@@ -24,7 +24,7 @@ from .tree_util import (tree_flatten, tree_unflatten, tree_map, tree_multimap,
                         register_pytree_node_class)
 from .util import safe_zip, safe_map, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
-from .abstract_arrays import raise_to_shaped
+from .core import raise_to_shaped
 from .ad_util import Zero, zeros_like_aval, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
@@ -33,7 +33,7 @@ from .interpreters import xla
 from .interpreters.batching import not_mapped
 from .config import config
 
-from . import traceback_util
+from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 map = safe_map
@@ -79,10 +79,18 @@ class custom_jvp:
   This class is meant to be used as a function decorator. Instances are
   callables that behave similarly to the underlying function to which the
   decorator was applied, except when a differentiation transformation (like
-  :py:func:`jax.jvp` or :py:func:`jax.grad`) is applied, in which case a custom user-supplied
-  JVP rule function is used instead of tracing into and performing automatic
-  differentiation of the underlying function's implementation. There is a single
-  instance method, ``defjvp``, which defines the custom JVP rule.
+  :py:func:`jax.jvp` or :py:func:`jax.grad`) is applied, in which case a custom
+  user-supplied JVP rule function is used instead of tracing into and
+  performing automatic differentiation of the underlying function's
+  implementation.
+
+  There are two instance methods available for defining the custom JVP rule:
+  :py:func:`~jax.custom_jvp.defjvp` for defining a *single* custom JVP rule for
+  all the function's inputs, and for convenience
+  :py:func:`~jax.custom_jvp.defjvps`, which wraps
+  :py:func:`~jax.custom_jvp.defjvp`, and allows you to provide seperate
+  definitions for the partial derivatives of the function w.r.t. each of its
+  arguments.
 
   For example::
 
@@ -262,9 +270,9 @@ class CustomJVPCallPrimitive(core.CallPrimitive):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = core.process_env_traces(
-        fun, self, top_trace and top_trace.level, ())
+        fun, self, top_trace and top_trace.level, (), None)
     jvp, env_trace_todo2 = core.process_env_traces(
-        jvp, self, top_trace and top_trace.level, ())
+        jvp, self, top_trace and top_trace.level, (), None)
     tracers = map(top_trace.full_raise, args)  # type: ignore
     with core.maybe_new_sublevel(top_trace):
       outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
@@ -320,7 +328,7 @@ def _custom_jvp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
 def _custom_jvp_call_jaxpr_vmap(
-    args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
+    args, in_dims, axis_name, *, fun_jaxpr: core.ClosedJaxpr,
     jvp_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     num_consts: int):
   size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
@@ -329,7 +337,7 @@ def _custom_jvp_call_jaxpr_vmap(
   num_out = len(fun_jaxpr.out_avals)
 
   in_batched = [d is not not_mapped for d in in_dims]
-  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False, axis_name)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []  # mutable cell updated by batched_jvp_jaxpr_thunk
 
@@ -337,12 +345,12 @@ def _custom_jvp_call_jaxpr_vmap(
   def batched_jvp_jaxpr_thunk():
     jvp_jaxpr = core.ClosedJaxpr(*jvp_jaxpr_thunk())  # consts can be tracers
     _, args_batched = split_list(in_batched, [num_consts])
-    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, size, args_batched * 2, False)
+    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, size, args_batched * 2, False, axis_name)
     primals_batched, tangents_batched = split_list(all_batched, [num_out])
     out_batched = map(op.or_, primals_batched, tangents_batched)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     batched_jvp_jaxpr, _ = batching.batch_jaxpr(
-        jvp_jaxpr, size, args_batched * 2, out_batched * 2)
+        jvp_jaxpr, size, args_batched * 2, out_batched * 2, axis_name)
     return batched_jvp_jaxpr.jaxpr, batched_jvp_jaxpr.consts
 
   batched_outs = custom_jvp_call_jaxpr_p.bind(
@@ -350,7 +358,7 @@ def _custom_jvp_call_jaxpr_vmap(
       jvp_jaxpr_thunk=batched_jvp_jaxpr_thunk, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.primitive_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
+batching.initial_style_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
 
 xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_jvp_call_jaxpr_impl)
@@ -376,7 +384,8 @@ class custom_vjp:
   transformation (like :py:func:`jax.grad`) is applied, in which case a custom
   user-supplied VJP rule function is used instead of tracing into and performing
   automatic differentiation of the underlying function's implementation. There
-  is a single instance method, ``defvjp``, which defines the custom VJP rule.
+  is a single instance method, :py:func:`~jax.custom_vjp.defvjp`, which may be
+  used to define the custom VJP rule.
 
   This decorator precludes the use of forward-mode automatic differentiation.
 
@@ -560,9 +569,9 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = core.process_env_traces(
-        fun, self, top_trace and top_trace.level, ())
+        fun, self, top_trace and top_trace.level, (), None)
     fwd, env_trace_todo2 = core.process_env_traces(
-        fwd, self, top_trace and top_trace.level, ())
+        fwd, self, top_trace and top_trace.level, (), None)
     tracers = map(top_trace.full_raise, args)  # type: ignore
     with core.maybe_new_sublevel(top_trace):
       outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers,
@@ -614,7 +623,7 @@ def _custom_vjp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
 def _custom_vjp_call_jaxpr_vmap(
-    args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
+    args, in_dims, axis_name, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
   size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
@@ -623,7 +632,7 @@ def _custom_vjp_call_jaxpr_vmap(
 
   in_batched = [d is not not_mapped for d in in_dims]
   _, args_batched = split_list(in_batched, [num_consts])
-  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False, axis_name)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
@@ -631,7 +640,7 @@ def _custom_vjp_call_jaxpr_vmap(
   def batched_fwd_jaxpr_thunk():
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk())  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
-        fwd_jaxpr, size, args_batched, False)
+        fwd_jaxpr, size, args_batched, False, axis_name)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     return batched_fwd_jaxpr.jaxpr, batched_fwd_jaxpr.consts
 
@@ -649,7 +658,7 @@ def _custom_vjp_call_jaxpr_vmap(
   if not config.omnistaging_enabled:
     out_dims = out_dims[:len(batched_outs)]
   return batched_outs, out_dims
-batching.primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
+batching.initial_style_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
 xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_vjp_call_jaxpr_impl)
@@ -672,9 +681,9 @@ def omnistaging_disabler() -> None:
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = core.process_env_traces(
-        fun, self, top_trace and top_trace.level, ())
+        fun, self, top_trace and top_trace.level, (), None)
     jvp, env_trace_todo2 = core.process_env_traces(
-        jvp, self, top_trace and top_trace.level, ())
+        jvp, self, top_trace and top_trace.level, (), None)
     if top_trace is None:
       with core.new_sublevel():
         outs = self.impl(fun, jvp, *args)

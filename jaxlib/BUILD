@@ -78,7 +78,9 @@ py_library(
     srcs = [
         "cuda_prng.py",
         "cusolver.py",
+        "init.py",
         "pocketfft.py",
+        "setup.py",
         "version.py",
     ],
     deps = [":pocketfft_flatbuffers_py"],

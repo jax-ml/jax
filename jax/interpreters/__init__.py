@@ -14,5 +14,5 @@
 
 import os
 
-from .. import traceback_util
+from jax._src import traceback_util
 traceback_util.register_exclusion(os.path.dirname(__file__))

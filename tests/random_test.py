@@ -33,6 +33,7 @@ from jax import random
 from jax import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
+import jax._src.random
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -134,7 +135,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     N = 10
     key = random.PRNGKey(1701)
     nbits = [8, 16, 32]
-    rand_bits = [random._random_bits(key, n, (N * 64 // n,)) for n in nbits]
+    rand_bits = [jax._src.random._random_bits(key, n, (N * 64 // n,))
+                 for n in nbits]
     rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
     assert np.all(rand_bits_32 == rand_bits_32[0])
 
@@ -142,19 +144,19 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Test specific outputs to ensure consistent random values between JAX versions.
     key = random.PRNGKey(1701)
 
-    bits8 = random._random_bits(key, 8, (3,))
+    bits8 = jax._src.random._random_bits(key, 8, (3,))
     expected8 = np.array([216, 115,  43], dtype=np.uint8)
     self.assertArraysEqual(bits8, expected8)
 
-    bits16 = random._random_bits(key, 16, (3,))
+    bits16 = jax._src.random._random_bits(key, 16, (3,))
     expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
     self.assertArraysEqual(bits16, expected16)
 
-    bits32 = random._random_bits(key, 32, (3,))
+    bits32 = jax._src.random._random_bits(key, 32, (3,))
     expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits32, expected32)
 
-    bits64 = random._random_bits(key, 64, (3,))
+    bits64 = jax._src.random._random_bits(key, 64, (3,))
     if FLAGS.jax_enable_x64:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
@@ -888,6 +890,59 @@ class LaxRandomTest(jtu.JaxTestCase):
       return random.normal(random.PRNGKey(x), (int(1e12),))
     with core.skipping_checks():  # check_jaxpr will materialize array
       api.eval_shape(f, 0)  # doesn't error
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "seed={seed}_type={type}_jit={jit}".format(**dct), **dct} for dct in [
+      {"seed": 0, "type": int, "jit": True, "key": [0, 0]},
+      {"seed": 0, "type": int, "jit": False, "key": [0, 0]},
+      {"seed": 1, "type": np.int32, "jit": True, "key": [0, 1]},
+      {"seed": 1, "type": np.int32, "jit": False, "key": [0, 1]},
+      {"seed": 2, "type": np.uint32, "jit": True, "key": [0, 2]},
+      {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
+      {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
+      {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
+      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
+      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
+      {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
+      {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
+      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
+      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
+      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
+    ]
+  ))
+  def test_prng_seeds_and_keys(self, seed, type, jit, key):
+    seed = type(seed)
+    if jit:
+      actual = api.jit(random.PRNGKey)(seed)
+    else:
+      actual = random.PRNGKey(seed)
+    expected = jnp.array(key, dtype=jnp.uint32)
+    self.assertArraysEqual(actual, expected)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_seed={seed}_type={type}", "seed": seed, "type": type}
+      for type in ["int", "np.array", "jnp.array"]
+      for seed in [-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)]))
+  def test_prng_jit_invariance(self, seed, type):
+    if type == "int" and seed == (1 << 64) - 1:
+      self.skipTest("Expected failure: Python int too large.")
+    type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
+    args_maker = lambda: [type(seed)]
+    self._CompileAndCheck(random.PRNGKey, args_maker)
+
+  def test_prng_errors(self):
+    seed = np.iinfo(np.uint64).max
+    with self.assertRaises(OverflowError):
+      random.PRNGKey(seed)
+    with self.assertRaises(OverflowError):
+      api.jit(random.PRNGKey)(seed)
 
 
 if __name__ == "__main__":

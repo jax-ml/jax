@@ -19,6 +19,9 @@ autograd/diff library and the Dormand-Prince method for adaptive integration
 stepsize calculation. Provides improved integration accuracy over fixed
 stepsize integration methods.
 
+For details of the mixed 4th/5th order Runge-Kutta integration method, see
+https://doi.org/10.1090/S0025-5718-1986-0815836-3
+
 Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 """
 
@@ -101,7 +104,7 @@ def interp_fit_dopri(y0, y1, k, dt):
       -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
       -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
   y_mid = y0 + dt * jnp.dot(dps_c_mid, k)
-  return jnp.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
+  return jnp.asarray(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
 
 def fit_4th_order_polynomial(y0, y1, y_mid, dy0, dy1, dt):
   a = -2.*dt*dy0 + 2.*dt*dy1 -  8.*y0 -  8.*y1 + 16.*y_mid

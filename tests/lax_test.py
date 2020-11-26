@@ -29,6 +29,7 @@ from jax import core
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
+from jax import tree_util
 from jax import lax_reference
 from jax.test_util import check_grads
 import jax.util
@@ -1934,7 +1935,7 @@ class LaxTest(jtu.JaxTestCase):
        "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
        "update_shape": update_shape, "dnums": dnums,
        "rng_factory": rng_factory, "rng_idx_factory": rng_idx_factory}
-      for dtype in float_dtypes
+      for dtype in inexact_dtypes
       for arg_shape, idxs, update_shape, dnums in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
@@ -2238,6 +2239,31 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       lax.reduce_window(**args)
 
+  def test_reduce_correctly_works_with_pytrees(self):
+    operands = {'x': [np.ones(5), np.arange(5)]}
+    init_values = {'x': [0., 0]}
+    result = lax.reduce(operands, init_values,
+                        lambda x, y: tree_util.tree_multimap(lax.add, x, y),
+                        [0])
+    self.assertDictEqual(result, {'x': [5., 10.]})
+
+  def test_reduce_with_mismatched_pytrees_errors(self):
+    operands = {'x': np.ones(5)}
+    bad_init_values = {'y': 0.}
+
+    with self.assertRaisesRegex(ValueError, 'Operands must have the same '
+                                'tree structure as init_values'):
+      lax.reduce(operands, bad_init_values,
+                 lambda x, y: dict(x=x['x'] + y['x']), [0])
+
+  def test_reduce_with_nonscalar_inits_errors(self):
+    operands = {'x': np.ones(5)}
+    bad_init_values = {'x': np.ones(5)}
+
+    with self.assertRaisesRegex(ValueError, 'Found non-scalar init_value'):
+      lax.reduce(operands, bad_init_values,
+                 lambda x, y: dict(x=x['x'] + y['x']), [0])
+
   def test_select_jvp_complexity(self):
     if not config.omnistaging_enabled:
       raise SkipTest("test requires omnistaging")
@@ -2329,6 +2355,16 @@ class LazyConstantTest(jtu.JaxTestCase):
     make_const = lambda: lax.broadcast_in_dim(arr, (2, 1, 3), (0, 2))
     self._Check(make_const, expected)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_fn={}_indexdtype={}"
+       .format(jax_fn.__name__, np.dtype(index_dtype).name),
+       "index_dtype": index_dtype, "jax_fn": jax_fn}
+      for index_dtype in jtu.dtypes.all_inexact + jtu.dtypes.boolean
+      for jax_fn in [lax.argmin, lax.argmax]))
+  def testArgMinMaxIndexDtypeError(self, jax_fn, index_dtype):
+    with self.assertRaisesRegex(TypeError,
+                                "index_dtype must be an integer type"):
+      jax_fn(np.ones((2, 2)), axis=0, index_dtype=index_dtype)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

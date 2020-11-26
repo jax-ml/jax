@@ -26,6 +26,7 @@ if cuda_version:
   __version__ += "+cuda" + cuda_version.replace(".", "")
 
 binary_libs = [os.path.basename(f) for f in glob('jaxlib/*.so*')]
+binary_libs += [os.path.basename(f) for f in glob('jaxlib/*.pyd*')]
 
 setup(
     name='jaxlib',

@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from .jax2tf import convert
+from .jax2tf import convert, shape_as_value

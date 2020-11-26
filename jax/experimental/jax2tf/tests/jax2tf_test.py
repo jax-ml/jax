@@ -410,6 +410,18 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         ValueError, "convert must be used outside all JAX transformations"):
       self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
 
+  def test_name_scope(self):
+    log = []
+
+    @jax.named_call
+    def my_test_function(x):
+      y = tf.Variable(1., name="foo")
+      log.append(y.name)
+      return x * x
+
+    jax2tf.convert(my_test_function)(2)
+    self.assertIn("my_test_function/foo", log[0])
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -20,7 +20,7 @@ from . import ad_util
 from . import core
 from . import dtypes
 
-from . import traceback_util
+from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 _DIMENSION_TYPES = core._DIMENSION_TYPES
@@ -47,7 +47,7 @@ array_types = {np.ndarray, np.bool_,
                np.uint8, np.uint16, np.uint32, np.uint64,
                dtypes.bfloat16, np.float16, np.float32, np.float64,
                np.complex64, np.complex128,
-               np.longlong}
+               np.longlong, np.intc}
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray

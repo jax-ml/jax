@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,4 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .version import __version__
+# flake8: noqa: F401
+from jax._src.lax.linalg import (
+  cholesky,
+  cholesky_p,
+  eig,
+  eig_p,
+  eigh,
+  eigh_p,
+  lu,
+  lu_p,
+  lu_pivots_to_permutation,
+  qr,
+  qr_p,
+  svd,
+  svd_p,
+  triangular_solve,
+  triangular_solve_p,
+)

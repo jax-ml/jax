@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO(phawkins): remove these aliases after fixing callers.
-
 # flake8: noqa: F401
-from jax._src.lax.control_flow import _initial_style_jaxpr
+from .version import __version__

@@ -180,5 +180,113 @@ class DtypesTest(jtu.JaxTestCase):
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
 
 
+class TestPromotionTables(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_jaxtype={}".format(jaxtype),
+     "jaxtype": jaxtype}
+     for jaxtype in dtypes._jax_types)
+  def testJaxTypeFromType(self, jaxtype):
+    self.assertIs(dtypes._jax_type(jaxtype), jaxtype)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_jaxtype={}".format(jaxtype),
+     "jaxtype": jaxtype}
+     for jaxtype in dtypes._jax_types)
+  def testJaxTypeFromVal(self, jaxtype):
+    try:
+      val = jaxtype(0)
+    except TypeError:
+      val = jaxtype.type(0)
+    self.assertIs(dtypes._jax_type(val), jaxtype)
+
+  def testObservedPromotionTable(self):
+    """Test that the weak & strong dtype promotion table does not change over time."""
+    # Note: * here refers to weakly-typed values
+    typecodes = \
+        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
+    if FLAGS.jax_enable_x64:
+      expected = [
+        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
+        ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f8','c8'],
+        ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f8','c8'],
+        ['u4','u4','u4','u4','u8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','u4','f8','c8'],
+        ['u8','u8','u8','u8','u8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','u8','f8','c8'],
+        ['i1','i2','i4','i8','f8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f8','c8'],
+        ['i2','i2','i4','i8','f8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f8','c8'],
+        ['i4','i4','i4','i8','f8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f8','c8'],
+        ['i8','i8','i8','i8','f8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
+        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c4'],
+        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c4'],
+        ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
+        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
+        ['i8','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+        ['f8','f8','f8','f8','f8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
+        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
+      ]
+    else:
+      expected = [
+        ['b1','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
+        ['u1','u1','u2','u4','u4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','u1','f4','c4'],
+        ['u2','u2','u2','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u2','f4','c4'],
+        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f4','c4'],
+        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f4','c4'],
+        ['i1','i2','i4','i4','i4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i1','f4','c4'],
+        ['i2','i2','i4','i4','i4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','i2','f4','c4'],
+        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
+        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
+        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f4','c4','c4','bf','bf','c4'],
+        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f4','c4','c4','f2','f2','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','c4','c4','f4','f4','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','c4','c4','f4','f4','c4'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4'],
+        ['i4','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i*','f*','c*'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','bf','f2','f4','f4','c4','c4','f*','f*','c*'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c*','c*','c*'],
+      ]
+    typecode_to_dtype = {
+      'b1': jnp.bool_,
+      'u1': jnp.uint8, 'u2': jnp.uint16, 'u4': jnp.uint32, 'u8': jnp.uint64,
+      'i1': jnp.int8, 'i2': jnp.int16, 'i4': jnp.int32, 'i8': jnp.int64,
+      'bf': jnp.bfloat16, 'f2': jnp.float16, 'f4': jnp.float32, 'f8': jnp.float64,
+      'c4': jnp.complex64, 'c8': jnp.complex128,
+      'i*': jnp.int64, 'f*': jnp.float64, 'c*': jnp.complex128,
+    }
+    dtype_to_typecode = {jnp.dtype(v): k for k, v in typecode_to_dtype.items()
+                        if not k.endswith('*')}
+
+    def typecode_to_val(typecode):
+      weak_type = typecode.endswith('*')
+      dtype = typecode_to_dtype[typecode]
+      val = dtype(0)
+      if weak_type:
+        val = val.item()
+      return val
+
+    def val_to_typecode(val):
+      dtype = dtypes.result_type(val)
+      weak_type = dtypes.is_weakly_typed(val)
+      typecode = dtype_to_typecode[dtype]
+      if weak_type:
+        typecode = typecode[:-1] + '*'
+      return typecode
+
+    vals = [typecode_to_val(t) for t in typecodes]
+    table = [[val_to_typecode(v1 + v2) for v1 in vals] for v2 in vals]
+
+    def show_differences(epected, actual):
+      diffs = ""
+      for i, t1 in enumerate(typecodes):
+        for j, t2 in enumerate(typecodes):
+          if expected[i][j] != actual[i][j]:
+            diffs += f"\n{t1}, {t2} -> want {expected[i][j]}, got {actual[i][j]}"
+      return diffs
+
+    self.assertEqual(table, expected, show_differences(expected, table))
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

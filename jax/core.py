@@ -24,7 +24,7 @@ import threading
 import types
 from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
-                    Type, Union, cast)
+                    Type, Union, cast, Iterable, Hashable)
 
 import numpy as np
 
@@ -32,11 +32,12 @@ from . import dtypes
 from .config import FLAGS, config
 from . import linear_util as lu
 
-from . import source_info_util
-from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
-from .pprint_util import pp, vcat, PrettyPrint
+from jax._src import source_info_util
+from .util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
+                   tuple_insert, tuple_delete, as_hashable_function)
+from ._src.pprint_util import pp, vcat, PrettyPrint
 
-from . import traceback_util
+from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 # TODO(dougalm): compilation cache breaks the leak detector. Consisder solving.
@@ -127,6 +128,9 @@ class ClosedJaxpr:
   @property
   def literals(self):
     return self.consts  # backwards compatible alias
+
+  def map_jaxpr(self, f):
+    return ClosedJaxpr(f(self.jaxpr), self.consts)
 
   def __str__(self): return str(self.jaxpr)
   def __repr__(self): return repr(self.jaxpr)
@@ -308,6 +312,13 @@ def extract_call_jaxpr(
     return (params["call_jaxpr"], new_params)
 
 
+def traverse_jaxpr_params(f, params):
+  """Applies f to each jaxpr parameter and returns a tuple of returned values."""
+  return tuple(f(param if type(param) is Jaxpr else param.jaxpr)
+               for param in params.values()
+               if type(param) in (Jaxpr, ClosedJaxpr))
+
+
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
   def read(v):
     if type(v) is Literal:
@@ -329,8 +340,13 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
+    if eqn.primitive.map_primitive:
+      bind_params = dict(params, out_axes_thunk=lambda: params['out_axes'])
+      del bind_params['out_axes']
+    else:
+      bind_params = params
     with source_info_util.user_context(eqn.source_info):
-      ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
+      ans = eqn.primitive.bind(*(subfuns + in_vals), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
@@ -591,10 +607,12 @@ class EvalTrace(Trace):
 class MainTrace:
   level: int
   trace_type: Type[Trace]
+  payload: Dict[str, Any]
 
-  def __init__(self, level, trace_type) -> None:
+  def __init__(self, level, trace_type, **payload) -> None:
     self.level = level
     self.trace_type = trace_type
+    self.payload = payload
 
   def __repr__(self) -> str:
     return "MainTrace({},{})".format(self.level, self.trace_type.__name__)
@@ -604,12 +622,17 @@ class MainTrace:
 
   def __eq__(self, other: object) -> bool:
     return (isinstance(other, MainTrace) and
-            self.level == other.level and self.trace_type == other.trace_type)
+            self.level == other.level and
+            self.trace_type == other.trace_type and
+            self.payload == other.payload)
+
+  def with_cur_sublevel(self):
+    return self.trace_type(self, cur_sublevel(), **self.payload)
 
 class TraceStack:
   # See comments in https://github.com/google/jax/pull/3370
-  upward: List[MainTrace]
-  downward: List[MainTrace]
+  stack: List[MainTrace]
+  dynamic: MainTrace
 
   def __init__(self):
     eval_trace = MainTrace(0, EvalTrace)
@@ -637,6 +660,7 @@ class TraceStack:
 
 class Sublevel(int): pass
 AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
+AxisName = Hashable
 
 class TraceState:
   trace_stack: TraceStack
@@ -682,12 +706,13 @@ def cur_sublevel() -> Sublevel:
   return thread_local_state.trace_state.substack[-1]
 
 @contextmanager
-def new_main(trace_type: Type[Trace], dynamic: bool = False,
-                ) -> Generator[MainTrace, None, None]:
+def new_main(trace_type: Type[Trace],
+             dynamic: bool = False,
+             **payload) -> Generator[MainTrace, None, None]:
   # See comments in https://github.com/google/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   level = stack.next_level()
-  main = MainTrace(level, trace_type)
+  main = MainTrace(level, trace_type, **payload)
   stack.push(main)
   if dynamic:
     prev_dynamic, stack.dynamic = stack.dynamic, main
@@ -755,8 +780,8 @@ def find_top_trace(xs) -> Trace:
                  default=None, key=attrgetter('level'))
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
-                else top_main)
-  return top_main and top_main.trace_type(top_main, cur_sublevel())  # type: ignore
+              else top_main)
+  return top_main and top_main.with_cur_sublevel()  # type: ignore
 
 
 # -------------------- abstract values --------------------
@@ -1138,12 +1163,19 @@ def apply_todos(todos, outs):
     outs = map(full_lower, todos_list.pop()(outs))
   return outs
 
+class _IgnoreElemList(list):
+  """Compares equal to all other _ignore_elem_lists."""
+  def __hash__(self): return 0
+  def __eq__(self, other):
+    return type(other) is _IgnoreElemList
+
 @lu.transformation_with_aux
 def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
-                       level: int, params_tuple: tuple, *args):
+                       level: int, params_tuple: tuple, out_axes_transforms, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
+  assert not out_axes_transforms
   while True:
     tracers = [x for x in outs if isinstance(x, Tracer)
                and (level is None or x._trace.level > level)]
@@ -1151,18 +1183,35 @@ def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
       ans = max(tracers, key=lambda x: x._trace.level)
     else:
       break
-    trace = type(ans._trace)(ans._trace.main, cur_sublevel())
+    trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
     outs, cur_todo = primitive.post_process(trace, outs, params)
+    if isinstance(primitive, MapPrimitive):
+      cur_todo, out_axes_transform = cur_todo
+      out_axes_transforms.append(out_axes_transform)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
 def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
               fun, *args, **params):
+  out_axes_transforms = _IgnoreElemList()
+  if primitive.map_primitive:
+    out_axes_thunk = params['out_axes_thunk']
+    # The new thunk depends deterministically on the old thunk and the wrapped function.
+    # Any caching already has to include the wrapped function as part of the key, so we
+    # only use the previous thunk for equality checks.
+    @as_hashable_function(key=out_axes_thunk)
+    def new_out_axes_thunk():
+      out_axes = out_axes_thunk()
+      for t in out_axes_transforms:
+        out_axes = t(out_axes)
+      return out_axes
+    params = dict(params, out_axes_thunk=new_out_axes_thunk)
   params_tuple = tuple(params.items())
   top_trace = find_top_trace(args)
   fun, env_trace_todo = process_env_traces(
-      fun, primitive, top_trace and top_trace.level, params_tuple)
+      fun, primitive, top_trace and top_trace.level,
+      params_tuple, out_axes_transforms)
   tracers = map(top_trace.full_raise, args)
   with maybe_new_sublevel(top_trace):
     outs = primitive.process(top_trace, fun, tracers, params)
@@ -1190,6 +1239,8 @@ call_p = CallPrimitive('call')
 call = call_p.bind
 call_p.def_impl(call_impl)
 
+named_call_p = CallPrimitive('named_call')
+named_call_p.def_impl(call_impl)
 
 # ------------------- Map -------------------
 
@@ -1198,7 +1249,7 @@ class MapPrimitive(Primitive):
   map_primitive = True
 
   def bind(self, fun, *args, **params):
-    assert len(params['mapped_invars']) == len(args)
+    assert len(params['in_axes']) == len(args)
     return call_bind(self, fun, *args, **params)
 
   def process(self, trace, fun, tracers, params):
@@ -1208,13 +1259,23 @@ class MapPrimitive(Primitive):
     return trace.post_process_map(self, out_tracers, params)
 
 @contextmanager
-def extend_axis_env(axis_name, size: int, tag: Any):
+def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
   frame = AxisEnvFrame(axis_name, size, tag)
   thread_local_state.trace_state.axis_env.append(frame)
   try:
     yield
   finally:
     thread_local_state.trace_state.axis_env.pop()
+
+@contextmanager
+def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]]):
+  frames = [AxisEnvFrame(axis_name, size, None) for axis_name, size in axes]
+  thread_local_state.trace_state.axis_env.extend(frames)
+  try:
+    yield
+  finally:
+    for _ in frames:
+      thread_local_state.trace_state.axis_env.pop()
 
 
 # When a mapped function is given no axis name, we generate a name object based
@@ -1243,35 +1304,30 @@ def axis_frame(axis_name):
   for frame in reversed(frames):
     if frame.name == axis_name:
       return frame
-
-  named_axis = [
-      frame.name
-      for frame in reversed(frames)
-      if not isinstance(frame.name, _TempAxisName)
-  ]
+  named_axes = [frame.name for frame in reversed(frames)
+                if not isinstance(frame.name, _TempAxisName)]
   raise NameError(
       f'unbound axis name: {axis_name}. The following axis names (e.g. defined '
-      'by pmap) are available to collectives operations:'
-      f'{named_axis}')
+      f'by pmap) are available to collective operations: {named_axes}')
 
 
 # ------------------- Jaxpr checking -------------------
 
-def mapped_aval(size: int, aval: AbstractValue) -> AbstractValue:
+def mapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
   if aval is abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
     # might be raising abstraction level from Concrete here
-    assert aval.shape[0] == size
-    return ShapedArray(aval.shape[1:], aval.dtype)
+    assert aval.shape[axis] == size
+    return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype)
   else:
     raise TypeError(f"Mapped operand {aval}")
 
-def unmapped_aval(size: int, aval: AbstractValue) -> AbstractValue:
+def unmapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
   if aval is abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
-    return ShapedArray((size,) + aval.shape, aval.dtype)
+    return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype)
   else:
     raise TypeError(f"Mapped output {aval}")
 
@@ -1305,7 +1361,8 @@ def check_jaxpr(jaxpr: Jaxpr):
   - variables are typed equally throughout a jaxpr
   - variable type annotations are compatible with their binding expression
 
-  Raises `TypeError` if `jaxpr` is determined invalid. Returns `None` otherwise.
+  Raises `JaxprTypeError` if `jaxpr` is determined invalid. Returns `None`
+  otherwise.
   """
   try:
     _check_jaxpr(jaxpr, [v.aval for v in jaxpr.invars])
@@ -1403,23 +1460,29 @@ def check_map(prim, in_avals, params):
   typecheck_assert("axis_size" in params,
                    f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
-  typecheck_assert("mapped_invars" in params,
-                   f"Map primitive {prim} missing 'mapped_invars' parameter")
-  mapped_invars = params["mapped_invars"]
+  typecheck_assert("in_axes" in params,
+                   f"Map primitive {prim} missing 'in_axes' parameter")
+  in_axes = params["in_axes"]
+  typecheck_assert("out_axes" in params,
+                   f"Map primitive {prim} missing 'out_axes' parameter")
+  out_axes = params["out_axes"]
 
-  binder_avals = [unmapped_aval(axis_size, v.aval) if mapped else v.aval
-                  for v, mapped in zip(call_jaxpr.invars, mapped_invars)]
+  binder_avals = [unmapped_aval(axis_size, in_axis, v.aval)
+                  if in_axis is not None else v.aval
+                  for v, in_axis in zip(call_jaxpr.invars, in_axes)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
     typecheck_assert(typecompat(binder_aval, in_aval),
                      f"Call primitive {prim} passes operand {in_aval} "
                      f"to jaxpr expecting {binder_aval}")
 
-  mapped_avals = [mapped_aval(axis_size, aval) if mapped else aval
-                  for aval, mapped in zip(in_avals, mapped_invars)]
+  mapped_avals = [mapped_aval(axis_size, in_axis, aval)
+                  if in_axis is not None else aval
+                  for aval, in_axis in zip(in_avals, in_axes)]
   _check_jaxpr(call_jaxpr, mapped_avals)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_size, aval) for aval in mapped_out_avals]
+  out_avals = [unmapped_aval(axis_size, out_axis, aval) if out_axis is not None else aval
+               for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals
 
 
@@ -1576,9 +1639,9 @@ def omnistaging_disabler() -> None:
       return True
 
   @contextmanager
-  def new_main(trace_type: Type[Trace], bottom=False) -> Generator[MainTrace, None, None]:
+  def new_main(trace_type: Type[Trace], bottom=False, **payload) -> Generator[MainTrace, None, None]:
     level = thread_local_state.trace_state.trace_stack.next_level(bottom)
-    main = MainTrace(level, trace_type)
+    main = MainTrace(level, trace_type, **payload)
     thread_local_state.trace_state.trace_stack.push(main, bottom)
 
     try:
@@ -1596,7 +1659,7 @@ def omnistaging_disabler() -> None:
   def find_top_trace(xs) -> Optional[Trace]:
     top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
                     key=attrgetter('level'), default=None)
-    return top_trace and type(top_trace)(top_trace.main, cur_sublevel())
+    return top_trace and top_trace.main.with_cur_sublevel()
 
   @contextmanager
   def eval_context():
@@ -1619,12 +1682,26 @@ def omnistaging_disabler() -> None:
 
   def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
                 fun: lu.WrappedFun, *args, **params):
+    out_axes_transforms = _IgnoreElemList()
+    if primitive.map_primitive:
+      out_axes_thunk = params['out_axes_thunk']
+      # The new thunk depends deterministically on the old thunk and the wrapped function.
+      # Any caching already has to include the wrapped function as part of the key, so we
+      # only use the previous thunk for equality checks.
+      @as_hashable_function(key=out_axes_thunk)
+      def new_out_axes_thunk():
+        out_axes = out_axes_thunk()
+        for t in out_axes_transforms:
+          out_axes = t(out_axes)
+        return out_axes
+      params = dict(params, out_axes_thunk=new_out_axes_thunk)
     params_tuple = tuple(params.items())
     top_trace = find_top_trace(args)
     level = (thread_local_state.trace_state.trace_stack.next_level(True)
             if top_trace is None else top_trace.level)
     params_tuple = tuple(params.items())
-    fun, env_trace_todo = process_env_traces(fun, primitive, level, params_tuple)
+    fun, env_trace_todo = process_env_traces(
+        fun, primitive, level, params_tuple, out_axes_transforms)
     if top_trace is None:
       with new_sublevel():
         outs = primitive.impl(fun, *args, **params)

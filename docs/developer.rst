@@ -30,40 +30,81 @@ Building ``jaxlib`` from source
 
 To build ``jaxlib`` from source, you must also install some prerequisites:
 
-* a C++ compiler (g++ or clang)
-* Numpy
-* Scipy
-* Cython
-* six (required for during the jaxlib build only, not required at install time)
+* a C++ compiler (g++, clang, or MSVC)
 
-On Ubuntu 18.04 or Debian you can install the necessary prerequisites with::
+  On Ubuntu or Debian you can install the necessary prerequisites with::
 
- sudo apt-get install g++ python python3-dev python3-numpy python3-scipy cython3 python3-six
+   sudo apt install g++ python python3-dev
+
+  If you are building on a Mac, make sure XCode and the XCode command line tools
+  are installed.
+
+  See below for Windows build instructions.
+
+* Python packages: ``numpy``, ``scipy``, ``six``, ``wheel``.
+
+  The ``six`` package is required for during the jaxlib build only, and is not
+  required at install time.
 
 
-If you are building on a Mac, make sure XCode and the XCode command line tools
-are installed.
+You can install the necessary Python dependencies using ``pip``::
 
-You can also install the necessary Python dependencies using ``pip``::
-
-    pip install numpy scipy cython six
+    pip install numpy scipy six wheel
 
 
 To build ``jaxlib`` with CUDA support, you can run::
 
     python build/build.py --enable_cuda
-    pip install -e build  # installs jaxlib (includes XLA)
+    pip install -e dist/*.whl  # installs jaxlib (includes XLA)
 
 
 See ``python build/build.py --help`` for configuration options, including ways to
 specify the paths to CUDA and CUDNN, which you must have installed. Here
 ``python`` should be the name of your Python 3 interpreter; on some systems, you
-may need to use ``python3`` instead.
+may need to use ``python3`` instead. By default, the wheel is written to the
+``dist/`` subdirectory of the current directory.
 
 To build ``jaxlib`` without CUDA GPU support (CPU only), drop the ``--enable_cuda``::
 
   python build/build.py
-  pip install -e build  # installs jaxlib (includes XLA)
+  pip install dist/*.whl  # installs jaxlib (includes XLA)
+
+
+Additional Notes for Building ``jaxlib`` from source on Windows
+...............................................................
+
+On Windows, follow `Install Visual Studio <https://docs.microsoft.com/en-us/visualstudio/install/install-visual-studio?view=vs-2019>`_
+to setup a C++ toolchain. Visual Studio 2019 version 16.5 or newer is required.
+If you need to build with CUDA enabled, follow
+`CUDA Installation Guide <https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html>`_
+to setup CUDA environment.
+
+It is recommended to use `Anaconda <https://docs.anaconda.com/anaconda/install/windows/>`_
+or `Miniconda <https://docs.conda.io/en/latest/miniconda.html#windows-installers>`_
+to setup python environment.
+
+Some targets of Bazel use bash utilities to do scripting, so `MSYS2 <https://www.msys2.org>`_
+is needed. See `Installing Bazel on Windows <https://docs.bazel.build/versions/master/install-windows.html#installing-compilers-and-language-runtimes>`_
+for more details. Install the following packages::
+
+  pacman -S patch realpath
+
+
+Once everything is installed. Open PowerShell, and make sure MSYS2 is in the
+path of the current session. Ensure ``bazel``, ``patch`` and ``realpath`` are
+accessible. Activate the conda environment. The following command builds with
+CUDA enabled, adjust it to whatever suitable for you::
+
+  python .\build\build.py `
+    --enable_cuda `
+    --cuda_path='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1' `
+    --cudnn_path='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1' `
+    --cuda_compute_capabilities='6.1' `
+    --cuda_version='10.1' `
+    --cudnn_version='7.6.5'
+
+
+To build with debug information, add the flag ``--bazel_options='--copt=/Z7'``.
 
 Installing ``jax``
 ------------------
@@ -209,4 +250,3 @@ I saw in the Readthedocs logs::
     python -m pip install --exists-action=w --no-cache-dir -r docs/requirements.txt
     cd docs
     python `which sphinx-build` -T -E -b html -d _build/doctrees-readthedocs -D language=en . _build/html
-

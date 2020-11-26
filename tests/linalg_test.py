@@ -27,7 +27,6 @@ import jax
 import jax.lib
 from jax import jit, grad, jvp, vmap
 from jax import lax
-from jax import lax_linalg
 from jax import numpy as jnp
 from jax import scipy as jsp
 from jax import test_util as jtu
@@ -199,7 +198,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
       for shape in [(1, 1), (4, 4), (5, 5), (2, 7, 7)]
-      for dtype in float_types
+      for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
@@ -258,7 +257,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       check_right_eigenvectors(aH, wC, vl)
 
     a, = args_maker()
-    results = lax_linalg.eig(a, compute_left_eigenvectors,
+    results = lax.linalg.eig(a, compute_left_eigenvectors,
                              compute_right_eigenvectors)
     w = results[0]
 
@@ -269,6 +268,30 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(partial(jnp.linalg.eig), args_maker,
                           rtol=1e-3)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+           jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory
+       }
+      for shape in [(4, 4), (5, 5), (8, 8), (7, 6, 6)]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEigvalsGrad(self, shape, dtype, rng_factory):
+    # This test sometimes fails for large matrices. I (@j-towns) suspect, but
+    # haven't checked, that might be because of perturbations causing the
+    # ordering of eigenvalues to change, which will trip up check_grads. So we
+    # just test on small-ish matrices.
+    rng = rng_factory(self.rng())
+    jtu.skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng(shape, dtype)]
+    a, = args_maker()
+    tol = 1e-4 if dtype in (np.float64, np.complex128) else 1e-1
+    jtu.check_grads(lambda x: jnp.linalg.eigvals(x), (a,), order=1,
+                    modes=['fwd', 'rev'], rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
@@ -1182,14 +1205,14 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       b_shape, dtype, rng_factory):
     jtu.skip_if_unsupported_type(dtype)
     rng = rng_factory(self.rng())
-    # Test lax_linalg.triangular_solve instead of scipy.linalg.solve_triangular
+    # Test lax.linalg.triangular_solve instead of scipy.linalg.solve_triangular
     # because it exposes more options.
     A = jnp.tril(rng(a_shape, dtype) + 5 * np.eye(a_shape[-1], dtype=dtype))
     A = A if lower else T(A)
     B = rng(b_shape, dtype)
-    f = partial(lax_linalg.triangular_solve, lower=lower,
-                transpose_a=transpose_a, conjugate_a=conjugate_a,
-                unit_diagonal=unit_diagonal, left_side=left_side)
+    f = partial(lax.linalg.triangular_solve, lower=lower, transpose_a=transpose_a,
+                conjugate_a=conjugate_a, unit_diagonal=unit_diagonal,
+                left_side=left_side)
     jtu.check_grads(f, (A, B), 2, rtol=4e-2, eps=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1211,9 +1234,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     A = jnp.tril(rng(a_shape, np.float32)
                 + 5 * np.eye(a_shape[-1], dtype=np.float32))
     B = rng(b_shape, np.float32)
-    solve = partial(lax_linalg.triangular_solve, lower=True,
-                    transpose_a=False, conjugate_a=False,
-                    unit_diagonal=False, left_side=left_side)
+    solve = partial(lax.linalg.triangular_solve, lower=True, transpose_a=False,
+                    conjugate_a=False, unit_diagonal=False, left_side=left_side)
     X = vmap(solve, bdims)(A, B)
     matmul = partial(jnp.matmul, precision=lax.Precision.HIGHEST)
     Y = matmul(A, X) if left_side else matmul(X, A)
@@ -1225,7 +1247,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     b = rng((1, 3), np.float32)
     jtu.assert_dot_precision(
         lax.Precision.HIGHEST,
-        partial(jvp, lax_linalg.triangular_solve),
+        partial(jvp, lax.linalg.triangular_solve),
         (a, b),
         (a, b))
 

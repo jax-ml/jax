@@ -17,16 +17,17 @@ import os.path
 import threading
 from typing import Any, Optional
 
-from .lib import xla_client
+import jax.version
+from jax.lib import xla_client
 
-from . import traceback_util
+from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 
 Traceback = Any  # xla_client.Traceback
 Frame = Any  # xla_client.Traceback::Frame
 
-_jax_path = os.path.dirname(__file__)
+_jax_path = os.path.dirname(jax.version.__file__)
 
 def user_frame(source_info: Optional[Traceback]) -> Optional[Frame]:
   """Heuristic that guesses the identity of the user's code in a stack trace."""

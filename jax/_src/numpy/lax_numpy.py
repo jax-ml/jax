@@ -42,7 +42,7 @@ from .vectorize import vectorize
 from .util import _wraps
 from jax import core
 from jax import dtypes
-from jax.abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
+from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import flags, config
 from jax.interpreters.xla import DeviceArray
 from jax.interpreters.masking import Poly
@@ -210,6 +210,12 @@ _DEFAULT_TYPEMAP = {
   np.int_: int_,
   np.float_: float_,
   np.complex_: complex_
+}
+
+_INT_DTYPES = {
+  16: np.int16,
+  32: np.int32,
+  64: np.int64,
 }
 
 def _np_array(obj, dtype=None, **kwargs):
@@ -671,19 +677,12 @@ def signbit(x):
     x = lax.convert_element_type(x, float32)
 
   info = finfo(dtype)
-  if info.bits == 16:
-    int_type = np.int16
-  elif info.bits == 32:
-    int_type = np.int32
-  elif info.bits == 64:
-    int_type = np.int64
-  else:
+  if info.bits not in _INT_DTYPES:
     raise NotImplementedError(
         "jax.numpy.signbit only supports 16, 32, and 64-bit types.")
-
+  int_type = _INT_DTYPES[info.bits]
   x = lax.bitcast_convert_type(x, int_type)
   return lax.convert_element_type(x >> (info.nexp + info.nmant), np.bool_)
-
 
 
 @_wraps(np.trapz)
@@ -750,17 +749,11 @@ def correlate(a, v, mode='valid', *, precision=None):
 def _normalize_float(x):
   info = finfo(_dtype(x))
   cond = lax.abs(x) < info.tiny
-  x1 = where(cond, x * (1 << info.nmant), x)
-  x2 = where(cond, full_like(x, -info.nmant, dtype=np.int32),
-             zeros_like(x, dtype=np.int32))
-  return lax.convert_element_type(x1, _dtype(x)), x2
+  x1 = where(cond, x * lax._const(x, 1 << info.nmant), x)
+  x2 = where(cond, lax._const(np.int32, -info.nmant), lax._const(np.int32, 0))
+  int_type = _INT_DTYPES[info.bits]
+  return lax.bitcast_convert_type(x1, int_type), x2
 
-
-_INT_DTYPES = {
-  16: np.int16,
-  32: np.int32,
-  64: np.int64,
-}
 
 @_wraps(np.ldexp)
 @jit
@@ -776,9 +769,7 @@ def ldexp(x1, x2):
   int_type = _INT_DTYPES[info.bits]
 
   x, e = _normalize_float(x1)
-  x2 += lax.convert_element_type(e, np.int32)
-  x = lax.bitcast_convert_type(x, int_type)
-  x2 += ((x >> info.nmant) & mask) - bias
+  x2 += e + ((x >> info.nmant) & mask) - bias
 
   # find underflow/overflow before denormalization
   underflow_cond = x2 < -(bias + info.nmant)
@@ -819,10 +810,7 @@ def frexp(x):
   mask = (1 << info.nexp) - 1
   bias = ((1 << info.nexp) - 1) >> 1
 
-  int_type = _INT_DTYPES[info.bits]
-
   x1, x2 = _normalize_float(x)
-  x1 = lax.bitcast_convert_type(x1, int_type)
   x2 += ((x1 >> info.nmant) & mask) - bias + 1
   x1 &= ~(mask << info.nmant)
   x1 |= (bias - 1) << info.nmant
@@ -889,7 +877,7 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
   if isinstance(bins, str):
     raise NotImplementedError("string values for `bins` not implemented.")
   a = ravel(a)
-  b = array(bins)
+  b = asarray(bins)
   if b.ndim == 1:
     return b
   if range is None:
@@ -1202,11 +1190,10 @@ def _gradient(a, varargs, axis):
 
 
 @_wraps(np.gradient)
-def gradient(f, *args, **kwargs):
-  axis = kwargs.pop("axis", None)
-  if not len(kwargs) == 0:
-    raise ValueError("Only `axis` keyword is implemented")
-  return _gradient(f, args, axis)
+def gradient(f, *varargs, axis=None, edge_order=None):
+  if edge_order is not None:
+    raise NotImplementedError("The 'edge_order' argument to jnp.gradient is not supported.")
+  return _gradient(f, varargs, axis)
 
 
 @_wraps(np.isrealobj)
@@ -1231,9 +1218,8 @@ def _compute_newshape(a, newshape):
     return size if type(size) is Poly else core.concrete_or_error(
       int, size, "The error arose in jax.numpy.reshape.")
   newshape = [check(size) for size in newshape] if iterable else check(newshape)
-  newsize = _prod((newshape,) if type(newshape) is Poly else newshape)
-  if newsize < 0:
-    fix = a.size // -newsize
+  if np.any(np.equal(newshape, -1)):
+    fix = -a.size // (newshape if type(newshape) is Poly else _prod(newshape))
     return [d if d != -1 else fix for d in newshape]
   else:
     return newshape
@@ -1456,9 +1442,17 @@ def interp(x, xp, fp, left=None, right=None, period=None):
 In the JAX version, the `assume_unique` argument is not referenced.
 """)
 def in1d(ar1, ar2, assume_unique=False, invert=False):
-  # TODO(vanderplas): use sorting-based approach for larger inputs.
   ar1 = ravel(ar1)
   ar2 = ravel(ar2)
+  # Note: an algorithm based on searchsorted has better scaling, but in practice
+  # is very slow on accelerators because it relies on lax control flow. If XLA
+  # ever supports binary search natively, we should switch to this:
+  #   ar2 = jnp.sort(ar2)
+  #   ind = jnp.searchsorted(ar2, ar1)
+  #   if invert:
+  #     return ar1 != ar2[ind]
+  #   else:
+  #     return ar1 == ar2[ind]
   if invert:
     return (ar1[:, None] != ar2).all(-1)
   else:
@@ -1599,7 +1593,7 @@ def bincount(x, weights=None, minlength=0, *, length=None):
     msg = f"x argument to bincount must have an integer type; got {x.dtype}"
     raise TypeError(msg)
   if length is None:
-    x = core.concrete_or_error(array, x,
+    x = core.concrete_or_error(asarray, x,
       "The error occured because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
     length = max(x) + 1
@@ -1644,23 +1638,28 @@ def broadcast_to(arr, shape):
     kept_dims = tuple(np.delete(np.arange(len(shape)), new_dims))
     return lax.broadcast_in_dim(squeeze(arr, tuple(diff)), shape, kept_dims)
 
+
 def _split(op, ary, indices_or_sections, axis=0):
   axis = core.concrete_or_error(int, axis, f"in jax.numpy.{op} argument `axis`")
   size = ary.shape[axis]
   if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
-    indices_or_sections = [core.concrete_or_error(int, i_s, f"in jax.numpy.{op} argument 1")
-                           for i_s in indices_or_sections]
-    split_indices = np.concatenate([[0], indices_or_sections, [size]])
+    indices_or_sections = np.array(
+        [core.concrete_or_error(np.int64, i_s, f"in jax.numpy.{op} argument 1")
+         for i_s in indices_or_sections], np.int64)
+    split_indices = np.concatenate([[np.int64(0)], indices_or_sections,
+                                    [np.int64(size)]])
   else:
-    indices_or_sections = core.concrete_or_error(int, indices_or_sections,
+    indices_or_sections = core.concrete_or_error(np.int64, indices_or_sections,
                                                  f"in jax.numpy.{op} argument 1")
     part_size, r = _divmod(size, indices_or_sections)
     if r == 0:
-      split_indices = np.arange(indices_or_sections + 1) * part_size
+      split_indices = np.arange(indices_or_sections + 1,
+                                dtype=np.int64) * part_size
     elif op == "array_split":
-      split_indices = np.concatenate([np.arange(r + 1) * (part_size + 1),
-                                      np.arange(indices_or_sections - r) * part_size
-                                      + ((r + 1) * (part_size + 1) - 1)])
+      split_indices = np.concatenate(
+          [np.arange(r + 1, dtype=np.int64) * (part_size + 1),
+           np.arange(indices_or_sections - r, dtype=np.int64) * part_size
+           + ((r + 1) * (part_size + 1) - 1)])
     else:
       raise ValueError("array split does not result in an equal division")
   starts, ends = [0] * ndim(ary), shape(ary)
@@ -1687,8 +1686,10 @@ def array_split(ary, indices_or_sections, axis=0):
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
 @_wraps(np.clip)
-def clip(a, a_min=None, a_max=None):
+def clip(a, a_min=None, a_max=None, out=None):
   _check_arraylike("clip", a)
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.clip is not supported.")
   if a_min is None and a_max is None:
     raise ValueError("At most one of a_min and a_max may be None")
   if a_min is not None:
@@ -1712,8 +1713,10 @@ def _round_to_nearest_even(x):
     lax.add(round_val, one), round_val)
 
 @_wraps(np.round, update_doc=False)
-def round(a, decimals=0):
+def round(a, decimals=0, out=None):
   _check_arraylike("round", a)
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.round is not supported.")
   dtype = _dtype(a)
   if issubdtype(dtype, integer):
     if decimals < 0:
@@ -1745,7 +1748,7 @@ around = round
 def fix(x, out=None):
   _check_arraylike("fix", x)
   if out is not None:
-    raise ValueError("fix does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.fix is not supported.")
   zero = lax._const(x, 0)
   return where(lax.ge(x, zero), floor(x), ceil(x))
 
@@ -1754,7 +1757,7 @@ def fix(x, out=None):
 def modf(x, out=None):
   _check_arraylike("modf", x)
   if out is not None:
-    raise ValueError("modf does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.modf is not supported.")
   whole = fix(x)
   return x - whole, whole
 
@@ -1784,7 +1787,9 @@ def isinf(x):
   else:
     return full_like(x, False, dtype=bool_)
 
-def _isposneginf(infinity, x):
+def _isposneginf(infinity, x, out):
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
     return lax.eq(x, _constant_like(x, infinity))
@@ -1793,9 +1798,9 @@ def _isposneginf(infinity, x):
   else:
     return full_like(x, False, dtype=bool_)
 
-isposinf = _wraps(np.isposinf)(lambda x: _isposneginf(inf, x))
+isposinf = _wraps(np.isposinf)(lambda x, out=None: _isposneginf(inf, x, out))
 
-isneginf = _wraps(np.isneginf)(lambda x: _isposneginf(-inf, x))
+isneginf = _wraps(np.isneginf)(lambda x, out=None: _isposneginf(-inf, x, out))
 
 @_wraps(np.isnan)
 def isnan(x):
@@ -1821,37 +1826,44 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 
 ### Reducers
 
-
-def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
-                    upcast_f16_for_computation=False):
-  """Creates reduction function given a binary operation and monoid identity."""
-
+def _reduction(a, name, np_fun, op, init_val, has_identity=True,
+               preproc=None, bool_op=None, upcast_f16_for_computation=False,
+               axis=None, dtype=None, out=None, keepdims=False, initial=None, where_=None):
   bool_op = bool_op or op
+  if out is not None:
+    raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
+  _check_arraylike(name, a)
+  lax._check_user_dtype_supported(dtype, name)
+  axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
-  @_wraps(np_fun)
-  def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
-    if out is not None:
-      raise ValueError("reduction does not support the `out` argument.")
-    _check_arraylike(name, a)
-    lax._check_user_dtype_supported(dtype, name)
-    axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
+  if initial is None and not has_identity:
+    if not size(a):
+      raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
+    if where_ is not None:
+      raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
+                       f"where mask one has to specify 'initial'")
 
-    a = a if isinstance(a, ndarray) else asarray(a)
-    a = preproc(a) if preproc else a
-    dims = _reduction_dims(a, axis)
-    result_dtype = dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a))))
-    if upcast_f16_for_computation and issubdtype(result_dtype, inexact):
-      computation_dtype = promote_types(result_dtype, float32)
-    else:
-      computation_dtype = result_dtype
-    a = lax.convert_element_type(a, computation_dtype)
-    result = lax.reduce(a, _reduction_init_val(a, init_val),
-                        op if computation_dtype != np.bool_ else bool_op, dims)
-    if keepdims:
-      result = expand_dims(result, dims)
-    return lax.convert_element_type(result, dtype or result_dtype)
-
-  return reduction
+  a = a if isinstance(a, ndarray) else asarray(a)
+  a = preproc(a) if preproc else a
+  dims = _reduction_dims(a, axis)
+  result_dtype = dtypes.canonicalize_dtype(dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a)))))
+  if upcast_f16_for_computation and issubdtype(result_dtype, inexact):
+    computation_dtype = promote_types(result_dtype, float32)
+  else:
+    computation_dtype = result_dtype
+  a = lax.convert_element_type(a, computation_dtype)
+  op = op if computation_dtype != np.bool_ else bool_op
+  # NB: in XLA, init_val must be an identity for the op, so the user-specified
+  # initial value must be applied afterward.
+  init_val = _reduction_init_val(a, init_val)
+  if where_ is not None:
+    a = where(where_, a, init_val)
+  result = lax.reduce(a, init_val, op, dims)
+  if initial is not None:
+    result = op(_reduction_init_val(a, initial), result)
+  if keepdims:
+    result = expand_dims(result, dims)
+  return lax.convert_element_type(result, dtype or result_dtype)
 
 def _reduction_dims(a, axis):
   if axis is None:
@@ -1878,22 +1890,50 @@ def _reduction_init_val(a, init_val):
 
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 
-sum = _make_reduction("sum", np.sum, lax.add, 0, upcast_f16_for_computation=True,
-                      bool_op=lax.bitwise_or)
-product = prod = _make_reduction("prod", np.prod, lax.mul, 1, bool_op=lax.bitwise_and,
-                                 upcast_f16_for_computation=True)
-amax = max = _make_reduction("max", np.max, lax.max, -np.inf)
-amin = min = _make_reduction("min", np.min, lax.min, np.inf)
-all = alltrue = _make_reduction("all", np.all, lax.bitwise_and, True, _cast_to_bool)
-any = sometrue = _make_reduction("any", np.any, lax.bitwise_or, False, _cast_to_bool)
+@_wraps(np.sum)
+def sum(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=None):
+  return _reduction(a, "sum", np.sum, lax.add, 0,
+                    bool_op=lax.bitwise_or, upcast_f16_for_computation=True,
+                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where_=where)
 
+@_wraps(np.prod)
+def prod(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=None):
+  return _reduction(a, "prod", np.prod, lax.mul, 1,
+                    bool_op=lax.bitwise_and, upcast_f16_for_computation=True,
+                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where_=where)
+
+@_wraps(np.max)
+def max(a, axis=None, out=None, keepdims=None, initial=None, where=None):
+  return _reduction(a, "max", np.max, lax.max, -np.inf, has_identity=False,
+                    axis=axis, out=out, keepdims=keepdims, initial=initial, where_=where)
+
+@_wraps(np.min)
+def min(a, axis=None, out=None, keepdims=None, initial=None, where=None):
+  return _reduction(a, "min", np.min, lax.min, np.inf, has_identity=False,
+                    axis=axis, out=out, keepdims=keepdims, initial=initial, where_=where)
+
+@_wraps(np.all)
+def all(a, axis=None, out=None, keepdims=None):
+  return _reduction(a, "all", np.all, lax.bitwise_and, True, preproc=_cast_to_bool,
+                    axis=axis, out=out, keepdims=keepdims)
+
+@_wraps(np.any)
+def any(a, axis=None, out=None, keepdims=None):
+  return _reduction(a, "any", np.any, lax.bitwise_or, False, preproc=_cast_to_bool,
+                    axis=axis, out=out, keepdims=keepdims)
+
+product = prod
+amin = min
+amax = max
+alltrue = all
+sometrue = any
 
 @_wraps(np.mean)
 def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   _check_arraylike("mean", a)
   lax._check_user_dtype_supported(dtype, "mean")
   if out is not None:
-    raise ValueError("mean does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.mean is not supported.")
 
   if axis is None:
     normalizer = size(a)
@@ -1964,7 +2004,7 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("var", a)
   lax._check_user_dtype_supported(dtype, "var")
   if out is not None:
-    raise ValueError("var does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
   a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
   a_mean = mean(a, axis, dtype=a_dtype, keepdims=True)
@@ -1998,7 +2038,7 @@ def _var_promote_types(a_dtype, dtype):
     a_dtype = promote_types(a_dtype, dtype)
   else:
     if not issubdtype(a_dtype, inexact):
-      dtype = a_dtype = float_
+      dtype = a_dtype = dtypes.canonicalize_dtype(float_)
     else:
       dtype = _complex_elem_type(a_dtype)
       a_dtype = promote_types(a_dtype, float32)
@@ -2010,7 +2050,7 @@ def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("std", a)
   lax._check_user_dtype_supported(dtype, "std")
   if out is not None:
-    raise ValueError("std does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
   return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
@@ -2018,15 +2058,15 @@ def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 def ptp(a, axis=None, out=None, keepdims=False):
   _check_arraylike("ptp", a)
   if out is not None:
-    raise ValueError("ptp does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.ptp is not supported.")
   x = amax(a, axis=axis, keepdims=keepdims)
   y = amin(a, axis=axis, keepdims=keepdims)
   return lax.sub(x, y)
 
 
 @_wraps(np.allclose)
-def allclose(a, b, rtol=1e-05, atol=1e-08):
-  return all(isclose(a, b, rtol, atol))
+def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
+  return all(isclose(a, b, rtol, atol, equal_nan))
 
 
 @_wraps(np.count_nonzero)
@@ -2059,31 +2099,43 @@ def flatnonzero(a):
   return nonzero(ravel(a))[0]
 
 
-def _make_nan_reduction(np_reduction, jnp_reduction, init_val, nan_if_all_nan):
-  @_wraps(np_reduction)
-  def nan_reduction(a, axis=None, out=None, keepdims=False, **kwargs):
-    _check_arraylike(np_reduction.__name__, a)
-    out = jnp_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
-                       axis=axis, out=out, keepdims=keepdims, **kwargs)
-    if nan_if_all_nan:
-      return where(all(isnan(a), axis=axis, keepdims=keepdims),
-                   _constant_like(a, nan), out)
-    else:
-      return out
+def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
+                   axis=None, keepdims=None, **kwargs):
+  _check_arraylike(name, a)
+  out = jnp_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
+                      axis=axis, keepdims=keepdims, **kwargs)
+  if nan_if_all_nan:
+    return where(all(isnan(a), axis=axis, keepdims=keepdims),
+                  _constant_like(a, nan), out)
+  else:
+    return out
 
-  return nan_reduction
+@_wraps(np.nanmin)
+def nanmin(a, axis=None, out=None, keepdims=None):
+  return _nan_reduction(a, 'nanmin', min, inf, nan_if_all_nan=True,
+                        axis=axis, out=out, keepdims=keepdims)
 
-nanmin = _make_nan_reduction(np.nanmin, min, inf, nan_if_all_nan=True)
-nanmax = _make_nan_reduction(np.nanmax, max, -inf, nan_if_all_nan=True)
-nansum = _make_nan_reduction(np.nansum, sum, 0, nan_if_all_nan=False)
-nanprod = _make_nan_reduction(np.nanprod, prod, 1, nan_if_all_nan=False)
+@_wraps(np.nanmax)
+def nanmax(a, axis=None, out=None, keepdims=None):
+  return _nan_reduction(a, 'nanmax', max, -inf, nan_if_all_nan=True,
+                        axis=axis, out=out, keepdims=keepdims)
+
+@_wraps(np.nansum)
+def nansum(a, axis=None, dtype=None, out=None, keepdims=None):
+  return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
+                        axis=axis, dtype=dtype, out=out, keepdims=keepdims)
+
+@_wraps(np.nanprod)
+def nanprod(a, axis=None, dtype=None, out=None, keepdims=None):
+  return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
+                        axis=axis, dtype=dtype, out=out, keepdims=keepdims)
 
 @_wraps(np.nanmean)
 def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   _check_arraylike("nanmean", a)
   lax._check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
-    raise ValueError("nanmean does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
   if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
     return mean(a, axis, dtype, out, keepdims)
   if dtype is None:
@@ -2100,7 +2152,7 @@ def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("nanvar", a)
   lax._check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
-    raise ValueError("nanvar does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
   a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
   a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True)
@@ -2130,7 +2182,7 @@ def nanstd(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("nanstd", a)
   lax._check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
-    raise ValueError("nanstd does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
   return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
@@ -2160,8 +2212,11 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
     return reduction(a, axis)
 
   @_wraps(np_reduction)
-  def cumulative_reduction(a, axis=None, dtype=None):
+  def cumulative_reduction(a, axis=None, dtype=None, out=None):
     _check_arraylike(np_reduction.__name__, a)
+    if out is not None:
+      raise NotImplementedError(f"The 'out' argument to jnp.{np_reduction.__name__} "
+                                f"is not supported.")
     lax._check_user_dtype_supported(dtype, np_reduction.__name__)
     # jit doesn't support kwargs as static_args.
     return _cumulative_reduction(a, axis, dtype)
@@ -2349,9 +2404,11 @@ def pad(array, pad_width, mode="constant", constant_values=0):
 
 
 @_wraps(np.stack)
-def stack(arrays, axis=0):
+def stack(arrays, axis=0, out=None):
   if not len(arrays):
     raise ValueError("Need at least one array to stack.")
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.stack is not supported.")
   _check_arraylike("stack", *arrays)
   shape0 = shape(arrays[0])
   axis = _canonicalize_axis(axis, len(shape0) + 1)
@@ -2389,7 +2446,7 @@ def concatenate(arrays, axis=0):
   # (https://github.com/google/jax/issues/653).
   k = 16
   if len(arrays) == 1:
-    return array(arrays[0])
+    return asarray(arrays[0])
   else:
     while len(arrays) > 1:
       arrays = [lax.concatenate(arrays[i:i+k], axis)
@@ -2420,7 +2477,7 @@ def dstack(tup):
 def column_stack(tup):
   arrays = []
   for v in tup:
-    arr = array(v)
+    arr = asarray(v)
     if arr.ndim < 2:
       arr = atleast_2d(arr).T
     arrays.append(arr)
@@ -2430,14 +2487,14 @@ def column_stack(tup):
 @_wraps(np.choose)
 def choose(a, choices, out=None, mode='raise'):
   if out is not None:
-    raise NotImplementedError("out argument to jnp.choose()")
+    raise NotImplementedError("The 'out' argument to jnp.choose is not supported.")
   _check_arraylike('choose', a, *choices)
   if not issubdtype(_dtype(a), integer):
     raise ValueError("`a` array must be integer typed")
   N = len(choices)
 
   if mode == 'raise':
-    a = core.concrete_or_error(array, a,
+    a = core.concrete_or_error(asarray, a,
       "The error occurred because jnp.choose was jit-compiled"
       " with mode='raise'. Use mode='wrap' or mode='clip' instead.")
     if any((a < 0) | (a >= N)):
@@ -2483,7 +2540,7 @@ def block(arrays):
 @_wraps(np.atleast_1d, update_doc=False)
 def atleast_1d(*arys):
   if len(arys) == 1:
-    arr = array(arys[0])
+    arr = asarray(arys[0])
     return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
     return [atleast_1d(arr) for arr in arys]
@@ -2492,7 +2549,7 @@ def atleast_1d(*arys):
 @_wraps(np.atleast_2d, update_doc=False)
 def atleast_2d(*arys):
   if len(arys) == 1:
-    arr = array(arys[0])
+    arr = asarray(arys[0])
     if ndim(arr) >= 2:
       return arr
     elif ndim(arr) == 1:
@@ -2506,7 +2563,7 @@ def atleast_2d(*arys):
 @_wraps(np.atleast_3d, update_doc=False)
 def atleast_3d(*arys):
   if len(arys) == 1:
-    arr = array(arys[0])
+    arr = asarray(arys[0])
     if ndim(arr) == 0:
       arr = expand_dims(arr, axis=(0, 1, 2))
     elif ndim(arr) == 1:
@@ -2526,7 +2583,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
   if _can_call_numpy_array(object):
-    object = _np_array(object, dtype=dtype, ndmin=ndmin)
+    object = _np_array(object, dtype=dtype, ndmin=ndmin, copy=False)
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
@@ -2541,7 +2598,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       out = object
   elif isinstance(object, (list, tuple)):
     if object:
-      out = stack([array(elt, dtype=dtype) for elt in object])
+      out = stack([asarray(elt, dtype=dtype) for elt in object])
     else:
       out = _device_put_raw(_np_array([], dtype=dtype))
   else:
@@ -2574,17 +2631,21 @@ def asarray(a, dtype=None, order=None):
 
 
 @_wraps(np.zeros_like)
-def zeros_like(a, dtype=None):
+def zeros_like(a, dtype=None, shape=None):
   _check_arraylike("zeros_like", a)
   lax._check_user_dtype_supported(dtype, "zeros_like")
-  return lax.full_like(a, 0, dtype)
+  if np.isscalar(shape):
+    shape = (shape,)
+  return lax.full_like(a, 0, dtype, shape)
 
 
 @_wraps(np.ones_like)
-def ones_like(a, dtype=None):
+def ones_like(a, dtype=None, shape=None):
   _check_arraylike("ones_like", a)
   lax._check_user_dtype_supported(dtype, "ones_like")
-  return lax.full_like(a, 1, dtype)
+  if np.isscalar(shape):
+    shape = (shape,)
+  return lax.full_like(a, 1, dtype, shape)
 
 
 @_wraps(np.full)
@@ -2595,10 +2656,12 @@ def full(shape, fill_value, dtype=None):
 
 
 @_wraps(np.full_like)
-def full_like(a, fill_value, dtype=None):
+def full_like(a, fill_value, dtype=None, shape=None):
   _check_arraylike("full_like", a)
   lax._check_user_dtype_supported(dtype, "full_like")
-  return lax.full_like(a, fill_value, dtype)
+  if np.isscalar(shape):
+    shape = (shape,)
+  return lax.full_like(a, fill_value, dtype, shape)
 
 
 @_wraps(np.zeros)
@@ -2970,8 +3033,8 @@ def triu(m, k=0):
 @_wraps(np.trace)
 def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   _check_arraylike("trace", a)
-  if out:
-    raise NotImplementedError("The 'out' argument to trace is not supported.")
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
   lax._check_user_dtype_supported(dtype, "trace")
 
   axis1 = _canonicalize_axis(axis1, ndim(a))
@@ -3331,7 +3394,9 @@ def tensordot(a, b, axes=2, *, precision=None):
 
 
 @_wraps(np.einsum, lax_description=_PRECISION_DOC)
-def einsum(*operands, optimize='greedy', precision=None):
+def einsum(*operands, out=None, optimize='greedy', precision=None):
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
   optimize = 'greedy' if optimize is True else optimize
   # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
@@ -3491,8 +3556,8 @@ def inner(a, b, *, precision=None):
 
 @_wraps(np.outer)
 def outer(a, b, out=None):
-  if out:
-    raise NotImplementedError("The 'out' argument to outer is not supported.")
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.outer is not supported.")
   a, b = _promote_dtypes(a, b)
   return ravel(a)[:, None] * ravel(b)[None, :]
 
@@ -3567,8 +3632,10 @@ def argwhere(a):
 
 
 @_wraps(np.argmax)
-def argmax(a, axis=None):
+def argmax(a, axis=None, out=None):
   _check_arraylike("argmax", a)
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.argmax is not supported.")
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -3577,8 +3644,10 @@ def argmax(a, axis=None):
   return lax.argmax(a, _canonicalize_axis(axis, a.ndim), int64)
 
 @_wraps(np.argmin)
-def argmin(a, axis=None):
+def argmin(a, axis=None, out=None):
   _check_arraylike("argmin", a)
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.argmin is not supported.")
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -3759,8 +3828,8 @@ def unpackbits(a, axis=None, count=None, bitorder='big'):
 
 @_wraps(np.take)
 def take(a, indices, axis=None, out=None, mode=None):
-  if out:
-    raise NotImplementedError("The 'out' argument to np.take is not supported.")
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
 
   a = asarray(a)
   indices = asarray(indices)
@@ -3772,7 +3841,7 @@ def take(a, indices, axis=None, out=None, mode=None):
 
   if mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
-    raise NotImplementedError("The 'raise' mode to np.take is not supported.")
+    raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
     indices = mod(indices, _constant_like(indices, a.shape[axis]))
   elif mode != "clip" and mode is not None:
@@ -3929,7 +3998,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
 @_wraps(np.unique)
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis=None):
-  ar = core.concrete_or_error(array, ar, "The error arose in jnp.unique()")
+  ar = core.concrete_or_error(asarray, ar, "The error arose in jnp.unique()")
 
   if iscomplexobj(ar):
     raise NotImplementedError(
@@ -4241,32 +4310,22 @@ def _should_unpack_list_index(x):
 def _eliminate_deprecated_list_indexing(idx):
   # "Basic slicing is initiated if the selection object is a non-array,
   # non-tuple sequence containing slice objects, [Ellipses, or newaxis
-  # objects]". Detects this case and canonicalizes to a tuple. This case is
-  # deprecated by NumPy and exists for backward compatibility.
+  # objects]". Detects this and raises a TypeError.
   if not isinstance(idx, tuple):
     if isinstance(idx, Sequence) and not isinstance(idx, ndarray):
       # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
       # others are converted to arrays, based on a set of somewhat convoluted heuristics
       # (See https://github.com/numpy/numpy/blob/v1.19.2/numpy/core/src/multiarray/mapping.c#L179-L343)
-      # In JAX, we raise a warning for *all* non-tuple sequences, and in the future will
-      # *always* raise a TypeError here, rather than silently converting to an array or tuple
-      # depending on the contents of the list as numpy will. "Explicit is better than implicit".
-      # TODO(jakevdp): raise a TypeError here.
+      # In JAX, we raise an informative TypeError for *all* non-tuple sequences.
       if _any(_should_unpack_list_index(i) for i in idx):
-        msg = ("Using a non-tuple sequence for multidimensional indexing is deprecated; "
-               "use `arr[tuple(seq)]` instead of `arr[seq]`. In the future this will "
-               "result in a TypeError. See https://github.com/google/jax/issues/4564 "
-               "for discussion of why this type of indexing is being deprecated.")
-        idx = tuple(idx)
+        msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
+               "use `arr[tuple(seq)]` instead of `arr[seq]`. "
+               "See https://github.com/google/jax/issues/4564 for more information.")
       else:
-        msg = ("Using a non-tuple sequence for multidimensional indexing is deprecated; "
-               "use `arr[array(seq)]` instead of `arr[seq]`. In the future this will "
-               "result in a TypeError. See https://github.com/google/jax/issues/4564 "
-               "for discussion of why this type of indexing is being deprecated.")
-        idx = (idx,)
-      # TODO(jakevdp): this stacklevel is appropriate for x[idx]; for ops.index_update
-      # we should use stacklevel=5; for x.at[idx].set() we should use stacklevel=6.
-      warnings.warn(msg, FutureWarning, stacklevel=4)
+        msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
+               "use `arr[array(seq)]` instead of `arr[seq]`. "
+               "See https://github.com/google/jax/issues/4564 for more information.")
+      raise TypeError(msg)
     else:
       idx = (idx,)
   return idx
@@ -4427,11 +4486,11 @@ def extract(condition, arr):
 @_wraps(np.compress)
 def compress(condition, a, axis=None, out=None):
   if out is not None:
-    raise NotImplementedError("out argument is not supported.")
+    raise NotImplementedError("The 'out' argument to jnp.compress is not supported.")
   if ndim(condition) != 1:
     raise ValueError("condition must be a 1D array")
-  condition = array(condition).astype(bool)
-  a = array(a)
+  condition = asarray(condition).astype(bool)
+  a = asarray(a)
   if axis is None:
     axis = 0
     a = ravel(a)

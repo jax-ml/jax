@@ -60,6 +60,7 @@ from jax._src.lax.lax import (
   bitwise_or,
   bitwise_xor,
   broadcast,
+  broadcast_p,
   broadcast_in_dim,
   broadcast_in_dim_p,
   broadcast_shapes,
@@ -149,6 +150,7 @@ from jax._src.lax.lax import (
   integer_pow,
   integer_pow_p,
   iota,
+  iota_p,
   is_finite,
   is_finite_p,
   itertools,
@@ -162,7 +164,6 @@ from jax._src.lax.lax import (
   log_p,
   lt,
   lt_p,
-  lu,
   max,
   max_p,
   min,
@@ -340,8 +341,4 @@ from jax._src.lax.parallel import (
 from jax._src.lax.other import (
   conv_general_dilated_patches
 )
-
-# TODO(phawkins): fix callers and remove these imports.
-from . import lax
-from . import lax_parallel
-from . import lax_control_flow
+from . import linalg

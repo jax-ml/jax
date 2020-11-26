@@ -18,7 +18,7 @@ from functools import partial
 import itertools
 import operator
 import re
-from unittest import SkipTest
+from unittest import SkipTest, skipIf
 import textwrap
 
 from absl.testing import absltest
@@ -998,6 +998,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       expected = api.grad(f_ref)(x)
       self.assertAllClose(ans, expected, check_dtypes=False)
       jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
+
+  def testSwitchGradWithWeakTypeMismatch(self):  # issue #4696, PR #4896
+    dtype = jnp.ones(1).dtype
+    dtype = jnp.float32 if dtype == jnp.float32 else jnp.float64
+
+    branches = [
+        lambda x: x,             # This preserves the weak type of x.
+        lambda x: x + dtype(1),  # This strips the weak type of x.
+    ]
+
+    def f_ref(x):
+      i = x.astype(jnp.int32)
+      return branches[i](x)
+
+    def f(x):
+      return lax.switch(x.astype(jnp.int32), branches, x)
+
+    for x in [0., 1.]:
+      ans = api.grad(f)(x)
+      expected = api.grad(f_ref)(x)
+      self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{name}", "cond": cond}
@@ -2520,6 +2541,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     *_, ext_res = vjp_fun.args[0].args[0]
     self.assertIsInstance(ext_res, xla.DeviceArray)
 
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def test_scan_vmap_collectives(self):
+    def scan_f(state, x):
+      s = lax.psum(state, 'i') * x
+      return state, s
+
+    def scan(state, xs):
+      return lax.scan(scan_f, state, xs)
+
+    scan_v = api.vmap(scan, in_axes=0, out_axes=0, axis_name='i')
+    self.assertAllClose(
+      scan_v(jnp.ones([1]), jnp.arange(5).reshape((1, 5))),
+      (jnp.array([1.]), jnp.array([[0., 1., 2., 3., 4.]])))
 
 
 if __name__ == '__main__':

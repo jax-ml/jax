@@ -24,19 +24,20 @@ import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import vmap
 from jax import lax
-from jax.experimental.general_map import gmap
+from jax.experimental.general_map import gmap, fake_resources, Mesh, mesh, xmap, A
 from jax.lib import xla_bridge
-from jax.util import curry
+from jax.util import curry, unzip2
 
 from jax.config import config
 config.parse_flags_with_absl()
 
 ignore_gmap_warning = functools.partial(
-  jtu.ignore_warning, message="gmap is an experimental.*")
+  jtu.ignore_warning, message=".*is an experimental.*")
 
 # TODO(mattjj): de-duplicate setUpModule and tearDownModule with pmap_test.py
 # Run all tests with 8 CPU devices.
@@ -85,6 +86,19 @@ def check_default_schedules(cond, fun):
     {"testcase_name": "_" + name, "schedule": schedule}
     for name, schedule in schedules)(fun)
 
+@curry
+def with_mesh(named_shape, f):
+  def new_f(*args, **kwargs):
+    axis_names, shape = unzip2(named_shape)
+    size = np.prod(shape)
+    local_devices = list(jax.local_devices())
+    if len(local_devices) < size:
+      raise SkipTest(f"Test requires {size} local devices")
+    mesh_devices = np.array(local_devices[:size]).reshape(shape)
+    with mesh(mesh_devices, axis_names):
+      return f(*args, **kwargs)
+  return new_f
+
 
 class GmapTest(jtu.JaxTestCase):
 
@@ -123,6 +137,125 @@ class GmapTest(jtu.JaxTestCase):
     s = [('vectorized', None)]
     self.assertAllClose(gmap(gmap(f, s, axis_name='i'), s, axis_name='j')(x),
                         vmap(vmap(f, axis_name='i'), axis_name='j')(x))
+
+  @ignore_gmap_warning()
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testXMap(self):
+    def f(a, b):
+      return a + 2, b * 4
+    with fake_resources(r1=4, r2=2, r3=5):
+      fm = xmap(f,
+                in_axes=[A({'x': 0, 'z': 1}), A({'y': 1})],
+                out_axes=[A({'x': 1, 'z': 0}), A({'y': 0})],
+                schedule=[
+                  ('x', 'r1'),
+                  ('x', 'r2'),
+                  ('y', 'r1'),
+                  ('z', 'r3'),
+                  ('x', 'vectorize'),
+                  ('y', 'vectorize'),
+                ])
+      a = jnp.arange(16*5*2).reshape((16, 5, 2))
+      b = jnp.arange(6*16).reshape((6, 16))
+      c, d = fm(a, b)
+      self.assertAllClose(c, (a + 2).transpose((1, 0, 2)))
+      self.assertAllClose(d, (b * 4).T)
+
+  @ignore_gmap_warning()
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testXMapCollectives(self):
+    def f(a, b):
+      return lax.psum(a + 2, 'x'), b * 4
+    with fake_resources(r1=4, r2=2, r3=5):
+      fm = xmap(f,
+                in_axes=[A({'x': 0, 'z': 1}), A({'y': 1})],
+                out_axes=[A({'z': 0}), A({'y': 0})],
+                schedule=[
+                  ('x', 'r1'),
+                  ('x', 'r2'),
+                  ('y', 'r1'),
+                  ('z', 'r3'),
+                  ('x', 'vectorize'),
+                  ('y', 'vectorize'),
+                ])
+      a = jnp.arange(16*5*2).reshape((16, 5, 2))
+      b = jnp.arange(6*16).reshape((6, 16))
+      c, d = fm(a, b)
+      self.assertAllClose(c, (a + 2).sum(0))
+      self.assertAllClose(d, (b * 4).T)
+
+  @ignore_gmap_warning()
+  def testXMapMeshBasic(self):
+    local_devices = list(jax.local_devices())
+    if len(local_devices) < 4:
+      raise SkipTest("Test requires at least 4 local devices")
+    def f(a, b):
+      return a * 2, b * 4
+    devices = np.array(local_devices[:4]).reshape((2, 2))
+    with mesh(devices, ('x', 'y')):
+      fm = xmap(f,
+                in_axes=[A({'a': 0, 'b': 1}), A({'c': 0})],
+                out_axes=[A({'a': 0, 'b': 1}), A({'c': 0})],
+                schedule=[
+                  ('a', 'x'),
+                  ('b', 'y'),
+                  ('c', 'x'),
+                  ('a', 'vectorize'),
+                  ('b', 'vectorize'),
+                ])
+      ashape = (16, 8, 5)
+      a = jnp.arange(np.prod(ashape)).reshape(ashape)
+      bshape = (2, 7)
+      b = jnp.arange(np.prod(bshape)).reshape(bshape)
+      c, d = fm(a, b)
+      self.assertAllClose(c, a * 2)
+      self.assertAllClose(d, b * 4)
+
+  @ignore_gmap_warning()
+  def testXMapMeshCollectives(self):
+    local_devices = list(jax.local_devices())
+    if len(local_devices) < 4:
+      raise SkipTest("Test requires at least 4 local devices")
+    def f(a, b):
+      return lax.psum(a * 2, 'a'), b * 4
+    devices = np.array(local_devices[:4]).reshape((2, 2))
+    with mesh(devices, ('x', 'y')):
+      fm = xmap(f,
+                in_axes=[A({'a': 0, 'b': 1}), A({'c': 0})],
+                out_axes=[A({'b': 0}), A({'c': 0})],
+                schedule=[
+                  ('a', 'x'),
+                  ('b', 'y'),
+                  ('c', 'x'),
+                  ('a', 'vectorize'),
+                  ('b', 'vectorize'),
+                ])
+      ashape = (16, 8, 5)
+      a = jnp.arange(np.prod(ashape)).reshape(ashape)
+      bshape = (2, 7)
+      b = jnp.arange(np.prod(bshape)).reshape(bshape)
+      c, d = fm(a, b)
+      self.assertAllClose(c, (a * 2).sum(0))
+      self.assertAllClose(d, b * 4)
+
+  @ignore_gmap_warning()
+  @with_mesh([('x', 2)])
+  def testXMapCompilationCache(self):
+    def f(x):
+      assert python_should_be_executing
+      return x * 2
+    fm = xmap(f,
+              in_axes=[A({'a': 0})],
+              out_axes=[A({'a': 0})],
+              schedule=[('a', 'x'), ('a', 'vectorize')])
+    x = np.arange(8).reshape((2, 2, 2))
+    python_should_be_executing = True
+    fm(x)
+    python_should_be_executing = False
+    fm(x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

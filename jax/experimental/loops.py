@@ -111,7 +111,6 @@ import numpy as np
 import traceback
 from typing import Any, List, cast
 
-from jax import abstract_arrays
 from jax import lax, core
 from jax._src.lax import control_flow as lax_control_flow
 from jax import tree_util
@@ -425,7 +424,7 @@ class _BodyTracer(object):
 
   @staticmethod
   def abstractify(x):
-    return abstract_arrays.raise_to_shaped(core.get_aval(x))
+    return core.raise_to_shaped(core.get_aval(x))
 
   @staticmethod
   def trace_to_jaxpr_finalize(in_tracers, out_tracers, trace, instantiate=True):
@@ -562,7 +561,7 @@ class _WhileBuilder(_LoopBuilder):
     if not tree_util.treedef_is_leaf(cond_tree):
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals != [abstract_arrays.ShapedArray((), np.bool_)]:
+    if cond_jaxpr.out_avals != [core.ShapedArray((), np.bool_)]:
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
 

@@ -22,10 +22,7 @@ from typing import Any, Callable, Collection, Dict, List, NamedTuple, Optional,\
 from jax import core
 from jax import dtypes
 from jax import lax
-from jax import lax_linalg
 from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl, tf_impl
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import pxla
 from jax.interpreters import xla
 
 def to_jax_dtype(tf_dtype):
@@ -80,8 +77,8 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     _report_failure(CATEGORY_MISSING_TF_SUPPORT, msg, np_dtype, devs=devs)
 
   def tf_possible_incorrect(np_dtype: Optional[NpDType] = None,
-                         msg: str = "",
-                         devs: Sequence[str] = all_devices) -> None:
+                            msg: str = "",
+                            devs: Sequence[str] = all_devices) -> None:
     _report_failure(CATEGORY_POSSIBLE_INCORRECT_RESULTS, msg, np_dtype, devs=devs)
 
   def _to_np_dtype(dtype) -> NpDType:
@@ -96,14 +93,37 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   else:
     np_dtype = None
 
+  if prim is lax.regularized_incomplete_beta_p:
+    if np_dtype in [np.float16, dtypes.bfloat16]:
+      tf_unimpl(np_dtype)
+
+  if prim in [lax.reduce_min_p, lax.reduce_max_p]:
+    if np_dtype in [np.complex64, np.complex128]:
+      tf_unimpl(np_dtype)
+
   if prim in [lax.min_p, lax.max_p, lax.reduce_window_min_p,
               lax.reduce_window_max_p]:
     if np_dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
                     np.complex64, np.complex128]:
       tf_unimpl(np_dtype)
 
-  if prim in [lax.rem_p, lax.atan2_p]:
-    if np_dtype in [np.float16, dtypes.bfloat16]:
+  if prim is lax.div_p:
+    if np_dtype in [np.uint8, np.uint16, np.uint32, np.uint64,
+                    np.int8, np.int16]:
+      tf_unimpl(np_dtype)
+    elif dtypes.issubdtype(np_dtype, np.integer):
+      tf_unimpl(np_dtype, additional_msg=("integer division fails if the "
+                                          "divisor contains a 0"))
+
+  if prim is lax.rem_p:
+    if np_dtype in [np.uint8, np.uint16, np.uint32, np.uint64,
+                    np.int8, np.int16, np.float16]:
+      tf_unimpl(np_dtype)
+    elif dtypes.issubdtype(np_dtype, np.integer):
+      tf_unimpl(np_dtype, additional_msg=("integer division fails if the "
+                                          "divisor contains a 0"))
+
+  if prim is lax.atan2_p and np_dtype in [np.float16, dtypes.bfloat16]:
       # b/158006398: TF kernels are missing for 'rem' and 'atan2'
       tf_unimpl(np_dtype)
 
@@ -111,21 +131,21 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype in [np.float16, dtypes.bfloat16]:
       tf_unimpl(np_dtype)
 
-  if prim is lax_linalg.cholesky_p:
+  if prim is lax.linalg.cholesky_p:
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
-  if prim is lax_linalg.qr_p:
+  if prim is lax.linalg.qr_p:
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
-  if prim is lax_linalg.eig_p:
+  if prim is lax.linalg.eig_p:
     tf_unimpl(additional_msg=("this is a problem only in compiled mode "
                               "(experimental_compile=True))"))
     compute_left_eigenvectors = kwargs['compute_left_eigenvectors']
@@ -134,22 +154,22 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       tf_unimpl(additional_msg=("it is not possible to request both left and "
                                 "right eigenvectors for now"))
 
-  if prim is lax_linalg.eigh_p:
+  if prim is lax.linalg.eigh_p:
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
-  if prim is lax_linalg.lu_p:
+  if prim is lax.linalg.lu_p:
     if np_dtype == np.complex64:
       tf_unimpl(np_dtype, devs=["TPU"])
 
-  if prim is lax_linalg.triangular_solve_p:
+  if prim is lax.linalg.triangular_solve_p:
     if np_dtype in [dtypes.bfloat16, np.float16]:
       tf_unimpl(np_dtype)
 
-  if prim is lax_linalg.svd_p:
+  if prim is lax.linalg.svd_p:
     if np_dtype in [dtypes.bfloat16]:
       # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF
       tf_unimpl(np_dtype, devs=["TPU"])
@@ -163,6 +183,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       additional_msg = ("this works on JAX because JAX uses a custom "
                         "implementation")
       tf_unimpl(np_dtype, additional_msg=additional_msg, devs=["CPU", "GPU"])
+
+  if prim is lax.select_and_scatter_add_p:
+    if np_dtype in [np.uint64, np.uint32, np.uint16]:
+      tf_unimpl(np_dtype)
 
   if prim is lax.select_and_gather_add_p:
     # TODO: the conversion is only supported for float16/float32 on CPU/GPU,
@@ -191,14 +215,6 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       # TODO(bchetioui): tf.math.multiply is not defined for the above types.
       tf_unimpl(np_dtype)
 
-  if prim in [lax.scatter_mul_p, lax.scatter_add_p]:
-    if np_dtype == np.complex64:
-      tf_unimpl(np_dtype, devs=["TPU"])
-
-  if prim in [lax.scatter_max_p, lax.scatter_min_p, lax.scatter_p]:
-    if np_dtype == np.bool_:
-      tf_unimpl(np_dtype)
-
   if prim is lax.sort_p:
     if np_dtype in [np.complex64, np.complex128]:
       tf_unimpl(np_dtype)
@@ -217,6 +233,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
 
   if prim is lax.population_count_p:
     if np_dtype in [np.uint32, np.uint64]:
+      tf_unimpl(np_dtype)
+
+  if prim is lax.clamp_p:
+    if np_dtype in [np.int8, np.uint16, np.uint32, np.uint64]:
       tf_unimpl(np_dtype)
 
   # Testing with matmul (TODO: comment out and test without matmul)
@@ -258,6 +278,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype == np.float16:
       # b/158006398: float16 support missing from the kernel of the above
       # operations.
+      tf_unimpl(np_dtype)
+
+  if prim in [lax.le_p, lax.lt_p, lax.ge_p, lax.gt_p]:
+    if np_dtype in [np.bool_, np.uint16, np.uint32, np.uint64]:
       tf_unimpl(np_dtype)
 
   if prim is lax.fft_p:
@@ -328,7 +352,7 @@ def prettify_not_yet_covered(covered_set: Set[core.Primitive]) -> str:
   Builds an ordered summary markdown list of all the primitives that are
   implemented but not in the set passed as an argument.
   """
-  ignore = set([xla.xla_call_p, pxla.xla_pmap_p, pe.remat_call_p, core.call_p])
+  ignore = set(xla.call_translations)
   not_yet_covered = (
     set(filter(lambda prim: not prim in ignore, set(tf_impl) - covered_set)))
 

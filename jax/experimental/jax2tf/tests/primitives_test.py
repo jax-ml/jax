@@ -24,9 +24,9 @@ import itertools
 import jax
 from jax import dtypes
 from jax import lax
-from jax import lax_linalg
 from jax import numpy as jnp
 from jax import test_util as jtu
+from jax._src.lax import control_flow as lax_control_flow
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -111,23 +111,62 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_pad(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_select)
+  def test_select(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_transpose)
+  def test_transpose(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_control_flow_cumreduce)
+  def test_cumreduce(self, harness: primitive_harness.Harness):
+    f_jax, dtype = harness.params["f_jax"], harness.params["dtype"]
+    dut = jtu.device_under_test()
+    if (dtype == np.complex64 and
+        f_jax in [lax_control_flow.cummin, lax_control_flow.cummax,
+                  lax_control_flow.cumprod, lax_control_flow.cumsum] and
+        dut == "tpu"):
+      raise unittest.SkipTest("TODO(bchetioui): cum{min,max,prod,sum} fails "
+                              "in JAX for complex64 on TPU")
+    tol = None
+    if f_jax == lax_control_flow.cumsum:
+      tol = 0.1 if dtype == np.float16 else (0.5 if dtype == dtypes.bfloat16
+                                             else tol)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=tol, rtol=tol)
+
   @primitive_harness.parameterized(primitive_harness.lax_top_k)
   def test_top_k(self, harness: primitive_harness.Harness):
-    if (harness.params["k"] > harness.params["shape"][-1] or
-        harness.params["k"] < 0):
+    custom_assert = None
+    k, dtype = harness.params["k"], harness.params["dtype"]
+    if k > harness.params["shape"][-1] or k < 0:
       with self.assertRaisesRegex(ValueError, "k argument to top_k must be"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    elif harness.params["dtype"] in jtu.dtypes.complex:
+      return
+    if dtype in jtu.dtypes.complex:
       # TODO(necula): fix top_k complex bug on TPU
       if jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("top_k complex on TPU raises different error")
-      with self.assertRaisesRegex(RuntimeError, "Unimplemented: complex comparison"):
+      with self.assertRaisesRegex(RuntimeError,
+                                  "Unimplemented: complex comparison"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    # TODO: TF and JAX sort [inf, nan] differently.
-    elif harness.name.startswith("nan_"):
-      raise unittest.SkipTest("inconsistent [nan, inf] sorting")
-    else:
-      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+      return
+    if dtype in jtu.dtypes.all_inexact:
+      def custom_assert(result_jax, result_tf):
+        assert len(result_jax) == len(result_tf)
+        # TODO: TF and JAX sort [inf, nan] differently.
+        first_arr_jax, first_arr_tf = result_jax[0], result_tf[0].numpy()
+        if np.all(first_arr_jax == first_arr_tf):
+          for arr_jax, arr_tf in zip(result_jax, result_tf):
+            self.assertArraysEqual(arr_jax, arr_tf)
+        else:
+          mask_jax, mask_tf = np.isnan(first_arr_jax), np.isnan(first_arr_tf)
+          self.assertArraysEqual(first_arr_jax[~ mask_jax],
+                                 first_arr_tf[~ mask_tf])
+
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           custom_assert=custom_assert)
 
   @primitive_harness.parameterized(primitive_harness.lax_sort)
   def test_sort(self, harness: primitive_harness.Harness):
@@ -141,7 +180,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_fft)
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_fft(self, harness: primitive_harness.Harness):
     if len(harness.params["fft_lengths"]) > 3:
       if jtu.device_under_test() == "gpu":
@@ -157,12 +195,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                   "only 1D FFT is currently supported."):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     else:
-      tol = None
-      if jtu.device_under_test() in ("cpu", "gpu"):
-        if harness.params["dtype"] in jtu.dtypes.boolean:
-          tol = 0.01
-        else:
-          tol = 1e-3
+      tol = None if jtu.device_under_test() == "tpu" else 1e-3
       self.ConvertAndCompare(harness.dyn_fun,
                              *harness.dyn_args_maker(self.rng()),
                              atol=tol, rtol=tol)
@@ -265,6 +298,15 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            atol=tol, rtol=tol,
                            custom_assert=custom_assert,
                            always_custom_assert=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_select_and_scatter_add)
+  def test_select_and_scatter_add(self, harness: primitive_harness.Harness):
+    if jtu.device_under_test() == "tpu" and not harness.params["run_on_tpu"]:
+      raise unittest.SkipTest(
+        "TODO: select_and_scatter on JAX on TPU only works when the parameters "
+        "define 2 or more inactive dimensions"
+      )
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_select_and_gather_add)
   @jtu.ignore_warning(category=UserWarning,
@@ -439,7 +481,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       u = jnp.triu(lu)[...,:k, :]
       p_mat = _make_permutation_matrix(perm)
 
-      self.assertArraysEqual(lax_linalg.lu_pivots_to_permutation(pivots, m),
+      self.assertArraysEqual(lax.linalg.lu_pivots_to_permutation(pivots, m),
                              perm)
       self.assertAllClose(jnp.matmul(p_mat, operand), jnp.matmul(l, u),
                           atol=tol, rtol=tol)
@@ -528,12 +570,28 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, arg, custom_assert=custom_assert,
                            atol=atol)
 
+  @primitive_harness.parameterized(primitive_harness.lax_comparators)
+  def test_comparators(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_bitwise_not)
   def test_bitwise_not(self, harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_zeros_like)
+  def test_zeros_like(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_population_count)
   def test_population_count(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_argminmax)
+  def test_argminmax(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_iota)
+  def test_iota(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_add_mul)
@@ -552,6 +610,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            custom_assert=custom_assert,
                            always_custom_assert=always_custom_assert)
+
+  @primitive_harness.parameterized(primitive_harness.lax_div_rem)
+  def test_div(self, harness: primitive_harness.Harness):
+    dividend, divisor = harness.dyn_args_maker(self.rng())
+    prim = harness.params["prim"]
+    if dtypes.issubdtype(dividend.dtype, np.integer):
+      if (prim is lax.div_p and
+          np.any(divisor == np.array(0, dtype=divisor.dtype))):
+        raise unittest.SkipTest(
+            "Divisor contains a 0, and TF returns an error value in compiled "
+            "mode instead of failing like in eager and graph mode for dtype "
+            f"{divisor.dtype}")
+    self.ConvertAndCompare(harness.dyn_fun, dividend, divisor)
 
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
@@ -607,16 +678,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_binary_elementwise_logical(self, harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_broadcast_in_dim)
+  def test_broadcast_in_dim(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_broadcast)
+  def test_broadcast(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_betainc)
   def test_betainc(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
     # TODO: https://www.tensorflow.org/api_docs/python/tf/math/betainc only
     # supports float32/64 tests.
-    # TODO(bchetioui): investigate why the test actually fails in JAX.
-    if dtype in [np.float16, dtypes.bfloat16]:
-      raise unittest.SkipTest("(b)float16 not implemented in TF")
-
     tol = None
     if dtype is np.float64:
       tol = 1e-14
@@ -649,6 +723,18 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     else:
       self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_complex)
+  def test_complex(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_conj)
+  def test_conj(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_real_imag)
+  def test_real_imag(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
   def test_dynamic_slice(self, harness):
@@ -697,6 +783,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=tol, rtol=tol)
 
+  @primitive_harness.parameterized(primitive_harness.lax_clamp)
+  def test_clamp(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_concatenate)
+  def test_concatenate(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_conv_general_dilated)
   def test_conv_general_dilated(self, harness: primitive_harness.Harness):
     dtype, device = harness.params["dtype"], jtu.device_under_test()
@@ -720,8 +814,37 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     # tf.nn.convolution.
     elif dtype == np.float64 and device == "cpu":
       tol = 1e-13
+
+    # TODO(bchetioui): unidentified bug in compiled mode. The test that fails is
+    #
+    # test_conv_general_dilated_tf_conversion_path_3d_lhs=float32[1,4,28,28,1]_rhs=float32[2,3,3,1,16]_windowstrides=(1,1,1)_padding=VALID_lhsdilation=(1,1,1)_rhsdilation=(1,1,2)_dimensionnumbers=('NDHWC','DHWIO','NDHWC')_featuregroupcount=1_batchgroupcount=1_precision=None_enablexla=False
+    #
+    # with the following assertion error in TensorFlowTrace.process_primitive:
+    #
+    # AssertionError: conv_general_dilated: out.aval = ShapedArray(float32[1,3,24,26,16]); expected ShapedArray(float32[1,3,26,24,16])
+    #
+    # Deactivating this assertion is enough to pass the test, which suggests
+    # that the end shape is indeed the correct one (i.e. (1,3,26,24,16)).
+    # Further investigation is required to really understand this behavior,
+    # which we have not managed to reproduce as a pure TF test.
+    #
+    # This bug is low priority since it only occurs when using a non-TFXLA
+    # conversion path in compiled mode, i.e. in a context where using the
+    # TFXLA path is possible.
+    if harness.name == "_tf_conversion_path_3d_lhs=float32[1,4,28,28,1]_rhs=float32[2,3,3,1,16]_windowstrides=(1,1,1)_padding=VALID_lhsdilation=(1,1,1)_rhsdilation=(1,1,2)_dimensionnumbers=('NDHWC','DHWIO','NDHWC')_featuregroupcount=1_batchgroupcount=1_precision=None_enablexla=False":
+      raise unittest.SkipTest("TODO: known but unidentified bug in compiled "
+                              "mode")
+
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           atol=tol, rtol=tol)
+        atol=tol, rtol=tol, enable_xla=harness.params["enable_xla"])
+
+  @primitive_harness.parameterized(primitive_harness.disable_xla)
+  def test_disable_xla(self, harness: primitive_harness.Harness):
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Call to pad can only be converted through "
+                                "TFXLA, but XLA is disabled"):
+      self.ConvertAndCompare(harness.dyn_fun,
+          *harness.dyn_args_maker(self.rng()), enable_xla=False)
 
   @primitive_harness.parameterized(primitive_harness.lax_gather)
   def test_gather(self, harness: primitive_harness.Harness):
@@ -761,14 +884,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(f_jax, values)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_{f_jax.__name__}",
-         f_jax=f_jax)
-    for f_jax in (jnp.cumsum, jnp.cumprod)))
-  def test_cumulated_ops(self, f_jax):
-    values = np.array([1, 2, 3], dtype=np.float32)
-    self.ConvertAndCompare(f_jax, values)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{op.__name__}",
          op=op)
     for op in INDEX))
@@ -786,6 +901,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
 
+  @primitive_harness.parameterized(primitive_harness.lax_reducer)
+  def test_reducers(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.random_gamma)
   def test_random_gamma(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
@@ -794,11 +913,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.random_split)
   def test_random_split(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-
-  def test_zeros_like(self):
-    v = np.float32(2.)
-    f_jax = jax.ad_util.zeros_like_jaxval
-    self.ConvertAndCompare(f_jax, v)
 
   def test_stop_gradient(self):
     f = jax2tf.convert(lax.stop_gradient)
