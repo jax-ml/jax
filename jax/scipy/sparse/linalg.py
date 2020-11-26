@@ -16,5 +16,5 @@
 from jax._src.scipy.sparse.linalg import (
   cg,
   _gmres,
-  eigsh
+   eigsh
 )
