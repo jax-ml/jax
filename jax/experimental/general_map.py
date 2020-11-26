@@ -31,18 +31,19 @@ from ..api import _mapped_axis_size, _check_callable, _check_arg
 from ..tree_util import tree_flatten, tree_unflatten, tree_leaves
 from ..api_util import flatten_fun, flatten_fun_nokwargs, flatten_axes
 from ..interpreters import partial_eval as pe
-from ..interpreters import batching
 from ..interpreters import pxla
 from ..interpreters import xla
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..util import safe_map, safe_zip, curry, HashableFunction
+from ..util import safe_map, safe_zip, HashableFunction
 from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
 zip = safe_zip
 
 xops = xc.ops
+
+EXPERIMENTAL_SPMD_LOWERING = False
 
 class FrozenDict:  # dataclasses might remove some boilerplate here
   def __init__(self, *args, **kwargs):
@@ -278,6 +279,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                     submesh,
                                     mesh_in_axes,
                                     mesh_out_axes,
+                                    EXPERIMENTAL_SPMD_LOWERING,
                                     *in_avals)
   else:
     return f.call_wrapped
@@ -326,14 +328,14 @@ class EvaluationPlan(NamedTuple):
     for naxis, raxis in self.vectorized.items():
       map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
-      f = vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=raxis)
+      f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=raxis)
 
     resource_env_shape = resource_env.shape
     for raxis, naxes in self.fake_resource_map.items():
       map_in_axes = tuple(unsafe_map(lambda spec: lookup_exactly_one_of(spec, naxes), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: lookup_exactly_one_of(spec, naxes), out_axes))
       map_size = resource_env_shape[raxis]
-      f = vtile(f, map_in_axes, map_out_axes, tile_size=map_size, axis_name=raxis)
+      f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=map_size, axis_name=raxis)
 
     return f
 
@@ -419,11 +421,18 @@ pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore
 
 # -------- nested xmap handling --------
 
-def _xmap_translation_rule(c, axis_env,
-                           in_nodes, name_stack, *,
-                           call_jaxpr, name,
-                           in_axes, out_axes, axis_sizes,
-                           schedule, resource_env, backend):
+def _xmap_translation_rule(*args, **kwargs):
+  if EXPERIMENTAL_SPMD_LOWERING:
+    return _xmap_translation_rule_spmd(*args, **kwargs)
+  else:
+    return _xmap_translation_rule_replica(*args, **kwargs)
+xla.call_translations[xmap_p] = _xmap_translation_rule
+
+def _xmap_translation_rule_replica(c, axis_env,
+                                   in_nodes, name_stack, *,
+                                   call_jaxpr, name,
+                                   in_axes, out_axes, axis_sizes,
+                                   schedule, resource_env, backend):
   plan = EvaluationPlan.from_schedule(schedule, resource_env)
 
   # TODO: Make sure that the resource env matches the outer xmap
@@ -461,7 +470,6 @@ def _xmap_translation_rule(c, axis_env,
           in zip(call_jaxpr.outvars, tiled_outs, mesh_out_axes)]
 
   return xops.Tuple(c, outs)
-xla.call_translations[xmap_p] = _xmap_translation_rule
 
 def _xla_tile(c, axis_env, x, in_axes, axis_sizes):
   if not in_axes:
@@ -520,6 +528,17 @@ def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
     out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(np.bool_))
   return out
 
+def _xmap_translation_rule_spmd(c, axis_env,
+                                in_nodes, name_stack, *,
+                                call_jaxpr, name,
+                                in_axes, out_axes, axis_sizes,
+                                schedule, resource_env, backend):
+  # TODO(apaszke): This is quite difficult to implement given the current lowering
+  #                in mesh_tiled_callable. There, we vmap the mapped axes, but we
+  #                have no idea which positional axes they end up being in this
+  #                translation rule!
+  raise NotImplementedError
+
 
 # -------- helper functions --------
 
@@ -576,44 +595,6 @@ def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
   squeezed_args = map(_squeeze_mapped_axes, flat_args, flat_in_axes)
   flat_outputs = yield squeezed_args, {}
   yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
-
-
-# NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
-def vtile(f_flat,
-          in_axes_flat: Tuple[AxisNamePos, ...],
-          out_axes_flat: Tuple[AxisNamePos, ...],
-          tile_size: Optional[int], axis_name):
-  if tile_size == 1:
-    return f_flat
-
-  @curry
-  def tile_axis(arg, axis: Optional[int], tile_size):
-    if axis is None:
-      return arg
-    shape = list(arg.shape)
-    shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
-    return arg.reshape(shape)
-
-  def untile_axis(out, axis: Optional[int]):
-    if axis is None:
-      return out
-    shape = list(out.shape)
-    shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
-    return out.reshape(shape)
-
-  @lu.transformation
-  def _map_to_tile(*args_flat):
-    sizes = (x.shape[i] for x, i in zip(args_flat, in_axes_flat) if i is not None)
-    tile_size_ = tile_size or next(sizes, None)
-    assert tile_size_ is not None, "No mapped arguments?"
-    outputs_flat = yield map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat), {}
-    yield map(untile_axis, outputs_flat, out_axes_flat)
-
-  return _map_to_tile(
-    batching.batch_fun(f_flat,
-                       in_axes_flat,
-                       out_axes_flat,
-                       axis_name=axis_name))
 
 
 def _schedule_resources(schedule) -> Set[ResourceAxisName]:

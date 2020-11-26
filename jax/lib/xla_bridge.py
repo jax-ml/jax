@@ -351,11 +351,8 @@ def _sharding_to_proto(sharding: SpatialSharding):
   """
   proto = xla_client.OpSharding()
   if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
-      assert all(s is None or isinstance(s, tuple) for s in sharding)
-      sub_protos = [_sharding_to_proto(s) for s in sharding]  # type: ignore
-      proto.type = xla_client.OpSharding.Type.TUPLE
-      proto.tuple_shardings = sub_protos
-      return proto
+    assert all(s is None or isinstance(s, tuple) for s in sharding)
+    return tuple_sharding_proto(list(map(_sharding_to_proto, sharding)))  # type: ignore
 
   if sharding is None:
     proto.type = xla_client.OpSharding.Type.REPLICATED
@@ -365,20 +362,35 @@ def _sharding_to_proto(sharding: SpatialSharding):
     proto.tile_assignment_devices = list(range(np.product(sharding)))
   return proto
 
-def set_sharding(builder, op, sharding: SpatialSharding):
+def tuple_sharding_proto(elems):
+  proto = xla_client.OpSharding()
+  assert all(isinstance(e, type(proto)) for e in elems)
+  proto.type = xla_client.OpSharding.Type.TUPLE
+  proto.tuple_shardings = elems
+  return proto
+
+def set_sharding_proto(builder, op, sharding_proto):
   """Uses CustomCall to annotate a value as sharded."""
   # "Sharding" is a built-in custom call target that acts like an identity
   # function, and is used to attach an OpSharding to.
-  return with_sharding(builder, sharding, xops.CustomCall,
-                       builder, b"Sharding", [op], builder.get_shape(op))
+  return with_sharding_proto(builder, sharding_proto, xops.CustomCall,
+                             builder, b"Sharding", [op], builder.get_shape(op))
 
-def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
+def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  builder.set_sharding(_sharding_to_proto(sharding))
+  builder.set_sharding(sharding_proto)
   try:
     return op_fn(*args, **kwargs)
   finally:
     builder.clear_sharding()
+
+def set_sharding(builder, op, sharding: SpatialSharding):
+  """Uses CustomCall to annotate a value as sharded."""
+  return set_sharding_proto(builder, op, _sharding_to_proto(sharding))
+
+def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
+  """Builds op_fn(*args, **kwargs) with sharding annotation."""
+  return with_sharding_proto(builder, _sharding_to_proto(sharding), op_fn, *args, **kwargs)
 
 def make_computation_builder(name):
   return xla_client.XlaBuilder(name)
