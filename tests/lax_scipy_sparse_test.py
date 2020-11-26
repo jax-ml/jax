@@ -417,7 +417,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     np.random.seed(10)
     x = np.random.rand(20).astype(dtype)
     p = 10
-    actual_x, actual_inds = jax.scipy.sparse.linalg.SA_sort(
+    actual_x, actual_inds = jax._src.scipy.sparse.linalg.SA_sort(
         p, jnp.array(np.real(x)))
     exp_inds = np.argsort(x)
     exp_x = x[exp_inds][-p:]
@@ -433,7 +433,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     np.random.seed(10)
     x = np.random.rand(20).astype(dtype)
     p = 10
-    actual_x, actual_inds = jax.scipy.sparse.linalg.LA_sort(
+    actual_x, actual_inds = jax._src.scipy.sparse.linalg.LA_sort(
         p, jnp.array(np.real(x)))
     exp_inds = np.argsort(x)
     exp_x = x[exp_inds][p-1::-1]
