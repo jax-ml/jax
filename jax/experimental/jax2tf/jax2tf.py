@@ -27,6 +27,7 @@ from jax.api_util import flatten_fun
 from jax.interpreters import ad, batching
 from jax.interpreters import masking
 from jax.interpreters import pxla
+from jax.interpreters import sharded_jit
 from jax.interpreters import xla
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
@@ -840,6 +841,8 @@ tf_not_yet_impl = [
   lax_parallel.axis_index_p, lax_parallel.pdot_p,
 
   pxla.xla_pmap_p,
+
+  sharded_jit.sharding_constraint_p
 ]
 
 try:
