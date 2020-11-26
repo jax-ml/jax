@@ -621,7 +621,7 @@ def iterative_classical_gram_schmidt(vector, krylov_vectors,
     overlaps = overlaps + ov
   return vec, overlaps
 
-def lanczos_factorization(matvec: Callable, v0: jnp.ndarray,
+def _lanczos_factorization(matvec: Callable, v0: jnp.ndarray,
     Vm: jnp.ndarray, alphas: jnp.ndarray, betas: jnp.ndarray,
     start: int, num_krylov_vecs: int, tol: float, precision):
   """
@@ -848,7 +848,7 @@ def eigsh(matvec: Callable,#pylint: disable=too-many-statements
   betas = jnp.zeros(num_krylov_vecs - 1, dtype=dtype)
 
   # perform initial lanczos factorization
-  Vm, alphas, betas, residual, norm, numits, ar_converged = lanczos_factorization(#pylint: disable=line-too-long
+  Vm, alphas, betas, residual, norm, numits, ar_converged = _lanczos_factorization(#pylint: disable=line-too-long
       matvec, initial_state, Vm, alphas, betas, 0, num_krylov_vecs, tol,
       precision)
   fm = residual.ravel() * norm
