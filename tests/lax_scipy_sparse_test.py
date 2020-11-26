@@ -462,7 +462,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     betas = jnp.zeros(ncv - 1, dtype=dtype)
     start = 0
     tol = 1E-5
-    Vm, alphas, betas, residual, norm, _, _ = jax.scipy.sparse.linalg.lanczos_factorization(
+    Vm, alphas, betas, residual, norm, _, _ = jax._src.scipy.sparse.linalg.lanczos_factorization(
         matvec, x, Vm, alphas, betas, start, ncv, tol, precision)
     Hm = jnp.diag(alphas) + jnp.diag(betas, -1) + jnp.diag(betas.conj(), 1)
     fm = residual * norm
@@ -497,7 +497,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     betas = jnp.zeros(ncv - 1, dtype=dtype)
     start = 0
     tol = 1E-5
-    lan_fact_jit = jit(jax.scipy.sparse.linalg.lanczos_factorization,
+    lan_fact_jit = jit(jax._src.scipy.sparse.linalg.lanczos_factorization,
                        static_argnums=(5, 6, 7, 8))
     Vm, alphas, betas, residual, norm, _, _ = lan_fact_jit(
       Partial(matvec), x, Vm, alphas, betas, start, ncv, tol, precision)
