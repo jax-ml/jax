@@ -12,24 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import enum
 import threading
 import contextlib
 import numpy as np
 import itertools as it
-from collections import namedtuple, OrderedDict
+from collections import OrderedDict
 from typing import (Callable, Iterable, List, Tuple, Optional, Dict, Any, Set,
                     NamedTuple)
 from warnings import warn
 from functools import wraps, partial
 
-import jax
 from .. import numpy as jnp
 from .. import core
 from .. import linear_util as lu
-from ..api import _mapped_axis_size, _check_callable, _check_arg
+from ..api import _check_callable, _check_arg
 from ..tree_util import tree_flatten, tree_unflatten, tree_leaves
-from ..api_util import flatten_fun, flatten_fun_nokwargs, flatten_axes
+from ..api_util import flatten_fun_nokwargs, flatten_axes
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
 from ..interpreters import xla
@@ -78,31 +76,23 @@ Mesh = pxla.Mesh
 
 # TODO: Support sequential mapping
 class ResourceEnv:
-  __slots__ = ('physical_mesh', 'fake_resources')
+  __slots__ = ('physical_mesh',)
   physical_mesh: Mesh
-  fake_resources: FrozenDict
 
-  def __init__(self, physical_mesh: Mesh, fake_resources: FrozenDict):
+  def __init__(self, physical_mesh: Mesh):
     super().__setattr__('physical_mesh', physical_mesh)
-    super().__setattr__('fake_resources', fake_resources)
 
   @property
   def physical_resource_axes(self) -> Set[ResourceAxisName]:
     return set(self.physical_mesh.axis_names)
 
   @property
-  def fake_resource_axes(self) -> Set[ResourceAxisName]:
-    return set(self.fake_resources.keys())
-
-  @property
   def resource_axes(self) -> Set[ResourceAxisName]:
-    return self.physical_resource_axes | self.fake_resource_axes
+    return self.physical_resource_axes
 
   @property
   def shape(self):
-    shape = OrderedDict(self.physical_mesh.shape)
-    shape.update((name, size) for name, size in self.fake_resources.items())
-    return shape
+    return OrderedDict(self.physical_mesh.shape)
 
   def __setattr__(self, name, value):
     raise RuntimeError("ResourceEnv is immutable!")
@@ -112,28 +102,18 @@ class ResourceEnv:
 
   def __eq__(self, other):
     return (type(other) is ResourceEnv and
-            self.physical_mesh == other.physical_mesh and
-            self.fake_resources == other.fake_resources)
+            self.physical_mesh == other.physical_mesh)
 
   def __hash__(self):
-    return hash((self.physical_mesh, self.fake_resources))
+    return hash(self.physical_mesh)
 
 thread_resources = threading.local()
-thread_resources.env = ResourceEnv(Mesh(np.empty((), dtype=object), ()), FrozenDict())
-
-@contextlib.contextmanager
-def fake_resources(**axes):
-  old_env = thread_resources.env
-  thread_resources.env = ResourceEnv(old_env.physical_mesh, FrozenDict(axes))
-  try:
-    yield
-  finally:
-    thread_resources.env = old_env
+thread_resources.env = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
 @contextlib.contextmanager
 def mesh(*args, **kwargs):
   old_env = thread_resources.env
-  thread_resources.env = ResourceEnv(Mesh(*args, **kwargs), old_env.fake_resources)
+  thread_resources.env = ResourceEnv(Mesh(*args, **kwargs))
   try:
     yield
   finally:
@@ -209,6 +189,7 @@ def xmap(fun: Callable,
   if len(set(frozen_schedule)) != len(frozen_schedule):
     raise ValueError(f"xmap schedule contains duplicate entries: {frozen_schedule}")
 
+  @wraps(fun)
   def fun_mapped(*args):
     # Putting this outside of fun_mapped would make resources lexically scoped
     resource_env = thread_resources.env
@@ -266,7 +247,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
-  f = plan.vectorize(f, in_axes, out_axes, resource_env)
+  f = plan.vectorize(f, in_axes, out_axes)
 
   used_resources = _jaxpr_resources(jaxpr, resource_env) | _schedule_resources(schedule)
   used_mesh_axes = used_resources & resource_env.physical_resource_axes
@@ -286,7 +267,6 @@ def make_xmap_callable(fun: lu.WrappedFun,
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
-  fake_resource_map: Dict[ResourceAxisName, Set[AxisName]]
   physical_resource_map: Dict[ResourceAxisName, Set[AxisName]]
   vectorized: Dict[AxisName, ResourceAxisName]
   axis_subst: Dict[AxisName, Tuple[ResourceAxisName, ...]]
@@ -303,7 +283,6 @@ class EvaluationPlan(NamedTuple):
     #       the schedule to break ties.
     # Technically the order doesn't matter right now, but we use the ordered dict
     # to at least limit the amount of non-determinism in this code.
-    fake_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
     physical_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
     vectorized: Dict[AxisName, ResourceAxisName] = OrderedDict()
 
@@ -315,28 +294,18 @@ class EvaluationPlan(NamedTuple):
         vectorized[axis] = resource
       elif resource in resource_env.physical_resource_axes:
         physical_resource_map.setdefault(resource, set()).add(axis)
-      elif resource in resource_env.fake_resource_axes:
-        fake_resource_map.setdefault(resource, set()).add(axis)
       else:
         raise ValueError(f"Mapping axis {axis} to an undefined resource axis {resource}. "
                             f"The resource axes currently in scope are: {resource_env.resource_axes}")
       axis_subst.setdefault(axis, []).append(resource)
     axis_subst_t = {name: tuple(axes) for name, axes in axis_subst.items()}
-    return cls(fake_resource_map, physical_resource_map, vectorized, axis_subst_t)
+    return cls(physical_resource_map, vectorized, axis_subst_t)
 
-  def vectorize(self, f: lu.WrappedFun, in_axes, out_axes, resource_env):
+  def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
     for naxis, raxis in self.vectorized.items():
       map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
       f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=raxis)
-
-    resource_env_shape = resource_env.shape
-    for raxis, naxes in self.fake_resource_map.items():
-      map_in_axes = tuple(unsafe_map(lambda spec: lookup_exactly_one_of(spec, naxes), in_axes))
-      map_out_axes = tuple(unsafe_map(lambda spec: lookup_exactly_one_of(spec, naxes), out_axes))
-      map_size = resource_env_shape[raxis]
-      f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=map_size, axis_name=raxis)
-
     return f
 
   def to_mesh_axes(self, in_axes, out_axes):
@@ -448,7 +417,7 @@ def _xmap_translation_rule_replica(c, axis_env,
                  in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(call_jaxpr, ())))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
-  f = plan.vectorize(f, in_axes, out_axes, resource_env)
+  f = plan.vectorize(f, in_axes, out_axes)
   vectorized_jaxpr, _, consts = pe.trace_to_jaxpr_final(f, local_avals)
   assert not consts
 
@@ -613,148 +582,6 @@ def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
     for update in updates:
       used_resources |= update
   return used_resources
-
-
-# Single-dimensional generalized map
-
-def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
-  warn("gmap is an experimental feature and probably has bugs!")
-  _check_callable(fun)
-  binds_axis_name = axis_name is not None
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
-
-  @wraps(fun)
-  def f_gmapped(*args, **kwargs):
-    f = lu.wrap_init(fun)
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    in_axes = (0,) * len(args_flat)
-    axis_size = _mapped_axis_size(in_tree, args_flat, (0,) * len(args_flat), "gmap")
-    parsed_schedule = _normalize_schedule(schedule, axis_size, binds_axis_name)
-    for arg in args_flat: _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    outs = gmap_p.bind(
-        flat_fun, *args_flat,
-        axis_name=axis_name,
-        axis_size=axis_size,
-        in_axes=in_axes,
-        out_axes_thunk=lambda: (0,) * out_tree().num_leaves,
-        schedule=parsed_schedule,
-        binds_axis_name=binds_axis_name)
-    return tree_unflatten(out_tree(), outs)
-  return f_gmapped
-
-
-class LoopType(enum.Enum):
-    vectorized = enum.auto()
-    parallel = enum.auto()
-    sequential = enum.auto()
-
-Loop = namedtuple('Loop', ['type', 'size'])
-
-
-def _normalize_schedule(schedule, axis_size, binds_axis_name):
-  if not schedule:
-    raise ValueError("gmap expects a non-empty schedule")
-
-  scheduled = 1
-  seen_none = False
-  for loop in schedule:
-    if loop[1] is not None:
-      scheduled *= loop[1]
-    elif seen_none:
-      raise ValueError("gmap schedule can only contain at most a single None size specification")
-    else:
-      seen_none = True
-  unscheduled = axis_size // scheduled
-
-  new_schedule = []
-  for i, loop in enumerate(schedule):
-    loop_type = _parse_name(loop[0])
-    if loop_type is LoopType.vectorized and i < len(schedule) - 1:
-      raise ValueError("vectorized loops can only appear as the last component of the schedule")
-    if loop_type is LoopType.sequential and binds_axis_name:
-      raise ValueError("gmaps that bind a new axis name cannot have sequential components in the schedule")
-    new_schedule.append(Loop(loop_type, loop[1] or unscheduled))
-  return tuple(new_schedule)
-
-def _parse_name(name):
-  if isinstance(name, LoopType):
-    return name
-  try:
-    return LoopType[name]
-  except KeyError as err:
-    raise ValueError(f"Unrecognized loop type: {name}") from err
-
-
-def gmap_impl(fun: lu.WrappedFun, *args, axis_size, axis_name,
-              binds_axis_name, in_axes, out_axes_thunk, schedule):
-  avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  scheduled_fun = _apply_schedule(fun, axis_size, axis_name, binds_axis_name,
-                                  in_axes, out_axes_thunk, schedule, *avals)
-  return scheduled_fun(*args)
-
-class _GMapSubaxis:
-  def __init__(self, axis_name, index):
-    self.axis_name = axis_name
-    self.index = index
-  def __repr__(self):
-    return f'<subaxis {self.index} of {self.axis_name}>'
-  def __hash__(self):
-    return hash((self.axis_name, self.index))
-  def __eq__(self, other):
-    return (isinstance(other, _GMapSubaxis) and
-            self.axis_name == other.axis_name and
-            self.index == other.index)
-
-@lu.cache
-def _apply_schedule(fun: lu.WrappedFun,
-                    axis_size, full_axis_name, binds_axis_name,
-                    in_axes,
-                    out_axes_thunk,
-                    schedule,
-                    *avals):
-  mapped_avals = [core.mapped_aval(axis_size, in_axis, aval)
-                  if in_axis is not None else aval
-                  for aval, in_axis in zip(avals, in_axes)]
-  with core.extend_axis_env(full_axis_name, axis_size, None):
-    jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_avals)
-  out_axes = out_axes_thunk()
-  assert all(out_axis == 0 for out_axis in out_axes)
-
-  axis_names = tuple(_GMapSubaxis(full_axis_name, i) for i in range(len(schedule)))
-  if binds_axis_name:
-    jaxpr = subst_axis_names(jaxpr, {full_axis_name: axis_names})  # type: ignore
-
-  sched_fun = lambda *args: core.eval_jaxpr(jaxpr, consts, *args)
-  for (ltype, size), axis_name in list(zip(schedule, axis_names))[::-1]:
-    if ltype is LoopType.vectorized:
-      sched_fun = jax.vmap(sched_fun, axis_name=axis_name, in_axes=in_axes)
-    elif ltype is LoopType.parallel:
-      sched_fun = jax.pmap(sched_fun, axis_name=axis_name, in_axes=in_axes)
-    elif ltype is LoopType.sequential:
-      if binds_axis_name:
-        raise NotImplementedError("gmaps with sequential components of the schedule don't support "
-                                  "collectives yet. Please open a feature request!")
-      assert not binds_axis_name
-      sched_fun = lambda *args, sched_fun=sched_fun: _sequential_map(sched_fun, in_axes, args)
-
-  dim_sizes = tuple(loop.size for loop in schedule)
-  def sched_fun_wrapper(*args):
-    split_args = [arg.reshape(arg.shape[:in_axis] + dim_sizes + arg.shape[in_axis + 1:])
-                  for arg, in_axis in zip(args, in_axes)]
-    results = sched_fun(*split_args)
-    return [res.reshape((axis_size,) + res.shape[len(dim_sizes):]) for res in results]
-  return sched_fun_wrapper
-
-gmap_p = core.MapPrimitive('gmap')
-gmap_p.def_impl(gmap_impl)
-
-def _sequential_map(f, flat_in_axes, args):
-  flat_args, treedef = tree_flatten(args)
-  flat_args_leading = [jnp.moveaxis(arg, in_axis, 0)
-                       for arg, in_axis in zip(flat_args, flat_in_axes)]
-  args_leading = tree_unflatten(treedef, flat_args_leading)
-  return jax.lax.map(lambda xs: f(*xs), args_leading)
 
 def subst_axis_names(jaxpr, axis_subst: Dict[AxisName, Tuple[AxisName]]):
   eqns = [subst_eqn_axis_names(eqn, axis_subst) for eqn in jaxpr.eqns]
