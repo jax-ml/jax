@@ -18,7 +18,8 @@ import contextlib
 import numpy as np
 import itertools as it
 from collections import namedtuple, OrderedDict
-from typing import Callable, Iterable, List, Tuple, Optional, Dict, Any, Set
+from typing import (Callable, Iterable, List, Tuple, Optional, Dict, Any, Set,
+                    NamedTuple)
 from warnings import warn
 from functools import wraps, partial
 
@@ -32,10 +33,16 @@ from ..api_util import flatten_fun, flatten_fun_nokwargs, flatten_axes
 from ..interpreters import partial_eval as pe
 from ..interpreters import batching
 from ..interpreters import pxla
+from ..interpreters import xla
+from ..lib import xla_bridge as xb
+from ..lib import xla_client as xc
 from ..util import safe_map, safe_zip, curry
+from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
 zip = safe_zip
+
+xops = xc.ops
 
 class FrozenDict:  # dataclasses might remove some boilerplate here
   def __init__(self, *args, **kwargs):
@@ -221,6 +228,7 @@ def xmap(fun: Callable,
     axis_sizes = _get_axis_sizes(args_flat, in_axes_flat)
     out_flat = xmap_p.bind(
       fun_flat, *args_flat,
+      name=fun.__name__,
       in_axes=tuple(in_axes_flat),
       out_axes=tuple(out_axes_flat),
       axis_sizes=FrozenDict(axis_sizes),
@@ -231,83 +239,36 @@ def xmap(fun: Callable,
 
   return fun_mapped
 
-def xmap_impl(fun: lu.WrappedFun, *args, in_axes, out_axes, axis_sizes, schedule, resource_env, backend):
+def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes, axis_sizes, schedule, resource_env, backend):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  return make_xmap_callable(fun, in_axes, out_axes, axis_sizes, schedule,
+  return make_xmap_callable(fun, name, in_axes, out_axes, axis_sizes, schedule,
                             resource_env, backend, *in_avals)(*args)
 
 @lu.cache
 def make_xmap_callable(fun: lu.WrappedFun,
+                       name,
                        in_axes, out_axes, axis_sizes,
                        schedule, resource_env, backend,
                        *in_avals):
+  plan = EvaluationPlan.from_schedule(schedule, resource_env)
+
   mapped_in_avals = [_delete_aval_axes(aval, in_axes)
                      for aval, in_axes in zip(in_avals, in_axes)]
   with core.extend_axis_env_nd(axis_sizes.items()):
-    raw_jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
-  jaxpr = core.ClosedJaxpr(raw_jaxpr, consts)
+    jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
+  jaxpr = subst_axis_names(jaxpr, plan.axis_subst)
 
-  # TODO: The order of maps should be derived from the schedule, not from the
-  #       resource env. This doesn't really matter for as long as we only support
-  #       vectorization and parallelization, but will be important for sequential.
-  #       We should be able to do that by building a graph of dependencies between
-  #       resources based on the order in which they appear within each axis.
-  #       If it has cycles then we cannot realize it. Otherwise, if the DAG doesn't
-  #       uniquely identify a linear order, we should use the order of entries in
-  #       the schedule to break ties.
-  # Technically the order doesn't matter right now, but we use the ordered dict
-  # to at least limit the amount of non-determinism in this code.
-  fake_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
-  physical_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
-  vectorized: Dict[AxisName, ResourceAxisName] = OrderedDict()
-
-  axis_subst: Dict[AxisName, List[ResourceAxisName]] = {}
-  for axis, resource in schedule:
-    if resource == 'vectorize':
-      assert axis not in vectorized
-      resource = fresh_resource_name()
-      vectorized[axis] = resource
-    elif resource in resource_env.physical_resource_axes:
-      physical_resource_map.setdefault(resource, set()).add(axis)
-    elif resource in resource_env.fake_resource_axes:
-      fake_resource_map.setdefault(resource, set()).add(axis)
-    else:
-      raise ValueError(f"Mapping axis {axis} to an undefined resource axis {resource}. "
-                        f"The resource axes currently in scope are: {resource_env.resource_axes}")
-    axis_subst.setdefault(axis, []).append(resource)
-
-  axis_subst_t = {axis: tuple(resources) for axis, resources in axis_subst.items()}
-  jaxpr = jaxpr.map_jaxpr(partial(subst_axis_names, axis_subst=axis_subst_t))
-
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+  f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
+  f = plan.vectorize(f, in_axes, out_axes, resource_env)
 
-  for naxis, raxis in vectorized.items():
-    map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
-    map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
-    f = vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=raxis)
-
-  resource_env_shape = resource_env.shape
-  for raxis, naxes in fake_resource_map.items():
-    map_in_axes = tuple(unsafe_map(lambda spec: lookup_exactly_one_of(spec, naxes), in_axes))
-    map_out_axes = tuple(unsafe_map(lambda spec: lookup_exactly_one_of(spec, naxes), out_axes))
-    map_size = resource_env_shape[raxis]
-    f = vtile(f, map_in_axes, map_out_axes, tile_size=map_size, axis_name=raxis)
-
-  if physical_resource_map:
-    submesh = resource_env.physical_mesh[tuple(physical_resource_map.keys())]
-    def to_mesh_axes(axes):
-      mesh_axes = {}
-      for paxis, naxes in physical_resource_map.items():
-        axis = lookup_exactly_one_of(axes, naxes)
-        if axis is None:
-            continue
-        mesh_axes[paxis] = axis
-      return A(mesh_axes)
-    mesh_in_axes = tuple(unsafe_map(to_mesh_axes, in_axes))
-    mesh_out_axes = tuple(unsafe_map(to_mesh_axes, out_axes))
+  used_resources = _jaxpr_resources(jaxpr, resource_env) | _schedule_resources(schedule)
+  used_mesh_axes = used_resources & resource_env.physical_resource_axes
+  if used_mesh_axes:
+    submesh = resource_env.physical_mesh[sorted(used_mesh_axes, key=str)]
+    mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
     return pxla.mesh_tiled_callable(f,
-                                    f.__name__,
+                                    name,
                                     backend,
                                     submesh,
                                     mesh_in_axes,
@@ -316,6 +277,79 @@ def make_xmap_callable(fun: lu.WrappedFun,
   else:
     return f.call_wrapped
 
+class EvaluationPlan(NamedTuple):
+  """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
+  fake_resource_map: Dict[ResourceAxisName, Set[AxisName]]
+  physical_resource_map: Dict[ResourceAxisName, Set[AxisName]]
+  vectorized: Dict[AxisName, ResourceAxisName]
+  axis_subst: Dict[AxisName, Tuple[ResourceAxisName, ...]]
+
+  @classmethod
+  def from_schedule(cls, schedule: Tuple[Tuple[AxisName, ResourceAxisName], ...], resource_env):
+    # TODO: The order of maps should be derived from the schedule, not from the
+    #       resource env. This doesn't really matter for as long as we only support
+    #       vectorization and parallelization, but will be important for sequential.
+    #       We should be able to do that by building a graph of dependencies between
+    #       resources based on the order in which they appear within each axis.
+    #       If it has cycles then we cannot realize it. Otherwise, if the DAG doesn't
+    #       uniquely identify a linear order, we should use the order of entries in
+    #       the schedule to break ties.
+    # Technically the order doesn't matter right now, but we use the ordered dict
+    # to at least limit the amount of non-determinism in this code.
+    fake_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
+    physical_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
+    vectorized: Dict[AxisName, ResourceAxisName] = OrderedDict()
+
+    axis_subst: Dict[AxisName, List[ResourceAxisName]] = {}
+    for axis, resource in schedule:
+      if resource == 'vectorize':
+        assert axis not in vectorized
+        resource = fresh_resource_name()
+        vectorized[axis] = resource
+      elif resource in resource_env.physical_resource_axes:
+        physical_resource_map.setdefault(resource, set()).add(axis)
+      elif resource in resource_env.fake_resource_axes:
+        fake_resource_map.setdefault(resource, set()).add(axis)
+      else:
+        raise ValueError(f"Mapping axis {axis} to an undefined resource axis {resource}. "
+                            f"The resource axes currently in scope are: {resource_env.resource_axes}")
+      axis_subst.setdefault(axis, []).append(resource)
+    axis_subst_t = {name: tuple(axes) for name, axes in axis_subst.items()}
+    return cls(fake_resource_map, physical_resource_map, vectorized, axis_subst_t)
+
+  def vectorize(self, f: lu.WrappedFun, in_axes, out_axes, resource_env):
+    for naxis, raxis in self.vectorized.items():
+      map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
+      map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
+      f = vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=raxis)
+
+    resource_env_shape = resource_env.shape
+    for raxis, naxes in self.fake_resource_map.items():
+      map_in_axes = tuple(unsafe_map(lambda spec: lookup_exactly_one_of(spec, naxes), in_axes))
+      map_out_axes = tuple(unsafe_map(lambda spec: lookup_exactly_one_of(spec, naxes), out_axes))
+      map_size = resource_env_shape[raxis]
+      f = vtile(f, map_in_axes, map_out_axes, tile_size=map_size, axis_name=raxis)
+
+    return f
+
+  def to_mesh_axes(self, in_axes, out_axes):
+    """
+    Convert in/out_axes parameters ranging over logical dimensions to
+    in/out_axes that range over the mesh dimensions.
+    """
+    def to_mesh(axes):
+      mesh_axes = {}
+      for paxis, naxes in self.physical_resource_map.items():
+        axis = lookup_exactly_one_of(axes, naxes)
+        if axis is None:
+            continue
+        mesh_axes[paxis] = axis
+      return A(mesh_axes)
+    return (tuple(unsafe_map(to_mesh, in_axes)),
+            tuple(unsafe_map(to_mesh, out_axes)))
+
+# -------- xmap primitive and its transforms --------
+
 # xmap has a different set of parameters than pmap, so we make it its own primitive type
 class XMapPrimitive(core.Primitive):
   multiple_results = True
@@ -323,7 +357,7 @@ class XMapPrimitive(core.Primitive):
   def __init__(self):
     super().__init__('xmap')
     self.def_impl(xmap_impl)
-    self.def_custom_bind(partial(core.call_bind, self))
+    self.def_custom_bind(self.bind)
 
   def bind(self, fun, *args, **params):
     assert len(params['in_axes']) == len(args)
@@ -341,12 +375,173 @@ def _process_xmap_default(self, call_primitive, f, tracers, params):
   raise NotImplementedError(f"{type(self)} must override process_xmap to handle xmap")
 core.Trace.process_xmap = _process_xmap_default  # type: ignore
 
+
+# This is necessary for various functions such as core.eval_jaxpr to
+# recognize that xmap is a map-like primitive.
+def _extract_call_jaxpr(primitive, params):
+  if primitive is xmap_p:
+    new_params = dict(params)
+    call_jaxpr = new_params.pop('call_jaxpr')
+    return (call_jaxpr, new_params)
+  return _old_extract_call_jaxpr(primitive, params)
+_old_extract_call_jaxpr = core.extract_call_jaxpr
+core.extract_call_jaxpr = _extract_call_jaxpr
+
+
+# This is DynamicJaxprTrace.process_map with some very minor modifications
+def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
+  from jax.interpreters.partial_eval import (
+    trace_to_subjaxpr_dynamic, DynamicJaxprTracer, source_info_util,
+    convert_constvars_jaxpr, call_param_updaters, new_jaxpr_eqn)
+  assert primitive is xmap_p
+  in_avals = [t.aval for t in tracers]
+  axis_sizes = params['axis_sizes']
+  mapped_in_avals = [_delete_aval_axes(a, a_in_axes)
+                     for a, a_in_axes in zip(in_avals, params['in_axes'])]
+  with core.extend_axis_env_nd(params['axis_sizes'].items()):
+    jaxpr, mapped_out_avals, consts = trace_to_subjaxpr_dynamic(
+        f, self.main, mapped_in_avals)
+  out_avals = [_insert_aval_axes(a, a_out_axes, axis_sizes)
+               for a, a_out_axes in zip(mapped_out_avals, params['out_axes'])]
+  source_info = source_info_util.current()
+  out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
+  invars = map(self.getvar, tracers)
+  constvars = map(self.getvar, map(self.instantiate_const, consts))
+  outvars = map(self.makevar, out_tracers)
+  new_in_axes = (None,) * len(consts) + params['in_axes']
+  new_params = dict(params, in_axes=new_in_axes,
+                    call_jaxpr=convert_constvars_jaxpr(jaxpr))
+  update_params = call_param_updaters.get(primitive)
+  if update_params:
+    new_params = update_params(new_params, [True] * len(tracers))
+  eqn = new_jaxpr_eqn([*constvars, *invars], outvars, primitive,
+                      new_params, source_info)
+  self.frame.eqns.append(eqn)
+  return out_tracers
+pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore
+
+
+# -------- nested xmap handling --------
+
+def _xmap_translation_rule(c, axis_env,
+                           in_nodes, name_stack, *,
+                           call_jaxpr, name,
+                           in_axes, out_axes, axis_sizes,
+                           schedule, resource_env, backend):
+  plan = EvaluationPlan.from_schedule(schedule, resource_env)
+
+  # TODO: Make sure that the resource env matches the outer xmap
+  local_mesh = resource_env.physical_mesh.local_mesh
+  local_mesh_shape = local_mesh.shape
+  mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
+
+  assert type(call_jaxpr) is core.Jaxpr
+  local_avals = [pxla.tile_aval_nd(
+                    local_mesh_shape, aval_mesh_in_axes,
+                    _insert_aval_axes(v.aval, aval_in_axes, axis_sizes))
+                 for v, aval_in_axes, aval_mesh_in_axes
+                 in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
+  f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(call_jaxpr, ())))
+  f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
+  f = plan.vectorize(f, in_axes, out_axes, resource_env)
+  vectorized_jaxpr, _, consts = pe.trace_to_jaxpr_final(f, local_avals)
+  assert not consts
+
+  tiled_ins = (
+    _xla_tile(c, axis_env, in_node, arg_in_axes, local_mesh_shape)
+    if v.aval is not core.abstract_unit else in_node
+    for v, in_node, arg_in_axes in zip(call_jaxpr.invars, in_nodes, mesh_in_axes))
+
+  # We in-line here rather than generating a Call HLO as in the xla_call
+  # translation rule just because the extra tuple stuff is a pain.
+  with core.extend_axis_env_nd(axis_sizes.items()):
+    tiled_outs = xla.jaxpr_subcomp(
+        c, vectorized_jaxpr, backend, axis_env, (),
+        xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')), *tiled_ins)
+
+  outs = [_xla_untile(c, axis_env, tiled_out, ans_out_axes, local_mesh_shape, backend)
+          if v.aval is not core.abstract_unit else tiled_out
+          for v, tiled_out, ans_out_axes
+          in zip(call_jaxpr.outvars, tiled_outs, mesh_out_axes)]
+
+  return xops.Tuple(c, outs)
+xla.call_translations[xmap_p] = _xmap_translation_rule
+
+def _xla_tile(c, axis_env, x, in_axes, axis_sizes):
+  if not in_axes:
+    return x
+  shape = list(c.get_shape(x).dimensions())
+  zero = xb.constant(c, np.zeros((), dtype=np.int32))
+  start_idxs = [zero] * len(shape)
+  tiled_shape = list(shape)
+  for name, axis in in_axes.items():
+    axis_size = axis_sizes[name]
+
+    assert tiled_shape[axis] % axis_size == 0
+    tiled_shape[axis] //= axis_size
+
+    axis_size_c = xb.constant(c, np.array(axis_size, np.int32))
+    assert start_idxs[axis] is zero  # TODO(apaszke): tiling over multiple mesh axes
+    axis_index = _axis_index_translation_rule(
+        c, axis_name=name, axis_env=axis_env, platform=None)
+    start_idxs[axis] = xops.Mul(axis_index, axis_size_c)
+  return xops.DynamicSlice(x, start_idxs, tiled_shape)
+
+# TODO(b/110096942): more efficient gather
+def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
+  xla_shape = c.get_shape(x)
+  x_dtype = xla_shape.numpy_dtype()
+  # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
+  convert_bool = (np.issubdtype(x_dtype, np.bool_)
+                  and xb.get_backend(backend).platform in ('cpu', 'gpu'))
+  if convert_bool:
+    x = xops.ConvertElementType(x, xb.dtype_to_etype(np.float32))
+
+  untiled_shape = list(xla_shape.dimensions())
+  zero_idx = xb.constant(c, np.zeros((), dtype=np.int32))
+  start_idxs = [zero_idx] * len(untiled_shape)
+  for name, axis in out_axes.items():
+    axis_size = axis_sizes[name]
+
+    untiled_shape[axis] *= axis_size
+
+    axis_size_c = xb.constant(c, np.array(axis_size, np.int32))
+    assert start_idxs[axis] is zero_idx  # TODO(apaszke): tiling over multiple mesh axes
+    axis_index = _axis_index_translation_rule(
+        c, axis_name=name, axis_env=axis_env, platform=None)
+    start_idxs[axis] = xops.Mul(axis_index, axis_size_c)
+
+  zero = xb.constant(c, np.array(0, x_dtype))
+  padded = xops.Broadcast(zero, untiled_shape)
+  padded = xops.DynamicUpdateSlice(padded, x, start_idxs)
+  replica_groups_protos = xc.make_replica_groups(
+    xla.axis_groups(axis_env, tuple(out_axes.keys())))
+  out = xops.CrossReplicaSum(padded, replica_groups_protos)
+
+  # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
+  if convert_bool:
+    nonzero = xops.Ne(out, xb.constant(c, np.array(0, dtype=np.float32)))
+    out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(np.bool_))
+  return out
+
+
+# -------- helper functions --------
+
 def _delete_aval_axes(aval, axes: AxisNamePos):
   assert isinstance(aval, core.ShapedArray)
   shape = list(aval.shape)
   for i in sorted(axes.values(), reverse=True):
     del shape[i]
   return core.ShapedArray(tuple(shape), aval.dtype)
+
+
+def _insert_aval_axes(aval, axes: AxisNamePos, axis_sizes):
+  assert isinstance(aval, core.ShapedArray)
+  shape = list(aval.shape)
+  for name, axis in sorted(axes.items()):
+    shape.insert(axis, axis_sizes[name])
+  return core.ShapedArray(tuple(shape), aval.dtype)
+
 
 # TODO: pmap has some very fancy error messages for this function!
 def _get_axis_sizes(args_flat: Iterable[Any], in_axes_flat: Iterable[AxisNamePos]):
@@ -359,6 +554,7 @@ def _get_axis_sizes(args_flat: Iterable[Any], in_axes_flat: Iterable[AxisNamePos
         axis_sizes[name] = arg.shape[dim]
   return axis_sizes
 
+
 def lookup_exactly_one_of(d: AxisNamePos, names: Set[AxisName]) -> Optional[int]:
   res = None
   for name in names:
@@ -368,42 +564,47 @@ def lookup_exactly_one_of(d: AxisNamePos, names: Set[AxisName]) -> Optional[int]
       res = d[name]
   return res
 
-def _squeeze_mapped_axes(arg, axes: AxisNamePos):
-  for dim in sorted(axes.values(), reverse=True):
-    arg = arg.squeeze(dim)
-  return arg
-
-def _unsqueeze_mapped_axes(out, axes: AxisNamePos):
-  for dim in sorted(axes.values()):
-    out = jnp.expand_dims(out, dim)
-  return out
 
 @lu.transformation
 def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
+  def _squeeze_mapped_axes(arg, axes: AxisNamePos):
+    for dim in sorted(axes.values(), reverse=True):
+      arg = arg.squeeze(dim)
+    return arg
+
+  def _unsqueeze_mapped_axes(out, axes: AxisNamePos):
+    for dim in sorted(axes.values()):
+      out = jnp.expand_dims(out, dim)
+    return out
+
   squeezed_args = map(_squeeze_mapped_axes, flat_args, flat_in_axes)
   flat_outputs = yield squeezed_args, {}
   yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
 
-@curry
-def tile_axis(arg, axis: Optional[int], tile_size):
-  if axis is None:
-    return arg
-  shape = list(arg.shape)
-  shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
-  return arg.reshape(shape)
-
-def untile_axis(out, axis: Optional[int]):
-  if axis is None:
-    return out
-  shape = list(out.shape)
-  shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
-  return out.reshape(shape)
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
 def vtile(f_flat,
           in_axes_flat: Tuple[AxisNamePos, ...],
           out_axes_flat: Tuple[AxisNamePos, ...],
           tile_size: Optional[int], axis_name):
+  if tile_size == 1:
+    return f_flat
+
+  @curry
+  def tile_axis(arg, axis: Optional[int], tile_size):
+    if axis is None:
+      return arg
+    shape = list(arg.shape)
+    shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
+    return arg.reshape(shape)
+
+  def untile_axis(out, axis: Optional[int]):
+    if axis is None:
+      return out
+    shape = list(out.shape)
+    shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
+    return out.reshape(shape)
+
   @lu.transformation
   def _map_to_tile(*args_flat):
     sizes = (x.shape[i] for x, i in zip(args_flat, in_axes_flat) if i is not None)
@@ -417,6 +618,26 @@ def vtile(f_flat,
                        in_axes_flat,
                        out_axes_flat,
                        axis_name=axis_name))
+
+
+def _schedule_resources(schedule) -> Set[ResourceAxisName]:
+  return {resource for _, resource in schedule}
+
+
+def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
+  used_resources = set()
+  for eqn in jaxpr.eqns:
+    if eqn.primitive is xmap_p:
+      if eqn.params['resource_env'] != resource_env:
+        raise RuntimeError("Changing the resource environment (e.g. hardware mesh "
+                           "spec) is not allowed inside xmap.")
+      used_resources |= _schedule_resources(eqn.params['schedule'])
+    updates = core.traverse_jaxpr_params(
+        partial(_jaxpr_resources, resource_env=resource_env), eqn.params)
+    for update in updates:
+      used_resources |= update
+  return used_resources
+
 
 # Single-dimensional generalized map
 

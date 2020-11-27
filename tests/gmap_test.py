@@ -23,6 +23,7 @@ from unittest import SkipTest, skip, skipIf
 import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -32,6 +33,7 @@ from jax import lax
 from jax.experimental.general_map import gmap, fake_resources, Mesh, mesh, xmap, A
 from jax.lib import xla_bridge
 from jax.util import curry, unzip2
+from jax.interpreters import pxla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -255,6 +257,64 @@ class GmapTest(jtu.JaxTestCase):
     fm(x)
     python_should_be_executing = False
     fm(x)
+
+  @ignore_gmap_warning()
+  @with_mesh([('x', 2)])
+  def testNestedXMapBasic(self):
+    @partial(xmap, in_axes=[A({'a': 1})], out_axes=[A({'a': 0})],
+             schedule=[('a', 'x')])
+    def f(x):
+      y = x * 2
+      @partial(xmap, in_axes=[A({'b': 0})], out_axes=[A({'b': 1})],
+               schedule=[('b', 'vectorize')])
+      def h(y):
+        return jnp.sin(y)
+      return h(y)
+    xshape = (4, 2, 5)
+    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    self.assertAllClose(f(x),
+                        jnp.sin(x * 2).transpose((1, 2, 0)))
+
+  @ignore_gmap_warning()
+  @with_mesh([('x', 2), ('y', 3)])
+  def testNestedXMapMesh(self):
+    @partial(xmap, in_axes=[A({'a': 1})], out_axes=[A({'a': 0})],
+             schedule=[('a', 'y')])
+    def f(x):
+      y = x * 2
+      @partial(xmap, in_axes=[A({'b': 0})], out_axes=[A({'b': 1})],
+               schedule=[('b', 'x')])
+      def h(y):
+        return jnp.sin(y)
+      return h(y)
+    xshape = (2, 3, 5)
+    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    y = f(x)
+    self.assertAllClose(y, jnp.sin(x * 2).transpose((1, 2, 0)))
+    # Make sure the op really ran accros a 2D mesh.
+    self.assertEqual(y.sharding_spec.sharding,
+                     (pxla.Chunked(3), None, None))
+    self.assertEqual(y.sharding_spec.mesh_mapping,
+                     (pxla.Replicated(2), pxla.ShardedAxis(0)))
+
+  @ignore_gmap_warning()
+  @with_mesh([('x', 2)])
+  def testNestedXMapDifferentResources(self):
+    @partial(xmap, in_axes=[A({'a': 0})], out_axes=[A({'a': 0})],
+             schedule=[('a', 'x')])
+    def f(x):
+      with mesh(np.empty((), dtype=np.object), ()):
+        @partial(xmap, in_axes=[A({'b': 0})], out_axes=[A({'b': 0})],
+                 schedule=[('b', 'vectorize')])
+        def h(x):
+          return x
+        return h(x)
+    xshape = (2, 5, 6)
+    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    with self.assertRaisesRegex(RuntimeError,
+                                "Changing the resource environment.*"):
+      f(x)
+
 
 
 if __name__ == '__main__':

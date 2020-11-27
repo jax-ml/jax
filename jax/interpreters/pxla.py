@@ -1366,6 +1366,7 @@ def mesh_sharding_specs(local_axis_sizes, axis_names):
     return ShardingSpec(sharding, mesh_mapping)
   return mk_sharding_spec
 
+
 # ------------------- soft_pmap -------------------
 
 def soft_pmap_impl(fun: lu.WrappedFun, *args, axis_name, axis_size, in_axes, out_axes_thunk):
