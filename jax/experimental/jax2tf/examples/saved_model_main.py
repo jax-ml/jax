@@ -49,8 +49,7 @@ flags.DEFINE_integer("model_version", 1,
                      ("The version number for the SavedModel. Needed for "
                       "serving, larger versions will take precedence"))
 flags.DEFINE_integer("serving_batch_size", 1,
-                     ("For what batch size to prepare the serving signature. "
-                      "Use -1 for batch-polymorphic saving."))
+                     ("For what batch size to prepare the serving signature. "))
 flags.DEFINE_integer("num_epochs", 3, "For how many epochs to train.")
 flags.DEFINE_boolean(
     "generate_model", True,

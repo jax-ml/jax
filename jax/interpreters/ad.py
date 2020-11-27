@@ -21,11 +21,12 @@ from . import partial_eval as pe
 from ..config import config
 from .. import core
 from ..dtypes import dtype, float0
-from ..core import Trace, Tracer, get_aval, call_p, Primitive, Literal
+from ..core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
+                    raise_to_shaped)
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
-from ..abstract_arrays import raise_to_shaped
-from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name, moveaxis
+from ..util import (unzip2, safe_map, safe_zip, partial, split_list, wrap_name,
+                    as_hashable_function)
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
@@ -292,7 +293,24 @@ class JVPTrace(Trace):
     if isinstance(call_primitive, core.MapPrimitive):
       in_axes = params['in_axes']
       tangent_in_axes = [ax for ax, nz in zip(in_axes, nz_tangents) if nz]
-      params = dict(params, in_axes=(*in_axes, *tangent_in_axes))
+      out_axes_thunk = params['out_axes_thunk']
+
+      @lu.transformation_with_aux
+      def populate_outputs(*args, **kwargs):
+        results = yield args, kwargs
+        _, tangents_out = tree_unflatten(out_tree_def(), results)
+        yield results, [type(t) is not Zero for t in tangents_out]
+      f_jvp, nz_tangents_out = populate_outputs(f_jvp)
+      # The new thunk depends deterministically on the old thunk and the wrapped function.
+      # Any caching already has to include the wrapped function as part of the key, so we
+      # only use the previous thunk for equality checks.
+      @as_hashable_function(key=out_axes_thunk)
+      def new_out_axes_thunk():
+        out_axes = out_axes_thunk()
+        return (*out_axes, *(ax for ax, nz in zip(out_axes, nz_tangents_out()) if nz))
+      params = dict(params,
+                    in_axes=(*in_axes, *tangent_in_axes),
+                    out_axes_thunk=new_out_axes_thunk)
     update_params = call_param_updaters.get(call_primitive)
     new_params = update_params(params, nz_tangents) if update_params else params
     result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
@@ -302,16 +320,22 @@ class JVPTrace(Trace):
   def post_process_call(self, call_primitive, out_tracers, params):
     primals, tangents = unzip2((t.primal, t.tangent) for t in out_tracers)
     out, treedef = tree_flatten((primals, tangents))
+    tangents_nz = [type(t) is not Zero for t in tangents]
     del primals, tangents
     main = self.main
     def todo(x):
       primals, tangents = tree_unflatten(treedef, x)
       trace = JVPTrace(main, core.cur_sublevel())
       return map(partial(JVPTracer, trace), primals, tangents)
+    if call_primitive.map_primitive:
+      def out_axes_transform(out_axes):
+        return (*out_axes, *(ax for ax, nz in zip(out_axes, tangents_nz) if nz))
+      todo = (todo, out_axes_transform)
     return out, todo
 
   # The only difference between process_map and process_call is that
-  # the `in_axes` param must be updated; that's handled in process_call.
+  # the `in_axes` and `out_axes_thunk` params must be updated;
+  # that's handled in process_call.
   process_map = process_call
   post_process_map = post_process_call
 
@@ -562,14 +586,26 @@ primitive_transposes[pe.remat_call_p] = remat_transpose
 def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
+  @lu.transformation_with_aux
+  def find_nonzero_results(*args, **kwargs):
+    results = yield args, kwargs
+    yield results, [type(r) is not Zero for r in results]
+  fun, nz_arg_cts = find_nonzero_results(fun)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-  # Preserve axis for primal arguments, skip tangents (represented as undefined primals),
-  # we only support out_axes=0 for now, so hard-code that for each cotangent.
-  new_in_axes = (*[axis for axis, x in zip(params['in_axes'], args)
+  # Preserve axis for primal arguments, skip tangents (represented as undefined primals).
+  in_axes, out_axes = params['in_axes'], params['out_axes']
+  new_in_axes = (*[axis for axis, x in zip(in_axes, args)
                    if not is_undefined_primal(x)],
-                 *[0 for x in ct if type(x) is not Zero])
+                 *[axis for axis, x in zip(out_axes, ct)
+                   if type(x) is not Zero])
+  # The interim strategy we use below (until avals-with-names) only works
+  # when all outputs are mapped.
+  assert all(out_axis is not None for out_axis in out_axes), out_axes
+  def out_axes_thunk():
+    return tuple(axis or 0 for axis, nz in zip(in_axes, nz_arg_cts()) if nz)
   new_params = dict(params, name=wrap_name(params['name'], 'transpose'),
-                    in_axes=new_in_axes)
+                    in_axes=new_in_axes, out_axes_thunk=out_axes_thunk)
+  del new_params['out_axes']
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
     new_params = update_params(new_params, map(is_undefined_primal, args),
@@ -577,7 +613,6 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   out_flat = primitive.bind(fun, *all_args, **new_params)
   arg_cts = tree_unflatten(out_tree(), out_flat)
 
-  in_axes = params['in_axes']
   # The freevars are being fanned out (not mapped). During transpose the
   # dual of fan-out is fan-in-sum. We apply it to the unmapped invars.
   assert len(in_axes) == len(arg_cts)
@@ -585,7 +620,7 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
     return (zero if in_axis is None else
             Zero(core.unmapped_aval(params['axis_size'], in_axis, zero.aval)))
   arg_cts = (unmap_zero(arg_ct, in_axis) if type(arg_ct) is Zero else
-             moveaxis(arg_ct, 0, in_axis) if in_axis is not None else
+             arg_ct if in_axis is not None else
              arg_ct.sum(0)
              for arg_ct, in_axis in zip(arg_cts, in_axes))
   return tuple(arg_cts)

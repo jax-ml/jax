@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import os
 import re
 import traceback
 import unittest
 
 from absl.testing import absltest
 
+import jax
 from jax import grad, jit, vmap
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax._src import traceback_util
+from jax._src import source_info_util
 
 
 from jax.config import config
@@ -48,8 +50,9 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=[]):
         reversed(frame_patterns), reversed(c_tb)):
       fname_pat = re.escape(fname_pat)
       line_pat = re.escape(line_pat)
+      file = re.escape(__file__)
       full_pat = (
-          f'  File "{__file__}", line ' r'[0-9]+'
+          f'  File "{file}", line ' r'[0-9]+'
           f', in {fname_pat}' r'\n\s*' f'{line_pat}')
       test.assertRegex(frame_fmt, full_pat)
 
@@ -144,6 +147,13 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     self.assertIsInstance(e.__cause__, ValueError)
     self.assertIsInstance(e.__cause__.__cause__,
                           traceback_util.FilteredStackTrace)
+
+
+class SourceInfoTest(jtu.JaxTestCase):
+
+  def testJaxPathMatchesSourceInfoPath(self):
+    self.assertEqual(source_info_util._jax_path, os.path.dirname(jax.__file__))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

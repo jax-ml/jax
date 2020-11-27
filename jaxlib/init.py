@@ -13,9 +13,4 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-
-from jax._src.lax.linalg import (
-  lu,
-  lu_pivots_to_permutation,
-  triangular_solve,
-)
+from .version import __version__

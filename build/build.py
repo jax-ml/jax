@@ -43,6 +43,10 @@ else:
 # pylint: enable=g-import-not-at-top
 
 
+def is_windows():
+    return sys.platform.startswith("win32")
+
+
 def shell(cmd):
   output = subprocess.check_output(cmd)
   return output.decode("UTF-8").strip()
@@ -52,7 +56,8 @@ def shell(cmd):
 
 def get_python_bin_path(python_bin_path_flag):
   """Returns the path to the Python interpreter to use."""
-  return python_bin_path_flag or sys.executable
+  path = python_bin_path_flag or sys.executable
+  return path.replace(os.sep, "/")
 
 
 def get_python_version(python_bin_path):
@@ -71,19 +76,24 @@ def check_python_version(python_version):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/2.0.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/3.1.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-2.0.0-linux-x86_64",
+            file="bazel-3.1.0-linux-x86_64",
             sha256=
-            "4df79462c6c3ecdeeee7af99fc269b52ab1aa4828ef3bc359c1837d3fafeeee7"),
+            "753434f4fa730266cf5ce21d1fdd425e1e167dd9347ad3e8adc19e8c0d54edca"),
     "Darwin":
         BazelPackage(
-            file="bazel-2.0.0-darwin-x86_64",
+            file="bazel-3.1.0-darwin-x86_64",
             sha256=
-            "3eca4c96cfda97a9d5f8d3d0dec4155a5cc5ff339b10d3f35213c398bf13881e"),
+            "b7c5b07026eb653d431b7f15c569ecfc36a5f79427e66b5a55cab7ee885927ab"),
+    "Windows":
+        BazelPackage(
+            file="bazel-3.1.0-windows-x86_64.exe",
+            sha256=
+            "776db1f4986dacc3eda143932f00f7529f9ee65c7c1c004414c44aaa6419d0e9"),
 }
 
 
@@ -131,7 +141,7 @@ def download_and_verify_bazel():
     os.chmod(package.file,
              st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-  return "./" + package.file
+  return os.path.join(".", package.file)
 
 
 def get_bazel_path(bazel_path_flag):
@@ -184,7 +194,8 @@ build --python_path="{python_bin_path}"
 build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
 build --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"
 build --distinct_host_configuration=false
-build --copt=-Wno-sign-compare
+build:linux --copt=-Wno-sign-compare
+build:macos --copt=-Wno-sign-compare
 build -c opt
 build:opt --copt=-march=native
 build:opt --host_copt=-march=native
@@ -200,9 +211,12 @@ build --announce_rc
 build --define open_source_build=true
 
 # Disable enabled-by-default TensorFlow features that we don't care about.
-build --define=no_aws_support=true
-build --define=no_gcp_support=true
-build --define=no_hdfs_support=true
+build:linux --define=no_aws_support=true
+build:macos --define=no_aws_support=true
+build:linux --define=no_gcp_support=true
+build:macos --define=no_gcp_support=true
+build:linux --define=no_hdfs_support=true
+build:macos --define=no_hdfs_support=true
 build --define=no_kafka_support=true
 build --define=no_ignite_support=true
 build --define=grpc_no_ares=true
@@ -213,16 +227,54 @@ build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
 build --spawn_strategy=standalone
 build --strategy=Genrule=standalone
 
-build --cxxopt=-std=c++14
-build --host_cxxopt=-std=c++14
+build --enable_platform_specific_config
+
+# Tensorflow uses M_* math constants that only get defined by MSVC headers if
+# _USE_MATH_DEFINES is defined.
+build:windows --copt=/D_USE_MATH_DEFINES
+build:windows --host_copt=/D_USE_MATH_DEFINES
+
+# Make sure to include as little of windows.h as possible
+build:windows --copt=-DWIN32_LEAN_AND_MEAN
+build:windows --host_copt=-DWIN32_LEAN_AND_MEAN
+build:windows --copt=-DNOGDI
+build:windows --host_copt=-DNOGDI
+
+# https://devblogs.microsoft.com/cppblog/announcing-full-support-for-a-c-c-conformant-preprocessor-in-msvc/
+# otherwise, there will be some compiling error due to preprocessing.
+build:windows --copt=/Zc:preprocessor
+
+build:linux --cxxopt=-std=c++14
+build:linux --host_cxxopt=-std=c++14
+
+build:macos --cxxopt=-std=c++14
+build:macos --host_cxxopt=-std=c++14
+
+build:windows --cxxopt=/std:c++14
+build:windows --host_cxxopt=/std:c++14
+
+# Generate PDB files, to generate useful PDBs, in opt compilation_mode
+# --copt /Z7 is needed.
+build:windows --linkopt=/DEBUG
+build:windows --host_linkopt=/DEBUG
+build:windows --linkopt=/OPT:REF
+build:windows --host_linkopt=/OPT:REF
+build:windows --linkopt=/OPT:ICF
+build:windows --host_linkopt=/OPT:ICF
+build:windows --experimental_strict_action_env=true
 
 # Suppress all warning messages.
 build:short_logs --output_filter=DONT_MATCH_ANYTHING
+
+# Workaround for gcc 10+ warnings related to upb.
+# See https://github.com/tensorflow/tensorflow/issues/39467
+build:linux --copt=-Wno-stringop-truncation
 """
 
 
 
-def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None, **kwargs):
+def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None,
+                  cuda_version=None, cudnn_version=None, **kwargs):
   with open("../.bazelrc", "w") as f:
     f.write(BAZELRC_TEMPLATE.format(**kwargs))
     if cuda_toolkit_path:
@@ -231,7 +283,12 @@ def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None, **kwargs):
     if cudnn_install_path:
       f.write("build --action_env CUDNN_INSTALL_PATH=\"{cudnn_install_path}\"\n"
               .format(cudnn_install_path=cudnn_install_path))
-
+    if cuda_version:
+      f.write("build --action_env TF_CUDA_VERSION=\"{cuda_version}\"\n"
+              .format(cuda_version=cuda_version))
+    if cudnn_version:
+      f.write("build --action_env TF_CUDNN_VERSION=\"{cudnn_version}\"\n"
+              .format(cudnn_version=cudnn_version))
 
 BANNER = r"""
      _   _  __  __
@@ -277,8 +334,9 @@ def add_boolean_argument(parser, name, default=False, help_str=None):
 
 
 def main():
+  cwd = os.getcwd()
   parser = argparse.ArgumentParser(
-      description="Builds libjax from source.", epilog=EPILOG)
+      description="Builds jaxlib from source.", epilog=EPILOG)
   parser.add_argument(
       "--bazel_path",
       help="Path to the Bazel binary to use. The default is to find bazel via "
@@ -313,6 +371,14 @@ def main():
       default=None,
       help="Path to CUDNN libraries.")
   parser.add_argument(
+      "--cuda_version",
+      default=None,
+      help="CUDA toolkit version, e.g., 11.1")
+  parser.add_argument(
+      "--cudnn_version",
+      default=None,
+      help="CUDNN version, e.g., 8")
+  parser.add_argument(
       "--cuda_compute_capabilities",
       default="3.5,5.2,6.0,6.1,7.0",
       help="A comma-separated list of CUDA compute capabilities to support.")
@@ -324,9 +390,21 @@ def main():
       "--bazel_options",
       action="append", default=[],
       help="Additional options to pass to bazel.")
+  parser.add_argument(
+      "--output_path",
+      default=os.path.join(cwd, "dist"),
+      help="Directory to which the jaxlib wheel should be written")
   args = parser.parse_args()
 
+  if is_windows() and args.enable_cuda:
+    if args.cuda_version is None:
+      parser.error("--cuda_version is needed for Windows CUDA build.")
+    if args.cudnn_version is None:
+      parser.error("--cudnn_version is needed for Windows CUDA build.")
+
   print(BANNER)
+
+  output_path = os.path.abspath(args.output_path)
   os.chdir(os.path.dirname(__file__ or args.prog) or '.')
 
   # Find a working Bazel.
@@ -352,12 +430,18 @@ def main():
     if cudnn_install_path:
       print("CUDNN library path: {}".format(cudnn_install_path))
     print("CUDA compute capabilities: {}".format(args.cuda_compute_capabilities))
+    if args.cuda_version:
+      print("CUDA version: {}".format(args.cuda_version))
+    if args.cudnn_version:
+      print("CUDNN version: {}".format(args.cudnn_version))
   write_bazelrc(
       python_bin_path=python_bin_path,
       tf_need_cuda=1 if args.enable_cuda else 0,
       cuda_toolkit_path=cuda_toolkit_path,
       cudnn_install_path=cudnn_install_path,
-      cuda_compute_capabilities=args.cuda_compute_capabilities)
+      cuda_compute_capabilities=args.cuda_compute_capabilities,
+      cuda_version=args.cuda_version,
+      cudnn_version=args.cudnn_version)
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   config_args = args.bazel_options
@@ -371,7 +455,8 @@ def main():
     config_args += ["--define=xla_python_enable_gpu=true"]
   command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] + config_args +
-    [":install_xla_in_source_tree", os.getcwd()])
+    [":build_wheel", "--",
+    f"--output_path={output_path}"])
   print(" ".join(command))
   shell(command)
   shell([bazel_path, "shutdown"])

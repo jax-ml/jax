@@ -65,13 +65,6 @@ pytype_library(
 )
 
 pytype_library(
-    name = "optix",
-    srcs = ["experimental/optix.py"],
-    srcs_version = "PY3",
-    deps = [":jax"],
-)
-
-pytype_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
     srcs_version = "PY3",

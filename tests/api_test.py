@@ -23,6 +23,7 @@ import types
 import warnings
 import weakref
 import functools
+import itertools as it
 
 from absl import logging
 from absl.testing import absltest, parameterized
@@ -1033,8 +1034,8 @@ class APITest(jtu.JaxTestCase):
   def test_devicearray_delete(self):
     x = device_put(1.)
     x.delete()
-    self.assertRaisesRegex(ValueError, "DeviceArray has been deleted.",
-                            lambda: repr(x))
+    self.assertRaisesRegex(RuntimeError, "DeviceArray has been deleted.",
+                           lambda: repr(x))
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
@@ -1542,9 +1543,13 @@ class APITest(jtu.JaxTestCase):
         assert len(w) == prev_len
 
     check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
-                  lambda: jnp.array([1, 2, 3], dtype="float32"),)
+                  lambda: jnp.array([1, 2, 3], dtype="float32"))
+    check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
+                  lambda: jnp.array([1, 2, 3], dtype=float))
     check_warning(lambda: jnp.ones(3, dtype=np.float64),
                   lambda: jnp.ones(3))
+    check_warning(lambda: jnp.ones(3, dtype=np.float64),
+                  lambda: jnp.ones(3, dtype=float))
     check_warning(lambda: jnp.ones_like(3, dtype=np.int64),
                   lambda: jnp.ones_like(3, dtype=np.int32))
     check_warning(lambda: jnp.zeros(3, dtype="int64"),
@@ -1563,6 +1568,10 @@ class APITest(jtu.JaxTestCase):
                   lambda: jnp.linspace(0, 3, dtype=np.float32))
     check_warning(lambda: jnp.tri(2, dtype="float64"),
                   lambda: jnp.tri(2, dtype="float32"))
+    check_warning(lambda: jnp.arange(1).astype("float64"),
+                  lambda: jnp.arange(1).astype(float))
+    check_warning(lambda: jnp.arange(1.0).astype("int64"),
+                  lambda: jnp.arange(1.0).astype(int))
 
   def test_vmap_preserves_docstr(self):
     def superfun(a):
@@ -1716,21 +1725,28 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
   def test_pmap_global_cache(self):
-    def f(x):
+    def f(x, y):
       assert python_should_be_executing
-      return x
+      return x, y
 
-    x = np.ones(1)
-
-    python_should_be_executing = True
-    api.pmap(f)(x)
-    python_should_be_executing = False
-    api.pmap(f)(x)
+    x = np.ones((1, 1, 1))
 
     python_should_be_executing = True
-    api.pmap(f, 'i')(x)
+    api.pmap(f)(x, x)
     python_should_be_executing = False
-    api.pmap(f, 'i')(x)
+    api.pmap(f)(x, x)
+
+    python_should_be_executing = True
+    api.pmap(f, 'i')(x, x)
+    python_should_be_executing = False
+    api.pmap(f, 'i')(x, x)
+
+    if config.omnistaging_enabled:
+      for x_in, y_in, x_out, y_out in it.product(*((0, 1, 2) for _ in range(4))):
+        python_should_be_executing = True
+        api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
+        python_should_be_executing = False
+        api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
 
   def test_device_array_repr(self):
     rep = repr(jnp.ones(()) + 1.)
@@ -4593,6 +4609,58 @@ class BufferDonationTest(jtu.JaxTestCase):
     else:
       for buffer in x.device_buffers:
         self.assertEqual(buffer.is_deleted(), deleted)
+
+
+class NamedCallTest(jtu.JaxTestCase):
+
+  def test_default_name(self):
+
+    @api.named_call
+    def my_test_function(x):
+      return x**2
+
+    @jax.jit
+    def f(x):
+      return my_test_function(x)
+
+    c = jax.xla_computation(f)(2)
+    self.assertIn("my_test_function", c.as_hlo_text())
+
+  def test_non_jaxtype_arg(self):
+    # For the test to fail without the invalid JaxType filter we need to pass
+    # in a valid JaxType that forces the invalid Jaxtype to be raised to an
+    # abstract value.
+    def f(not_a_jaxtype, a_jaxtype):
+      # then Jax needs to try and evaluate the abstractified non-JaxType
+      if not_a_jaxtype:
+        return a_jaxtype
+      return 0
+
+    f = api.named_call(f, name="test")
+    out = jax.jit(f, static_argnums=(0,))("not a Jaxtype", 1)
+    self.assertEqual(out, 1)
+
+  @parameterized.parameters(jax.jit, jax.grad, jax.vmap, jax.remat)
+  def test_jax_transforms(self, transform):
+    f = jnp.sum
+    x = jnp.array([1.])
+
+    unnamed_out = transform(f)(x)
+    named_out = transform(api.named_call(f, name="test"))(x)
+
+    self.assertEqual(unnamed_out, named_out)
+
+  def test_static_argnums(self):
+    f = api.named_call(lambda x, y: y if x else None, name="test")
+    f = jax.jit(f, static_argnums=(0,))
+    out = f(True, 5)
+    self.assertEqual(out, 5)
+
+  def test_partial_eval(self):
+    f = api.named_call(lambda x, y: y if x else None, name="test")
+    f = jax.jit(functools.partial(f, True))
+    out = f(5)
+    self.assertEqual(out, 5)
 
 
 if __name__ == '__main__':

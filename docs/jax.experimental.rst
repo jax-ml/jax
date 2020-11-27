@@ -1,6 +1,9 @@
 jax.experimental package
 ========================
 
+``jax.experimental.optix`` has been moved into its own Python package
+(``optax``).
+
 .. toctree::
     :maxdepth: 1
 

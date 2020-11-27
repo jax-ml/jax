@@ -26,6 +26,7 @@ from absl import testing
 import jax
 from jax import config
 from jax import dtypes
+from jax import ad_util
 from jax import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
@@ -178,6 +179,33 @@ lax_unary_elementwise = tuple(
   ]
 )
 
+_LAX_COMPARATORS = (
+  lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
+
+def _make_comparator_harness(name, *, dtype=np.float32, op=lax.eq, lhs_shape=(),
+                             rhs_shape=()):
+  return Harness(f"{name}_op={op.__name__}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
+                 op,
+                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype)],
+                 lhs_shape=lhs_shape,
+                 rhs_shape=rhs_shape,
+                 dtype=dtype)
+
+lax_comparators = tuple( # Validate dtypes
+  _make_comparator_harness("dtypes", dtype=dtype, op=op)
+  for op in _LAX_COMPARATORS
+  for dtype in (jtu.dtypes.all if op in [lax.eq, lax.ne] else
+                set(jtu.dtypes.all) - set(jtu.dtypes.complex))
+) + tuple( # Validate broadcasting behavior
+  _make_comparator_harness("broadcasting", lhs_shape=lhs_shape,
+                           rhs_shape=rhs_shape, op=op)
+  for op in _LAX_COMPARATORS
+  for lhs_shape, rhs_shape in [
+    ((), (2, 3)),     # broadcast scalar
+    ((1, 2), (3, 2)), # broadcast along specific axis
+  ]
+)
+
 lax_bitwise_not = tuple(
   [Harness(f"{jtu.dtype_str(dtype)}",
           lax.bitwise_not,
@@ -197,6 +225,16 @@ lax_bitwise_not = tuple(
   for arg in [
     np.array([True, False])
   ]]
+)
+
+lax_zeros_like = tuple(
+  Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+          ad_util.zeros_like_p.bind,
+          [RandArg(shape, dtype)],
+          shape=shape,
+          dtype=dtype)
+  for shape in [(3, 4, 5)]
+  for dtype in jtu.dtypes.all
 )
 
 lax_population_count = tuple(
@@ -225,6 +263,66 @@ def _get_min_identity(dtype):
     return np.array(dtypes.iinfo(dtype).max, dtype)
   elif dtypes.issubdtype(dtype, np.bool_):
     return np.array(True, np.bool_)
+
+def _make_argminmax_harness(name, *, shape=(15,), dtype=jnp.float32, axes=(0,),
+                            index_dtype=np.int32, prim=lax.argmin_p,
+                            arr=None):
+  arr = arr if arr is not None else RandArg(shape, dtype)
+  dtype, shape = arr.dtype, arr.shape
+  index_dtype = dtypes.canonicalize_dtype(index_dtype)
+  return Harness(f"{name}_prim={prim.name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axes={axes}_indexdtype={index_dtype}",
+                 lambda arg: prim.bind(arg, axes=axes, index_dtype=index_dtype),
+                 [arr],
+                 shape=shape,
+                 dtype=dtype,
+                 axes=axes,
+                 index_dtype=index_dtype,
+                 prim=prim)
+
+lax_argminmax = tuple( # Validate dtypes for each primitive
+  _make_argminmax_harness("dtypes", dtype=dtype, prim=prim)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex)
+  for prim in [lax.argmin_p, lax.argmax_p]
+) + tuple( # Validate axes for each primitive
+  _make_argminmax_harness("axes", shape=shape, axes=axes, prim=prim)
+  for shape, axes in [
+    ((18, 12), (1,)), # non major axis
+  ]
+  for prim in [lax.argmin_p, lax.argmax_p]
+) + tuple( # Validate index dtype for each primitive
+  _make_argminmax_harness("index_dtype", index_dtype=index_dtype, prim=prim)
+  for index_dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned
+  for prim in [lax.argmin_p, lax.argmax_p]
+)
+# TODO(bchetioui): the below documents a limitation of argmin and argmax when a
+# dimension of the input is too large. However, it is not categorizable as it
+# seems that the converter fails before reaching the actual primitive call. This
+# suggests that we may need to harden the converter to handle inputs this big.
+# + tuple( # Document limitation in case of too large axis
+#  _make_argminmax_harness("overflow_axis", prim=prim,
+#                          arr=np.ones((2**31,), dtype=np.uint8))
+#  for prim in [lax.argmin_p, lax.argmax_p]
+#)
+
+def _make_iota_harness(name, *, shape=(2, 3), dtype=np.float32, dimension=0):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimension={dimension}",
+                 lambda dtype, shape, dim: (
+                   lax.iota_p.bind(dtype=dtype, shape=shape, dimension=dim)),
+                 [StaticArg(dtype), StaticArg(shape), StaticArg(dimension)],
+                 shape=shape,
+                 dtype=dtype,
+                 dimension=dimension)
+
+lax_iota = tuple( # Validate dtypes
+  _make_iota_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+) + tuple( # Validate broadcasting
+  _make_iota_harness("broadcasting", shape=shape, dimension=dimension)
+  for shape, dimension in [
+    ((4, 8, 1, 1), 1), # broadcasting along non-major dimension
+    ((4, 8, 1, 1), 2), # broadcasting along dimension == 1
+  ]
+)
 
 lax_add_mul = tuple(
   Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
@@ -275,6 +373,48 @@ lax_min_max = tuple(
      np.array([np.nan, np.nan], dtype=dtype)),
     (np.array([-np.inf, -np.inf], dtype=dtype),
      np.array([np.nan, np.nan], dtype=dtype))
+  ]
+)
+
+def _make_div_rem_harness(name, *, shapes=((2,), (2,)), dtype=np.float32,
+                          arrs=(None, None), prim=lax.div_p):
+  lhs, rhs = arrs
+  lhs = RandArg(shapes[0], dtype) if lhs is None else lhs
+  rhs = RandArg(shapes[1], dtype) if rhs is None else rhs
+  return Harness(f"{name}_prim={prim.name}_lhs={jtu.format_shape_dtype_string(lhs.shape, lhs.dtype)}_rhs={jtu.format_shape_dtype_string(rhs.shape, rhs.dtype)}",
+                 prim.bind,
+                 [lhs, rhs],
+                 rng_factory=jtu.rand_nonzero,
+                 lhs=lhs,
+                 rhs=rhs,
+                 prim=prim)
+
+lax_div_rem = tuple( # Validate dtypes
+  _make_div_rem_harness("dtypes", dtype=dtype, prim=prim)
+  for prim in [lax.div_p, lax.rem_p]
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean) - (
+      set() if prim is lax.div_p else set(jtu.dtypes.complex))
+) + tuple( # Validate broadcasting
+  _make_div_rem_harness("broadcast", shapes=shapes, prim=prim)
+  for prim in [lax.div_p, lax.rem_p]
+  for shapes in [
+    ((2, 1, 3), (2, 4, 3)), # broadcast dividend
+    ((2, 4, 3), (2, 1, 3)), # broadcast divisor
+  ]
+) + tuple( # Validate singularity points
+  _make_div_rem_harness(f"singularity_{name}", arrs=arrs, prim=prim)
+  for prim in [lax.div_p, lax.rem_p]
+  for name, arrs in [
+    ("positive_by_0", (np.ones((2,), dtype=np.float32),
+                       np.zeros((2,), dtype=np.float32))),
+    ("positive_by_0_int32", (np.ones((2,), dtype=np.int32),
+                             np.zeros((2,), dtype=np.int32))),
+    ("negative_by_0", (-np.ones((2,), dtype=np.float32),
+                       np.zeros((2,), dtype=np.float32))),
+    ("0_by_0", (np.zeros((2,), dtype=np.float32),
+                np.zeros((2,), dtype=np.float32))),
+    ("inf_by_inf", (np.array([np.inf], dtype=np.float32),
+                    np.array([np.inf], dtype=np.float32))),
   ]
 )
 
@@ -516,6 +656,46 @@ lax_pad = tuple(
     [(0, 0, 0), (-1, -1, 0)],  # negative padding
     [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
     [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
+  ]
+)
+
+def _make_select_harness(name, *, shape_pred=(2, 3), shape_args=(2, 3),
+                         dtype=np.float32):
+  return Harness(f"{name}_shapepred={jtu.format_shape_dtype_string(shape_pred, np.bool_)}_shapeargs={jtu.format_shape_dtype_string(shape_args, dtype)}",
+                 lax.select,
+                 [RandArg(shape_pred, np.bool_), RandArg(shape_args, dtype),
+                  RandArg(shape_args, dtype)],
+                 shape_pred=shape_pred,
+                 shape_args=shape_args,
+                 dtype=dtype)
+
+lax_select = tuple( # Validate dtypes
+  _make_select_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate shapes
+  _make_select_harness("shapes", shape_pred=shape_pred, shape_args=shape_args)
+  for shape_pred, shape_args in [
+    ((), (18,)), # scalar pred
+  ]
+)
+
+def _make_transpose_harness(name, *, shape=(2, 3), permutation=(1, 0),
+                            dtype=np.float32):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_permutation={permutation}".replace(' ', ''),
+                 lambda x: lax.transpose_p.bind(x, permutation=permutation),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 permutation=permutation)
+
+lax_transpose = tuple( # Validate dtypes
+  _make_transpose_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate permutations
+  _make_transpose_harness("permutations", shape=shape, permutation=permutation)
+  for shape, permutation in [
+    ((2, 3, 4), (0, 1, 2)), # identity
+    ((2, 3, 4), (1, 2, 0)), # transposition
   ]
 )
 
@@ -874,6 +1054,24 @@ lax_slice = tuple(
   for dtype in [np.float32]
 )
 
+def _make_complex_harness(name, *, shapes=((3, 4), (3, 4)), dtype=np.float32):
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
+                 lax.complex_p.bind,
+                 [RandArg(shapes[0], dtype), RandArg(shapes[1], dtype)],
+                 shapes=shapes,
+                 dtype=dtype)
+
+lax_complex = tuple( # Validate dtypes
+  _make_complex_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.floating
+) + tuple( # Validate broadcasting
+  _make_complex_harness("broadcast", shapes=shapes)
+  for shapes in [
+    ((3, 2), (3, 1)), # broadcast imaginary part
+    ((3, 1), (3, 2)), # broadcast real part
+  ]
+)
+
 def _make_conj_harness(name, *, shape=(3, 4), dtype=np.float32, **kwargs):
   return Harness(f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}_kwargs={kwargs}".replace(" ", ""),
                  lambda x: lax.conj_p.bind(x, **kwargs),
@@ -890,6 +1088,21 @@ lax_conj = tuple( # Validate dtypes
   for kwargs in [
     { "_input_dtype": np.float32 },             # expected kwarg for ad
   ]
+)
+
+def _make_real_imag_harness(name, *, shape=(2, 3), dtype=np.float32,
+                            prim=lax.real_p):
+  return Harness(f"{name}_prim={prim.name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+                 prim.bind,
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 prim=prim)
+
+lax_real_imag = tuple( # Validate dtypes
+  _make_real_imag_harness("dtypes", dtype=dtype, prim=prim)
+  for prim in [lax.real_p, lax.imag_p]
+  for dtype in jtu.dtypes.complex
 )
 
 # Use lax_slice, but (a) make the start_indices dynamic arg, and (b) no strides.
@@ -1162,6 +1375,29 @@ lax_reduce_window = tuple( # Validate dtypes across all execution paths
   ]
 )
 
+def _make_reducer_harness(name, *, prim=lax.reduce_sum_p, shape=(2, 3),
+                          axes=(0,), dtype=np.int32):
+  return Harness(f"{name}_prime={prim.name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+                 lambda arg: prim.bind(arg, axes=axes),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 axes=axes)
+
+lax_reducer = tuple( # Validate dtypes
+  _make_reducer_harness("dtypes", prim=prim, dtype=dtype)
+  for prim in [lax.reduce_sum_p, lax.reduce_prod_p, lax.reduce_max_p,
+               lax.reduce_min_p, lax.reduce_or_p, lax.reduce_and_p]
+  for dtype in {
+    lax.reduce_sum_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
+    lax.reduce_prod_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
+    lax.reduce_max_p: jtu.dtypes.all,
+    lax.reduce_min_p: jtu.dtypes.all,
+    lax.reduce_or_p: jtu.dtypes.boolean,
+    lax.reduce_and_p: jtu.dtypes.boolean
+  }[prim]
+)
+
 random_gamma = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
           jax.jit(jax.random.gamma),
@@ -1179,6 +1415,38 @@ random_split = tuple(
                                np.array([0xFFFFFFFF, 0], dtype=np.uint32),
                                np.array([0, 0xFFFFFFFF], dtype=np.uint32),
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
+)
+
+def _make_clamp_harness(name, *, min_shape=(), operand_shape=(2, 3),
+                        max_shape=(), dtype=np.float32, min_max=None):
+  min_arr, max_arr = (min_max if min_max is not None else
+                      [RandArg(min_shape, dtype), RandArg(max_shape, dtype)])
+  return Harness(f"{name}_min={jtu.format_shape_dtype_string(min_arr.shape, min_arr.dtype)}_operand={jtu.format_shape_dtype_string(operand_shape, dtype)}_max={jtu.format_shape_dtype_string(max_arr.shape, max_arr.dtype)}",
+                 lax.clamp,
+                 [min_arr, RandArg(operand_shape, dtype), max_arr],
+                 min_shape=min_arr.shape,
+                 operand_shape=operand_shape,
+                 max_shape=max_arr.shape,
+                 dtype=dtype)
+
+lax_clamp = tuple( # Validate dtypes
+  _make_clamp_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex + [np.bool_])
+) + tuple( # Validate broadcasting of min/max arrays
+  _make_clamp_harness("broadcasting", min_shape=min_shape, max_shape=max_shape,
+                      operand_shape=operand_shape)
+  for min_shape, operand_shape, max_shape in [
+    ((), (2, 3), (2, 3)),     # no broadcasting for max
+    ((2, 3), (2, 3), ()),     # no broadcasting for min
+    ((2, 3), (2, 3), (2, 3)), # no broadcasting
+  ]
+) + tuple( # Validate clamping when minval > maxval, and when minval < maxval
+  _make_clamp_harness(f"order={is_ordered}", min_max=(min_arr, max_arr),
+                      dtype=np.float32)
+  for is_ordered, min_arr, max_arr in [
+    (False, np.array(4., dtype=np.float32), np.array(1., dtype=np.float32)),
+    (True, np.array(1., dtype=np.float32), np.array(4., dtype=np.float32))
+  ]
 )
 
 def _make_dot_general_harness(
@@ -1229,6 +1497,32 @@ lax_dot_general = tuple( # Validate dtypes and precision
     ((4,), (4, 4), (((0,), (0,)), ((), ()))), # (1, 4) -> (4,)
     ((4, 4), (4,), (((1,), (0,)), ((), ()))), # (4, 1) -> (4,)
     ((4,), (4,), (((0,), (0,)), ((), ()))),   # (1, 1) -> ()
+  ]
+)
+
+def _make_concatenate_harness(name, *, shapes=[(2, 3), (2, 3)], dimension=0,
+                              dtype=np.float32):
+  shapes_str = '_'.join(jtu.format_shape_dtype_string(s, dtype) for s in shapes)
+  return Harness(f"{name}_shapes={shapes_str}_dimension={dimension}",
+                 lambda *args: lax.concatenate_p.bind(*args,
+                                                      dimension=dimension),
+                 [RandArg(shape, dtype) for shape in shapes],
+                 shapes=shapes,
+                 dtype=dtype,
+                 dimension=dimension)
+
+lax_concatenate = tuple( # Validate dtypes
+  _make_concatenate_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate dimension
+  _make_concatenate_harness("dimension", dimension=dimension)
+  for dimension in [
+    1, # non-major axis
+  ]
+) + tuple( # Validate > 2 operands
+  _make_concatenate_harness("nb_operands", shapes=shapes)
+  for shapes in [
+    [(2, 3, 4), (3, 3, 4), (4, 3, 4)], # 3 operands
   ]
 )
 

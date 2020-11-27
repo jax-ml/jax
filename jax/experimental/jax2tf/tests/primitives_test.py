@@ -111,6 +111,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_pad(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_select)
+  def test_select(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_transpose)
+  def test_transpose(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_control_flow_cumreduce)
   def test_cumreduce(self, harness: primitive_harness.Harness):
     f_jax, dtype = harness.params["f_jax"], harness.params["dtype"]
@@ -562,12 +570,28 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, arg, custom_assert=custom_assert,
                            atol=atol)
 
+  @primitive_harness.parameterized(primitive_harness.lax_comparators)
+  def test_comparators(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_bitwise_not)
   def test_bitwise_not(self, harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_zeros_like)
+  def test_zeros_like(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_population_count)
   def test_population_count(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_argminmax)
+  def test_argminmax(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_iota)
+  def test_iota(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_add_mul)
@@ -586,6 +610,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            custom_assert=custom_assert,
                            always_custom_assert=always_custom_assert)
+
+  @primitive_harness.parameterized(primitive_harness.lax_div_rem)
+  def test_div(self, harness: primitive_harness.Harness):
+    dividend, divisor = harness.dyn_args_maker(self.rng())
+    prim = harness.params["prim"]
+    if dtypes.issubdtype(dividend.dtype, np.integer):
+      if (prim is lax.div_p and
+          np.any(divisor == np.array(0, dtype=divisor.dtype))):
+        raise unittest.SkipTest(
+            "Divisor contains a 0, and TF returns an error value in compiled "
+            "mode instead of failing like in eager and graph mode for dtype "
+            f"{divisor.dtype}")
+    self.ConvertAndCompare(harness.dyn_fun, dividend, divisor)
 
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
@@ -687,8 +724,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     else:
       self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_complex)
+  def test_complex(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_conj)
   def test_conj(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_real_imag)
+  def test_real_imag(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
@@ -737,6 +782,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         tol = 0.01
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=tol, rtol=tol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_clamp)
+  def test_clamp(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_concatenate)
+  def test_concatenate(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_conv_general_dilated)
   def test_conv_general_dilated(self, harness: primitive_harness.Harness):
@@ -848,6 +901,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
 
+  @primitive_harness.parameterized(primitive_harness.lax_reducer)
+  def test_reducers(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.random_gamma)
   def test_random_gamma(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
@@ -856,11 +913,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.random_split)
   def test_random_split(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-
-  def test_zeros_like(self):
-    v = np.float32(2.)
-    f_jax = jax.ad_util.zeros_like_jaxval
-    self.ConvertAndCompare(f_jax, v)
 
   def test_stop_gradient(self):
     f = jax2tf.convert(lax.stop_gradient)

@@ -288,7 +288,7 @@ def one_hot(x, num_classes, *, dtype=jnp.float64):
   x = jnp.asarray(x)
   lhs = x[..., jnp.newaxis]
   rhs = lax.broadcast_to_rank(jnp.arange(num_classes, dtype=x.dtype), lhs.ndim)
-  return jnp.array(lhs == rhs, dtype=dtype)
+  return jnp.asarray(lhs == rhs, dtype=dtype)
 
 def relu6(x):
   r"""Rectified Linear Unit 6 activation function.

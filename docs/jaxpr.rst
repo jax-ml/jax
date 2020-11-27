@@ -448,14 +448,16 @@ captured using the ``xla_pmap`` primitive. Consider this example
                                                            shape=(1,) ] 1.0
                                      e = add c d
                                      f = psum[ axis_index_groups=None
-                                               axis_name=rows ] b
+                                               axis_name=('rows',) ] b
                                      g = div e f
                                  in (g,) }
                     devices=None
                     donated_invars=(False, False)
+                    global_arg_shapes=(None,)
                     global_axis_size=None
                     in_axes=(None, 0)
-                    name=inner ] b a
+                    name=inner
+                    out_axes=(0,) ] b a
   in (c,) }
 
 The ``xla_pmap`` primitive specifies the name of the axis (parameter ``rows``)

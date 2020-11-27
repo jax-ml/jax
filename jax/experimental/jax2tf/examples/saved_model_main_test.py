@@ -42,7 +42,7 @@ class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
           model=model,
           serving_batch_size=serving_batch_size)
       for model in ["mnist_pure_jax", "mnist_flax"]
-      for serving_batch_size in [1, -1])
+      for serving_batch_size in [1])
   def test_train_and_save_full(self,
                                model="mnist_pure_jax",
                                serving_batch_size=1):

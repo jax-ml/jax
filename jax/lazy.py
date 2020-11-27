@@ -16,11 +16,11 @@
 from collections import namedtuple
 import functools
 import operator as op
-from typing import Any, Callable, Optional, Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 
-from .util import safe_map, safe_zip, unzip2, subvals
+from .util import safe_map, safe_zip, unzip2, subvals, taggedtuple
 from .lib import xla_bridge as xb
 from .lib import xla_client as xc
 
@@ -31,21 +31,6 @@ xops = xc.ops
 
 map = safe_map
 zip = safe_zip
-
-
-### util
-
-# TODO(mattjj): replace with dataclass when Python 2 support is removed
-def taggedtuple(name, fields) -> Callable[..., Any]:
-  """Lightweight version of namedtuple where equality depends on the type."""
-  def __new__(cls, *xs):
-    return tuple.__new__(cls, (cls,) + xs)
-  def __str__(self):
-    return '{}{}'.format(name, tuple.__str__(self[1:]))
-  class_namespace = {'__new__' : __new__, '__str__': __str__}
-  for i, f in enumerate(fields):
-    class_namespace[f] = property(op.itemgetter(i+1))  # type: ignore
-  return type(name, (tuple,), class_namespace)
 
 
 ### lazy sublanguage
@@ -143,8 +128,8 @@ def transpose(lexpr: LazyExpr, perm: Sequence[int]):
 def is_constant(lexpr: Optional[LazyExpr]):
   return lexpr is not None and type(lexpr.input) is not ArrayVar
 
-def is_trivial(lexpr: LazyExpr) -> bool:
-  return (type(lexpr.input) is ArrayVar and
+def is_trivial(lexpr: Optional[LazyExpr]) -> bool:
+  return lexpr is None or (type(lexpr.input) is ArrayVar and
           lexpr.dims == tuple(range(len(lexpr.shape))))
 
 
@@ -156,7 +141,7 @@ def eval_lexpr(lexpr, x):
   Returns:
     An ndarray representing the value of the lazy expression.
   """
-  if is_trivial(lexpr):
+  if lexpr is None or is_trivial(lexpr):
     return x
 
   input_, shape, dims = lexpr

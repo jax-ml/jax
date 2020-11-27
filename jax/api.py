@@ -50,7 +50,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf, Partial)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod, split_list,
-                   extend_name_stack, wrap_name, cache, wraps)
+                   extend_name_stack, wrap_name, cache, wraps, HashableFunction)
 from .lib import jax_jit
 from .lib import version
 from .lib import xla_bridge as xb
@@ -58,7 +58,7 @@ from .lib import xla_client as xc
 # Unused imports to be exported
 from .lib.xla_bridge import (device_count, local_device_count, devices,
                              local_devices, host_id, host_ids, host_count)
-from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
+from .core import ConcreteArray, ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla
@@ -564,11 +564,11 @@ def xla_computation(fun: Callable,
 
   def make_axis_env(nreps):
     if axis_env is None:
-      return xla.AxisEnv(nreps, (), (), None)
+      return xla.AxisEnv(nreps, (), ())
     else:
       nreps = nreps * prod(size for name, size in axis_env)
       names, sizes = unzip2(axis_env)
-      return xla.AxisEnv(nreps, names, sizes, None)
+      return xla.AxisEnv(nreps, names, sizes)
 
   def abstractify(x):
     return ShapedArray(np.shape(x), dtypes.result_type(x))
@@ -1235,11 +1235,13 @@ def _mapped_axis_size(tree, vals, dims, name):
       raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from None
 
 def pmap(fun: Callable[..., T],
-         axis_name: Optional[AxisName] = None, *, in_axes=0,
+         axis_name: Optional[AxisName] = None, *, in_axes=0, out_axes=0,
          static_broadcasted_argnums: Union[int, Iterable[int]] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None,
-         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable[..., T]:
+         donate_argnums: Union[int, Iterable[int]] = (),
+         global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None
+         ) -> Callable[..., T]:
   """Parallel map with support for collective operations.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data (SPMD)
@@ -1290,6 +1292,10 @@ def pmap(fun: Callable[..., T],
       axis so that parallel collectives can be applied.
     in_axes: A non-negative integer, None, or nested Python container thereof
       that specifies which axes in the input to map over (see :py:func:`vmap`).
+    out_axes: A non-negative integer, None, or nested Python container thereof
+      indicating where the mapped axis should appear in the output. All outputs
+      with a mapped axis must have a non-None ``out_axes`` specification
+      (see :py:func:`vmap`).
     static_broadcasted_argnums: An int or collection of ints specifying which
       positional arguments to treat as static (compile-time constant).
       Operations that only depend on static arguments will be constant-folded.
@@ -1315,6 +1321,11 @@ def pmap(fun: Callable[..., T],
       for example recycling one of your input buffers to store a result. You
       should not re-use buffers that you donate to a computation, JAX will raise
       an error if you try to.
+    global_arg_shapes: Optional, must be set when using pmap(sharded_jit) and
+      the partitioned values span multiple processes. The global cross-process
+      per-replica shape of each argument, i.e. does not include the leading
+      pmapped dimension. Can be None for replicated arguments. This API is
+      likely to change in the future.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -1463,27 +1474,61 @@ def pmap(fun: Callable[..., T],
       dyn_argnums = [i for i in range(len(args))
                      if i not in static_broadcasted_tuple]
       f, dyn_args = argnums_partial(f, dyn_argnums, args)
+
       if isinstance(in_axes, tuple):
         dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
       else:
         dyn_in_axes = in_axes
+        dyn_global_arg_shapes = global_arg_shapes
+
+      if isinstance(global_arg_shapes, tuple):
+        dyn_global_arg_shapes = tuple(global_arg_shapes[i] for i in dyn_argnums)
+      else:
+        dyn_global_arg_shapes = global_arg_shapes
     else:
       dyn_args, dyn_in_axes = args, in_axes
+      dyn_global_arg_shapes = global_arg_shapes
     args, in_tree = tree_flatten((dyn_args, kwargs))
+
     if donate_tuple:
       donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
     else:
       donated_invars = (False,) * len(args)
     in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
+    global_arg_shapes_flat = flatten_axes("pmap global_arg_shapes", in_tree,
+                                          (dyn_global_arg_shapes, None))
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
+    if not config.omnistaging_enabled and out_axes != 0:
+      raise ValueError("out_axes supported only with omnistaging enabled")
+    if not config.omnistaging_enabled and any(in_axis not in {None, 0} for in_axis in in_axes_flat):
+      raise ValueError("in_axes other than 0 and None only supported with omnistaging enabled")
+    if any(out_axis is None for out_axis in tree_flatten(out_axes)):
+      raise NotImplementedError("None out_axes in pmap are not supported yet")
+    # NOTE: We don't put out_tree() in the closure, because it's (1) non-hashable,
+    #       (2) depends deterministically on flat_fun (at least that's the assumption
+    #       that we make).
+    if out_axes == 0:
+      # TODO(apaszke,mattjj): flatten_axes assumes that the output pytree is
+      #   functorial (i.e. it can hold leaves of any type), but some user code
+      #   breaks this assumption. This is a stop-gap solution to keep the old
+      #   out_axes == 0 path working as we look for a better solution.
+      out_axes_thunk = HashableFunction(
+        lambda: (0,) * out_tree().num_leaves,
+        key=out_axes)
+    else:
+      out_axes_thunk = HashableFunction(
+        lambda: tuple(flatten_axes("pmap out_axes", out_tree(), out_axes)),
+        key=out_axes)
     out = pxla.xla_pmap(
         flat_fun, *args, backend=backend, axis_name=axis_name,
         axis_size=local_axis_size, global_axis_size=axis_size,
         devices=None if devices is None else tuple(devices),
         in_axes=tuple(in_axes_flat),
-        name=flat_fun.__name__, donated_invars=tuple(donated_invars))
+        out_axes_thunk=out_axes_thunk,
+        name=flat_fun.__name__, donated_invars=tuple(donated_invars),
+        global_arg_shapes=tuple(global_arg_shapes_flat))
     return tree_unflatten(out_tree(), out)
 
   return f_pmapped
@@ -1509,8 +1554,13 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
     axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
     for arg in args_flat: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
+    # See note about out_axes_thunk in pmap for the explanation of why we choose this key
+    out_axes_thunk = HashableFunction(
+      lambda: tuple(flatten_axes("soft_pmap out_axes", out_tree(), 0)),
+      key=())
     outs = pxla.soft_pmap(flat_fun, *args_flat, axis_name=axis_name,
-                          axis_size=axis_size, in_axes=tuple(in_axes_flat))
+                          axis_size=axis_size, in_axes=tuple(in_axes_flat),
+                          out_axes_thunk=out_axes_thunk)
     return tree_unflatten(out_tree(), outs)
   return f_pmapped
 
@@ -2275,6 +2325,48 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   return fun_remat
 remat = checkpoint
 
+
+def named_call(
+    fun: Callable[..., Any],
+    *,
+    name: Optional[str] = None,
+) -> Callable[..., Any]:
+  """Adds a user specified name to a function when staging out JAX computations.
+
+  When staging out computations for just-in-time compilation to XLA (or other
+  backends such as TensorFlow) JAX runs your Python program but by default does
+  not preserve any of the function names or other metadata associated with it.
+  This can make debugging the staged out (and/or compiled) representation of
+  your program complicated because there is limited context information for each
+  operation being executed.
+
+  `named_call` tells JAX to stage the given function out as a subcomputation
+  with a specific name. When the staged out program is compiled with XLA these
+  named subcomputations are preserved and show up in debugging utilities like
+  the TensorFlow Profiler in TensorBoard. Names are also preserved when staging
+  out JAX programs to TensorFlow using :func:`experimental.jax2tf.convert`.
+
+  Args:
+    fun: Function to be wrapped. This can be any Callable.
+    name: Optional. The prefix to use to name all sub computations created
+      within the name scope. Use the fun.__name__ if not specified.
+
+  Returns:
+    A version of `fun` that is wrapped in a name_scope.
+  """
+  if name is None:
+    name = fun.__name__
+
+  _, in_tree = tree_flatten(())
+
+  @functools.wraps(fun)
+  def named_f(*args, **kwargs):
+    lu_f = lu.wrap_init(lambda: fun(*args, **kwargs))
+    flat_f, out_tree = flatten_fun_nokwargs(lu_f, in_tree)
+    out_flat = core.named_call_p.bind(flat_f, name=name)
+    return tree_unflatten(out_tree(), out_flat)
+
+  return named_f
 
 # TODO(mattjj): delete everything below here (deprecated custom_transforms)
 

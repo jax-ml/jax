@@ -20,13 +20,12 @@ import textwrap
 import operator
 from typing import Tuple, Union, cast
 
-from jax import jit, vmap, custom_jvp
+from jax import jit, custom_jvp
 from jax import lax
 from jax import ops
 from jax._src.lax import linalg as lax_linalg
 from jax import dtypes
 from .util import _wraps
-from .vectorize import vectorize
 from . import lax_numpy as jnp
 from jax.util import canonicalize_axis
 
@@ -140,10 +139,13 @@ def slogdet(a):
 def _slogdet_jvp(primals, tangents):
   x, = primals
   g, = tangents
-  if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
-    raise NotImplementedError  # TODO(pfau): make this work for complex types
   sign, ans = slogdet(x)
-  sign_dot, ans_dot = jnp.zeros_like(sign), jnp.trace(solve(x, g), axis1=-1, axis2=-2)
+  ans_dot = jnp.trace(solve(x, g), axis1=-1, axis2=-2)
+  if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
+    sign_dot = (ans_dot - np.real(ans_dot)) * sign
+    ans_dot = np.real(ans_dot)
+  else:
+    sign_dot = jnp.zeros_like(sign)
   return (sign, ans), (sign_dot, ans_dot)
 
 
@@ -212,7 +214,7 @@ def _cofactor_solve(a, b):
   # Compute (partial) determinant, ignoring last diagonal of LU
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   parity = jnp.count_nonzero(pivots != jnp.arange(a_shape[-1]), axis=-1)
-  sign = jnp.array(-2 * (parity % 2) + 1, dtype=dtype)
+  sign = jnp.asarray(-2 * (parity % 2) + 1, dtype=dtype)
   # partial_det[:, -1] contains the full determinant and
   # partial_det[:, -2] contains det(u) / u_{nn}.
   partial_det = jnp.cumprod(diag, axis=-1) * sign[..., None]
@@ -441,39 +443,11 @@ def qr(a, mode="reduced"):
   return q, r
 
 
-def _check_solve_shapes(a, b):
-  if not (a.ndim >= 2 and a.shape[-1] == a.shape[-2] and b.ndim >= 1):
-    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
-           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
-    raise ValueError(msg.format(a.shape, b.shape))
-
-
-@partial(vectorize, signature='(n,m),(m)->(n)')
-def _matvec_multiply(a, b):
-  return jnp.dot(a, b, precision=lax.Precision.HIGHEST)
-
-
 @_wraps(np.linalg.solve)
 @jit
 def solve(a, b):
   a, b = _promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
-  _check_solve_shapes(a, b)
-
-  # With custom_linear_solve, we can reuse the same factorization when
-  # computing sensitivities. This is considerably faster.
-  lu, _, permutation = lax_linalg.lu(lax.stop_gradient(a))
-  custom_solve = partial(
-      lax.custom_linear_solve,
-      lambda x: _matvec_multiply(a, x),
-      solve=lambda _, x: lax_linalg.lu_solve(lu, permutation, x, trans=0),
-      transpose_solve=lambda _, x: lax_linalg.lu_solve(lu, permutation, x,
-                                                       trans=1))
-  if a.ndim == b.ndim + 1:
-    # b.shape == [..., m]
-    return custom_solve(b)
-  else:
-    # b.shape == [..., m, k]
-    return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
+  return lax_linalg._solve(a, b)
 
 
 @_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\

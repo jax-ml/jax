@@ -9,8 +9,21 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.2.6 (Unreleased)
---------------------------
+jax 0.2.7 (Unreleased)
+----------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.6...master>`_.
+
+* Breaking changes:
+
+  * ``jax.experimental.optix`` has been deleted, in favor of the standalone
+    ``optax`` Python package.
+
+  * indexing of JAX arrays with non-tuple sequences now raises a `TypeError`. This type of indexing
+    has been deprecated in Numpy since v1.16, and in JAX since v0.2.4.
+    See `#4564 <https://github.com/google/jax/pull/4564>`_.
+
+jax 0.2.6 (Nov 18 2020)
+-----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.5...jax-v0.2.6>`_.
 
 * New Features:
@@ -21,9 +34,10 @@ jax 0.2.6 (Unreleased)
 * Breaking change cleanup
 
   * Raise an error on non-hashable static arguments for jax.jit and
-    xla_computation.  See `https://github.com/google/jax/commit/cb48f42`_.
+    xla_computation.  See `cb48f42 <https://github.com/google/jax/commit/cb48f42>`_.
 
-  * Improve consistency of type promotion behavior (#4744):
+  * Improve consistency of type promotion behavior (`#4744 <https://github.com/google/jax/pull/4744>`_):
+
     * Adding a complex Python scalar to a JAX floating point number respects the precision of
       the JAX float. For example, ``jnp.float32(1) + 1j`` now returns ``complex64``, where previously
       it returned ``complex128``.
@@ -36,7 +50,8 @@ jax 0.2.6 (Unreleased)
   * The contents of the (undocumented) ``jax.lax_linalg`` linear algebra module
     are now exposed publicly as ``jax.lax.linalg``.
 
-  * ``jax.random.PRNGKey`` now produces the same results in and out of JIT compilation (#4877).
+  * ``jax.random.PRNGKey`` now produces the same results in and out of JIT compilation
+    (`#4877 <https://github.com/google/jax/pull/4877>`_).
     This required changing the result for a given seed in a few particular cases:
 
     * With ``jax_enable_x64=False``, negative seeds passed as Python integers now return a different result
@@ -45,11 +60,13 @@ jax 0.2.6 (Unreleased)
     * Seeds outside the range representable by `int64` outside JIT now result in an ``OverflowError``
       rather than a ``TypeError``. This matches the behavior in JIT.
 
-    To recover the keys returned previously for negative integers with `jax_enable_x64=False` outside JIT,
-    you can use::
+    To recover the keys returned previously for negative integers with ``jax_enable_x64=False``
+    outside JIT, you can use::
 
         key = random.PRNGKey(-1).at[0].set(0xFFFFFFFF)
 
+  * DeviceArray now raises ``RuntimeError`` instead of ``ValueError`` when trying
+    to access its value while it has been deleted.
 
 jaxlib 0.1.58 (Unreleased)
 ------------------------------
@@ -57,8 +74,8 @@ jaxlib 0.1.58 (Unreleased)
 * Fixed a bug that meant JAX sometimes return platform-specific types (e.g.,
   `np.cint`) instead of standard types (e.g., `np.int32`). (#4903)
 
-jaxlib 0.1.57 (November 12 2021)
-------------------------------
+jaxlib 0.1.57 (November 12 2020)
+--------------------------------
 
 * Fixed manylinux2010 compliance issues in GPU wheels.
 * Switched the CPU FFT implementation from Eigen to PocketFFT.
@@ -72,7 +89,7 @@ jaxlib 0.1.57 (November 12 2021)
 * Dropped support for CUDA 10.0.
 
 jax 0.2.5 (October 27 2020)
---------------------------
+---------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.4...jax-v0.2.5>`_.
 
 * Improvements:
@@ -82,26 +99,30 @@ jax 0.2.5 (October 27 2020)
     See `primitives_with_limited_support.md <https://github.com/google/jax/blob/master/jax/experimental/jax2tf/primitives_with_limited_support.md>`_.
 
 jax 0.2.4 (October 19 2020)
---------------------------
+---------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.3...jax-v0.2.4>`_.
 
 * Improvements:
 
   * Add support for `remat` to jax.experimental.host_callback.  See `#4608 <https://github.com/google/jax/pull/4608>`_.
 
+* Deprecations
+
+  * Indexing with non-tuple sequences is now deprecated, following a similar deprecation in Numpy.
+    In a future release, this will result in a TypeError. See `#4564 <https://github.com/google/jax/pull/4564>`_.
 
 jaxlib 0.1.56 (October 14, 2020)
-------------------------------
+--------------------------------
 
 
 jax 0.2.3 (October 14 2020)
---------------------------
+---------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.2...jax-v0.2.3>`_.
 * The reason for another release so soon is we need to temporarily roll back a
   new jit fastpath while we look into a performance degradation
 
 jax 0.2.2 (October 13 2020)
---------------------------
+---------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.1...jax-v0.2.2>`_.
 
 jax 0.2.1 (October 6 2020)
@@ -115,7 +136,7 @@ jax 0.2.1 (October 6 2020)
     :py:func:`jax.experimental.host_callback.id_tap` is not used in the computation.
 
 jax (0.2.0) (September 23 2020)
-----------------
+-------------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0>`_.
 
 * Improvements:
@@ -124,20 +145,20 @@ jax (0.2.0) (September 23 2020)
 
 
 jax (0.1.77) (September 15 2020)
-----------------
+--------------------------------
 
 * Breaking changes:
 
   * New simplified interface for :py:func:`jax.experimental.host_callback.id_tap` (#4101)
 
 jaxlib 0.1.55 (September 8, 2020)
-------------------------------
+---------------------------------
 * Update XLA:
 
   * Fix bug in DLPackManagedTensorToBuffer (#4196)
 
 jax 0.1.76 (September 8, 2020)
---------------------------
+------------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.75...jax-v0.1.76>`_.
 
 jax 0.1.75 (July 30, 2020)
@@ -173,7 +194,7 @@ jax 0.1.74 (July 29, 2020)
 
 
 jaxlib 0.1.52 (July 22, 2020)
-------------------------------
+-----------------------------
 
 * Update XLA.
 
@@ -217,13 +238,13 @@ jax 0.1.73 (July 22, 2020)
   * Add support for base dilation and window dilation to reduce window op… (#3803)
 
 jaxlib 0.1.51 (July 2, 2020)
-------------------------------
+----------------------------
 
 * Update XLA.
 * Add new runtime support for host_callback.
 
 jax 0.1.72 (June 28, 2020)
----------------------------
+--------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.71...jax-v0.1.72>`_.
 
@@ -234,7 +255,7 @@ jax 0.1.72 (June 28, 2020)
 
 
 jax 0.1.71 (June 25, 2020)
----------------------------
+--------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.70...jax-v0.1.71>`_.
 * The minimum jaxlib version is now 0.1.48.
@@ -246,7 +267,7 @@ jax 0.1.71 (June 25, 2020)
     `#3562 <https://github.com/google/jax/pull/3562>`_.
 
 jaxlib 0.1.50 (June 25, 2020)
-------------------------------
+-----------------------------
 
 * Add support for CUDA 11.0.
 * Drop support for CUDA 9.2 (we only maintain support for the last four CUDA
@@ -254,7 +275,7 @@ jaxlib 0.1.50 (June 25, 2020)
 * Update XLA.
 
 jaxlib 0.1.49 (June 19, 2020)
-------------------------------
+-----------------------------
 
 * Bug fixes:
 
@@ -262,7 +283,7 @@ jaxlib 0.1.49 (June 19, 2020)
     (https://github.com/tensorflow/tensorflow/commit/f805153a25b00d12072bd728e91bb1621bfcf1b1)
 
 jaxlib 0.1.48 (June 12, 2020)
-------------------------------
+-----------------------------
 
 * New features:
 
@@ -281,7 +302,7 @@ jaxlib 0.1.48 (June 12, 2020)
 
 
 jax 0.1.70 (June 8, 2020)
----------------------------
+-------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.69...jax-v0.1.70>`_.
 
@@ -293,12 +314,12 @@ jax 0.1.70 (June 8, 2020)
     `#3318 <https://github.com/google/jax/pull/3318>`_.
 
 jax 0.1.69 (June 3, 2020)
----------------------------
+-------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.68...jax-v0.1.69>`_.
 
 jax 0.1.68 (May 21, 2020)
----------------------------
+-------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.67...jax-v0.1.68>`_.
 
@@ -315,7 +336,7 @@ jax 0.1.68 (May 21, 2020)
 
 
 jax 0.1.67 (May 12, 2020)
----------------------------
+-------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.66...jax-v0.1.67>`_.
 
@@ -334,12 +355,12 @@ jax 0.1.67 (May 12, 2020)
     previously exported accidentally.
 
 jaxlib 0.1.47 (May 8, 2020)
-------------------------------
+---------------------------
 
 * Fixes crash for outfeed.
 
 jax 0.1.66 (May 5, 2020)
----------------------------
+------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.65...jax-v0.1.66>`_.
 
@@ -349,7 +370,7 @@ jax 0.1.66 (May 5, 2020)
     `#2896 <https://github.com/google/jax/pull/2896>`_.
 
 jaxlib 0.1.46 (May 5, 2020)
-------------------------------
+---------------------------
 
 * Fixes crash for linear algebra functions on Mac OS X (#432).
 * Fixes an illegal instruction crash caused by using AVX512 instructions when
@@ -484,7 +505,7 @@ jax 0.1.60 (March 17, 2020)
 * The minimum jaxlib version is now 0.1.41.
 
 jaxlib 0.1.40 (March 4, 2020)
--------------------------------
+-----------------------------
 
 * Adds experimental support in Jaxlib for TensorFlow profiler, which allows
   tracing of CPU and GPU computations from TensorBoard.

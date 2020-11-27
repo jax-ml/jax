@@ -24,7 +24,7 @@ from .tree_util import (tree_flatten, tree_unflatten, tree_map, tree_multimap,
                         register_pytree_node_class)
 from .util import safe_zip, safe_map, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
-from .abstract_arrays import raise_to_shaped
+from .core import raise_to_shaped
 from .ad_util import Zero, zeros_like_aval, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
@@ -270,9 +270,9 @@ class CustomJVPCallPrimitive(core.CallPrimitive):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = core.process_env_traces(
-        fun, self, top_trace and top_trace.level, ())
+        fun, self, top_trace and top_trace.level, (), None)
     jvp, env_trace_todo2 = core.process_env_traces(
-        jvp, self, top_trace and top_trace.level, ())
+        jvp, self, top_trace and top_trace.level, (), None)
     tracers = map(top_trace.full_raise, args)  # type: ignore
     with core.maybe_new_sublevel(top_trace):
       outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
@@ -569,9 +569,9 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = core.process_env_traces(
-        fun, self, top_trace and top_trace.level, ())
+        fun, self, top_trace and top_trace.level, (), None)
     fwd, env_trace_todo2 = core.process_env_traces(
-        fwd, self, top_trace and top_trace.level, ())
+        fwd, self, top_trace and top_trace.level, (), None)
     tracers = map(top_trace.full_raise, args)  # type: ignore
     with core.maybe_new_sublevel(top_trace):
       outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers,
@@ -681,9 +681,9 @@ def omnistaging_disabler() -> None:
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = core.process_env_traces(
-        fun, self, top_trace and top_trace.level, ())
+        fun, self, top_trace and top_trace.level, (), None)
     jvp, env_trace_todo2 = core.process_env_traces(
-        jvp, self, top_trace and top_trace.level, ())
+        jvp, self, top_trace and top_trace.level, (), None)
     if top_trace is None:
       with core.new_sublevel():
         outs = self.impl(fun, jvp, *args)

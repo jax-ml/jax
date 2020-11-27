@@ -35,7 +35,7 @@ from jax._src import source_info_util
 from jax import util
 from jax._src.lax import lax
 from jax import linear_util as lu
-from jax.abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
+from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
@@ -1934,13 +1934,13 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   prepended to details of the mismatch in TypeError.
   """
   if tree1 != tree2:
-    msg = ("{} must have same type structure, got {} and {}.")
-    raise TypeError(msg.format(what, tree1, tree2))
-  if not all(safe_map(core.typematch, avals1, avals2)):
-    msg = ("{} must have identical types, "
-           "got\n{}\nand\n{}.")
-    raise TypeError(msg.format(what, tree_unflatten(tree1, avals1),
-                               tree_unflatten(tree2, avals2)))
+    raise TypeError(
+        f"{what} must have same type structure, got {tree1} and {tree2}.")
+  if not all(_map(core.typematch, avals1, avals2)):
+    raise TypeError(
+        f"{what} must have identical types, got\n"
+        f"{tree_unflatten(tree1, avals1)}\nand\n"
+        f"{tree_unflatten(tree2, avals2)}.")
 
 
 def _check_tree(func_name, expected_name, actual_tree, expected_tree):

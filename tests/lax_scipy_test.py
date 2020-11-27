@@ -17,6 +17,7 @@ import collections
 import functools
 from functools import partial
 import itertools
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -154,6 +155,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for rec in JAX_SPECIAL_FUNCTION_RECORDS))
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
                           test_autodiff, nondiff_argnums):
+    if (jtu.device_under_test() == "cpu" and
+        (lax_op is lsp_special.gammainc or lax_op is lsp_special.gammaincc)):
+      # TODO(b/173608403): re-enable test when LLVM bug is fixed.
+      raise unittest.SkipTest("Skipping test due to LLVM lowering bug")
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()

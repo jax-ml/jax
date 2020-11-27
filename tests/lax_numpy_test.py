@@ -91,6 +91,11 @@ def _shape_and_dtypes(shapes, dtypes):
     for dtype in _valid_dtypes_for_shape(shape, dtypes):
       yield (shape, dtype)
 
+def _compatible_shapes(shape):
+  if shape in scalar_shapes:
+    return [shape]
+  return (shape[n:] for n in range(len(shape) + 1))
+
 OpRecord = collections.namedtuple(
   "OpRecord",
   ["name", "nargs", "dtypes", "shapes", "rng_factory", "diff_modes",
@@ -325,6 +330,13 @@ JAX_REDUCER_RECORDS = [
     op_record("nansum", 1, number_dtypes, all_shapes, jtu.rand_some_nan, []),
 ]
 
+JAX_REDUCER_INITIAL_RECORDS = [
+    op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, []),
+    op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("max", 1, all_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("min", 1, all_dtypes, all_shapes, jtu.rand_default, []),
+]
+
 JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("all", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
     op_record("any", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
@@ -334,6 +346,8 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
               inexact=True),
     op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True),
+    op_record("nanmax", 1, inexact_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
+    op_record("nanmin", 1, inexact_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
     op_record("nanvar", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan,
               [], inexact=True),
     op_record("nanstd", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan,
@@ -704,7 +718,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for out_dtype in [None] + rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
         for keepdims in [False, True])
-    for rec in JAX_REDUCER_RECORDS))
+      for rec in JAX_REDUCER_RECORDS))
   def testReducer(self, np_op, jnp_op, rng_factory, shape, dtype, out_dtype,
                   axis, keepdims, inexact):
     rng = rng_factory(self.rng())
@@ -731,23 +745,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol,
                           rtol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
-          rec.test_name.capitalize(),
-          jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
-       "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
-       "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-       "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
-      for rec in JAX_REDUCER_NO_DTYPE_RECORDS
-      for shape in rec.shapes for dtype in rec.dtypes
-      for axis in list(range(-len(shape), len(shape))) + [None]
-      for keepdims in [False, True]))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
+            rec.test_name.capitalize(),
+            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
+        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
+        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
+        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+        for shape in rec.shapes for dtype in rec.dtypes
+        for axis in list(range(-len(shape), len(shape))) + [None]
+        for keepdims in [False, True])
+      for rec in JAX_REDUCER_NO_DTYPE_RECORDS))
   def testReducerNoDtype(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, inexact):
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="All-NaN slice encountered.*")
     def np_fun(x):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
@@ -756,6 +773,80 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = _promote_like_jnp(np_fun, inexact)
     np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
+    jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
+    args_maker = lambda: [rng(shape, dtype)]
+    tol = {np.float16: 0.002}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=tol, atol=tol)
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_initial={}".format(
+            rec.test_name.capitalize(),
+            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims, initial),
+        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
+        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
+        "initial": initial, "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+        for shape in rec.shapes for dtype in rec.dtypes
+        for axis in list(range(-len(shape), len(shape))) + [None]
+        for initial in [0, 1] for keepdims in [False, True])
+      for rec in JAX_REDUCER_INITIAL_RECORDS))
+  def testReducerInitial(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+                         keepdims, initial, inexact):
+    if dtype == np.bool_ and jtu.device_under_test() == "tpu" and jnp_op in [jnp.min, jnp.max]:
+      raise unittest.SkipTest("bool max/min reductions with initial value not supported on TPU")
+    rng = rng_factory(self.rng())
+    is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom <= 0 for slice.*")
+    def np_fun(x):
+      x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
+      res = np_op(x_cast, axis, keepdims=keepdims, initial=initial)
+      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
+      return res
+    np_fun = _promote_like_jnp(np_fun, inexact)
+    np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
+    jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial)
+    jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @unittest.skipIf(numpy_version < (1, 17), "where parameter not supported in older numpy")
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_initial={}_whereshape={}".format(
+            rec.test_name.capitalize(),
+            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims, initial,
+            jtu.format_shape_dtype_string(whereshape, bool)),
+        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
+        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name), "whereshape": whereshape,
+        "initial": initial, "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+        for shape in rec.shapes for dtype in rec.dtypes
+        for whereshape in _compatible_shapes(shape)
+        for axis in list(range(-len(shape), len(shape))) + [None]
+        for initial in [0, 1] for keepdims in [False, True])
+      for rec in JAX_REDUCER_INITIAL_RECORDS))
+  def testReducerWhere(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+                       keepdims, initial, inexact, whereshape):
+    if (shape in [()] + scalar_shapes and
+        dtype in [jnp.int16, jnp.uint16] and
+        jnp_op in [jnp.min, jnp.max]):
+      self.skipTest("Known XLA failure; see https://github.com/google/jax/issues/4971.")
+    rng = rng_factory(self.rng())
+    is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    # Do not pass where via args_maker as that is incompatible with _promote_like_jnp.
+    where = jtu.rand_bool(self.rng())(whereshape, np.bool)
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom <= 0 for slice.*")
+    def np_fun(x):
+      x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
+      res = np_op(x_cast, axis, keepdims=keepdims, initial=initial, where=where)
+      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
+      return res
+    np_fun = _promote_like_jnp(np_fun, inexact)
+    np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
+    jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, where=where)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
@@ -1948,7 +2039,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun_np = lambda arg1, arg2: jnp.polymul(arg1, arg2, trim_leading_zeros=True)
     jnp_fun_co = lambda arg1, arg2: jnp.polymul(arg1, arg2)
     args_maker = lambda: [rng(a1_shape, dtype), rng(a2_shape, dtype)]
-    tol = {np.float16: 2e-1, np.float32: 5e-2, np.float64: 1e-14}
+    tol = {np.float16: 2e-1, np.float32: 5e-2, np.float64: 1e-13}
     self._CheckAgainstNumpy(np_fun, jnp_fun_np, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun_co, args_maker, check_dtypes=False)
 
@@ -2232,23 +2323,47 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       jnp.ones((-1, 1))
 
+  @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_filldtype={}_outdtype={}".format(
+      {"testcase_name": "_inshape={}_filldtype={}_outdtype={}_outshape={}".format(
           jtu.format_shape_dtype_string(shape, in_dtype),
           np.dtype(fill_value_dtype).name,
-          np.dtype(out_dtype).name),
+          np.dtype(out_dtype).name,
+          out_shape),
        "shape": shape, "in_dtype": in_dtype,
        "fill_value_dtype": fill_value_dtype, "out_dtype": out_dtype,
-       "rng_factory": jtu.rand_default}
+       "out_shape": out_shape}
       for shape in array_shapes
+      for out_shape in [None] + array_shapes
       for in_dtype in default_dtypes
       for fill_value_dtype in default_dtypes
       for out_dtype in default_dtypes))
-  def testFullLike(self, shape, in_dtype, fill_value_dtype, out_dtype, rng_factory):
-    rng = rng_factory(self.rng())
-    np_fun = lambda x, fill_value: np.full_like(x, fill_value, dtype=out_dtype)
-    jnp_fun = lambda x, fill_value: jnp.full_like(x, fill_value, dtype=out_dtype)
+  def testFullLike(self, shape, in_dtype, fill_value_dtype, out_dtype, out_shape):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x, fill_value: np.full_like(x, fill_value, dtype=out_dtype, shape=out_shape)
+    jnp_fun = lambda x, fill_value: jnp.full_like(x, fill_value, dtype=out_dtype, shape=out_shape)
     args_maker = lambda: [rng(shape, in_dtype), rng((), fill_value_dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_func={}_outdtype={}_outshape={}".format(
+          jtu.format_shape_dtype_string(shape, in_dtype),
+          func, np.dtype(out_dtype).name, out_shape),
+       "shape": shape, "in_dtype": in_dtype,
+       "func": func, "out_dtype": out_dtype,
+       "out_shape": out_shape}
+      for shape in array_shapes
+      for out_shape in [None] + array_shapes
+      for in_dtype in default_dtypes
+      for func in ["ones_like", "zeros_like"]
+      for out_dtype in default_dtypes))
+  def testZerosOnesLike(self, shape, in_dtype, func, out_dtype, out_shape):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x: getattr(np, func)(x, dtype=out_dtype, shape=out_shape)
+    jnp_fun = lambda x: getattr(jnp, func)(x, dtype=out_dtype, shape=out_shape)
+    args_maker = lambda: [rng(shape, in_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -2694,25 +2809,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         self.assertTrue(jnp.all(jnp.equal(result_np, result_jax)))
         self.assertTrue(jnp.all(jnp.equal(result_np, result_jit)))
 
-  def testAllClose(self):
-    rng = np.random.RandomState(0)
-    x = rng.randn(2, 2)
-    y = rng.randn(2)
-
-    def same(list1, list2):
-      allclose = functools.partial(jnp.allclose, atol=1e-3, rtol=1e-3)
-      elements_close = list(map(allclose, list1, list2))
-      return jnp.all(jnp.array(elements_close))
-
-    csame = api.jit(same)
-
-    a1 = same((x, y), (x, y))
-    a2 = csame((x, y), (x, y))
-    a3 = csame((x, y), (x, 2 * y))
-
-    self.assertTrue(a1)
-    self.assertTrue(a2)
-    self.assertFalse(a3)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_x={}_y={}_equal_nan={}".format(x, y, equal_nan),
+       "x": x, "y": y, "equal_nan": equal_nan}
+      for x, y in itertools.product([
+         1, [1], [1, 1 + 1E-4], [1, np.nan]], repeat=2)
+      for equal_nan in [True, False]))
+  def testAllClose(self, x, y, equal_nan):
+    jnp_fun = partial(jnp.allclose, equal_nan=equal_nan, rtol=1E-3)
+    np_fun = partial(np.allclose, equal_nan=equal_nan, rtol=1E-3)
+    args_maker = lambda: [x, y]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testZeroStridesConstantHandler(self):
     raw_const = np.random.RandomState(0).randn(1, 2, 1, 1, 5, 1)
@@ -4459,67 +4567,31 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
-      'allclose': ['equal_nan'],
-      'amax': ['initial', 'where'],
-      'amin': ['initial', 'where'],
       'angle': ['deg'],
-      'argmax': ['out'],
-      'argmin': ['out'],
-      'around': ['out'],
       'broadcast_to': ['subok', 'array'],
-      'clip': ['out', 'kwargs'],
+      'clip': ['kwargs'],
       'corrcoef': ['ddof', 'bias'],
-      'cumprod': ['out'],
-      'cumproduct': ['out'],
-      'cumsum': ['out'],
       'diff': ['prepend', 'append'],
-      'empty_like': ['shape', 'subok', 'order'],
-      'einsum': ['out', 'kwargs'],
+      'empty_like': ['subok', 'order'],
+      'einsum': ['kwargs'],
       'einsum_path': ['einsum_call'],
       'eye': ['order'],
       'full': ['order'],
-      'full_like': ['shape', 'subok', 'order'],
-      'gradient': ['varargs', 'axis', 'edge_order'],
+      'full_like': ['subok', 'order'],
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
-      'isneginf': ['out'],
-      'isposinf': ['out'],
-      'max': ['initial', 'where'],
-      'min': ['initial', 'where'],
-      'nancumprod': ['out'],
-      'nancumsum': ['out'],
-      'nanprod': ['dtype'],
-      'nansum': ['dtype'],
       'ones': ['order'],
-      'ones_like': ['shape', 'subok', 'order'],
+      'ones_like': ['subok', 'order'],
       'pad': ['kwargs'],
-      'prod': ['initial', 'where'],
-      'product': ['initial', 'where'],
-      'round': ['out'],
-      'stack': ['out'],
-      'sum': ['initial', 'where'],
-      'zeros_like': ['shape', 'subok', 'order']
+      'zeros_like': ['subok', 'order']
     }
 
     extra_params = {
-      'all': ['dtype'],
-      'alltrue': ['dtype'],
-      'amax': ['dtype'],
-      'amin': ['dtype'],
-      'any': ['dtype'],
       'broadcast_to': ['arr'],
-      'gradient': ['kwargs', 'args'],
       'einsum': ['precision'],
       'einsum_path': ['subscripts'],
-      'max': ['dtype'],
-      'min': ['dtype'],
-      'nanmax': ['kwargs'],
-      'nanmin': ['kwargs'],
-      'nanprod': ['kwargs'],
-      'nansum': ['kwargs'],
       'pad': ['constant_values'],
-      'sometrue': ['dtype'],
     }
 
     mismatches = {}

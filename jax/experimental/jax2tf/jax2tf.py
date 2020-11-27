@@ -13,6 +13,7 @@
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 import functools
+import re
 import string
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
 
@@ -32,6 +33,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 from jax._src.lax import parallel as lax_parallel
+import jax._src.random
 from jax.lib import xla_bridge as xb
 
 import numpy as np
@@ -44,6 +46,18 @@ from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
 from jaxlib import xla_client
 
+
+# The scope name need to be a valid TensorFlow name. See
+# https://github.com/tensorflow/tensorflow/blob/r2.3/tensorflow/core/framework/node_def_util.cc#L731
+_VALID_SCOPE_REGEX = re.compile("^[A-Za-z0-9.][A-Za-z0-9_.\\/>-]*$")
+_INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/>-]")
+
+
+def _sanitize_scope_name(name):
+  scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
+  if not _VALID_SCOPE_REGEX.match(scope_name):
+    scope_name = ".{}".format(scope_name)
+  return scope_name
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
@@ -735,7 +749,12 @@ class TensorFlowTrace(core.Trace):
     assert call_primitive.multiple_results
     vals: Sequence[TfVal] = [t.val for t in tracers]
     f = _interpret_subtrace(f, self.main, tuple(t.aval for t in tracers))
-    vals_out: Sequence[Tuple[TfVal, core.AbstractValue]] = f.call_wrapped(*vals)
+    if call_primitive == core.named_call_p:
+      with tf.name_scope(_sanitize_scope_name(params["name"])):
+        vals_out: Sequence[Tuple[TfVal,
+                                 core.AbstractValue]] = f.call_wrapped(*vals)
+    else:
+      vals_out = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def post_process_call(self, call_primitive: core.Primitive,
@@ -899,6 +918,7 @@ tf_impl[lax.mul_p] = tf.math.multiply
 
 
 def _iota(*, dtype, shape, dimension):
+  dtype = to_tf_dtype(dtype)
   # Some dtypes are unsupported, like uint32, so we just fall back to int32.
   # TODO(mattjj, necula): improve tf.range dtype handling
   shape_tf = _eval_shape(shape)
@@ -1073,11 +1093,14 @@ tf_impl[lax.bitcast_convert_type_p] = _bitcast_convert_type
 
 
 def _clamp(minval, operand, maxval):
+  # The below permits mirroring the behavior of JAX when maxval < minval
+  maxval = tf.broadcast_to(maxval, operand.shape)
+  minval = tf.math.minimum(tf.broadcast_to(minval, operand.shape), maxval)
   return tf.clip_by_value(operand, minval, maxval)
 tf_impl[lax.clamp_p] = _clamp
 
 
-def _concatenate(*operands, dimension=None):
+def _concatenate(*operands, dimension):
   return tf.concat(operands, axis=dimension)
 tf_impl[lax.concatenate_p] = _concatenate
 
@@ -1383,8 +1406,8 @@ tf_impl[lax.rev_p] = _rev
 
 tf_impl[lax.select_p] = tf.where
 
-def _transpose(operand, permutation):
-  return tf.transpose(operand, permutation)
+def _transpose(operand, *, permutation):
+  return tf.transpose(operand, perm=permutation)
 tf_impl[lax.transpose_p] = _transpose
 
 axes_to_axis = lambda func: lambda operand, axes: func(operand, axis=axes)
@@ -1402,8 +1425,12 @@ tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
 def _argminmax(fn, operand, axes, index_dtype):
   axis, = axes
+  output_type = tf.int32
+  if dtypes.iinfo(index_dtype).bits > 32:
+    output_type = tf.int64
   # TODO(phawkins): handle axes larger than 2^31.
-  return fn(operand, axis=axis, output_type=to_tf_dtype(index_dtype))
+  result = fn(operand, axis=axis, output_type=output_type)
+  return tf.cast(result, to_tf_dtype(index_dtype))
 
 tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
 tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
@@ -1724,7 +1751,7 @@ def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   _out_aval_cast = tuple(core.ShapedArray(out_aval.shape, np.int32)
                          for out_aval in _out_aval)
   res = _convert_jax_impl(
-    functools.partial(random._threefry2x32_lowering,
+    functools.partial(jax._src.random._threefry2x32_lowering,
                       use_rolled_loops=False),
     multiple_results=True)(*args_cast, _in_avals=_in_avals_cast, _out_aval=_out_aval_cast)
   res = tuple([tf.cast(r, tf.uint32) for r in res])
@@ -1735,7 +1762,7 @@ tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 # Use the vmap implementation, otherwise on TPU the performance is really bad
 # With use_vmap=True on, we get about the same performance for JAX and jax2tf.
 tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
-  functools.partial(random._gamma_impl, use_vmap=True),
+  functools.partial(jax._src.random._gamma_impl, use_vmap=True),
   multiple_results=False)
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):

@@ -32,6 +32,7 @@ Just-in-time compilation (:code:`jit`)
     make_jaxpr
     eval_shape
     device_put
+    named_call
 
 Automatic differentiation
 -------------------------

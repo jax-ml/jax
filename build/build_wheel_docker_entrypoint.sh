@@ -35,33 +35,25 @@ fi
 # Builds and activates a specific Python version.
 pyenv local "$PY_VERSION"
 
-PY_TAG=$(python -c "import packaging.tags as t; print(t.interpreter_name() + t.interpreter_version())")
-
-echo "Python tag: $PY_TAG"
-
 # Workaround for https://github.com/bazelbuild/bazel/issues/9254
 export BAZEL_LINKLIBS="-lstdc++"
 
+export JAX_CUDA_VERSION=$3
 case $2 in
   cuda-included)
     python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root"
     python include_cuda.py
-    PLAT_NAME="manylinux2010_x86_64"
     ;;
   cuda)
     python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root"
-    PLAT_NAME="manylinux2010_x86_64"
     ;;
   nocuda)
     python build.py --bazel_startup_options="--output_user_root=/build/root"
-    PLAT_NAME="manylinux2010_x86_64"
     ;;
   *)
     usage
 esac
 
-export JAX_CUDA_VERSION=$3
-python setup.py bdist_wheel --python-tag "$PY_TAG" --plat-name "$PLAT_NAME"
 if ! python -m auditwheel show dist/jaxlib-*.whl  | grep 'platform tag: "manylinux2010_x86_64"' > /dev/null; then
   # Print output for debugging
   python -m auditwheel show dist/jaxlib-*.whl

@@ -26,8 +26,7 @@ from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.util import partial, prod
-from jax.abstract_arrays import ShapedArray
-from jax.core import Primitive
+from jax.core import Primitive, ShapedArray
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype, _broadcasting_select)
@@ -238,6 +237,33 @@ def triangular_solve(a, b, left_side: bool = False, lower: bool = False,
 
 
 # utilities
+@partial(vectorize, signature='(n,m),(m)->(n)')
+def _matvec_multiply(a, b):
+  return lax.dot(a, b, precision=lax.Precision.HIGHEST)
+
+def _check_solve_shapes(a, b):
+  if not (a.ndim >= 2 and a.shape[-1] == a.shape[-2] and b.ndim >= 1):
+    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
+           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
+    raise ValueError(msg.format(a.shape, b.shape))
+
+def _solve(a, b):
+  _check_solve_shapes(a, b)
+
+  # With custom_linear_solve, we can reuse the same factorization when
+  # computing sensitivities. This is considerably faster.
+  lu_, _, permutation = lu(lax.stop_gradient(a))
+  custom_solve = partial(
+      lax.custom_linear_solve,
+      lambda x: _matvec_multiply(a, x),
+      solve=lambda _, x: lu_solve(lu_, permutation, x, trans=0),
+      transpose_solve=lambda _, x: lu_solve(lu_, permutation, x, trans=1))
+  if a.ndim == b.ndim + 1:
+    # b.shape == [..., m]
+    return custom_solve(b)
+  else:
+    # b.shape == [..., m, k]
+    return api.vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 def _T(x): return jnp.swapaxes(x, -1, -2)
 def _H(x): return jnp.conj(_T(x))
@@ -381,6 +407,20 @@ def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
                      compute_right_eigenvectors=compute_right_eigenvectors),
           (0,) * (1 + compute_left_eigenvectors + compute_right_eigenvectors))
 
+def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
+                 compute_right_eigenvectors):
+  if compute_left_eigenvectors or compute_right_eigenvectors:
+    raise NotImplementedError(
+        'The derivatives of eigenvectors are not implemented, only '
+        'eigenvalues. See '
+        'https://github.com/google/jax/issues/2748 for discussion.')
+  # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
+  # https://arxiv.org/abs/1701.00392
+  a, = primals
+  da, = tangents
+  l, v = eig(a, compute_left_eigenvectors=False)
+  return [l], [jnp.sum(_solve(v, da.astype(v.dtype)) * _T(v), -1)]
+
 eig_p = Primitive('eig')
 eig_p.multiple_results = True
 eig_p.def_impl(eig_impl)
@@ -388,6 +428,7 @@ eig_p.def_abstract_eval(eig_abstract_eval)
 xla.translations[eig_p] = eig_translation_rule
 xla.backend_specific_translations['cpu'][eig_p] = eig_cpu_translation_rule
 batching.primitive_batchers[eig_p] = eig_batching_rule
+ad.primitive_jvps[eig_p] = eig_jvp_rule
 
 
 # Symmetric/Hermitian eigendecomposition

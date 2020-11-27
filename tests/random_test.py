@@ -33,6 +33,7 @@ from jax import random
 from jax import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
+import jax._src.random
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -134,7 +135,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     N = 10
     key = random.PRNGKey(1701)
     nbits = [8, 16, 32]
-    rand_bits = [random._random_bits(key, n, (N * 64 // n,)) for n in nbits]
+    rand_bits = [jax._src.random._random_bits(key, n, (N * 64 // n,))
+                 for n in nbits]
     rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
     assert np.all(rand_bits_32 == rand_bits_32[0])
 
@@ -142,19 +144,19 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Test specific outputs to ensure consistent random values between JAX versions.
     key = random.PRNGKey(1701)
 
-    bits8 = random._random_bits(key, 8, (3,))
+    bits8 = jax._src.random._random_bits(key, 8, (3,))
     expected8 = np.array([216, 115,  43], dtype=np.uint8)
     self.assertArraysEqual(bits8, expected8)
 
-    bits16 = random._random_bits(key, 16, (3,))
+    bits16 = jax._src.random._random_bits(key, 16, (3,))
     expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
     self.assertArraysEqual(bits16, expected16)
 
-    bits32 = random._random_bits(key, 32, (3,))
+    bits32 = jax._src.random._random_bits(key, 32, (3,))
     expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits32, expected32)
 
-    bits64 = random._random_bits(key, 64, (3,))
+    bits64 = jax._src.random._random_bits(key, 64, (3,))
     if FLAGS.jax_enable_x64:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
