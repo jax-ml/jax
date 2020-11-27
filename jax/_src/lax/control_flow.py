@@ -1163,6 +1163,9 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
   dtype (or a nested tuple/list/dict container data structure with a fixed
   structure and arrays with fixed shape and dtype at the leaves).
 
+  NOTE: ``scan`` is known to cause memory leaks when not called within a jitted
+  function.
+
   Args:
     f: a Python function to be scanned of type ``c -> a -> (c, b)``, meaning
       that ``f`` accepts two arguments where the first is a value of the loop
