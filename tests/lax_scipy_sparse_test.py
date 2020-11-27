@@ -55,7 +55,7 @@ def lax_solver(solver_name, A, b, M=None, atol=0.0, **kwargs):
 
 
 lax_cg = partial(lax_solver, 'cg')
-lax_gmres = partial(lax_solver, '_gmres')
+lax_gmres = partial(lax_solver, 'gmres')
 
 
 def scipy_solver(solver_name, A, b, atol=0.0, **kwargs):
@@ -71,10 +71,6 @@ scipy_gmres = partial(scipy_solver, 'gmres')
 def rand_sym_pos_def(rng, shape, dtype):
   matrix = np.eye(N=shape[0], dtype=dtype) + rng(shape, dtype)
   return matrix @ matrix.T.conj()
-
-
-
-
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
@@ -107,11 +103,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
             jtu.format_shape_dtype_string(shape, dtype),
             preconditioner),
        "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
-      for shape in [(4, 4), (7, 7), (32, 32)]
-      for dtype in float_types + complex_types
-      for preconditioner in [None, 'identity', 'exact']))
-  # TODO(#2951): reenable 'random' preconditioner.
+      for shape in [(4, 4), (7, 7)]
+      for dtype in [np.float64, np.complex128]
+      for preconditioner in [None, 'identity', 'exact', 'random']))
   def test_cg_against_scipy(self, shape, dtype, preconditioner):
+    if not config.FLAGS.jax_enable_x64:
+      raise unittest.SkipTest("requires x64 mode")
 
     rng = jtu.rand_default(self.rng())
     A = rand_sym_pos_def(rng, shape, dtype)
@@ -125,21 +122,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         partial(scipy_cg, M=M, maxiter=1),
         partial(lax_cg, M=M, maxiter=1),
         args_maker,
-        tol=1e-3)
+        tol=1e-12)
 
-    # TODO(shoyer,mattjj): I had to loosen the tolerance for complex64[7,7]
-    # with preconditioner=random
     self._CheckAgainstNumpy(
         partial(scipy_cg, M=M, maxiter=3),
         partial(lax_cg, M=M, maxiter=3),
         args_maker,
-        tol=3e-3)
+        tol=1e-12)
 
     self._CheckAgainstNumpy(
         np.linalg.solve,
-        partial(lax_cg, M=M, atol=1e-6),
+        partial(lax_cg, M=M, atol=1e-10),
         args_maker,
-        tol=2e-2)
+        tol=1e-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -213,43 +208,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   # GMRES
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype}
-      for shape in [(2, 2)]
-      for dtype in float_types + complex_types))
-  def test_gmres_on_small_fixed_problem(self, shape, dtype):
-    """
-    GMRES gives the right answer for a small fixed system.
-    """
-    A = jnp.array(([[1, 1], [3, -4]]), dtype=dtype)
-    b = jnp.array([3, 2], dtype=dtype)
-    x0 = jnp.ones(2, dtype=dtype)
-    restart = 2
-    maxiter = 1
-
-    @jax.tree_util.Partial
-    def A_mv(x):
-      return matmul_high_precision(A, x)
-    tol = A.size * jnp.finfo(dtype).eps
-    x, _ = jax.scipy.sparse.linalg._gmres(
-        A_mv, b, x0=x0, tol=tol, atol=tol, restart=restart, maxiter=maxiter)
-    solution = jnp.array([2., 1.], dtype=dtype)
-    self.assertAllClose(solution, x)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}_qr_mode={}".format(
+       "_shape={}_preconditioner={}_solve_method={}".format(
             jtu.format_shape_dtype_string(shape, dtype),
             preconditioner,
-            qr_mode),
+            solve_method),
        "shape": shape, "dtype": dtype, "preconditioner": preconditioner,
-       "qr_mode": qr_mode}
+       "solve_method": solve_method}
       for shape in [(3, 3)]
-      # TODO(shoyer): get working for np.complex128 and qr_mode=True
-      for dtype in [np.float64]
-      for preconditioner in [None, 'identity', 'exact']
-      for qr_mode in [False]))
-  def test_gmres_against_scipy(self, shape, dtype, preconditioner, qr_mode):
+      for dtype in [np.float64, np.complex128]
+      for preconditioner in [None, 'identity', 'exact', 'random']
+      for solve_method in ['incremental', 'batched']))
+  def test_gmres_against_scipy(
+      self, shape, dtype, preconditioner, solve_method):
     if not config.FLAGS.jax_enable_x64:
       raise unittest.SkipTest("requires x64 mode")
 
@@ -263,43 +233,43 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(
         partial(scipy_gmres, M=M, restart=1, maxiter=1),
-        partial(lax_gmres, M=M, restart=1, maxiter=1, qr_mode=qr_mode),
+        partial(lax_gmres, M=M, restart=1, maxiter=1, solve_method=solve_method),
         args_maker,
-        tol=1e-3)
+        tol=1e-10)
 
     self._CheckAgainstNumpy(
         partial(scipy_gmres, M=M, restart=1, maxiter=2),
-        partial(lax_gmres, M=M, restart=1, maxiter=2, qr_mode=qr_mode),
+        partial(lax_gmres, M=M, restart=1, maxiter=2, solve_method=solve_method),
         args_maker,
-        tol=1e-3)
+        tol=1e-10)
 
     self._CheckAgainstNumpy(
-        partial(scipy_gmres, M=M, restart=3, maxiter=1),
-        partial(lax_gmres, M=M, restart=3, maxiter=1, qr_mode=qr_mode),
+        partial(scipy_gmres, M=M, restart=2, maxiter=1),
+        partial(lax_gmres, M=M, restart=2, maxiter=1, solve_method=solve_method),
         args_maker,
-        tol=3e-3)
+        tol=1e-10)
 
     self._CheckAgainstNumpy(
         np.linalg.solve,
-        partial(lax_gmres, M=M, atol=1e-6, qr_mode=qr_mode),
+        partial(lax_gmres, M=M, atol=1e-6, solve_method=solve_method),
         args_maker,
-        tol=2e-2)
+        tol=1e-10)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}_preconditioner={}_qr_mode={}".format(
+       "_shape={}_preconditioner={}_solve_method={}".format(
          jtu.format_shape_dtype_string(shape, dtype),
          preconditioner,
-         qr_mode),
+         solve_method),
       "shape": shape, "dtype": dtype, "preconditioner": preconditioner,
-      "qr_mode": qr_mode}
+      "solve_method": solve_method}
       for shape in [(2, 2), (7, 7)]
       for dtype in float_types + complex_types
       for preconditioner in [None, 'identity', 'exact']
-      for qr_mode in [True, False]
+      for solve_method in ['batched', 'incremental']
       ))
   def test_gmres_on_identity_system(self, shape, dtype, preconditioner,
-                                    qr_mode):
+                                    solve_method):
     A = jnp.eye(shape[1], dtype=dtype)
 
     solution = jnp.ones(shape[1], dtype=dtype)
@@ -312,28 +282,28 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     b = A_mv(solution)
     restart = shape[-1]
     tol = shape[0] * jnp.finfo(dtype).eps
-    x, info = jax.scipy.sparse.linalg._gmres(A_mv, b, tol=tol, atol=tol,
-                                             restart=restart,
-                                             M=M, qr_mode=qr_mode)
+    x, info = jax.scipy.sparse.linalg.gmres(A_mv, b, tol=tol, atol=tol,
+                                            restart=restart,
+                                            M=M, solve_method=solve_method)
     using_x64 = solution.dtype.kind in {np.float64, np.complex128}
     solution_tol = 1e-8 if using_x64 else 1e-4
     self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}_preconditioner={}_qr_mode={}".format(
+       "_shape={}_preconditioner={}_solve_method={}".format(
          jtu.format_shape_dtype_string(shape, dtype),
          preconditioner,
-         qr_mode),
+         solve_method),
       "shape": shape, "dtype": dtype, "preconditioner": preconditioner,
-      "qr_mode": qr_mode}
+      "solve_method": solve_method}
       for shape in [(2, 2), (4, 4)]
       for dtype in float_types + complex_types
       for preconditioner in [None, 'identity', 'exact']
-      for qr_mode in [True, False]
+      for solve_method in ['incremental', 'batched']
       ))
   def test_gmres_on_random_system(self, shape, dtype, preconditioner,
-                                  qr_mode):
+                                  solve_method):
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
 
@@ -346,9 +316,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     b = A_mv(solution)
     restart = shape[-1]
     tol = shape[0] * jnp.finfo(A.dtype).eps
-    x, info = jax.scipy.sparse.linalg._gmres(A_mv, b, tol=tol, atol=tol,
-                                             restart=restart,
-                                             M=M, qr_mode=qr_mode)
+    x, info = jax.scipy.sparse.linalg.gmres(A_mv, b, tol=tol, atol=tol,
+                                            restart=restart,
+                                            M=M, solve_method=solve_method)
     using_x64 = solution.dtype.kind in {np.float64, np.complex128}
     solution_tol = 1e-8 if using_x64 else 1e-4
     self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
@@ -357,10 +327,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     A = lambda x: {"a": x["a"] + 0.5 * x["b"], "b": 0.5 * x["a"] + x["b"]}
     b = {"a": 1.0, "b": -4.0}
     expected = {"a": 4.0, "b": -6.0}
-    actual, _ = jax.scipy.sparse.linalg._gmres(A, b)
+    actual, _ = jax.scipy.sparse.linalg.gmres(A, b)
     self.assertEqual(expected.keys(), actual.keys())
-    self.assertAlmostEqual(expected["a"], actual["a"], places=6)
-    self.assertAlmostEqual(expected["b"], actual["b"], places=6)
+    self.assertAlmostEqual(expected["a"], actual["a"], places=5)
+    self.assertAlmostEqual(expected["b"], actual["b"], places=5)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -389,20 +359,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     n = shape[0]
     x0 = rng(shape[:1], dtype)
     Q = np.zeros((n, n + 1), dtype=dtype)
-    Q[:, 0] = x0/jax.numpy.linalg.norm(x0)
+    Q[:, 0] = x0/jnp.linalg.norm(x0)
     Q = jnp.array(Q)
-    H = jax.numpy.eye(n, n + 1, dtype=dtype)
-    tol = A.size*A.size*jax.numpy.finfo(dtype).eps
+    H = jnp.eye(n, n + 1, dtype=dtype)
 
     @jax.tree_util.Partial
     def A_mv(x):
       return matmul_high_precision(A, x)
     for k in range(n):
       Q, H, _ = jax._src.scipy.sparse.linalg._kth_arnoldi_iteration(
-          k, A_mv, M, Q, H, tol)
+          k, A_mv, M, Q, H)
     QA = matmul_high_precision(Q[:, :n].conj().T, A)
     QAQ = matmul_high_precision(QA, Q[:, :n])
-    self.assertAllClose(QAQ, H.T[:n, :], rtol=tol, atol=tol)
+    self.assertAllClose(QAQ, H.T[:n, :], rtol=1e-5, atol=1e-5)
 
 
 if __name__ == "__main__":
