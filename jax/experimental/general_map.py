@@ -801,27 +801,3 @@ def subst_eqn_axis_names(eqn, axis_subst: Dict[AxisName, Tuple[AxisName]]):
     axis_names = (axis_names,)
   new_axis_names = sum((axis_subst.get(name, (name,)) for name in axis_names), ())
   return eqn._replace(params=dict(eqn.params, axis_name=new_axis_names))
-
-
-def _dynamic_jaxpr_trace_process_xmap(trace, prim, fun, tracers, params):
-  in_avals = [t.aval for t in tracers]
-  mapped_in_avals = [_delete_aval_axes(aval, in_axes)
-                     for aval, in_axes in zip(in_avals, params['in_axes'])]
-  with core.extend_axis_env_nd(params['axis_sizes'].items()):
-    jaxpr, reduced_out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
-  if consts: raise NotImplementedError  # TODO(mattjj): handle consts
-  out_avals = [_insert_aval_axes(aval, out_axes, params['axis_sizes'])
-               for aval, out_axes in zip(reduced_out_avals, params['out_axes'])]
-  source_info = pe.source_info_util.current()
-  out_tracers = [pe.DynamicJaxprTracer(trace, a, source_info) for a in out_avals]
-  invars = map(trace.getvar, tracers)
-  constvars = map(trace.getvar, map(trace.instantiate_const, consts))
-  outvars = map(trace.makevar, out_tracers)
-  new_in_axes = (None,) * len(consts) + params['in_axes']
-  new_params = dict(params, in_axes=new_in_axes,
-                    call_jaxpr=pe.convert_constvars_jaxpr(jaxpr))
-  eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim,
-                         new_params, source_info)
-  trace.frame.eqns.append(eqn)
-  return out_tracers
-pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_trace_process_xmap  # type: ignore
