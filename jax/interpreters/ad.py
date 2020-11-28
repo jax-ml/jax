@@ -164,20 +164,20 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
   if all(type(ct) is Zero for ct in cotangents_in):
     return map(lambda v: Zero(v.aval), jaxpr.invars)
 
-  def write_cotangent(v, ct):
+  def write_cotangent(prim, v, ct):
     # assert v not in primal_env
+    assert ct is not Zero, (prim, v.aval)  # check for an old harmless type error
     if ct is None or type(v) is Literal:
       return
     if type(ct) is Zero:
       # FIXME: This triggers a lot of failures!
-      # assert v.aval == ct.aval, (v.aval, ct.aval)
-      return
-    if ct is Zero: # FIXME: This should never happen, but seems to be necessary
+      # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
       return
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
     if not core.skip_checks:
       ct_aval = core.get_aval(ct_env[v])
-      assert v.aval.strip_weak_type() == core.lattice_join(v.aval, ct_aval).strip_weak_type(), (v.aval, ct_aval)
+      joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type()
+      assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.get(v, Zero(v.aval))
@@ -209,7 +209,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
     seen_vars |= read_set
 
   ct_env: Dict[Any, Any] = {}
-  map(write_cotangent, jaxpr.outvars, cotangents_in)
+  map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
   for eqn, to_drop in zip(jaxpr.eqns[::-1], drop_cts[::-1]):
     # FIXME: Some invars correspond to tangents
     invals = map(read_primal, eqn.invars)
@@ -228,7 +228,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
                                                          **eqn.params)
     cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
     # FIXME: Some invars correspond to primals!
-    map(write_cotangent, eqn.invars, cts_out)
+    map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
     for var in to_drop:
       ct_env.pop(var, None)  # NB: Constant cotangents might be missing
 
