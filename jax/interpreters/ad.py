@@ -166,12 +166,13 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
-    assert ct is not Zero  # check for an old harmless type error
     if ct is None or type(v) is Literal:
       return
     if type(ct) is Zero:
       # FIXME: This triggers a lot of failures!
       # assert v.aval == ct.aval, (v.aval, ct.aval)
+      return
+    if ct is Zero: # FIXME: This should never happen, but seems to be necessary
       return
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
     if not core.skip_checks:
