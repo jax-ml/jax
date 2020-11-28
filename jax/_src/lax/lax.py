@@ -2425,8 +2425,14 @@ iad.definverse(add_p, _add_inverse)
 def _sub_transpose(t, x, y):
   # The following linearity assertion is morally true, but because in some cases
   # we instantiate zeros for convenience, it doesn't always hold.
+  # TODO(mattjj): re-enable this assertion, don't return None below
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  return [t, neg(t) if type(t) is not ad_util.Zero else ad_util.Zero]
+  if type(t) is ad_util.Zero:
+    x_bar = ad_util.Zero(x.aval) if ad.is_undefined_primal(x) else None
+    y_bar = ad_util.Zero(y.aval) if ad.is_undefined_primal(y) else None
+    return [x_bar, y_bar]
+  else:
+    return [t, neg(t)]
 
 sub_p = standard_naryop([_num, _num], 'sub')
 ad.defjvp(sub_p,
@@ -2444,7 +2450,7 @@ iad.definverse(mul_p, _mul_inverse)
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
-  res = ad_util.Zero if type(cotangent) is ad_util.Zero else div(cotangent, y)
+  res = ad_util.Zero(x.aval) if type(cotangent) is ad_util.Zero else div(cotangent, y)
   return res, None
 div_p = standard_naryop([_num, _num], 'div')
 ad.defjvp(div_p,
@@ -2717,7 +2723,13 @@ def _conv_general_dilated_transpose_rhs(
   assert type(dimension_numbers) is ConvDimensionNumbers
   if np.size(g) == 0:
     # Avoids forming degenerate convolutions where the RHS has spatial size 0.
-    return ad_util.Zero
+    # Awkwardly, we don't have an aval for the rhs readily available, so instead
+    # of returning an ad_util.Zero instance here, representing a symbolic zero
+    # value, we instead return a None, which is meant to represent having no
+    # cotangent at all (and is thus incorrect for this situation), since the two
+    # are treated the same operationally.
+    # TODO(mattjj): adjust defbilinear so that the rhs aval is available here
+    return None
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
   assert batch_group_count == 1 or feature_group_count == 1
@@ -3283,7 +3295,8 @@ def _concatenate_transpose_rule(t, *operands, dimension):
   operand_shapes = [o.aval.shape if ad.is_undefined_primal(o) else o.shape
                     for o in operands]
   if type(t) is ad_util.Zero:
-    return ad_util.Zero
+    return [ad_util.Zero(o.aval) if ad.is_undefined_primal(o) else None
+            for o in operands]
   else:
     limit_points = np.cumsum([shape[dimension] for shape in operand_shapes])
     starts = np.zeros((len(operands), t.ndim), dtype=int)
@@ -3334,20 +3347,20 @@ def _pad_shape_rule(operand, padding_value, *, padding_config):
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
-    return ad_util.Zero
+    t_operand = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
+    t_padv = ad_util.Zero(padding_value.aval) if ad.is_undefined_primal(padding_value) else None
+  else:
+    lo, hi, interior = zip(*padding_config)
+    total = lambda x: _reduce_sum(x, list(range(t.ndim)))
 
-  lo, hi, interior = zip(*padding_config)
-  total = lambda x: _reduce_sum(x, list(range(t.ndim)))
+    def t_op():
+      unpad_config = safe_zip(np.negative(lo), np.negative(hi),
+                              np.zeros_like(interior))
+      unpadded = pad(t, np.array(0., t.dtype), unpad_config)
+      return slice(unpadded, np.zeros_like(lo), unpadded.shape, np.add(interior, 1))
 
-  def t_op():
-    unpad_config = safe_zip(np.negative(lo), np.negative(hi),
-                            np.zeros_like(interior))
-    unpadded = pad(t, np.array(0., t.dtype), unpad_config)
-    return slice(unpadded, np.zeros_like(lo), unpadded.shape, np.add(interior, 1))
-
-  t_operand = t_op() if ad.is_undefined_primal(operand) else None
-  t_padv = sub(total(t), total(t_operand)) if ad.is_undefined_primal(padding_value) else None
-
+    t_operand = t_op() if ad.is_undefined_primal(operand) else None
+    t_padv = sub(total(t), total(t_operand)) if ad.is_undefined_primal(padding_value) else None
   return [t_operand, t_padv]
 
 def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
@@ -3632,7 +3645,9 @@ def _select_dtype_rule(pred, on_true, on_false):
 def _select_transpose_rule(t, pred, on_true, on_false):
   assert not ad.is_undefined_primal(pred)
   if type(t) is ad_util.Zero:
-    return ad_util.Zero
+    return [None,
+            ad_util.Zero(on_true.aval) if ad.is_undefined_primal(on_true) else None,
+            ad_util.Zero(on_false.aval) if ad.is_undefined_primal(on_false) else None]
   else:
     zeros = full_like(t, 0)
     return [None,
@@ -3844,13 +3859,13 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
   assert ad.is_undefined_primal(operand)
   assert all(not ad.is_undefined_primal(s) for s in start_indices)
   operand_shape, operand_dtype = operand.aval.shape, operand.aval.dtype
-  if config.omnistaging_enabled:
-    zeros = full(operand_shape, 0, operand_dtype)
-  else:
-    zeros = full(operand_shape, tie_in(t, _zero(t)))
   if type(t) is ad_util.Zero:
-    return [zeros] + [None] * len(start_indices)
+    return [ad_util.Zero(operand.aval)] + [None] * len(start_indices)
   else:
+    if config.omnistaging_enabled:
+      zeros = full(operand_shape, 0, operand_dtype)
+    else:
+      zeros = full(operand_shape, tie_in(t, _zero(t)))
     return ([dynamic_update_slice(zeros, t, start_indices)] +
             [None] * len(start_indices))
 
@@ -3936,11 +3951,15 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
     update_shape = update.aval.shape
   else:
     update_shape = update.shape
-  dus = dynamic_update_slice
-  ds = dynamic_slice
-  zeros = _zeros(t, shape=update_shape)
-  operand_t = dus(t, zeros, start_indices) if ad.is_undefined_primal(operand) else None
-  update_t = ds(t, start_indices, update_shape) if ad.is_undefined_primal(update) else None
+  if type(t) is ad_util.Zero:
+    operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
+    update_t = ad_util.Zero(update.aval) if ad.is_undefined_primal(update) else None
+  else:
+    dus = dynamic_update_slice
+    ds = dynamic_slice
+    zeros = _zeros(t, shape=update_shape)
+    operand_t = dus(t, zeros, start_indices) if ad.is_undefined_primal(operand) else None
+    update_t = ds(t, start_indices, update_shape) if ad.is_undefined_primal(update) else None
   return [operand_t, update_t] + [None] * len(start_indices)
 
 def _dynamic_update_slice_translation_rule(c, operand, update, *start_indices):
@@ -4143,19 +4162,20 @@ def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
   if type(t) is ad_util.Zero:
-    return ad_util.Zero
-  if config.omnistaging_enabled:
-    zeros = full(operand_shape, _zero(t))
+    out = ad_util.Zero(operand.aval)
   else:
-    zeros = full(operand_shape, tie_in(t, _zero(t)))
-  scatter_dnums = ScatterDimensionNumbers(
-    update_window_dims=dimension_numbers.offset_dims,
-    inserted_window_dims=dimension_numbers.collapsed_slice_dims,
-    scatter_dims_to_operand_dims=dimension_numbers.start_index_map)
-  out = scatter_add(zeros, start_indices, t, scatter_dnums,
-                    indices_are_sorted=False,
-                    unique_indices=False)
-  return [out, ad_util.Zero.from_value(start_indices)]
+    if config.omnistaging_enabled:
+      zeros = full(operand_shape, _zero(t))
+    else:
+      zeros = full(operand_shape, tie_in(t, _zero(t)))
+    scatter_dnums = ScatterDimensionNumbers(
+      update_window_dims=dimension_numbers.offset_dims,
+      inserted_window_dims=dimension_numbers.collapsed_slice_dims,
+      scatter_dims_to_operand_dims=dimension_numbers.start_index_map)
+    out = scatter_add(zeros, start_indices, t, scatter_dnums,
+                      indices_are_sorted=False,
+                      unique_indices=False)
+  return [out, None]
 
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                           slice_sizes):
@@ -4412,27 +4432,28 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
   else:
     updates_shape = updates.shape
   if type(t) is ad_util.Zero:
-    return ad_util.Zero
+    operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
+    update_t = ad_util.Zero(updates.aval) if ad.is_undefined_primal(updates) else None
+  else:
+    operand_t = update_t = None
+    if ad.is_undefined_primal(operand):
+      operand_t = t
 
-  operand_t = update_t = None
-  if ad.is_undefined_primal(operand):
-    operand_t = t
-
-  if ad.is_undefined_primal(updates):
-    gather_dnums = GatherDimensionNumbers(
-      offset_dims=dimension_numbers.update_window_dims,
-      collapsed_slice_dims=dimension_numbers.inserted_window_dims,
-      start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
-    slice_sizes = []
-    pos = 0
-    for i in range(len(t.shape)):
-      if i in dimension_numbers.inserted_window_dims:
-        slice_sizes.append(1)
-      else:
-        slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
-        pos += 1
-    update_t = gather(t, scatter_indices, dimension_numbers=gather_dnums,
-                      slice_sizes=slice_sizes)
+    if ad.is_undefined_primal(updates):
+      gather_dnums = GatherDimensionNumbers(
+        offset_dims=dimension_numbers.update_window_dims,
+        collapsed_slice_dims=dimension_numbers.inserted_window_dims,
+        start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
+      slice_sizes = []
+      pos = 0
+      for i in range(len(t.shape)):
+        if i in dimension_numbers.inserted_window_dims:
+          slice_sizes.append(1)
+        else:
+          slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
+          pos += 1
+      update_t = gather(t, scatter_indices, dimension_numbers=gather_dnums,
+                        slice_sizes=slice_sizes)
   return [operand_t, None, update_t]
 
 def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
@@ -4444,29 +4465,29 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
   else:
     updates_shape = updates.shape
   if type(t) is ad_util.Zero:
-    return ad_util.Zero
-
-  operand_t = update_t = None
-  if ad.is_undefined_primal(operand):
-    operand_t = scatter_mul(
-        t, scatter_indices, updates, dimension_numbers=dimension_numbers,
-        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
-
-  if ad.is_undefined_primal(updates):
-    gather_dnums = GatherDimensionNumbers(
-      offset_dims=dimension_numbers.update_window_dims,
-      collapsed_slice_dims=dimension_numbers.inserted_window_dims,
-      start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
-    slice_sizes = []
-    pos = 0
-    for i in range(len(t.shape)):
-      if i in dimension_numbers.inserted_window_dims:
-        slice_sizes.append(1)
-      else:
-        slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
-        pos += 1
-    update_t = gather(mul(t, operand), scatter_indices,
-                      dimension_numbers=gather_dnums, slice_sizes=slice_sizes)
+    operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
+    update_t = ad_util.Zero(updates.aval) if ad.is_undefined_primal(updates) else None
+  else:
+    operand_t = update_t = None
+    if ad.is_undefined_primal(operand):
+      operand_t = scatter_mul(
+          t, scatter_indices, updates, dimension_numbers=dimension_numbers,
+          indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
+    if ad.is_undefined_primal(updates):
+      gather_dnums = GatherDimensionNumbers(
+        offset_dims=dimension_numbers.update_window_dims,
+        collapsed_slice_dims=dimension_numbers.inserted_window_dims,
+        start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
+      slice_sizes = []
+      pos = 0
+      for i in range(len(t.shape)):
+        if i in dimension_numbers.inserted_window_dims:
+          slice_sizes.append(1)
+        else:
+          slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
+          pos += 1
+      update_t = gather(mul(t, operand), scatter_indices,
+                        dimension_numbers=gather_dnums, slice_sizes=slice_sizes)
   return [operand_t, None, update_t]
 
 
@@ -5503,7 +5524,7 @@ def _select_and_gather_add_transpose(
            "dilation, got window_dilation={}.")
     raise NotImplementedError(msg.format(window_dilation))
   if type(t) is ad_util.Zero:
-    return [ad_util.Zero, None]
+    return [ad_util.Zero(tangents.aval), None]
   has_base_dilation = any(d != 1 for d in base_dilation)
   if has_base_dilation:
     select_identity = (_get_max_identity if select_prim is ge_p
