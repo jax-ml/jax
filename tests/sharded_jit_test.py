@@ -28,9 +28,9 @@ from jax import jit, pmap, vjp
 from jax import lax
 from jax import test_util as jtu
 from jax import tree_util
+from jax.experimental import (sharded_jit, with_sharding_constraint,
+                              PartitionSpec as P)
 from jax.interpreters import pxla
-from jax.interpreters.sharded_jit import sharded_jit, with_sharding_constraint
-from jax.interpreters.sharded_jit import PartitionSpec as P
 from jax.util import prod
 import jax.numpy as jnp
 
