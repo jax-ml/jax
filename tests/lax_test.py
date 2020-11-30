@@ -1595,14 +1595,14 @@ class LaxTest(jtu.JaxTestCase):
             [(1, 1, 1, 1), (1, 2, 2, 1), (30, 40, 3, 2)])))))
   def testReduceWindowShapeDilation(self, shape, window_dimensions,
                                     base_dilation, window_dilation):
-      operand, padding, strides = np.ones(shape), 'SAME', (1,) * len(shape)
-      result = lax.reduce_window(operand, 0., lax.add, padding=padding,
-                                 window_strides=strides,
-                                 window_dimensions=window_dimensions)
-      # With a stride of 1 in each direction and a padding of 'SAME', the
-      # shape of the input should be equal to the shape of the result according
-      # to https://www.tensorflow.org/xla/operation_semantics#reducewindow.
-      self.assertEqual(shape, result.shape)
+    operand, padding, strides = np.ones(shape), 'SAME', (1,) * len(shape)
+    result = lax.reduce_window(operand, 0., lax.add, padding=padding,
+                               window_strides=strides,
+                               window_dimensions=window_dimensions)
+    # With a stride of 1 in each direction and a padding of 'SAME', the
+    # shape of the input should be equal to the shape of the result according
+    # to https://www.tensorflow.org/xla/operation_semantics#reducewindow.
+    self.assertEqual(shape, result.shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_shape={}_axis={}_reverse={}"
@@ -1643,10 +1643,8 @@ class LaxTest(jtu.JaxTestCase):
       for axis in [-1, len(shape) - 1]
       for is_stable in [False, True]))
   def testSort(self, shape, dtype, axis, is_stable):
-    # TODO(b/141131288): enable complex-valued sorts on TPU.
-    if (np.issubdtype(dtype, np.complexfloating) and (
-        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
-         jtu.device_under_test() == "tpu")):
+    if (np.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -1662,10 +1660,8 @@ class LaxTest(jtu.JaxTestCase):
       for axis in [-1, len(shape) - 1]
       for is_stable in [False, True]))
   def testSortAgainstNumpy(self, shape, dtype, axis, is_stable):
-    # TODO(b/141131288): enable complex-valued sorts on TPU.
-    if (np.issubdtype(dtype, np.complexfloating) and (
-        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
-         jtu.device_under_test() == "tpu")):
+    if (np.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -1690,10 +1686,8 @@ class LaxTest(jtu.JaxTestCase):
       for axis in [-1, len(shape) - 1]
       for is_stable in [False, True]))
   def testSortKeyVal(self, shape, key_dtype, val_dtype, axis, is_stable):
-    # TODO(b/141131288): enable complex-valued sorts on TPU.
-    if (np.issubdtype(key_dtype, np.complexfloating) and (
-        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
-         jtu.device_under_test() == "tpu")):
+    if (np.issubdtype(key_dtype, np.complexfloating) and
+        jtu.device_under_test() == "cpu"):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     # This test relies on the property that wherever keys are tied, values are
@@ -1716,10 +1710,8 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(3, 5,), (4, 3)]
       for num_keys in range(1, shape[0] + 1)))
   def testSortNumKeys(self, shape, dtype, num_keys):
-    # TODO(b/141131288): enable complex-valued sorts on TPU.
-    if (np.issubdtype(dtype, np.complexfloating) and (
-        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
-         jtu.device_under_test() == "tpu")):
+    if (np.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -1740,10 +1732,8 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(3,), (5, 3)]
       for axis in [-1, len(shape) - 1]))
   def testSortKeyValAgainstNumpy(self, shape, key_dtype, val_dtype, axis):
-    # TODO(b/141131288): enable complex-valued sorts on TPU.
-    if (np.issubdtype(key_dtype, np.complexfloating) and (
-        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
-         jtu.device_under_test() == "tpu")):
+    if (np.issubdtype(key_dtype, np.complexfloating) and
+        jtu.device_under_test() == "cpu"):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     # This test relies on the property that wherever keys are tied, values are
@@ -2135,11 +2125,11 @@ class LaxTest(jtu.JaxTestCase):
   def testScatterShapeCheckingRule(self, operand_shape, scatter_indices,
                                    update_shape, dimension_numbers, msg):
 
-      operand = np.ones(operand_shape, dtype=np.int32)
-      updates = np.ones(update_shape, dtype=np.int32)
+    operand = np.ones(operand_shape, dtype=np.int32)
+    updates = np.ones(update_shape, dtype=np.int32)
 
-      with self.assertRaisesRegex(TypeError, msg):
-        lax.scatter(operand, scatter_indices, updates, dimension_numbers)
+    with self.assertRaisesRegex(TypeError, msg):
+      lax.scatter(operand, scatter_indices, updates, dimension_numbers)
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler
