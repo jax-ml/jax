@@ -273,6 +273,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype == dtypes.bfloat16:
       tf_unimpl(np_dtype, devs=["CPU", "GPU"])
 
+  if prim is lax.convert_element_type_p:
+    if np_dtype == dtypes.bfloat16:
+      tf_unimpl(np_dtype, devs=["CPU", "GPU"])
+
   if prim in [lax.sinh_p, lax.cosh_p, lax.atanh_p, lax.asinh_p, lax.acosh_p,
               lax.erf_inv_p]:
     if np_dtype == np.float16:
