@@ -635,6 +635,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_add_jaxvals(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_tie_in)
+  def test_tie_in(self, harness: primitive_harness.Harness):
+    if config.omnistaging_enabled:
+      raise unittest.SkipTest("tie_in test requires omnistaging to be disabled")
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_comparators)
   def test_comparators(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))

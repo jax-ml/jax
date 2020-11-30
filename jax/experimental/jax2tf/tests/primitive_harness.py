@@ -411,6 +411,24 @@ ad_util_add_jaxvals = tuple( # Validate dtypes
   for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
 )
 
+lax_tie_in = tuple(
+  Harness(f"lhs={jtu.format_shape_dtype_string(lhs_shape, lhs_dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}",
+          lax.tie_in_p.bind,
+          [RandArg(lhs_shape, lhs_dtype), RandArg(rhs_shape, rhs_dtype)],
+          lhs_shape=lhs_shape,
+          lhs_dtype=lhs_dtype,
+          rhs_shape=rhs_shape,
+          rhs_dtype=rhs_dtype,
+          primitive=lax.tie_in_p)
+  for lhs_shape, rhs_shape in [
+    ((2, 3), (4, 5))
+  ]
+  for rhs_dtype in jtu.dtypes.all
+  for lhs_dtype in [
+    np.float32
+  ]
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 
