@@ -398,6 +398,19 @@ lax_bitcast_convert_type = tuple( # Validate dtypes combinations
   for new_dtype in filter(partial(_can_bitcast, dtype), jtu.dtypes.all)
 )
 
+def _make_add_jaxvals_harness(name, *, shapes=((2,), (2,)),
+                              dtype=np.float32):
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
+                 ad_util.add_jaxvals_p.bind,
+                 list(map(lambda s: RandArg(s, dtype), shapes)),
+                 shapes=shapes,
+                 dtypes=dtypes)
+
+ad_util_add_jaxvals = tuple( # Validate dtypes
+  _make_add_jaxvals_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 

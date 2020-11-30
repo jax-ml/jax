@@ -19,6 +19,7 @@ import numpy as np
 from typing import Any, Callable, Collection, Dict, List, NamedTuple, Optional,\
                    Tuple, Sequence, Set
 
+from jax import ad_util
 from jax import core
 from jax import dtypes
 from jax import lax
@@ -205,7 +206,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
         # rewriting is not implemented"
         tf_unimpl(np_dtype, devs=devs)
 
-  if prim in [lax.add_p, lax.reduce_window_sum_p]:
+  if prim in [ad_util.add_jaxvals_p, lax.add_p, lax.reduce_window_sum_p]:
     if np_dtype in [np.uint16, np.uint32, np.uint64]:
       # TODO(bchetioui): tf.math.add is not defined for the above types.
       tf_unimpl(np_dtype)
