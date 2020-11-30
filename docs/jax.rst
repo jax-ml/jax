@@ -82,6 +82,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
 .. autofunction:: device_put
+.. autofunction:: named_call
 
 .. autofunction:: grad
 .. autofunction:: value_and_grad
