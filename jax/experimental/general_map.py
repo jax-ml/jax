@@ -549,7 +549,6 @@ def _delete_aval_axes(aval, axes: AxisNamePos):
     del shape[i]
   return core.ShapedArray(tuple(shape), aval.dtype)
 
-
 def _insert_aval_axes(aval, axes: AxisNamePos, axis_sizes):
   assert isinstance(aval, core.ShapedArray)
   shape = list(aval.shape)

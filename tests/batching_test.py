@@ -1111,6 +1111,69 @@ class BatchingTest(jtu.JaxTestCase):
       vmap(lambda x: x - lax.axis_index('i'), axis_name='i')(x),
       x - np.arange(x.shape[0]))
 
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testCollectivePdot(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(0)
+
+    x = rng.randn(3, 4)
+    y = rng.randn(4, 5)
+    z = vmap(f, axis_name='i', in_axes=(1, 0), out_axes=None)(x, y)
+    self.assertAllClose(z, jnp.dot(x, y))
+
+    x = rng.randn(4, 3)
+    y = rng.randn(4, 5)
+    z = vmap(f, axis_name='i', in_axes=(0, 0), out_axes=None)(x, y)
+    self.assertAllClose(z, jnp.dot(x.T, y))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testCollectivePdotBatching(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(1)
+    xs = rng.randn(2, 8, 3)
+    ys = rng.randn(2, 3, 5)
+    zs = vmap(vmap(f, axis_name='i', in_axes=(1, 0), out_axes=None))(xs, ys)
+    self.assertAllClose(zs, jnp.einsum('nij,njk->nik', xs, ys))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPdotJvp(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(1)
+    x = rng.randn(3, 4)
+    x_dot = rng.randn(*x.shape)
+    y = rng.randn(4, 5)
+    y_dot = rng.randn(*y.shape)
+
+    z, z_dot = vmap(lambda x, y, x_dot, y_dot: jvp(f, (x, y), (x_dot, y_dot)),
+                    axis_name='i', in_axes=(1, 0, 1, 0), out_axes=None)(x, y, x_dot, y_dot)
+    self.assertAllClose(z, jnp.dot(x, y))
+    self.assertAllClose(z_dot, jnp.dot(x_dot, y) + jnp.dot(x, y_dot))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPdotVjp(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(1)
+    x = rng.randn(3, 4)
+    y = rng.randn(4, 5)
+    z_bar = rng.randn(3, 5)
+
+    x_bar, y_bar = vmap(lambda x, y, z_bar: vjp(f, x, y)[1](z_bar),
+                        axis_name='i', in_axes=(1, 0, None), out_axes=(1, 0))(x, y, z_bar)
+    self.assertAllClose(x_bar, jnp.dot(z_bar, y.T))
+    self.assertAllClose(y_bar, jnp.dot(x.T, z_bar))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

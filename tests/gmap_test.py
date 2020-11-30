@@ -30,7 +30,7 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import vmap
 from jax import lax
-from jax.experimental.general_map import gmap, fake_resources, Mesh, mesh, xmap, A
+from jax.experimental.general_map import gmap, Mesh, mesh, xmap, A
 from jax.lib import xla_bridge
 from jax.util import curry, unzip2
 from jax.interpreters import pxla
@@ -158,50 +158,50 @@ class XMapTest(jtu.JaxTestCase):
   @ignore_gmap_warning()
   @skipIf(not config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
+  @with_mesh([('r1', 4), ('r2', 2), ('r3', 5)])
   def testXMap(self):
     def f(a, b):
       return a + 2, b * 4
-    with fake_resources(r1=4, r2=2, r3=5):
-      fm = xmap(f,
-                in_axes=[A({'x': 0, 'z': 1}), A({'y': 1})],
-                out_axes=[A({'x': 1, 'z': 0}), A({'y': 0})],
-                schedule=[
-                  ('x', 'r1'),
-                  ('x', 'r2'),
-                  ('y', 'r1'),
-                  ('z', 'r3'),
-                  ('x', 'vectorize'),
-                  ('y', 'vectorize'),
-                ])
-      a = jnp.arange(16*5*2).reshape((16, 5, 2))
-      b = jnp.arange(6*16).reshape((6, 16))
-      c, d = fm(a, b)
-      self.assertAllClose(c, (a + 2).transpose((1, 0, 2)))
-      self.assertAllClose(d, (b * 4).T)
+    fm = xmap(f,
+              in_axes=[A({'x': 0, 'z': 1}), A({'y': 1})],
+              out_axes=[A({'x': 1, 'z': 0}), A({'y': 0})],
+              schedule=[
+                ('x', 'r1'),
+                ('x', 'r2'),
+                ('y', 'r1'),
+                ('z', 'r3'),
+                ('x', 'vectorize'),
+                ('y', 'vectorize'),
+              ])
+    a = jnp.arange(16*5*2).reshape((16, 5, 2))
+    b = jnp.arange(6*16).reshape((6, 16))
+    c, d = fm(a, b)
+    self.assertAllClose(c, (a + 2).transpose((1, 0, 2)))
+    self.assertAllClose(d, (b * 4).T)
 
   @ignore_gmap_warning()
   @skipIf(not config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
+  @with_mesh([('r1', 4), ('r2', 2), ('r3', 5)])
   def testXMapCollectives(self):
     def f(a, b):
       return lax.psum(a + 2, 'x'), b * 4
-    with fake_resources(r1=4, r2=2, r3=5):
-      fm = xmap(f,
-                in_axes=[A({'x': 0, 'z': 1}), A({'y': 1})],
-                out_axes=[A({'z': 0}), A({'y': 0})],
-                schedule=[
-                  ('x', 'r1'),
-                  ('x', 'r2'),
-                  ('y', 'r1'),
-                  ('z', 'r3'),
-                  ('x', 'vectorize'),
-                  ('y', 'vectorize'),
-                ])
-      a = jnp.arange(16*5*2).reshape((16, 5, 2))
-      b = jnp.arange(6*16).reshape((6, 16))
-      c, d = fm(a, b)
-      self.assertAllClose(c, (a + 2).sum(0))
-      self.assertAllClose(d, (b * 4).T)
+    fm = xmap(f,
+              in_axes=[A({'x': 0, 'z': 1}), A({'y': 1})],
+              out_axes=[A({'z': 0}), A({'y': 0})],
+              schedule=[
+                ('x', 'r1'),
+                ('x', 'r2'),
+                ('y', 'r1'),
+                ('z', 'r3'),
+                ('x', 'vectorize'),
+                ('y', 'vectorize'),
+              ])
+    a = jnp.arange(16*5*2).reshape((16, 5, 2))
+    b = jnp.arange(6*16).reshape((6, 16))
+    c, d = fm(a, b)
+    self.assertAllClose(c, (a + 2).sum(0))
+    self.assertAllClose(d, (b * 4).T)
 
   @ignore_gmap_warning()
   def testXMapMeshBasic(self):
@@ -334,6 +334,45 @@ class XMapTest(jtu.JaxTestCase):
                                 "Changing the resource environment.*"):
       f(x)
 
+  @ignore_gmap_warning()
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  @with_mesh([('r1', 2)])
+  def testPdotBasic(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    f_mapped = xmap(f, in_axes=[A({'i': 1}), A({'i': 0})], out_axes=A(),
+                    schedule=[('i', 'r1'), ('i', 'vectorize')])
+
+    rng = np.random.RandomState(0)
+    x = rng.randn(3, 8)
+    y = rng.randn(8, 5)
+
+    z = f_mapped(x, y)
+
+    self.assertAllClose(z, jnp.dot(x, y))
+
+  @ignore_gmap_warning()
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  @with_mesh([('r1', 2)])
+  def testPdotBatching(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(0)
+    x = rng.randn(2, 3, 8)
+    y = rng.randn(2, 8, 5)
+
+    f_mapped = xmap(f,
+                    in_axes=[A({'i': 2, 'j': 0}), A({'i': 1, 'j': 0})],
+                    out_axes=A({'j': 0}),
+                    schedule=[('j', 'vectorize'), ('i', 'r1'), ('i', 'vectorize')])
+
+    z = f_mapped(x, y)
+
+    self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
