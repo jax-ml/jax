@@ -2534,6 +2534,10 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, old_dtype):
   return operand.shape
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, old_dtype):
+  if operand.dtype != old_dtype:
+    raise TypeError("operand dtype and old_dtype must be the same, but got "
+        "operand.dtype={} and old_dtype={}."
+        .format(operand.dtype, np.dtype(old_dtype)))
   return new_dtype
 
 def _convert_element_type_translation_rule(c, operand, *, new_dtype, old_dtype):
