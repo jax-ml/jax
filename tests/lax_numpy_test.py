@@ -2339,9 +2339,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for fill_value_dtype in default_dtypes
       for out_dtype in default_dtypes))
   def testFullLike(self, shape, in_dtype, fill_value_dtype, out_dtype, out_shape):
+    if numpy_version < (1, 19) and out_shape == ():
+      raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
     rng = jtu.rand_default(self.rng())
-    np_fun = lambda x, fill_value: np.full_like(x, fill_value, dtype=out_dtype, shape=out_shape)
-    jnp_fun = lambda x, fill_value: jnp.full_like(x, fill_value, dtype=out_dtype, shape=out_shape)
+    np_fun = lambda x, fill_value: np.full_like(
+      x, fill_value, dtype=out_dtype, shape=out_shape)
+    jnp_fun = lambda x, fill_value: jnp.full_like(
+      x, fill_value, dtype=out_dtype, shape=out_shape)
     args_maker = lambda: [rng(shape, in_dtype), rng((), fill_value_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -2360,6 +2364,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for func in ["ones_like", "zeros_like"]
       for out_dtype in default_dtypes))
   def testZerosOnesLike(self, shape, in_dtype, func, out_dtype, out_shape):
+    if numpy_version < (1, 19) and out_shape == ():
+      raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
     rng = jtu.rand_default(self.rng())
     np_fun = lambda x: getattr(np, func)(x, dtype=out_dtype, shape=out_shape)
     jnp_fun = lambda x: getattr(jnp, func)(x, dtype=out_dtype, shape=out_shape)
