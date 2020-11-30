@@ -116,12 +116,10 @@ def prepare_wheel(sources_path):
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.so"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.so"))
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.pyd"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.pyd"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/version.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver.py"))
