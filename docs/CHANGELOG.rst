@@ -73,6 +73,7 @@ jaxlib 0.1.58 (Unreleased)
 
 * Fixed a bug that meant JAX sometimes return platform-specific types (e.g.,
   `np.cint`) instead of standard types (e.g., `np.int32`). (#4903)
+* Fixed a crash when constant-folding certain int16 operations. (#4971)
 
 jaxlib 0.1.57 (November 12 2020)
 --------------------------------
