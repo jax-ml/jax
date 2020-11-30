@@ -224,6 +224,11 @@ def xmap(fun: Callable,
                      f"in_axes, but the following are missing: "
                      f"{out_axes_names - in_axes_names}")
 
+  for axis, resources in frozen_axis_resources.items():
+    if len(set(resources)) != len(resources):
+      raise ValueError(f"Resource assignment of a single axis must be a tuple of "
+                       f"distinct resources, but specified {resources} for axis {axis}")
+
   @wraps(fun)
   def fun_mapped(*args):
     # Putting this outside of fun_mapped would make resources lexically scoped
@@ -303,20 +308,15 @@ def make_xmap_callable(fun: lu.WrappedFun,
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
-  physical_resource_map: Dict[ResourceAxisName, Set[AxisName]]
+  physical_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
   axis_subst: Dict[AxisName, Tuple[ResourceAxisName, ...]]
 
   @classmethod
   def from_axis_resources(cls, axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]], resource_env):
-    physical_resource_map: Dict[ResourceAxisName, Set[AxisName]] = {}
-    for axis, resources in axis_resources.items():
-      for resource in resources:
-        if resource not in resource_env.physical_resource_axes:
-            raise ValueError(f"Mapping axis {axis} to an undefined resource axis {resource}. "
-                             f"The resource axes currently in scope are: {resource_env.resource_axes}")
-        physical_resource_map.setdefault(resource, set()).add(axis)
+    # TODO: Support sequential resources
+    physical_axis_resources = axis_resources  # NB: We only support physical resources at the moment
     axis_subst = {name: axes + (fresh_resource_name(name),) for name, axes in axis_resources.items()}
-    return cls(physical_resource_map, axis_subst)
+    return cls(physical_axis_resources, axis_subst)
 
   def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
     for naxis, raxes in self.axis_subst.items():
@@ -332,13 +332,9 @@ class EvaluationPlan(NamedTuple):
     in/out_axes that range over the mesh dimensions.
     """
     def to_mesh(axes):
-      mesh_axes = {}
-      for paxis, naxes in self.physical_resource_map.items():
-        axis = lookup_exactly_one_of(axes, naxes)
-        if axis is None:
-          continue
-        mesh_axes[paxis] = axis
-      return AxisNamePos(mesh_axes)
+      return OrderedDict((physical_axis, pos_axis)
+                         for logical_axis, pos_axis in axes.items()
+                         for physical_axis in self.physical_axis_resources[logical_axis])
     return (tuple(unsafe_map(to_mesh, in_axes)),
             tuple(unsafe_map(to_mesh, out_axes)))
 

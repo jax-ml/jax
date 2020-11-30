@@ -28,6 +28,7 @@
 # This encoding is assumed by various parts of the system, e.g. generating
 # replica groups for collective operations.
 
+import sys
 from contextlib import contextmanager
 from collections import defaultdict, OrderedDict
 import itertools as it
@@ -57,6 +58,10 @@ from . import partial_eval as pe
 from . import xla
 from . import ad
 
+if sys.version_info >= (3, 9):
+  OrderedDictType = OrderedDict
+else:
+  OrderedDictType = Dict
 
 xops = xc.ops
 
@@ -71,11 +76,31 @@ Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 if TYPE_CHECKING:
   class Unstacked(NamedTuple):
     size: int
-  class Chunked(NamedTuple):
-    chunks: int
 else:
   Unstacked = taggedtuple('Unstacked', ('size',))
-  Chunked = taggedtuple('Chunked', ('chunks',))
+
+class Chunked:
+  chunks: Tuple[int, ...]
+
+  def __init__(self, chunks: Union[int, Tuple[int, ...]]):
+    if isinstance(chunks, int):
+      chunks = (chunks,)
+    object.__setattr__(self, 'chunks', chunks)
+
+  def __setattr__(self, name, value):
+    raise RuntimeError("Chunked is immutable")
+
+  def __delattr__(self, name):
+    raise RuntimeError("Chunked is immutable")
+
+  def __hash__(self):
+    return hash(self.chunks)
+
+  def __eq__(self, other):
+    return type(other) is Chunked and self.chunks == other.chunks
+
+  def __repr__(self):
+    return f'Chunked({self.chunks})'
 
 """
 Represents all the ways we can shard a dimension.
@@ -139,7 +164,7 @@ class ShardingSpec:
       elif isinstance(sharding, Unstacked):
         sharded_axis_sizes.append(sharding.size)
       elif isinstance(sharding, Chunked):
-        sharded_axis_sizes.append(sharding.chunks)
+        sharded_axis_sizes.extend(sharding.chunks)
       else:
         assert_unreachable(sharding)
     return tuple(sharded_axis_sizes[a.axis] if isinstance(a, ShardedAxis) else a.replicas
@@ -181,10 +206,12 @@ class ShardingSpec:
       if sharding is None:
         new_mesh_shape.append(1)  # Add a dummy mesh axis we won't be sharding over
       elif isinstance(sharding, Chunked):
-        maxis = sharded_axes[next_sharded_axis]
-        mesh_permutation.append(maxis)
-        new_mesh_shape.append(mesh_shape[maxis])
-        next_sharded_axis += 1
+        for nchunks in sharding.chunks:
+          maxis = sharded_axes[next_sharded_axis]
+          assert mesh_shape[maxis] == nchunks
+          mesh_permutation.append(maxis)
+          next_sharded_axis += 1
+        new_mesh_shape.append(int(np.prod(sharding.chunks)))
       elif isinstance(sharding, Unstacked):
         raise RuntimeError("Cannot convert unstacked sharding specs to XLA OpSharding")
       else:
@@ -208,9 +235,10 @@ class ShardingSpec:
       shape: The shape of the logical array being sharded.
 
     Returns:
-      An ndarray with a NumPy-style index for each element of the logical mesh.
-      Each element is an int, a slice object with step=1, or a tuple thereof, to
-      be treated as an index into the full logical array.
+      An ndarray with the same shape as the logical mesh (as derived form
+      `mesh_mapping`). Each entry is a NumPy-style index selecting the subset of
+      the data array to be placed on a corresponding device. The indices can be
+      ints, slice objects with step=1, or tuples of those.
     """
     assert len(shape) == len(self.sharding), (shape, self.sharding)
 
@@ -227,11 +255,12 @@ class ShardingSpec:
         axis_indices.append(range(axis_size))
         shard_indices_shape.append(axis_size)
       elif isinstance(sharding, Chunked):
-        shard_size, ragged = divmod(axis_size, sharding.chunks)
-        assert not ragged, (axis_size, sharding.chunks, dim)
+        total_chunks = int(np.prod(sharding.chunks))
+        shard_size, ragged = divmod(axis_size, total_chunks)
+        assert not ragged, (axis_size, total_chunks, dim)
         axis_indices.append([slice(i * shard_size, (i + 1) * shard_size)
-                             for i in range(sharding.chunks)])
-        shard_indices_shape.append(sharding.chunks)
+                             for i in range(total_chunks)])
+        shard_indices_shape.extend(sharding.chunks)
       else:
         assert_unreachable(sharding)
 
@@ -257,6 +286,12 @@ class ShardingSpec:
             for a in self.mesh_mapping]
     return (np.broadcast_to(shard_indices, replica_sizes + shard_indices.shape)
               .transpose(perm))
+
+  def __eq__(self, other):
+    return (self.sharding, self.mesh_mapping) == (other.sharding, other.mesh_mapping)
+
+  def __hash__(self):
+    return hash((self.sharding, self.mesh_mapping))
 
   def __repr__(self):
     return f'ShardingSpec({self.sharding}, {self.mesh_mapping})'
@@ -1239,13 +1274,28 @@ def _unravel_index(c, axis_env):
 
 # ------------------- xmap -------------------
 
-AxisName = Any
-AxisNameMap = Any # Dict[AxisName, int]
+MeshAxisName = Any
+"""
+ArrayMapping specifies how an ndarray should map to mesh axes.
+
+Note that the ordering is crucial for the cases when this mapping is non-injective
+(i.e. when multiple mesh axes map to the same positional axis). Then, the
+order of entries of the mapping determines a major-to-minor order on mesh axes,
+according to which chunks of the value along the repeated dimension will be assigned.
+
+For example, consider a mapping {'x': 1, 'y': 1} and a mesh with shape {'x': 2, 'y': 3}.
+The second dimension of the value would get chunked into 6 pieces, and assigned to the
+mesh in a way that treats 'y' as the fastest changing (minor) dimension. In this case,
+that would mean that a flat list of chunks would get assigned to a flattened list of
+mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, then the
+mesh devices ndarray would have to be transposed before flattening and assignment.
+"""
+ArrayMapping = OrderedDictType[MeshAxisName, int]
 
 class Mesh:
   __slots__ = ('devices', 'axis_names')
 
-  def __init__(self, devices: np.ndarray, axis_names: Sequence[AxisName]):
+  def __init__(self, devices: np.ndarray, axis_names: Sequence[MeshAxisName]):
     assert devices.ndim == len(axis_names)
     # TODO: Make sure that devices are unique? At least with the quick and
     #       dirty check that the array size is not larger than the number of
@@ -1297,7 +1347,7 @@ class Mesh:
   def device_ids(self):
     return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
 
-def tile_aval_nd(axis_sizes, in_axes: AxisNameMap, aval):
+def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   if aval is core.abstract_unit:
     return aval
   assert isinstance(aval, ShapedArray)
@@ -1307,7 +1357,7 @@ def tile_aval_nd(axis_sizes, in_axes: AxisNameMap, aval):
     shape[axis] //= axis_sizes[name]
   return ShapedArray(tuple(shape), aval.dtype)
 
-def untile_aval_nd(axis_sizes, out_axes: AxisNameMap, aval):
+def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
   if aval is core.abstract_unit:
     return aval
   assert isinstance(aval, ShapedArray)
@@ -1320,8 +1370,8 @@ def mesh_tiled_callable(fun: lu.WrappedFun,
                         transformed_name: str,
                         backend_name: Optional[str],
                         mesh: Mesh,
-                        in_axes: Sequence[AxisNameMap],
-                        out_axes: Sequence[AxisNameMap],
+                        in_axes: Sequence[ArrayMapping],
+                        out_axes: Sequence[ArrayMapping],
                         spmd_lowering,
                         *local_in_untiled_avals):
   assert config.omnistaging_enabled
@@ -1493,29 +1543,26 @@ def _sanitize_mesh_jaxpr(jaxpr):
     core.traverse_jaxpr_params(_sanitize_mesh_jaxpr, eqn.params)
 
 
-def mesh_sharding_specs(local_axis_sizes, axis_names):
+def mesh_sharding_specs(axis_sizes, axis_names):
   mesh_axis_pos = {name: i for i, name in enumerate(axis_names)}
   # NOTE: This takes in the non-sharded avals!
   def mk_sharding_spec(aval, aval_axes):
     sharding = [None] * len(aval.shape)
-    pre_mesh_mapping = [None] * len(local_axis_sizes)
-    for name, axis in aval_axes.items():
-      if sharding[axis] is not None:
-        raise NotImplementedError("A single named dimension can only be mapped to "
-                                  "a single physical resource at the moment.")
-      assert aval.shape[axis] % local_axis_sizes[name] == 0, (local_axis_sizes[name], aval.shape[axis])
-      sharding[axis] = Chunked(local_axis_sizes[name])
-      pre_mesh_mapping[mesh_axis_pos[name]] = axis
-
-    sharded_axis_idx = {}
-    sharded_axis_count = 0
-    for axis, dim_sharding in enumerate(sharding):
-      if dim_sharding is not None:
-        sharded_axis_idx[axis] = sharded_axis_count
-        sharded_axis_count += 1
-
-    mesh_mapping = [Replicated(axis_size) if m is None else ShardedAxis(sharded_axis_idx[m])
-                    for m, axis_size in zip(pre_mesh_mapping, local_axis_sizes.values())]
+    mesh_mapping = [Replicated(axis_size) for axis_size in axis_sizes.values()]
+    next_sharded_axis = 0
+    aval_shape = list(aval.shape)
+    # NOTE: sorted is stable, which is important when multiple resources
+    #       map to the same axis.
+    for name, axis in sorted(aval_axes.items(), key=lambda x: x[1]):
+      assert aval_shape[axis] % axis_sizes[name] == 0, (axis_sizes[name], aval.shape[axis])
+      aval_shape[axis] //= axis_sizes[name]
+      if sharding[axis] is None:
+        sharding[axis] = Chunked(())
+      sharding[axis] = Chunked(sharding[axis].chunks + (axis_sizes[name],))
+      assert isinstance(mesh_mapping[mesh_axis_pos[name]], Replicated), \
+          "Value mapped to the same mesh axis twice"
+      mesh_mapping[mesh_axis_pos[name]] = ShardedAxis(next_sharded_axis)
+      next_sharded_axis += 1
     return ShardingSpec(sharding, mesh_mapping)
   return mk_sharding_spec
 
