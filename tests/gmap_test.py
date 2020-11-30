@@ -249,8 +249,8 @@ class GmapTest(jtu.JaxTestCase):
       assert python_should_be_executing
       return x * 2
     fm = xmap(f,
-              in_axes=[A({'a': 0})],
-              out_axes=[A({'a': 0})],
+              in_axes=A({'a': 0}),
+              out_axes=A({'a': 0}),
               schedule=[('a', 'x'), ('a', 'vectorize')])
     x = np.arange(8).reshape((2, 2, 2))
     python_should_be_executing = True
@@ -261,11 +261,11 @@ class GmapTest(jtu.JaxTestCase):
   @ignore_gmap_warning()
   @with_mesh([('x', 2)])
   def testNestedXMapBasic(self):
-    @partial(xmap, in_axes=[A({'a': 1})], out_axes=[A({'a': 0})],
+    @partial(xmap, in_axes=A({'a': 1}), out_axes=A({'a': 0}),
              schedule=[('a', 'x')])
     def f(x):
       y = x * 2
-      @partial(xmap, in_axes=[A({'b': 0})], out_axes=[A({'b': 1})],
+      @partial(xmap, in_axes=A({'b': 0}), out_axes=A({'b': 1}),
                schedule=[('b', 'vectorize')])
       def h(y):
         return jnp.sin(y)
@@ -278,11 +278,11 @@ class GmapTest(jtu.JaxTestCase):
   @ignore_gmap_warning()
   @with_mesh([('x', 2), ('y', 3)])
   def testNestedXMapMesh(self):
-    @partial(xmap, in_axes=[A({'a': 1})], out_axes=[A({'a': 0})],
+    @partial(xmap, in_axes=A({'a': 1}), out_axes=A({'a': 0}),
              schedule=[('a', 'y')])
     def f(x):
       y = x * 2
-      @partial(xmap, in_axes=[A({'b': 0})], out_axes=[A({'b': 1})],
+      @partial(xmap, in_axes=A({'b': 0}), out_axes=A({'b': 1}),
                schedule=[('b', 'x')])
       def h(y):
         return jnp.sin(y)
@@ -300,11 +300,11 @@ class GmapTest(jtu.JaxTestCase):
   @ignore_gmap_warning()
   @with_mesh([('x', 2)])
   def testNestedXMapDifferentResources(self):
-    @partial(xmap, in_axes=[A({'a': 0})], out_axes=[A({'a': 0})],
+    @partial(xmap, in_axes=A({'a': 0}), out_axes=A({'a': 0}),
              schedule=[('a', 'x')])
     def f(x):
       with mesh(np.empty((), dtype=np.object), ()):
-        @partial(xmap, in_axes=[A({'b': 0})], out_axes=[A({'b': 0})],
+        @partial(xmap, in_axes=A({'b': 0}), out_axes=A({'b': 0}),
                  schedule=[('b', 'vectorize')])
         def h(x):
           return x

@@ -36,7 +36,7 @@ from ..interpreters import pxla
 from ..interpreters import xla
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..util import safe_map, safe_zip, curry
+from ..util import safe_map, safe_zip, curry, HashableFunction
 from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
@@ -170,13 +170,15 @@ def xmap(fun: Callable,
 
   frozen_schedule = tuple(tuple(x) for x in schedule)
 
+  # To be a tree prefix of the positional args tuple, in_axes can never be a
+  # list: if in_axes is not a leaf, it must be a tuple of trees. However,
+  # in cases like these users expect tuples and lists to be treated
+  # essentially interchangeably, so we canonicalize lists to tuples here
+  # rather than raising an error. https://github.com/google/jax/issues/2367
   if isinstance(in_axes, list):
-    # To be a tree prefix of the positional args tuple, in_axes can never be a
-    # list: if in_axes is not a leaf, it must be a tuple of trees. However,
-    # in cases like these users expect tuples and lists to be treated
-    # essentially interchangeably, so we canonicalize lists to tuples here
-    # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axes = tuple(in_axes)
+  if isinstance(out_axes, list):
+    out_axes = tuple(out_axes)
 
   in_axes_entries = tree_leaves(in_axes)
   out_axes_entries = tree_leaves(out_axes)
@@ -222,15 +224,15 @@ def xmap(fun: Callable,
     # TODO: Check that:
     #         - two axes mapped to the same resource never coincide (even inside f)
     in_axes_flat = flatten_axes("xmap in_axes", in_tree, in_axes)
-    out_axes_flat, out_axes_tree = tree_flatten(out_axes)
-    # TODO: Verify that out_axes are equal, or better expand their prefix
-    # assert out_axes_tree == out_tree
+    out_axes_thunk = HashableFunction(
+      lambda: tuple(flatten_axes("xmap out_axes", out_tree(), out_axes)),
+      key=out_axes)
     axis_sizes = _get_axis_sizes(args_flat, in_axes_flat)
     out_flat = xmap_p.bind(
       fun_flat, *args_flat,
       name=fun.__name__,
       in_axes=tuple(in_axes_flat),
-      out_axes=tuple(out_axes_flat),
+      out_axes_thunk=out_axes_thunk,
       axis_sizes=FrozenDict(axis_sizes),
       schedule=frozen_schedule,
       resource_env=resource_env,
@@ -239,23 +241,26 @@ def xmap(fun: Callable,
 
   return fun_mapped
 
-def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes, axis_sizes, schedule, resource_env, backend):
+def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, axis_sizes, schedule, resource_env, backend):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  return make_xmap_callable(fun, name, in_axes, out_axes, axis_sizes, schedule,
+  return make_xmap_callable(fun, name, in_axes, out_axes_thunk, axis_sizes, schedule,
                             resource_env, backend, *in_avals)(*args)
 
 @lu.cache
 def make_xmap_callable(fun: lu.WrappedFun,
                        name,
-                       in_axes, out_axes, axis_sizes,
+                       in_axes, out_axes_thunk, axis_sizes,
                        schedule, resource_env, backend,
                        *in_avals):
   plan = EvaluationPlan.from_schedule(schedule, resource_env)
 
+  # TODO: Making axis substitution final style would allow us to avoid
+  #       tracing to jaxpr here
   mapped_in_avals = [_delete_aval_axes(aval, in_axes)
                      for aval, in_axes in zip(in_avals, in_axes)]
   with core.extend_axis_env_nd(axis_sizes.items()):
     jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
+  out_axes = out_axes_thunk()
   jaxpr = subst_axis_names(jaxpr, plan.axis_subst)
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
@@ -353,6 +358,7 @@ class EvaluationPlan(NamedTuple):
 # xmap has a different set of parameters than pmap, so we make it its own primitive type
 class XMapPrimitive(core.Primitive):
   multiple_results = True
+  map_primitive = True  # Not really, but it gives us a few good behaviors
 
   def __init__(self):
     super().__init__('xmap')
@@ -376,18 +382,6 @@ def _process_xmap_default(self, call_primitive, f, tracers, params):
 core.Trace.process_xmap = _process_xmap_default  # type: ignore
 
 
-# This is necessary for various functions such as core.eval_jaxpr to
-# recognize that xmap is a map-like primitive.
-def _extract_call_jaxpr(primitive, params):
-  if primitive is xmap_p:
-    new_params = dict(params)
-    call_jaxpr = new_params.pop('call_jaxpr')
-    return (call_jaxpr, new_params)
-  return _old_extract_call_jaxpr(primitive, params)
-_old_extract_call_jaxpr = core.extract_call_jaxpr
-core.extract_call_jaxpr = _extract_call_jaxpr
-
-
 # This is DynamicJaxprTrace.process_map with some very minor modifications
 def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   from jax.interpreters.partial_eval import (
@@ -401,16 +395,18 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   with core.extend_axis_env_nd(params['axis_sizes'].items()):
     jaxpr, mapped_out_avals, consts = trace_to_subjaxpr_dynamic(
         f, self.main, mapped_in_avals)
+  out_axes = params['out_axes_thunk']()
   out_avals = [_insert_aval_axes(a, a_out_axes, axis_sizes)
-               for a, a_out_axes in zip(mapped_out_avals, params['out_axes'])]
+               for a, a_out_axes in zip(mapped_out_avals, out_axes)]
   source_info = source_info_util.current()
   out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
   invars = map(self.getvar, tracers)
   constvars = map(self.getvar, map(self.instantiate_const, consts))
   outvars = map(self.makevar, out_tracers)
   new_in_axes = (None,) * len(consts) + params['in_axes']
-  new_params = dict(params, in_axes=new_in_axes,
+  new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
                     call_jaxpr=convert_constvars_jaxpr(jaxpr))
+  del new_params['out_axes_thunk']
   update_params = call_param_updaters.get(primitive)
   if update_params:
     new_params = update_params(new_params, [True] * len(tracers))
