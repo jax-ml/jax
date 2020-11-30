@@ -101,6 +101,19 @@ def with_mesh(named_shape, f):
       return f(*args, **kwargs)
   return new_f
 
+def use_spmd_lowering(f):
+  def new_f(*args, **kwargs):
+    if jtu.device_under_test() != "tpu":
+      raise SkipTest
+    jax.experimental.general_map.make_xmap_callable.cache_clear()
+    old = jax.experimental.general_map.EXPERIMENTAL_SPMD_LOWERING
+    jax.experimental.general_map.EXPERIMENTAL_SPMD_LOWERING = True
+    try:
+      return f(*args, **kwargs)
+    finally:
+      jax.experimental.general_map.EXPERIMENTAL_SPMD_LOWERING = old
+  return new_f
+
 
 class GmapTest(jtu.JaxTestCase):
 
@@ -139,6 +152,8 @@ class GmapTest(jtu.JaxTestCase):
     s = [('vectorized', None)]
     self.assertAllClose(gmap(gmap(f, s, axis_name='i'), s, axis_name='j')(x),
                         vmap(vmap(f, axis_name='i'), axis_name='j')(x))
+
+class XMapTest(jtu.JaxTestCase):
 
   @ignore_gmap_warning()
   @skipIf(not config.omnistaging_enabled,
@@ -215,6 +230,8 @@ class GmapTest(jtu.JaxTestCase):
       self.assertAllClose(c, a * 2)
       self.assertAllClose(d, b * 4)
 
+  testXMapMeshBasicSPMD = use_spmd_lowering(testXMapMeshBasic)
+
   @ignore_gmap_warning()
   def testXMapMeshCollectives(self):
     local_devices = list(jax.local_devices())
@@ -241,6 +258,8 @@ class GmapTest(jtu.JaxTestCase):
       c, d = fm(a, b)
       self.assertAllClose(c, (a * 2).sum(0))
       self.assertAllClose(d, b * 4)
+
+  testXMapMeshCollectivesSPMD = use_spmd_lowering(testXMapMeshCollectives)
 
   @ignore_gmap_warning()
   @with_mesh([('x', 2)])
@@ -314,7 +333,6 @@ class GmapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError,
                                 "Changing the resource environment.*"):
       f(x)
-
 
 
 if __name__ == '__main__':
