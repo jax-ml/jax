@@ -116,12 +116,10 @@ def prepare_wheel(sources_path):
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.so"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.so"))
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.pyd"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.pyd"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/version.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver.py"))
@@ -145,6 +143,7 @@ def build_wheel(sources_path, output_path):
     "Darwin": "macosx_10_9",
     "Windows": "win",
   }[platform.system()]
+  # TODO(phawkins): support non-x86 CPUs.
   cpu_name = "amd64" if platform.system() == "Windows" else "x86_64"
   python_tag_arg = (f"--python-tag=cp{sys.version_info.major}"
                     f"{sys.version_info.minor}")
