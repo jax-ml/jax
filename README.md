@@ -226,7 +226,7 @@ predictions = np.stack(list(map(partial(predict, params), input_batch)))
 
 But pushing one example through the network at a time would be slow! It’s better
 to vectorize the computation, so that at every layer we’re doing matrix-matrix
-multiplies rather than matrix-vector multiplies.
+multiplication rather than matrix-vector multiplication.
 
 The `vmap` function does that transformation for us. That is, if we write
 
