@@ -196,3 +196,14 @@ Linear algebra operators (jax.lax.linalg)
     qr
     svd
     triangular_solve
+
+Argument classes
+----------------
+
+.. automodule:: jax.lax
+
+.. autoclass:: ConvDimensionNumbers
+.. autoclass:: GatherDimensionNumbers
+.. autoclass:: Precision
+.. autoclass:: RoundingMethod
+.. autoclass:: ScatterDimensionNumbers
