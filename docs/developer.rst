@@ -74,14 +74,16 @@ Additional Notes for Building ``jaxlib`` from source on Windows
 ...............................................................
 
 On Windows, follow `Install Visual Studio <https://docs.microsoft.com/en-us/visualstudio/install/install-visual-studio?view=vs-2019>`_
-to setup a C++ toolchain. Visual Studio 2019 version 16.5 or newer is required.
-If you need to build with CUDA enabled, follow
+to set up a C++ toolchain. Visual Studio 2019 version 16.5 or newer is required.
+If you need to build with CUDA enabled, follow the
 `CUDA Installation Guide <https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html>`_
-to setup CUDA environment.
+to set up a CUDA environment.
 
-It is recommended to use `Anaconda <https://docs.anaconda.com/anaconda/install/windows/>`_
+You can either install Python using its
+`Windows installer <https://www.python.org/downloads/>`_, or if you prefer, you
+can use `Anaconda <https://docs.anaconda.com/anaconda/install/windows/>`_
 or `Miniconda <https://docs.conda.io/en/latest/miniconda.html#windows-installers>`_
-to setup python environment.
+to setup a Python environment.
 
 Some targets of Bazel use bash utilities to do scripting, so `MSYS2 <https://www.msys2.org>`_
 is needed. See `Installing Bazel on Windows <https://docs.bazel.build/versions/master/install-windows.html#installing-compilers-and-language-runtimes>`_
