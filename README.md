@@ -387,10 +387,12 @@ installed as the `jaxlib` package. Use the following instructions to install a
 binary package with `pip`, or to build JAX from source.
 
 We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
-macOS (10.12 or later) platforms. Windows users can use JAX on CPU via the
+macOS (10.12 or later) platforms. Windows users can use JAX on CPU and GPU via
+the
 [Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/about).
-We're not currently working on native Windows support, but contributions are
-welcome (see [#438](https://github.com/google/jax/issues/438)).
+There is some initial native Windows support, but since it is still somewhat
+immature, there are no binary releases and it must be
+[built from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
 
 ### pip installation
 
