@@ -128,7 +128,7 @@ class GmapTest(jtu.JaxTestCase):
 
     x = jnp.arange(800).reshape((8, 10, 10))
 
-    self.assertAllClose(gmap(f, schedule)(x), vmap(f)(x))
+    self.assertAllClose(gmap(f, schedule)(x), vmap(f)(x), rtol=3e-5)
 
   @check_default_schedules(lambda s: not any(c[0] == 'sequential' for c in s))
   @skip_insufficient_devices(8)
