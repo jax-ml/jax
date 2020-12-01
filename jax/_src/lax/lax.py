@@ -1505,7 +1505,7 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   if config.omnistaging_enabled:
     bool_tri = ge(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
                   broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_tri, old_dtype=np.int32,
+    return convert_element_type_p.bind(bool_tri, old_dtype=np.bool_,
                                        new_dtype=dtype)
   else:
     lazy_expr = lazy.tri(dtype, (N, M), offset)
@@ -2534,6 +2534,10 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, old_dtype):
   return operand.shape
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, old_dtype):
+  if operand.dtype != old_dtype:
+    raise TypeError("operand dtype and old_dtype must be the same, but got "
+        "operand.dtype={} and old_dtype={}."
+        .format(operand.dtype, np.dtype(old_dtype)))
   return new_dtype
 
 def _convert_element_type_translation_rule(c, operand, *, new_dtype, old_dtype):
