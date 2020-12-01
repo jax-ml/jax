@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-11-20*
+*Last generated on (YYYY-MM-DD): 2020-12-01*
 
 We do not yet have support for `pmap` (with its collective primitives),
 nor for `sharded_jit` (SPMD partitioning).
@@ -80,6 +80,7 @@ conversion to Tensorflow.
 | acosh | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | acosh | Missing TF support | Primitive is unimplemented in TF | float16 | CPU, GPU, TPU |
 | add | Missing TF support | Primitive is unimplemented in TF | uint16, uint32, uint64 | CPU, GPU, TPU |
+| add_any | Missing TF support | Primitive is unimplemented in TF | uint16, uint32, uint64 | CPU, GPU, TPU |
 | asinh | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | asinh | Missing TF support | Primitive is unimplemented in TF | float16 | CPU, GPU, TPU |
 | atan2 | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
@@ -87,6 +88,7 @@ conversion to Tensorflow.
 | atanh | Missing TF support | Primitive is unimplemented in TF | float16 | CPU, GPU, TPU |
 | bessel_i0e | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | bessel_i1e | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
+| bitcast_convert_type | Missing TF support | Primitive is unimplemented in TF | bool | CPU, GPU, TPU |
 | cholesky | Missing TF support | Primitive is unimplemented in TF; this is a problem only in compiled mode (experimental_compile=True)) | complex128, complex64 | CPU, GPU, TPU |
 | clamp | Missing TF support | Primitive is unimplemented in TF | int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | conv_general_dilated | Missing TF support | Primitive is unimplemented in TF; batch_group_count != 1 unsupported | ALL | CPU, GPU, TPU |
@@ -109,6 +111,8 @@ conversion to Tensorflow.
 | fft | Missing TF support | Primitive is unimplemented in TF; this is a problem only in compiled mode (experimental_compile=True)) | complex128, float64 | CPU, GPU, TPU |
 | ge | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
 | gt | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
+| integer_pow | Missing TF support | Primitive is unimplemented in TF | int16, int8, uint16, uint32, uint64, uint8 | CPU, GPU, TPU |
+| integer_pow | Missing TF support | Primitive is unimplemented in TF; integer types can not be raised to power > 3 in compiled mode (experimental_compile=True) | int32, int64 | CPU, GPU, TPU |
 | le | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
 | lgamma | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | lt | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
@@ -127,6 +131,7 @@ conversion to Tensorflow.
 | regularized_incomplete_beta | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
 | rem | Missing TF support | Primitive is unimplemented in TF | float16, int16, int8, uint16, uint32, uint64, uint8 | CPU, GPU, TPU |
 | rem | Missing TF support | Primitive is unimplemented in TF; integer division fails if the divisor contains a 0 | int32, int64 | CPU, GPU, TPU |
+| rev | Missing TF support | Primitive is unimplemented in TF | uint32, uint64 | CPU, GPU, TPU |
 | round | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | rsqrt | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | select_and_gather_add | Missing TF support | Primitive is unimplemented in TF | float32, float64 | TPU |
@@ -138,6 +143,7 @@ conversion to Tensorflow.
 | sort | Missing TF support | Primitive is unimplemented in TF; sorting 2 arrays where the first one is an array of booleans is not supported for XlaSort | bool | CPU, GPU, TPU |
 | sort | Missing TF support | Primitive is unimplemented in TF; sorting more than 2 arrays is not supported for XlaSort | ALL | CPU, GPU, TPU |
 | sort | Missing TF support | Primitive is unimplemented in TF; stable sort not implemented for XlaSort | ALL | CPU, GPU, TPU |
+| sub | Missing TF support | Primitive is unimplemented in TF | uint64 | CPU, GPU, TPU |
 | svd | Missing TF support | Primitive is unimplemented in TF; this works on JAX because JAX uses a custom implementation | complex128, complex64 | CPU, GPU |
 | top_k | Missing TF support | Primitive is unimplemented in TF; this is a problem only in compiled mode (experimental_compile=True)) | float64, int64, uint64 | CPU, GPU, TPU |
 | triangular_solve | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
@@ -153,4 +159,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`complex`, `custom_lin`, `device_put`, `integer_pow`, `rev`, `select_and_scatter`, `tie_in`
+`custom_lin`, `select_and_scatter`, `tie_in`
