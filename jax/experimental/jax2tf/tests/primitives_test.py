@@ -175,8 +175,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         not harness.params["is_stable"]):
       # TODO: fix the TF GPU test
       raise unittest.SkipTest("GPU tests are running TF on CPU")
-    if jtu.device_under_test() == "tpu" and harness.params["dtype"] in jtu.dtypes.complex:
-      raise unittest.SkipTest("JAX sort is not implemented on TPU for complex")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_fft)
