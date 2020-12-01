@@ -179,6 +179,37 @@ lax_unary_elementwise = tuple(
   ]
 )
 
+def _make_round_harness(name, *, shape=(100, 100), dtype=np.float32,
+                        rounding_method=lax.RoundingMethod.AWAY_FROM_ZERO,
+                        operand=None):
+  operand = operand if operand is not None else RandArg(shape, dtype)
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(operand.shape, operand.dtype)}_roundingmethod={rounding_method}",
+                 lax.round,
+                 [operand, StaticArg(rounding_method)],
+                 operand=operand)
+
+lax_round = tuple( # Validate dtypes
+  _make_round_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+) + tuple( # Validate rounding method
+  _make_round_harness("dtypes", operand=operand,
+                      rounding_method=rounding_method)
+  for operand in [
+    np.array([[0.5, 1.5, 2.5], [-0.5, -1.5, -2.5]], dtype=np.float32)
+  ]
+  for rounding_method in [
+    lax.RoundingMethod.AWAY_FROM_ZERO,
+    lax.RoundingMethod.TO_NEAREST_EVEN
+  ]
+) + tuple( # Validate edge cases
+  _make_round_harness(f"edge_case_{name}", operand=operand)
+  for name, operand in [
+    # Checks that https://github.com/google/jax/issues/4952 is resolved
+    ("round_away_from_0", np.array([[0.5, 1.5, 2.5],
+                                    [-0.5, -1.5, -2.5]], dtype=np.float32)),
+  ]
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 

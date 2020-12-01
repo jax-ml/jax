@@ -19,6 +19,7 @@ from jax._src.lax.lax import (
   DotDimensionNumbers,
   GatherDimensionNumbers,
   Precision,
+  RoundingMethod,
   ScatterDimensionNumbers,
   abs,
   abs_p,
