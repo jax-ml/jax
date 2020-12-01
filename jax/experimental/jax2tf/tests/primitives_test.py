@@ -33,7 +33,6 @@ from jax.experimental.jax2tf.tests import tf_test_util
 from jax.interpreters import xla
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
 
 config.parse_flags_with_absl()
 
@@ -641,6 +640,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("tie_in test requires omnistaging to be disabled")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.ad_util_stop_gradient)
+  def test_stop_gradient(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_comparators)
   def test_comparators(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
@@ -984,10 +987,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.random_split)
   def test_random_split(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-
-  def test_stop_gradient(self):
-    f = jax2tf.convert(lax.stop_gradient)
-    self.assertEqual(f(tf.ones([])), 1.)
 
   # test_bfloat16_constant checks that https://github.com/google/jax/issues/3942 is
   # fixed

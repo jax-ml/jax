@@ -429,6 +429,18 @@ lax_tie_in = tuple(
   ]
 )
 
+ad_util_stop_gradient = tuple( # Validate dtypes
+  Harness(f"{jtu.format_shape_dtype_string(shape, dtype)}",
+          ad_util.stop_gradient_p.bind,
+          [RandArg(shape, dtype)],
+          shape=shape,
+          dtype=dtype)
+  for shape in [
+    (20, 20)
+  ]
+  for dtype in jtu.dtypes.all
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 
