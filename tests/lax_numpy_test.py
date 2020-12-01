@@ -1341,6 +1341,51 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_mode={}_pad_width={}_stat_length={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode, pad_width, stat_length),
+       "shape": shape, "dtype": dtype, "mode": mode, "pad_width": pad_width,
+       "stat_length": stat_length}
+      for mode in ['maximum', 'minimum', 'mean', 'median']
+      for shape, dtype in _shape_and_dtypes(nonempty_shapes, all_dtypes)
+      for pad_width in [
+          # ((before_1, after_1), ..., (before_N, after_N))
+          tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
+          # ((before, after),)
+          ((1, 2),), ((2, 0),),
+          # (before, after)  (not in the docstring but works in numpy)
+          (2, 0), (0, 0),
+          # (pad,)
+          (1,), (2,),
+          # pad
+          0, 1,
+      ]
+      for stat_length in [
+          None,
+          # ((before_1, after_1), ..., (before_N, after_N))
+          tuple(((i % 3 + 1), ((i + 1) % 3) + 1) for i in range(len(shape))),
+          # ((before, after),)
+          ((1, 2),), ((2, 2),),
+          # (before, after)  (not in the docstring but works in numpy)
+          (1, 1), (3, 4),
+          # (pad,)
+          (1,), (2,),
+          # pad
+          1, 2
+      ]
+      if (pad_width != () and stat_length != () and
+          not (dtype in bool_dtypes and mode == 'mean'))))
+  def testPadStatValues(self, shape, dtype, mode, pad_width, stat_length):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    np_fun = partial(np.pad, pad_width=pad_width, mode=mode, stat_length=stat_length)
+    jnp_fun = partial(jnp.pad, pad_width=pad_width, mode=mode, stat_length=stat_length)
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                            check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testPadWithNumpyPadWidth(self):
     a = [1, 2, 3, 4, 5]
     f = jax.jit(
