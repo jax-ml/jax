@@ -35,6 +35,8 @@ from jax.test_util import check_grads
 import jax.util
 from jax.util import prod
 
+from jax._src.lax.lax import _device_put_raw
+
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
@@ -213,6 +215,33 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng((2, 3), from_dtype)]
     op = lambda x: lax.convert_element_type(x, to_dtype)
     self._CompileAndCheck(op, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_input_type={}_dtype={}_value={}".format(
+          input_type.__name__, dtype.__name__, value),
+       "input_type": input_type, "dtype": dtype, "value": value}
+      for input_type in [int, float, np.int32, np.float32, np.array]
+      for dtype in [np.int32, np.float32]
+      for value in [0, 1]))
+  def testConvertElementTypeAlwaysStages(self, input_type, dtype, value):
+    value = input_type(value)
+    def f(x):
+      return core.concrete_or_error(dtype, lax.convert_element_type(x, dtype))
+    with self.assertRaises(core.ConcretizationTypeError):
+      api.jit(lambda: f(value))()
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype_in={}_dtype_out={}".format(
+          dtype_in.__name__, dtype_out.__name__),
+       "dtype_in": dtype_in, "dtype_out": dtype_out}
+      for dtype_in in all_dtypes for dtype_out in all_dtypes))
+  def testConvertElementTypeAvoidsCopies(self, dtype_in, dtype_out):
+    x = _device_put_raw(np.zeros(5, dtype_in))
+    y = lax.convert_element_type(x, dtype_out)
+    if np.dtype(dtype_in) == np.dtype(dtype_out):
+      self.assertIs(x.device_buffer, y.device_buffer)
+    else:
+      self.assertFalse(x.device_buffer is y.device_buffer)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}"

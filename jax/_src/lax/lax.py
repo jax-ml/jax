@@ -432,8 +432,6 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
   if type(operand) in dtypes.python_scalar_dtypes:
     operand = np.asarray(operand, new_dtype)
   old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
-  if old_dtype == new_dtype:
-    return operand
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
@@ -2602,9 +2600,16 @@ def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, old_dtype):
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
                                        old_dtype=old_dtype)
 
-convert_element_type_p = standard_primitive(
-    _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
-    'convert_element_type', _convert_element_type_translation_rule)
+def _convert_element_type_impl(operand, *, new_dtype, old_dtype):
+  if np.dtype(new_dtype) == np.dtype(old_dtype):
+    return operand
+  else:
+    return xla.apply_primitive(convert_element_type_p, operand, new_dtype=new_dtype, old_dtype=old_dtype)
+
+convert_element_type_p = Primitive("convert_element_type")
+convert_element_type_p.def_impl(_convert_element_type_impl)
+convert_element_type_p.def_abstract_eval(partial(standard_abstract_eval, convert_element_type_p, _convert_element_type_shape_rule, _convert_element_type_dtype_rule))
+xla.translations[convert_element_type_p] = _convert_element_type_translation_rule
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
