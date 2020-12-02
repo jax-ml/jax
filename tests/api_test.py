@@ -1726,27 +1726,36 @@ class APITest(jtu.JaxTestCase):
 
   def test_pmap_global_cache(self):
     def f(x, y):
-      assert python_should_be_executing
       return x, y
 
     x = np.ones((1, 1, 1))
 
-    python_should_be_executing = True
-    api.pmap(f)(x, x)
-    python_should_be_executing = False
-    api.pmap(f)(x, x)
+    # All defaults
+    with jtu.assert_num_jit_and_pmap_compilations(1):
+      for _ in range(2):
+        api.pmap(f)(x, x)
 
-    python_should_be_executing = True
-    api.pmap(f, 'i')(x, x)
-    python_should_be_executing = False
-    api.pmap(f, 'i')(x, x)
+    # With axis name
+    with jtu.assert_num_jit_and_pmap_compilations(1):
+      for _ in range(2):
+        api.pmap(f, 'i')(x, x)
 
+    # With in_axes and out_axes
     if config.omnistaging_enabled:
       for x_in, y_in, x_out, y_out in it.product(*((0, 1, 2) for _ in range(4))):
-        python_should_be_executing = True
-        api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
-        python_should_be_executing = False
-        api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
+        with jtu.assert_num_jit_and_pmap_compilations(1):
+          for _ in range(2):
+            api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
+
+    # Forward-mode AD on the outside
+    with jtu.assert_num_jit_and_pmap_compilations(1):
+      for _ in range(2):
+        api.jvp(api.pmap(f), (x, x), (x, x))
+
+    # Reverse-mode AD on the outside. One compilation for forward, one for backward.
+    with jtu.assert_num_jit_and_pmap_compilations(2):
+      for _ in range(2):
+        api.vjp(api.pmap(f), x, x)[1]((x, x))
 
   def test_device_array_repr(self):
     rep = repr(jnp.ones(()) + 1.)

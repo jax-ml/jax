@@ -198,7 +198,10 @@ class BatchTrace(Trace):
         for d, in_axis in zip(dims, params['in_axes']))
       f, dims_out = batch_subtrace(f, self.main, new_dims)
       out_axes_thunk = params['out_axes_thunk']
-      @as_hashable_function(key=out_axes_thunk)
+      # NOTE: This assumes that the choice of the dimensions over which outputs
+      #       are batched is entirely dependent on the function and not e.g. on the
+      #       data or its shapes.
+      @as_hashable_function(closure=out_axes_thunk)
       def new_out_axes_thunk():
         return tuple(out_axis + 1 if both_mapped(out_axis, d) and d < out_axis else out_axis
                      for out_axis, d in zip(out_axes_thunk(), dims_out()))

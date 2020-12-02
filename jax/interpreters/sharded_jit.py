@@ -362,14 +362,14 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
     # there a better way?
     out_parts_thunk = HashableFunction(
         lambda: tuple(flatten_axes("sharded_jit out_parts", out_tree(), out_parts)),
-        key=out_parts)
+        closure=out_parts)
     if local_out_parts:
       local_out_parts_thunk = HashableFunction(
           lambda: tuple(flatten_axes("sharded_jit local_out_parts",
                                      out_tree(), local_out_parts)),
-          key=local_out_parts)
+          closure=local_out_parts)
     else:
-      local_out_parts_thunk = HashableFunction(lambda: None, key=None)
+      local_out_parts_thunk = HashableFunction(lambda: None, closure=None)
 
     out = sharded_call(
         flat_fun,
