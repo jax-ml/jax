@@ -86,8 +86,8 @@ pytype_library(
 )
 
 pytype_library(
-    name = "general_map",
-    srcs = ["experimental/general_map.py"],
+    name = "maps",
+    srcs = ["experimental/maps.py"],
     srcs_version = "PY3",
     deps = [":jax"],
 )
