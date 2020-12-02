@@ -10,6 +10,15 @@ http_archive(
     ],
 )
 
+http_archive(
+    name = "tf_toolchains",
+    sha256 = "d60f9637c64829e92dac3f4477a2c45cdddb9946c5da0dd46db97765eb9de08e",
+    strip_prefix = "toolchains-1.1.5",
+    urls = [
+        "http://mirror.tensorflow.org/github.com/tensorflow/toolchains/archive/v1.1.5.tar.gz",
+        "https://github.com/tensorflow/toolchains/archive/v1.1.5.tar.gz",
+    ],
+)
 
 # https://github.com/bazelbuild/bazel-skylib/releases
 http_archive(
@@ -28,10 +37,10 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "b2c6334e2aac5498db6635bb71b38d4832af62d853e832bec8c8f5c8c3f5148d",
-    strip_prefix = "tensorflow-d15b32cc9af2f38c0df597918db3ebf97c2df56f",
+    sha256 = "03520820e4902e1b23f452c3454db52b898cb244e4e0bdc4f0c4164146bb6dd5",
+    strip_prefix = "tensorflow-2527840a365ad4ef256faf38831616d99c0979c7",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/d15b32cc9af2f38c0df597918db3ebf97c2df56f.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/2527840a365ad4ef256faf38831616d99c0979c7.tar.gz",
     ],
 )
 
