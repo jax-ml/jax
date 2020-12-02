@@ -243,6 +243,17 @@ class ShardedJitTest(jtu.JaxTestCase):
     expected = x @ y.T + z
     self.assertAllClose(result, expected, check_dtypes=False)
 
+  def testCompilationCache(self):
+    f = lambda x: x + 1
+    sharded_f = sharded_jit(f, in_parts=P(2), out_parts=P(2))
+    shape = (2,)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+
+    with jtu.count_jit_and_pmap_compiles() as count:
+      sharded_f(x)
+      sharded_f(x)
+    self.assertEqual(count[0], 1)
+
 
 # TODO(skye): add more error tests
 class ShardedJitErrorsTest(jtu.JaxTestCase):

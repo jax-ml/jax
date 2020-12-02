@@ -29,10 +29,13 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..api_util import flatten_axes, flatten_fun
 from ..tree_util import tree_flatten, tree_unflatten
-from ..util import extend_name_stack, wrap_name, wraps, safe_zip
-from ..config import config
+from ..util import (extend_name_stack, wrap_name, wraps, safe_zip,
+                    HashableFunction)
+from ..config import config, flags
 
 xops = xc._xla.ops
+
+FLAGS = flags.FLAGS
 
 
 def _map(f, *xs):
@@ -148,6 +151,11 @@ def _sharded_callable(
   local_out_avals = [pxla.get_local_aval(out, parts, lparts)
                      for out, parts, lparts
                      in safe_zip(global_out_avals, out_parts, local_out_parts)]
+
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              f"Compiling {fun.__name__} for {nparts} devices with "
+              f"args {global_abstract_args}.")
 
   c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
   xla_consts = _map(partial(xb.constant, c), consts)
@@ -352,13 +360,16 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
     flat_fun, out_tree = flatten_fun(f, in_tree)
     # TODO(skye): having a function-typed param in a primitive seems dicey, is
     # there a better way?
-    out_parts_thunk = lambda: tuple(flatten_axes("sharded_jit out_parts",
-                                                 out_tree(), out_parts))
+    out_parts_thunk = HashableFunction(
+        lambda: tuple(flatten_axes("sharded_jit out_parts", out_tree(), out_parts)),
+        key=out_parts)
     if local_out_parts:
-      local_out_parts_thunk = lambda: tuple(flatten_axes("sharded_jit local_out_parts",
-                                                         out_tree(), local_out_parts))
+      local_out_parts_thunk = HashableFunction(
+          lambda: tuple(flatten_axes("sharded_jit local_out_parts",
+                                     out_tree(), local_out_parts)),
+          key=local_out_parts)
     else:
-      local_out_parts_thunk = lambda: None
+      local_out_parts_thunk = HashableFunction(lambda: None, key=None)
 
     out = sharded_call(
         flat_fun,
