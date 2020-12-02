@@ -4558,6 +4558,10 @@ class NumpyGradTests(jtu.JaxTestCase):
     for ops in itertools.combinations_with_replacement([deriv, api.grad], 4):
       self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d4)
 
+  def testSincGradArrayInput(self):
+    # tests for a bug almost introduced in #5077
+    jax.grad(lambda x: jnp.sinc(x).sum())(jnp.arange(10.))  # doesn't crash
+
   def testTakeAlongAxisIssue1521(self):
     # https://github.com/google/jax/issues/1521
     idx = jnp.repeat(jnp.arange(3), 10).reshape((30, 1))
