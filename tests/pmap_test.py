@@ -845,7 +845,7 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     f = pmap(lambda x: 3)
     x = jnp.arange(device_count)
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       ans = f(x)
     # self.assertEqual(count[0], 0)  # TODO(mattjj): fix this
     expected = np.repeat(3, device_count)
@@ -853,9 +853,8 @@ class PmapTest(jtu.JaxTestCase):
 
     f = pmap(lambda x: (x, 3))
     x = np.arange(device_count)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.assert_num_jit_and_pmap_compilations(1):
       _, ans = f(x)
-    self.assertEqual(count[0], 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPmapConstantDevices(self):

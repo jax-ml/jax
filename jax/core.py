@@ -34,7 +34,8 @@ from . import linear_util as lu
 
 from jax._src import source_info_util
 from .util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
-                   tuple_insert, tuple_delete, as_hashable_function)
+                   tuple_insert, tuple_delete, as_hashable_function,
+                   HashableFunction)
 from ._src.pprint_util import pp, vcat, PrettyPrint
 
 from ._src import traceback_util
@@ -341,7 +342,9 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
     else:
       subfuns = []
     if eqn.primitive.map_primitive:
-      bind_params = dict(params, out_axes_thunk=lambda: params['out_axes'])
+      out_axes_thunk = HashableFunction(lambda: params['out_axes'],
+                                        closure=params['out_axes'])
+      bind_params = dict(params, out_axes_thunk=out_axes_thunk)
       del bind_params['out_axes']
     else:
       bind_params = params
@@ -1200,7 +1203,7 @@ def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
     # The new thunk depends deterministically on the old thunk and the wrapped function.
     # Any caching already has to include the wrapped function as part of the key, so we
     # only use the previous thunk for equality checks.
-    @as_hashable_function(key=out_axes_thunk)
+    @as_hashable_function(closure=out_axes_thunk)
     def new_out_axes_thunk():
       out_axes = out_axes_thunk()
       for t in out_axes_transforms:
@@ -1688,7 +1691,7 @@ def omnistaging_disabler() -> None:
       # The new thunk depends deterministically on the old thunk and the wrapped function.
       # Any caching already has to include the wrapped function as part of the key, so we
       # only use the previous thunk for equality checks.
-      @as_hashable_function(key=out_axes_thunk)
+      @as_hashable_function(closure=out_axes_thunk)
       def new_out_axes_thunk():
         out_axes = out_axes_thunk()
         for t in out_axes_transforms:

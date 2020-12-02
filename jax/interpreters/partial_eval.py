@@ -181,7 +181,7 @@ class JaxprTrace(Trace):
       def app(f, *args):
         f, num_outputs = count_outputs(f)
         out_axes_thunk = params['out_axes_thunk']
-        @as_hashable_function(key=out_axes_thunk)
+        @as_hashable_function(closure=out_axes_thunk)
         def new_out_axes_thunk():
           out_axes = out_axes_thunk()
           return out_axes + (0,) * (num_outputs() - len(out_axes))

@@ -257,6 +257,12 @@ def get_primitive_transpose(p):
         "Transpose rule (for reverse-mode differentiation) for '{}' "
         "not implemented".format(p)) from err
 
+@lu.transformation_with_aux
+def nonzero_tangent_outputs(*args, **kwargs):
+  results = (_, tangents_out) = yield args, kwargs
+  yield results, [type(r) is not Zero for r in tangents_out]
+
+
 class JVPTrace(Trace):
 
   def pure(self, val):
@@ -286,31 +292,27 @@ class JVPTrace(Trace):
     assert call_primitive.multiple_results
     primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
     nonzero_tangents, tangent_tree_def = tree_flatten(tangents)
-    f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.main),
-                                    len(primals), tangent_tree_def)
     nz_tangents = [type(t) is not Zero for t in tangents]
     params = dict(params, name=wrap_name(params['name'], 'jvp'))
+    f_jvp = jvp_subtrace(f, self.main)
     if isinstance(call_primitive, core.MapPrimitive):
       in_axes = params['in_axes']
       tangent_in_axes = [ax for ax, nz in zip(in_axes, nz_tangents) if nz]
       out_axes_thunk = params['out_axes_thunk']
-
-      @lu.transformation_with_aux
-      def populate_outputs(*args, **kwargs):
-        results = yield args, kwargs
-        _, tangents_out = tree_unflatten(out_tree_def(), results)
-        yield results, [type(t) is not Zero for t in tangents_out]
-      f_jvp, nz_tangents_out = populate_outputs(f_jvp)
+      f_jvp, nz_tangents_out = nonzero_tangent_outputs(f_jvp)
       # The new thunk depends deterministically on the old thunk and the wrapped function.
       # Any caching already has to include the wrapped function as part of the key, so we
       # only use the previous thunk for equality checks.
-      @as_hashable_function(key=out_axes_thunk)
+      # NOTE: This assumes that the output tangents being zero is a deterministic
+      #       function of which input tangents were zero.
+      @as_hashable_function(closure=(tuple(nz_tangents), out_axes_thunk))
       def new_out_axes_thunk():
         out_axes = out_axes_thunk()
         return (*out_axes, *(ax for ax, nz in zip(out_axes, nz_tangents_out()) if nz))
       params = dict(params,
                     in_axes=(*in_axes, *tangent_in_axes),
                     out_axes_thunk=new_out_axes_thunk)
+    f_jvp, out_tree_def = traceable(f_jvp, len(primals), tangent_tree_def)
     update_params = call_param_updaters.get(call_primitive)
     new_params = update_params(params, nz_tangents) if update_params else params
     result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
@@ -582,15 +584,16 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   return tree_unflatten(out_tree(), flat_cotangents_out)
 primitive_transposes[pe.remat_call_p] = remat_transpose
 
+@lu.transformation_with_aux
+def nonzero_outputs(*args, **kwargs):
+  results = yield args, kwargs
+  yield results, [type(r) is not Zero for r in results]
+
 
 def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
-  @lu.transformation_with_aux
-  def find_nonzero_results(*args, **kwargs):
-    results = yield args, kwargs
-    yield results, [type(r) is not Zero for r in results]
-  fun, nz_arg_cts = find_nonzero_results(fun)
+  fun, nz_arg_cts = nonzero_outputs(fun)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   # Preserve axis for primal arguments, skip tangents (represented as undefined primals).
   in_axes, out_axes = params['in_axes'], params['out_axes']
@@ -601,6 +604,9 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   # The interim strategy we use below (until avals-with-names) only works
   # when all outputs are mapped.
   assert all(out_axis is not None for out_axis in out_axes), out_axes
+  # NOTE: This assumes that the output cotangents being zero is a deterministic
+  #       function of which input cotangents were zero.
+  @as_hashable_function(closure=(in_axes, tuple(type(c) is Zero for c in ct)))
   def out_axes_thunk():
     return tuple(axis or 0 for axis, nz in zip(in_axes, nz_arg_cts()) if nz)
   new_params = dict(params, name=wrap_name(params['name'], 'transpose'),

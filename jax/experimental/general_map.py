@@ -227,7 +227,7 @@ def xmap(fun: Callable,
     in_axes_flat = flatten_axes("xmap in_axes", in_tree, in_axes)
     out_axes_thunk = HashableFunction(
       lambda: tuple(flatten_axes("xmap out_axes", out_tree(), out_axes)),
-      key=out_axes)
+      closure=out_axes)
     axis_sizes = _get_axis_sizes(args_flat, in_axes_flat)
     out_flat = xmap_p.bind(
       fun_flat, *args_flat,

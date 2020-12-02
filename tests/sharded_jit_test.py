@@ -249,10 +249,9 @@ class ShardedJitTest(jtu.JaxTestCase):
     shape = (2,)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
 
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.assert_num_jit_and_pmap_compilations(1):
       sharded_f(x)
       sharded_f(x)
-    self.assertEqual(count[0], 1)
 
 
 # TODO(skye): add more error tests
