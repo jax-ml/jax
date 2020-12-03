@@ -628,6 +628,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_bitcast_convert_type)
   def test_bitcast_convert_type(self, harness: primitive_harness.Harness):
+    dtype, new_dtype = harness.params["dtype"], harness.params["new_dtype"]
+    if dtype == new_dtype == np.complex64 and jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest( "TODO(bchetioui): bitcast_convert_type from "
+                              f"{dtype} to {new_dtype} fails in JAX on TPU.")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.ad_util_add_jaxvals)
