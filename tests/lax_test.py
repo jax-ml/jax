@@ -2344,6 +2344,7 @@ class LazyConstantTest(jtu.JaxTestCase):
     self._Check(make_const, expected)
 
   def testConvertElementTypeMismatchedDTypeOldDType(self):
+    raise SkipTest("test is no longer relevant after removing old_dtype param")
     arr = np.ones((2, 2), dtype=np.float32)
     with self.assertRaisesRegex(
         TypeError, "operand dtype and old_dtype must be the same, but got "

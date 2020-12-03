@@ -244,11 +244,11 @@ _def_inequality(lax.le_p, operator.le)
 _def_inequality(lax.eq_p, operator.eq)
 _def_inequality(lax.ne_p, operator.ne)
 
-def _convert_element_type(operand, new_dtype, old_dtype):
+def _convert_element_type(operand, new_dtype):
   head, tail = operand
-  head = lax.convert_element_type_p.bind(head, new_dtype=new_dtype, old_dtype=old_dtype)
+  head = lax.convert_element_type_p.bind(head, new_dtype=new_dtype)
   if tail is not None:
-    tail = lax.convert_element_type_p.bind(tail, new_dtype=new_dtype, old_dtype=old_dtype)
+    tail = lax.convert_element_type_p.bind(tail, new_dtype=new_dtype)
   if jnp.issubdtype(new_dtype, jnp.floating):
     if tail is None:
       tail = jnp.zeros_like(head)
