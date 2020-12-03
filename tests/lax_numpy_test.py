@@ -3346,10 +3346,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_ishape={}_axis={}".format(
-          jtu.format_shape_dtype_string(x_shape, dtype), i_shape, axis),
-       "rng_factory": rng_factory, "x_shape": x_shape, "i_shape": i_shape, "dtype": dtype,
-       "axis": axis}
+      {"testcase_name": "_{}_index={}_axis={}".format(
+          jtu.format_shape_dtype_string(x_shape, dtype),
+          jtu.format_shape_dtype_string(i_shape, index_dtype), axis),
+       "x_shape": x_shape, "i_shape": i_shape, "dtype": dtype,
+       "index_dtype": index_dtype, "axis": axis}
       for x_shape, i_shape in filter(
         _shapes_are_equal_length,
         filter(_shapes_are_broadcast_compatible,
@@ -3357,9 +3358,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in itertools.chain(range(len(x_shape)), [-1],
                                   [cast(Optional[int], None)])
       for dtype in default_dtypes
-      for rng_factory in [jtu.rand_default]))
-  def testTakeAlongAxis(self, x_shape, i_shape, dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for index_dtype in int_dtypes))
+  def testTakeAlongAxis(self, x_shape, i_shape, dtype, index_dtype, axis):
+    rng = jtu.rand_default(self.rng())
+
     i_shape = np.array(i_shape)
     if axis is None:
       i_shape = [np.prod(i_shape, dtype=np.int64)]
@@ -3370,7 +3372,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def args_maker():
       x = rng(x_shape, dtype)
       n = np.prod(x_shape, dtype=np.int32) if axis is None else x_shape[axis]
-      i = rng(i_shape, np.int32) % (2 * n - 1) - (n - 1)
+      if np.issubdtype(index_dtype, np.unsignedinteger):
+        index_rng = jtu.rand_int(self.rng(), 0, n)
+      else:
+        index_rng = jtu.rand_int(self.rng(), -n, n)
+      i = index_rng(i_shape, index_dtype)
       return x, i
 
     jnp_op = lambda x, i: jnp.take_along_axis(x, i, axis=axis)
@@ -3379,6 +3385,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       np_op = lambda x, i: np.take_along_axis(x, i, axis=axis)
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
+
+  def testTakeAlongAxisWithUint8IndicesDoesNotOverflow(self):
+    # https://github.com/google/jax/issues/5088
+    h = jtu.rand_default(self.rng())((256, 256, 100), np.float32)
+    g = jtu.rand_int(self.rng(), 0, 100)((256, 256, 1), np.uint8)
+    q0 = jnp.take_along_axis(h, g, axis=-1)
+    q1 = np.take_along_axis( h, g, axis=-1)
+    np.testing.assert_equal(q0, q1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}_increasing={}".format(
