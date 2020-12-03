@@ -1067,6 +1067,20 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     grad_fn = jax.grad(jax.grad(jax.grad(jax.grad(jax.grad(jax.grad(inv))))))
     self.assertAllClose(np.float32(0.0439453125), grad_fn(np.float32(4.)))
 
+  def test_linear_transpose_real(self):
+    f = lambda x: x.real
+    transpose = api.linear_transpose(f, 1.j)
+    actual, = transpose(1.)
+    expected = 1.
+    self.assertEqual(actual, expected)
+
+  def test_linear_transpose_imag(self):
+    f = lambda x: x.imag
+    transpose = api.linear_transpose(f, 1.j)
+    actual, = transpose(1.)
+    expected = -1.j
+    self.assertEqual(actual, expected)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
