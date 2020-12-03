@@ -4545,6 +4545,37 @@ class NumpyGradTests(jtu.JaxTestCase):
     check_grads(op, (special_value,), order, ["fwd", "rev"],
                 atol={np.float32: 3e-3})
 
+  def testSincAtZero(self):
+    # Some manual tests for sinc at zero, since it doesn't have well-behaved
+    # numerical derivatives at zero
+    def deriv(f):
+      return lambda x: api.jvp(f, (x,), (1.,))[1]
+
+    def apply_all(fns, x):
+      for f in fns:
+        x = f(x)
+      return x
+
+    d1 = 0.
+    for ops in itertools.combinations_with_replacement([deriv, api.grad], 1):
+      self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d1)
+
+    d2 = -np.pi ** 2 / 3
+    for ops in itertools.combinations_with_replacement([deriv, api.grad], 2):
+      self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d2)
+
+    d3 = 0.
+    for ops in itertools.combinations_with_replacement([deriv, api.grad], 3):
+      self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d3)
+
+    d4 = np.pi ** 4 / 5
+    for ops in itertools.combinations_with_replacement([deriv, api.grad], 4):
+      self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d4)
+
+  def testSincGradArrayInput(self):
+    # tests for a bug almost introduced in #5077
+    jax.grad(lambda x: jnp.sinc(x).sum())(jnp.arange(10.))  # doesn't crash
+
   def testTakeAlongAxisIssue1521(self):
     # https://github.com/google/jax/issues/1521
     idx = jnp.repeat(jnp.arange(3), 10).reshape((30, 1))
