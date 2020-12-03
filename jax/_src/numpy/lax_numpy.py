@@ -3879,6 +3879,10 @@ def _take_along_axis(arr, indices, axis):
     lst[axis] = val
     return tuple(lst)
 
+  use_64bit_index = _any([type(d) is Poly or d >= (1 << 31) for d in arr.shape])
+  index_dtype = int64 if use_64bit_index else int32
+  indices = lax.convert_element_type(indices, index_dtype)
+
   bcast_shape = lax.broadcast_shapes(replace(arr.shape, 1), replace(indices.shape, 1))
   indices = broadcast_to(indices, replace(bcast_shape, indices.shape[axis]))
   arr     = broadcast_to(arr,     replace(bcast_shape, arr.shape[axis]))
