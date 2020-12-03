@@ -15,5 +15,5 @@
 # flake8: noqa: F401
 from jax._src.scipy.sparse.linalg import (
   cg,
-  _gmres,
+  gmres,
 )

@@ -60,6 +60,7 @@ jax.scipy.sparse.linalg
   :toctree: _autosummary
 
    cg
+   gmres
 
 jax.scipy.special
 -----------------
