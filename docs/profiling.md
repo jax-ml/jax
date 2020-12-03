@@ -13,8 +13,8 @@ GPU and TPU. The end result looks something like this:
 ### Installation
 
 ```shell
-# Requires TensorFlow and TensorBoard version >= 2.2
-pip install --upgrade tensorflow tensorboard_plugin_profile
+# Profiling is known to work with the following packages.
+pip install --upgrade tb-nightly==2.5.0a20201203 tbp-nightly==2.4.0a20201203 tf-nightly==2.5.0.dev20201203 tensorboard-plugin-wit==1.7.0
 ```
 
 ### Usage
