@@ -1472,7 +1472,7 @@ def iota(dtype: DType, size: int) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     lazy_expr = lazy.iota(dtype, shape[0])
     aval = ShapedArray(shape, dtype)
-    return xla.make_device_array(aval, None, lazy_expr, xla.DeviceConstant())
+    return xla._DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
   """Convenience wrapper around ``iota``."""
@@ -1495,7 +1495,7 @@ def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   else:
     lazy_expr = lazy.eye(dtype, (N, M), offset)
     aval = ShapedArray((N, M), dtype)
-    return xla.make_device_array(aval, None, lazy_expr, xla.DeviceConstant())
+    return xla._DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
@@ -1513,7 +1513,7 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   else:
     lazy_expr = lazy.broadcast(lazy.delta(dtype, base_shape), shape, axes)
     aval = ShapedArray(shape, dtype)
-    return xla.make_device_array(aval, None, lazy_expr, xla.DeviceConstant())
+    return xla._DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
@@ -1528,7 +1528,7 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   else:
     lazy_expr = lazy.tri(dtype, (N, M), offset)
     aval = ShapedArray((N, M), dtype)
-    return xla.make_device_array(aval, None, lazy_expr, xla.DeviceConstant())
+    return xla._DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def stop_gradient(x):
   """Stops gradient computation.
@@ -1976,10 +1976,12 @@ ShapedArray._iter = staticmethod(_iter)
 def zeros_like_array(x):
   return full_like(x, 0)
 
-for t in itertools.chain(dtypes.python_scalar_dtypes.keys(), array_types,
-                         [xla.DeviceArray, pxla.ShardedDeviceArray]):
+for t in itertools.chain(
+    dtypes.python_scalar_dtypes.keys(), array_types,
+    [xla._CppDeviceArray, xla._DeviceArray, pxla.ShardedDeviceArray]):
   ad_util.jaxval_adders[t] = add
-ad_util.jaxval_zeros_likers[xla.DeviceArray] = zeros_like_array
+ad_util.jaxval_zeros_likers[xla._DeviceArray] = zeros_like_array
+ad_util.jaxval_zeros_likers[xla._CppDeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[pxla.ShardedDeviceArray] = zeros_like_array
 
 
@@ -3218,10 +3220,10 @@ def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))
     if operand._lazy_expr is None:
-      lazy_expr = lazy.broadcast(lazy.array(operand), shape, broadcast_dimensions)
+      lazy_expr = lazy.broadcast(lazy.array(operand.shape), shape, broadcast_dimensions)
     else:
       lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
-    return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
+    return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(broadcast_in_dim_p, operand, shape=shape,
                                broadcast_dimensions=broadcast_dimensions)
@@ -3523,10 +3525,10 @@ def _reshape_impl(operand, *, new_sizes, dimensions):
     if bcast_dims is not None:
       aval = ShapedArray(new_sizes, operand.dtype)
       if operand._lazy_expr is None:
-        lazy_expr = lazy.broadcast(lazy.array(operand), new_sizes, bcast_dims)
+        lazy_expr = lazy.broadcast(lazy.array(operand.shape), new_sizes, bcast_dims)
       else:
         lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
-      return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
+      return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
   return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
                              dimensions=dimensions)
 
@@ -3639,11 +3641,11 @@ batching.primitive_batchers[rev_p] = _rev_batch_rule
 def _transpose_impl(operand, *, permutation):
   if xla.type_is_device_array(operand):
     if operand._lazy_expr is None:
-      lazy_expr = lazy.transpose(lazy.array(operand), permutation)
+      lazy_expr = lazy.transpose(lazy.array(operand.shape), permutation)
     else:
       lazy_expr = lazy.transpose(operand._lazy_expr, permutation)
     aval = ShapedArray(lazy_expr.shape, operand.dtype)
-    return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
+    return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(transpose_p, operand, permutation=permutation)
 

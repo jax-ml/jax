@@ -44,7 +44,7 @@ from jax import core
 from jax import dtypes
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import flags, config
-from jax.interpreters.xla import DeviceArray
+from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
 from jax.interpreters.masking import Poly
 from jax import lax
 from jax._src.lax.lax import _device_put_raw
@@ -4969,18 +4969,19 @@ setattr(ShapedArray, "nbytes", core.aval_property(_nbytes))
 
 # Forward operators, methods, and properties on DeviceArray to lax_numpy
 # functions (with no Tracers involved; this forwarding is direct)
-for operator_name, function in _operators.items():
-  setattr(DeviceArray, "__{}__".format(operator_name), function)
-for method_name in _nondiff_methods + _diff_methods:
-  setattr(DeviceArray, method_name, globals()[method_name])
-setattr(DeviceArray, "reshape", _reshape_method)
-setattr(DeviceArray, "flatten", ravel)
-setattr(DeviceArray, "T", property(transpose))
-setattr(DeviceArray, "real", property(real))
-setattr(DeviceArray, "imag", property(imag))
-setattr(DeviceArray, "astype", _astype)
-setattr(DeviceArray, "view", _view)
-setattr(DeviceArray, "nbytes", property(_nbytes))
+for device_array in [_DeviceArray, _CppDeviceArray]:
+  for operator_name, function in _operators.items():
+    setattr(device_array, "__{}__".format(operator_name), function)
+  for method_name in _nondiff_methods + _diff_methods:
+    setattr(device_array, method_name, globals()[method_name])
+  setattr(device_array, "reshape", _reshape_method)
+  setattr(device_array, "flatten", ravel)
+  setattr(device_array, "T", property(transpose))
+  setattr(device_array, "real", property(real))
+  setattr(device_array, "imag", property(imag))
+  setattr(device_array, "astype", _astype)
+  setattr(device_array, "view", _view)
+  setattr(device_array, "nbytes", property(_nbytes))
 
 
 # Experimental support for NumPy's module dispatch with NEP-37.
@@ -4995,25 +4996,28 @@ def __array_module__(self, types):
     return NotImplemented
 
 setattr(ShapedArray, "_array_module", staticmethod(__array_module__))
-setattr(DeviceArray, "__array_module__", __array_module__)
+setattr(_DeviceArray, "__array_module__", __array_module__)
+setattr(_CppDeviceArray, "__array_module__", __array_module__)
 
 
 # Extra methods that are handy
 setattr(ShapedArray, "broadcast", core.aval_method(lax.broadcast))
 setattr(ShapedArray, "broadcast_in_dim", core.aval_method(lax.broadcast_in_dim))
 setattr(ShapedArray, "split", core.aval_method(split))
-setattr(DeviceArray, "broadcast", lax.broadcast)
-setattr(DeviceArray, "broadcast_in_dim", lax.broadcast_in_dim)
-setattr(DeviceArray, "split", split)
+for device_array in [_DeviceArray, _CppDeviceArray]:
+  setattr(device_array, "broadcast", lax.broadcast)
+  setattr(device_array, "broadcast_in_dim", lax.broadcast_in_dim)
+  setattr(device_array, "split", split)
 
 def _compress_method(a, condition, axis=None, out=None):
   return compress(condition, a, axis, out)
 
 setattr(ShapedArray, "compress", _compress_method)
-setattr(DeviceArray, "compress", _compress_method)
+setattr(_DeviceArray, "compress", _compress_method)
+setattr(_CppDeviceArray, "compress", _compress_method)
 
 @partial(jit, static_argnums=(1,2,3))
-def _multi_slice(arr: DeviceArray,
+def _multi_slice(arr,
                  start_indices: Tuple[Tuple[int, ...]],
                  limit_indices: Tuple[Tuple[int, ...]],
                  removed_dims: Tuple[Tuple[int, ...]]):
@@ -5029,7 +5033,8 @@ def _multi_slice(arr: DeviceArray,
       sliced = sliced.reshape(np.delete(sliced.shape, removed_dims))
     results.append(sliced)
   return results
-setattr(DeviceArray, "_multi_slice", _multi_slice)
+setattr(_DeviceArray, "_multi_slice", _multi_slice)
+setattr(_CppDeviceArray, "_multi_slice", _multi_slice)
 
 
 # Syntactic sugar for scatter operations.
@@ -5150,5 +5155,6 @@ class _IndexUpdateRef:
                          indices_are_sorted=indices_are_sorted,
                          unique_indices=unique_indices)
 
-setattr(DeviceArray, "at", property(_IndexUpdateHelper))
+setattr(_DeviceArray, "at", property(_IndexUpdateHelper))
+setattr(_CppDeviceArray, "at", property(_IndexUpdateHelper))
 setattr(ShapedArray, "at", core.aval_property(_IndexUpdateHelper))
