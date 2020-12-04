@@ -73,6 +73,21 @@ def _identity(x):
   return x
 
 
+def _normalize_matvec(f):
+  """Normalize an argument for computing matrix-vector products."""
+  if callable(f):
+    return f
+  elif isinstance(f, (np.ndarray, jnp.ndarray)):
+    if f.ndim != 2 or f.shape[0] != f.shape[1]:
+      raise ValueError(
+          f'linear operator must be a square matrix, but has shape: {f.shape}')
+    return partial(_dot, f)
+  else:
+    # TODO(shoyer): handle sparse arrays?
+    raise TypeError(
+        f'linear operator must be either a function or ndarray: {f}')
+
+
 def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
@@ -126,11 +141,11 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Parameters
   ----------
-  A : function
-      Function that calculates the matrix-vector product ``Ax`` when called
-      like ``A(x)``. ``A`` must represent a hermitian, positive definite
-      matrix, and must return array(s) with the same structure and shape as its
-      argument.
+  A: ndarray or function
+      2D array or function that calculates the linear map (matrix-vector
+      product) ``Ax`` when called like ``A(x)``. ``A`` must represent a
+      hermitian, positive definite matrix, and must return array(s) with the
+      same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
       stored as an array or Python container of array(s) with any shape.
@@ -154,7 +169,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   maxiter : integer
       Maximum number of iterations.  Iteration will stop after maxiter
       steps even if the specified tolerance has not been achieved.
-  M : function
+  M : ndarray or function
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
@@ -176,6 +191,8 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   if M is None:
     M = _identity
+  A = _normalize_matvec(A)
+  M = _normalize_matvec(M)
 
   if tree_structure(x0) != tree_structure(b):
     raise ValueError(
@@ -507,10 +524,10 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
 
   Parameters
   ----------
-  A: function
-     Function that calculates the linear map (matrix-vector product)
-     ``Ax`` when called like ``A(x)``. ``A`` must return array(s) with the same
-     structure and shape as its argument.
+  A: ndarray or function
+      2D array or function that calculates the linear map (matrix-vector
+      product) ``Ax`` when called like ``A(x)``. ``A`` must return array(s) with
+      the same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
       stored as an array or Python container of array(s) with any shape.
@@ -526,8 +543,8 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   Other Parameters
   ----------------
   x0 : array, optional
-       Starting guess for the solution. Must have the same structure as ``b``.
-       If this is unspecified, zeroes are used.
+      Starting guess for the solution. Must have the same structure as ``b``.
+      If this is unspecified, zeroes are used.
   tol, atol : float, optional
       Tolerances for convergence, ``norm(residual) <= max(tol*norm(b), atol)``.
       We do not implement SciPy's "legacy" behavior, so JAX's tolerance will
@@ -546,7 +563,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       starting from the solution found at the last iteration. If GMRES
       halts or is very slow, decreasing this parameter may help.
       Default is infinite.
-  M : function
+  M : ndarray or function
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
@@ -570,6 +587,8 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
     x0 = tree_map(jnp.zeros_like, b)
   if M is None:
     M = _identity
+  A = _normalize_matvec(A)
+  M = _normalize_matvec(M)
 
   b, x0 = device_put((b, x0))
   size = sum(bi.size for bi in tree_leaves(b))
