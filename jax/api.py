@@ -2060,9 +2060,9 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     containing a stacked version of the inputs:
 
     >>> from jax import api, numpy as jnp
-    >>> devices = api.local_devices()
+    >>> devices = jax.local_devices()
     >>> x = [jnp.ones(5) for device in devices]
-    >>> y = api.device_put_sharded(x, devices)
+    >>> y = jax.device_put_sharded(x, devices)
     >>> np.allclose(y, jnp.stack(x))
     True
 
@@ -2071,11 +2071,11 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     all entries in the list to have the same tree structure:
 
     >>> x = [(i, jnp.arange(i, i + 4)) for i in range(len(devices))]
-    >>> y = api.device_put_sharded(x, devices)
+    >>> y = jax.device_put_sharded(x, devices)
     >>> type(y)
     <class 'tuple'>
-    >>> y0 = api.device_put_sharded([a for a, b in x], devices)
-    >>> y1 = api.device_put_sharded([b for a, b in x], devices)
+    >>> y0 = jax.device_put_sharded([a for a, b in x], devices)
+    >>> y1 = jax.device_put_sharded([b for a, b in x], devices)
     >>> np.allclose(y[0], y0)
     True
     >>> np.allclose(y[1], y1)
@@ -2106,6 +2106,47 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     return pxla.ShardedDeviceArray(stacked_aval, buffers)
 
   return tree_multimap(_device_put_sharded, *shards)
+
+
+def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
+  """Transfer array(s) to each specified device and form ShardedDeviceArray(s).
+
+  Args:
+    x: an array, scalar, or (nested) standard Python container thereof
+      representing the array to be replicated to form the output.
+    devices: A sequence of :py:class:`Device` instances representing the devices
+      to which ``x`` will be transferred.
+
+  Returns:
+    A ShardedDeviceArray or (nested) Python container thereof representing the
+    value of ``x`` broadcasted along a new leading axis of size
+    ``len(devices)``, with each slice along that new leading axis backed by
+    memory on the device specified by the corresponding entry in ``devices``.
+
+  Examples:
+    Passing an array:
+
+    >>> from jax import api, numpy as jnp
+    >>> devices = jax.local_devices()
+    >>> x = jnp.array([1., 2., 3.])
+    >>> y = api.device_put_replicated(x, devices)
+    >>> np.allclose(y, jnp.stack([x for _ in devices]))
+    True
+
+  See also:
+  - device_put
+  - device_put_sharded
+  """
+  if not isinstance(devices, Sequence) or not devices:
+    raise ValueError("`devices` argument to `device_put_replicated must be "
+                     "a non-empty sequence.")
+  def _device_put_replicated(x) -> pxla.ShardedDeviceArray:
+    aval = core.unmapped_aval(len(devices), 0,
+                              core.raise_to_shaped(core.get_aval(x)))
+    buf, = xla.device_put(x, devices[0])  # assuming single-buf repr
+    rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
+    return pxla.ShardedDeviceArray(aval, [buf, *rest_bufs])
+  return tree_map(_device_put_replicated, x)
 
 
 # TODO(mattjj): consider revising

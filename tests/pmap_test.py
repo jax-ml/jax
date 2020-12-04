@@ -2043,6 +2043,56 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
       self.assertIsInstance(sharded_x[i], jax.interpreters.xla.DeviceArray)
     self.assertIsNone(sharded_x._npy_value)
 
+  def test_device_put_sharded_array(self):
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    x = [np.arange(i, i + 4) for i in range(n_devices)]
+    y = jax.device_put_sharded(x, devices)
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
+    self.assertEqual(len(y.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
+    self.assertAllClose(y, jnp.stack(x))
+
+  def test_device_put_sharded_pytree(self):
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
+    y1, y2 = jax.device_put_sharded(x, devices)
+    self.assertIsInstance(y1, pxla.ShardedDeviceArray)
+    self.assertAllClose(y1, jnp.array([a for a, _ in x]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
+    self.assertIsInstance(y2, pxla.ShardedDeviceArray)
+    self.assertAllClose(y2, jnp.vstack([b for _, b in x]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
+
+  def test_device_put_replicated_array(self):
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    x = np.arange(1, 5)
+    y = jax.device_put_replicated(x, devices)
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
+    self.assertEqual(len(y.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
+    self.assertAllClose(y, np.stack([x for _ in devices]))
+
+  def test_device_put_replicated_pytree(self):
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    xs = {'a': np.arange(1, 5), 'b': np.arange(3)}
+    ys = jax.device_put_replicated(xs, devices)
+    self.assertIsInstance(ys, dict)
+    y1, y2 = ys['a'], ys['b']
+
+    self.assertIsInstance(y1, pxla.ShardedDeviceArray)
+    self.assertEqual(len(y1.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
+    self.assertAllClose(y1, np.stack([xs['a'] for _ in devices]))
+
+    self.assertIsInstance(y2, pxla.ShardedDeviceArray)
+    self.assertEqual(len(y2.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
+    self.assertAllClose(y2, np.stack([xs['b'] for _ in devices]))
+
 
 class SpecToIndicesTest(jtu.JaxTestCase):
 
