@@ -16,7 +16,8 @@
 
 load("@org_tensorflow//tensorflow/core/platform/default:build_config.bzl", "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
-load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library", "if_cuda_is_configured")
+load("@local_config_rocm//rocm:build_defs.bzl", "rocm_library", "if_rocm_is_configured")
 load("@flatbuffers//:build_defs.bzl", "flatbuffer_cc_library", "flatbuffer_py_library")
 
 licenses(["notice"])
@@ -65,9 +66,9 @@ cc_library(
 )
 
 cc_library(
-    name = "gpu_kernel_helpers",
-    srcs = ["gpu_kernel_helpers.cc"],
-    hdrs = ["gpu_kernel_helpers.h"],
+    name = "cuda_gpu_kernel_helpers",
+    srcs = ["cuda_gpu_kernel_helpers.cc"],
+    hdrs = ["cuda_gpu_kernel_helpers.h"],
     copts = [
         "-fexceptions",
     ],
@@ -80,6 +81,23 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "rocm_gpu_kernel_helpers",
+    srcs = ["rocm_gpu_kernel_helpers.cc"],
+    hdrs = ["rocm_gpu_kernel_helpers.h"],
+    copts = [
+        "-fexceptions",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
+
 pyx_library(
     name = "lapack",
     srcs = ["lapack.pyx"],
@@ -89,13 +107,16 @@ pyx_library(
 py_library(
     name = "jaxlib",
     srcs = [
-        "cuda_prng.py",
-        "cusolver.py",
         "init.py",
         "pocketfft.py",
         "setup.py",
         "version.py",
-    ],
+        ] + if_cuda_is_configured([
+         "cuda_prng.py",
+         "cusolver.py",
+        ]) + if_rocm_is_configured ([
+         "rocsolver.py",
+        ]),
     deps = [":pocketfft_flatbuffers_py"],
 )
 
@@ -118,7 +139,7 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "cublas_kernels",
     deps = [
-        ":gpu_kernel_helpers",
+        ":cuda_gpu_kernel_helpers",
         ":handle_pool",
         ":kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cublas_lib",
@@ -148,7 +169,7 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "cusolver_kernels",
     deps = [
-        ":gpu_kernel_helpers",
+        ":cuda_gpu_kernel_helpers",
         ":handle_pool",
         ":kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
@@ -172,7 +193,7 @@ cuda_library(
     srcs = ["cuda_prng_kernels.cu.cc"],
     hdrs = ["cuda_prng_kernels.h"],
     deps = [
-        ":gpu_kernel_helpers",
+        ":cuda_gpu_kernel_helpers",
         ":kernel_helpers",
         "@local_config_cuda//cuda:cuda_headers",
     ],
@@ -192,6 +213,33 @@ pybind_extension(
         ":kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@local_config_cuda//cuda:cuda_headers",
+        "@pybind11",
+    ],
+)
+
+pybind_extension(
+    name = "rocblas_kernels",
+    srcs = ["rocblas.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "rocblas_kernels",
+    deps = [
+        ":rocm_gpu_kernel_helpers",
+        ":handle_pool",
+        ":kernel_pybind11_helpers",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:rocm",
         "@pybind11",
     ],
 )
