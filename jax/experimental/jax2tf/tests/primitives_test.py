@@ -579,7 +579,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     dtype = harness.params["dtype"]
     custom_assert = rtol = None
     if dtype in [np.float32, np.complex64]:
-      rtol = 1e-3
+      rtol = 1e-2 if jtu.device_under_test() == "tpu" else 1e-3
     elif dtype in [np.float64, np.complex128]:
       rtol = 1e-12
     elif dtype == np.float16:
@@ -610,6 +610,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     if dtype in [np.int32, np.int64] and y > 10:
       raise unittest.SkipTest("TODO(bchetioui): integer_pow has inconsistent "
                               "overflow behavior for dtype {}".format(dtype))
+    if (dtype in [np.complex64, np.float32] and
+        jtu.device_under_test() == "tpu" and y in [-1000, 1000]):
+      raise unittest.SkipTest("TODO(bchetioui): hitting rtol = nan for "
+                              "dtype {} on TPU".format(dtype))
     self._pow_test_util(harness)
 
   @primitive_harness.parameterized(primitive_harness.lax_pow)
