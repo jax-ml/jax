@@ -2343,15 +2343,6 @@ class LazyConstantTest(jtu.JaxTestCase):
     make_const = lambda: lax.broadcast_in_dim(arr, (2, 1, 3), (0, 2))
     self._Check(make_const, expected)
 
-  def testConvertElementTypeMismatchedDTypeOldDType(self):
-    raise SkipTest("test is no longer relevant after removing old_dtype param")
-    arr = np.ones((2, 2), dtype=np.float32)
-    with self.assertRaisesRegex(
-        TypeError, "operand dtype and old_dtype must be the same, but got "
-                   "operand.dtype=float32 and old_dtype=complex64"):
-      lax.convert_element_type_p.bind(arr, old_dtype=np.complex64,
-                                      new_dtype=np.bool_)
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fn={}_indexdtype={}"
        .format(jax_fn.__name__, np.dtype(index_dtype).name),
