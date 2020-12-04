@@ -100,6 +100,28 @@ def patch_copy_tpu_client_py(dst_dir):
     with open(os.path.join(dst_dir, "tpu_client.py"), "w") as f:
       f.write(src)
 
+def verify_mac_libraries_dont_reference_chkstack():
+  """Verifies that xla_extension.so doesn't depend on ____chkstk_darwin.
+
+  We don't entirely know why this happens, but in some build environments
+  we seem to target the wrong Mac OS version.
+  https://github.com/google/jax/issues/3867
+
+  This check makes sure we don't release wheels that have this dependency.
+  """
+  if platform.system() != "Darwin":
+    return
+  nm = subprocess.run(
+    ["nm", "-g",
+     r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so")
+    ], capture_output=True, text=True)
+  if nm.returncode != 0:
+    raise RuntimeError(f"nm process failed: {nm.stdout} {nm.stderr}")
+  if "____chkstk_darwin" in nm.stdout:
+      raise RuntimeError(
+        "Mac wheel incorrectly depends on symbol ____chkstk_darwin, which "
+        "means that it isn't compatible with older MacOS versions.")
+
 
 def prepare_wheel(sources_path):
   """Assembles a source tree for the wheel in `sources_path`."""
@@ -107,6 +129,7 @@ def prepare_wheel(sources_path):
   os.makedirs(jaxlib_dir)
   copy_to_jaxlib = functools.partial(copy_file, dst_dir=jaxlib_dir)
 
+  verify_mac_libraries_dont_reference_chkstack()
   copy_file(r.Rlocation("__main__/jaxlib/setup.py"), dst_dir=sources_path)
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/init.py"), dst_filename="__init__.py")
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/lapack.so"))

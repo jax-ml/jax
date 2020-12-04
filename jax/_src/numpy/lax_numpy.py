@@ -1005,10 +1005,24 @@ def sinc(x):
   _check_arraylike("sinc", x)
   x, = _promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, lax._const(x, 0))
-  safe_x = where(eq_zero, lax._const(x, 0), x)
-  pi_x = lax.mul(lax._const(x, pi), safe_x)
-  return where(eq_zero,
-               lax._const(x, 1), lax.div(lax.sin(pi_x), pi_x))
+  pi_x = lax.mul(lax._const(x, pi), x)
+  safe_pi_x = where(eq_zero, lax._const(x, 0), pi_x)
+  return where(eq_zero, _sinc_maclaurin(0, pi_x),
+               lax.div(lax.sin(safe_pi_x), safe_pi_x))
+
+@partial(custom_jvp, nondiff_argnums=(0,))
+def _sinc_maclaurin(k, x):
+  # compute the kth derivative of x -> sin(x)/x evaluated at zero (since we
+  # compute the monomial term in the jvp rule)
+  if k % 2:
+    return lax.full_like(x, 0)
+  else:
+    return lax.full_like(x, (-1) ** (k // 2) / (k + 1))
+
+@_sinc_maclaurin.defjvp
+def _sinc_maclaurin_jvp(k, primals, tangents):
+  (x,), (t,) = primals, tangents
+  return _sinc_maclaurin(k, x), _sinc_maclaurin(k + 1, x) * t
 
 
 @_wraps(np.transpose)
@@ -1101,7 +1115,7 @@ def angle(z):
 
 
 @_wraps(np.diff)
-def diff(a, n=1, axis=-1):
+def diff(a, n=1, axis=-1, prepend=None, append=None):
   _check_arraylike("diff", a)
   if n == 0:
     return a
@@ -1111,6 +1125,28 @@ def diff(a, n=1, axis=-1):
     raise ValueError(f"diff requires input that is at least one dimensional; got {a}")
 
   nd = a.ndim
+
+  combined = []
+  if prepend is not None:
+    _check_arraylike("diff", prepend)
+    if isscalar(prepend):
+      shape = list(a.shape)
+      shape[axis] = 1
+      prepend = broadcast_to(prepend, tuple(shape))
+    combined.append(prepend)
+
+  combined.append(a)
+
+  if append is not None:
+    _check_arraylike("diff", append)
+    if isscalar(append):
+      shape = list(a.shape)
+      shape[axis] = 1
+      append = broadcast_to(append, tuple(shape))
+    combined.append(append)
+
+  if len(combined) > 1:
+    a = concatenate(combined, axis)
 
   slice1 = [slice(None)] * nd
   slice2 = [slice(None)] * nd
@@ -2333,35 +2369,79 @@ def _pad_edge(array, pad_width):
   return array
 
 
-@partial(jit, static_argnums=(1, 2))
-def _pad(array, pad_width, mode, constant_values):
+def _pad_stats(array, pad_width, stat_length, stat_func):
+  nd = ndim(array)
+  for i in range(nd):
+    if stat_length is None:
+      stat_before = stat_func(array, axis=i, keepdims=True)
+      stat_after = stat_before
+    else:
+      array_length = array.shape[i]
+      length_before, length_after = stat_length[i]
+      if length_before == 0 or length_after == 0:
+        raise ValueError("stat_length of 0 yields no value for padding")
+
+      # Limit stat_length to length of array.
+      length_before = _min(length_before, array_length)
+      length_after = _min(length_after, array_length)
+
+      slice_before = lax.slice_in_dim(array, 0, length_before, axis=i)
+      slice_after = lax.slice_in_dim(array, -length_after, None, axis=i)
+      stat_before = stat_func(slice_before, axis=i, keepdims=True)
+      stat_after = stat_func(slice_after, axis=i, keepdims=True)
+
+    if np.issubdtype(array.dtype, np.integer):
+      stat_before = round(stat_before)
+      stat_after = round(stat_after)
+
+    stat_before = stat_before.astype(array.dtype)
+    stat_after = stat_after.astype(array.dtype)
+
+    npad_before, npad_after = pad_width[i]
+    pad_before = repeat(stat_before, npad_before, axis=i)
+    pad_after = repeat(stat_after, npad_after, axis=i)
+
+    array = lax.concatenate([pad_before, array, pad_after], dimension=i)
+  return array
+
+
+def _broadcast_to_pairs(nvals, nd, name):
+  nvals_shape = np.shape(nvals)
+  if nvals_shape == (nd, 2):
+    # ((before_1, after_1), ..., (before_N, after_N))
+    pass
+  elif nvals_shape == (1, 2):
+    # ((before, after),)
+    nvals = nvals * nd
+  elif nvals_shape == (2,):
+    # (before, after)  (not in the numpy docstring but works anyway)
+    before, after = nvals
+    nvals = (nvals,) * nd
+  elif nvals_shape == (1,):
+    # (pad,)
+    nvals, = nvals
+    nvals = ((nvals, nvals),) * nd
+  elif nvals_shape == ():
+    # pad
+    nvals = ((nvals, nvals),) * nd
+  else:
+    raise ValueError(f"{name} given unexpected structure: {nvals}. "
+                     "See docstring for valid {name} formats.")
+  return nvals
+
+
+@partial(jit, static_argnums=(1, 2, 4))
+def _pad(array, pad_width, mode, constant_values, stat_length):
   array = asarray(array)
   nd = ndim(array)
 
   if nd == 0:
     return array
 
-  pad_width_shape = np.shape(pad_width)
-  if pad_width_shape == (nd, 2):
-    # ((before_1, after_1), ..., (before_N, after_N))
-    pass
-  elif pad_width_shape == (1, 2):
-    # ((before, after),)
-    pad_width = pad_width * nd
-  elif pad_width_shape == (2,):
-    # (before, after)  (not in the numpy docstring but works anyway)
-    before, after = pad_width
-    pad_width = (pad_width,) * nd
-  elif pad_width_shape == (1,):
-    # (pad,)
-    pad_width, = pad_width
-    pad_width = ((pad_width, pad_width),) * nd
-  elif pad_width_shape == ():
-    # pad
-    pad_width = ((pad_width, pad_width),) * nd
-  else:
-    raise ValueError(f"pad_width given unexpected structure: {pad_width}. "
-                     "See docstring for valid pad_width formats.")
+  stat_funcs = {"maximum": amax, "minimum": amin,
+                "mean": mean, "median": median}
+
+  pad_width = _broadcast_to_pairs(pad_width, nd, "pad_width")
   pad_width = np.array(pad_width)
   assert pad_width.shape == (nd, 2), pad_width
 
@@ -2380,18 +2460,23 @@ def _pad(array, pad_width, mode, constant_values):
   elif mode == "edge":
     return _pad_edge(array, pad_width)
 
+  elif mode in stat_funcs:
+    if stat_length is not None:
+      stat_length = _broadcast_to_pairs(stat_length, nd, "stat_length")
+    return _pad_stats(array, pad_width, stat_length, stat_funcs[mode])
+
   else:
     msg = "Unimplemented padding mode '{}' for np.pad."
     raise NotImplementedError(msg.format(mode))
 
 
 @_wraps(np.pad)
-def pad(array, pad_width, mode="constant", constant_values=0):
+def pad(array, pad_width, mode="constant", constant_values=0, stat_length=None):
   if isinstance(pad_width, Iterable):
     pad_width = tuple(
         tuple(int(i) for i in x) if isinstance(x, Iterable) else x
         for x in pad_width)
-  return _pad(array, pad_width, mode, constant_values)
+  return _pad(array, pad_width, mode, constant_values, stat_length)
 
 
 @_wraps(np.stack)

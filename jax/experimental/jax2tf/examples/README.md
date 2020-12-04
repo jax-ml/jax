@@ -176,4 +176,5 @@ but the Google version can be used, as shown in the
 
 A jax2tf-generated SavedModel can also be converted to a format usable with
 TensorFlow.js in some cases where the conversion does not require XLA support,
-as shown in the [Quickdraw TensorFlow.js example](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md).
+as shown in the [Quickdraw TensorFlow.js example](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md). Note
+that this is highly experimental.

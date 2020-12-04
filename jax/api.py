@@ -2040,20 +2040,24 @@ def device_put(x, device: Optional[xc.Device] = None):
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
 
-def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]):
-  """Transfers pre-sharded input to the specified devices, returning ShardedDeviceArrays.
+def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
+  """Transfer array shards to specified devices and form ShardedDeviceArray(s).
 
   Args:
-    x: A sequence of arrays, scalars, or (nested) standard Python containers thereof.
-    devices: A sequence of devices()
+    shards: A sequence of arrays, scalars, or (nested) standard Python
+      containers thereof representing the shards to be stacked together to form
+      the output. The length of ``shards`` must equal the length of ``devices``.
+    devices: A sequence of :py:class:`Device` instances representing the devices
+      to which corresponding shards in ``shards`` will be transferred.
 
   Returns:
-    A ShardedDeviceArray or (nested) Python container thereof containing a stacked
-    version of x sharded across the specified devices.
+    A ShardedDeviceArray or (nested) Python container thereof representing the
+    elements of ``shards`` stacked together, with each shard backed by physical
+    device memory specified by the corresponding entry in ``devices``.
 
   Examples:
-    Passing a list of arrays results in a sharded array containing a stacked version
-    of the inputs. Note that the array's leading dimension must equal the number of devices:
+    Passing a list of arrays for ``shards`` results in a sharded array
+    containing a stacked version of the inputs:
 
     >>> from jax import api, numpy as jnp
     >>> devices = api.local_devices()
@@ -2062,9 +2066,9 @@ def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]):
     >>> np.allclose(y, jnp.stack(x))
     True
 
-    Sharding a list of nested objects is equivalent to sharding the list
-    of each entry and repackaging the results to match the nesting. This
-    requires all entries in the list to have the same structure:
+    Passing a list of nested container objects with arrays at the leaves for
+    ``shards`` corresponds to stacking the shards at each leaf. This requires
+    all entries in the list to have the same tree structure:
 
     >>> x = [(i, jnp.arange(i, i + 4)) for i in range(len(devices))]
     >>> y = api.device_put_sharded(x, devices)
@@ -2081,20 +2085,27 @@ def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]):
   - device_put
   - device_put_replicated
   """
-  if not isinstance(x, Sequence):
-    raise ValueError(f"x must be a sequence; got {type(x)}")
-  # TODO(jakevdp): provide a default for devices that considers both local devices and pods
-  assert len(x) == len(devices), f"len(x) = {len(x)} must equal len(devices) = {len(devices)}."
+  # TODO(jakevdp): provide a default for devices that considers both local
+  # devices and pods
+  if not isinstance(shards, Sequence):
+    raise ValueError("device_put_sharded `shards` input must be a sequence; "
+                     f"got {type(shards)}")
+  if not len(shards) == len(devices):
+    raise ValueError(f"len(shards) = {len(shards)} must equal "
+                     f"len(devices) = {len(devices)}.")
+
   def _device_put_sharded(*xs) -> pxla.ShardedDeviceArray:
     avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs]
-    # We cannot check aval equality directly, because it may fail for ConcreteArray.
-    assert all(aval.shape == avals[0].shape and aval.dtype == avals[0].dtype for aval in avals),\
-      f"abstract values not compatible: {avals}"
-    x_aval = core.raise_to_shaped(avals[0])
-    aval = ShapedArray((len(devices),) + x_aval.shape, x_aval.dtype)
-    buffers = list(it.chain.from_iterable(xla.device_put(x, d) for x, d in zip(xs, devices)))
-    return pxla.ShardedDeviceArray(aval, buffers)
-  return tree_multimap(_device_put_sharded, *x)
+    if not all(a1 == a2 for a1, a2 in zip(avals[:-1], avals[1:])):
+      a1, a2 = next((a1, a2) for a1, a2 in zip(avals[:-1], avals[1:])
+                    if a1 != a2)
+      raise ValueError("the shards passed to device_put_sharded must have "
+                       f"consistent shape and dtype, but got {a1} and {a2}.")
+    stacked_aval = ShapedArray((len(devices),) + avals[0].shape, avals[0].dtype)
+    buffers = [buf for x, d in zip(xs, devices) for buf in xla.device_put(x, d)]
+    return pxla.ShardedDeviceArray(stacked_aval, buffers)
+
+  return tree_multimap(_device_put_sharded, *shards)
 
 
 # TODO(mattjj): consider revising
