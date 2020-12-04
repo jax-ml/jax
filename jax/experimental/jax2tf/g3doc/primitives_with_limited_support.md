@@ -27,6 +27,11 @@ Additionally, some primitives have numerical differences between JAX and TF in s
   both arguments less or equal to 0 for `igammac`) JAX returns `NaN` and TF returns 0 or
   JAX returns 1 and TF returns `NaN`.
 
+  * `integer_pow` does not have the right overflow behavior in compiled mode
+  for int32 and int64 dtypes. Additionally, the overflow behavior for floating
+  point and complex numbers produces `NaN`s and `+inf`/`-inf` differently in
+  JAX and TF.
+
   * `erf_inv` is converted to `tf.math.erfinv` with discrepancies at
   undefined points (< -1 or > 1): At undefined points with dtype float32 JAX
   returns `NaN` and TF returns `+inf` or `-inf`.
@@ -112,7 +117,6 @@ conversion to Tensorflow.
 | ge | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
 | gt | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
 | integer_pow | Missing TF support | Primitive is unimplemented in TF | int16, int8, uint16, uint32, uint64, uint8 | CPU, GPU, TPU |
-| integer_pow | Missing TF support | Primitive is unimplemented in TF; integer types can not be raised to power > 3 in compiled mode (experimental_compile=True) | int32, int64 | CPU, GPU, TPU |
 | le | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
 | lgamma | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | lt | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |

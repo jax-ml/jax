@@ -604,6 +604,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_integer_pow)
   def test_integer_pow(self, harness: primitive_harness.Harness):
+    dtype, y = harness.params["dtype"], harness.params["y"]
+    # TODO(bchetioui): y > 10 is an arbitrary bound here, to skip tests that
+    # might cause an overflow behavior.
+    if dtype in [np.int32, np.int64] and y > 10:
+      raise unittest.SkipTest("TODO(bchetioui): integer_pow has inconsistent "
+                              "overflow behavior for dtype {}".format(dtype))
     self._pow_test_util(harness)
 
   @primitive_harness.parameterized(primitive_harness.lax_pow)
