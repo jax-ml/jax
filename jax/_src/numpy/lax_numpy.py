@@ -1115,7 +1115,7 @@ def angle(z):
 
 
 @_wraps(np.diff)
-def diff(a, n=1, axis=-1):
+def diff(a, n=1, axis=-1, prepend=None, append=None):
   _check_arraylike("diff", a)
   if n == 0:
     return a
@@ -1125,6 +1125,28 @@ def diff(a, n=1, axis=-1):
     raise ValueError(f"diff requires input that is at least one dimensional; got {a}")
 
   nd = a.ndim
+
+  combined = []
+  if prepend is not None:
+    _check_arraylike("diff", prepend)
+    if isscalar(prepend):
+      shape = list(a.shape)
+      shape[axis] = 1
+      prepend = broadcast_to(prepend, tuple(shape))
+    combined.append(prepend)
+
+  combined.append(a)
+
+  if append is not None:
+    _check_arraylike("diff", append)
+    if isscalar(append):
+      shape = list(a.shape)
+      shape[axis] = 1
+      append = broadcast_to(append, tuple(shape))
+    combined.append(append)
+
+  if len(combined) > 1:
+    a = concatenate(combined, axis)
 
   slice1 = [slice(None)] * nd
   slice2 = [slice(None)] * nd

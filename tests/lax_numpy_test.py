@@ -296,7 +296,6 @@ JAX_COMPOUND_OP_RECORDS = [
               check_dtypes=False),
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero,
               ["rev"], inexact=True),
-    op_record("diff", 1, number_dtypes + bool_dtypes, nonzerodim_shapes, jtu.rand_default, ["rev"]),
     op_record("ediff1d", 3, [np.int32], all_shapes, jtu.rand_default, []),
     op_record("unwrap", 1, float_dtypes, nonempty_nonscalar_array_shapes,
               jtu.rand_default, ["rev"],
@@ -2326,6 +2325,44 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda fill_value: jnp.full(shape, fill_value, dtype=out_dtype)
     args_maker = lambda: [rng((), fill_value_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+       {"testcase_name":
+           "_shape={}_n={}_axis={}_prepend={}_append={}".format(
+           jtu.format_shape_dtype_string(shape, dtype),
+           n, axis, prepend, append),
+        "shape": shape, "dtype": dtype, "n": n, "axis": axis,
+        "prepend": prepend, "append": append,
+        "rng_factory": jtu.rand_default}
+       for shape, dtype in _shape_and_dtypes(nonempty_nonscalar_array_shapes, default_dtypes)
+       for n in [0, 1, 2]
+       for axis in list(range(-len(shape), max(1, len(shape))))
+       for prepend in [None, 1, np.zeros(shape, dtype=dtype)]
+       for append in [None, 1, np.zeros(shape, dtype=dtype)]
+       ))
+  def testDiff(self, shape, dtype, n, axis, prepend, append, rng_factory):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    def np_fun(x, n=n, axis=axis, prepend=prepend, append=append):
+      if prepend is None:
+          prepend = np._NoValue
+      elif not np.isscalar(prepend) and prepend.dtype == jnp.bfloat16:
+          prepend = prepend.astype(np.float32)
+
+      if append is None:
+        append = np._NoValue
+      elif not np.isscalar(append) and append.dtype == jnp.bfloat16:
+        append = append.astype(np.float32)
+
+      if x.dtype == jnp.bfloat16:
+        return np.diff(x.astype(np.float32), n=n, axis=axis, prepend=prepend, append=append).astype(jnp.bfloat16)
+      else:
+        return np.diff(x, n=n, axis=axis, prepend=prepend, append=append)
+
+    jnp_fun = lambda x: jnp.diff(x, n=n, axis=axis, prepend=prepend, append=append)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(
@@ -4599,7 +4636,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
       'corrcoef': ['ddof', 'bias'],
-      'diff': ['prepend', 'append'],
       'empty_like': ['subok', 'order'],
       'einsum': ['kwargs'],
       'einsum_path': ['einsum_call'],
