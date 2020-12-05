@@ -2067,7 +2067,6 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   def test_device_put_replicated_array(self):
     devices = jax.local_devices()
-    n_devices = len(devices)
     x = np.arange(1, 5)
     y = jax.device_put_replicated(x, devices)
     self.assertIsInstance(y, pxla.ShardedDeviceArray)
@@ -2077,7 +2076,6 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   def test_device_put_replicated_pytree(self):
     devices = jax.local_devices()
-    n_devices = len(devices)
     xs = {'a': np.arange(1, 5), 'b': np.arange(3)}
     ys = jax.device_put_replicated(xs, devices)
     self.assertIsInstance(ys, dict)
