@@ -2124,6 +2124,15 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       lax.conv_general_dilated(lhs, rhs, **kwargs)
 
+  def test_window_strides_dimension_shape_rule(self):
+    # https://github.com/google/jax/issues/5087
+    msg = ("conv_general_dilated window and window_strides must have "
+           "the same number of dimension")
+    lhs = jax.numpy.zeros((1, 1, 3, 3))
+    rhs = np.zeros((1, 1, 1, 1))
+    with self.assertRaisesRegex(ValueError, msg):
+      jax.lax.conv(lhs, rhs, [1], 'SAME')
+
   def test_reduce_window_scalar_init_value_shape_rule(self):
     # https://github.com/google/jax/issues/4574
     args = { "operand": np.ones((4, 4), dtype=np.int32)

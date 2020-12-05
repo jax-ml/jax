@@ -2683,6 +2683,12 @@ def _conv_general_dilated_shape_rule(
            "1, got batch_group_count={} and feature_group_count={}")
     raise ValueError(msg.format(batch_group_count, feature_group_count))
 
+  if len(_conv_sdims(dimension_numbers.rhs_spec)) != len(window_strides):
+    msg = ("conv_general_dilated window and window_strides must have "
+           "the same number of dimension, but got {} and {}")
+    raise ValueError(
+        msg.format(len(_conv_sdims(dimension_numbers.rhs_spec)), len(window_strides)))
+
   lhs_perm, rhs_perm, out_perm = dimension_numbers
   lhs_trans = _dilate_shape(np.take(lhs.shape, lhs_perm), lhs_dilation)
   rhs_trans = _dilate_shape(np.take(rhs.shape, rhs_perm), rhs_dilation)
