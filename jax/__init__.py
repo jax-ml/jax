@@ -36,6 +36,8 @@ from .api import (
   device_count,
   device_get,
   device_put,
+  device_put_sharded,
+  device_put_replicated,
   devices,
   disable_jit,
   eval_shape,
