@@ -2059,18 +2059,18 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     Passing a list of arrays for ``shards`` results in a sharded array
     containing a stacked version of the inputs:
 
-    >>> from jax import api, numpy as jnp
+    >>> import jax
     >>> devices = jax.local_devices()
-    >>> x = [jnp.ones(5) for device in devices]
+    >>> x = [jax.numpy.ones(5) for device in devices]
     >>> y = jax.device_put_sharded(x, devices)
-    >>> np.allclose(y, jnp.stack(x))
+    >>> np.allclose(y, jax.numpy.stack(x))
     True
 
     Passing a list of nested container objects with arrays at the leaves for
     ``shards`` corresponds to stacking the shards at each leaf. This requires
     all entries in the list to have the same tree structure:
 
-    >>> x = [(i, jnp.arange(i, i + 4)) for i in range(len(devices))]
+    >>> x = [(i, jax.numpy.arange(i, i + 4)) for i in range(len(devices))]
     >>> y = jax.device_put_sharded(x, devices)
     >>> type(y)
     <class 'tuple'>
@@ -2126,11 +2126,11 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
   Examples:
     Passing an array:
 
-    >>> from jax import api, numpy as jnp
+    >>> import jax
     >>> devices = jax.local_devices()
-    >>> x = jnp.array([1., 2., 3.])
-    >>> y = api.device_put_replicated(x, devices)
-    >>> np.allclose(y, jnp.stack([x for _ in devices]))
+    >>> x = jax.numpy.array([1., 2., 3.])
+    >>> y = jax.device_put_replicated(x, devices)
+    >>> np.allclose(y, jax.numpy.stack([x for _ in devices]))
     True
 
   See also:
