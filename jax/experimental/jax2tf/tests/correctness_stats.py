@@ -284,6 +284,19 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       # operations.
       tf_unimpl(np_dtype)
 
+  if prim is lax.integer_pow_p:
+    if np_dtype in [np.uint8, np.uint16, np.uint32, np.uint64, np.int8,
+                    np.int16]:
+      tf_unimpl(np_dtype)
+    elif np_dtype in [np.int32, np.int64] and kwargs["y"] > 3:
+      # TODO(bchetioui): as of 20/11/20, this triggers the following exception
+      # in compiled mode:
+      # tensorflow.python.framework.errors_impl.UnimplementedError: binary integer op 'power' [Op:__inference_converted_fun_1104]
+      tf_unimpl(np_dtype, additional_msg=(
+        "integer types can not be raised to power > 3 in compiled mode "
+        "(experimental_compile=True)"))
+
+
   if prim in [lax.le_p, lax.lt_p, lax.ge_p, lax.gt_p]:
     if np_dtype in [np.bool_, np.uint16, np.uint32, np.uint64]:
       tf_unimpl(np_dtype)

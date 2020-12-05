@@ -571,6 +571,34 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.lax_round)
   def test_round(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+  
+  @primitive_harness.parameterized(primitive_harness.lax_integer_pow)
+  def test_integer_pow(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    custom_assert = rtol = None
+    if dtype in [np.float32, np.complex64]:
+      rtol = 1e-3
+    elif dtype in [np.float64, np.complex128]:
+      rtol = 1e-12
+    elif dtype == np.float16:
+      rtol = 1
+    elif dtype == dtypes.bfloat16:
+      # Values get really small for large negative powers.
+      rtol = 3
+
+    if dtype in [np.complex64, np.complex128]:
+      def custom_assert(result_jax, result_tf):
+        result_tf = result_tf.numpy()
+        # NaNs are mismatched, but assertAllClose will also behave weirdly for
+        # complex numbers containing np.inf as one of their components. See
+        # https://github.com/numpy/numpy/issues/15959 for more details.
+        mask = (np.isnan(result_jax) + np.isnan(result_tf) +
+                np.isinf(result_jax) + np.isinf(result_tf))
+        self.assertAllClose(result_jax[~ mask], result_tf[~ mask], rtol=rtol)
+
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           rtol=rtol, custom_assert=custom_assert,
+                           always_custom_assert=True)
 
   @primitive_harness.parameterized(primitive_harness.lax_convert_element_type)
   def test_convert_element_type(self, harness: primitive_harness.Harness):

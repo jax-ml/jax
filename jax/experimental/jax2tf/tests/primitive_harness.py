@@ -233,6 +233,27 @@ lax_convert_element_type = tuple( # Validate dtypes to dtypes
                    else set(jtu.dtypes.all) - set(jtu.dtypes.all_unsigned))
 )
 
+def _make_integer_pow_harness(name, *, shape=(20, 30), dtype=np.int32, y=3):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_y={y}",
+                 lax.integer_pow,
+                 [RandArg(shape, dtype), StaticArg(y)],
+                 shape=shape,
+                 dtype=dtype,
+                 y=y)
+
+lax_integer_pow = tuple( # Validate dtypes and y values
+  _make_integer_pow_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+) + tuple( # Validate overflow behavior by dtype
+  _make_integer_pow_harness("overflow", y=y, dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+  for y in [1000]
+) + tuple( # Validate negative y by dtype
+  _make_integer_pow_harness("negative_exp", y=y, dtype=dtype)
+  for dtype in jtu.dtypes.all_inexact
+  for y in [-1000]
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 
