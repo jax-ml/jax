@@ -1274,8 +1274,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
     self.assertRewrite("""
         { lambda a ; b c h.
           let d = gt c 0
-              e = convert_element_type[ new_dtype=int32
-                                        old_dtype=bool ] d
+              e = convert_element_type[ new_dtype=int32 ] d
               f g i = cond[ branches=( { lambda  ; a b c d f.
                                          let e g = id_tap[ arg_treedef_=*
                                                            has_token_=True

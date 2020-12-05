@@ -438,8 +438,7 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, np.ComplexWarning, stacklevel=2)
-  return convert_element_type_p.bind(
-      operand, new_dtype=new_dtype, old_dtype=old_dtype)
+  return convert_element_type_p.bind(operand, new_dtype=new_dtype)
 
 def bitcast_convert_type(operand: Array, new_dtype: DType) -> Array:
   """Elementwise bitcast.
@@ -1490,8 +1489,7 @@ def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   if config.omnistaging_enabled:
     bool_eye = eq(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
                   broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_eye, new_dtype=dtype,
-                                       old_dtype=np.bool_)
+    return convert_element_type_p.bind(bool_eye, new_dtype=dtype)
   else:
     lazy_expr = lazy.eye(dtype, (N, M), offset)
     aval = ShapedArray((N, M), dtype)
@@ -1507,8 +1505,7 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
     iotas = [broadcasted_iota(np.uint32, base_shape, i)
              for i in range(len(base_shape))]
     eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    result = convert_element_type_p.bind(_reduce(operator.and_, eyes),
-                                         new_dtype=dtype, old_dtype=np.bool_)
+    result = convert_element_type_p.bind(_reduce(operator.and_, eyes), new_dtype=dtype)
     return broadcast_in_dim(result, shape, axes)
   else:
     lazy_expr = lazy.broadcast(lazy.delta(dtype, base_shape), shape, axes)
@@ -1523,8 +1520,7 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   if config.omnistaging_enabled:
     bool_tri = ge(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
                   broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_tri, old_dtype=np.bool_,
-                                       new_dtype=dtype)
+    return convert_element_type_p.bind(bool_tri, new_dtype=dtype)
   else:
     lazy_expr = lazy.tri(dtype, (N, M), offset)
     aval = ShapedArray((N, M), dtype)
@@ -2571,38 +2567,35 @@ lt_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'lt')
 ad.defjvp_zero(lt_p)
 
 
-def _convert_element_type_shape_rule(operand, *, new_dtype, old_dtype):
+def _convert_element_type_shape_rule(operand, *, new_dtype):
   return operand.shape
 
-def _convert_element_type_dtype_rule(operand, *, new_dtype, old_dtype):
-  if operand.dtype != old_dtype:
-    raise TypeError("operand dtype and old_dtype must be the same, but got "
-        "operand.dtype={} and old_dtype={}."
-        .format(operand.dtype, np.dtype(old_dtype)))
+def _convert_element_type_dtype_rule(operand, *, new_dtype):
   return new_dtype
 
-def _convert_element_type_translation_rule(c, operand, *, new_dtype, old_dtype):
+def _convert_element_type_translation_rule(c, operand, *, new_dtype):
+  old_dtype = c.get_shape(operand).numpy_dtype()
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     operand = xops.Real(operand)
   new_etype = xla_client.dtype_to_etype(new_dtype)
   return xops.ConvertElementType(operand, new_element_type=new_etype)
 
-def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, old_dtype):
+def _convert_element_type_transpose_rule(ct, operand, *, new_dtype):
+  assert ad.is_undefined_primal(operand)
+  old_dtype = operand.aval.dtype
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)]
   elif core.primal_dtype_to_tangent_dtype(old_dtype) is dtypes.float0:
     return [ad_util.Zero(ShapedArray(operand.aval.shape, dtype=dtypes.float0))]
   else:
-    return [convert_element_type_p.bind(ct, new_dtype=old_dtype,
-                                        old_dtype=new_dtype)]
+    return [convert_element_type_p.bind(ct, new_dtype=old_dtype)]
 
-def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, old_dtype):
+def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype):
   if core.primal_dtype_to_tangent_dtype(new_dtype) is dtypes.float0:
     return ad_util.Zero(ShapedArray(tangent.shape, dtype=dtypes.float0))
   else:
-    return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
-                                       old_dtype=old_dtype)
+    return convert_element_type_p.bind(tangent, new_dtype=new_dtype)
 
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,

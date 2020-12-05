@@ -1094,8 +1094,7 @@ tf_impl[lax.lt_p] = tf.math.less
 
 tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
-def _convert_element_type(operand, *, old_dtype, new_dtype):
-  del old_dtype
+def _convert_element_type(operand, *, new_dtype):
   old_dtype = operand.dtype.as_numpy_dtype
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
@@ -1494,10 +1493,8 @@ def _select_and_gather_add(tangents: TfVal,
     def pack(a, b):
       a = _bitcast_convert_type(a, word_dtype)
       b = _bitcast_convert_type(b, word_dtype)
-      a = _convert_element_type(a, new_dtype=double_word_dtype,
-                                old_dtype=word_dtype)
-      b = _convert_element_type(b, new_dtype=double_word_dtype,
-                                old_dtype=word_dtype)
+      a = _convert_element_type(a, new_dtype=double_word_dtype)
+      b = _convert_element_type(b, new_dtype=double_word_dtype)
       a = tf.bitwise.left_shift(a, const(double_word_dtype, nbits))
       return tf.bitwise.bitwise_or(a, b)
 
@@ -1506,15 +1503,13 @@ def _select_and_gather_add(tangents: TfVal,
       assert t.dtype == double_word_dtype
       st = _shift_right_logical(t, const(double_word_dtype, nbits))
       return _bitcast_convert_type(
-        _convert_element_type(st, new_dtype=word_dtype,
-                              old_dtype=double_word_dtype), dtype
+        _convert_element_type(st, new_dtype=word_dtype), dtype
       )
 
     # Unpacks the second element of a tuple.
     def snd(t):
       return _bitcast_convert_type(
-        _convert_element_type(t, new_dtype=word_dtype,
-                              old_dtype=double_word_dtype), dtype
+        _convert_element_type(t, new_dtype=word_dtype), dtype
       )
 
   else:

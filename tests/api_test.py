@@ -2513,8 +2513,7 @@ class JaxprTest(jtu.JaxTestCase):
         let b = ge a 0.0
             c = add a 1.0
             d = add a 2.0
-            e = convert_element_type[ new_dtype=int32
-                                      old_dtype=bool ] b
+            e = convert_element_type[ new_dtype=int32 ] b
             f = cond[ branches=( { lambda  ; e_ a b c.
                                    let d = sub c a
                                    in (d,) }
@@ -2528,8 +2527,7 @@ class JaxprTest(jtu.JaxTestCase):
       expected = """
       { lambda  ; a.
         let b = ge a 0.0
-            c = convert_element_type[ new_dtype=int32
-                                      old_dtype=bool ] b
+            c = convert_element_type[ new_dtype=int32 ] b
             d = add a 1.0
             e = add a 2.0
             f = cond[ branches=( { lambda  ; e_ c a b.
