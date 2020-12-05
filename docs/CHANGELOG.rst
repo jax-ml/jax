@@ -9,9 +9,23 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.2.7 (Unreleased)
+jax 0.2.7 (Dec 4 2020)
 ----------------------
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.6...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.6...jax-v0.2.7>`_.
+
+* New features:
+
+  * Add ``jax.device_put_replicated``
+  * Add multi-host support to ``jax.experimental.sharded_jit``
+  * Add support for differentiating eigenvaleus computed by ``jax.numpy.linalg.eig``
+  * Add support for building on Windows platforms
+  * Add support for general in_axes and out_axes in ``jax.pmap``
+  * Add complex support for ``jax.numpy.linalg.slogdet``
+
+* Bug fixes:
+
+  * Fix higher-than-second order derivatives of ``jax.numpy.sinc`` at zero
+  * Fix some hard-to-hit bugs around symbolic zeros in transpose rules
 
 * Breaking changes:
 
