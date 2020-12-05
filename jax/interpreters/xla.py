@@ -1167,8 +1167,7 @@ for device_array in [_DeviceArray, _CppDeviceArray]:
 
   def __repr__(self):
     line_width = np.get_printoptions()["linewidth"]
-    # TODO(jblespia): Should we put back self.__class__.__name__ ?
-    prefix = '{}('.format("DeviceArray")
+    prefix = '{}('.format(self.__class__.__name__.lstrip('_'))
     s = np.array2string(self._value, prefix=prefix, suffix=',',
                         separator=', ', max_line_width=line_width)
     dtype_str = 'dtype={})'.format(self.dtype.name)

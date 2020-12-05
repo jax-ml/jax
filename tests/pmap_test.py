@@ -2091,6 +2091,10 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
     self.assertArraysEqual(y2, np.stack([xs['b'] for _ in devices]))
 
+  def test_repr(self):
+    x = jax.device_put_replicated(1, jax.devices())
+    self.assertStartsWith(repr(x), 'ShardedDeviceArray')
+
 
 class SpecToIndicesTest(jtu.JaxTestCase):
 
