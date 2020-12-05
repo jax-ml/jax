@@ -32,6 +32,7 @@ import tensorflow as tf  # type: ignore[import]
 
 config.parse_flags_with_absl()
 
+numpy_version = tuple(map(int, np.version.version.split('.')[:2]))
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
@@ -252,8 +253,11 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(5.)
 
   def test_convert_argument_non_tensor_error(self):
-    with self.assertRaisesRegex(TypeError,
-                                "Argument.*should be NumPy array"):
+    if numpy_version < (1, 19):
+      msg = "data type not understood"
+    else:
+      msg = "Cannot interpret .* as a data type"
+    with self.assertRaisesRegex(TypeError, msg):
       jax2tf.convert(lambda x: x)(lambda y: y)
 
   def test_argument_eager_tensor(self):

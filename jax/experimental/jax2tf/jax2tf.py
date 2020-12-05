@@ -52,6 +52,7 @@ from jaxlib import xla_client
 _VALID_SCOPE_REGEX = re.compile("^[A-Za-z0-9.][A-Za-z0-9_.\\/>-]*$")
 _INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/>-]")
 
+_dtype = np.result_type
 
 def _sanitize_scope_name(name):
   scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
@@ -87,13 +88,15 @@ def _safe_convert_to_tensor(val, dtype=None) -> TfVal:
   `ndarray` with a `uint16` dtype, for which conversion is properly defined. Then, we
   simply bitcast it back to `bfloat16`.
   """
-  dtype = dtype if dtype else (val.dtype if hasattr(val, "dtype") else None)
-  if (dtype == jnp.bfloat16 or isinstance(val, jnp.bfloat16)):
-    if not isinstance(val, jnp.ndarray):
-      val = np.array(val, jnp.bfloat16)
+  dtype = dtype or _dtype(val)
 
-    val = tf.bitcast(tf.convert_to_tensor(val.view(jnp.uint16),
-                                          dtype=to_tf_dtype(jnp.uint16)),
+  if (dtype == jnp.bfloat16 or _dtype(val) == jnp.bfloat16):
+    # TODO: handle bfloat16 without going through numpy.
+    # We cannot call val.view() on a DeviceArray, because it passes val to
+    # bitcast_convert_type_p, which calls back here, leading to an infinite
+    # recursion.  Instead, copy to a numpy array and create the view there.
+    val = np.asarray(val, jnp.bfloat16).view(np.uint16)
+    val = tf.bitcast(tf.convert_to_tensor(val, dtype=to_tf_dtype(jnp.uint16)),
                      type=to_tf_dtype(jnp.bfloat16))
   else:
     conversion_type = to_tf_dtype(dtype) if dtype else None

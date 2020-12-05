@@ -944,5 +944,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(tf_fn_array(np.array([3, 4, 5])),
                         np.array([4.5, 10, 17.5], jnp.bfloat16))
 
+  # test_bfloat16_array checks that https://github.com/google/jax/issues/5106 is
+  # fixed
+  def test_bfloat16_array(self):
+    @jax2tf.convert
+    def f(x):
+      return x
+    f(jnp.bfloat16(1))
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
