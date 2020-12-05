@@ -52,6 +52,19 @@ cc_library(
 )
 
 cc_library(
+    name = "handle_pool",
+    hdrs = ["handle_pool.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/base",
+    ],
+)
+
+cc_library(
     name = "gpu_kernel_helpers",
     srcs = ["gpu_kernel_helpers.cc"],
     hdrs = ["gpu_kernel_helpers.h"],
@@ -106,6 +119,7 @@ pybind_extension(
     module_name = "cublas_kernels",
     deps = [
         ":gpu_kernel_helpers",
+        ":handle_pool",
         ":kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cublas_lib",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
@@ -135,6 +149,7 @@ pybind_extension(
     module_name = "cusolver_kernels",
     deps = [
         ":gpu_kernel_helpers",
+        ":handle_pool",
         ":kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cusolver_lib",
