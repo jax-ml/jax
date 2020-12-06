@@ -2685,7 +2685,7 @@ def _conv_general_dilated_shape_rule(
 
   if len(_conv_sdims(dimension_numbers.rhs_spec)) != len(window_strides):
     msg = ("conv_general_dilated window and window_strides must have "
-           "the same number of dimension, but got {} and {}")
+           "the same number of dimensions, but got {} and {}")
     raise ValueError(
         msg.format(len(_conv_sdims(dimension_numbers.rhs_spec)), len(window_strides)))
 
