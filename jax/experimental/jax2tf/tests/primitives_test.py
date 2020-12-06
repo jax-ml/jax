@@ -33,7 +33,6 @@ from jax.experimental.jax2tf.tests import tf_test_util
 from jax.interpreters import xla
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
 
 config.parse_flags_with_absl()
 
@@ -576,6 +575,89 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_convert_element_type(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  def _pow_test_util(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    custom_assert = rtol = None
+    if dtype in [np.float32, np.complex64]:
+      rtol = 1e-2 if jtu.device_under_test() == "tpu" else 1e-3
+    elif dtype in [np.float64, np.complex128]:
+      rtol = 1e-12
+    elif dtype == np.float16:
+      rtol = 1
+    elif dtype == dtypes.bfloat16:
+      # Values get really small for large negative powers.
+      rtol = 3
+
+    if dtype in [np.complex64, np.complex128]:
+      def custom_assert(result_jax, result_tf):
+        result_tf = result_tf.numpy()
+        # NaNs are mismatched, but assertAllClose will also behave weirdly for
+        # complex numbers containing np.inf as one of their components. See
+        # https://github.com/numpy/numpy/issues/15959 for more details.
+        mask = (np.isnan(result_jax) + np.isnan(result_tf) +
+                np.isinf(result_jax) + np.isinf(result_tf))
+        self.assertAllClose(result_jax[~ mask], result_tf[~ mask], rtol=rtol)
+
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           rtol=rtol, custom_assert=custom_assert,
+                           always_custom_assert=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_integer_pow)
+  def test_integer_pow(self, harness: primitive_harness.Harness):
+    dtype, y = harness.params["dtype"], harness.params["y"]
+    # TODO(bchetioui): y > 10 is an arbitrary bound here, to skip tests that
+    # might cause an overflow behavior.
+    if dtype in [np.int32, np.int64] and y > 10:
+      raise unittest.SkipTest("TODO(bchetioui): integer_pow has inconsistent "
+                              "overflow behavior for dtype {}".format(dtype))
+    if (dtype in [np.complex64, np.float32] and
+        jtu.device_under_test() == "tpu" and y in [-1000, 1000]):
+      raise unittest.SkipTest("TODO(bchetioui): hitting rtol = nan for "
+                              "dtype {} on TPU".format(dtype))
+    self._pow_test_util(harness)
+
+  @primitive_harness.parameterized(primitive_harness.lax_pow)
+  def test_pow(self, harness: primitive_harness.Harness):
+    self._pow_test_util(harness)
+
+  @primitive_harness.parameterized(primitive_harness.lax_reshape)
+  def test_reshape(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_rev)
+  def test_rev(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.xla_device_put)
+  def test_device_put(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_sub)
+  def test_sub(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_bitcast_convert_type)
+  def test_bitcast_convert_type(self, harness: primitive_harness.Harness):
+    dtype, new_dtype = harness.params["dtype"], harness.params["new_dtype"]
+    if dtype == new_dtype == np.complex64 and jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest( "TODO(bchetioui): bitcast_convert_type from "
+                              f"{dtype} to {new_dtype} fails in JAX on TPU.")
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.ad_util_add_jaxvals)
+  def test_add_jaxvals(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_tie_in)
+  def test_tie_in(self, harness: primitive_harness.Harness):
+    if config.omnistaging_enabled:
+      raise unittest.SkipTest("tie_in test requires omnistaging to be disabled")
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.ad_util_stop_gradient)
+  def test_stop_gradient(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_comparators)
   def test_comparators(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
@@ -919,10 +1001,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.random_split)
   def test_random_split(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-
-  def test_stop_gradient(self):
-    f = jax2tf.convert(lax.stop_gradient)
-    self.assertEqual(f(tf.ones([])), 1.)
 
   # test_bfloat16_constant checks that https://github.com/google/jax/issues/3942 is
   # fixed

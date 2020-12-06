@@ -31,6 +31,7 @@ from jax import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow
+from jax.interpreters import xla
 
 from jaxlib import xla_client
 
@@ -231,6 +232,213 @@ lax_convert_element_type = tuple( # Validate dtypes to dtypes
     jtu.dtypes.all if not (dtypes.issubdtype(old_dtype, np.floating) or
                            dtypes.issubdtype(old_dtype, np.complexfloating))
                    else set(jtu.dtypes.all) - set(jtu.dtypes.all_unsigned))
+)
+
+def _make_integer_pow_harness(name, *, shape=(20, 30), dtype=np.int32, y=3):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_y={y}",
+                 lax.integer_pow,
+                 [RandArg(shape, dtype), StaticArg(y)],
+                 shape=shape,
+                 dtype=dtype,
+                 y=y)
+
+lax_integer_pow = tuple( # Validate dtypes and y values
+  _make_integer_pow_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+) + tuple( # Validate overflow behavior by dtype
+  _make_integer_pow_harness("overflow", y=y, dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+  for y in [1000]
+) + tuple( # Validate negative y by dtype
+  _make_integer_pow_harness("negative_exp", y=y, dtype=dtype)
+  for dtype in jtu.dtypes.all_inexact
+  for y in [-1000]
+)
+
+def _make_pow_harness(name, *, shapes=((20, 30), (20, 30)), dtype=np.float32,
+                      lhs=None, rhs=None):
+  lhs = RandArg(shapes[0], dtype) if lhs is None else lhs
+  rhs = RandArg(shapes[1], dtype) if rhs is None else rhs
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(lhs.shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs.shape, dtype)}",
+                 lax.pow,
+                 [lhs, rhs],
+                 lhs=lhs,
+                 rhs=rhs,
+                 dtype=dtype)
+
+lax_pow = tuple( # Validate dtypes
+  _make_pow_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all_inexact
+) + tuple( # Validate broadcasting behavior
+  _make_pow_harness("broadcast", shapes=shapes)
+  for shapes in [
+    ((), (4, 5, 6)),        # broadcasting lhs
+    ((4, 5, 6), ()),        # broadcasting rhs
+    ((4, 1, 6), (4, 5, 6)), # broadcasting lhs on a specific axis
+    ((4, 5, 6), (4, 1, 6)), # broadcasting rhs on a specific axis
+  ]
+)
+
+def _make_reshape_harness(name, *, shape=(2, 3), new_sizes=(3, 2),
+                          dimensions=(0, 1), dtype=np.float32):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newsizes={new_sizes}_dimensions={dimensions}",
+                 lax.reshape,
+                 [RandArg(shape, dtype), StaticArg(new_sizes),
+                  StaticArg(dimensions)],
+                 shape=shape,
+                 dtype=dtype,
+                 new_sizes=new_sizes,
+                 dimensions=dimensions)
+
+lax_reshape = tuple( # Validate dtypes
+  _make_reshape_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate new_sizes
+  _make_reshape_harness("new_sizes", shape=shape, new_sizes=new_sizes,
+                        dimensions=dimensions)
+  for shape, new_sizes, dimensions in [
+    ((3, 4, 5), (3, 20), (0, 1, 2)), # merging two dimensions
+    ((3, 4, 5), (4, 15), (0, 1, 2)), # changing leading dimension
+  ]
+) + tuple( # Validate dimensions collapsing order
+  _make_reshape_harness("dimensions", shape=shape, new_sizes=new_sizes,
+                        dimensions=dimensions)
+  for shape, new_sizes, dimensions in [
+    ((3, 4, 5), (3, 20), (2, 1, 0)), # transpose shape (0, 1, 2) into (2, 1, 0)
+    ((3, 4, 5), (3, 20), (2, 0, 1)), # transpose shape (0, 1, 2) into (2, 0, 1)
+  ]
+)
+
+def _make_rev_harness(name, *, shape=(4, 5), dtype=np.float32,
+                      dimensions=(0,)):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimensions={dimensions}",
+                 lax.rev,
+                 [RandArg(shape, dtype), StaticArg(dimensions)],
+                 shape=shape,
+                 dtype=dtype,
+                 dimensions=dimensions)
+
+lax_rev = tuple( # Validate dtypes
+  _make_rev_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate dimensions
+  _make_rev_harness("dimensions", shape=shape, dimensions=dimensions)
+  for shape, dimensions in [
+    ((3, 4, 5), ()),        # empty dimensions
+    ((3, 4, 5), (0, 2)),    # some dimensions
+    ((3, 4, 5), (0, 1, 2)), # all dimensions (ordered)
+    ((3, 4, 5), (2, 0, 1)), # all dimensions (unordered)
+  ]
+)
+
+def _make_device_put_harness(name, *, shape=(3, 4), dtype=np.float32,
+                             device=None):
+  _device_fn = lambda: jax.devices(device)[0] if device is not None else None
+  return Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}_device={device}",
+                 lambda x: xla.device_put_p.bind(x, device=_device_fn()),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 device=device)
+
+xla_device_put = tuple( # Validate dtypes
+  _make_device_put_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate devices
+  _make_device_put_harness("devices", device=device)
+  for device in [
+    "cpu" # first CPU device
+  ]
+)
+
+def _make_sub_harness(name, *, lhs_shape=(2, 3), rhs_shape=(2, 3),
+                      dtype=np.float32):
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
+                 lax.sub,
+                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype)],
+                 lhs_shape=lhs_shape,
+                 rhs_shape=rhs_shape,
+                 dtype=dtype)
+
+lax_sub = tuple( # Validate dtypes
+  _make_sub_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+) + tuple( # Validate broadcasting behaviour
+  _make_sub_harness("broadcasting", lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+  for lhs_shape, rhs_shape in [
+    ((), (2, 3)),     # broadcast scalar
+    ((1, 2), (3, 2)), # broadcast along specific axis
+  ]
+)
+
+def _make_bitcast_convert_type_harness(name, *, shape=(2, 3), dtype=np.float32,
+                                       new_dtype=np.float32):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newdtype={np.dtype(new_dtype).name}",
+                 lambda x: (
+                     lax.bitcast_convert_type_p.bind(x, new_dtype=new_dtype)),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 new_dtype=new_dtype)
+
+def _can_bitcast(dtype, target_dtype):
+  def _to_equivalence_class(dtype):
+    if dtypes.issubdtype(dtype, np.integer): return dtypes.iinfo(dtype).bits
+    elif dtypes.issubdtype(dtype, np.floating): return dtypes.finfo(dtype).bits
+    else:
+      assert dtype == np.bool_ or dtypes.issubdtype(dtype, np.complexfloating)
+      # Complex and boolean types can only be cast to themselves
+      return np.dtype(dtype).name
+  return _to_equivalence_class(dtype) == _to_equivalence_class(target_dtype)
+
+lax_bitcast_convert_type = tuple( # Validate dtypes combinations
+  _make_bitcast_convert_type_harness("dtypes_to_new_dtypes", dtype=dtype,
+                                     new_dtype=new_dtype)
+  for dtype in jtu.dtypes.all
+  for new_dtype in filter(partial(_can_bitcast, dtype), jtu.dtypes.all)
+)
+
+def _make_add_jaxvals_harness(name, *, shapes=((2,), (2,)),
+                              dtype=np.float32):
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
+                 ad_util.add_jaxvals_p.bind,
+                 list(map(lambda s: RandArg(s, dtype), shapes)),
+                 shapes=shapes,
+                 dtypes=dtypes)
+
+ad_util_add_jaxvals = tuple( # Validate dtypes
+  _make_add_jaxvals_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+)
+
+lax_tie_in = tuple(
+  Harness(f"lhs={jtu.format_shape_dtype_string(lhs_shape, lhs_dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}",
+          lax.tie_in_p.bind,
+          [RandArg(lhs_shape, lhs_dtype), RandArg(rhs_shape, rhs_dtype)],
+          lhs_shape=lhs_shape,
+          lhs_dtype=lhs_dtype,
+          rhs_shape=rhs_shape,
+          rhs_dtype=rhs_dtype,
+          primitive=lax.tie_in_p)
+  for lhs_shape, rhs_shape in [
+    ((2, 3), (4, 5))
+  ]
+  for rhs_dtype in jtu.dtypes.all
+  for lhs_dtype in [
+    np.float32
+  ]
+)
+
+ad_util_stop_gradient = tuple( # Validate dtypes
+  Harness(f"{jtu.format_shape_dtype_string(shape, dtype)}",
+          ad_util.stop_gradient_p.bind,
+          [RandArg(shape, dtype)],
+          shape=shape,
+          dtype=dtype)
+  for shape in [
+    (20, 20)
+  ]
+  for dtype in jtu.dtypes.all
 )
 
 _LAX_COMPARATORS = (

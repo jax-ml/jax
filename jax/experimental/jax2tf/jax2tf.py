@@ -1110,7 +1110,7 @@ tf_impl[lax.convert_element_type_p] = _convert_element_type
 
 
 def _bitcast_convert_type(operand, new_dtype):
-  return tf.bitcast(operand, new_dtype)
+  return tf.bitcast(operand, to_tf_dtype(new_dtype))
 tf_impl[lax.bitcast_convert_type_p] = _bitcast_convert_type
 
 

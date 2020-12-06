@@ -19,6 +19,7 @@ import numpy as np
 from typing import Any, Callable, Collection, Dict, List, NamedTuple, Optional,\
                    Tuple, Sequence, Set
 
+from jax import ad_util
 from jax import core
 from jax import dtypes
 from jax import lax
@@ -205,7 +206,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
         # rewriting is not implemented"
         tf_unimpl(np_dtype, devs=devs)
 
-  if prim in [lax.add_p, lax.reduce_window_sum_p]:
+  if prim in [ad_util.add_jaxvals_p, lax.add_p, lax.reduce_window_sum_p]:
     if np_dtype in [np.uint16, np.uint32, np.uint64]:
       # TODO(bchetioui): tf.math.add is not defined for the above types.
       tf_unimpl(np_dtype)
@@ -282,6 +283,23 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype == np.float16:
       # b/158006398: float16 support missing from the kernel of the above
       # operations.
+      tf_unimpl(np_dtype)
+
+  if prim is lax.integer_pow_p:
+    if np_dtype in [np.uint8, np.uint16, np.uint32, np.uint64, np.int8,
+                    np.int16]:
+      tf_unimpl(np_dtype)
+
+  if prim is lax.rev_p:
+    if np_dtype in [np.uint32, np.uint64]:
+      tf_unimpl(np_dtype)
+
+  if prim is lax.sub_p:
+    if np_dtype == np.uint64:
+      tf_unimpl(np_dtype)
+
+  if prim is lax.bitcast_convert_type_p:
+    if np_dtype == np.bool_:
       tf_unimpl(np_dtype)
 
   if prim in [lax.le_p, lax.lt_p, lax.ge_p, lax.gt_p]:
