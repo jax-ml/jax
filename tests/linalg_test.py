@@ -997,7 +997,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     actual_ps, actual_ls, actual_us = vmap(jsp.linalg.lu)(jnp.stack(args))
     self.assertAllClose(ps, actual_ps)
-    self.assertAllClose(ls, actual_ls)
+    self.assertAllClose(ls, actual_ls, rtol=5e-6)
     self.assertAllClose(us, actual_us)
 
   @parameterized.named_parameters(jtu.cases_from_list(
