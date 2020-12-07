@@ -52,6 +52,11 @@ def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), t
   nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
   return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
 
+# TODO(phawkins): we should probably separate out the function domains used for
+# autodiff tests from the function domains used for equivalence testing. For
+# example, logit should closely match its scipy equivalent everywhere, but we
+# don't expect numerical gradient tests to pass for inputs very close to 0.
+
 JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
     op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
@@ -68,7 +73,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("i0e", 1, float_dtypes, jtu.rand_default, True),
     op_record("i1", 1, float_dtypes, jtu.rand_default, True),
     op_record("i1e", 1, float_dtypes, jtu.rand_default, True),
-    op_record("logit", 1, float_dtypes, jtu.rand_uniform, True),
+    op_record("logit", 1, float_dtypes, partial(jtu.rand_uniform, low=0.05,
+                                                high=0.95), True),
     op_record("log_ndtr", 1, float_dtypes, jtu.rand_default, True),
     op_record("ndtri", 1, float_dtypes, partial(jtu.rand_uniform, low=0.05,
                                                 high=0.95),

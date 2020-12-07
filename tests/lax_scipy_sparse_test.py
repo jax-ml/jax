@@ -133,16 +133,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     expected = np.linalg.solve(posify(a), b)
     actual = lax_cg(posify(a), b)
-    self.assertAllClose(expected, actual)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
 
     actual = jit(lax_cg)(posify(a), b)
-    self.assertAllClose(expected, actual)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
     jtu.check_grads(
         lambda x, y: lax_cg(posify(x), y),
-        (a, b), order=2, rtol=1e-2)
+        (a, b), order=2, rtol=2e-1)
 
   def test_cg_ndarray(self):
     A = lambda x: 2 * x
