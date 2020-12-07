@@ -78,6 +78,12 @@ This happens to be the default ``in_axes`` value for ``vmap``!
 The same logic applies to other optional parameters that refer to specific input
 or output values of a transformed function, e.g. ``vmap``'s ``out_axes``.
 
+Viewing the pytree definition of an object
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+To view the pytree definition of an arbitrary ``object`` for debugging purposes, you can use::
+
+  from jax.tree_util import tree_structure
+  print(tree_structure(object))
 
 Developer information
 ^^^^^^^^^^^^^^^^^^^^^^
