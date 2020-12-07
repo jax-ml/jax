@@ -51,6 +51,13 @@ pytype_library(
 )
 
 pytype_library(
+    name = "experimental",
+    srcs = ["experimental/__init__.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
     name = "stax",
     srcs = ["experimental/stax.py"],
     srcs_version = "PY3",
