@@ -193,6 +193,8 @@ build --action_env=PYENV_ROOT
 build --python_path="{python_bin_path}"
 build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
 build --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"
+build --repo_env TF_NEED_ROCM="{tf_need_rocm}"
+build --action_env TF_ROCM_AMDGPU_TARGETS="{rocm_amdgpu_targets}"
 build --distinct_host_configuration=false
 build:linux --copt=-Wno-sign-compare
 build:macos --copt=-Wno-sign-compare
@@ -223,6 +225,10 @@ build --define=grpc_no_ares=true
 
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
+
+build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
+build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
+build:nonccl --define=no_nccl_support=true
 
 build --spawn_strategy=standalone
 build --strategy=Genrule=standalone
@@ -274,7 +280,7 @@ build:linux --copt=-Wno-stringop-truncation
 
 
 def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None,
-                  cuda_version=None, cudnn_version=None, **kwargs):
+                  cuda_version=None, cudnn_version=None, rocm_toolkit_path=None, **kwargs):
   with open("../.bazelrc", "w") as f:
     f.write(BAZELRC_TEMPLATE.format(**kwargs))
     if cuda_toolkit_path:
@@ -289,6 +295,9 @@ def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None,
     if cudnn_version:
       f.write("build --action_env TF_CUDNN_VERSION=\"{cudnn_version}\"\n"
               .format(cudnn_version=cudnn_version))
+    if rocm_toolkit_path:
+      f.write("build --action_env ROCM_PATH=\"{rocm_toolkit_path}\"\n"
+              .format(rocm_toolkit_path=rocm_toolkit_path))
 
 BANNER = r"""
      _   _  __  __
@@ -362,6 +371,10 @@ def main():
       parser,
       "enable_cuda",
       help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
+  add_boolean_argument(
+      parser,
+      "enable_rocm",
+      help_str="Should we build with ROCm enabled?")
   parser.add_argument(
       "--cuda_path",
       default=None,
@@ -383,6 +396,14 @@ def main():
       default="3.5,5.2,6.0,6.1,7.0",
       help="A comma-separated list of CUDA compute capabilities to support.")
   parser.add_argument(
+      "--rocm_path",
+      default=None,
+      help="Path to the ROCm toolkit.")
+  parser.add_argument(
+      "--rocm_amdgpu_targets",
+      default="gfx803,gfx900,gfx906,gfx1010",
+      help="A comma-separated list of ROCm amdgpu targets to support.")
+  parser.add_argument(
       "--bazel_startup_options",
       action="append", default=[],
       help="Additional startup options to pass to bazel.")
@@ -401,6 +422,9 @@ def main():
       parser.error("--cuda_version is needed for Windows CUDA build.")
     if args.cudnn_version is None:
       parser.error("--cudnn_version is needed for Windows CUDA build.")
+
+  if args.enable_cuda and args.enable_rocm:
+    parser.error("--enable_cuda and --enable_rocm cannot be enabled at the same time.")
 
   print(BANNER)
 
@@ -423,6 +447,7 @@ def main():
 
   cuda_toolkit_path = args.cuda_path
   cudnn_install_path = args.cudnn_path
+  rocm_toolkit_path = args.rocm_path
   print("CUDA enabled: {}".format("yes" if args.enable_cuda else "no"))
   if args.enable_cuda:
     if cuda_toolkit_path:
@@ -434,14 +459,25 @@ def main():
       print("CUDA version: {}".format(args.cuda_version))
     if args.cudnn_version:
       print("CUDNN version: {}".format(args.cudnn_version))
+
+  print("ROCm enabled: {}".format("yes" if args.enable_rocm else "no"))
+  if args.enable_rocm:
+    if rocm_toolkit_path:
+      print("ROCm toolkit path: {}".format(rocm_toolkit_path))
+      print("ROCm amdgpu targets: {}".format(args.rocm_amdgpu_targets))
+
   write_bazelrc(
       python_bin_path=python_bin_path,
       tf_need_cuda=1 if args.enable_cuda else 0,
+      tf_need_rocm=1 if args.enable_rocm else 0,
       cuda_toolkit_path=cuda_toolkit_path,
       cudnn_install_path=cudnn_install_path,
       cuda_compute_capabilities=args.cuda_compute_capabilities,
       cuda_version=args.cuda_version,
-      cudnn_version=args.cudnn_version)
+      cudnn_version=args.cudnn_version,
+      rocm_toolkit_path=rocm_toolkit_path,
+      rocm_amdgpu_targets=args.rocm_amdgpu_targets,
+)
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   config_args = args.bazel_options
@@ -452,6 +488,10 @@ def main():
     config_args += ["--config=mkl_open_source_only"]
   if args.enable_cuda:
     config_args += ["--config=cuda"]
+    config_args += ["--define=xla_python_enable_gpu=true"]
+  if args.enable_rocm:
+    config_args += ["--config=rocm"]
+    config_args += ["--config=nonccl"]
     config_args += ["--define=xla_python_enable_gpu=true"]
   command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] + config_args +
