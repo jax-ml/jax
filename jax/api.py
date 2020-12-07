@@ -308,7 +308,18 @@ def _cpp_jit(
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       xla_executable, _, result_handlers = execute.args
-      fastpath_data = (xla_executable, result_handlers, out_pytree_def)
+      sticky_device = None
+      avals = []
+      lazy_exprs = []
+      for result_handler in result_handlers:
+        aval, sticky_device, lazy_expr = result_handler.args
+        avals.append(aval)
+        lazy_exprs.append(None if xla.lazy.is_trivial(lazy_expr) else lazy_expr)
+      assert len(avals) == len(out_flat)
+      if version >= (0, 1, 58):
+        fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals, lazy_exprs)
+      else:
+        fastpath_data = (xla_executable, result_handlers, out_pytree_def)
     else:
       fastpath_data = None
 

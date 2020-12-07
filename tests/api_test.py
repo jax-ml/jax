@@ -462,6 +462,17 @@ class CPPJitTest(jtu.JaxTestCase):
         re.escape("static arguments should be comparable using __eq__")):
       jitted_f(1, HashableWithoutEq())
 
+  def test_cpp_jitted_function_returns_PyBuffer(self):
+    if version < (0, 1, 58):
+      raise unittest.SkipTest("Disabled because it depends on some future "
+                              "release of jax_jit.cc within jaxlib.")
+    if self.jit != jax.api._cpp_jit:
+      raise unittest.SkipTest("this test only applies to _cpp_jit")
+
+    jitted_f = self.jit(lambda a: a + 1)
+    jitted_f(1)
+    self.assertIsInstance(jitted_f(2), xla._CppDeviceArray)
+
 
 class PythonJitTest(CPPJitTest):
 
