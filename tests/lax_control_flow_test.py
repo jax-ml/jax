@@ -1955,12 +1955,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_custom_root_with_custom_linear_solve(self):
 
-    # TODO(shoyer): Figure out why this fails and re-enable it.
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
-
     def linear_solve(a, b):
-      f = lambda x: jnp.dot(a, x) - b
+      f = lambda x: high_precision_dot(a, x) - b
       factors = jsp.linalg.cho_factor(a)
       cho_solve = lambda f, b: jsp.linalg.cho_solve(factors, b)
       def pos_def_solve(g, b):
@@ -1971,15 +1967,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    actual = linear_solve(jnp.dot(a, a.T), b)
-    expected = jnp.linalg.solve(jnp.dot(a, a.T), b)
+    actual = linear_solve(high_precision_dot(a, a.T), b)
+    expected = jnp.linalg.solve(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual)
 
-    actual = api.jit(linear_solve)(jnp.dot(a, a.T), b)
-    expected = jnp.linalg.solve(jnp.dot(a, a.T), b)
+    actual = api.jit(linear_solve)(high_precision_dot(a, a.T), b)
+    expected = jnp.linalg.solve(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual)
 
-    jtu.check_grads(lambda x, y: linear_solve(jnp.dot(x, x.T), y),
+    jtu.check_grads(lambda x, y: linear_solve(high_precision_dot(x, x.T), y),
                     (a, b), order=2, rtol={jnp.float32: 1e-2})
 
   def test_custom_root_errors(self):
@@ -2130,10 +2126,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
-
-    # TODO(b/143528110): re-enable when underlying XLA TPU issue is fixed
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
 
     def linear_solve(a, b):
       a_factors = jsp.linalg.lu_factor(a)
