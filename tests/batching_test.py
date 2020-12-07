@@ -1039,7 +1039,7 @@ class BatchingTest(jtu.JaxTestCase):
     shape = (2, 3, 4, 5)
     x = np.arange(np.prod(shape)).reshape(shape)
     rule = batching.collective_rules[lax.all_to_all_p]
-    y, out_d = rule(None, (x,), (d,), None, split_axis, concat_axis)
+    y, out_d = rule(None, (x,), (d,), None, split_axis, concat_axis, None)
     exp_shape = shape_fun(x, out_d)
     self.assertEqual(y.shape, exp_shape)
 

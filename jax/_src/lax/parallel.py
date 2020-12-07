@@ -233,14 +233,16 @@ def pshuffle(x, axis_name, perm):
   return ppermute(x, axis_name, list(zip(perm, range(len(perm)))))
 
 
-def pswapaxes(x, axis_name, axis):
+def pswapaxes(x, axis_name, axis, *, axis_index_groups=None):
   """Swap the pmapped axis ``axis_name`` with the unmapped axis ``axis``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
   each leaf in the tree.
 
-  The mapped axis size must be equal to the size of the unmapped axis; that is,
-  we must have ``lax.psum(1, axis_name) == x.shape[axis]``.
+  The group size of the mapped axis size must be equal to the size of the
+  unmapped axis; that is, we must have
+  ``lax.psum(1, axis_name, axis_index_groups=axis_index_groups) == x.shape[axis]``.
+  By default, when ``axis_index_groups=None``, this encompasses all the devices.
 
   This function is a special case of ``all_to_all`` where the pmapped axis of
   the input is placed at the position ``axis`` in the output. That is, it is
@@ -252,13 +254,17 @@ def pswapaxes(x, axis_name, axis):
       :func:`jax.pmap` documentation for more details).
     axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would run pswapaxes over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x``.
   """
-  return all_to_all(x, axis_name, axis, axis)
+  return all_to_all(x, axis_name, axis, axis, axis_index_groups=axis_index_groups)
 
-def all_to_all(x, axis_name, split_axis, concat_axis):
+def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None):
   """Materialize the mapped axis and map a different axis.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -268,8 +274,10 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
   logical axis position ``concat_axis``, and the input unmapped axis at position
   ``split_axis`` is mapped with the name ``axis_name``.
 
-  The input mapped axis size must be equal to the size of the axis to be mapped;
-  that is, we must have ``lax.psum(1, axis_name) == x.shape[split_axis]``.
+  The group size of the mapped axis size must be equal to the size of the
+  unmapped axis; that is, we must have
+  ``lax.psum(1, axis_name, axis_index_groups=axis_index_groups) == x.shape[axis]``.
+  By default, when ``axis_index_groups=None``, this encompasses all the devices.
 
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
@@ -279,6 +287,10 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
       ``axis_name``.
     concat_axis: int indicating the position in the output to materialize the
       mapped axis of the input with the name ``axis_name``.
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would run all_to_all over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) with shape given by the expression::
@@ -289,12 +301,15 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
     the input ``x``, i.e. ``axis_size = lax.psum(1, axis_name)``.
   """
   def bind(x):
-    if psum(1, axis_name) != x.shape[split_axis]:
+    group_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+    if group_size != x.shape[split_axis]:
       msg = ("all_to_all requires the size of the mapped axis axis_name to "
              "equal x.shape[split_axis], but they are {} and {} respectively.")
-      raise ValueError(msg.format(psum(1, axis_name), x.shape[split_axis]))
+      raise ValueError(msg.format(group_size, x.shape[split_axis]))
     return all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
-                             axis_name=axis_name)
+                             axis_name=axis_name,
+                             axis_index_groups=axis_index_groups)
+
   return tree_util.tree_map(bind, x)
 
 def axis_index(axis_name):
@@ -548,16 +563,18 @@ def _moveaxis(src, dst, x):
   perm.insert(dst, src)
   return lax.transpose(x, perm)
 
-def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis):
-  global_full = all_gather(x, axis_name)
+def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis, axis_index_groups):
+  global_full = all_gather(x, axis_name, axis_index_groups=axis_index_groups)
   idx = axis_index(axis_name)
+  if axis_index_groups:
+    idx = idx % len(axis_index_groups[0])
   local_slice = lax.dynamic_index_in_dim(global_full, idx, split_axis + 1, keepdims=False)
   return _moveaxis(0, concat_axis, local_slice)
 
 def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
-                                 axis_env, platform):
+                                 axis_index_groups, axis_env, platform):
   # Workaround for AllToAll not being implemented on CPU.
-  replica_groups = _replica_groups(axis_env, axis_name, None)
+  replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
   if len(replica_groups[0]) == 1:
     return x
   elif platform != 'tpu':
@@ -567,7 +584,7 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
     lowering = xla.lower_fun(_all_to_all_via_all_gather, multiple_results=False, parallel=True)
     return lowering(c, x,
                     split_axis=split_axis, concat_axis=concat_axis, axis_name=axis_name,
-                    axis_env=axis_env, platform=platform)
+                    axis_index_groups=axis_index_groups, axis_env=axis_env, platform=platform)
   else:
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
@@ -586,10 +603,16 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
       x = xla.lower_fun(partial(lax.squeeze, dimensions=(split_axis,)), multiple_results=False)(c, x)
       return x
 
-def _all_to_all_transpose_rule(cts, axis_name, split_axis, concat_axis):
-  return (all_to_all(cts, axis_name=axis_name, split_axis=concat_axis, concat_axis=split_axis),)
+def _all_to_all_transpose_rule(cts, axis_name, split_axis, concat_axis, axis_index_groups):
+  return (all_to_all(
+      cts,
+      axis_name=axis_name,
+      split_axis=concat_axis,
+      concat_axis=split_axis,
+      axis_index_groups=axis_index_groups),)
 
-def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis):
+
+def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis, axis_index_groups):
   x, = vals_in
   d, = dims_in
   if d <= split_axis:
@@ -602,11 +625,17 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis)
     d -= 1
   elif concat_axis < d < split_axis:
     d += 1
-  result = all_to_all_p.bind(x, axis_name=axis_name, split_axis=split_axis, concat_axis=concat_axis)
+  result = all_to_all_p.bind(
+      x,
+      axis_name=axis_name,
+      split_axis=split_axis,
+      concat_axis=concat_axis,
+      axis_index_groups=axis_index_groups)
   return result, d
 
 def _all_to_all_batched_collective(frame, vals_in, dims_in,
-                                   axis_name, split_axis, concat_axis):
+                                   axis_name, split_axis, concat_axis,
+                                   axis_index_groups):
   if isinstance(axis_name, (list, tuple)) and len(axis_name) > 1:
     raise NotImplementedError("update after #4835")  # TODO(mattjj,apaszke)
   x, = vals_in
@@ -619,7 +648,7 @@ def _all_to_all_batched_collective(frame, vals_in, dims_in,
     split_axis_adj += 1
   return _moveaxis(d, concat_axis_adj, x), split_axis_adj
 
-def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis):
+def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_groups):
   input_aval = raise_to_shaped(x)
   shape = list(input_aval.shape)
   size = shape.pop(split_axis)
