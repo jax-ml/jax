@@ -169,7 +169,7 @@ class DLPackTest(jtu.JaxTestCase):
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
     y = torch.utils.dlpack.from_dlpack(dlpack)
-    self.assertAllClose(np, y.numpy())
+    self.assertAllClose(np, y.cpu().numpy())
 
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
