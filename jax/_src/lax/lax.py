@@ -1890,46 +1890,21 @@ def _upcast_fp16_for_computation(f):
 
   return f_wrapped
 
-@api.jit
-@_upcast_fp16_for_computation
 def tan(x: Array) -> Array:
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
-  return div(sin(x), cos(x))
+  return tan_p.bind(x)
 
-@api.jit
 def asin(x: Array) -> Array:
   r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
-    return mul(_const(x, -1j), asinh(mul(_const(x, 1j), x)))
-  else:
-    return mul(_const(x, 2),
-               atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
+  return asin_p.bind(x)
 
-@api.jit
 def acos(x: Array) -> Array:
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
-    result = mul(_const(x, 1j), acosh(x))
-    # By convention, numpy chooses the branch with positive real part.
-    rpart = real(result)
-    return select(
-      gt(rpart, _const(rpart, 0)),
-      result,
-      neg(result)
-    )
-  else:
-    return select(
-        ne(x, _const(x, -1.0)),
-        mul(_const(x, 2),
-            atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x))),
-        full_like(x, np.pi))
+  return acos_p.bind(x)
 
 def atan(x: Array) -> Array:
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
-    return mul(_const(x, -1j), atanh(mul(_const(x, 1j), x)))
-  else:
-    return atan2(x, _const(x, 1))
+  return atan_p.bind(x)
 
 def sinh(x: Array) -> Array:
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
@@ -2236,6 +2211,62 @@ ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
+
+@partial(xla.lower_fun, multiple_results=False)
+@_upcast_fp16_for_computation
+def tan_translation_rule(x):
+  return div(sin(x), cos(x))
+
+tan_p = standard_unop(_float | _complex, 'tan',
+                       translation_rule=tan_translation_rule)
+ad.defjvp(tan_p, lambda g, x: mul(g, _const(x, 1) + square(tan(x))))
+
+
+@partial(xla.lower_fun, multiple_results=False)
+def asin_translation_rule(x):
+  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+    return mul(_const(x, -1j), asinh(mul(_const(x, 1j), x)))
+  else:
+    return mul(_const(x, 2),
+               atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
+
+asin_p = standard_unop(_float | _complex, 'asin',
+                       translation_rule=asin_translation_rule)
+ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
+
+
+@partial(xla.lower_fun, multiple_results=False)
+def acos_translation_rule(x):
+  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+    result = mul(_const(x, 1j), acosh(x))
+    # By convention, numpy chooses the branch with positive real part.
+    rpart = real(result)
+    return select(
+      gt(rpart, _const(rpart, 0)),
+      result,
+      neg(result)
+    )
+  else:
+    return select(
+        ne(x, _const(x, -1.0)),
+        mul(_const(x, 2),
+            atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x))),
+        full_like(x, np.pi))
+
+acos_p = standard_unop(_float | _complex, 'acos',
+                       translation_rule=acos_translation_rule)
+ad.defjvp(acos_p, lambda g, x: mul(g, -rsqrt(_const(x, 1) - square(x))))
+
+@partial(xla.lower_fun, multiple_results=False)
+def atan_translation_rule(x):
+  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+    return mul(_const(x, -1j), atanh(mul(_const(x, 1j), x)))
+  else:
+    return atan2(x, _const(x, 1))
+
+atan_p = standard_unop(_float | _complex, 'atan',
+                       translation_rule=atan_translation_rule)
+ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
 
 atan2_p = standard_naryop([_float, _float], 'atan2')
 ad.defjvp(atan2_p,
