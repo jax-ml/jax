@@ -433,7 +433,10 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
     operand = np.asarray(operand, new_dtype)
   old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
   if old_dtype == new_dtype:
-    return operand
+    if isinstance(operand, (core.Tracer, xla.DeviceArray)):
+      return operand
+    else:
+      return _device_put_raw(np.asarray(operand))
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
