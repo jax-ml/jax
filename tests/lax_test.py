@@ -34,6 +34,10 @@ from jax import lax_reference
 from jax.test_util import check_grads
 import jax.util
 from jax.util import prod
+from jax import xla
+
+from jax._src.lax.lax import _device_put_raw
+
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -2265,6 +2269,37 @@ class LazyConstantTest(jtu.JaxTestCase):
     expected = lax_reference.broadcast_in_dim(arr_np, (2, 1, 3), (0, 2))
     make_const = lambda: lax.broadcast_in_dim(arr, (2, 1, 3), (0, 2))
     self._Check(make_const, expected)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_input_type={}_dtype={}_value={}_jit={}".format(
+          input_type.__name__, dtype.__name__, value, jit),
+       "input_type": input_type, "dtype": dtype, "value": value, "jit": jit}
+      for input_type in [int, float, np.int32, np.float32, np.array]
+      for dtype in [np.int32, np.float32]
+      for jit in [True, False]
+      for value in [0, 1]))
+  def testConvertElementReturnType(self, input_type, dtype, value, jit):
+    op = lambda x: lax.convert_element_type(x, dtype)
+    if jit:
+      op = api.jit(op)
+    result = op(input_type(value))
+    assert isinstance(result, xla.DeviceArray)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype_in={}_dtype_out={}".format(
+          dtype_in.__name__, dtype_out.__name__),
+       "dtype_in": dtype_in, "dtype_out": dtype_out}
+      for dtype_in in all_dtypes for dtype_out in all_dtypes))
+  @jtu.ignore_warning(category=np.ComplexWarning)
+  def testConvertElementTypeAvoidsCopies(self, dtype_in, dtype_out):
+    x = _device_put_raw(np.zeros(5, dtype_in))
+    self.assertEqual(x.dtype, dtype_in)
+    y = lax.convert_element_type(x, dtype_out)
+    self.assertEqual(y.dtype, dtype_out)
+    if np.dtype(dtype_in) == np.dtype(dtype_out):
+      self.assertIs(x.device_buffer, y.device_buffer)
+    else:
+      self.assertFalse(x.device_buffer is y.device_buffer)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fn={}_indexdtype={}"
