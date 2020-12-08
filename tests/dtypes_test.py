@@ -77,6 +77,8 @@ class DtypesTest(jtu.JaxTestCase):
     {"testcase_name": "_swap={}_jit={}".format(swap, jit),
      "swap": swap, "jit": jit}
     for swap in [False, True] for jit in [False, True])
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
   def testBinaryPromotion(self, swap, jit):
     testcases = [
       (jnp.array(1.), 0., jnp.float_),
@@ -200,6 +202,8 @@ class TestPromotionTables(jtu.JaxTestCase):
       val = jaxtype.type(0)
     self.assertIs(dtypes._jax_type(val), jaxtype)
 
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
   def testObservedPromotionTable(self):
     """Test that the weak & strong dtype promotion table does not change over time."""
     # Note: * here refers to weakly-typed values

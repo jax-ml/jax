@@ -32,8 +32,8 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-float_types = [np.float32, np.float64]
-complex_types = [np.complex64, np.complex128]
+float_types = jtu.dtypes.floating
+complex_types = jtu.dtypes.complex
 
 
 def matmul_high_precision(a, b):

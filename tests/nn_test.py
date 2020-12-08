@@ -21,7 +21,6 @@ import itertools
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as np
 import scipy.stats
 
 from jax import core
@@ -67,8 +66,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.softplus, (float('nan'),), order=1,
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
 
-  @parameterized.parameters([
-      int, jnp.int32, float, jnp.float64, jnp.float32, jnp.float64,])
+  @parameterized.parameters([int, float] + jtu.dtypes.floating + jtu.dtypes.integer)
   def testSoftplusZero(self, dtype):
     self.assertEqual(jnp.log(dtype(2)), nn.softplus(dtype(0)))
 
@@ -212,7 +210,7 @@ class NNInitializersTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testInitializer(self, initializer, shape, dtype):
     rng = random.PRNGKey(0)
     val = initializer(rng, shape, dtype)
@@ -228,7 +226,7 @@ class NNInitializersTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testInitializerProvider(self, initializer_provider, shape, dtype):
     rng = random.PRNGKey(0)
     initializer = initializer_provider(dtype=dtype)
