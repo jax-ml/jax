@@ -3197,14 +3197,20 @@ def _dot_using_sum_of_products(lhs, rhs, *, dimension_numbers):
                 tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
 
 def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision):
+  return xops.DotGeneral(lhs, rhs,
+                         xc.make_dot_dimension_numbers(dimension_numbers),
+                         precision_config=_precision_config(precision))
+
+def _dot_general_cpu_translation_rule(c, lhs, rhs, *, dimension_numbers,
+                                      precision):
   dtype = c.get_shape(lhs).numpy_dtype()
   if dtypes.issubdtype(dtype, np.inexact):
     return xops.DotGeneral(lhs, rhs,
                            xc.make_dot_dimension_numbers(dimension_numbers),
                            precision_config=_precision_config(precision))
   else:
-    # TODO(b/134526360): XLA doesn't support bool or integer dots, so we emit a
-    # sum of products instead.
+    # TODO(b/134526360): XLA doesn't support bool or some integer dots on CPU,
+    # so we emit a sum of products instead.
     translation = xla.lower_fun(_dot_using_sum_of_products,
                                 multiple_results=False)
     return translation(c, lhs, rhs, dimension_numbers=dimension_numbers)
@@ -3227,6 +3233,8 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
+xla.backend_specific_translations['cpu'][dot_general_p] = \
+    _dot_general_cpu_translation_rule
 
 
 def _broadcast_shape_rule(operand, sizes):
