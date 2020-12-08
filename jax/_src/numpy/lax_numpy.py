@@ -270,15 +270,21 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    to_dtype = result_type(*args)
-    return [lax.convert_element_type(x, to_dtype) for x in args]
+    to_dtype_raw = dtypes._result_type_raw(*args)
+    weak_type = to_dtype_raw in set(dtypes._weak_types)
+    to_dtype = dtypes.canonicalize_dtype(to_dtype_raw)
+    return [lax.convert_element_type(x, to_dtype, weak_type) for x in args]
 
 def _promote_dtypes_inexact(*args):
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
-  to_dtype = _to_inexact_dtype(result_type(*args))
-  return [lax.convert_element_type(x, to_dtype) for x in args]
+  to_dtype_raw = dtypes._result_type_raw(*args)
+  to_dtype = dtypes.canonicalize_dtype(to_dtype_raw)
+  to_dtype_inexact = _to_inexact_dtype(to_dtype)
+  weak_type = (to_dtype == to_dtype_inexact
+               and to_dtype_raw in set(dtypes._weak_types))
+  return [lax.convert_element_type(x, to_dtype_inexact, weak_type) for x in args]
 
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""

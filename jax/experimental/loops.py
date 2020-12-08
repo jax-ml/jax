@@ -548,8 +548,7 @@ class _WhileBuilder(_LoopBuilder):
       # Conditional function is not allowed to modify the scope state
       for ms, init_ms in zip(carried_state_names, args):
         if not (scope._mutable_state[ms] is init_ms):
-          msg = "Conditional function modifies scope.{} field."
-          raise ValueError(msg.format(ms))
+          raise ValueError(f"Conditional function modifies scope.{ms} field.")
       return res
 
     init_avals = safe_map(_BodyTracer.abstractify, init_vals)
@@ -559,11 +558,10 @@ class _WhileBuilder(_LoopBuilder):
                                             tuple(init_avals)))
     # TODO: share these checks with lax_control_flow.while
     if not tree_util.treedef_is_leaf(cond_tree):
-      msg = "cond_fun must return a boolean scalar, but got pytree {}."
-      raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals != [core.ShapedArray((), np.bool_)]:
-      msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
-      raise TypeError(msg.format(cond_jaxpr.out_avals))
+      raise TypeError(f"cond_fun must return a boolean scalar, but got pytree {cond_tree}.")
+    if not safe_map(core.typecompat, cond_jaxpr.out_avals, [core.ShapedArray((), np.bool_)]):
+      raise TypeError(f"cond_fun must return a boolean scalar, but got output type(s) "
+                      f"{cond_jaxpr.out_avals}.")
 
     return lax_control_flow.while_p.bind(*itertools.chain(cond_consts,
                                                           body_const_vals,
