@@ -1,6 +1,8 @@
 jax2tf Examples
 ===============
 
+Link: go/jax2tf-examples.
+
 This directory contains a number of examples of using the
 [jax2tf converter](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md) to:
 
