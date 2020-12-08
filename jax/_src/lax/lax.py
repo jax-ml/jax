@@ -6378,7 +6378,7 @@ def _check_user_dtype_supported(dtype, fun_name=None):
            "See https://github.com/google/jax#current-gotchas for more.")
     fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = dtypes.canonicalize_dtype(dtype).name
-    warnings.warn(msg.format(dtype, fun_name , truncated_dtype))
+    warnings.warn(msg.format(dtype, fun_name , truncated_dtype), stacklevel=2)
 
 
 def _canonicalize_axis(axis, num_dims):

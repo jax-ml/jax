@@ -54,7 +54,7 @@ def compute_weight_mat(input_size: int, output_size: int, scale,
   # want to interpolate.
   kernel_scale = jnp.maximum(inv_scale, 1.) if antialias else 1.
 
-  sample_f = ((np.arange(output_size) + 0.5) * inv_scale -
+  sample_f = ((jnp.arange(output_size) + 0.5) * inv_scale -
               translation * inv_scale - 0.5)
   x = (
       jnp.abs(sample_f[jnp.newaxis, :] -

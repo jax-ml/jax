@@ -282,7 +282,7 @@ class OptimizerTests(jtu.JaxTestCase):
       assert trip == 75
       return opt_final
 
-    initial_params = jnp.float64(0.5)
+    initial_params = jnp.array(0.5)
     minimize_structure(initial_params)
 
     def loss(test_params):

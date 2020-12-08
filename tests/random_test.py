@@ -77,11 +77,8 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testNumpyAndXLAAgreeOnFloatEndianness(self, dtype):
-    if not FLAGS.jax_enable_x64 and jnp.issubdtype(dtype, np.float64):
-      raise SkipTest("can't test float64 agreement")
-
     bits_dtype = np.uint32 if jnp.finfo(dtype).bits == 32 else np.uint64
     numpy_bits = np.array(1., dtype).view(bits_dtype)
     xla_bits = api.jit(
@@ -156,7 +153,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits32, expected32)
 
-    bits64 = jax._src.random._random_bits(key, 64, (3,))
+    with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
+      bits64 = jax._src.random._random_bits(key, 64, (3,))
     if FLAGS.jax_enable_x64:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
@@ -199,7 +197,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float16, np.float32, np.float64]))
+      for dtype in float_dtypes))
   def testNormal(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
@@ -213,7 +211,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float16, np.float32, np.float64]))
+      for dtype in float_dtypes))
   def testTruncatedNormal(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
@@ -231,7 +229,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float32, np.float64, np.int32, np.int64]))
+      for dtype in jtu.dtypes.floating + jtu.dtypes.integer))
   def testShuffle(self, dtype):
     key = random.PRNGKey(0)
     x = np.arange(100).astype(dtype)
@@ -252,7 +250,7 @@ class LaxRandomTest(jtu.JaxTestCase):
           np.dtype(dtype).name, shape, replace, weighted, array_input),
         "dtype": dtype, "shape": shape, "replace": replace,
         "weighted": weighted, "array_input": array_input}
-      for dtype in [np.float32, np.float64, np.int32, np.int64]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.integer
       for shape in [(), (5,), (4, 5)]
       for replace in [True, False]
       for weighted in [True, False]
@@ -280,7 +278,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "dtype": dtype, "shape": shape}
-      for dtype in [np.float32, np.float64, np.int32, np.int64]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.integer
       for shape in [100, (10, 10), (10, 5, 2)]))
   def testPermutationArray(self, dtype, shape):
     key = random.PRNGKey(0)
@@ -322,7 +320,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_p={}_dtype={}".format(p, np.dtype(dtype).name),
        "p": p, "dtype": dtype}
       for p in [0.1, 0.5, 0.9]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testBernoulli(self, p, dtype):
     key = random.PRNGKey(0)
     p = np.array(p, dtype=dtype)
@@ -345,7 +343,7 @@ class LaxRandomTest(jtu.JaxTestCase):
         ([[.5, .1], [.5, .9]], 0),
     ]
     for sample_shape in [(10000,), (5000, 2)]
-    for dtype in [np.float32, np.float64]))
+    for dtype in jtu.dtypes.floating))
   def testCategorical(self, p, axis, dtype, sample_shape):
     key = random.PRNGKey(0)
     p = np.array(p, dtype=dtype)
@@ -397,7 +395,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float16, np.float32, np.float64]))
+      for dtype in float_dtypes))
   def testCauchy(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
@@ -415,7 +413,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for alpha in [
           np.array([0.2, 1., 5.]),
       ]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
     key = random.PRNGKey(0)
@@ -449,7 +447,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_a={}_dtype={}".format(a, np.dtype(dtype).name),
        "a": a, "dtype": dtype}
       for a in [0.1, 1., 10.]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testGamma(self, a, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
@@ -527,7 +525,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testGumbel(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.gumbel(key, (10000,), dtype)
@@ -571,7 +569,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_b={}_dtype={}".format(b, np.dtype(dtype).name),
        "b": b, "dtype": dtype}
       for b in [0.1, 1., 10.]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testPareto(self, b, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, b: random.pareto(key, b, (10000,), dtype)
@@ -592,7 +590,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_df={}_dtype={}".format(df, np.dtype(dtype).name),
        "df": df, "dtype": dtype}
       for df in [0.1, 1., 10.]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
     key = random.PRNGKey(0)

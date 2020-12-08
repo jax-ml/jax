@@ -304,7 +304,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("gpu", "tpu")
   def testEigvalsInf(self):
     # https://github.com/google/jax/issues/2661
-    x = jnp.array([[jnp.inf]], jnp.float64)
+    x = jnp.array([[jnp.inf]])
     self.assertTrue(jnp.all(jnp.isnan(jnp.linalg.eigvals(x))))
 
   @parameterized.named_parameters(jtu.cases_from_list(

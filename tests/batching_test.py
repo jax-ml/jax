@@ -563,7 +563,7 @@ class BatchingTest(jtu.JaxTestCase):
   def testCumProd(self):
    x = jnp.arange(9).reshape(3, 3) + 1
    y = vmap(lambda x: jnp.cumprod(x, axis=-1))(x)
-   self.assertAllClose(np.cumprod(x, axis=1, dtype=jnp.int_), y)
+   self.assertAllClose(np.cumprod(x, axis=1, dtype=int), y)
 
   def testSelect(self):
     pred = np.array([True, False])
@@ -930,12 +930,11 @@ class BatchingTest(jtu.JaxTestCase):
     def f(key):
       def body_fn(uk):
         key = uk[1]
-        u = random.uniform(key, (), dtype=jnp.float64)
+        u = random.uniform(key, ())
         key, _ = random.split(key)
         return u, key
 
-      u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn,
-                            (jnp.float64(1.), key))
+      u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn, (1., key))
       return u
 
     print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash

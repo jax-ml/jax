@@ -34,6 +34,7 @@ config.parse_flags_with_absl()
 def jvp_taylor(fun, primals, series):
   # Computes the Taylor series the slow way, with nested jvp.
   order, = set(map(len, series))
+  primals = tuple(jnp.asarray(p) for p in primals)
   def composition(eps):
     taylor_terms = [sum([eps ** (i+1) * terms[i] / fact(i + 1)
                          for i in range(len(terms))]) for terms in series]

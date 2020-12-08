@@ -3198,7 +3198,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testNpMean(self):
     # from https://github.com/google/jax/issues/125
-    x = lax.add(jnp.eye(3, dtype=jnp.float_), 0.)
+    x = lax.add(jnp.eye(3, dtype=float), 0.)
     ans = np.mean(x)
     self.assertAllClose(ans, np.array(1./3), check_dtypes=False)
 
@@ -3825,6 +3825,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testLongLong(self):
     self.assertAllClose(np.int64(7), api.jit(lambda x: x)(np.longlong(7)))
 
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
   def testArange(self):
     # test cases inspired by dask tests at
     # https://github.com/dask/dask/blob/master/dask/array/tests/test_creation.py#L92
