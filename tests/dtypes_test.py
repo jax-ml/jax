@@ -88,8 +88,8 @@ class DtypesTest(jtu.JaxTestCase):
     testcases = [
       (jnp.array(1.), 0., jnp.float_),
       (jnp.array(1.), jnp.array(0.), jnp.float_),
-      (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float_),
-      (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float_),
+      (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float16),
+      (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float32),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float64), jnp.float64),
       (jnp.array(1., dtype=jnp.float16), 0., jnp.float16),
       (jnp.array(1., dtype=jnp.float32), 0., jnp.float32),
@@ -303,7 +303,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     for xtype, ytype in itertools.product(
       [int, float, jnp.int16, jnp.int32, jnp.float16, jnp.float32], repeat=2)
     for xfun, yfun in itertools.product(
-      [identity, abs], repeat=2)
+      [identity, abs, jnp.array], repeat=2)
     )
   def testBinaryPromotionJitInvariance(self, xtype, ytype, xfun, yfun):
     """Test jit invariance of simple binary promotion rules with and without weak types."""
