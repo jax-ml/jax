@@ -26,7 +26,7 @@ from .. import numpy as jnp
 from .. import core
 from .. import linear_util as lu
 from ..api import _check_callable, _check_arg
-from ..tree_util import tree_flatten, tree_unflatten, tree_leaves
+from ..tree_util import tree_flatten, tree_unflatten, all_leaves
 from ..api_util import flatten_fun_nokwargs, flatten_axes
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
@@ -67,6 +67,9 @@ class FrozenDict:  # dataclasses might remove some boilerplate here
 
   def __hash__(self):
     return hash(tuple(self.contents.items()))
+
+  def __repr__(self):
+    return f"FrozenDict({self.contents})"
 
 # Multi-dimensional generalized map
 
@@ -136,14 +139,49 @@ def fresh_resource_name():
 class AxisNamePos(FrozenDict):
   pass
 
-A = AxisNamePos
 
+def _parse_entry(arg_name, entry):
+  # Dictionaries mapping axis names to positional axes
+  if isinstance(entry, dict) and all(isinstance(v, int) for v in entry.keys()):
+    result = AxisNamePos((name, axis) for axis, name in entry.items())
+    num_mapped_dims = len(entry)
+  # Non-empty lists or tuples that terminate with an ellipsis
+  elif isinstance(entry, (tuple, list)) and entry and entry[-1] == ...:
+    result = AxisNamePos((name, axis)
+                         for axis, name in enumerate(entry[:-1])
+                         if name is not None)
+    num_mapped_dims = sum(name is not None for name in entry[:-1])
+  else:
+    raise TypeError(f"""\
+Value mapping specification in xmap {arg_name} pytree can be either:
+- lists of axis names, ending with ellipsis (...)
+- dictionaries that map axis names to positional axes (integers)
+but got: {entry}""")
+  if len(result) != num_mapped_dims:
+    raise ValueError(
+        f"Named axes should be unique within each {arg_name} argument "
+        f"specification, but one them is: {entry}")
+  return result
+
+def _is_axes_leaf(entry):
+  if isinstance(entry, dict) and all_leaves(entry.values()):
+    return True
+  # NOTE: `None`s are not considered leaves by `all_leaves`
+  if isinstance(entry, (tuple, list)) and all_leaves(v for v in entry if v is not None):
+    return True
+  return False
+
+
+def _prepare_axes(axes, arg_name):
+  entries, treedef = tree_flatten(axes, is_leaf=_is_axes_leaf)
+  entries = map(partial(_parse_entry, arg_name), entries)
+  return tree_unflatten(treedef, entries), entries
 
 # TODO: Some syntactic sugar to make the API more usable in a single-axis case?
 # TODO: Are the resource axes scoped lexically or dynamically? Dynamically for now!
 def xmap(fun: Callable,
-         in_axes,  # PyTree[AxisNamePos]
-         out_axes,  # PyTree[AxisNamePos],
+         in_axes,
+         out_axes,
          schedule: Iterable[Tuple[AxisName, ResourceAxisName]],
          backend: Optional[str] = None):
   warn("xmap is an experimental feature and probably has bugs!")
@@ -161,29 +199,15 @@ def xmap(fun: Callable,
   if isinstance(out_axes, list):
     out_axes = tuple(out_axes)
 
-  in_axes_entries = tree_leaves(in_axes)
-  out_axes_entries = tree_leaves(out_axes)
-  # Check that {in|out}_axes have the right types, and don't use the same positional axis twice
-  if not all(isinstance(x, A) for x in in_axes_entries):
-    raise TypeError(f"xmap in_axes must be AxisNamePos (A) instances or (nested) "
-                    f"containers with those types as leaves, but got {in_axes}")
-  if not all(isinstance(x, A) for x in out_axes_entries):
-    raise TypeError(f"xmap out_axes must be AxisNamePos (A) instances or (nested) "
-                    f"containers with those types as leaves, but got {in_axes}")
-  for x in in_axes_entries:
-    if len(set(x.values())) != len(x):
-      raise ValueError(f"Positional dimension indices should be unique within each "
-                       f"in_axes dictionary, but one of the entries is: {x}")
-  for x in out_axes_entries:
-    if len(set(x.values())) != len(x):
-      raise ValueError(f"Positional dimension indices should be unique within each "
-                       f"in_axes dictionary, but one of the entries is: {x}")
+  in_axes, in_axes_entries = _prepare_axes(in_axes, 'in_axes')
+  out_axes, _ = _prepare_axes(out_axes, 'out_axes')
 
   in_axes_names = set(it.chain(*(spec.keys() for spec in in_axes_entries)))
   scheduled_axes = set(x[0] for x in frozen_schedule)
   if scheduled_axes != in_axes_names:
-    raise ValueError("The set of axes names appearing in in_axes has to equal the "
-                     "set of scheduled axes, but {in_axes_names} != {scheduled_axes}")
+    raise ValueError(
+        f"The set of axes names appearing in in_axes has to equal the "
+        f"set of scheduled axes, but {in_axes_names} != {scheduled_axes}")
 
   necessary_resources = set(x[1] for x in frozen_schedule if x[1] != 'vectorize')
   if len(set(frozen_schedule)) != len(frozen_schedule):
@@ -318,9 +342,10 @@ class EvaluationPlan(NamedTuple):
       for paxis, naxes in self.physical_resource_map.items():
         axis = lookup_exactly_one_of(axes, naxes)
         if axis is None:
-            continue
+          continue
         mesh_axes[paxis] = axis
-      return A(mesh_axes)
+      return AxisNamePos(mesh_axes)
+
     return (tuple(unsafe_map(to_mesh, in_axes)),
             tuple(unsafe_map(to_mesh, out_axes)))
 
