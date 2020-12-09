@@ -2369,6 +2369,34 @@ def _pad_edge(array, pad_width):
   return array
 
 
+def _pad_linear_ramp(array, pad_width, end_values):
+  for axis in range(ndim(array)):
+    edge_before = lax.slice_in_dim(array, 0, 1, axis=axis)
+    edge_after = lax.slice_in_dim(array, -1, None, axis=axis)
+    ramp_before = linspace(
+        start=end_values[axis][0],
+        stop=edge_before.squeeze(axis), # Dimension is replaced by linspace
+        num=pad_width[axis][0],
+        endpoint=False,
+        dtype=array.dtype,
+        axis=axis
+    )
+    ramp_after = linspace(
+        start=end_values[axis][1],
+        stop=edge_after.squeeze(axis), # Dimension is replaced by linspace
+        num=pad_width[axis][1],
+        endpoint=False,
+        dtype=array.dtype,
+        axis=axis
+    )
+
+    # Reverse linear space in appropriate dimension
+    ramp_after = flip(ramp_after, axis)
+
+    array = lax.concatenate([ramp_before, array, ramp_after], dimension=axis)
+  return array
+
+
 def _pad_stats(array, pad_width, stat_length, stat_func):
   nd = ndim(array)
   for i in range(nd):
@@ -2430,8 +2458,8 @@ def _broadcast_to_pairs(nvals, nd, name):
   return nvals
 
 
-@partial(jit, static_argnums=(1, 2, 4))
-def _pad(array, pad_width, mode, constant_values, stat_length):
+@partial(jit, static_argnums=(1, 2, 4, 5))
+def _pad(array, pad_width, mode, constant_values, stat_length, end_values):
   array = asarray(array)
   nd = ndim(array)
 
@@ -2460,6 +2488,10 @@ def _pad(array, pad_width, mode, constant_values, stat_length):
   elif mode == "edge":
     return _pad_edge(array, pad_width)
 
+  elif mode == "linear_ramp":
+    end_values = _broadcast_to_pairs(end_values, nd, "end_values")
+    return _pad_linear_ramp(array, pad_width, end_values)
+
   elif mode in stat_funcs:
     if stat_length is not None:
       stat_length = _broadcast_to_pairs(stat_length, nd, "stat_length")
@@ -2471,12 +2503,13 @@ def _pad(array, pad_width, mode, constant_values, stat_length):
 
 
 @_wraps(np.pad)
-def pad(array, pad_width, mode="constant", constant_values=0, stat_length=None):
+def pad(array, pad_width, mode="constant", constant_values=0, stat_length=None,
+        end_values=0):
   if isinstance(pad_width, Iterable):
     pad_width = tuple(
         tuple(int(i) for i in x) if isinstance(x, Iterable) else x
         for x in pad_width)
-  return _pad(array, pad_width, mode, constant_values, stat_length)
+  return _pad(array, pad_width, mode, constant_values, stat_length, end_values)
 
 
 @_wraps(np.stack)
