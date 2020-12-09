@@ -22,6 +22,8 @@ import jax.dlpack
 import jax.numpy as jnp
 from jax import test_util as jtu
 
+import numpy as np
+
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -38,7 +40,9 @@ except ImportError:
 
 try:
   import tensorflow as tf
-except ImportError:
+  tf_version = tuple(
+    int(x) for x in tf.version.VERSION.split("-")[0].split("."))
+except:
   tf = None
 
 
@@ -194,6 +198,17 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     self.assertEqual(y.__cuda_array_interface__["data"][0],
                      z.__cuda_array_interface__["data"][0])
     self.assertAllClose(x, cupy.asnumpy(z))
+
+
+class Bfloat16Test(jtu.JaxTestCase):
+
+  @unittest.skipIf((not tf or tf_version < (2, 5, 0) or
+                    jax.lib.version < (0, 1, 58)),
+                   "Test requires TensorFlow 2.5.0 or newer and jaxlib 0.1.58 "
+                   "or newer")
+  def testJaxAndTfHaveTheSameBfloat16Type(self):
+    self.assertEqual(np.dtype(jnp.bfloat16).num,
+                     np.dtype(tf.dtypes.bfloat16.as_numpy_dtype).num)
 
 
 if __name__ == "__main__":
