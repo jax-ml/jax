@@ -14,6 +14,7 @@
 
 import inspect
 import unittest
+import pickle
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -28,6 +29,7 @@ import numpy as np
 
 
 FLAGS = flags.FLAGS
+
 
 
 class JaxJitTest(parameterized.TestCase):
@@ -106,6 +108,17 @@ class JaxJitTest(parameterized.TestCase):
     def f(a, b, c, d):
       return a + b + c + d
 
+    with self.subTest('_python_jit'):
+      jitted_f = jax.api._python_jit(f, static_argnums=(1, 2), donate_argnums=3)
+      jit_args = jitted_f._jit_args
+      self.assertEqual(id(f), id(jit_args.fun))
+      self.assertEqual(jit_args.static_argnums, (1, 2))
+      self.assertEqual(jit_args.donate_argnums, (3,))
+
+    # TODO(jblespiau): remove after version release
+    if version < (0, 1, 56):
+      raise unittest.SkipTest("old jaxlib version")
+
     with self.subTest('_cpp_jit'):
       jitted_f = jax.api._cpp_jit(f, static_argnums=(1, 2), donate_argnums=3)
       jit_args = jitted_f._jit_args
@@ -113,12 +126,42 @@ class JaxJitTest(parameterized.TestCase):
       self.assertEqual(jit_args.static_argnums, (1, 2))
       self.assertEqual(jit_args.donate_argnums, (3,))
 
-    with self.subTest('_python_jit'):
-      jitted_f = jax.api._python_jit(f, static_argnums=(1, 2), donate_argnums=3)
-      jit_args = jitted_f._jit_args
-      self.assertEqual(id(f), id(jit_args.fun))
-      self.assertEqual(jit_args.static_argnums, (1, 2))
-      self.assertEqual(jit_args.donate_argnums, (3,))
+  def test_pickle(self):
+    # TODO(jblespiau): remove after version release
+    if version < (0, 1, 56):
+      raise unittest.SkipTest("old jaxlib version")
+
+    with self.subTest('broken'):
+      old = _WithJittedFuncBroken()
+      with self.assertRaisesRegex(Exception, r"Can't pickle"):
+        pickle.loads(pickle.dumps(old))
+
+    with self.subTest('working'):
+      old = _WithJittedFuncWorking()
+      new = pickle.loads(pickle.dumps(old))
+      self.assertEqual(old.func(1, 2, 3, 4), new.func(1, 2, 3, 4))
+
+
+class _WithJittedFuncBroken:
+  def __init__(self):
+    self.func = jax.api._cpp_jit(_func, static_argnums=(1, 2), donate_argnums=3)
+
+
+class _WithJittedFuncWorking:
+  def __init__(self):
+    self.func = jax.api._cpp_jit(_func, static_argnums=(1, 2), donate_argnums=3)
+
+  def __getstate__(self):
+    jit_args = self.func._jit_args
+    return (jit_args.fun, jit_args.static_argnums, jit_args.donate_argnums)
+
+  def __setstate__(self, state):
+    f, s, d = state
+    self.func = jax.api._cpp_jit(f, static_argnums=s, donate_argnums=d)
+
+
+def _func(a, b, c, d):
+  return a + b + c + d
 
 
 if __name__ == '__main__':
