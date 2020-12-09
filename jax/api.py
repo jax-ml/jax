@@ -192,6 +192,7 @@ def _python_jit(
   _check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
+  jit_args = _JitArgs(fun, static_argnums, device, backend, donate_argnums)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   @wraps(fun)
@@ -225,6 +226,7 @@ def _python_jit(
         donated_invars=donated_invars)
     return tree_unflatten(out_tree(), out)
 
+  f_jitted._jit_args = jit_args  # expose jit args for serialization
   return f_jitted
 
 
@@ -251,6 +253,7 @@ def _cpp_jit(
   _check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
+  jit_args = _JitArgs(fun, static_argnums, device, backend, donate_argnums)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   if device is not None and backend is not None:
@@ -382,6 +385,7 @@ def _cpp_jit(
     else:
       return cpp_jitted_f(*args, **kwargs)
   f_jitted._cpp_jitted_f = cpp_jitted_f
+  f_jitted._jit_args = jit_args  # expose jit args for serialization
 
   return f_jitted
 

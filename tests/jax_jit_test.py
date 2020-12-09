@@ -102,6 +102,24 @@ class JaxJitTest(parameterized.TestCase):
     jitted_f = jax.api._cpp_jit(f)
     self.assertEqual(inspect.signature(f), inspect.signature(jitted_f))
 
+  def test_jit_args(self):
+    def f(a, b, c, d):
+      return a + b + c + d
+
+    with self.subTest('_cpp_jit'):
+      jitted_f = jax.api._cpp_jit(f, static_argnums=(1, 2), donate_argnums=3)
+      jit_args = jitted_f._jit_args
+      self.assertEqual(id(f), id(jit_args.fun))
+      self.assertEqual(jit_args.static_argnums, (1, 2))
+      self.assertEqual(jit_args.donate_argnums, (3,))
+
+    with self.subTest('_python_jit'):
+      jitted_f = jax.api._python_jit(f, static_argnums=(1, 2), donate_argnums=3)
+      jit_args = jitted_f._jit_args
+      self.assertEqual(id(f), id(jit_args.fun))
+      self.assertEqual(jit_args.static_argnums, (1, 2))
+      self.assertEqual(jit_args.donate_argnums, (3,))
+
 
 if __name__ == '__main__':
   jax.config.config_with_absl()
