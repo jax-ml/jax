@@ -39,6 +39,7 @@ for examples.
 import functools
 import collections
 import operator as op
+from typing import Optional, Callable, Any
 
 from .lib import pytree
 
@@ -48,17 +49,24 @@ from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 
-def tree_flatten(tree):
+def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Flattens a pytree.
 
   Args:
     tree: a pytree to flatten.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether
+      the flattening should traverse the current object, or if it should be
+      stopped immediately, with the whole subtree being treated as a leaf.
 
   Returns:
     A pair where the first element is a list of leaf values and the second
     element is a treedef representing the structure of the flattened tree.
   """
-  return pytree.flatten(tree)
+  # We skip the second argument in support of old jaxlibs
+  # TODO: Remove once 0.1.58 becomes the minimum supported jaxlib version
+  return pytree.flatten(tree) if is_leaf is None else pytree.flatten(tree, is_leaf)
+
 
 def tree_unflatten(treedef, leaves):
   """Reconstructs a pytree from the treedef and the leaves.
