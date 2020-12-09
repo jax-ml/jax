@@ -1386,6 +1386,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @unittest.skipIf(numpy_version < (1, 16, 6), "numpy <= 1.16.5 has a bug in linear_rmap")
+  # https://github.com/numpy/numpy/commit/1c45e0df150b1f49982aaa3fc1a328407b5eff7e
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_mode={}_pad_width={}_end_values={}".format(
           jtu.format_shape_dtype_string(shape, dtype), "linear_ramp", pad_width, end_values),
