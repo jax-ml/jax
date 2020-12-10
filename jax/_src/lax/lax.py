@@ -612,7 +612,8 @@ def conv_general_dilated(
       lhs_shape=lhs.shape, rhs_shape=rhs.shape,
       precision=_canonicalize_precision(precision))
 
-def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None) -> Array:
+def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
+        preferred_element_type: Optional[DType] = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot
@@ -634,7 +635,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None) -> Array:
   """
   if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and lhs.shape[-1] == rhs.shape[0]:
     return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
-                       precision=precision)
+                       precision=precision, preferred_element_type=preferred_element_type)
   else:
     raise TypeError("Incompatible shapes for dot: got {} and {}.".format(
         lhs.shape, rhs.shape))
@@ -644,7 +645,8 @@ DotDimensionNumbers = Tuple[Tuple[Sequence[int], Sequence[int]],
                             Tuple[Sequence[int], Sequence[int]]]
 
 def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
-                precision: PrecisionLike = None) -> Array:
+                precision: PrecisionLike = None,
+                preferred_element_type: Optional[DType] = None) -> Array:
   """More general contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -670,7 +672,8 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
   batch_dims = tuple(map(lambda x: tuple(x), batch_dims_seq))
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(contract_dims, batch_dims),
-                            precision=_canonicalize_precision(precision))
+                            precision=_canonicalize_precision(precision),
+                            preferred_element_type=preferred_element_type)
 
 def broadcast(operand: Array, sizes: Sequence[int]) -> Array:
   """Broadcasts an array, adding new major dimensions.
@@ -3063,7 +3066,8 @@ def _precision_config(precision):
   return None
 
 
-def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision):
+def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
+                            preferred_element_type: Optional[DType] = None):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if not all(np.all(np.greater_equal(d, 0)) and np.all(np.less(d, lhs.ndim))
              for d in (lhs_contracting, lhs_batch)):
@@ -3130,11 +3134,16 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision):
   return batch_shape + lhs_tensored_shape + rhs_tensored_shape
 
 
-def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision):
-  return naryop_dtype_rule(_input_dtype, [_any, _any], 'dot_general', lhs, rhs)
+def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
+                            preferred_element_type: Optional[DType] = None):
+  if preferred_element_type is not None:
+    return preferred_element_type
+  else:
+    return naryop_dtype_rule(_input_dtype, [_any, _any], 'dot_general', lhs, rhs)
 
 
 def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
+                               preferred_element_type: Optional[DType] = None,
                                swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = g.ndim - y.ndim + len(x_batch) + 2 * len(x_contract)
@@ -3147,24 +3156,28 @@ def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
-  return transpose(dot_general(g, y, dims, precision=precision),
+  return transpose(dot_general(g, y, dims, precision=precision, preferred_element_type=preferred_element_type),
                    tuple(out_axes))
 
-def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision):
+def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision,
+                               preferred_element_type: Optional[DType] = None):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   return _dot_general_transpose_lhs(
     g, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
+    preferred_element_type=preferred_element_type,
     swap_ans=True)
 
 
 def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
-                            precision):
+                            precision,
+                            preferred_element_type: Optional[DType] = None):
   lhs, rhs = batched_args
   new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
       (lhs.ndim, rhs.ndim), batch_dims, dimension_numbers)
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
-                            precision=precision)
+                            precision=precision,
+                            preferred_element_type=preferred_element_type)
   return batched_out, result_batch_dim
 
 def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
@@ -3234,18 +3247,26 @@ def _dot_using_sum_of_products(lhs, rhs, *, dimension_numbers):
   return reduce(op_product(lhs, rhs), _zero(lhs), op_sum,
                 tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
 
-def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision):
+def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision,
+                                  preferred_element_type: Optional[DType] = None):
+  if preferred_element_type is not None:
+    preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
   return xops.DotGeneral(lhs, rhs,
                          xc.make_dot_dimension_numbers(dimension_numbers),
-                         precision_config=_precision_config(precision))
+                         precision_config=_precision_config(precision),
+                         preferred_element_type=preferred_element_type)
 
 def _dot_general_cpu_translation_rule(c, lhs, rhs, *, dimension_numbers,
-                                      precision):
+                                      precision,
+                                      preferred_element_type: Optional[DType] = None):
+  if preferred_element_type is not None:
+    preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
   dtype = c.get_shape(lhs).numpy_dtype()
   if dtypes.issubdtype(dtype, np.inexact):
     return xops.DotGeneral(lhs, rhs,
                            xc.make_dot_dimension_numbers(dimension_numbers),
-                           precision_config=_precision_config(precision))
+                           precision_config=_precision_config(precision),
+                           preferred_element_type=preferred_element_type)
   else:
     # TODO(b/134526360): XLA doesn't support bool or some integer dots on CPU,
     # so we emit a sum of products instead.
@@ -3254,7 +3275,8 @@ def _dot_general_cpu_translation_rule(c, lhs, rhs, *, dimension_numbers,
     return translation(c, lhs, rhs, dimension_numbers=dimension_numbers)
 
 def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
-                              precision):
+                              precision,
+                              preferred_element_type: Optional[DType] = None):
   lhs, rhs = padded_vals
   # Only need to mask off contraction dims of one side - we mask the lhs here
   # but this is arbitrary. Could check the sizes of lhs and rhs and mask
