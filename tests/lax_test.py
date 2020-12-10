@@ -206,16 +206,22 @@ class LaxTest(jtu.JaxTestCase):
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_from_dtype={}_to_dtype={}".format(
-          from_dtype, to_dtype),
-       "from_dtype": from_dtype, "to_dtype": to_dtype}
+      {"testcase_name": "_from_dtype={}_to_dtype={}_weak_type={}".format(
+          from_dtype, to_dtype, weak_type),
+       "from_dtype": from_dtype, "to_dtype": to_dtype, "weak_type": weak_type}
       for from_dtype, to_dtype in itertools.product(
-          [np.float32, np.int32, "float32", "int32"], repeat=2)))
-  def testConvertElementType(self, from_dtype, to_dtype):
+          [None, np.float32, np.int32, "float32", "int32"], repeat=2)
+      for weak_type in [True, False]))
+  def testConvertElementType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax.convert_element_type(x, to_dtype)
+    op = lambda x: lax.convert_element_type(x, to_dtype, weak_type)
     self._CompileAndCheck(op, args_maker)
+
+    x = rng((1,), from_dtype)
+    out = op(x)
+    self.assertEqual(out.dtype, dtypes.canonicalize_dtype(to_dtype or x.dtype))
+    self.assertEqual(out.aval.weak_type, weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}"

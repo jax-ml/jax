@@ -426,7 +426,7 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
   Returns:
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
-  new_dtype = dtypes.canonicalize_dtype(new_dtype)
+  new_dtype = dtypes.canonicalize_dtype(new_dtype or _dtype(operand))
   new_weak_type = bool(weak_type)
   # Avoids dropping precision by casting Python scalars to the default Jax
   # type. If we passed a Python scalar directly to the bind call below, it is
