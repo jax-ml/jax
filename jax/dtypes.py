@@ -287,10 +287,11 @@ def dtype(x):
     return python_scalar_dtypes[type(x)]
   return np.result_type(x)
 
+def _result_type_raw(*args):
+  if len(args) < 2:
+    return _jax_type(args[0])
+  return _least_upper_bound(*{_jax_type(arg) for arg in args})
+
 def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
-   # TODO(jakevdp): propagate weak_type to the result.
-  if len(args) < 2:
-    return canonicalize_dtype(dtype(args[0]))
-  # TODO(jakevdp): propagate weak_type to the result when necessary.
-  return canonicalize_dtype(_least_upper_bound(*{_jax_type(arg) for arg in args}))
+  return canonicalize_dtype(_result_type_raw(*args))

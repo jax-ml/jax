@@ -56,6 +56,11 @@ scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                 jnp.complex64, jnp.complex128]
 
+def identity(x):
+  """A named identity function for use in tests"""
+  return x
+
+
 class DtypesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -211,45 +216,45 @@ class TestPromotionTables(jtu.JaxTestCase):
         ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
     if FLAGS.jax_enable_x64:
       expected = [
-        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
-        ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f8','c8'],
-        ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f8','c8'],
-        ['u4','u4','u4','u4','u8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','u4','f8','c8'],
-        ['u8','u8','u8','u8','u8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','u8','f8','c8'],
-        ['i1','i2','i4','i8','f8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f8','c8'],
-        ['i2','i2','i4','i8','f8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f8','c8'],
-        ['i4','i4','i4','i8','f8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f8','c8'],
-        ['i8','i8','i8','i8','f8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
+        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+        ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f*','c*'],
+        ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f*','c*'],
+        ['u4','u4','u4','u4','u8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','u4','f*','c*'],
+        ['u8','u8','u8','u8','u8','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','u8','f*','c*'],
+        ['i1','i2','i4','i8','f*','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f*','c*'],
+        ['i2','i2','i4','i8','f*','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f*','c*'],
+        ['i4','i4','i4','i8','f*','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f*','c*'],
+        ['i8','i8','i8','i8','f*','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f*','c*'],
         ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c4'],
         ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c4'],
         ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c4'],
         ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
         ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
         ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
-        ['i8','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
-        ['f8','f8','f8','f8','f8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
-        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
+        ['i*','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+        ['f*','f*','f*','f*','f*','f*','f*','f*','f*','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
+        ['c*','c*','c*','c*','c*','c*','c*','c*','c*','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
       ]
     else:
       expected = [
-        ['b1','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
-        ['u1','u1','u2','u4','u4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','u1','f4','c4'],
-        ['u2','u2','u2','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u2','f4','c4'],
-        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f4','c4'],
-        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f4','c4'],
-        ['i1','i2','i4','i4','i4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i1','f4','c4'],
-        ['i2','i2','i4','i4','i4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','i2','f4','c4'],
-        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
-        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
+        ['b1','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i*','f*','c*'],
+        ['u1','u1','u2','u4','u4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','u1','f*','c*'],
+        ['u2','u2','u2','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u2','f*','c*'],
+        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f*','c*'],
+        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f*','c*'],
+        ['i1','i2','i4','i4','i4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i1','f*','c*'],
+        ['i2','i2','i4','i4','i4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','i2','f*','c*'],
+        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f*','c*'],
+        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f*','c*'],
         ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f4','c4','c4','bf','bf','c4'],
         ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f4','c4','c4','f2','f2','c4'],
         ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','c4','c4','f4','f4','c4'],
         ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','c4','c4','f4','f4','c4'],
         ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4'],
         ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4'],
-        ['i4','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i*','f*','c*'],
-        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','bf','f2','f4','f4','c4','c4','f*','f*','c*'],
-        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c*','c*','c*'],
+        ['i*','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i*','f*','c*'],
+        ['f*','f*','f*','f*','f*','f*','f*','f*','f*','bf','f2','f4','f4','c4','c4','f*','f*','c*'],
+        ['c*','c*','c*','c*','c*','c*','c*','c*','c*','c4','c4','c4','c4','c4','c4','c*','c*','c*'],
       ]
     typecode_to_dtype = {
       'b1': jnp.bool_,
@@ -291,6 +296,20 @@ class TestPromotionTables(jtu.JaxTestCase):
 
     self.assertEqual(table, expected, show_differences(expected, table))
 
+  @parameterized.named_parameters(
+    {"testcase_name": "_xtype={}_ytype={}_xfun={}_yfun={}".format(
+      xtype.__name__, ytype.__name__, xfun.__name__, yfun.__name__),
+     "xtype": xtype, "ytype": ytype, "xfun": xfun, "yfun": yfun}
+    for xtype, ytype in itertools.product(
+      [int, float, jnp.int16, jnp.int32, jnp.float16, jnp.float32], repeat=2)
+    for xfun, yfun in itertools.product(
+      [identity, abs], repeat=2)
+    )
+  def testBinaryPromotionJitInvariance(self, xtype, ytype, xfun, yfun):
+    """Test jit invariance of simple binary promotion rules with and without weak types."""
+    f = lambda x, y: xfun(x) + yfun(y)
+    args_maker = lambda: [xtype(1), ytype(1)]
+    self._CompileAndCheck(f, args_maker, check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
