@@ -852,7 +852,18 @@ tf_impl[ad_util.add_jaxvals_p] = tf.math.add
 tf_impl[xla.device_put_p] = lambda x, device=None: x
 
 tf_impl[lax.neg_p] = tf.math.negative
-tf_impl[lax.sign_p] = tf.math.sign
+
+def _sign(x):
+  if x.dtype in [tf.uint8, tf.uint16, tf.uint32, tf.uint64]:
+    return tf.cast(tf.math.not_equal(x, tf.constant(np.array(0), x.dtype)),
+                   x.dtype)
+  elif x.dtype in [tf.int8, tf.int16]:
+    zero = tf.constant(np.array(0), x.dtype)
+    return (tf.cast(tf.math.greater(x, zero), x.dtype) -
+            tf.cast(tf.math.less(x, zero), x.dtype))
+  return tf.math.sign(x)
+
+tf_impl[lax.sign_p] = _sign
 tf_impl[lax.floor_p] = tf.math.floor
 tf_impl[lax.ceil_p] = tf.math.ceil
 

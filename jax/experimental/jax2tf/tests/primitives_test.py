@@ -512,60 +512,240 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     self.ConvertAndCompare(harness.dyn_fun, a, b, atol=tol, rtol=tol)
 
-  @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
-  def test_unary_elementwise(self, harness: primitive_harness.Harness):
-    dtype = harness.params["dtype"]
-    lax_name = harness.params["lax_name"]
-    arg, = harness.dyn_args_maker(self.rng())
-    custom_assert = None
-    if lax_name == "digamma":
-      # TODO(necula): fix bug with digamma/(f32|f16) on TPU
-      if dtype in [np.float16, np.float32] and jtu.device_under_test() == "tpu":
-        raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
+  @primitive_harness.parameterized(primitive_harness.lax_abs)
+  def test_abs(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
-      # In the bfloat16 case, TF and lax both return NaN in undefined cases.
-      if not dtype is dtypes.bfloat16:
-        # digamma is not defined at 0 and -1
-        def custom_assert(result_jax, result_tf):
-          # lax.digamma returns NaN and tf.math.digamma returns inf
-          special_cases = (arg == 0.) | (arg == -1.)
-          nr_special_cases = np.count_nonzero(special_cases)
-          self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
-                              result_jax[special_cases])
-          self.assertAllClose(np.full((nr_special_cases,), dtype(np.inf)),
-                              result_tf[special_cases])
-          # non-special cases are equal
-          self.assertAllClose(result_jax[~ special_cases],
-                              result_tf[~ special_cases])
-    if lax_name == "erf_inv":
-      # TODO(necula): fix erf_inv bug on TPU
-      if jtu.device_under_test() == "tpu":
-        raise unittest.SkipTest("erf_inv bug on TPU: nan vs non-nan")
-      # TODO: investigate: in the (b)float16 cases, TF and lax both return the
-      # same result in undefined cases.
-      if not dtype in [np.float16, dtypes.bfloat16]:
-        # erf_inv is not defined for arg <= -1 or arg >= 1
-        def custom_assert(result_jax, result_tf):  # noqa: F811
-          # for arg < -1 or arg > 1
-          # lax.erf_inv returns NaN; tf.math.erf_inv return +/- inf
-          special_cases = (arg < -1.) | (arg > 1.)
-          nr_special_cases = np.count_nonzero(special_cases)
-          self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan),
-                                      dtype=dtype),
-                              result_jax[special_cases])
-          signs = np.where(arg[special_cases] < 0., -1., 1.)
-          self.assertAllClose(np.full((nr_special_cases,),
-                                      signs * dtype(np.inf), dtype=dtype),
-                              result_tf[special_cases])
-          # non-special cases are equal
-          self.assertAllClose(result_jax[~ special_cases],
-                              result_tf[~ special_cases])
-    atol = None
-    if jtu.device_under_test() == "gpu":
-      # TODO(necula): revisit once we fix the GPU tests
-      atol = 1e-3
-    self.ConvertAndCompare(harness.dyn_fun, arg, custom_assert=custom_assert,
-                           atol=atol)
+  def _preimage_function_test_util(self, harness: primitive_harness.Harness,
+                                   atol=None, rtol=None):
+    inverse_fun = {lax.acosh_p: np.cosh,
+                   lax.asinh_p: np.sinh,
+                   lax.atanh_p: np.tanh,
+                   lax.acos_p: np.cos,
+                   lax.asin_p: np.sin,
+                   lax.atan_p: np.tan}[harness.params["prim"]]
+    custom_assert = None
+    operand, = harness.dyn_args_maker(self.rng())
+    if harness.params["dtype"] in [np.complex64, np.complex128]:
+      def custom_assert(result_jax, result_tf):
+        # There are technically infinitely many possible results, so we check
+        # correctness as follows. Note that this is also the case for real
+        # inputs in principle, although it seems like in that case, TF and
+        # JAX have the same expected behavior.
+        self.assertAllClose(inverse_fun(result_tf.numpy()), operand, atol=atol,
+                            rtol=rtol)
+    self.ConvertAndCompare(harness.dyn_fun, operand,
+                           custom_assert=custom_assert,
+                           atol=atol, rtol=rtol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_acosh)
+  def test_acosh(self, harness: primitive_harness.Harness):
+    self._preimage_function_test_util(harness)
+
+  @primitive_harness.parameterized(primitive_harness.lax_asinh)
+  def test_asinh(self, harness: primitive_harness.Harness):
+    self._preimage_function_test_util(harness)
+
+  @primitive_harness.parameterized(primitive_harness.lax_atanh)
+  def test_atanh(self, harness: primitive_harness.Harness):
+    tol = None
+    if harness.params["dtype"] == np.float64:
+      tol = 1e-14
+    self._preimage_function_test_util(harness, atol=tol, rtol=tol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_acos)
+  def test_acos(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    atol = rtol = None
+    if dtype == np.complex128:
+      atol = rtol = 1e-13
+    elif dtype == np.complex64:
+      atol, rtol = 1e-4, 1e-5
+    self._preimage_function_test_util(harness, atol=atol, rtol=rtol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_asin)
+  def test_asin(self, harness: primitive_harness.Harness):
+    self._preimage_function_test_util(harness)
+
+  @primitive_harness.parameterized(primitive_harness.lax_atan)
+  def test_atan(self, harness: primitive_harness.Harness):
+    self._preimage_function_test_util(harness)
+
+  @primitive_harness.parameterized(primitive_harness.lax_bessel_i0e)
+  def test_bessel_i0e(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_bessel_i1e)
+  def test_bessel_i1e(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_ceil)
+  def test_ceil(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_cos)
+  def test_cos(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_cosh)
+  def test_cosh(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_digamma)
+  def test_digamma(self, harness: primitive_harness.Harness):
+    custom_assert = None
+    dtype = harness.params["dtype"]
+    arg, = harness.dyn_args_maker(self.rng())
+    tol = None
+
+    # TODO(necula): fix bug with digamma/(f32|f16) on TPU
+    if dtype in [np.float16, np.float32] and jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
+
+    if dtype == np.float64:
+      tol = 1e-13
+
+    # In the bfloat16 case, TF and lax both return NaN in undefined cases.
+    if not dtype is dtypes.bfloat16:
+      # digamma is not defined at 0 and -1
+      def custom_assert(result_jax, result_tf):
+        # lax.digamma returns NaN and tf.math.digamma returns inf
+        special_cases = (arg == 0.) | (arg == -1.)
+        nr_special_cases = np.count_nonzero(special_cases)
+        self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
+                            result_jax[special_cases])
+        self.assertAllClose(np.full((nr_special_cases,), dtype(np.inf)),
+                            result_tf[special_cases])
+        # non-special cases are equal
+        self.assertAllClose(result_jax[~ special_cases],
+                            result_tf[~ special_cases], atol=tol,
+                            rtol=tol)
+    self.ConvertAndCompare(harness.dyn_fun, arg,
+                           custom_assert=custom_assert, atol=tol, rtol=tol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_erf)
+  def test_erf(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_erf_inv)
+  def test_erf_inv(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    arg, = harness.dyn_args_maker(self.rng())
+    custom_assert = atol = rtol = None
+    # TODO(necula): fix erf_inv bug on TPU
+    if jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("erf_inv bug on TPU: nan vs non-nan")
+    # TODO: investigate: in the (b)float16 cases, TF and lax both return the
+    # same result in undefined cases.
+    if dtype == np.float64:
+      atol, rtol = 1e-14, 1e-13
+    if not dtype in [np.float16, dtypes.bfloat16]:
+      # erf_inv is not defined for arg <= -1 or arg >= 1
+      def custom_assert(result_jax, result_tf):  # noqa: F811
+        # for arg < -1 or arg > 1
+        # lax.erf_inv returns NaN; tf.math.erf_inv return +/- inf
+        special_cases = (arg < -1.) | (arg > 1.)
+        nr_special_cases = np.count_nonzero(special_cases)
+        self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan),
+                                    dtype=dtype),
+                            result_jax[special_cases])
+        signs = np.where(arg[special_cases] < 0., -1., 1.)
+        self.assertAllClose(np.full((nr_special_cases,),
+                                    signs * dtype(np.inf), dtype=dtype),
+                            result_tf[special_cases])
+        # non-special cases are equal
+        self.assertAllClose(result_jax[~ special_cases],
+                            result_tf[~ special_cases], atol=atol, rtol=rtol)
+    self.ConvertAndCompare(harness.dyn_fun, arg,
+                           custom_assert=custom_assert, atol=atol, rtol=rtol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_erfc)
+  def test_erfc(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_exp)
+  def test_exp(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_expm1)
+  def test_expm1(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    atol = rtol = None
+    if dtype == np.float64:
+      atol, rtol = 1e-11, 1e-7
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=atol, rtol=rtol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_floor)
+  def test_floor(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_is_finite)
+  def test_is_finite(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_lgamma)
+  def test_lgamma(self, harness: primitive_harness.Harness):
+    atol = rtol = None
+    dtype = harness.params["dtype"]
+    if dtype == np.float64:
+      atol, rtol = 1e-14, 1e-11
+    elif dtype == np.float32:
+      atol, rtol = 1e-5, 1e-3
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=atol, rtol=rtol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_log)
+  def test_log(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_log1p)
+  def test_log1p(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_neg)
+  def test_neg(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_rsqrt)
+  def test_rsqrt(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_sign)
+  def test_sign(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_sin)
+  def test_sin(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_sinh)
+  def test_sinh(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_sqrt)
+  def test_sqrt(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_tan)
+  def test_tan(self, harness: primitive_harness.Harness):
+    atol = rtol = None
+    dtype = harness.params["dtype"]
+    if dtype == np.complex64:
+      atol, rtol = 1e-4, 1e-5
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=atol, rtol=rtol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_tanh)
+  def test_tanh(self, harness: primitive_harness.Harness):
+    atol = rtol = None
+    dtype = harness.params["dtype"]
+    if dtype == np.complex128:
+      atol, rtol = 1e-7, 1e-7
+    elif dtype == np.complex64:
+      atol, rtol = 1e-4, 1e-5
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=atol, rtol=rtol)
 
   @primitive_harness.parameterized(primitive_harness.lax_round)
   def test_round(self, harness: primitive_harness.Harness):

@@ -160,24 +160,169 @@ def parameterized(harness_group: Iterable[Harness],
 
 ### Harness definitions ###
 ###
-_LAX_UNARY_ELEMENTWISE = (
-  lax.abs, lax.acosh, lax.asinh, lax.atanh, lax.bessel_i0e, lax.bessel_i1e,
-  lax.ceil, lax.cos, lax.cosh, lax.digamma, lax.erf, lax.erf_inv, lax.erfc,
-  lax.exp, lax.expm1, lax.floor, lax.is_finite, lax.lgamma, lax.log,
-  lax.log1p, lax.neg, lax.round, lax.rsqrt, lax.sign, lax.sin, lax.sinh,
-  lax.sqrt, lax.tan, lax.tanh)
 
-lax_unary_elementwise = tuple(
-  Harness(f"{f_lax.__name__}_{jtu.dtype_str(dtype)}",
-          f_lax,
-          [arg],
-          lax_name=f_lax.__name__,
-          dtype=dtype)
-  for f_lax in _LAX_UNARY_ELEMENTWISE
+def _make_unary_elementwise_harness(*, prim, shape=(20, 20), dtype):
+  return Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+                 prim.bind,
+                 [RandArg(shape, dtype)],
+                 prim=prim,
+                 dtype=dtype)
+
+lax_abs = tuple(
+  _make_unary_elementwise_harness(prim=lax.abs_p, dtype=dtype)
+  for dtype in (set(jtu.dtypes.all) -
+                set(jtu.dtypes.all_unsigned + jtu.dtypes.boolean))
+)
+
+lax_acosh = tuple(
+  _make_unary_elementwise_harness(prim=lax.acosh_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_asinh = tuple(
+  _make_unary_elementwise_harness(prim=lax.asinh_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_atanh = tuple(
+  _make_unary_elementwise_harness(prim=lax.atanh_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+
+lax_acos = tuple(
+  _make_unary_elementwise_harness(prim=lax.acos_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_asin = tuple(
+  _make_unary_elementwise_harness(prim=lax.asin_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_atan = tuple(
+  _make_unary_elementwise_harness(prim=lax.atan_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_bessel_i0e = tuple(
+  _make_unary_elementwise_harness(prim=lax.bessel_i0e_p, dtype=dtype)
   for dtype in jtu.dtypes.all_floating
-  for arg in [
-    np.array([-1.6, -1.4, -1.0, 0.0, 0.1, 0.2, 1., 1.4, 1.6], dtype=dtype)
-  ]
+)
+
+lax_bessel_i1e = tuple(
+  _make_unary_elementwise_harness(prim=lax.bessel_i1e_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_ceil = tuple(
+  _make_unary_elementwise_harness(prim=lax.ceil_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_cos = tuple(
+  _make_unary_elementwise_harness(prim=lax.cos_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_cosh = tuple(
+  _make_unary_elementwise_harness(prim=lax.cosh_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_digamma = tuple(
+  _make_unary_elementwise_harness(prim=lax.digamma_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_erf = tuple(
+  _make_unary_elementwise_harness(prim=lax.erf_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_erf_inv = tuple(
+  _make_unary_elementwise_harness(prim=lax.erf_inv_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_erfc = tuple(
+  _make_unary_elementwise_harness(prim=lax.erfc_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_exp = tuple(
+  _make_unary_elementwise_harness(prim=lax.exp_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_expm1 = tuple(
+  _make_unary_elementwise_harness(prim=lax.expm1_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_floor = tuple(
+  _make_unary_elementwise_harness(prim=lax.floor_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_is_finite = tuple(
+  _make_unary_elementwise_harness(prim=lax.is_finite_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_lgamma = tuple(
+  _make_unary_elementwise_harness(prim=lax.lgamma_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating
+)
+
+lax_log = tuple(
+  _make_unary_elementwise_harness(prim=lax.log_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_log1p = tuple(
+  _make_unary_elementwise_harness(prim=lax.log1p_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_neg = tuple(
+  _make_unary_elementwise_harness(prim=lax.neg_p, dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+)
+
+lax_rsqrt = tuple(
+  _make_unary_elementwise_harness(prim=lax.rsqrt_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_sign = tuple(
+  _make_unary_elementwise_harness(prim=lax.sign_p, dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+)
+
+lax_sin = tuple(
+  _make_unary_elementwise_harness(prim=lax.sin_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_sinh = tuple(
+  _make_unary_elementwise_harness(prim=lax.sinh_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_sqrt = tuple(
+  _make_unary_elementwise_harness(prim=lax.sqrt_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_tan = tuple(
+  _make_unary_elementwise_harness(prim=lax.tan_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+)
+
+lax_tanh = tuple(
+  _make_unary_elementwise_harness(prim=lax.tanh_p, dtype=dtype)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
 )
 
 def _make_round_harness(name, *, shape=(100, 100), dtype=np.float32,
