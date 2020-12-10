@@ -2735,8 +2735,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
-  if dtype and _dtype(out) != dtype:
-    out = lax.convert_element_type(out, dtype, weak_type=weak_type)
+  out = lax.convert_element_type(out, dtype, weak_type=weak_type)
 
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))

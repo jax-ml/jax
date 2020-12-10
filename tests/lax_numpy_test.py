@@ -2466,18 +2466,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_func={}_outdtype={}_outshape={}".format(
-          jtu.format_shape_dtype_string(shape, in_dtype),
-          func, np.dtype(out_dtype).name, out_shape),
-       "shape": shape, "in_dtype": in_dtype,
-       "func": func, "out_dtype": out_dtype,
-       "out_shape": out_shape}
+      {"testcase_name": "_func={}_inshape={}_outshape={}_outdtype={}".format(
+          func, jtu.format_shape_dtype_string(shape, in_dtype),
+          out_shape, out_dtype),
+       "func": func, "shape": shape, "in_dtype": in_dtype,
+       "out_shape": out_shape, "out_dtype": out_dtype}
       for shape in array_shapes
       for out_shape in [None] + array_shapes
       for in_dtype in default_dtypes
       for func in ["ones_like", "zeros_like"]
       for out_dtype in default_dtypes))
-  def testZerosOnesLike(self, shape, in_dtype, func, out_dtype, out_shape):
+  def testZerosOnesLike(self, func, shape, in_dtype, out_shape, out_dtype):
     if numpy_version < (1, 19) and out_shape == ():
       raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
     rng = jtu.rand_default(self.rng())
@@ -2486,6 +2485,48 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, in_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+
+  @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_func={}_inshape={}_weak_type={}_outshape={}_outdtype={}".format(
+          func, jtu.format_shape_dtype_string(shape, in_dtype),
+          weak_type, out_shape, out_dtype),
+       "func": func, "args": args,
+       "shape": shape, "in_dtype": in_dtype, "weak_type": weak_type,
+       "out_shape": out_shape, "out_dtype": out_dtype}
+      for shape in array_shapes
+      for in_dtype in [np.int32, np.float32, np.complex64]
+      for weak_type in [True, False]
+      for out_shape in [None, (), (10,)]
+      for func, args in [("full_like", (-100,)), ("ones_like", ()), ("zeros_like", ())]
+      for out_dtype in [None, float]))
+  def testZerosOnesFullLikeWeakType(self, func, args, shape, in_dtype, weak_type, out_shape, out_dtype):
+    if numpy_version < (1, 19) and out_shape == ():
+      raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
+    rng = jtu.rand_default(self.rng())
+    x = lax.convert_element_type(rng(shape, in_dtype), weak_type=weak_type)
+    fun = lambda x: getattr(jnp, func)(x, *args, dtype=out_dtype, shape=out_shape)
+    expected_weak_type = weak_type and (out_dtype is None)
+    self.assertEqual(dtypes.is_weakly_typed(fun(x)), expected_weak_type)
+    self.assertEqual(dtypes.is_weakly_typed(api.jit(fun)(x)), expected_weak_type)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_funcname={}_input_type={}_val={}_dtype={}".format(
+          funcname, input_type, val, dtype),
+       "funcname": funcname, "input_type": input_type, "val": val, "dtype": dtype}
+      for funcname in ["array", "asarray"]
+      for dtype in [int, float, None]
+      for val in [0, 1]
+      for input_type in [int, float, np.int32, np.float32]))
+  def testArrayWeakType(self, funcname, input_type, val, dtype):
+    func = lambda x: getattr(jnp, funcname)(x, dtype=dtype)
+    fjit = api.jit(func)
+    val = input_type(val)
+    expected_weak_type = dtype is None and input_type in set(dtypes._weak_types)
+    self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
+    self.assertEqual(dtypes.is_weakly_typed(fjit(val)), expected_weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(
