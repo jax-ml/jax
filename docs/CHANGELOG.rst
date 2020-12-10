@@ -9,6 +9,15 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.2.8 (Unreleased)
+----------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.7...master>`_.
+
+* Bug fixes:
+
+  * ``jax.numpy.arccosh`` now returns the same branch as ``numpy.arccosh`` for
+    complex inputs (`#5156 <https://github.com/google/jax/pull/5156>`_)
+
 jax 0.2.7 (Dec 4 2020)
 ----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.6...jax-v0.2.7>`_.

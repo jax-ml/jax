@@ -417,7 +417,6 @@ cosh = _one_to_one_unop(np.cosh, lax.cosh, True)
 arcsinh = _one_to_one_unop(np.arcsinh, lax.asinh, True)
 tanh = _one_to_one_unop(np.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(np.arcsinh, lax.asinh, True)
-arccosh = _one_to_one_unop(np.arccosh, lax.acosh, True)
 arctanh = _one_to_one_unop(np.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(np.sqrt, lax.sqrt, True)
 
@@ -437,6 +436,14 @@ maximum = _one_to_one_binop(np.maximum, lax.max)
 float_power = _one_to_one_binop(np.float_power, lax.pow, True)
 nextafter = _one_to_one_binop(np.nextafter, lax.nextafter, True, True)
 
+@_wraps(np.arccosh)
+def arccosh(x):
+  # Note: arccosh is multi-valued for complex input, and lax.acosh uses a different
+  # convention than np.arccosh.
+  out = lax.acosh(*_promote_args_inexact("arccosh", x))
+  if issubdtype(out.dtype, np.complexfloating):
+    out = where(real(out) < 0, lax.neg(out), out)
+  return out
 
 def _comparison_op(numpy_fn, lax_fn):
   def fn(x1, x2):
