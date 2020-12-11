@@ -83,7 +83,7 @@ class Chunked:
   chunks: Tuple[int, ...]
 
   def __init__(self, chunks: Union[int, Tuple[int, ...]]):
-    if isinstance(chunks, int):
+    if not isinstance(chunks, tuple):
       chunks = (chunks,)
     object.__setattr__(self, 'chunks', chunks)
 
