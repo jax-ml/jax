@@ -38,17 +38,15 @@ class TestPolynomial(jtu.JaxTestCase):
     {"testcase_name": "_dtype={}_leading={}_trailing={}".format(
        jtu.format_shape_dtype_string((length+leading+trailing,), dtype),
        leading, trailing),
-     "dtype": dtype, "rng_factory": rng_factory, "length": length,
-     "leading": leading, "trailing": trailing}
+     "dtype": dtype, "length": length, "leading": leading, "trailing": trailing}
     for dtype in all_dtypes
-    for rng_factory in [jtu.rand_default]
     for length in [0, 3, 9, 10, 17]
     for leading in [0, 1, 2, 3, 5, 7, 10]
     for trailing in [0, 1, 2, 3, 5, 7, 10]))
   # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
   @jtu.skip_on_devices("gpu")
-  def testRoots(self, dtype, rng_factory, length, leading, trailing):
-    rng = rng_factory(np.random.RandomState(0))
+  def testRoots(self, dtype, length, leading, trailing):
+    rng = jtu.rand_default(np.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
@@ -63,16 +61,14 @@ class TestPolynomial(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_trailing={}".format(
         jtu.format_shape_dtype_string((length+trailing,), dtype), trailing),
-     "dtype": dtype, "rng_factory": rng_factory, "length": length,
-     "trailing": trailing}
+     "dtype": dtype, "length": length, "trailing": trailing}
     for dtype in all_dtypes
-    for rng_factory in [jtu.rand_default]
     for length in [0, 1, 3, 10]
     for trailing in [0, 1, 3, 7]))
   # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
   @jtu.skip_on_devices("gpu")
-  def testRootsNostrip(self, length, dtype, rng_factory, trailing):
-    rng = rng_factory(np.random.RandomState(0))
+  def testRootsNostrip(self, length, dtype, trailing):
+    rng = jtu.rand_default(np.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
@@ -90,17 +86,15 @@ class TestPolynomial(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_trailing={}".format(
       jtu.format_shape_dtype_string((length + trailing,), dtype), trailing),
-      "dtype": dtype, "rng_factory": rng_factory, "length": length,
-      "trailing": trailing}
+      "dtype": dtype, "length": length, "trailing": trailing}
     for dtype in all_dtypes
-    for rng_factory in [jtu.rand_default]
     for length in [0, 1, 3, 10]
     for trailing in [0, 1, 3, 7]))
   # TODO: enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
-  def testRootsJit(self, length, dtype, rng_factory, trailing):
-    rng = rng_factory(np.random.RandomState(0))
+  def testRootsJit(self, length, dtype, trailing):
+    rng = jtu.rand_default(np.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
@@ -122,16 +116,14 @@ class TestPolynomial(jtu.JaxTestCase):
     {"testcase_name": "_dtype={}_zeros={}_nonzeros={}".format(
         jtu.format_shape_dtype_string((zeros+nonzeros,), dtype),
         zeros, nonzeros),
-     "zeros": zeros, "nonzeros": nonzeros, "dtype": dtype,
-     "rng_factory": rng_factory}
+     "zeros": zeros, "nonzeros": nonzeros, "dtype": dtype}
     for dtype in all_dtypes
-    for rng_factory in [jtu.rand_default]
     for zeros in [1, 2, 5]
     for nonzeros in [0, 3]))
   @jtu.skip_on_devices("gpu")
-  def testRootsInvalid(self, zeros, nonzeros, dtype, rng_factory):
+  def testRootsInvalid(self, zeros, nonzeros, dtype):
     raise unittest.SkipTest("getting segfaults on MKL")  # TODO(#3711)
-    rng = rng_factory(np.random.RandomState(0))
+    rng = jtu.rand_default(np.random.RandomState(0))
 
     # The polynomial coefficients here start with zero and would have to
     # be stripped before computing eigenvalues of the companion matrix.
