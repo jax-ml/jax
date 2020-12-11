@@ -24,9 +24,10 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
-flags.DEFINE_string('tflite_file_path', '/tmp/jax2tf/mnist/mnist.tflite',
+flags.DEFINE_string('tflite_file_path',
+                    '/usr/local/google/home/qiuminxu/jax2tf/mnist.tflite',
                     'Path where to save the TensorFlow Lite file.')
-flags.DEFINE_integer('serving_batch_size', 1,
+flags.DEFINE_integer('serving_batch_size', 4,
                      ('For what batch size to prepare the serving signature. '))
 flags.DEFINE_integer('num_epochs', 10, 'For how many epochs to train.')
 
@@ -50,11 +51,11 @@ def evaluate_tflite_model(tflite_model, test_ds):
     # Run inference.
     interpreter.invoke()
 
-    # Post-processing: remove batch dimension and find the digit with highest
+    # Post-processing: for each batch dimension and find the digit with highest
     # probability.
-    digit = np.argmax(output()[0])
-    prediction_digits.append(digit)
-    labels.append(np.argmax(one_hot_label))
+    digits = np.argmax(output(), axis=1)
+    prediction_digits.extend(digits)
+    labels.extend(np.argmax(one_hot_label, axis=1))
 
   # Compare prediction results with ground truth labels to calculate accuracy.
   accurate_count = 0
@@ -80,7 +81,7 @@ def main(_):
 
   # Convert Flax model to TF function.
   tf_predict = tf.function(
-      jax2tf.convert(predict, with_gradient=False, enable_xla=False),
+      jax2tf.convert(predict, enable_xla=False),
       input_signature=[
           tf.TensorSpec(
               shape=[FLAGS.serving_batch_size, 28, 28, 1],
