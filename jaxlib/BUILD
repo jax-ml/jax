@@ -80,11 +80,15 @@ py_library(
         "cusolver.py",
         "init.py",
         "pocketfft.py",
-        "setup.py",
         "version.py",
     ],
     deps = [":pocketfft_flatbuffers_py"],
 )
+
+exports_files([
+    "setup.py",
+    "setup.cfg",
+])
 
 py_library(
     name = "gpu_support",
