@@ -143,6 +143,41 @@ class XMapTest(jtu.JaxTestCase):
   testBasicCollectiveSPMD = use_spmd_lowering(testBasicCollective)
 
   @ignore_xmap_warning()
+  @with_mesh([('x', 2), ('y', 2)])
+  def testOneLogicalTwoMeshAxesBasic(self):
+    def f(v):
+      return lax.psum(v * 2, 'a'), v * 4
+    fm = xmap(f, in_axes=['a', ...], out_axes=[{}, {1: 'a'}],
+              axis_resources={'a': ('x', 'y')})
+    vshape = (4, 5)
+    v = jnp.arange(np.prod(vshape)).reshape(vshape)
+    ans, ans2 = fm(v)
+    self.assertAllClose(ans, (v * 2).sum(0))
+    self.assertAllClose(ans2, v.T * 4)
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2), ('y', 2)])
+  def testOneLogicalTwoMeshAxesSharding(self):
+    def f(v):
+      return v * 4
+    fxy = xmap(f, in_axes=['a', ...], out_axes={1: 'a'},
+               axis_resources={'a': ('x', 'y')})
+    fyx = xmap(f, in_axes=['a', ...], out_axes={1: 'a'},
+               axis_resources={'a': ('y', 'x')})
+    vshape = (4, 5)
+    v = jnp.arange(np.prod(vshape)).reshape(vshape)
+    zxy = fxy(v)
+    self.assertEqual(
+        zxy.sharding_spec,
+        pxla.ShardingSpec((None, pxla.Chunked((2, 2))),
+                          (pxla.ShardedAxis(0), pxla.ShardedAxis(1))))
+    zyx = fyx(v)
+    self.assertEqual(
+        zyx.sharding_spec,
+        pxla.ShardingSpec((None, pxla.Chunked((2, 2))),
+                          (pxla.ShardedAxis(1), pxla.ShardedAxis(0))))
+
+  @ignore_xmap_warning()
   @with_mesh([('x', 2)])
   def testCompilationCache(self):
     def f(x):
@@ -247,6 +282,18 @@ class XMapTest(jtu.JaxTestCase):
     z = f_mapped(x, y)
 
     self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
+
+class XMapErrorTest(jtu.JaxTestCase):
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testRepeatedAxisResource(self):
+    def f(v):
+      return v * 4
+    with self.assertRaisesRegex(ValueError, r"distinct resources.*specified \('x', 'x'\) for axis a"):
+      fxy = xmap(f, in_axes=['a', ...], out_axes=['a', ...],
+                 axis_resources={'a': ('x', 'x')})
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
