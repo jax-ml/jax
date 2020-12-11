@@ -130,8 +130,10 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib = functools.partial(copy_file, dst_dir=jaxlib_dir)
 
   verify_mac_libraries_dont_reference_chkstack()
-  copy_to_jaxlib(r.Rlocation("__main__/build/LICENSE.txt"))
+  copy_to_jaxlib(r.Rlocation("__main__/build/LICENSE.txt"),
+                 dst_dir=sources_path)
   copy_file(r.Rlocation("__main__/jaxlib/setup.py"), dst_dir=sources_path)
+  copy_file(r.Rlocation("__main__/jaxlib/setup.cfg"), dst_dir=sources_path)
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/init.py"),
                  dst_filename="__init__.py")
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/lapack.so"))
