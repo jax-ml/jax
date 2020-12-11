@@ -2385,16 +2385,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
            jtu.format_shape_dtype_string(shape, dtype),
            n, axis, prepend, append),
         "shape": shape, "dtype": dtype, "n": n, "axis": axis,
-        "prepend": prepend, "append": append,
-        "rng_factory": jtu.rand_default}
+        "prepend": prepend, "append": append}
        for shape, dtype in _shape_and_dtypes(nonempty_nonscalar_array_shapes, default_dtypes)
        for n in [0, 1, 2]
        for axis in list(range(-len(shape), max(1, len(shape))))
        for prepend in [None, 1, np.zeros(shape, dtype=dtype)]
        for append in [None, 1, np.zeros(shape, dtype=dtype)]
        ))
-  def testDiff(self, shape, dtype, n, axis, prepend, append, rng_factory):
-    rng = rng_factory(self.rng())
+  def testDiff(self, shape, dtype, n, axis, prepend, append):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
     def np_fun(x, n=n, axis=axis, prepend=prepend, append=append):

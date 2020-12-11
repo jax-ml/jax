@@ -188,19 +188,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_d={}".format(
           jtu.format_shape_dtype_string(shape, dtype), d),
-       "rng_factory": jtu.rand_positive, "shape": shape, "dtype": dtype,
-       "d": d}
+       "shape": shape, "dtype": dtype, "d": d}
       for shape in all_shapes
       for dtype in float_dtypes
       for d in [1, 2, 5]))
-  def testMultigammaln(self, rng_factory, shape, dtype, d):
+  def testMultigammaln(self, shape, dtype, d):
     def scipy_fun(a):
       return osp_special.multigammaln(a, d)
 
     def lax_fun(a):
       return lsp_special.multigammaln(a, d)
 
-    rng = rng_factory(self.rng())
+    rng = jtu.rand_positive(self.rng())
     args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
                             tol={np.float32: 1e-3, np.float64: 1e-14})
