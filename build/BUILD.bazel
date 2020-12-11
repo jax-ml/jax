@@ -25,6 +25,7 @@ py_binary(
     name = "build_wheel",
     srcs = ["build_wheel.py"],
     data = [
+        "LICENSE.txt",
         "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
         "//jaxlib",
         "//jaxlib:lapack.so",
