@@ -1456,8 +1456,9 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
   if np.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
+  weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
-  fill_value = convert_element_type(fill_value, dtype)
+  fill_value = convert_element_type(fill_value, dtype, weak_type)
   return broadcast(fill_value, shape)
 
 def _device_put_raw(x, weak_type=None):
@@ -1746,9 +1747,11 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
     `fill_value`, similar to the output of np.full.
   """
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)
+  weak_type = dtype is None and dtypes.is_weakly_typed(x)
+  dtype = dtype or _dtype(x)
   if not config.omnistaging_enabled:
     fill_value = tie_in(x, fill_value)
-  return full(fill_shape, fill_value, dtype or _dtype(x))
+  return full(fill_shape, convert_element_type(fill_value, dtype, weak_type))
 
 
 def collapse(operand: Array, start_dimension: int,
@@ -1973,6 +1976,8 @@ ad_util.jaxval_zeros_likers[pxla.ShardedDeviceArray] = zeros_like_array
 _input_dtype = lambda *args, **_: dtypes.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: np.abs(np.zeros((), dtype)).dtype
+
+_input_weak_type = lambda *args, **_: args[0].weak_type
 
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
                        multiple_results=False, weak_type_rule=None):
@@ -3288,7 +3293,7 @@ def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
       np.equal(operand.shape, np.take(shape, broadcast_dimensions))):
     shape = _broadcast_in_dim_shape_rule(
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
-    aval = ShapedArray(shape, _dtype(operand))
+    aval = ShapedArray(shape, _dtype(operand), weak_type=dtypes.is_weakly_typed(operand))
     if operand._lazy_expr is None:
       lazy_expr = lazy.broadcast(lazy.array(operand.shape), shape, broadcast_dimensions)
     else:
@@ -3346,7 +3351,8 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
 
 
 broadcast_in_dim_p = standard_primitive(
-    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
+    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim',
+    weak_type_rule=_input_weak_type)
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
