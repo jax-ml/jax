@@ -428,11 +428,6 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
   """
   new_dtype = dtypes.canonicalize_dtype(new_dtype or _dtype(operand))
   new_weak_type = bool(weak_type)
-  # Avoids dropping precision by casting Python scalars to the default Jax
-  # type. If we passed a Python scalar directly to the bind call below, it is
-  # cast to the default type as part of the calling convention.
-  if type(operand) in dtypes.python_scalar_dtypes:
-    operand = np.asarray(operand, dtype=new_dtype)
 
   old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
   old_weak_type = dtypes.is_weakly_typed(operand)
