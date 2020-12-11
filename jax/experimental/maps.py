@@ -17,8 +17,8 @@ import contextlib
 import numpy as np
 import itertools as it
 from collections import OrderedDict
-from typing import (Callable, Iterable, List, Tuple, Optional, Dict, Any, Set,
-                    NamedTuple)
+from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
+                    NamedTuple, Union)
 from warnings import warn
 from functools import wraps, partial
 
@@ -26,7 +26,7 @@ from .. import numpy as jnp
 from .. import core
 from .. import linear_util as lu
 from ..api import _check_callable, _check_arg
-from ..tree_util import tree_flatten, tree_unflatten, tree_leaves
+from ..tree_util import tree_flatten, tree_unflatten, all_leaves
 from ..api_util import flatten_fun_nokwargs, flatten_axes
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
@@ -67,6 +67,9 @@ class FrozenDict:  # dataclasses might remove some boilerplate here
 
   def __hash__(self):
     return hash(tuple(self.contents.items()))
+
+  def __repr__(self):
+    return f"FrozenDict({self.contents})"
 
 # Multi-dimensional generalized map
 
@@ -120,14 +123,21 @@ def mesh(*args, **kwargs):
     thread_resources.env = old_env
 
 _next_resource_id = 0
-class UniqueResourceName:
-  def __init__(self, uid): self.uid = uid
-  def __eq__(self, other): return type(other) is UniqueResourceName and self.uid == other.uid
-  def __hash__(self): return hash(self.uid)
-def fresh_resource_name():
+class _UniqueResourceName:
+  def __init__(self, uid, tag=None):
+    self.uid = uid
+    self.tag = tag
+  def __eq__(self, other):
+    return type(other) is _UniqueResourceName and self.uid == other.uid
+  def __hash__(self):
+    return hash(self.uid)
+  def __repr__(self):
+    return f"<UniqueResource {self.tag} {self.uid}>"
+
+def fresh_resource_name(tag=None):
   global _next_resource_id
   try:
-    return UniqueResourceName(_next_resource_id)
+    return _UniqueResourceName(_next_resource_id, tag)
   finally:
     _next_resource_id += 1
 
@@ -136,20 +146,50 @@ def fresh_resource_name():
 class AxisNamePos(FrozenDict):
   pass
 
-A = AxisNamePos
+def _parse_entry(arg_name, entry):
+  # Dictionaries mapping axis names to positional axes
+  if isinstance(entry, dict) and all(isinstance(v, int) for v in entry.keys()):
+    result = AxisNamePos((name, axis) for axis, name in entry.items())
+    num_mapped_dims = len(entry)
+  # Non-empty lists or tuples that terminate with an ellipsis
+  elif isinstance(entry, (tuple, list)) and entry and entry[-1] == ...:
+    result = AxisNamePos((name, axis) for axis, name in enumerate(entry[:-1])
+                         if name is not None)
+    num_mapped_dims = sum(name is not None for name in entry[:-1])
+  else:
+    raise TypeError(f"""\
+Value mapping specification in xmap {arg_name} pytree can be either:
+- lists of axis names, ending with ellipsis (...)
+- dictionaries that map axis names to positional axes (integers)
+but got: {entry}""")
+  if len(result) != num_mapped_dims:
+    raise ValueError(f"Named axes should be unique within each {arg_name} argument "
+                     f"specification, but one them is: {entry}")
+  return result
 
+def _is_axes_leaf(entry):
+  if isinstance(entry, dict) and all_leaves(entry.values()):
+    return True
+  # NOTE: `None`s are not considered leaves by `all_leaves`
+  if isinstance(entry, (tuple, list)) and all_leaves(v for v in entry if v is not None):
+    return True
+  return False
+
+def _prepare_axes(axes, arg_name):
+  entries, treedef = tree_flatten(axes, is_leaf=_is_axes_leaf)
+  entries = map(partial(_parse_entry, arg_name), entries)
+  return tree_unflatten(treedef, entries), entries
 
 # TODO: Some syntactic sugar to make the API more usable in a single-axis case?
 # TODO: Are the resource axes scoped lexically or dynamically? Dynamically for now!
 def xmap(fun: Callable,
-         in_axes,  # PyTree[AxisNamePos]
-         out_axes,  # PyTree[AxisNamePos],
-         schedule: Iterable[Tuple[AxisName, ResourceAxisName]],
+         in_axes,
+         out_axes,
+         axis_resources: Dict[AxisName, Union[ResourceAxisName, Tuple[ResourceAxisName, ...]]] = {},
          backend: Optional[str] = None):
   warn("xmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
 
-  frozen_schedule = tuple(tuple(x) for x in schedule)
 
   # To be a tree prefix of the positional args tuple, in_axes can never be a
   # list: if in_axes is not a leaf, it must be a tuple of trees. However,
@@ -161,33 +201,28 @@ def xmap(fun: Callable,
   if isinstance(out_axes, list):
     out_axes = tuple(out_axes)
 
-  in_axes_entries = tree_leaves(in_axes)
-  out_axes_entries = tree_leaves(out_axes)
-  # Check that {in|out}_axes have the right types, and don't use the same positional axis twice
-  if not all(isinstance(x, A) for x in in_axes_entries):
-    raise TypeError(f"xmap in_axes must be AxisNamePos (A) instances or (nested) "
-                    f"containers with those types as leaves, but got {in_axes}")
-  if not all(isinstance(x, A) for x in out_axes_entries):
-    raise TypeError(f"xmap out_axes must be AxisNamePos (A) instances or (nested) "
-                    f"containers with those types as leaves, but got {in_axes}")
-  for x in in_axes_entries:
-    if len(set(x.values())) != len(x):
-      raise ValueError(f"Positional dimension indices should be unique within each "
-                       f"in_axes dictionary, but one of the entries is: {x}")
-  for x in out_axes_entries:
-    if len(set(x.values())) != len(x):
-      raise ValueError(f"Positional dimension indices should be unique within each "
-                       f"in_axes dictionary, but one of the entries is: {x}")
+  in_axes, in_axes_entries = _prepare_axes(in_axes, "in_axes")
+  out_axes, out_axes_entries = _prepare_axes(out_axes, "out_axes")
 
   in_axes_names = set(it.chain(*(spec.keys() for spec in in_axes_entries)))
-  scheduled_axes = set(x[0] for x in frozen_schedule)
-  if scheduled_axes != in_axes_names:
-    raise ValueError("The set of axes names appearing in in_axes has to equal the "
-                     "set of scheduled axes, but {in_axes_names} != {scheduled_axes}")
+  out_axes_names = set(it.chain(*(spec.keys() for spec in out_axes_entries)))
+  normalized_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]] = \
+      {axis: (resources if isinstance(resources, tuple) else (resources,))
+       for axis, resources in axis_resources.items()}
+  for axis in in_axes_names:
+    normalized_axis_resources.setdefault(axis, ())
+  frozen_axis_resources = FrozenDict(normalized_axis_resources)
+  necessary_resources = set(it.chain(*frozen_axis_resources.values()))
 
-  necessary_resources = set(x[1] for x in frozen_schedule if x[1] != 'vectorize')
-  if len(set(frozen_schedule)) != len(frozen_schedule):
-    raise ValueError(f"xmap schedule contains duplicate entries: {frozen_schedule}")
+  axes_with_resources = set(frozen_axis_resources.keys())
+  if axes_with_resources > in_axes_names:
+    raise ValueError(f"All axes that were assigned resources have to appear in "
+                     f"in_axes, but the following are missing: "
+                     f"{axes_with_resources - in_axes_names}")
+  if out_axes_names > in_axes_names:
+    raise ValueError(f"All axis names appearing in out_axes must also appear in "
+                     f"in_axes, but the following are missing: "
+                     f"{out_axes_names - in_axes_names}")
 
   @wraps(fun)
   def fun_mapped(*args):
@@ -216,25 +251,26 @@ def xmap(fun: Callable,
       in_axes=tuple(in_axes_flat),
       out_axes_thunk=out_axes_thunk,
       axis_sizes=FrozenDict(axis_sizes),
-      schedule=frozen_schedule,
+      axis_resources=frozen_axis_resources,
       resource_env=resource_env,
       backend=backend)
     return tree_unflatten(out_tree(), out_flat)
 
   return fun_mapped
 
-def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, axis_sizes, schedule, resource_env, backend):
+def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, axis_sizes,
+              axis_resources, resource_env, backend):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  return make_xmap_callable(fun, name, in_axes, out_axes_thunk, axis_sizes, schedule,
-                            resource_env, backend, *in_avals)(*args)
+  return make_xmap_callable(fun, name, in_axes, out_axes_thunk, axis_sizes,
+                            axis_resources, resource_env, backend, *in_avals)(*args)
 
 @lu.cache
 def make_xmap_callable(fun: lu.WrappedFun,
                        name,
                        in_axes, out_axes_thunk, axis_sizes,
-                       schedule, resource_env, backend,
+                       axis_resources, resource_env, backend,
                        *in_avals):
-  plan = EvaluationPlan.from_schedule(schedule, resource_env)
+  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env)
 
   # TODO: Making axis substitution final style would allow us to avoid
   #       tracing to jaxpr here
@@ -249,7 +285,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
   f = plan.vectorize(f, in_axes, out_axes)
 
-  used_resources = _jaxpr_resources(jaxpr, resource_env) | _schedule_resources(schedule)
+  used_resources = _jaxpr_resources(jaxpr, resource_env) | set(it.chain(*axis_resources.values()))
   used_mesh_axes = used_resources & resource_env.physical_resource_axes
   if used_mesh_axes:
     submesh = resource_env.physical_mesh[sorted(used_mesh_axes, key=str)]
@@ -268,44 +304,26 @@ def make_xmap_callable(fun: lu.WrappedFun,
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
   physical_resource_map: Dict[ResourceAxisName, Set[AxisName]]
-  vectorized: Dict[AxisName, ResourceAxisName]
   axis_subst: Dict[AxisName, Tuple[ResourceAxisName, ...]]
 
   @classmethod
-  def from_schedule(cls, schedule: Tuple[Tuple[AxisName, ResourceAxisName], ...], resource_env):
-    # TODO: The order of maps should be derived from the schedule, not from the
-    #       resource env. This doesn't really matter for as long as we only support
-    #       vectorization and parallelization, but will be important for sequential.
-    #       We should be able to do that by building a graph of dependencies between
-    #       resources based on the order in which they appear within each axis.
-    #       If it has cycles then we cannot realize it. Otherwise, if the DAG doesn't
-    #       uniquely identify a linear order, we should use the order of entries in
-    #       the schedule to break ties.
-    # Technically the order doesn't matter right now, but we use the ordered dict
-    # to at least limit the amount of non-determinism in this code.
-    physical_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
-    vectorized: Dict[AxisName, ResourceAxisName] = OrderedDict()
-
-    axis_subst: Dict[AxisName, List[ResourceAxisName]] = {}
-    for axis, resource in schedule:
-      if resource == 'vectorize':
-        assert axis not in vectorized
-        resource = fresh_resource_name()
-        vectorized[axis] = resource
-      elif resource in resource_env.physical_resource_axes:
+  def from_axis_resources(cls, axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]], resource_env):
+    physical_resource_map: Dict[ResourceAxisName, Set[AxisName]] = {}
+    for axis, resources in axis_resources.items():
+      for resource in resources:
+        if resource not in resource_env.physical_resource_axes:
+            raise ValueError(f"Mapping axis {axis} to an undefined resource axis {resource}. "
+                             f"The resource axes currently in scope are: {resource_env.resource_axes}")
         physical_resource_map.setdefault(resource, set()).add(axis)
-      else:
-        raise ValueError(f"Mapping axis {axis} to an undefined resource axis {resource}. "
-                            f"The resource axes currently in scope are: {resource_env.resource_axes}")
-      axis_subst.setdefault(axis, []).append(resource)
-    axis_subst_t = {name: tuple(axes) for name, axes in axis_subst.items()}
-    return cls(physical_resource_map, vectorized, axis_subst_t)
+    axis_subst = {name: axes + (fresh_resource_name(name),) for name, axes in axis_resources.items()}
+    return cls(physical_resource_map, axis_subst)
 
   def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
-    for naxis, raxis in self.vectorized.items():
+    for naxis, raxes in self.axis_subst.items():
+      vaxis = raxes[-1]
       map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
-      f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=raxis)
+      f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=vaxis)
     return f
 
   def to_mesh_axes(self, in_axes, out_axes):
@@ -318,9 +336,9 @@ class EvaluationPlan(NamedTuple):
       for paxis, naxes in self.physical_resource_map.items():
         axis = lookup_exactly_one_of(axes, naxes)
         if axis is None:
-            continue
+          continue
         mesh_axes[paxis] = axis
-      return A(mesh_axes)
+      return AxisNamePos(mesh_axes)
     return (tuple(unsafe_map(to_mesh, in_axes)),
             tuple(unsafe_map(to_mesh, out_axes)))
 
@@ -401,13 +419,13 @@ def _xmap_translation_rule_replica(c, axis_env,
                                    in_nodes, name_stack, *,
                                    call_jaxpr, name,
                                    in_axes, out_axes, axis_sizes,
-                                   schedule, resource_env, backend):
-  plan = EvaluationPlan.from_schedule(schedule, resource_env)
+                                   axis_resources, resource_env, backend):
+  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env)
 
-  # TODO: Make sure that the resource env matches the outer xmap
   local_mesh = resource_env.physical_mesh.local_mesh
   local_mesh_shape = local_mesh.shape
   mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
+  raise NotImplementedError("TODO: Substitute axis names!")
 
   assert type(call_jaxpr) is core.Jaxpr
   local_avals = [pxla.tile_aval_nd(
@@ -501,7 +519,7 @@ def _xmap_translation_rule_spmd(c, axis_env,
                                 in_nodes, name_stack, *,
                                 call_jaxpr, name,
                                 in_axes, out_axes, axis_sizes,
-                                schedule, resource_env, backend):
+                                axis_resources, resource_env, backend):
   # TODO(apaszke): This is quite difficult to implement given the current lowering
   #                in mesh_tiled_callable. There, we vmap the mapped axes, but we
   #                have no idea which positional axes they end up being in this
@@ -565,10 +583,6 @@ def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
   yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
 
 
-def _schedule_resources(schedule) -> Set[ResourceAxisName]:
-  return {resource for _, resource in schedule}
-
-
 def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
   used_resources = set()
   for eqn in jaxpr.eqns:
@@ -576,7 +590,7 @@ def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
       if eqn.params['resource_env'] != resource_env:
         raise RuntimeError("Changing the resource environment (e.g. hardware mesh "
                            "spec) is not allowed inside xmap.")
-      used_resources |= _schedule_resources(eqn.params['schedule'])
+      used_resources |= set(it.chain(*eqn.params['axis_resources'].values()))
     updates = core.traverse_jaxpr_params(
         partial(_jaxpr_resources, resource_env=resource_env), eqn.params)
     for update in updates:

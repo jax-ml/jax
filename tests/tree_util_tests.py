@@ -15,9 +15,11 @@
 
 import collections
 
+from unittest import skipIf
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax import test_util as jtu
 from jax import tree_util
 
@@ -191,6 +193,32 @@ class TreeTest(jtu.JaxTestCase):
     out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y)
     self.assertEqual(out, (((1, [3]), (2, None)),
                            ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
+
+  @skipIf(jax.lib.version < (0, 1, 58), "test requires Jaxlib >= 0.1.58")
+  def testFlattenIsLeaf(self):
+    x = [(1, 2), (3, 4), (5, 6)]
+    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: False)
+    self.assertEqual(leaves, [1, 2, 3, 4, 5, 6])
+    leaves, _ = tree_util.tree_flatten(
+        x, is_leaf=lambda t: isinstance(t, tuple))
+    self.assertEqual(leaves, x)
+    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: isinstance(t, list))
+    self.assertEqual(leaves, [x])
+    leaves, _ = tree_util.tree_flatten(x, is_leaf=lambda t: True)
+    self.assertEqual(leaves, [x])
+
+    y = [[[(1,)], [[(2,)], {"a": (3,)}]]]
+    leaves, _ = tree_util.tree_flatten(
+        y, is_leaf=lambda t: isinstance(t, tuple))
+    self.assertEqual(leaves, [(1,), (2,), (3,)])
+
+  @skipIf(jax.lib.version < (0, 1, 58), "test requires Jaxlib >= 0.1.58")
+  @parameterized.parameters(*TREES)
+  def testRoundtripIsLeaf(self, tree):
+    xs, treedef = tree_util.tree_flatten(
+        tree, is_leaf=lambda t: isinstance(t, tuple))
+    recon_tree = tree_util.tree_unflatten(treedef, xs)
+    self.assertEqual(recon_tree, tree)
 
   @parameterized.parameters(*TREES)
   def testAllLeavesWithTrees(self, tree):

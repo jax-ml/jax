@@ -30,7 +30,7 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import vmap
 from jax import lax
-from jax.experimental.maps import Mesh, mesh, xmap, A
+from jax.experimental.maps import Mesh, mesh, xmap
 from jax.lib import xla_bridge
 from jax.util import curry, unzip2
 from jax.interpreters import pxla
@@ -106,15 +106,9 @@ class XMapTest(jtu.JaxTestCase):
     devices = np.array(local_devices[:4]).reshape((2, 2))
     with mesh(devices, ('x', 'y')):
       fm = xmap(f,
-                in_axes=[A({'a': 0, 'b': 1}), A({'c': 0})],
-                out_axes=[A({'a': 0, 'b': 1}), A({'c': 0})],
-                schedule=[
-                  ('a', 'x'),
-                  ('b', 'y'),
-                  ('c', 'x'),
-                  ('a', 'vectorize'),
-                  ('b', 'vectorize'),
-                ])
+                in_axes=[{0: 'a', 1: 'b'}, ['c', ...]],
+                out_axes=[{0: 'a', 1: 'b'}, ['c', ...]],
+                axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
       ashape = (16, 8, 5)
       a = jnp.arange(np.prod(ashape)).reshape(ashape)
       bshape = (2, 7)
@@ -135,15 +129,9 @@ class XMapTest(jtu.JaxTestCase):
     devices = np.array(local_devices[:4]).reshape((2, 2))
     with mesh(devices, ('x', 'y')):
       fm = xmap(f,
-                in_axes=[A({'a': 0, 'b': 1}), A({'c': 0})],
-                out_axes=[A({'b': 0}), A({'c': 0})],
-                schedule=[
-                  ('a', 'x'),
-                  ('b', 'y'),
-                  ('c', 'x'),
-                  ('a', 'vectorize'),
-                  ('b', 'vectorize'),
-                ])
+                in_axes=[['a', 'b', ...], {0: 'c'}],
+                out_axes=[['b', ...], {0: 'c'}],
+                axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
       ashape = (16, 8, 5)
       a = jnp.arange(np.prod(ashape)).reshape(ashape)
       bshape = (2, 7)
@@ -161,24 +149,22 @@ class XMapTest(jtu.JaxTestCase):
       assert python_should_be_executing
       return x * 2
     fm = xmap(f,
-              in_axes=A({'a': 0}),
-              out_axes=A({'a': 0}),
-              schedule=[('a', 'x'), ('a', 'vectorize')])
+              in_axes=['a', ...], out_axes=['a', ...],
+              axis_resources={'a': 'x'})
     x = np.arange(8).reshape((2, 2, 2))
     python_should_be_executing = True
     fm(x)
     python_should_be_executing = False
     fm(x)
 
+  @skip("Need to implement vmap(xmap)")
   @ignore_xmap_warning()
   @with_mesh([('x', 2)])
   def testNestedVectorize(self):
-    @partial(xmap, in_axes=A({'a': 1}), out_axes=A({'a': 0}),
-             schedule=[('a', 'x')])
+    @partial(xmap, in_axes=[None, 'a', ...], out_axes=['a', ...], axis_resources={'a': 'x'})
     def f(x):
       y = x * 2
-      @partial(xmap, in_axes=A({'b': 0}), out_axes=A({'b': 1}),
-               schedule=[('b', 'vectorize')])
+      @partial(xmap, in_axes=['b', ...], out_axes=[None, 'b', ...])
       def h(y):
         return jnp.sin(y)
       return h(y)
@@ -187,15 +173,14 @@ class XMapTest(jtu.JaxTestCase):
     self.assertAllClose(f(x),
                         jnp.sin(x * 2).transpose((1, 2, 0)))
 
+  @skip("Need to implement vmap(xmap)")
   @ignore_xmap_warning()
   @with_mesh([('x', 2), ('y', 3)])
   def testNestedMesh(self):
-    @partial(xmap, in_axes=A({'a': 1}), out_axes=A({'a': 0}),
-             schedule=[('a', 'y')])
+    @partial(xmap, in_axes={1: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'y'})
     def f(x):
       y = x * 2
-      @partial(xmap, in_axes=A({'b': 0}), out_axes=A({'b': 1}),
-               schedule=[('b', 'x')])
+      @partial(xmap, in_axes={0: 'b'}, out_axes={1: 'b'}, axis_resources={'b': 'x'})
       def h(y):
         return jnp.sin(y)
       return h(y)
@@ -212,12 +197,10 @@ class XMapTest(jtu.JaxTestCase):
   @ignore_xmap_warning()
   @with_mesh([('x', 2)])
   def testNestedDifferentResources(self):
-    @partial(xmap, in_axes=A({'a': 0}), out_axes=A({'a': 0}),
-             schedule=[('a', 'x')])
+    @partial(xmap, in_axes={0: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'x'})
     def f(x):
       with mesh(np.empty((), dtype=np.object), ()):
-        @partial(xmap, in_axes=A({'b': 0}), out_axes=A({'b': 0}),
-                 schedule=[('b', 'vectorize')])
+        @partial(xmap, in_axes={0: 'b'}, out_axes={0: 'b'})
         def h(x):
           return x
         return h(x)
@@ -233,8 +216,10 @@ class XMapTest(jtu.JaxTestCase):
     def f(x, y):
       return lax.pdot(x, y, 'i')
 
-    f_mapped = xmap(f, in_axes=[A({'i': 1}), A({'i': 0})], out_axes=A(),
-                    schedule=[('i', 'r1'), ('i', 'vectorize')])
+    f_mapped = xmap(f,
+                    in_axes=[{1: 'i'}, {0: 'i'}],
+                    out_axes={},
+                    axis_resources={'i': 'r1'})
 
     rng = np.random.RandomState(0)
     x = rng.randn(3, 8)
@@ -255,9 +240,9 @@ class XMapTest(jtu.JaxTestCase):
     y = rng.randn(2, 8, 5)
 
     f_mapped = xmap(f,
-                    in_axes=[A({'i': 2, 'j': 0}), A({'i': 1, 'j': 0})],
-                    out_axes=A({'j': 0}),
-                    schedule=[('j', 'vectorize'), ('i', 'r1'), ('i', 'vectorize')])
+                    in_axes=[{0: 'j', 2: 'i'}, {0: 'j', 1: 'i'}],
+                    out_axes=['j', ...],
+                    axis_resources={'i': 'r1'})
 
     z = f_mapped(x, y)
 
