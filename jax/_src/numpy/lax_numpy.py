@@ -4175,7 +4175,7 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
   # Avoid calling gather if the slice shape is empty, both as a fast path and to
   # handle cases like zeros(0)[array([], int32)].
   if _prod(indexer.slice_shape) == 0:
-    return zeros(indexer.slice_shape, dtype=y.dtype)
+    return zeros_like(y, shape=indexer.slice_shape)
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if indexer.gather_indices.size:

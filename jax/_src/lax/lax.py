@@ -3709,7 +3709,8 @@ def _rev_batch_rule(batched_args, batch_dims, *, dimensions):
   new_dimensions = [i + 1 if i >= bdim else i for i in dimensions]
   return rev(operand, new_dimensions), bdim
 
-rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev')
+rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev',
+                           weak_type_rule=_input_weak_type)
 ad.deflinear(rev_p, lambda t, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
@@ -3941,7 +3942,7 @@ def _slice_masking_rule(
                strides=strides)
 
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
-                             _slice_translation_rule)
+                             _slice_translation_rule, weak_type_rule=_input_weak_type)
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 masking.masking_rules[slice_p] = _slice_masking_rule
@@ -4361,7 +4362,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    _gather_translation_rule)
+    _gather_translation_rule, weak_type_rule=_input_weak_type)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
