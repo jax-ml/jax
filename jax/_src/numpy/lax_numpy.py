@@ -2315,8 +2315,9 @@ def _pad_wrap(array, pad_width):
   return array
 
 
-def _pad_symmetric_or_reflect(array, pad_width, mode):
+def _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type):
   assert mode in ("symmetric", "reflect")
+  assert reflect_type in ("even", "odd")
 
   for i in range(ndim(array)):
     if array.shape[i] == 0:
@@ -2324,28 +2325,45 @@ def _pad_symmetric_or_reflect(array, pad_width, mode):
       continue
 
     n = array.shape[i]
-    rarray = lax.rev(array, dimensions=(i,))
     offset = 1 if (mode == "reflect" and n > 1) else 0
 
-    def build_padding(padding, forward):
-      xs = []
-      delta = n - offset
-      while padding > delta:
-        padding -= delta
-        p = array if forward else rarray
-        xs.append(lax.slice_in_dim(p, offset, n, axis=i))
-        forward = not forward
-      if padding > 0:
-        x = lax.slice_in_dim(array if forward else rarray, offset,
-                             padding + offset, axis=i)
-        xs.append(x)
-      return xs
+    def build_padding(array, padding, before):
+      if before:
+        edge = lax.slice_in_dim(array, 0, 1, axis=i)
+      else:
+        edge = lax.slice_in_dim(array, -1, None, axis=i)
 
-    parts = reversed(build_padding(pad_width[i, 0], forward=True))
-    parts = [lax.rev(x, dimensions=(i,)) for x in parts]
-    parts += [array]
-    parts += build_padding(pad_width[i, 1], forward=False)
-    array = lax.concatenate(parts, dimension=i)
+      while padding > 0:
+        curr_pad = _min(padding, n - offset)
+        padding -= curr_pad
+
+        if before:
+          start = offset
+          stop = offset + curr_pad
+        else:
+          start = -(curr_pad + offset)
+          stop = None if (mode == "symmetric" or n == 1) else -1
+
+        x = lax.slice_in_dim(array, start, stop, axis=i)
+        x = flip(x, axis=i)
+
+        if reflect_type == 'odd':
+          x = 2 * edge - x
+          x = x.astype(array.dtype) # Unexpected type conversion might happened
+          if n > 1:
+            if before:
+              edge = lax.slice_in_dim(x, 0, 1, axis=i)
+            else:
+              edge = lax.slice_in_dim(x, -1, None, axis=i)
+
+        if before:
+          array = lax.concatenate([x, array], dimension=i)
+        else:
+          array = lax.concatenate([array, x], dimension=i)
+      return array
+
+    array = build_padding(array, pad_width[i, 0], before=True)
+    array = build_padding(array, pad_width[i, 1], before=False)
   return array
 
 
@@ -2458,8 +2476,8 @@ def _broadcast_to_pairs(nvals, nd, name):
   return nvals
 
 
-@partial(jit, static_argnums=(1, 2, 4, 5))
-def _pad(array, pad_width, mode, constant_values, stat_length, end_values):
+@partial(jit, static_argnums=(1, 2, 4, 5, 6))
+def _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type):
   array = asarray(array)
   nd = ndim(array)
 
@@ -2483,7 +2501,7 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values):
     return _pad_wrap(array, pad_width)
 
   elif mode in ("symmetric", "reflect"):
-    return _pad_symmetric_or_reflect(array, pad_width, mode)
+    return _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type)
 
   elif mode == "edge":
     return _pad_edge(array, pad_width)
@@ -2504,12 +2522,12 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values):
 
 @_wraps(np.pad)
 def pad(array, pad_width, mode="constant", constant_values=0, stat_length=None,
-        end_values=0):
+        end_values=0, reflect_type="even"):
   if isinstance(pad_width, Iterable):
     pad_width = tuple(
         tuple(int(i) for i in x) if isinstance(x, Iterable) else x
         for x in pad_width)
-  return _pad(array, pad_width, mode, constant_values, stat_length, end_values)
+  return _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type)
 
 
 @_wraps(np.stack)
