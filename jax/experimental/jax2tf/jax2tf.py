@@ -1596,24 +1596,30 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
       base_dilation, window_dilation, _in_avals, _out_aval
   )
 
-# _try_tf_max_pool returns a Tensor when it succeeds, or a string describing why
-# it did not succeed otherwise.
-def _try_tf_max_pool(operand, window_dimensions, window_strides, padding,
-                     base_dilation, window_dilation) -> Union[str, TfVal]:
-  # TODO(bchetioui): this function is not exhaustive wrt which
-  # reduce_window_max cases can be translated into a call to max_pool. Further
-  # investigation is needed to fully flesh it out.
 
+# _try_tf_pool returns a Tensor when it succeeds, or a string describing why
+# it did not succeed otherwise. It currently only supports reduce_window_max
+# and reduce_window_sum.
+# TODO(bchetioui): this function is not exhaustive wrt which
+# reduce_window_max or reduce_window_sum cases can be translated into a call to
+# max_pool or avg_pool. Further investigation is needed to fully flesh it out.
+def _try_tf_pool(op_name, operand, window_dimensions, window_strides, padding,
+                 base_dilation, window_dilation) -> Union[str, TfVal]:
   # Contrarily to the main path, tf.int8 is actually a valid type for
   # tf.nn.max_pool.
-  if operand.dtype in [tf.bool, tf.uint32, tf.uint64, tf.complex64,
-                       tf.complex128]:
+  if op_name == "reduce_window_max" and operand.dtype in [
+      tf.bool, tf.uint32, tf.uint64, tf.complex64, tf.complex128
+  ]:
     return f"tf.nn.max_pool does not support operands of type {operand.dtype}"
+  if op_name == "reduce_window_sum" and operand.dtype not in [
+      tf.float16, tf.float32, tf.float64
+  ]:
+    return f"tf.nn.avg_pool does not support operands of type {operand.dtype}"
   has_batch_dim = window_dimensions[0] == 1
   has_channel_dim = window_dimensions[-1] == 1
   nb_spatial_dimensions = len(operand.shape) - has_batch_dim - has_channel_dim
   if nb_spatial_dimensions < 1 or nb_spatial_dimensions > 3:
-    return ("TensorFlow can only handle max pooling for arrays with 1, 2, or "
+    return ("TensorFlow can only handle pooling for arrays with 1, 2, or "
             "3 spatial dimensions")
   # TODO(bchetioui): does a simple conversion with another base dilation exist?
   if list(base_dilation) != [1] * len(operand.shape):
@@ -1625,8 +1631,8 @@ def _try_tf_max_pool(operand, window_dimensions, window_strides, padding,
   if list(padding) != [(0, 0)] * len(operand.shape):
     return "Unimplemented support for padding"
   # ReduceWindow in XLA takes an array of rank N as a parameter, but
-  # tf.nn.max_pool takes an array of rank N+2, with a default shape of the
-  # form [batch_size] + input_spatial_shape + [num_channels]
+  # tf.nn.max_pool / tf.nn.avg_pool take an array of rank N+2, with a default
+  # shape of the form [batch_size] + input_spatial_shape + [num_channels]
   tf_operand = operand
   tf_window_dimensions = list(window_dimensions)
   tf_window_strides = list(window_strides)
@@ -1638,15 +1644,24 @@ def _try_tf_max_pool(operand, window_dimensions, window_strides, padding,
     tf_operand = tf.expand_dims(tf_operand, -1)
     tf_window_dimensions.append(1)
     tf_window_strides.append(1)
-  tf_data_format = 'N' + 'DHW'[-nb_spatial_dimensions:] + 'C'
-  tf_padding = 'VALID'
-  result = tf.nn.max_pool(tf_operand, tf_window_dimensions, tf_window_strides,
-                          tf_padding, tf_data_format)
+  tf_data_format = "N" + "DHW"[-nb_spatial_dimensions:] + "C"
+  tf_padding = "VALID"
+  if op_name == "reduce_window_max":
+    result = tf.nn.max_pool(tf_operand, tf_window_dimensions, tf_window_strides,
+                            tf_padding, tf_data_format)
+  elif op_name == "reduce_window_sum":
+    avg = tf.nn.avg_pool(tf_operand, tf_window_dimensions, tf_window_strides,
+                         tf_padding, tf_data_format)
+    result = avg * np.prod(tf_window_dimensions)
+  else:
+    return f"Unimplemented support for {op_name}"
+
   if not has_batch_dim:
     result = tf.squeeze(result, 0)
   if not has_channel_dim:
     result = tf.squeeze(result, -1)
   return result
+
 
 def _specialized_reduce_window(reducer, identity, operand, *, window_dimensions,
                                window_strides, padding, base_dilation,
@@ -1673,9 +1688,9 @@ def _specialized_reduce_window(reducer, identity, operand, *, window_dimensions,
   Returns:
     The reduced operand.
   """
-  if name == "reduce_window_max":
-    res = _try_tf_max_pool(operand, window_dimensions, window_strides, padding,
-                           base_dilation, window_dilation)
+  if name in ["reduce_window_max", "reduce_window_sum"]:
+    res = _try_tf_pool(name, operand, window_dimensions, window_strides,
+                       padding, base_dilation, window_dilation)
     if not isinstance(res, str):
       return res
 
