@@ -2510,7 +2510,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(dtypes.is_weakly_typed(fun(x)), expected_weak_type)
     self.assertEqual(dtypes.is_weakly_typed(api.jit(fun)(x)), expected_weak_type)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_funcname={}_input_type={}_val={}_dtype={}".format(
           funcname, input_type, val, dtype),
@@ -2526,6 +2525,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected_weak_type = dtype is None and input_type in set(dtypes._weak_types)
     self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
     self.assertEqual(dtypes.is_weakly_typed(fjit(val)), expected_weak_type)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_weak_type={}_slc={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), weak_type, slc),
+       "shape": shape, "dtype": dtype, "weak_type": weak_type, "slc": slc}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in [int, float, complex]
+      for weak_type in [True, False]
+      for slc in [slice(None), slice(0), slice(3), 0, ...]))
+  def testSliceWeakTypes(self, shape, dtype, weak_type, slc):
+    rng = jtu.rand_default(self.rng())
+    x = lax.convert_element_type(rng(shape, dtype), weak_type=weak_type)
+    op = lambda x: x[slc]
+    self.assertEqual(op(x).aval.weak_type, weak_type)
+    self.assertEqual(api.jit(op)(x).aval.weak_type, weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(
