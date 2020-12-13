@@ -92,7 +92,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                        self.tf_default_device.device_type)
 
     self._collect_limitations = False
-    self._original_impl: Callable = None
 
     with contextlib.ExitStack() as stack:
       stack.enter_context(tf.device(self.tf_default_device))
@@ -114,6 +113,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # No need to monkey patch again
     if self._collect_limitations:
       return
+
+    self._collect_limitations = True
 
     original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
 
