@@ -20,8 +20,11 @@ This module introduces the host callback functions :func:`id_tap` and
 side-effect of sending the arguments from the device to the host and
 invoking a user-specified Python function (for :func:`id_tap`) or printing the
 arguments on the host (for :func:`id_print`). The Python function passed
-to :func:`id_tap` takes two positional arguments (the value tapped from the
-device computation along with ``transforms`` sequence, described below).
+to :func:`id_tap` takes two positional arguments (the value tapped
+from the device computation along with ``transforms`` sequence,
+described below). Optionally, the function may be passed a keyword argument
+``device`` with the Device from which the value was tapped.
+
 A few examples::
 
   # calls func(2x, []) on host and returns 2x
@@ -30,6 +33,8 @@ A few examples::
   y, z = id_tap(func, (2 * x, 3 * x))  # The argument can be a pytree
   # calls func(2x, []) and returns y
   y = id_tap(func, 2 * x, result=y)  # override the result of id_tap
+  # calls func(2x, [], device=jax.devices()[0])
+  y = id_tap(func, 2 * x, tap_with_device=True)  # Pass the device to the tap
   # calls func(2x, [], what='activation') and returns 2x
   y = id_tap(functools.partial(func, what='activation'), 2 * x)
   # calls func(dict(x=x, y=y), what='data') and returns dict(x=x, y=y)
@@ -42,9 +47,16 @@ that are also printed along with the automatic kwarg ``transforms``.
 
 The order of execution of the tap functions is constrained by data dependency:
 the arguments are tapped after all the arguments are computed and before the
-result of the call is used. As of September 2020, it is not necessary anymore
-for the results of the tap to be used in the rest of the computation. The tap
-function will execute based on program order.
+result of the call is used. As of September 2020, it is not strictly necessary
+anymore for the results of the tap to be used in the rest of the computation.
+You can just do::
+
+  id_tap(func, x)
+
+The tap function will execute based on program order. However, if this code
+is subject to transformations, it is possible for the tap to appear to
+the transformation as dead code and to be removed from the computation.
+
 The host tap functions will be executed for each device in the order in which
 the send operations were performed on the device.
 
@@ -124,6 +136,15 @@ the backward pass::
   # what=x,x^2: [3., 9.]  # from forward pass, since y is used in backward pass
   # transforms: ['jvp', 'transpose'] what: x,x^2 : [0., 3.]  # from backward pass, adjoints of _, y
 
+In presence of :func:`jax.pmap` the code will run on multiple devices and
+each device will tap its values independently.
+It may be helpful to use the ``tap_with_device`` option for :func:`id_print`
+or :func:`id_tap`, so that you see which device is sending which data::
+
+  jax.pmap(power3, devices=jax.devices()[0:2])(np.array([3., 4.])
+  # device=cpu:0 what=x,x^2: [3., 9.]  # from the first device
+  # device=cpu:1 what=x,x^2: [4., 16.]  # from the second device
+
 See documentation for :func:`id_tap` and :func:`id_print`.
 For more usage example, see tests/host_callback_test.py.
 
@@ -131,8 +152,6 @@ Still to do:
   * Performance tests.
   * Add flags for logging.
   * Add unit tests with mocks.
-  * Explore a simpler API that uses Python program-order, instead of
-    data dependency-order.
   * Explore implementation with outside compilation.
   * Explore an extended API that allows the host function to return
     values to the accelerator computation.
@@ -177,7 +196,7 @@ from jax import core
 from jax import custom_derivatives
 from jax import lax
 from jax.lib import pytree
-from jax.interpreters import ad, xla, batching, masking
+from jax.interpreters import ad, xla, batching, masking, pxla
 from jax.interpreters import partial_eval as pe
 from jax._src import pprint_util as ppu
 from jax._src import source_info_util
@@ -217,7 +236,11 @@ def id_tap(tap_func: _TapFunc, arg: T) -> T:
 def id_tap(tap_func: _TapFunc, arg: T, *, result: U) -> U:
   ...
 
-def id_tap(tap_func, arg, *, result=None, **kwargs):
+@typing.overload
+def id_tap(tap_func: _TapFunc, arg: T, *, result: U, tap_with_device: bool) -> U:
+  ...
+
+def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
   """Host-callback tap primitive, like identity function with a call to ``tap_func``.
 
   **Experimental: please give feedback, and expect changes!**
@@ -229,13 +252,18 @@ def id_tap(tap_func, arg, *, result=None, **kwargs):
   Args:
     tap_func: tap function to call like ``tap_func(arg, transforms)``, with
       ``arg`` as described below and where ``transforms`` is the sequence of
-      applied JAX transformations in the form ``(name, params)``.
+      applied JAX transformations in the form ``(name, params)``. If the
+      `tap_with_device` optional argument is True, then the invocation also
+      includes the device from which the value is tapped as a keyword argument:
+      ``tap_func(arg, transforms, device=dev)``.
     arg: the argument passed to the tap function, can be a pytree of JAX
       types.
     result: if given, specifies the return value of ``id_tap``. This value is
       not passed to the tap function, and in fact is not sent from the device to
       the host. If the ``result`` parameter is not specified then the return
       value of ``id_tap`` is ``arg``.
+    tap_with_device: if True then the tap function is invoked with the
+      device from which the tap originates as a keyword argument.
 
   Returns:
     ``arg``, or ``result`` if given.
@@ -245,15 +273,8 @@ def id_tap(tap_func, arg, *, result=None, **kwargs):
   value is used. At least one of the returned values of ``id_tap`` must be
   used in the rest of the computation, or else this operation has no effect.
 
-  If you want to tap a constant value, you should use the ``result`` parameter
-  to control when it is tapped, otherwise it will be tapped during tracing
-  of the function::
-
-    x = id_tap(42, result=x)
-
   Tapping works even for code executed on accelerators and even for code under
-  JAX transformations. Code that uses taps must be run embedded in
-  :func:`outfeed_receiver`.
+  JAX transformations.
 
   For more details see the
   `module documentation
@@ -277,6 +298,8 @@ def id_tap(tap_func, arg, *, result=None, **kwargs):
   params["tap_func_"] = tap_func
   params["arg_treedef_"] = arg_treedef
   params["nr_tapped_args_"] = len(flat_args)
+  if tap_with_device:
+    params["tap_with_device_"] = tap_with_device
   if result is not None:
     flat_results, result_treedef = pytree.flatten(result)
     for result in flat_results:
@@ -291,7 +314,8 @@ def id_tap(tap_func, arg, *, result=None, **kwargs):
     return arg_treedef.unflatten(flat_outs)
 
 
-def id_print(arg, *, result=None, output_stream=None, threshold=None, **kwargs):
+def id_print(arg, *, result=None, tap_with_device=False,
+             output_stream=None, threshold=None, **kwargs):
   """Like :func:`id_tap` with a printing tap function.
 
    **Experimental: please give feedback, and expect changes!**
@@ -304,18 +328,17 @@ def id_print(arg, *, result=None, output_stream=None, threshold=None, **kwargs):
 
    Additional keyword arguments:
 
+   * ``tap_with_device`` if True, will print also the device from which
+     the value originates.
    * ``output_stream`` if given then it will be used instead of the
      built-in ``print``. The string will be passed as
      ``output_stream.write(s)``.
    * ``threshold`` is passed to ``numpy.array2string``.
   """
-  printer = functools.partial(
-      _print_consumer,
-      output_stream=output_stream,
-      threshold=threshold,
-      **kwargs,
-  )
-  return id_tap(printer, arg, result=result)
+  printer = functools.partial(_print_consumer,
+                              output_stream=output_stream,
+                              threshold=threshold, **kwargs)
+  return id_tap(printer, arg, result=result, tap_with_device=tap_with_device)
 
 
 def _unpack_transform(name, *params):
@@ -333,12 +356,18 @@ class _ConsumerCallable(NamedTuple):
   """Host-side information for an outfeed consumer."""
   func: Callable
   transforms: Tuple[tuple, ...]
+  tap_with_device: bool
   arg_treedef: Any
   arg_shape: XlaShape  # XlaShape implements __hash__.
 
-  def unpack_transforms(self) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
+  def _unpack_transforms(self) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
     return tuple(_unpack_transform(*t) for t in self.transforms)
 
+  def invoke(self, arg, device):
+    if self.tap_with_device:
+      return self.func(arg, self._unpack_transforms(), device=device)
+    else:
+      return self.func(arg, self._unpack_transforms())
 
 def _register_consumer(cons: _ConsumerCallable) -> int:
   """Registers a tap function, cache by hash of cons."""
@@ -355,7 +384,8 @@ def _register_consumer(cons: _ConsumerCallable) -> int:
 
 
 def _print_consumer(
-    arg, transforms, *, output_stream=None, threshold=1024, **kwargs):
+    arg, transforms, *, device=None,
+    output_stream=None, threshold=1024, **kwargs):
   """The consumer for id_print.
 
   We provide this as a simple tapping function for printing.
@@ -363,12 +393,13 @@ def _print_consumer(
   it should be easy for the user to roll their own printing function.
 
   Args:
+    device: the device from which the value originates (only if
+      ``tap_with_device`` was used for :func:`id_print`).
     output_stream: a function whose `write` method is called with the strings to
       be output.
     threshold: the value of numpy.array2string threshold parameter.
     **kwargs: all other keyword args are printed before printing `arg`.
   """
-
   def emit_str(s: str):
     if output_stream is not None:
       output_stream.write(s + "\n")
@@ -378,6 +409,8 @@ def _print_consumer(
   if transforms:
     kwargs['transforms'] = [(name, params) if params else name
                             for name, params in transforms]
+  if device is not None:
+    kwargs['device'] = device
   kv_pairs = " ".join([
       f"{k}: {v}" for k, v in sorted(kwargs.items())
   ])
@@ -425,6 +458,8 @@ The primitive has the following parameters:
     example, for `batch`, the parameters are the dimensions that have been
     batched, and for `mask` the logical shapes. These are unpacked by
     _ConsumerCallable before passing to the user function.
+  * tap_with_device_: a boolean that specifies whether the tap function
+    takes an additional device keyword argument.
   * the remaining parameters are from the user's invocation of the id_tap
     API function and are passed to the tap function.
 """
@@ -540,6 +575,7 @@ def _id_tap_translation_rule(comp: XlaComputationBuilder,
                              nr_tapped_args_,
                              arg_treedef_=None,
                              has_token_=False,
+                             tap_with_device_=False,
                              transforms=()):
 
   # We expect the current token at the end, inserted by _rewrite_jaxpr.
@@ -550,7 +586,7 @@ def _id_tap_translation_rule(comp: XlaComputationBuilder,
 
   args_to_outfeed = args_op[0:nr_tapped_args_]
   consumer_id = _register_consumer(
-      _ConsumerCallable(tap_func_, transforms, arg_treedef_,
+      _ConsumerCallable(tap_func_, transforms, tap_with_device_, arg_treedef_,
                         comp.get_shape(xops.Tuple(comp, args_to_outfeed))))
   next_token = _outfeed_receiver.receiver.add_outfeed(comp, current_token,
                                                       consumer_id,
@@ -616,6 +652,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
   This is only called if the current primitive uses outfeed.
   Assume that the current token is in `input_token_var` and the resulting
   token must end in `output_token_var`.
+
+  Append the result of rewriting to `eqns`.
   """
   if eqn.primitive is id_tap_p:
     assert "has_token_" not in eqn.params
@@ -701,6 +739,23 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 eqn.params,
                 call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
                 donated_invars=eqn.params["donated_invars"] + (False,)
+            ),
+          eqn.source_info))
+  elif eqn.primitive is pxla.xla_pmap_p:
+    # We broadcast the input token into an array of tokens
+    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
+    eqns.append(
+        core.new_jaxpr_eqn(
+            eqn.invars + [input_token_var], eqn.outvars + [output_token_var],
+            eqn.primitive,
+            dict(
+                eqn.params,
+                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
+                donated_invars=eqn.params["donated_invars"] + (False,),
+                # Sharding/unsharding of tokens in pmap_translation are special
+                # cased to just pass-through the token
+                in_axes=eqn.params["in_axes"] + (0,),
+                out_axes=eqn.params["out_axes"] + (0,)
             ),
           eqn.source_info))
   elif eqn.primitive is pe.remat_call_p:
@@ -919,7 +974,7 @@ def _outfeed_receiver_callback(device, consumer_id, arrays):
   assert consumer is not None, "We should have crashed in the runtime"
   try:
     arg = api.tree_unflatten(consumer.arg_treedef, arrays)
-    consumer.func(arg, consumer.unpack_transforms())  # type: ignore[attribute-error]
+    consumer.invoke(arg, device)
   except Exception as e:
     if isinstance(e, TypeError):
       logging.error("The signature host_callback.id_tap uses to calls wrapped "

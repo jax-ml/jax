@@ -17,6 +17,10 @@ jax 0.2.8 (Unreleased)
 
   * ``jax.numpy.arccosh`` now returns the same branch as ``numpy.arccosh`` for
     complex inputs (`#5156 <https://github.com/google/jax/pull/5156>`_)
+  * ``host_callback.id_tap`` now works for ``jax.pmap`` also. There is a
+    optional parameter for ``id_tap`` and ``id_print`` to request that the
+    device from which the value is tapped be passed as a keyword argument
+    to the tap function (`#5182 <https://github.com/google/jax/pull/5182>`_).
 
 jax 0.2.7 (Dec 4 2020)
 ----------------------

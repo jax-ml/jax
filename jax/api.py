@@ -1429,7 +1429,7 @@ def pmap(fun: Callable[..., T],
   on two hosts with 4 XLA devices each:
 
   >>> f = lambda x: x + jax.lax.psum(x, axis_name='i')
-  >>> data = jnp.arange(4) if jax.host_id() == 0 else jnp.arange(4,8)
+  >>> data = jnp.arange(4) if jax.host_id() == 0 else jnp.arange(4, 8)
   >>> out = pmap(f, axis_name='i')(data)  # doctest: +SKIP
   >>> print(out)  # doctest: +SKIP
   [28 29 30 31] # on host 0

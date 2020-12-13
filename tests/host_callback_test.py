@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import functools
+import itertools
 import logging
 import os
 import re
 import threading
 import time
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -53,6 +54,20 @@ class _TestingOutputStream(object):
   def output(self):
     return "".join(self._output)
 
+  @property
+  def output_sorted_by_device(self):
+    # Assume that the output is a sequence of strings including metadata
+    # and data, with metadata containing `device: xxx`
+    by_device = []  # each element is a pair (device, str_list)
+    for s in self._output:
+      m = re.match(r'.*device: (\S+)', s)
+      if m:
+        by_device.append((m.group(1), []))
+      by_device[-1][1].append(s)
+
+    sorted_by_device = sorted(by_device, key=lambda x: x[0])
+    return "\n".join(itertools.chain(*[s[1] for s in sorted_by_device]))
+
   def __str__(self):
     return "TestingOutputStream"
 
@@ -72,6 +87,16 @@ def fun1(a):
 def fun1_equiv(a):  # Numerical equivalent of fun`
   return (a * 2.)**2
 
+def maybe_print(do_print: bool, arg, what: str, tap_with_device: Optional[bool] = False):
+  """Conditionally print on testing_string"""
+  if do_print:
+    return hcb.id_print(arg, what=what,
+                        output_stream=testing_stream, tap_with_device=tap_with_device)
+  else:
+    return arg
+
+ignore_jit_of_pmap_warning = functools.partial(
+  jtu.ignore_warning, message=".*jit-of-pmap.*")
 
 def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase,
                                  expected: str, what: str):
@@ -103,6 +128,47 @@ def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase,
   tst.assertMultiLineStrippedEqual(expected, what)
 
 
+prev_xla_flags = None
+def setUpModule():
+  global prev_xla_flags
+  # This will control the CPU devices. On TPU we always have 2 devices
+  prev_xla_flags = jtu.set_host_platform_device_count(2)
+
+
+# Reset to previous configuration in case other test modules will be run.
+def tearDownModule():
+  prev_xla_flags()
+
+
+def assertMultiDeviceOutputEqual(tst: jtu.JaxTestCase,
+                                 expected_2CPUs: str):
+  """Check that the multi-device output is equal to the expected.
+
+  The tests run with 2 CPU devices on CPU (due to the flag), also
+  on TPU (due to how the TPU tests are set up), but only 1 device on
+  GPU. We adjust the expected output here for 1 device.
+
+  Args:
+    expected_2CPUs: the expected output for 2 CPUs. If there is only
+      one device, this is trimmed to the first device. If the current
+      device_under_test is not a CPU, then we change the names
+  """
+  assert api.device_count() in (1, 2)
+  expected = expected_2CPUs
+  if api.device_count() == 1:
+    start_device_1 = expected.find('device: cpu:1')
+    if start_device_1 >= 0:
+      expected = expected[0:start_device_1]
+
+  def replace_device_name(m) -> str:
+    return str(api.devices()[int(m.group(1))])
+  expected = re.sub(r'cpu:(\d+)', replace_device_name, expected)
+  what = testing_stream.output_sorted_by_device
+  return assertMultiLineStrippedEqual(tst, expected, what)
+
+
+
+
 class HostCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -115,15 +181,6 @@ class HostCallbackTest(jtu.JaxTestCase):
       os.environ["XLA_FLAGS"] = self.old_flags
       xla_bridge.get_backend.cache_clear()
     hcb.barrier_wait("HostCallbackTest.tearDown")
-
-  def helper_set_devices(self, nr_devices):
-    flags_str = os.getenv("XLA_FLAGS", "")
-    os.environ["XLA_FLAGS"] = (
-        flags_str +
-        " --xla_force_host_platform_device_count={}".format(nr_devices))
-    # Clear any cached backends so new CPU backend will pick up the env var.
-    xla_bridge.get_backend.cache_clear()
-    return api.devices()
 
   def helper_set_hlo_dump(self):
     flags_str = os.getenv("XLA_FLAGS", "")
@@ -180,6 +237,21 @@ class HostCallbackTest(jtu.JaxTestCase):
     assertMultiLineStrippedEqual(self, """
         [ 6.00
           9.00 ]""", testing_stream.output)
+    testing_stream.reset()
+
+  def test_print_with_device(self):
+    def func2(x):
+      x1 = hcb.id_print((x * 2., x * 3.), result=x * 4.,
+                        output_stream=testing_stream,
+                        tap_with_device=True)
+      return x1
+
+    self.assertEqual(3. * 4., func2(3.))
+    hcb.barrier_wait()
+    assertMultiDeviceOutputEqual(self, """
+      device: cpu:0
+      [ 6.00
+        9.00 ]""")
     testing_stream.reset()
 
   def test_eval_tap_exception(self):
@@ -939,13 +1011,234 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_pmap(self):
-    vargs = 2. + jnp.arange(api.local_device_count(), dtype=jnp.float32)
+    xv = jnp.arange(api.device_count(), dtype=jnp.int32)
+    def fun1(x, do_print=False): # x: i32
+      return maybe_print(do_print, x * 2, "x * 2", tap_with_device=True)
 
-    pmap_fun1 = api.pmap(fun1, axis_name="i")
-    res = pmap_fun1(vargs)
+    pmap_fun1 = api.pmap(functools.partial(fun1, do_print=True))
+    res = pmap_fun1(xv)
     hcb.barrier_wait()
-    expected_res = jnp.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
+    expected_res = api.pmap(functools.partial(fun1, do_print=False))(xv)
     self.assertAllClose(expected_res, res, check_dtypes=False)
+    # Assertion text is for 2 devices (also works for 1 device)
+    assertMultiDeviceOutputEqual(self, """
+        device: cpu:0 what: x * 2
+        0
+        device: cpu:1 what: x * 2
+        2""")
+    testing_stream.reset()
+
+  def test_pmap_vmap(self):
+    # A matrix M[ij] = i * 10 + j
+    nr_devices = api.device_count()
+    shape = (nr_devices, 3)
+    matrix = np.fromfunction(lambda i, j: 10. * i + j, shape,
+                             dtype=np.int32)
+
+    def fun1(x, do_print=False):  # x: i32
+      return maybe_print(do_print, x * 2, "x * 2", tap_with_device=True)
+
+    pmap_vmap_fun1 = api.pmap(api.vmap(functools.partial(fun1, do_print=True)))
+
+    res = pmap_vmap_fun1(matrix)
+    hcb.barrier_wait()
+    expected_res = api.pmap(api.vmap(functools.partial(fun1, do_print=False)))(matrix)
+    self.assertAllClose(expected_res, res, check_dtypes=False)
+    # Assertion text is for 2 devices (also works for 1 device)
+    assertMultiDeviceOutputEqual(self, """
+        device: cpu:0 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+        [0.00 2.00 4.00]
+        device: cpu:1 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+        [20.00 22.00 24.00]""")
+    testing_stream.reset()
+
+  def test_pmap_pmap_vmap(self):
+    # A matrix M[ijk] = i * 100 + j * 10 + k
+    nr_devices = api.local_device_count()
+    if nr_devices % 2 != 0:
+      raise SkipTest("test works only on even number of devices")
+
+    shape = (2, nr_devices // 2, 3)
+    matrix = np.fromfunction(lambda i, j, k: 100. * i + 10. * j + k, shape,
+                             dtype=np.float32)
+    def fun1(x, do_print=False): # x: f32
+      y = maybe_print(do_print, x * 2., "x * 2", tap_with_device=True)
+      return y ** 2
+
+    pmap_fun1 = api.pmap(api.pmap(api.vmap(functools.partial(fun1, do_print=True))))
+    res = pmap_fun1(matrix)
+    hcb.barrier_wait()
+    expected_res = api.pmap(api.pmap(api.vmap(functools.partial(fun1, do_print=False))))(matrix)
+    self.assertAllClose(expected_res, res, check_dtypes=False)
+    # Assertion text is for 2 devices (also works for 1 device)
+    assertMultiDeviceOutputEqual(self, """
+        device: cpu:0 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+        [0.00 2.00 4.00]
+        device: cpu:1 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+        [200.00 202.00 204.00]""")
+    testing_stream.reset()
+
+  @ignore_jit_of_pmap_warning()
+  def test_pmap_pmap_extra(self):
+    """pmap of a pmap surrounded by extra code."""
+    # A matrix M[ij] = i * 10 + j
+    nr_devices = api.local_device_count()
+    if nr_devices != 2:
+      raise SkipTest("test works only on 2 devices")
+    shape = (2, 1, 3)
+    matrix = np.fromfunction(lambda i, j, k: 100. * i + 10. * j + k, shape,
+                             dtype=np.float32)
+    def fun(xv, do_print=False):
+      # This will be printed on all devices, with shape [1, 3]
+      xv = maybe_print(do_print, xv + 1., "before", tap_with_device=True)
+      res = api.pmap(lambda x: maybe_print(do_print, x * 2., "inside", tap_with_device=True))(xv)
+      # This will be printed on all devices, with shape [1, 3]
+      return maybe_print(do_print, res + 1., "after", tap_with_device=True)
+
+    res = api.pmap(functools.partial(fun, do_print=True))(matrix)
+    self.assertAllClose(fun(matrix, do_print=False), res, check_dtypes=False)
+    hcb.barrier_wait()
+    # Assertion text is for 2 devices (also works for 1 device)
+    assertMultiDeviceOutputEqual(self, """
+      device: cpu:0 what: before
+      [[1.00 2.00 3.00]]
+      device: cpu:0 what: inside
+      [2.00 4.00 6.00]
+      device: cpu:0 what: after
+      [[3.00 5.00 7.00]]
+      device: cpu:1 what: before
+      [[101.00 102.00 103.00]]
+      device: cpu:1 what: inside
+      [202.00 204.00 206.00]
+      device: cpu:1 what: after
+      [[203.00 205.00 207.00]]""")
+
+    testing_stream.reset()
+
+  def test_jvp_pmap_vmap(self):
+    # A matrix M[ijk] = i * 100 + j * 10 * k
+    nr_devices = api.local_device_count()
+    shape = (nr_devices, 2, 3)
+    matrix = np.fromfunction(lambda i, j, k: 100. * i + 10. * j + k, shape,
+                             dtype=np.float32)
+    def fun(xv, do_print=False):
+      # x: f32[3]
+      return api.jvp(api.pmap(api.vmap(lambda x: maybe_print(do_print, x * 2., "x * 2", tap_with_device=True))),
+                     (xv,), (.1 * jnp.ones_like(xv),))
+
+    res = fun(matrix, do_print=True)
+    hcb.barrier_wait()
+    expected_res = fun(matrix, do_print=False)
+    self.assertAllClose(expected_res, res, check_dtypes=False)
+    # Assertion text is for 2 devices (also works for 1 device)
+    # Device 0 will get to execute api.jvp(api.vmap(...)) for matrix[0, :, :]
+    assertMultiDeviceOutputEqual(self, """
+      device: cpu:0 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+      [[ 0.00  2.00  4.00]
+       [20.00 22.00 24.00]]
+      device: cpu:0 transforms: [('batch', {'batch_dims': (0,)}), 'jvp'] what: x * 2
+      [[0.20 0.20 0.20]
+       [0.20 0.20 0.20]]
+      device: cpu:1 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+      [[200.00 202.00 204.00]
+       [220.00 222.00 224.00]]
+      device: cpu:1 transforms: [('batch', {'batch_dims': (0,)}), 'jvp'] what: x * 2
+      [[0.20 0.20 0.20]
+       [0.20 0.20 0.20]]""")
+    testing_stream.reset()
+
+  def test_vmap_pmap(self):
+    # A matrix M[ijk] = i * 100 + j * 10 * k
+    nr_devices = api.local_device_count()
+    shape = (2, nr_devices, 3)
+    matrix = np.fromfunction(lambda i, j, k: 100. * i + 10. * j + k, shape,
+                             dtype=np.float32)
+    def fun(xv, do_print=False):
+      # x: f32[3]
+      return api.vmap(api.pmap(lambda x: maybe_print(do_print, x * 2., "x * 2", tap_with_device=True)))(xv)
+
+    res = fun(matrix, do_print=True)
+    hcb.barrier_wait()
+    expected_res = fun(matrix, do_print=False)
+    self.assertAllClose(expected_res, res, check_dtypes=False)
+    # Assertion text is for 2 devices (also works for 1 device)
+    # Device 0 will get to execute api.jvp(api.vmap(...)) for matrix[:, 0, :]
+    assertMultiDeviceOutputEqual(self, """
+      device: cpu:0 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+      [[  0.00   2.00   4.00]
+       [200.00 202.00 204.00]]
+      device: cpu:1 transforms: [('batch', {'batch_dims': (0,)})] what: x * 2
+      [[ 20.00  22.00  24.00]
+       [220.00 222.00 224.00]]""")
+    testing_stream.reset()
+
+  @ignore_jit_of_pmap_warning()
+  def test_jit_pmap_extra(self):
+    """jit of a pmap surrounded by extra code."""
+    # A matrix M[ij] = i * 10 + j
+    nr_devices = api.local_device_count()
+    shape = (nr_devices, 3)
+    matrix = np.fromfunction(lambda i, j: 10. * i + j, shape,
+                             dtype=np.float32)
+
+    def fun(xv, do_print=False):
+      # This will be printed on all devices with shape (nr_devices, 3)
+      xv = maybe_print(do_print, xv + 1., "before", tap_with_device=True)
+      res = api.pmap(lambda x: maybe_print(do_print, x * 2., "inside", tap_with_device=True))(xv)
+      # This will be printed on all devices with shape (nr_devices, 3)
+      return maybe_print(do_print, res + 1., "after", tap_with_device=True)
+
+    res = api.jit(functools.partial(fun, do_print=True))(matrix)
+    self.assertAllClose(fun(matrix, do_print=False), res, check_dtypes=False)
+    hcb.barrier_wait()
+    if api.device_count() == 2:
+      assertMultiDeviceOutputEqual(self, """
+        device: cpu:0 what: before
+        [[ 1.00  2.00  3.00]
+         [11.00 12.00 13.00]]
+        device: cpu:0 what: inside
+        [2.00 4.00 6.00]
+        device: cpu:0 what: after
+        [[ 3.00  5.00  7.00]
+         [23.00 25.00 27.00]]
+        device: cpu:1 what: before
+        [[ 1.00  2.00  3.00]
+         [11.00 12.00 13.00]]
+        device: cpu:1 what: inside
+        [22.00 24.00 26.00]
+        device: cpu:1 what: after
+        [[ 3.00  5.00  7.00]
+         [23.00 25.00 27.00]]""")
+    else:
+      assert api.device_count() == 1
+      assertMultiDeviceOutputEqual(self, """
+        device: cpu:0 what: before
+        [[1.00 2.00 3.00]]
+        device: cpu:0 what: inside
+        [2.00 4.00 6.00]
+        device: cpu:0 what: after
+        [[3.00 5.00 7.00]]""")
+
+    testing_stream.reset()
+
+  def test_cond_pmap(self):
+    raise SkipTest("cond of pmap does not work in JAX. Issue #5178.")
+    # A matrix M[ij] = i * 10 + j
+    nr_devices = api.local_device_count()
+    shape = (nr_devices, 3)
+    matrix = np.fromfunction(lambda i, j: 10. * i + j, shape,
+                             dtype=np.float32)
+    def fun1(x, do_print=False):
+      return maybe_print(do_print, x * 2., "x * 2")
+    def fun2(cond, xv, do_print=False):
+      return lax.cond(cond, api.pmap(functools.partial(fun1, do_print=do_print)),
+                      lambda xv: xv, xv)
+    res = fun2(True, matrix)
+    self.assertAllClose(fun2(True, matrix, do_print=False), res, check_dtypes=False)
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+        TBD""", testing_stream.output)
+    testing_stream.reset()
 
   def test_scan_custom_jvp(self):
     """custom JVP, inside scan.
@@ -1193,7 +1486,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
     # the Jaxpr printing, we do not check these by default. It is recommended that
     # before making changes to the code generation and Jaxpr rewriting, turn on
     # the checking, update the expected Jaxpr, and then make the changes.
-    #assertMultiLineStrippedEqual(self, expected, str(rewritten))
+    # assertMultiLineStrippedEqual(self, expected, str(rewritten))
     del jaxpr
 
   def test_no_outfeed(self):
@@ -1274,7 +1567,8 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
     self.assertRewrite("""
         { lambda a ; b c h.
           let d = gt c 0
-              e = convert_element_type[ new_dtype=int32 ] d
+              e = convert_element_type[ new_dtype=int32
+                                        weak_type=False ] d
               f g i = cond[ branches=( { lambda  ; a b c d f.
                                          let e g = id_tap[ arg_treedef_=*
                                                            has_token_=True
@@ -1418,7 +1712,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                                                                                  tap_func_=_print  ] a d
                                                                                    c = mul a b
                                                                                in (c, e) }
-                                                                   ] b e
+                                                                   num_consts=0 ] b e
                                       d = add a c
                                   in (d, f, 0.00) }
                           length=5
@@ -1429,42 +1723,42 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                           unroll=1 ] 0.00 c a
         in (b, d) }""", g, [arg])
     self.assertRewrite("""
-        { lambda  ; a d.
-          let _ _ e _ b =
-                scan[ jaxpr={ lambda  ; a b h c d.
-                              let e i = custom_jvp_call_jaxpr[ fun_jaxpr={ lambda  ; a d.
-                                                                           let b e = id_tap[ arg_treedef_=*
-                                                                                             has_token_=True
-                                                                                             nr_tapped_args_=1
-                                                                                             tap_func_=_print  ] a d
-                                                                               c = mul a b
-                                                                           in (c, e) }
-                                                               ] c h
-                                  f = add a e
-                                  g = mul c 3.00
-                              in (f, *, i, 0.00, g) }
-                      length=5
-                      linear=(False, True, False, True, False)
-                      num_carry=3
-                      num_consts=0
-                      reverse=False
-                      unroll=1 ] 0.00 * d a *
-              _ _ f _ c =
-                scan[ jaxpr={ lambda  ; a b g c d.
-                              let e = mul b d
-                                  f h = id_tap[ arg_treedef_=*
-                                                has_token_=True
-                                                nr_tapped_args_=1
-                                                tap_func_=_print
-                                                transforms=(('transpose',),) ] e g
-                              in (*, b, h, *, f) }
-                      length=5
-                      linear=(True, True, True, False, False)
-                      num_carry=3
-                      num_consts=0
-                      reverse=True
-                      unroll=1 ] * 1.00 e * b
-          in (c, f) }""", api.grad(g), [arg])
+      { lambda  ; a d.
+        let _ _ e _ b =
+              scan[ jaxpr={ lambda  ; a b h c d.
+                            let e i = custom_jvp_call_jaxpr[ fun_jaxpr={ lambda  ; a d.
+                                                                         let b e = id_tap[ arg_treedef_=*
+                                                                                           has_token_=True
+                                                                                           nr_tapped_args_=1
+                                                                                           tap_func_=_print  ] a d
+                                                                             c = mul a b
+                                                                         in (c, e) }
+                                                             num_consts=0 ] c h
+                                f = add a e
+                                g = mul c 3.00
+                            in (f, *, i, 0.00, g) }
+                    length=5
+                    linear=(False, True, False, True, False)
+                    num_carry=3
+                    num_consts=0
+                    reverse=False
+                    unroll=1 ] 0.00 * d a *
+            _ _ f _ c =
+              scan[ jaxpr={ lambda  ; a b g c d.
+                            let e = mul b d
+                                f h = id_tap[ arg_treedef_=*
+                                              has_token_=True
+                                              nr_tapped_args_=1
+                                              tap_func_=_print
+                                              transforms=(('transpose',),) ] e g
+                            in (*, b, h, *, f) }
+                    length=5
+                    linear=(True, True, True, False, False)
+                    num_carry=3
+                    num_consts=0
+                    reverse=True
+                    unroll=1 ] * 1.00 e * b
+        in (c, f) }""", api.grad(g), [arg])
 
   def test_scan_custom_vjp(self):
     """custom VJP, inside scan.
@@ -1490,63 +1784,65 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
 
     arg = np.full((2,), 0.7)
     self.assertRewrite("""
-        { lambda  ; a c.
-          let b d _ = scan[ jaxpr={ lambda  ; a e b.
-                                    let c f = custom_vjp_call_jaxpr[
-                                                                     fun_jaxpr={ lambda  ; a d.
-                                                                                 let b e = id_tap[ arg_treedef_=*
-                                                                                                   has_token_=True
-                                                                                                   nr_tapped_args_=1
-                                                                                                   tap_func_=_print  ] a d
-                                                                                     c = mul a b
-                                                                                 in (c, e) }
-                                                                     ] b e
-                                        d = add a c
-                                    in (d, f, 0.00) }
-                            length=2
-                            linear=(False, False, False)
-                            num_carry=2
-                            num_consts=0
-                            reverse=False
-                            unroll=1 ] 0.00 c a
-          in (b, d) }""", g, [arg])
+      { lambda  ; a c.
+        let b d _ = scan[ jaxpr={ lambda  ; a e b.
+                                  let c f = custom_vjp_call_jaxpr[
+                                                                   fun_jaxpr={ lambda  ; a d.
+                                                                               let b e = id_tap[ arg_treedef_=*
+                                                                                                 has_token_=True
+                                                                                                 nr_tapped_args_=1
+                                                                                                 tap_func_=_print  ] a d
+                                                                                   c = mul a b
+                                                                               in (c, e) }
+                                                                   num_consts=0
+                                                                   ] b e
+                                      d = add a c
+                                  in (d, f, 0.00) }
+                          length=2
+                          linear=(False, False, False)
+                          num_carry=2
+                          num_consts=0
+                          reverse=False
+                          unroll=1 ] 0.00 c a
+        in (b, d) }""", g, [arg])
     self.assertRewrite("""
-        { lambda  ; a d.
-          let _ _ e _ b =
-                scan[ jaxpr={ lambda  ; a b h c d.
-                              let e i = custom_vjp_call_jaxpr[
-                                                               fun_jaxpr={ lambda  ; a d.
-                                                                           let b e = id_tap[ arg_treedef_=*
-                                                                                             has_token_=True
-                                                                                             nr_tapped_args_=1
-                                                                                             tap_func_=_print  ] a d
-                                                                               c = mul a b
-                                                                           in (c, e) }
-                                                               ] c h
-                                  f = add a e
-                                  g = mul c 3.00
-                              in (f, *, i, 0.00, g) }
-                      length=2
-                      linear=(False, True, False, True, False)
-                      num_carry=3
-                      num_consts=0
-                      reverse=False
-                      unroll=1 ] 0.00 * d a *
-              _ _ f _ c =
-                scan[ jaxpr={ lambda  ; a b g c d.
-                              let e h = id_tap[ arg_treedef_=*
-                                                has_token_=True
-                                                nr_tapped_args_=1
-                                                tap_func_=_print  ] b g
-                                  f = mul d e
-                              in (*, b, h, *, f) }
-                      length=2
-                      linear=(True, True, True, False, False)
-                      num_carry=3
-                      num_consts=0
-                      reverse=True
-                      unroll=1 ] * 1.00 e * b
-          in (c, f) }""", api.grad(g), [arg])
+      { lambda  ; a d.
+        let _ _ e _ b =
+              scan[ jaxpr={ lambda  ; a b h c d.
+                            let e i = custom_vjp_call_jaxpr[
+                                                             fun_jaxpr={ lambda  ; a d.
+                                                                         let b e = id_tap[ arg_treedef_=*
+                                                                                           has_token_=True
+                                                                                           nr_tapped_args_=1
+                                                                                           tap_func_=_print  ] a d
+                                                                             c = mul a b
+                                                                         in (c, e) }
+                                                             num_consts=0
+                                                             ] c h
+                                f = add a e
+                                g = mul c 3.00
+                            in (f, *, i, 0.00, g) }
+                    length=2
+                    linear=(False, True, False, True, False)
+                    num_carry=3
+                    num_consts=0
+                    reverse=False
+                    unroll=1 ] 0.00 * d a *
+            _ _ f _ c =
+              scan[ jaxpr={ lambda  ; a b g c d.
+                            let e h = id_tap[ arg_treedef_=*
+                                              has_token_=True
+                                              nr_tapped_args_=1
+                                              tap_func_=_print  ] b g
+                                f = mul d e
+                            in (*, b, h, *, f) }
+                    length=2
+                    linear=(True, True, True, False, False)
+                    num_carry=3
+                    num_consts=0
+                    reverse=True
+                    unroll=1 ] * 1.00 e * b
+        in (c, f) }""", api.grad(g), [arg])
 
   def test_remat_loop(self):
     def f(k, x):
@@ -1580,6 +1876,34 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                        cond_nconsts=0 ] 0 1 a c
           in (b, d) }""", loss, [2])
 
+  def test_pmap(self):
+    def f(xv):
+      api.pmap(lambda x: jnp.sin(hcb.id_print(x, tap_with_device=True)),
+               axis_name="i")(xv)
+
+    self.assertRewrite("""
+      { lambda  ; a b.
+        let _ c = xla_pmap[ axis_name=i
+                            axis_size=1
+                            backend=None
+                            call_jaxpr={ lambda  ; a e.
+                                         let b f = id_tap[ arg_treedef_=*
+                                                           has_token_=True
+                                                           nr_tapped_args_=1
+                                                           tap_func_=_print
+                                                           tap_with_device_=True ] a e
+                                             c = convert_element_type[ new_dtype=float32
+                                                                       weak_type=False ] b
+                                             d = sin c
+                                         in (d, f) }
+                            devices=None
+                            donated_invars=(False, False)
+                            global_arg_shapes=(None,)
+                            global_axis_size=None
+                            in_axes=(0, 0)
+                            name=<lambda>
+                            out_axes=(0, 0) ] a b
+        in (c,) }""", f, [np.array([2])])
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
