@@ -2349,7 +2349,6 @@ def _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type):
 
         if reflect_type == 'odd':
           x = 2 * edge - x
-          x = x.astype(array.dtype) # Unexpected type conversion might happened
           if n > 1:
             if before:
               edge = lax.slice_in_dim(x, 0, 1, axis=i)

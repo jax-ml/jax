@@ -1405,7 +1405,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for reflect_type in ['even', 'odd']
       if (pad_width != () and
           # following types lack precision when calculating odd values
-          (reflect_type != 'odd' or dtype not in [np.float16, jnp.bfloat16]))))
+          (reflect_type != 'odd' or dtype not in [np.bool_, np.float16, jnp.bfloat16]))))
   def testPadSymmetricAndReflect(self, shape, dtype, mode, pad_width, reflect_type):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
