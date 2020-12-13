@@ -55,7 +55,7 @@ You can install the necessary Python dependencies using ``pip``::
 To build ``jaxlib`` with CUDA support, you can run::
 
     python build/build.py --enable_cuda
-    pip install -e dist/*.whl  # installs jaxlib (includes XLA)
+    pip install dist/*.whl  # installs jaxlib (includes XLA)
 
 
 See ``python build/build.py --help`` for configuration options, including ways to
