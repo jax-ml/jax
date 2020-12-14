@@ -2236,7 +2236,8 @@ log1p_p = standard_unop(_float | _complex, 'log1p')
 ad.defjvp(log1p_p, lambda g, x: div(g, add(x, _one(x))))
 
 tanh_p = standard_unop(_float | _complex, 'tanh')
-ad.defjvp2(tanh_p, lambda g, ans, x: mul(g, sub(_one(x), mul(ans, ans))))
+ad.defjvp2(tanh_p, lambda g, ans, x: mul(add(g, mul(g, ans)),
+                                         sub(_one(x), ans)))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
@@ -2320,7 +2321,7 @@ ad.defjvp(acosh_p,
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
 ad.defjvp(atanh_p,
-          lambda g, x: mul(g, reciprocal((_one(x) - x) * (_one(x) + x))))
+          lambda g, x: mul(reciprocal(_one(x) + x), div(g, (_one(x) - x))))
 
 regularized_incomplete_beta_p = standard_naryop(
     [_float, _float, _float], 'regularized_incomplete_beta',
