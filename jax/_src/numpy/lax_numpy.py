@@ -2717,6 +2717,10 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     if isinstance(object, DeviceArray) and copy:
       # We perform a copy by bouncing back to the host
       # TODO(phawkins): add a device runtime function to copy a buffer
+      warnings.warn(
+        "Calling jnp.array(x) for a DeviceArray x will result in a "
+        "round-trip of the data to the host. Consider jnp.asarray(x) as "
+        "a more efficient alternative.", RuntimeWarning, stacklevel=2)
       out = _device_put_raw(_np_asarray(object), weak_type=weak_type)
     else:
       out = object

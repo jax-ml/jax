@@ -198,7 +198,7 @@ def gelu(x, approximate: bool = True):
     cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))
     return x * cdf
   else:
-    return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
+    return jnp.asarray(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
 
 def glu(x, axis=-1):
   """Gated linear unit activation function."""

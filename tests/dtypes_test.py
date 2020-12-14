@@ -303,7 +303,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     for xtype, ytype in itertools.product(
       [int, float, jnp.int16, jnp.int32, jnp.float16, jnp.float32], repeat=2)
     for xfun, yfun in itertools.product(
-      [identity, abs, jnp.array], repeat=2)
+      [identity, abs, jnp.asarray], repeat=2)
     )
   def testBinaryPromotionJitInvariance(self, xtype, ytype, xfun, yfun):
     """Test jit invariance of simple binary promotion rules with and without weak types."""

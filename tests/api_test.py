@@ -1516,6 +1516,12 @@ class APITest(jtu.JaxTestCase):
     for x, y in zip(xs, ys):
       self.assertAllClose(x, y)
 
+  def test_efficiency_warning(self):
+    x = jnp.arange(10)
+    msg = r"Calling jnp.array\(x\) for a DeviceArray x will result in a round-trip"
+    with self.assertWarnsRegex(RuntimeWarning, msg):
+      jnp.array(x)
+
   def test_dtype_warning(self):
     # cf. issue #1230
     if FLAGS.jax_enable_x64:
