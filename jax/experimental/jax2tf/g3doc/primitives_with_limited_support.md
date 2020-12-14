@@ -148,6 +148,7 @@ conversion to Tensorflow.
 | select_and_gather_add | Missing TF support | Primitive is unimplemented in TF | float32, float64 | TPU |
 | select_and_gather_add | Missing TF support | Primitive is unimplemented in TF | float64 | CPU, GPU |
 | select_and_scatter_add | Missing TF support | Primitive is unimplemented in TF | uint16, uint32, uint64 | CPU, GPU, TPU |
+| sign | Missing TF support | Primitive is unimplemented in TF | int16, int8, uint16, uint32, uint64, uint8 | CPU, GPU, TPU |
 | sinh | Missing TF support | Primitive is unimplemented in TF | float16 | CPU, GPU, TPU |
 | sort | Missing TF support | Primitive is unimplemented in TF | complex128, complex64 | CPU, GPU, TPU |
 | sort | Missing TF support | Primitive is unimplemented in TF; only sorting on last dimension is supported for XlaSort | ALL | CPU, GPU, TPU |

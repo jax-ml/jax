@@ -297,6 +297,11 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     elif np_dtype in [np.complex64, np.complex128]:
       tf_unimpl(np_dtype)
 
+  if prim is lax.sign_p:
+    if np_dtype in [np.int8, np.int16, np.uint8, np.uint16, np.uint32,
+                    np.uint64]:
+      tf_unimpl(np_dtype)
+
   if prim is lax.convert_element_type_p:
     if np_dtype == dtypes.bfloat16:
       tf_unimpl(np_dtype, devs=["CPU", "GPU"])
