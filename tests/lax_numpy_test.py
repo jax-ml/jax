@@ -1291,8 +1291,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "pad_width": pad_width, "constant_values": constant_values}
       for mode, shapes in [
           ('constant', all_shapes),
-          ('symmetric', nonempty_shapes),
-          ('reflect', nonempty_shapes),
           ('wrap', nonempty_shapes),
           ('edge', nonempty_shapes),
       ]
@@ -1383,6 +1381,41 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_mode={}_pad_width={}_reflect_type={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode, pad_width, reflect_type),
+       "shape": shape, "dtype": dtype, "mode": mode, "pad_width": pad_width,
+       "reflect_type": reflect_type}
+      for mode in ['symmetric', 'reflect']
+      for shape, dtype in _shape_and_dtypes(nonempty_shapes, all_dtypes)
+      for pad_width in [
+          # ((before_1, after_1), ..., (before_N, after_N))
+          tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
+          # ((before, after),)
+          ((1, 2),), ((2, 3),),
+          # (before, after)  (not in the docstring but works in numpy)
+          (2, 1), (1, 2),
+          # (pad,)
+          (1,), (2,), (3,),
+          # pad
+          0, 5, 7, 10
+      ]
+      for reflect_type in ['even', 'odd']
+      if (pad_width != () and
+          # following types lack precision when calculating odd values
+          (reflect_type != 'odd' or dtype not in [np.bool_, np.float16, jnp.bfloat16]))))
+  def testPadSymmetricAndReflect(self, shape, dtype, mode, pad_width, reflect_type):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    np_fun = partial(np.pad, pad_width=pad_width, mode=mode, reflect_type=reflect_type)
+    jnp_fun = partial(jnp.pad, pad_width=pad_width, mode=mode, reflect_type=reflect_type)
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                            check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE,
+                            tol={np.float32: 1e-3, np.complex64: 1e-3})
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @unittest.skipIf(numpy_version < (1, 16, 6), "numpy <= 1.16.5 has a bug in linear_rmap")
