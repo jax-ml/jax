@@ -40,7 +40,6 @@ Limitation = NamedTuple("Limitation", [ ("primitive_name", str)
                                       , ("devices", Tuple[str,...])
                                       ])
 
-CATEGORY_POSSIBLE_INCORRECT_RESULTS = "Possible incorrect results"
 CATEGORY_MISSING_TF_SUPPORT = "Missing TF support"
 
 def categorize(prim: core.Primitive, *args, **kwargs) \
@@ -76,11 +75,6 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if additional_msg:
       msg += '; ' + additional_msg
     _report_failure(CATEGORY_MISSING_TF_SUPPORT, msg, np_dtype, devs=devs)
-
-  def tf_possible_incorrect(np_dtype: Optional[NpDType] = None,
-                            msg: str = "",
-                            devs: Sequence[str] = all_devices) -> None:
-    _report_failure(CATEGORY_POSSIBLE_INCORRECT_RESULTS, msg, np_dtype, devs=devs)
 
   def _to_np_dtype(dtype) -> NpDType:
     try:
