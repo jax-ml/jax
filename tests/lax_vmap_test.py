@@ -74,7 +74,12 @@ class LaxVmapTest(jtu.JaxTestCase):
     args = [rng(shape, dtype) for shape, dtype in zip(batched_shapes, dtypes)]
     args_slice = args_slicer(args, bdims)
     ans = api.vmap(op, bdims)(*args)
-    expected = np.stack([op(*args_slice(i)) for i in range(bdim_size)])
+    if bdim_size == 0:
+      args = [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
+      out = op(*args)
+      expected = np.zeros((0,) + out.shape, out.dtype)
+    else:
+      expected = np.stack([op(*args_slice(i)) for i in range(bdim_size)])
     self.assertAllClose(ans, expected, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -642,6 +647,8 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(shape, idxs.shape)))
   def testGather(self, shape, dtype, idxs, dnums, slice_sizes, bdims):
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
+    self._CheckBatching(fun, 0, bdims, [shape, idxs.shape], [dtype, idxs.dtype],
+                        jtu.rand_default(self.rng()))
     self._CheckBatching(fun, 5, bdims, [shape, idxs.shape], [dtype, idxs.dtype],
                         jtu.rand_default(self.rng()))
 
