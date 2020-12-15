@@ -278,8 +278,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # Run JAX
     result_jax = func_jax(*args)
     if _output_hlo_stats:
+      backend = jax.lib.xla_bridge.get_backend()
+      c = jax.xla_computation(func_jax)(*args)
       _log_hlo(self._test_name, 'JAX',
-               jax.xla_computation(func_jax)(*args).as_hlo_text())
+               backend.compile(c).hlo_modules()[0].to_string())
 
     # Run TF in all execution modes
     func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
