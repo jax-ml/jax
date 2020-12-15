@@ -1,0 +1,3 @@
+# Size of generated HLO IR by test name
+
+{{hlo-stats-table}}

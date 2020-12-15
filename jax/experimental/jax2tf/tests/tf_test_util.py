@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import atexit
+import collections
+import functools
 import contextlib
 import logging
 import numpy as np
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import tensorflow as tf  # type: ignore[import]
 
 import jax
@@ -40,6 +42,57 @@ if os.getenv('JAX2TF_OUTPUT_LIMITATIONS') is not None:
   atexit.register(correctness_stats.pprint_all_limitations,
                   output_file, template_file)
 
+# This dictionary gathers, for each test, the HLO IR generated for the JAX
+# function and the one generated for the equivalent TF function in compiled
+# mode.
+generated_hlo_ir: Dict[str, Dict[str, str]] = (
+    collections.defaultdict(functools.partial(collections.defaultdict, str))) # type: ignore
+
+def _log_hlo(test_name: str, key_name: str, hlo_ir: str) -> None:
+  generated_hlo_ir[test_name][key_name] = hlo_ir
+
+def prettify_hlo_stats() -> str:
+  hlo_by_test = list(generated_hlo_ir.items())
+
+  def _pipewrap(columns):
+    return '| ' + ' | '.join(columns) + ' |'
+
+  max_column_length = 30
+  def _split(string):
+    split_string = "`" + string[:max_column_length] + "`"
+    for k in range(max_column_length, len(string), max_column_length):
+      split_string += '<br>`' + string[k:k + max_column_length] + "`"
+    return split_string
+
+  modes = ['JAX', 'TF compiled']
+  column_names = ['Test name'] + modes
+  header = [column_names, ['---'] * len(column_names)]
+  table = []
+
+  for test_name, hlo in hlo_by_test:
+    table.append([_split(test_name)] + [str(len(hlo[mode])) for mode in modes])
+
+  return '\n'.join(line for line in map(_pipewrap, header + sorted(table)))
+
+def _pprint_all_hlo_stats(output_file: str, template_file: str) -> None:
+  with open(template_file, 'r') as f:
+    output = f.read()
+
+  hlo_stats_table = prettify_hlo_stats()
+  output = output.replace('{{hlo-stats-table}}', hlo_stats_table)
+
+  with open(output_file, 'w') as f:
+    f.write(output)
+
+_output_hlo_stats = False
+
+if os.getenv('JAX2TF_OUTPUT_HLO_STATS') is not None:
+  output_file = os.path.join(os.path.dirname(__file__),
+                             '../g3doc/hlo_comparison.md')
+  template_file = os.path.join(os.path.dirname(__file__),
+                               '../g3doc/hlo_comparison.md.template')
+  atexit.register(_pprint_all_hlo_stats, output_file, template_file)
+  _output_hlo_stats = True
 
 def _make_tf_args(args):
   def _convert_if_bfloat16(v):
@@ -56,20 +109,20 @@ def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
     return tf.TensorSpec(np.shape(tf_arg), tf_arg.dtype)
   return tf.nest.map_structure(_make_one_arg_signature, list(tf_args))
 
-def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
+def _build_tf_function(func_tf: Callable, *tf_args, mode: str):
   if mode == "eager":
-    return func_tf(*tf_args)
+    return func_tf
   elif mode == "graph":
     return tf.function(
       func_tf, autograph=False,
-      input_signature=_make_tf_input_signature(*tf_args))(*tf_args)
+      input_signature=_make_tf_input_signature(*tf_args))
   elif mode == "compiled":
     # Adding an explicit input_signature prevents TF from constant-folding
     # the computation eagerly before compilation
     return tf.function(
       func_tf, autograph=False,
       experimental_compile=True,
-      input_signature=_make_tf_input_signature(*tf_args))(*tf_args)
+      input_signature=_make_tf_input_signature(*tf_args))
   else:
     assert False, (
         f"Expected 'eager', 'graph', or 'compiled' for mode: got '{mode}'")
@@ -92,6 +145,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                        self.tf_default_device.device_type)
 
     self._collect_limitations = False
+
+    test_name = os.environ.get('PYTEST_CURRENT_TEST')
+    assert test_name is not None, 'Could not read test name'
+    test_name = 'test_' + test_name.split('::test_')[1].split(' (call)')[0]
+    self._test_name = test_name
 
     with contextlib.ExitStack() as stack:
       stack.enter_context(tf.device(self.tf_default_device))
@@ -158,7 +216,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     result_tf = None
 
     try:
-      result_tf = _run_tf_function(func_tf, *tf_args, mode=mode)
+      func_tf = _build_tf_function(func_tf, *tf_args, mode=mode)
+      if _output_hlo_stats and mode == 'compiled':
+        _log_hlo(self._test_name, 'TF compiled',
+                 func_tf.experimental_get_compiler_ir(*tf_args)()) # type: ignore
+      result_tf = func_tf(*tf_args)
       tf_exception = None
     except Exception as e:
       tf_exception = e
@@ -211,6 +273,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     """
     # Run JAX
     result_jax = func_jax(*args)
+    if _output_hlo_stats:
+      _log_hlo(self._test_name, 'JAX',
+               jax.xla_computation(func_jax)(*args).as_hlo_text())
+
     # Run TF in all execution modes
     func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
 
