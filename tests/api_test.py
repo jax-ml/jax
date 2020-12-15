@@ -1757,8 +1757,17 @@ class APITest(jtu.JaxTestCase):
         api.vjp(api.pmap(f), x, x)[1]((x, x))
 
   def test_device_array_repr(self):
-    rep = repr(jnp.ones(()) + 1.)
-    self.assertStartsWith(rep, 'DeviceArray')
+    rep = jnp.ones(()) + 1.
+    self.assertStartsWith(repr(rep), "DeviceArray")
+
+  def test_device_array_hash(self):
+    rep = jnp.ones(()) + 1.
+    self.assertIsInstance(rep, jax.interpreters.xla._DeviceArray)
+    msg = "JAX DeviceArray, like numpy.ndarray, is not hashable."
+    with self.assertRaisesRegex(TypeError, msg):
+      hash(rep)
+    with self.assertRaisesRegex(TypeError, msg):
+      hash(rep.device_buffer)
 
   def test_grad_without_enough_args_error_message(self):
     # https://github.com/google/jax/issues/1696

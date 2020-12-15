@@ -1255,7 +1255,7 @@ for device_array in [_DeviceArray, _CppDeviceArray]:
   def __hash__(self):
     raise TypeError("JAX DeviceArray, like numpy.ndarray, is not hashable.")
 
-  setattr(device_array, "__eq__", __hash__)
+  setattr(device_array, "__hash__", __hash__)
 
   # The following methods are dynamically overridden in lax_numpy.py.
   def raise_not_implemented():
