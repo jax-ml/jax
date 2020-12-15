@@ -26,6 +26,7 @@ import collections
 import functools
 import inspect
 import itertools as it
+import operator
 import threading
 import weakref
 from typing import Any, Callable, Iterable, List, NamedTuple, Optional, Sequence, Tuple, TypeVar, Union
@@ -43,7 +44,7 @@ from .core import eval_jaxpr
 from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial,
                        argnums_partial_except, flatten_axes, donation_vector,
-                       rebase_donate_argnums)
+                       rebase_donate_argnums, _ensure_index, _ensure_index_tuple)
 from ._src import traceback_util
 from ._src.traceback_util import api_boundary
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
@@ -189,8 +190,8 @@ def _python_jit(
 ) -> Callable:
   """The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit."""
   _check_callable(fun)
-  static_argnums = _ensure_tuple(static_argnums)
-  donate_argnums = _ensure_tuple(donate_argnums)
+  static_argnums = _ensure_index_tuple(static_argnums)
+  donate_argnums = _ensure_index_tuple(donate_argnums)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   @wraps(fun)
@@ -248,8 +249,8 @@ def _cpp_jit(
   feature.
   """
   _check_callable(fun)
-  static_argnums = _ensure_tuple(static_argnums)
-  donate_argnums = _ensure_tuple(donate_argnums)
+  static_argnums = _ensure_index_tuple(static_argnums)
+  donate_argnums = _ensure_index_tuple(donate_argnums)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   if device is not None and backend is not None:
@@ -567,8 +568,8 @@ def xla_computation(fun: Callable,
   del instantiate_const_outputs  # Unused
 
   _check_callable(fun)
-  static_argnums = _ensure_tuple(static_argnums)
-  donate_argnums = _ensure_tuple(donate_argnums)
+  static_argnums = _ensure_index_tuple(static_argnums)
+  donate_argnums = _ensure_index_tuple(donate_argnums)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   fun_name = getattr(fun, "__name__", "unknown")
@@ -762,11 +763,12 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
             "same shape as the arguments at positions {argnums}.")
 
   _check_callable(fun)
+  argnums = _ensure_index(argnums)
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   @api_boundary
   def value_and_grad_f(*args, **kwargs):
-    max_argnum = argnums if type(argnums) is int else max(argnums)
+    max_argnum = argnums if isinstance(argnums, int) else max(argnums)
     if max_argnum >= len(args):
       msg = ("differentiating with respect to argnums={} requires at least "
              "{} positional arguments to be passed by the caller, but got only "
@@ -868,6 +870,7 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
    [ 1.6209   0.       0.84147]]
   """
   _check_callable(fun)
+  argnums = _ensure_index(argnums)
 
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
@@ -1467,8 +1470,8 @@ def pmap(fun: Callable[..., T],
 
   _check_callable(fun)
   axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
-  static_broadcasted_tuple = _ensure_tuple(static_broadcasted_argnums)
-  donate_tuple = rebase_donate_argnums(_ensure_tuple(donate_argnums),
+  static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
+  donate_tuple = rebase_donate_argnums(_ensure_index_tuple(donate_argnums),
                                        static_broadcasted_tuple)
 
   @wraps(fun)
@@ -2000,8 +2003,7 @@ def make_jaxpr(fun: Callable,
     in (g,) }
   """
   _check_callable(fun)
-  if isinstance(static_argnums, int):
-    static_argnums = (static_argnums,)
+  static_argnums = _ensure_index_tuple(static_argnums)
 
   @wraps(fun)
   @api_boundary
@@ -2578,9 +2580,6 @@ def defvjp(fun, *vjprules):
                    for x, vjp in zip(primals, vjprules))
     return ans, vjpfun
   defvjp_all(fun, custom_vjp)
-
-def _ensure_tuple(x: Union[int, Iterable[int]]) -> Tuple[int, ...]:
-  return (x,) if isinstance(x, int) else tuple(x)
 
 def invertible(fun: Callable) -> Callable:
   """Asserts that the decorated function is invertible.
