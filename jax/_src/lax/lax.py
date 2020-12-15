@@ -463,11 +463,7 @@ def bitcast_convert_type(operand: Array, new_dtype: DType) -> Array:
     `new_dtype`.
   """
   new_dtype = dtypes.canonicalize_dtype(new_dtype)
-  old_dtype = _dtype(operand)
-  if old_dtype != new_dtype:
-    return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
-  else:
-    return operand
+  return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
 
 def clamp(min: Array, x: Array, max: Array) -> Array:
   r"""Elementwise clamp.
@@ -1134,9 +1130,12 @@ def reduce(operands: Array, init_values: Array, computation: Callable,
                      f' {len(flat_operands)} vs. {len(flat_init_values)}')
   monoid_reducer = _get_monoid_reducer(computation, flat_init_values)
   if monoid_reducer:
-    return monoid_reducer(*flat_operands, dimensions)
+    # monoid reducers bypass the weak_type_rule, so we set it explicitly.
+    weak_type = dtypes.is_weakly_typed(*flat_operands) and dtypes.is_weakly_typed(*flat_init_values)
+    return convert_element_type(monoid_reducer(*flat_operands, dimensions), weak_type=weak_type)
   else:
     flat_init_avals = safe_map(_abstractify, flat_init_values)
+    # breakpoint()
     jaxpr, consts, out_tree = _variadic_reduction_jaxpr(
         computation, tuple(flat_init_avals), init_value_tree)
     out = reduce_p.bind(*(flat_operands + flat_init_values), computation=computation,
@@ -1169,9 +1168,8 @@ def _get_monoid_reducer(monoid_op: Callable, xs: Array) -> Optional[Callable]:
   dtype = _dtype(x)
   if (type(aval) is ConcreteArray) and aval.shape == ():
     if monoid_op is add:
-      return np.equal(aval.val, 0) and partial(
-          _reduce_sum)
-    if monoid_op is mul:
+      return np.equal(aval.val, 0) and partial(_reduce_sum)
+    elif monoid_op is mul:
       return np.equal(aval.val, 1) and _reduce_prod
     elif monoid_op is bitwise_or and dtype == np.bool_:
       return np.equal(aval.val, _get_max_identity(dtype)) and _reduce_or
@@ -1972,7 +1970,9 @@ _input_dtype = lambda *args, **_: dtypes.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: np.abs(np.zeros((), dtype)).dtype
 
-_input_weak_type = lambda *args, **_: args[0].weak_type
+_strip_weak_type = lambda *args, **_: False
+def _argnum_weak_type(*argnums):
+  return lambda *args, **_: all(args[i].weak_type for i in argnums)
 
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
                        multiple_results=False, weak_type_rule=None):
@@ -1986,25 +1986,27 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule, *args, **kwargs):
   assert all(isinstance(arg, UnshapedArray) for arg in args), args
-  weak_type = weak_type_rule(*args, **kwargs)
+  weak_types = weak_type_rule(*args, **kwargs)
   least_specialized = _max(
       map(type, args), key=operator.attrgetter('array_abstraction_level'))
   if least_specialized is ConcreteArray:
     out_vals = prim.impl(*[x.val for x in args], **kwargs)
     if not prim.multiple_results:
-      out_vals = [out_vals]
-    out_avals = [ConcreteArray(v, weak_type=weak_type) for v in out_vals]
+      out_vals, weak_types = [out_vals], [weak_types]
+    out_avals = [ConcreteArray(v, weak_type=weak_type)
+                 for v, weak_type in safe_zip(out_vals, weak_types)]
   elif least_specialized is ShapedArray:
     shapes, dtypes = shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs)
     if not prim.multiple_results:
-      shapes, dtypes = [shapes], [dtypes]
+      shapes, dtypes, weak_types = [shapes], [dtypes], [weak_types]
     out_avals = [ShapedArray(shape, dtype, weak_type=weak_type)
-                 for shape, dtype in safe_zip(shapes, dtypes)]
+                 for shape, dtype, weak_type in safe_zip(shapes, dtypes, weak_types)]
   elif least_specialized is UnshapedArray:
     dtypes = dtype_rule(*args, **kwargs)
     if not prim.multiple_results:
-      dtypes = [dtypes]
-    out_avals = [UnshapedArray(dtype, weak_type=weak_type) for dtype in dtypes]
+      dtypes, weak_types = [dtypes], [weak_types]
+    out_avals = [UnshapedArray(dtype, weak_type=weak_type)
+                 for dtype, weak_type in safe_zip(dtypes, weak_types)]
   else:
     raise TypeError(args, least_specialized)
   if not prim.multiple_results:
@@ -2075,8 +2077,7 @@ def _broadcasting_shape_rule(name, *avals):
   return result_shape
 
 def _standard_weak_type_rule(name, *avals, **kwargs):
-  # TODO(jakevdp): add logic to propagate weak types.
-  return False
+  return all(aval.weak_type for aval in avals)
 
 def _naryop_weak_type_rule(name, *avals, **kwargs):
   if any(aval.dtype is dtypes.float0 for aval in avals):
@@ -2466,9 +2467,6 @@ def _integer_pow_dtype_rule(x, *, y):
                     f"integer_pow({x}, {y})")
   return dtype
 
-def _integer_pow_weak_type_rule(x, *, y):
-  return x.weak_type and dtypes.is_weakly_typed(y)
-
 def _integer_pow_translation_rule(c, x, *, y):
   if y == 0:
     shape = c.get_shape(x)
@@ -2490,7 +2488,7 @@ def _integer_pow_jvp(g, x, *, y):
 
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
-  translation_rule=_integer_pow_translation_rule, weak_type_rule=_integer_pow_weak_type_rule)
+  translation_rule=_integer_pow_translation_rule)
 batching.defvectorized(integer_pow_p)
 masking.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
@@ -2690,7 +2688,8 @@ def _bitcast_convert_type_translation_rule(c, operand, *, new_dtype):
 
 bitcast_convert_type_p = standard_primitive(
     _bitcast_convert_type_shape_rule, _bitcast_convert_type_dtype_rule,
-    'bitcast_convert_type', _bitcast_convert_type_translation_rule)
+    'bitcast_convert_type', _bitcast_convert_type_translation_rule,
+    weak_type_rule=_strip_weak_type)
 ad.defjvp_zero(bitcast_convert_type_p)
 batching.defvectorized(bitcast_convert_type_p)
 masking.defvectorized(bitcast_convert_type_p)
@@ -3355,8 +3354,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
 
 
 broadcast_in_dim_p = standard_primitive(
-    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim',
-    weak_type_rule=_input_weak_type)
+    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
@@ -3713,8 +3711,7 @@ def _rev_batch_rule(batched_args, batch_dims, *, dimensions):
   new_dimensions = [i + 1 if i >= bdim else i for i in dimensions]
   return rev(operand, new_dimensions), bdim
 
-rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev',
-                           weak_type_rule=_input_weak_type)
+rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev')
 ad.deflinear(rev_p, lambda t, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
@@ -3843,7 +3840,8 @@ def _select_jvp(primals, tangents):
     out_dot = select(pred, on_true_dot, on_false_dot)
   return out, out_dot
 
-select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select')
+select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select',
+                              weak_type_rule=_argnum_weak_type(1, 2))
 ad.primitive_jvps[select_p] = _select_jvp
 ad.primitive_transposes[select_p] = _select_transpose_rule
 batching.primitive_batchers[select_p] = _select_batch_rule
@@ -3946,7 +3944,7 @@ def _slice_masking_rule(
                strides=strides)
 
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
-                             _slice_translation_rule, weak_type_rule=_input_weak_type)
+                             _slice_translation_rule)
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 masking.masking_rules[slice_p] = _slice_masking_rule
@@ -4035,7 +4033,7 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
 
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
-    _dynamic_slice_translation_rule)
+    _dynamic_slice_translation_rule, weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp  # TODO
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
@@ -4366,7 +4364,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    _gather_translation_rule, weak_type_rule=_input_weak_type)
+    _gather_translation_rule, weak_type_rule=_argnum_weak_type(0))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
@@ -4677,7 +4675,7 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
-    _scatter_add_translation_rule)
+    _scatter_add_translation_rule, weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
@@ -4688,7 +4686,7 @@ xla.backend_specific_translations['gpu'][scatter_add_p] = partial(
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
-    _scatter_translation_rule)
+    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
 
 def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
                          indices_are_sorted, unique_indices, **kw):
@@ -4805,14 +4803,14 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
 scatter_min_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
-    _scatter_translation_rule)
+    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_min_p] = (
   partial(_scatter_batching_rule, scatter_min))
 ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 
 scatter_max_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
-    _scatter_translation_rule)
+    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max))
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
@@ -4900,7 +4898,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
 scatter_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter',
-    _scatter_translation_rule)
+    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
@@ -4924,6 +4922,10 @@ def _reduce_dtype_rule(*args, computation, jaxpr, consts, dimensions):
       for in_arg in init_value_args
   ]
 
+def _reduce_weak_type_rule(*args, computation, jaxpr, consts, dimensions):
+  operand_args, init_value_args = split_list(args, [len(args) // 2])
+  return [op.weak_type and init_value.weak_type
+          for op, init_value in safe_zip(operand_args, init_value_args)]
 
 def _reduce_translation_rule(c, *values, computation, jaxpr,
                              consts, dimensions):
@@ -4991,7 +4993,7 @@ def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
 
 reduce_p = standard_primitive(_reduce_shape_rule, _reduce_dtype_rule,
                               'reduce', translation_rule=_reduce_translation_rule,
-                              multiple_results=True)
+                              multiple_results=True, weak_type_rule=_reduce_weak_type_rule)
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 
@@ -5177,7 +5179,8 @@ _argmax_translation_rule = partial(_argminmax_translation_rule, xops.Gt,
                                    _get_max_identity)
 
 argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
-                              'argmin', _argmin_translation_rule)
+                              'argmin', _argmin_translation_rule,
+                              weak_type_rule=_strip_weak_type)
 batching.defreducer(argmin_p)
 ad.defjvp_zero(argmin_p)
 xla.backend_specific_translations['gpu'][argmin_p] = xla.lower_fun(
@@ -5185,7 +5188,8 @@ xla.backend_specific_translations['gpu'][argmin_p] = xla.lower_fun(
   multiple_results=False)
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
-                              'argmax', _argmax_translation_rule)
+                              'argmax', _argmax_translation_rule,
+                              weak_type_rule=_strip_weak_type)
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 xla.backend_specific_translations['gpu'][argmax_p] = xla.lower_fun(
@@ -5207,14 +5211,16 @@ def _reduce_logical_translation_rule(prim, identity, c, operand, *, axes):
 _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
                                       or_p, _get_max_identity)
 reduce_or_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(np.bool_),
-                                 'reduce_or', _reduce_or_translation_rule)
+                                 'reduce_or', _reduce_or_translation_rule,
+                                 weak_type_rule=_strip_weak_type)
 batching.defreducer(reduce_or_p)
 
 
 _reduce_and_translation_rule = partial(_reduce_logical_translation_rule,
                                        and_p, _get_min_identity)
 reduce_and_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(np.bool_),
-                                 'reduce_and', _reduce_and_translation_rule)
+                                 'reduce_and', _reduce_and_translation_rule,
+                                 weak_type_rule=_strip_weak_type)
 batching.defreducer(reduce_and_p)
 
 def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
@@ -5828,7 +5834,7 @@ def _top_k_abstract_eval(operand, *, k):
     msg = "k argument to top_k must be no larger than minor dimension; {} vs {}"
     raise ValueError(msg.format(k, shape))
   shape[-1] = k
-  return (ShapedArray(shape, operand.dtype),
+  return (ShapedArray(shape, operand.dtype, operand.weak_type),
           ShapedArray(shape, np.dtype(np.int32)))
 
 def _top_k_jvp(primals, tangents, *, k):
@@ -6025,7 +6031,7 @@ def _rng_uniform_abstract_eval(a, b, *, shape):
     raise ValueError(
       "Arguments to rng_uniform must be scalars; got shapes {} and {}."
       .format(a.shape, b.shape))
-  return ShapedArray(shape, a.dtype)
+  return ShapedArray(shape, a.dtype, weak_type=(a.weak_type and b.weak_type))
 
 def _rng_uniform_translation_rule(c, a, b, *, shape):
   xla_shape = xc.Shape.array_shape(c.get_shape(a).xla_element_type(), shape)
