@@ -2068,6 +2068,27 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "tangent values inconsistent"):
       f_jvp(np.ones(2, np.int32))
 
+  def test_dunder_jax_array(self):
+    # https://github.com/google/jax/pull/4725
+
+    class AlexArray:
+      def __init__(self, jax_val):
+        self.jax_val = jax_val
+      def __jax_array__(self):
+        return self.jax_val
+      dtype = property(lambda self: self.jax_val.dtype)
+      shape = property(lambda self: self.jax_val.shape)
+
+    x = AlexArray(jnp.array([1., 2., 3.]))
+    y = jnp.sin(x)
+    self.assertAllClose(y, jnp.sin(jnp.array([1., 2., 3.])))
+    y = api.grad(api.jit(lambda x: jnp.sin(x).sum()))(x)
+    self.assertAllClose(y, jnp.cos(jnp.array([1., 2., 3.])))
+
+    x = AlexArray(jnp.array([[1., 2., 3.]]))
+    y = api.pmap(jnp.sin)(x)
+    self.assertAllClose(y, jnp.sin(jnp.array([[1., 2., 3.]])))
+
 
 class RematTest(jtu.JaxTestCase):
 

@@ -437,6 +437,9 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, np.ComplexWarning, stacklevel=2)
 
+  if hasattr(operand, '__jax_array__'):
+    operand = operand.__jax_array__()
+
   if not isinstance(operand, (core.Tracer, xla.DeviceArray)):
     return _device_put_raw(np.asarray(operand, dtype=new_dtype),
                            weak_type=new_weak_type)
