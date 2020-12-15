@@ -57,7 +57,7 @@ def prettify_hlo_stats() -> str:
   def _pipewrap(columns):
     return '| ' + ' | '.join(columns) + ' |'
 
-  max_column_length = 30
+  max_column_length = 100
   def _split(string):
     split_string = "`" + string[:max_column_length] + "`"
     for k in range(max_column_length, len(string), max_column_length):
@@ -70,7 +70,11 @@ def prettify_hlo_stats() -> str:
   table = []
 
   for test_name, hlo in hlo_by_test:
-    table.append([_split(test_name)] + [str(len(hlo[mode])) for mode in modes])
+    nb_lines_per_mode = [
+        str(len(list(filter(lambda line: line != '', hlo[mode].split('\n')))))
+        for mode in modes
+    ]
+    table.append([_split(test_name)] + nb_lines_per_mode)
 
   return '\n'.join(line for line in map(_pipewrap, header + sorted(table)))
 
@@ -219,7 +223,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       func_tf = _build_tf_function(func_tf, *tf_args, mode=mode)
       if _output_hlo_stats and mode == 'compiled':
         _log_hlo(self._test_name, 'TF compiled',
-                 func_tf.experimental_get_compiler_ir(*tf_args)()) # type: ignore
+                 func_tf.experimental_get_compiler_ir(*tf_args)(stage='optimized_hlo')) # type: ignore
       result_tf = func_tf(*tf_args)
       tf_exception = None
     except Exception as e:
