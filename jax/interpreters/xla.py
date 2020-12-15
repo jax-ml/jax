@@ -129,7 +129,7 @@ def device_put(x, device: Optional[Device] = None) -> Tuple[Any]:
   elif hasattr(x, '__jax_array__'):
     return device_put(x.__jax_array__(), device)
   else:
-    raise TypeError(f"No device_put handler for type: {type(x)}") from err
+    raise TypeError(f"No device_put handler for type: {type(x)}")
 
 def _device_put_array(x, device: Optional[Device]):
   backend = xb.get_device_backend(device)
