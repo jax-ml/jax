@@ -1464,6 +1464,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @unittest.skipIf(numpy_version < (1, 17, 0), "empty mode is new in numpy 1.17.0")
+  def testPadEmpty(self):
+    arr = np.arange(6).reshape(2, 3)
+
+    pad_width = ((2, 3), (3, 1))
+    np_res = np.pad(arr, pad_width=pad_width, mode="empty")
+    jnp_res = jnp.pad(arr, pad_width=pad_width, mode="empty")
+
+    np.testing.assert_equal(np_res.shape, jnp_res.shape)
+    np.testing.assert_equal(arr, np_res[2:-3, 3:-1])
+    np.testing.assert_equal(arr, jnp_res[2:-3, 3:-1])
+    np.testing.assert_equal(np_res[2:-3, 3:-1], jnp_res[2:-3, 3:-1])
+
   def testPadWithNumpyPadWidth(self):
     a = [1, 2, 3, 4, 5]
     f = jax.jit(
