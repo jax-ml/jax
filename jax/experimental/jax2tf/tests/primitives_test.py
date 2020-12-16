@@ -858,8 +858,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_comparators(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
-  @primitive_harness.parameterized(primitive_harness.lax_bitwise_not)
-  def test_bitwise_not(self, harness):
+  @primitive_harness.parameterized(primitive_harness.lax_not)
+  def test_not(self, harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_zeros_like)
@@ -908,58 +908,103 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
             f"{divisor.dtype}")
     self.ConvertAndCompare(harness.dyn_fun, dividend, divisor)
 
-  @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
-  def test_binary_elementwise(self, harness):
-    tol = None
-    lax_name, dtype = harness.params["lax_name"], harness.params["dtype"]
-    if lax_name in ("igamma", "igammac"):
-      # TODO(necula): fix bug with igamma/f16
-      if dtype in [np.float16, dtypes.bfloat16]:
-        raise unittest.SkipTest("TODO: igamma(c) unsupported with (b)float16 in JAX")
-      # TODO(necula): fix bug with igamma/f32 on TPU
-      if dtype is np.float32 and jtu.device_under_test() == "tpu":
-        raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
-    arg1, arg2 = harness.dyn_args_maker(self.rng())
-    custom_assert = None
-    if lax_name == "igamma":
-      # igamma is not defined when the first argument is <=0
-      def custom_assert(result_jax, result_tf):
-        # lax.igamma returns NaN when arg1 == arg2 == 0; tf.math.igamma returns 0
-        special_cases = (arg1 == 0.) & (arg2 == 0.)
-        nr_special_cases = np.count_nonzero(special_cases)
-        self.assertAllClose(np.full((nr_special_cases,), np.nan, dtype=dtype),
-                            result_jax[special_cases])
-        self.assertAllClose(np.full((nr_special_cases,), 0., dtype=dtype),
-                            result_tf[special_cases])
-        # non-special cases are equal
-        self.assertAllClose(result_jax[~ special_cases],
-                            result_tf[~ special_cases])
-    if lax_name == "igammac":
-      # On GPU, tolerance also needs to be adjusted in compiled mode
-      if dtype == np.float64 and jtu.device_under_test() == 'gpu':
-        tol = 1e-14
-      # igammac is not defined when the first argument is <=0
-      def custom_assert(result_jax, result_tf):  # noqa: F811
-        # lax.igammac returns 1. when arg1 <= 0; tf.math.igammac returns NaN
-        special_cases = (arg1 <= 0.) | (arg2 <= 0)
-        nr_special_cases = np.count_nonzero(special_cases)
-        self.assertAllClose(np.full((nr_special_cases,), 1., dtype=dtype),
-                            result_jax[special_cases])
-        self.assertAllClose(np.full((nr_special_cases,), np.nan, dtype=dtype),
-                            result_tf[special_cases])
-        # On CPU, tolerance only needs to be adjusted in eager & graph modes
-        tol = None
-        if dtype == np.float64:
-          tol = 1e-14
+  @primitive_harness.parameterized(primitive_harness.lax_atan2)
+  def test_atan2(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
-        # non-special cases are equal
-        self.assertAllClose(result_jax[~ special_cases],
-                            result_tf[~ special_cases], atol=tol, rtol=tol)
+  @primitive_harness.parameterized(primitive_harness.lax_igamma)
+  def test_igamma(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+
+    # TODO(necula): fix bug with igamma/f16
+    if dtype in [np.float16, dtypes.bfloat16]:
+      raise unittest.SkipTest("TODO: igamma unsupported with (b)float16 in JAX")
+      # TODO(necula): fix bug with igamma/f32 on TPU
+    elif dtype == np.float32 and jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
+
+    arg1, arg2 = harness.dyn_args_maker(self.rng())
+
+    # igamma is not defined when the first argument is <=0
+    def custom_assert(result_jax, result_tf):
+      # lax.igamma returns NaN when arg1 == arg2 == 0; tf.math.igamma returns 0
+      special_cases = (arg1 == 0.) & (arg2 == 0.)
+      nr_special_cases = np.count_nonzero(special_cases)
+      self.assertAllClose(np.full((nr_special_cases,), np.nan, dtype=dtype),
+                          result_jax[special_cases])
+      self.assertAllClose(np.full((nr_special_cases,), 0., dtype=dtype),
+                          result_tf[special_cases])
+      # non-special cases are equal
+      self.assertAllClose(result_jax[~ special_cases],
+                          result_tf[~ special_cases])
+
+    self.ConvertAndCompare(harness.dyn_fun, arg1, arg2,
+                           custom_assert=custom_assert)
+
+  @primitive_harness.parameterized(primitive_harness.lax_igammac)
+  def test_igammac(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+
+    # TODO(necula): fix bug with igammac/f16
+    if dtype in [np.float16, dtypes.bfloat16]:
+      raise unittest.SkipTest("TODO: igammac unsupported with (b)float16 in JAX")
+    # TODO(necula): fix bug with igammac/f32 on TPU
+    elif dtype == np.float32 and jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
+
+    arg1, arg2 = harness.dyn_args_maker(self.rng())
+
+    tol = 1e-14 if dtype == np.float64 else None
+
+    # igammac is not defined when the first argument is <=0
+    def custom_assert(result_jax, result_tf):  # noqa: F811
+      # lax.igammac returns 1. when arg1 <= 0; tf.math.igammac returns NaN
+      special_cases = (arg1 <= 0.) | (arg2 <= 0)
+      nr_special_cases = np.count_nonzero(special_cases)
+      self.assertAllClose(np.full((nr_special_cases,), 1., dtype=dtype),
+                          result_jax[special_cases])
+      self.assertAllClose(np.full((nr_special_cases,), np.nan, dtype=dtype),
+                          result_tf[special_cases])
+      # non-special cases are equal
+      self.assertAllClose(result_jax[~ special_cases],
+                          result_tf[~ special_cases], atol=tol, rtol=tol)
+
     self.ConvertAndCompare(harness.dyn_fun, arg1, arg2,
                            custom_assert=custom_assert, atol=tol, rtol=tol)
 
-  @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise_logical)
-  def test_binary_elementwise_logical(self, harness):
+  @primitive_harness.parameterized(primitive_harness.lax_nextafter)
+  def test_nextafter(self, harness: primitive_harness.Harness):
+    lhs_shape, rhs_shape = harness.params["shapes"]
+    if lhs_shape != rhs_shape:
+      # TODO(bchetioui): this fails when compiling to XLA with the following
+      # error:
+      # RuntimeError: Internal: RET_CHECK failure (external/org_tensorflow/tensorflow/compiler/xla/client/xla_builder.cc:732) non_scalar_shape.value().dimensions() == shape->dimensions() Unimplemented implicit broadcast.
+      raise unittest.SkipTest("TODO: implicit broadcasting unimplemented in "
+                              "XLA")
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_and)
+  def test_and(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_or)
+  def test_or(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_xor)
+  def test_xor(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_shift_left)
+  def test_shift_left(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_shift_right_logical)
+  def test_shift_right_logical(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_shift_right_arithmetic)
+  def test_shift_right_arithmetic(self, harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_broadcast_in_dim)
@@ -981,20 +1026,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=tol, rtol=tol)
-
-  # TODO(necula): combine tests that are identical except for the harness
-  # wait until we get more experience with using harnesses.
-  @primitive_harness.parameterized(primitive_harness.lax_shift_left)
-  def test_shift_left(self, harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-
-  @primitive_harness.parameterized(primitive_harness.lax_shift_right_logical)
-  def test_shift_right_logical(self, harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-
-  @primitive_harness.parameterized(primitive_harness.lax_shift_right_arithmetic)
-  def test_shift_right_arithmetic(self, harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_slice)
   def test_slice(self, harness):
