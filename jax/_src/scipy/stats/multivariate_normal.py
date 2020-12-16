@@ -22,8 +22,12 @@ from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
 
 
-@_wraps(osp_stats.multivariate_normal.logpdf, update_doc=False)
-def logpdf(x, mean, cov):
+@_wraps(osp_stats.multivariate_normal.logpdf, update_doc=False, lax_description="""
+In the JAX version, the `allow_singular` argument is not implemented.
+""")
+def logpdf(x, mean, cov, allow_singular=None):
+  if allow_singular is not None:
+    raise NotImplementedError("allow_singular argument of multivariate_normal.logpdf")
   x, mean, cov = _promote_dtypes_inexact(x, mean, cov)
   if not mean.shape:
     return (-1/2 * jnp.square(x - mean) / cov

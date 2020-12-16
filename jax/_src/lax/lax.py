@@ -410,9 +410,9 @@ def lt(x: Array, y: Array) -> Array:
   r"""Elementwise less-than: :math:`x < y`."""
   return lt_p.bind(x, y)
 
-def convert_element_type(operand: Array, new_dtype: DType) -> Array:
+def convert_element_type(operand: Array, new_dtype: DType = None,
+                         weak_type: bool = False) -> Array:
   """Elementwise cast.
-
   Wraps XLA's `ConvertElementType
   <https://www.tensorflow.org/xla/operation_semantics#convertelementtype>`_
   operator, which performs an elementwise conversion from one type to another.
@@ -421,27 +421,30 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
   Args:
     operand: an array or scalar value to be cast
     new_dtype: the new type. Should be a NumPy type.
+    weak_type: whether the new dtype should be weak.
 
   Returns:
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
-  new_dtype = dtypes.canonicalize_dtype(new_dtype)
-  # Avoids dropping precision by casting Python scalars to the default Jax
-  # type. If we passed a Python scalar directly to the bind call below, it is
-  # cast to the default type as part of the calling convention.
-  if type(operand) in dtypes.python_scalar_dtypes:
-    operand = np.asarray(operand, new_dtype)
+  new_dtype = dtypes.canonicalize_dtype(new_dtype or _dtype(operand))
+  new_weak_type = bool(weak_type)
+
   old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
-  if old_dtype == new_dtype:
-    if isinstance(operand, (core.Tracer, xla.DeviceArray)):
-      return operand
-    else:
-      return _device_put_raw(np.asarray(operand))
+  old_weak_type = dtypes.is_weakly_typed(operand)
+
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, np.ComplexWarning, stacklevel=2)
-  return convert_element_type_p.bind(operand, new_dtype=new_dtype)
+
+  if not isinstance(operand, (core.Tracer, xla.DeviceArray)):
+    return _device_put_raw(np.asarray(operand, dtype=new_dtype),
+                           weak_type=new_weak_type)
+  elif (old_dtype, old_weak_type) == (new_dtype, new_weak_type):
+    return operand
+  else:
+    return convert_element_type_p.bind(operand, new_dtype=new_dtype,
+                                       weak_type=new_weak_type)
 
 def bitcast_convert_type(operand: Array, new_dtype: DType) -> Array:
   """Elementwise bitcast.
@@ -1448,15 +1451,16 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
   if np.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
+  weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
-  fill_value = convert_element_type(fill_value, dtype)
+  fill_value = convert_element_type(fill_value, dtype, weak_type)
   return broadcast(fill_value, shape)
 
-def _device_put_raw(x):
+def _device_put_raw(x, weak_type=None):
   if isinstance(x, xla.DeviceArray):
     return x
   else:
-    aval = raise_to_shaped(core.get_aval(x))
+    aval = raise_to_shaped(core.get_aval(x), weak_type=weak_type)
     return xla.array_result_handler(None, aval)(*xla.device_put(x))
 
 def iota(dtype: DType, size: int) -> Array:
@@ -1492,7 +1496,7 @@ def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   if config.omnistaging_enabled:
     bool_eye = eq(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
                   broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_eye, new_dtype=dtype)
+    return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False)
   else:
     lazy_expr = lazy.eye(dtype, (N, M), offset)
     aval = ShapedArray((N, M), dtype)
@@ -1508,7 +1512,7 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
     iotas = [broadcasted_iota(np.uint32, base_shape, i)
              for i in range(len(base_shape))]
     eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    result = convert_element_type_p.bind(_reduce(operator.and_, eyes), new_dtype=dtype)
+    result = convert_element_type_p.bind(_reduce(operator.and_, eyes), new_dtype=dtype, weak_type=False)
     return broadcast_in_dim(result, shape, axes)
   else:
     lazy_expr = lazy.broadcast(lazy.delta(dtype, base_shape), shape, axes)
@@ -1523,7 +1527,7 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   if config.omnistaging_enabled:
     bool_tri = ge(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
                   broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_tri, new_dtype=dtype)
+    return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
   else:
     lazy_expr = lazy.tri(dtype, (N, M), offset)
     aval = ShapedArray((N, M), dtype)
@@ -1738,9 +1742,11 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
     `fill_value`, similar to the output of np.full.
   """
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)
+  weak_type = dtype is None and dtypes.is_weakly_typed(x)
+  dtype = dtype or _dtype(x)
   if not config.omnistaging_enabled:
     fill_value = tie_in(x, fill_value)
-  return full(fill_shape, fill_value, dtype or _dtype(x))
+  return full(fill_shape, convert_element_type(fill_value, dtype, weak_type))
 
 
 def collapse(operand: Array, start_dimension: int,
@@ -1966,35 +1972,39 @@ _input_dtype = lambda *args, **_: dtypes.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: np.abs(np.zeros((), dtype)).dtype
 
+_input_weak_type = lambda *args, **_: args[0].weak_type
+
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
-                       multiple_results=False):
+                       multiple_results=False, weak_type_rule=None):
+  weak_type_rule = weak_type_rule or partial(_standard_weak_type_rule, name)
   prim = Primitive(name)
   prim.multiple_results = multiple_results
   prim.def_impl(partial(xla.apply_primitive, prim))
-  prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule))
+  prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule, weak_type_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
   return prim
 
-
-def standard_abstract_eval(prim, shape_rule, dtype_rule, *args, **kwargs):
+def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule, *args, **kwargs):
   assert all(isinstance(arg, UnshapedArray) for arg in args), args
+  weak_type = weak_type_rule(*args, **kwargs)
   least_specialized = _max(
       map(type, args), key=operator.attrgetter('array_abstraction_level'))
   if least_specialized is ConcreteArray:
     out_vals = prim.impl(*[x.val for x in args], **kwargs)
     if not prim.multiple_results:
       out_vals = [out_vals]
-    out_avals = safe_map(ConcreteArray, out_vals)
+    out_avals = [ConcreteArray(v, weak_type=weak_type) for v in out_vals]
   elif least_specialized is ShapedArray:
     shapes, dtypes = shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs)
     if not prim.multiple_results:
       shapes, dtypes = [shapes], [dtypes]
-    out_avals = safe_map(ShapedArray, shapes, dtypes)
+    out_avals = [ShapedArray(shape, dtype, weak_type=weak_type)
+                 for shape, dtype in safe_zip(shapes, dtypes)]
   elif least_specialized is UnshapedArray:
     dtypes = dtype_rule(*args, **kwargs)
     if not prim.multiple_results:
       dtypes = [dtypes]
-    out_avals = safe_map(UnshapedArray, dtypes)
+    out_avals = [UnshapedArray(dtype, weak_type=weak_type) for dtype in dtypes]
   else:
     raise TypeError(args, least_specialized)
   if not prim.multiple_results:
@@ -2018,8 +2028,9 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
 
 def unop(result_dtype, accepted_dtypes, name, translation_rule=None):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
+  weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
-                            translation_rule=translation_rule)
+                            translation_rule=translation_rule, weak_type_rule=weak_type_rule)
   batching.defvectorized(prim)
   masking.defvectorized(prim)
   return prim
@@ -2063,12 +2074,30 @@ def _broadcasting_shape_rule(name, *avals):
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
   return result_shape
 
+def _standard_weak_type_rule(name, *avals, **kwargs):
+  # TODO(jakevdp): add logic to propagate weak types.
+  return False
+
+def _naryop_weak_type_rule(name, *avals, **kwargs):
+  if any(aval.dtype is dtypes.float0 for aval in avals):
+    pos = next(i for i, aval in enumerate(avals) if aval.dtype is dtypes.float0)
+    raise TypeError(
+        f"Called {name} with a float0 at position {pos}. "
+        "float0s do not support any operations by design, because they "
+        "are not compatible with non-trivial vector spaces. No implicit dtype "
+        "conversion is done. You can use np.zeros_like(arr, dtype=np.float) "
+        "to cast a float0 array to a regular zeros array. \n"
+        "If you didn't expect to get a float0 you might have accidentally "
+        "taken a gradient with respect to an integer argument.")
+  return all(aval.weak_type for aval in avals)
 
 def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
   shape_rule = partial(_broadcasting_shape_rule, name)
+  weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
-                            translation_rule=translation_rule)
+                            translation_rule=translation_rule,
+                            weak_type_rule=weak_type_rule)
   batching.defbroadcasting(prim)
   masking.defnaryop(prim)
   return prim
@@ -2207,7 +2236,8 @@ log1p_p = standard_unop(_float | _complex, 'log1p')
 ad.defjvp(log1p_p, lambda g, x: div(g, add(x, _one(x))))
 
 tanh_p = standard_unop(_float | _complex, 'tanh')
-ad.defjvp2(tanh_p, lambda g, ans, x: mul(g, sub(_one(x), mul(ans, ans))))
+ad.defjvp2(tanh_p, lambda g, ans, x: mul(add(g, mul(g, ans)),
+                                         sub(_one(x), ans)))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
@@ -2291,7 +2321,7 @@ ad.defjvp(acosh_p,
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
 ad.defjvp(atanh_p,
-          lambda g, x: mul(g, reciprocal((_one(x) - x) * (_one(x) + x))))
+          lambda g, x: mul(reciprocal(_one(x) + x), div(g, (_one(x) - x))))
 
 regularized_incomplete_beta_p = standard_naryop(
     [_float, _float, _float], 'regularized_incomplete_beta',
@@ -2436,6 +2466,9 @@ def _integer_pow_dtype_rule(x, *, y):
                     f"integer_pow({x}, {y})")
   return dtype
 
+def _integer_pow_weak_type_rule(x, *, y):
+  return x.weak_type and dtypes.is_weakly_typed(y)
+
 def _integer_pow_translation_rule(c, x, *, y):
   if y == 0:
     shape = c.get_shape(x)
@@ -2457,7 +2490,7 @@ def _integer_pow_jvp(g, x, *, y):
 
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
-  translation_rule=_integer_pow_translation_rule)
+  translation_rule=_integer_pow_translation_rule, weak_type_rule=_integer_pow_weak_type_rule)
 batching.defvectorized(integer_pow_p)
 masking.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
@@ -2601,13 +2634,16 @@ lt_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'lt')
 ad.defjvp_zero(lt_p)
 
 
-def _convert_element_type_shape_rule(operand, *, new_dtype):
+def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
   return operand.shape
 
-def _convert_element_type_dtype_rule(operand, *, new_dtype):
+def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
   return new_dtype
 
-def _convert_element_type_translation_rule(c, operand, *, new_dtype):
+def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type):
+  return weak_type
+
+def _convert_element_type_translation_rule(c, operand, *, new_dtype, weak_type):
   old_dtype = c.get_shape(operand).numpy_dtype()
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
@@ -2615,25 +2651,27 @@ def _convert_element_type_translation_rule(c, operand, *, new_dtype):
   new_etype = xla_client.dtype_to_etype(new_dtype)
   return xops.ConvertElementType(operand, new_element_type=new_etype)
 
-def _convert_element_type_transpose_rule(ct, operand, *, new_dtype):
+def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
   assert ad.is_undefined_primal(operand)
   old_dtype = operand.aval.dtype
+  old_weak_type = dtypes.is_weakly_typed(operand)
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)]
   elif core.primal_dtype_to_tangent_dtype(old_dtype) is dtypes.float0:
     return [ad_util.Zero(ShapedArray(operand.aval.shape, dtype=dtypes.float0))]
   else:
-    return [convert_element_type_p.bind(ct, new_dtype=old_dtype)]
+    return [convert_element_type_p.bind(ct, new_dtype=old_dtype, weak_type=old_weak_type)]
 
-def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype):
+def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
   if core.primal_dtype_to_tangent_dtype(new_dtype) is dtypes.float0:
     return ad_util.Zero(ShapedArray(tangent.shape, dtype=dtypes.float0))
   else:
-    return convert_element_type_p.bind(tangent, new_dtype=new_dtype)
+    return convert_element_type_p.bind(tangent, new_dtype=new_dtype, weak_type=weak_type)
 
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
-    'convert_element_type', _convert_element_type_translation_rule)
+    'convert_element_type', _convert_element_type_translation_rule,
+    weak_type_rule=_convert_element_type_weak_type_rule)
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
@@ -3197,14 +3235,20 @@ def _dot_using_sum_of_products(lhs, rhs, *, dimension_numbers):
                 tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
 
 def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision):
+  return xops.DotGeneral(lhs, rhs,
+                         xc.make_dot_dimension_numbers(dimension_numbers),
+                         precision_config=_precision_config(precision))
+
+def _dot_general_cpu_translation_rule(c, lhs, rhs, *, dimension_numbers,
+                                      precision):
   dtype = c.get_shape(lhs).numpy_dtype()
   if dtypes.issubdtype(dtype, np.inexact):
     return xops.DotGeneral(lhs, rhs,
                            xc.make_dot_dimension_numbers(dimension_numbers),
                            precision_config=_precision_config(precision))
   else:
-    # TODO(b/134526360): XLA doesn't support bool or integer dots, so we emit a
-    # sum of products instead.
+    # TODO(b/134526360): XLA doesn't support bool or some integer dots on CPU,
+    # so we emit a sum of products instead.
     translation = xla.lower_fun(_dot_using_sum_of_products,
                                 multiple_results=False)
     return translation(c, lhs, rhs, dimension_numbers=dimension_numbers)
@@ -3227,6 +3271,8 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
+xla.backend_specific_translations['cpu'][dot_general_p] = \
+    _dot_general_cpu_translation_rule
 
 
 def _broadcast_shape_rule(operand, sizes):
@@ -3251,7 +3297,7 @@ def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
       np.equal(operand.shape, np.take(shape, broadcast_dimensions))):
     shape = _broadcast_in_dim_shape_rule(
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
-    aval = ShapedArray(shape, _dtype(operand))
+    aval = ShapedArray(shape, _dtype(operand), weak_type=dtypes.is_weakly_typed(operand))
     if operand._lazy_expr is None:
       lazy_expr = lazy.broadcast(lazy.array(operand.shape), shape, broadcast_dimensions)
     else:
@@ -3309,7 +3355,8 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
 
 
 broadcast_in_dim_p = standard_primitive(
-    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
+    _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim',
+    weak_type_rule=_input_weak_type)
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
@@ -3666,7 +3713,8 @@ def _rev_batch_rule(batched_args, batch_dims, *, dimensions):
   new_dimensions = [i + 1 if i >= bdim else i for i in dimensions]
   return rev(operand, new_dimensions), bdim
 
-rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev')
+rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev',
+                           weak_type_rule=_input_weak_type)
 ad.deflinear(rev_p, lambda t, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
@@ -3898,7 +3946,7 @@ def _slice_masking_rule(
                strides=strides)
 
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
-                             _slice_translation_rule)
+                             _slice_translation_rule, weak_type_rule=_input_weak_type)
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 masking.masking_rules[slice_p] = _slice_masking_rule
@@ -4304,7 +4352,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     counts = broadcasted_iota(start_indices.dtype, tuple(count_shape), 0)
     start_indices = concatenate([counts, start_indices], len(count_shape) - 1)
 
-    slice_sizes = (1,) + slice_sizes
+    slice_sizes = (_min(operand.shape[0], 1),) + slice_sizes
     collapsed_slice_dims = (0,) + tuple(np.add(1, dimension_numbers.collapsed_slice_dims))
     offset_dims = tuple(np.add(1, dimension_numbers.offset_dims))
     start_index_map = (0,) + tuple(np.add(1, dimension_numbers.start_index_map))
@@ -4318,7 +4366,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    _gather_translation_rule)
+    _gather_translation_rule, weak_type_rule=_input_weak_type)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
@@ -6181,7 +6229,6 @@ def _dynamic_slice_indices(operand, start_indices):
             if isinstance(i, (int, np.integer))
             else select(lt(i, _const(i, 0)), add(i, _const(i, d)), i)
             for i, d in zip(start_indices, operand.shape)]
-
 
 
 def _const(example, val):

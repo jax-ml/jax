@@ -94,16 +94,14 @@ class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}_shape={}_axes={}".format(
           inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes),
-       "axes": axes, "shape": shape, "dtype": dtype,
-       "rng_factory": rng_factory, "inverse": inverse, "real": real}
+       "axes": axes, "shape": shape, "dtype": dtype, "inverse": inverse, "real": real}
       for inverse in [False, True]
       for real in [False, True]
-      for rng_factory in [jtu.rand_default]
       for dtype in (real_dtypes if real and not inverse else all_dtypes)
       for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
       for axes in _get_fftn_test_axes(shape)))
-  def testFftn(self, inverse, real, shape, dtype, axes, rng_factory):
-    rng = rng_factory(self.rng())
+  def testFftn(self, inverse, real, shape, dtype, axes):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_op = _get_fftn_func(jnp.fft, inverse, real)
     np_op = _get_fftn_func(np.fft, inverse, real)
@@ -154,19 +152,17 @@ class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}_hermitian={}_shape={}_axis={}".format(
           inverse, real, hermitian, jtu.format_shape_dtype_string(shape, dtype), axis),
-       "axis": axis, "shape": shape, "dtype": dtype,
-       "rng_factory": rng_factory, "inverse": inverse, "real": real,
+       "axis": axis, "shape": shape, "dtype": dtype, "inverse": inverse, "real": real,
        "hermitian": hermitian}
       for inverse in [False, True]
       for real in [False, True]
       for hermitian in [False, True]
-      for rng_factory in [jtu.rand_default]
       for dtype in (real_dtypes if (real and not inverse) or (hermitian and inverse)
                                 else all_dtypes)
       for shape in [(10,)]
       for axis in [-1, 0]))
-  def testFft(self, inverse, real, hermitian, shape, dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+  def testFft(self, inverse, real, hermitian, shape, dtype, axis):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     name = 'fft'
     if real:
@@ -223,16 +219,14 @@ class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}_shape={}_axes={}".format(
           inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes),
-       "axes": axes, "shape": shape, "dtype": dtype,
-       "rng_factory": rng_factory, "inverse": inverse, "real": real}
+       "axes": axes, "shape": shape, "dtype": dtype, "inverse": inverse, "real": real}
       for inverse in [False, True]
       for real in [False, True]
-      for rng_factory in [jtu.rand_default]
       for dtype in (real_dtypes if real and not inverse else all_dtypes)
       for shape in [(16, 8, 4, 8), (16, 8, 4, 8, 4)]
       for axes in [(-2, -1), (0, 1), (1, 3), (-1, 2)]))
-  def testFft2(self, inverse, real, shape, dtype, axes, rng_factory):
-    rng = rng_factory(self.rng())
+  def testFft2(self, inverse, real, shape, dtype, axes):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     name = 'fft2'
     if real:
@@ -280,13 +274,12 @@ class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_size={}_d={}".format(
       jtu.format_shape_dtype_string([size], dtype), d),
-      "dtype": dtype, "size": size, "rng_factory": rng_factory, "d": d}
-    for rng_factory in [jtu.rand_default]
+      "dtype": dtype, "size": size, "d": d}
     for dtype in all_dtypes
     for size in [9, 10, 101, 102]
     for d in [0.1, 2.]))
-  def testFftfreq(self, size, d, dtype, rng_factory):
-    rng = rng_factory(self.rng())
+  def testFftfreq(self, size, d, dtype):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng([size], dtype),)
     jnp_op = jnp.fft.fftfreq
     np_op = np.fft.fftfreq
@@ -324,13 +317,12 @@ class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_size={}_d={}".format(
       jtu.format_shape_dtype_string([size], dtype), d),
-      "dtype": dtype, "size": size, "rng_factory": rng_factory, "d": d}
-    for rng_factory in [jtu.rand_default]
+      "dtype": dtype, "size": size, "d": d}
     for dtype in all_dtypes
     for size in [9, 10, 101, 102]
     for d in [0.1, 2.]))
-  def testRfftfreq(self, size, d, dtype, rng_factory):
-    rng = rng_factory(self.rng())
+  def testRfftfreq(self, size, d, dtype):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng([size], dtype),)
     jnp_op = jnp.fft.rfftfreq
     np_op = np.fft.rfftfreq
@@ -368,13 +360,12 @@ class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "dtype={}_axes={}".format(
       jtu.format_shape_dtype_string(shape, dtype), axes),
-      "dtype": dtype, "shape": shape, "rng_factory": rng_factory, "axes": axes}
-    for rng_factory in [jtu.rand_default]
+      "dtype": dtype, "shape": shape, "axes": axes}
     for dtype in all_dtypes
     for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
     for axes in _get_fftn_test_axes(shape)))
-  def testFftshift(self, shape, dtype, rng_factory, axes):
-    rng = rng_factory(self.rng())
+  def testFftshift(self, shape, dtype, axes):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda arg: jnp.fft.fftshift(arg, axes=axes)
     np_fn = lambda arg: np.fft.fftshift(arg, axes=axes)
@@ -383,13 +374,12 @@ class FftTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "dtype={}_axes={}".format(
       jtu.format_shape_dtype_string(shape, dtype), axes),
-      "dtype": dtype, "shape": shape, "rng_factory": rng_factory, "axes": axes}
-    for rng_factory in [jtu.rand_default]
+      "dtype": dtype, "shape": shape, "axes": axes}
     for dtype in all_dtypes
     for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
     for axes in _get_fftn_test_axes(shape)))
-  def testIfftshift(self, shape, dtype, rng_factory, axes):
-    rng = rng_factory(self.rng())
+  def testIfftshift(self, shape, dtype, axes):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda arg: jnp.fft.ifftshift(arg, axes=axes)
     np_fn = lambda arg: np.fft.ifftshift(arg, axes=axes)

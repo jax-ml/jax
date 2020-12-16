@@ -1757,8 +1757,17 @@ class APITest(jtu.JaxTestCase):
         api.vjp(api.pmap(f), x, x)[1]((x, x))
 
   def test_device_array_repr(self):
-    rep = repr(jnp.ones(()) + 1.)
-    self.assertStartsWith(rep, 'DeviceArray')
+    rep = jnp.ones(()) + 1.
+    self.assertStartsWith(repr(rep), "DeviceArray")
+
+  def test_device_array_hash(self):
+    rep = jnp.ones(()) + 1.
+    self.assertIsInstance(rep, jax.interpreters.xla._DeviceArray)
+    msg = "JAX DeviceArray, like numpy.ndarray, is not hashable."
+    with self.assertRaisesRegex(TypeError, msg):
+      hash(rep)
+    with self.assertRaisesRegex(TypeError, msg):
+      hash(rep.device_buffer)
 
   def test_grad_without_enough_args_error_message(self):
     # https://github.com/google/jax/issues/1696
@@ -1837,9 +1846,9 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
     subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
-    self.assertLen(inner_jaxpr.eqns, 2)
-    self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
-    self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
+    self.assertLen(inner_jaxpr.eqns, 2 if config.omnistaging_enabled else 3)
+    self.assertEqual(inner_jaxpr.eqns[-2].primitive.name, 'mul')
+    self.assertEqual(inner_jaxpr.eqns[-1].primitive.name, 'add')
 
   def test_primitive_compilation_cache(self):
     with jtu.count_primitive_compiles() as count:
@@ -2509,7 +2518,8 @@ class JaxprTest(jtu.JaxTestCase):
         let b = ge a 0.0
             c = add a 1.0
             d = add a 2.0
-            e = convert_element_type[ new_dtype=int32 ] b
+            e = convert_element_type[ new_dtype=int32
+                                      weak_type=False ] b
             f = cond[ branches=( { lambda  ; e_ a b c.
                                    let d = sub c a
                                    in (d,) }
@@ -2517,24 +2527,29 @@ class JaxprTest(jtu.JaxTestCase):
                                    let d = add b a
                                    in (d,) } )
                       linear=(False, False, False, False) ] e a a c d
-      in (f,) }
-      """
+        in (f,) }
+        """
     else:
       expected = """
       { lambda  ; a.
         let b = ge a 0.0
-            c = convert_element_type[ new_dtype=int32 ] b
-            d = add a 1.0
-            e = add a 2.0
-            f = cond[ branches=( { lambda  ; e_ c a b.
+            c = convert_element_type[ new_dtype=int32
+                                      weak_type=False ] b
+            d = convert_element_type[ new_dtype=float32
+                                      weak_type=False ] a
+            e = convert_element_type[ new_dtype=float32
+                                      weak_type=False ] a
+            f = add a 1.0
+            g = add a 2.0
+            h = cond[ branches=( { lambda  ; e_ c a b.
                                    let d = sub b c
                                    in (d,) }
                                  { lambda  ; c f_ a b.
                                    let d = add a c
                                    in (d,) } )
-                      linear=(False, False, False, False) ] c a a d e
-        in (f,) }
-        """
+                      linear=(False, False, False, False) ] c d e f g
+        in (h,) }
+      """
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 

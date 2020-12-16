@@ -270,15 +270,21 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    to_dtype = result_type(*args)
-    return [lax.convert_element_type(x, to_dtype) for x in args]
+    to_dtype_raw = dtypes._result_type_raw(*args)
+    weak_type = to_dtype_raw in set(dtypes._weak_types)
+    to_dtype = dtypes.canonicalize_dtype(to_dtype_raw)
+    return [lax.convert_element_type(x, to_dtype, weak_type) for x in args]
 
 def _promote_dtypes_inexact(*args):
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
-  to_dtype = _to_inexact_dtype(result_type(*args))
-  return [lax.convert_element_type(x, to_dtype) for x in args]
+  to_dtype_raw = dtypes._result_type_raw(*args)
+  to_dtype = dtypes.canonicalize_dtype(to_dtype_raw)
+  to_dtype_inexact = _to_inexact_dtype(to_dtype)
+  weak_type = (to_dtype == to_dtype_inexact
+               and to_dtype_raw in set(dtypes._weak_types))
+  return [lax.convert_element_type(x, to_dtype_inexact, weak_type) for x in args]
 
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
@@ -417,7 +423,6 @@ cosh = _one_to_one_unop(np.cosh, lax.cosh, True)
 arcsinh = _one_to_one_unop(np.arcsinh, lax.asinh, True)
 tanh = _one_to_one_unop(np.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(np.arcsinh, lax.asinh, True)
-arccosh = _one_to_one_unop(np.arccosh, lax.acosh, True)
 arctanh = _one_to_one_unop(np.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(np.sqrt, lax.sqrt, True)
 
@@ -437,6 +442,14 @@ maximum = _one_to_one_binop(np.maximum, lax.max)
 float_power = _one_to_one_binop(np.float_power, lax.pow, True)
 nextafter = _one_to_one_binop(np.nextafter, lax.nextafter, True, True)
 
+@_wraps(np.arccosh)
+def arccosh(x):
+  # Note: arccosh is multi-valued for complex input, and lax.acosh uses a different
+  # convention than np.arccosh.
+  out = lax.acosh(*_promote_args_inexact("arccosh", x))
+  if issubdtype(out.dtype, np.complexfloating):
+    out = where(real(out) < 0, lax.neg(out), out)
+  return out
 
 def _comparison_op(numpy_fn, lax_fn):
   def fn(x1, x2):
@@ -2315,8 +2328,9 @@ def _pad_wrap(array, pad_width):
   return array
 
 
-def _pad_symmetric_or_reflect(array, pad_width, mode):
+def _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type):
   assert mode in ("symmetric", "reflect")
+  assert reflect_type in ("even", "odd")
 
   for i in range(ndim(array)):
     if array.shape[i] == 0:
@@ -2324,28 +2338,44 @@ def _pad_symmetric_or_reflect(array, pad_width, mode):
       continue
 
     n = array.shape[i]
-    rarray = lax.rev(array, dimensions=(i,))
     offset = 1 if (mode == "reflect" and n > 1) else 0
 
-    def build_padding(padding, forward):
-      xs = []
-      delta = n - offset
-      while padding > delta:
-        padding -= delta
-        p = array if forward else rarray
-        xs.append(lax.slice_in_dim(p, offset, n, axis=i))
-        forward = not forward
-      if padding > 0:
-        x = lax.slice_in_dim(array if forward else rarray, offset,
-                             padding + offset, axis=i)
-        xs.append(x)
-      return xs
+    def build_padding(array, padding, before):
+      if before:
+        edge = lax.slice_in_dim(array, 0, 1, axis=i)
+      else:
+        edge = lax.slice_in_dim(array, -1, None, axis=i)
 
-    parts = reversed(build_padding(pad_width[i, 0], forward=True))
-    parts = [lax.rev(x, dimensions=(i,)) for x in parts]
-    parts += [array]
-    parts += build_padding(pad_width[i, 1], forward=False)
-    array = lax.concatenate(parts, dimension=i)
+      while padding > 0:
+        curr_pad = _min(padding, n - offset)
+        padding -= curr_pad
+
+        if before:
+          start = offset
+          stop = offset + curr_pad
+        else:
+          start = -(curr_pad + offset)
+          stop = None if (mode == "symmetric" or n == 1) else -1
+
+        x = lax.slice_in_dim(array, start, stop, axis=i)
+        x = flip(x, axis=i)
+
+        if reflect_type == 'odd':
+          x = 2 * edge - x
+          if n > 1:
+            if before:
+              edge = lax.slice_in_dim(x, 0, 1, axis=i)
+            else:
+              edge = lax.slice_in_dim(x, -1, None, axis=i)
+
+        if before:
+          array = lax.concatenate([x, array], dimension=i)
+        else:
+          array = lax.concatenate([array, x], dimension=i)
+      return array
+
+    array = build_padding(array, pad_width[i, 0], before=True)
+    array = build_padding(array, pad_width[i, 1], before=False)
   return array
 
 
@@ -2458,8 +2488,8 @@ def _broadcast_to_pairs(nvals, nd, name):
   return nvals
 
 
-@partial(jit, static_argnums=(1, 2, 4, 5))
-def _pad(array, pad_width, mode, constant_values, stat_length, end_values):
+@partial(jit, static_argnums=(1, 2, 4, 5, 6))
+def _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type):
   array = asarray(array)
   nd = ndim(array)
 
@@ -2483,7 +2513,7 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values):
     return _pad_wrap(array, pad_width)
 
   elif mode in ("symmetric", "reflect"):
-    return _pad_symmetric_or_reflect(array, pad_width, mode)
+    return _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type)
 
   elif mode == "edge":
     return _pad_edge(array, pad_width)
@@ -2504,12 +2534,12 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values):
 
 @_wraps(np.pad)
 def pad(array, pad_width, mode="constant", constant_values=0, stat_length=None,
-        end_values=0):
+        end_values=0, reflect_type="even"):
   if isinstance(pad_width, Iterable):
     pad_width = tuple(
         tuple(int(i) for i in x) if isinstance(x, Iterable) else x
         for x in pad_width)
-  return _pad(array, pad_width, mode, constant_values, stat_length, end_values)
+  return _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type)
 
 
 @_wraps(np.stack)
@@ -2689,6 +2719,8 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
   lax._check_user_dtype_supported(dtype, "array")
+
+  weak_type = dtype is None and dtypes.is_weakly_typed(object)
   dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
   if _can_call_numpy_array(object):
@@ -2696,13 +2728,13 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
-    out = _device_put_raw(object)
+    out = _device_put_raw(object, weak_type=weak_type)
     if dtype: assert _dtype(out) == dtype
   elif isinstance(object, (DeviceArray, core.Tracer)):
     if isinstance(object, DeviceArray) and copy:
       # We perform a copy by bouncing back to the host
       # TODO(phawkins): add a device runtime function to copy a buffer
-      out = _device_put_raw(_np_asarray(object))
+      out = _device_put_raw(_np_asarray(object), weak_type=weak_type)
     else:
       out = object
   elif isinstance(object, (list, tuple)):
@@ -2720,8 +2752,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
-  if dtype and _dtype(out) != dtype:
-    out = lax.convert_element_type(out, dtype)
+  out = lax.convert_element_type(out, dtype, weak_type=weak_type)
 
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
@@ -4161,7 +4192,7 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
   # Avoid calling gather if the slice shape is empty, both as a fast path and to
   # handle cases like zeros(0)[array([], int32)].
   if _prod(indexer.slice_shape) == 0:
-    return zeros(indexer.slice_shape, dtype=y.dtype)
+    return zeros_like(y, shape=indexer.slice_shape)
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if indexer.gather_indices.size:

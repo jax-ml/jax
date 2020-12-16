@@ -180,10 +180,10 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
               inexact=True),
     op_record("arctan2", 2, float_dtypes, all_shapes, jtu.rand_small, ["rev"],
               inexact=True),
-    op_record("arcsinh", 1, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
-              inexact=True),
-    op_record("arccosh", 1, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
-              inexact=True),
+    op_record("arcsinh", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
+              inexact=True, tolerance={np.complex64: 2E-4, np.complex128: 2E-14}),
+    op_record("arccosh", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
+              inexact=True, tolerance={np.complex64: 2E-2, np.complex128: 2E-12}),
     op_record("arctanh", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
               inexact=True, tolerance={np.float64: 1e-9}),
 ]
@@ -1291,8 +1291,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "pad_width": pad_width, "constant_values": constant_values}
       for mode, shapes in [
           ('constant', all_shapes),
-          ('symmetric', nonempty_shapes),
-          ('reflect', nonempty_shapes),
           ('wrap', nonempty_shapes),
           ('edge', nonempty_shapes),
       ]
@@ -1383,6 +1381,41 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_mode={}_pad_width={}_reflect_type={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode, pad_width, reflect_type),
+       "shape": shape, "dtype": dtype, "mode": mode, "pad_width": pad_width,
+       "reflect_type": reflect_type}
+      for mode in ['symmetric', 'reflect']
+      for shape, dtype in _shape_and_dtypes(nonempty_shapes, all_dtypes)
+      for pad_width in [
+          # ((before_1, after_1), ..., (before_N, after_N))
+          tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
+          # ((before, after),)
+          ((1, 2),), ((2, 3),),
+          # (before, after)  (not in the docstring but works in numpy)
+          (2, 1), (1, 2),
+          # (pad,)
+          (1,), (2,), (3,),
+          # pad
+          0, 5, 7, 10
+      ]
+      for reflect_type in ['even', 'odd']
+      if (pad_width != () and
+          # following types lack precision when calculating odd values
+          (reflect_type != 'odd' or dtype not in [np.bool_, np.float16, jnp.bfloat16]))))
+  def testPadSymmetricAndReflect(self, shape, dtype, mode, pad_width, reflect_type):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    np_fun = partial(np.pad, pad_width=pad_width, mode=mode, reflect_type=reflect_type)
+    jnp_fun = partial(jnp.pad, pad_width=pad_width, mode=mode, reflect_type=reflect_type)
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                            check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE,
+                            tol={np.float32: 1e-3, np.complex64: 1e-3})
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @unittest.skipIf(numpy_version < (1, 16, 6), "numpy <= 1.16.5 has a bug in linear_rmap")
@@ -2385,16 +2418,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
            jtu.format_shape_dtype_string(shape, dtype),
            n, axis, prepend, append),
         "shape": shape, "dtype": dtype, "n": n, "axis": axis,
-        "prepend": prepend, "append": append,
-        "rng_factory": jtu.rand_default}
+        "prepend": prepend, "append": append}
        for shape, dtype in _shape_and_dtypes(nonempty_nonscalar_array_shapes, default_dtypes)
        for n in [0, 1, 2]
        for axis in list(range(-len(shape), max(1, len(shape))))
        for prepend in [None, 1, np.zeros(shape, dtype=dtype)]
        for append in [None, 1, np.zeros(shape, dtype=dtype)]
        ))
-  def testDiff(self, shape, dtype, n, axis, prepend, append, rng_factory):
-    rng = rng_factory(self.rng())
+  def testDiff(self, shape, dtype, n, axis, prepend, append):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
     def np_fun(x, n=n, axis=axis, prepend=prepend, append=append):
@@ -2466,18 +2498,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_func={}_outdtype={}_outshape={}".format(
-          jtu.format_shape_dtype_string(shape, in_dtype),
-          func, np.dtype(out_dtype).name, out_shape),
-       "shape": shape, "in_dtype": in_dtype,
-       "func": func, "out_dtype": out_dtype,
-       "out_shape": out_shape}
+      {"testcase_name": "_func={}_inshape={}_outshape={}_outdtype={}".format(
+          func, jtu.format_shape_dtype_string(shape, in_dtype),
+          out_shape, out_dtype),
+       "func": func, "shape": shape, "in_dtype": in_dtype,
+       "out_shape": out_shape, "out_dtype": out_dtype}
       for shape in array_shapes
       for out_shape in [None] + array_shapes
       for in_dtype in default_dtypes
       for func in ["ones_like", "zeros_like"]
       for out_dtype in default_dtypes))
-  def testZerosOnesLike(self, shape, in_dtype, func, out_dtype, out_shape):
+  def testZerosOnesLike(self, func, shape, in_dtype, out_shape, out_dtype):
     if numpy_version < (1, 19) and out_shape == ():
       raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
     rng = jtu.rand_default(self.rng())
@@ -2486,6 +2517,62 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, in_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+
+  @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_func={}_inshape={}_weak_type={}_outshape={}_outdtype={}".format(
+          func, jtu.format_shape_dtype_string(shape, in_dtype),
+          weak_type, out_shape, out_dtype),
+       "func": func, "args": args,
+       "shape": shape, "in_dtype": in_dtype, "weak_type": weak_type,
+       "out_shape": out_shape, "out_dtype": out_dtype}
+      for shape in array_shapes
+      for in_dtype in [np.int32, np.float32, np.complex64]
+      for weak_type in [True, False]
+      for out_shape in [None, (), (10,)]
+      for func, args in [("full_like", (-100,)), ("ones_like", ()), ("zeros_like", ())]
+      for out_dtype in [None, float]))
+  def testZerosOnesFullLikeWeakType(self, func, args, shape, in_dtype, weak_type, out_shape, out_dtype):
+    if numpy_version < (1, 19) and out_shape == ():
+      raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
+    rng = jtu.rand_default(self.rng())
+    x = lax.convert_element_type(rng(shape, in_dtype), weak_type=weak_type)
+    fun = lambda x: getattr(jnp, func)(x, *args, dtype=out_dtype, shape=out_shape)
+    expected_weak_type = weak_type and (out_dtype is None)
+    self.assertEqual(dtypes.is_weakly_typed(fun(x)), expected_weak_type)
+    self.assertEqual(dtypes.is_weakly_typed(api.jit(fun)(x)), expected_weak_type)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_funcname={}_input_type={}_val={}_dtype={}".format(
+          funcname, input_type, val, dtype),
+       "funcname": funcname, "input_type": input_type, "val": val, "dtype": dtype}
+      for funcname in ["array", "asarray"]
+      for dtype in [int, float, None]
+      for val in [0, 1]
+      for input_type in [int, float, np.int32, np.float32]))
+  def testArrayWeakType(self, funcname, input_type, val, dtype):
+    func = lambda x: getattr(jnp, funcname)(x, dtype=dtype)
+    fjit = api.jit(func)
+    val = input_type(val)
+    expected_weak_type = dtype is None and input_type in set(dtypes._weak_types)
+    self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
+    self.assertEqual(dtypes.is_weakly_typed(fjit(val)), expected_weak_type)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_weak_type={}_slc={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), weak_type, slc),
+       "shape": shape, "dtype": dtype, "weak_type": weak_type, "slc": slc}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in [int, float, complex]
+      for weak_type in [True, False]
+      for slc in [slice(None), slice(0), slice(3), 0, ...]))
+  def testSliceWeakTypes(self, shape, dtype, weak_type, slc):
+    rng = jtu.rand_default(self.rng())
+    x = lax.convert_element_type(rng(shape, dtype), weak_type=weak_type)
+    op = lambda x: x[slc]
+    self.assertEqual(op(x).aval.weak_type, weak_type)
+    self.assertEqual(api.jit(op)(x).aval.weak_type, weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(

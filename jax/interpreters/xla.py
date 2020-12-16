@@ -518,7 +518,7 @@ def _axis_groups(mesh_spec, mesh_axes):
       (prod(np.take(mesh_spec, mesh_axes)), -1))
   return tuple(unsafe_map(tuple, groups.T))
 
-def jaxpr_replicas(jaxpr):
+def jaxpr_replicas(jaxpr: core.Jaxpr) -> int:
   """The number of replicas needed for a jaxpr.
 
   For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
@@ -1255,7 +1255,7 @@ for device_array in [_DeviceArray, _CppDeviceArray]:
   def __hash__(self):
     raise TypeError("JAX DeviceArray, like numpy.ndarray, is not hashable.")
 
-  setattr(device_array, "__eq__", __hash__)
+  setattr(device_array, "__hash__", __hash__)
 
   # The following methods are dynamically overridden in lax_numpy.py.
   def raise_not_implemented():

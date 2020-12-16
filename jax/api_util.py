@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Tuple
+import operator
+from typing import Any, Tuple, Union
 
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure)
@@ -25,6 +26,19 @@ traceback_util.register_exclusion(__file__)
 
 map = safe_map
 
+def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
+  """Ensure x is either an index or a tuple of indices."""
+  try:
+    return operator.index(x)
+  except TypeError:
+    return tuple(map(operator.index, x))
+
+def _ensure_index_tuple(x: Any) -> Tuple[int, ...]:
+  """Convert x to a tuple of indices."""
+  try:
+    return (operator.index(x),)
+  except TypeError:
+    return tuple(map(operator.index, x))
 
 @lu.transformation_with_aux
 def flatten_fun(in_tree, *args_flat):
@@ -64,10 +78,7 @@ def flatten_fun_nokwargs2(in_tree, *args_flat):
 
 
 def argnums_partial(f, dyn_argnums, args):
-  if isinstance(dyn_argnums, int):
-    dyn_argnums = (dyn_argnums,)
-  else:
-    dyn_argnums = tuple(dyn_argnums)
+  dyn_argnums = _ensure_index_tuple(dyn_argnums)
   fixed_args = tuple([unit if i in dyn_argnums else wrap_hashably(arg)
                       for i, arg in enumerate(args)])
   dyn_args = tuple(args[i] for i in dyn_argnums)

@@ -9,6 +9,19 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.2.8 (Unreleased)
+----------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.7...master>`_.
+
+* Bug fixes:
+
+  * ``jax.numpy.arccosh`` now returns the same branch as ``numpy.arccosh`` for
+    complex inputs (`#5156 <https://github.com/google/jax/pull/5156>`_)
+  * ``host_callback.id_tap`` now works for ``jax.pmap`` also. There is a
+    optional parameter for ``id_tap`` and ``id_print`` to request that the
+    device from which the value is tapped be passed as a keyword argument
+    to the tap function (`#5182 <https://github.com/google/jax/pull/5182>`_).
+
 jax 0.2.7 (Dec 4 2020)
 ----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.6...jax-v0.2.7>`_.
@@ -88,6 +101,7 @@ jaxlib 0.1.58 (Unreleased)
 * Fixed a bug that meant JAX sometimes return platform-specific types (e.g.,
   `np.cint`) instead of standard types (e.g., `np.int32`). (#4903)
 * Fixed a crash when constant-folding certain int16 operations. (#4971)
+* Added an `is_leaf` predicate to `pytree.flatten`.
 
 jaxlib 0.1.57 (November 12 2020)
 --------------------------------

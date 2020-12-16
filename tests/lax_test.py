@@ -206,16 +206,22 @@ class LaxTest(jtu.JaxTestCase):
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_from_dtype={}_to_dtype={}".format(
-          from_dtype, to_dtype),
-       "from_dtype": from_dtype, "to_dtype": to_dtype}
+      {"testcase_name": "_from_dtype={}_to_dtype={}_weak_type={}".format(
+          from_dtype, to_dtype, weak_type),
+       "from_dtype": from_dtype, "to_dtype": to_dtype, "weak_type": weak_type}
       for from_dtype, to_dtype in itertools.product(
-          [np.float32, np.int32, "float32", "int32"], repeat=2)))
-  def testConvertElementType(self, from_dtype, to_dtype):
+          [None, np.float32, np.int32, "float32", "int32"], repeat=2)
+      for weak_type in [True, False]))
+  def testConvertElementType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax.convert_element_type(x, to_dtype)
+    op = lambda x: lax.convert_element_type(x, to_dtype, weak_type)
     self._CompileAndCheck(op, args_maker)
+
+    x = rng((1,), from_dtype)
+    out = op(x)
+    self.assertEqual(out.dtype, dtypes.canonicalize_dtype(to_dtype or x.dtype))
+    self.assertEqual(out.aval.weak_type, weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}"
@@ -2311,6 +2317,30 @@ class LazyConstantTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
                                 "index_dtype must be an integer type"):
       jax_fn(np.ones((2, 2)), axis=0, index_dtype=index_dtype)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": "_{}".format(rec.op),
+         "op_name": rec.op, "rec_dtypes": rec.dtypes}
+      for rec in LAX_OPS if rec.nargs == 1))
+  def testUnaryWeakTypes(self, op_name, rec_dtypes):
+    """Test that all lax unary ops propagate weak_type information appropriately."""
+    # Find a valid dtype for the function.
+    for dtype in [np.float_, np.int_, np.complex_, np.bool_]:
+      dtype = dtypes.canonicalize_dtype(dtype)
+      if dtype in rec_dtypes:
+        py_val = dtype.type(1).item()
+        lax_val = lax.full((), py_val, dtype)
+        break
+    else:
+      raise ValueError("no available dtypes")
+
+    op = getattr(lax, op_name)
+    py_op = op(py_val)
+    lax_op = op(lax_val)
+
+    self.assertAllClose(py_op, lax_op, check_dtypes=True)
+    self.assertTrue(py_op.aval.weak_type)
+    self.assertFalse(lax_op.aval.weak_type)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
