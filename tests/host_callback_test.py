@@ -1353,18 +1353,6 @@ class HostCallbackTest(jtu.JaxTestCase):
           """, testing_stream.output)
     testing_stream.reset()
 
-  def test_outfeed_receiver(self):
-    """Test the deprecated outfeed_receiver"""
-    with hcb.outfeed_receiver():
-      self.assertAllClose((5. * 2.) ** 2, fun1(5.), check_dtypes=True)
-    assertMultiLineStrippedEqual(self, """
-        what: a * 2
-        10.00
-        what: y * 3
-        30.00""", testing_stream.output)
-    testing_stream.reset()
-
-
   def test_callback_delay(self):
     hcb.callback_extra = lambda dev: time.sleep(1)
 
