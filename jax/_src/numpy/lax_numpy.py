@@ -300,9 +300,11 @@ def _result_dtype(op, *args):
   return _dtype(op(*args))
 
 
-def _arraylike(x): return isinstance(x, ndarray) or isscalar(x)
+def _arraylike(x):
+  return isinstance(x, ndarray) or isscalar(x) or hasattr(x, '__jax_array__')
+
 def _check_arraylike(fun_name, *args):
-  """Check if all args fit JAX's definition of arraylike (ndarray or scalar)."""
+  """Check if all args fit JAX's definition of arraylike."""
   assert isinstance(fun_name, str), f"fun_name must be a string. Got {fun_name}"
   if _any(not _arraylike(arg) for arg in args):
     pos, arg = next((i, arg) for i, arg in enumerate(args)
