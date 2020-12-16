@@ -280,10 +280,7 @@ def is_python_scalar(x):
   try:
     return x.aval.weak_type and np.ndim(x) == 0
   except AttributeError:
-    if hasattr(x, '__jax_array__'):
-      return is_python_scalar(x.__jax_array__())
-    else:
-      return type(x) in python_scalar_dtypes
+    return type(x) in python_scalar_dtypes
 
 def dtype(x):
   if type(x) in python_scalar_dtypes:
