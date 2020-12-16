@@ -617,7 +617,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     if dtype == np.float64:
       tol = 1e-13
 
-    if dtype == np.float32 and jtu.device_under_test() == "gpu":
+    if dtype == np.float32 and jtu.device_under_test() in ["cpu", "gpu"]:
       tol = 1e-3
 
     # In the bfloat16 case, TF and lax both return NaN in undefined cases.
