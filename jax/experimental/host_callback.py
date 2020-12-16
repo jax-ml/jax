@@ -176,7 +176,8 @@ for the C++ outfeed `receiver backend
     behave like INFO logs. This may be too much, but you will see which
     modules are logging relevant info, and then you can select which modules
     to log from:
-  * `TF_CPP_VMODULE=<module_name>=3``
+  * `TF_CPP_VMODULE=<module_name>=3`` (the module name can be either C++ or
+    Python, without the extension).
 
 You should also use the ``--verbosity=2`` flag so that you see the logs from Python.
 
@@ -187,7 +188,6 @@ TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed
 """
 from absl import logging
 import atexit
-import contextlib
 import functools
 import itertools
 
@@ -905,30 +905,6 @@ class TapFunctionException(Exception):
   Raised by :func:`outfeed_receiver`.
   """
   pass
-
-
-@contextlib.contextmanager
-def outfeed_receiver():
-  """Implements a barrier after a block of code.
-
-  DEPRECATED:
-  This function is not necessary anymore, it is here for backwards compatiblity.
-  At the moment it implements a ``barrier_wait`` after the body of the
-  context manager finishes.
-  """
-  warnings.warn(
-      "outfeed_receiver is unnecessary and deprecated. In the latest "
-      "version the outfeer receiver mechanism is started automatically. Use "
-      "barrier_wait if instead you want to wait for outfeeds after "
-      "a computation", DeprecationWarning)
-  _initialize_outfeed_receiver()
-  # We will deprecate the outfeed_receiver context manager, but for now
-  # we just turn it into a barrier.
-  try:
-    yield
-  finally:
-    # We put a barrier, which will also raise the TapFunctionException
-    barrier_wait("outfeed_receiver_stop")
 
 
 # For now we keep a single outfeed receiver

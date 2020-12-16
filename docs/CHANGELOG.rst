@@ -21,6 +21,8 @@ jax 0.2.8 (Unreleased)
     optional parameter for ``id_tap`` and ``id_print`` to request that the
     device from which the value is tapped be passed as a keyword argument
     to the tap function (`#5182 <https://github.com/google/jax/pull/5182>`_).
+  * ``host_callback.outfeed_receiver`` has been removed (it is not necessary,
+    and was deprecated a few months ago).
 
 jax 0.2.7 (Dec 4 2020)
 ----------------------
