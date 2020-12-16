@@ -187,13 +187,14 @@ def _make_round_harness(name, *, shape=(100, 100), dtype=np.float32,
   return Harness(f"{name}_shape={jtu.format_shape_dtype_string(operand.shape, operand.dtype)}_roundingmethod={rounding_method}",
                  lax.round,
                  [operand, StaticArg(rounding_method)],
-                 operand=operand)
+                 operand=operand,
+                 rounding_method=rounding_method)
 
 lax_round = tuple( # Validate dtypes
   _make_round_harness("dtypes", dtype=dtype)
   for dtype in jtu.dtypes.all_floating
 ) + tuple( # Validate rounding method
-  _make_round_harness("dtypes", operand=operand,
+  _make_round_harness("rounding_methods", operand=operand,
                       rounding_method=rounding_method)
   for operand in [
     np.array([[0.5, 1.5, 2.5], [-0.5, -1.5, -2.5]], dtype=np.float32)
