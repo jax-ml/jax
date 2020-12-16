@@ -65,16 +65,22 @@ def prettify_hlo_stats() -> str:
     return split_string
 
   modes = ['JAX', 'TF compiled']
-  column_names = ['Test name'] + modes
+  column_names = ['Test name'] + modes + ['Notice']
   header = [column_names, ['---'] * len(column_names)]
   table = []
 
   for test_name, hlo in hlo_by_test:
     nb_lines_per_mode = [
-        str(len(list(filter(lambda line: line != '', hlo[mode].split('\n')))))
+        len(list(filter(lambda line: line != '', hlo[mode].split('\n'))))
         for mode in modes
     ]
-    table.append([_split(test_name)] + nb_lines_per_mode)
+    notice = ''
+    if min(nb_lines_per_mode) != 0:
+      if (max(nb_lines_per_mode) / min(nb_lines_per_mode) > 1.1 and
+          max(nb_lines_per_mode) - min(nb_lines_per_mode) > 1):
+        notice = '**LARGE DIFF**'
+    table.append([_split(test_name)] + [str(n) for n in nb_lines_per_mode] +
+                 [notice])
 
   return '\n'.join(line for line in map(_pipewrap, header + sorted(table)))
 
@@ -220,11 +226,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     result_tf = None
 
     try:
-      func_tf = _build_tf_function(func_tf, *tf_args, mode=mode)
+      func_tf_mode = _build_tf_function(func_tf, *tf_args, mode=mode)
       if _output_hlo_stats and mode == 'compiled':
         _log_hlo(self._test_name, 'TF compiled',
-                 func_tf.experimental_get_compiler_ir(*tf_args)(stage='optimized_hlo')) # type: ignore
-      result_tf = func_tf(*tf_args)
+                 func_tf_mode.experimental_get_compiler_ir(*tf_args)(stage='optimized_hlo')) # type: ignore
+      result_tf = func_tf_mode(*tf_args)
       tf_exception = None
     except Exception as e:
       tf_exception = e
