@@ -16,6 +16,7 @@
 import collections
 from functools import partial
 import itertools
+import operator
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -260,6 +261,23 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x: lax.bitcast_convert_type(x, to_dtype)
     numpy_op = lambda x: lax_reference.bitcast_convert_type(x, to_dtype)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_from_dtype={}_to_dtype={}_weak_type={}"
+       .format(from_dtype, to_dtype, weak_type),
+       "from_dtype": from_dtype, "to_dtype": to_dtype, "weak_type": weak_type}
+      for from_dtype, to_dtype in itertools.product(
+          [np.float32, np.int32, "float32", "int32"], repeat=2)
+      for weak_type in [True, False]))
+  def testBitcastConvertWeakType(self, from_dtype, to_dtype, weak_type):
+    rng = jtu.rand_default(self.rng())
+    x_in = lax.convert_element_type(rng((2, 3), from_dtype), weak_type=weak_type)
+    op = lambda x: lax.bitcast_convert_type(x, to_dtype)
+    self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
+    x_out = op(x_in)
+    self.assertEqual(dtypes.is_weakly_typed(x_out), False)
+    x_out_jit = api.jit(op)(x_in)
+    self.assertEqual(dtypes.is_weakly_typed(x_out_jit), False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_min_shape={}_operand_shape={}_max_shape={}".format(
@@ -1462,6 +1480,24 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}.{}_arr_weak_type={}_init_weak_type={}"
+       .format(op_namespace.__name__, op, arr_weak_type, init_weak_type),
+       "op": op, "op_namespace": op_namespace, "arr_weak_type": arr_weak_type, "init_weak_type": init_weak_type}
+      for op in ["add", "mul"]
+      for op_namespace in [lax, operator]
+      for arr_weak_type in [True, False]
+      for init_weak_type in [True, False]))
+  def testReduceWeakType(self, op_namespace, op, arr_weak_type, init_weak_type):
+    op = getattr(op_namespace, op)
+    arr = lax.convert_element_type(np.arange(10), np.int32, weak_type=arr_weak_type)
+    init = lax.convert_element_type(1, np.int32, weak_type=init_weak_type)
+    fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
+    out = fun(arr, init)
+    self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)
+    out_jit = api.jit(fun)(arr, init)
+    self.assertEqual(dtypes.is_weakly_typed(out_jit), arr_weak_type and init_weak_type)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
                          "_basedilation={}_windowdilation={}")
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype),
@@ -2317,6 +2353,20 @@ class LazyConstantTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
                                 "index_dtype must be an integer type"):
       jax_fn(np.ones((2, 2)), axis=0, index_dtype=index_dtype)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_fn={}_weaktype={}".format(jax_fn.__name__, weak_type),
+       "jax_fn": jax_fn, "weak_type": weak_type}
+      for jax_fn in [lax.argmin, lax.argmax]
+      for weak_type in [True, False]))
+  def testArgMinMaxWeakType(self, jax_fn, weak_type):
+    op = lambda x: jax_fn(x, axis=0, index_dtype=np.int32)
+    x_in = lax.convert_element_type(np.ones((2, 2)), weak_type=weak_type)
+    self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
+    x_out = op(x_in)
+    self.assertEqual(dtypes.is_weakly_typed(x_out), False)
+    x_out_jit = api.jit(op)(x_in)
+    self.assertEqual(dtypes.is_weakly_typed(x_out_jit), False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": "_{}".format(rec.op),
