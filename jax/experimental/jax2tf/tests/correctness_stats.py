@@ -110,6 +110,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       tf_unimpl(np_dtype, additional_msg=("integer division fails if the "
                                           "divisor contains a 0"))
 
+  if prim is lax.neg_p:
+    if np_dtype in [np.uint8, np.uint16, np.uint32, np.uint64]:
+      tf_unimpl(np_dtype)
+
   if prim is lax.rem_p:
     if np_dtype in [np.uint8, np.uint16, np.uint32, np.uint64,
                     np.int8, np.int16, np.float16]:
@@ -267,6 +271,30 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
               lax.erfc_p, lax.lgamma_p, lax.round_p, lax.rsqrt_p]:
     if np_dtype == dtypes.bfloat16:
       tf_unimpl(np_dtype, devs=["CPU", "GPU"])
+
+  if prim is lax.acos_p:
+    if np_dtype in [dtypes.bfloat16, np.float16, np.complex64, np.complex128]:
+      tf_unimpl(np_dtype, additional_msg="this is only a problem in eager and "
+                                         "graph mode")
+
+  if prim is lax.asin_p:
+    if np_dtype in [dtypes.bfloat16, np.float16]:
+      tf_unimpl(np_dtype, additional_msg="this is only a problem in eager and "
+                                         "graph mode")
+    elif np_dtype in [np.complex64, np.complex128]:
+      tf_unimpl(np_dtype)
+
+  if prim is lax.atan_p:
+    if np_dtype in [dtypes.bfloat16, np.float16]:
+      tf_unimpl(np_dtype, additional_msg="this is only a problem in eager and "
+                                         "graph mode")
+    elif np_dtype in [np.complex64, np.complex128]:
+      tf_unimpl(np_dtype)
+
+  if prim is lax.sign_p:
+    if np_dtype in [np.int8, np.int16, np.uint8, np.uint16, np.uint32,
+                    np.uint64]:
+      tf_unimpl(np_dtype)
 
   if prim is lax.convert_element_type_p:
     if np_dtype == dtypes.bfloat16:
