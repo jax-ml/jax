@@ -318,6 +318,16 @@ class CPPJitTest(jtu.JaxTestCase):
     f(2)
     assert len(effects) == 3
 
+  def test_static_argnum_errors_on_keyword_arguments(self):
+    if version < (0, 1, 58):
+      raise unittest.SkipTest("Disabled because it depends on some future "
+                              "release of jax_jit.cc within jaxlib.")
+    f = self.jit(lambda x: x, static_argnums=0)
+    msg = ("jitted function has static_argnums=(0,), donate_argnums=() but was "
+           "called with only 0 positional arguments.")
+    with self.assertRaisesRegex(ValueError, re.escape(msg)):
+      f(x=4)
+
   def test_static_argnum_on_method(self):
 
     class A:
