@@ -181,6 +181,14 @@ def jit(fun: Callable[..., T],
     return _python_jit(fun, static_argnums, device, backend, donate_argnums)
 
 
+class _JitArgs(NamedTuple):
+  fun: Callable
+  static_argnums: Iterable[int]
+  device: Optional[xc.Device]
+  backend: Optional[str]
+  donate_argnums: Iterable[int]
+
+
 def _python_jit(
     fun: Callable,
     static_argnums: Union[int, Iterable[int]] = (),
