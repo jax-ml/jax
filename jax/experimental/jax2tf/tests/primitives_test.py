@@ -540,17 +540,28 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_acosh)
   def test_acosh(self, harness: primitive_harness.Harness):
-    self._preimage_function_test_util(harness)
+    tol, dtype = None, harness.params["dtype"]
+    if jtu.device_under_test() in ["cpu", "gpu"]:
+      tol = 1e-3 if dtype == np.complex64 else (1e-12 if dtype == np.complex128
+                                                else tol)
+    self._preimage_function_test_util(harness, atol=tol, rtol=tol)
 
   @primitive_harness.parameterized(primitive_harness.lax_asinh)
   def test_asinh(self, harness: primitive_harness.Harness):
-    self._preimage_function_test_util(harness)
+    tol, dtype = None, harness.params["dtype"]
+    if jtu.device_under_test() in ["cpu", "gpu"]:
+      tol = 1e-12 if dtype == np.complex128 else (1e-3 if dtype == np.complex64
+                                                  else tol)
+    self._preimage_function_test_util(harness, atol=tol, rtol=tol)
 
   @primitive_harness.parameterized(primitive_harness.lax_atanh)
   def test_atanh(self, harness: primitive_harness.Harness):
     tol = None
     if harness.params["dtype"] == np.float64:
       tol = 1e-14
+    elif (harness.params["dtype"] == np.complex128 and
+          jtu.device_under_test() in ["cpu", "gpu"]):
+      tol = 1e-12
     self._preimage_function_test_util(harness, atol=tol, rtol=tol)
 
   @primitive_harness.parameterized(primitive_harness.lax_acos)
@@ -560,7 +571,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     if dtype == np.complex128:
       atol = rtol = 1e-13
     elif dtype == np.complex64:
-      atol, rtol = 1e-4, 1e-5
+      atol, rtol = ((1e-3, 1e-4) if jtu.device_under_test() == "tpu"
+                    else (1e-4, 1e-5))
     self._preimage_function_test_util(harness, atol=atol, rtol=rtol)
 
   @primitive_harness.parameterized(primitive_harness.lax_asin)
@@ -604,6 +616,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     if dtype == np.float64:
       tol = 1e-13
+
+    if dtype == np.float32 and jtu.device_under_test() == "gpu":
+      tol = 1e-3
 
     # In the bfloat16 case, TF and lax both return NaN in undefined cases.
     if not dtype is dtypes.bfloat16:
@@ -730,9 +745,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.lax_tan)
   def test_tan(self, harness: primitive_harness.Harness):
     atol = rtol = None
-    dtype = harness.params["dtype"]
-    if dtype == np.complex64:
+    dtype, dut = harness.params["dtype"], jtu.device_under_test()
+    if dut == "tpu" and dtype == np.complex64:
       atol, rtol = 1e-4, 1e-5
+    elif dut in ["cpu", "gpu"]:
+      atol, rtol = ((1e-3, 1e-3) if dtype == np.complex64 else
+                    ((1e-12, 1e-12) if dtype == np.complex128 else
+                     (atol, rtol)))
+
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=atol, rtol=rtol)
 
