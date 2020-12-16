@@ -2463,6 +2463,18 @@ def _pad_stats(array, pad_width, stat_length, stat_func):
   return array
 
 
+def _pad_empty(array, pad_width):
+  # Note: jax.numpy.empty = jax.numpy.zeros
+  for i in range(ndim(array)):
+    shape_before = array.shape[:i] + (pad_width[i][0],) + array.shape[i + 1:]
+    pad_before = empty(shape_before, dtype=array.dtype)
+
+    shape_after = array.shape[:i] + (pad_width[i][1],) + array.shape[i + 1:]
+    pad_after = empty(shape_after, dtype=array.dtype)
+    array = lax.concatenate([pad_before, array, pad_after], dimension=i)
+  return array
+
+
 def _broadcast_to_pairs(nvals, nd, name):
   nvals_shape = np.shape(nvals)
   if nvals_shape == (nd, 2):
@@ -2526,6 +2538,9 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values, refle
     if stat_length is not None:
       stat_length = _broadcast_to_pairs(stat_length, nd, "stat_length")
     return _pad_stats(array, pad_width, stat_length, stat_funcs[mode])
+
+  elif mode == "empty":
+    return _pad_empty(array, pad_width)
 
   else:
     msg = "Unimplemented padding mode '{}' for np.pad."
