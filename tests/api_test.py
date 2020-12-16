@@ -2089,6 +2089,11 @@ class APITest(jtu.JaxTestCase):
     y = api.pmap(jnp.sin)(x)
     self.assertAllClose(y, jnp.sin(jnp.array([[1., 2., 3.]])))
 
+    x = jnp.array(1)
+    a = AlexArray(x)
+    for f in [jnp.isscalar, jnp.size, jnp.shape, jnp.dtype]:
+      self.assertEqual(f(x), f(a))
+
 
 class RematTest(jtu.JaxTestCase):
 
