@@ -1960,6 +1960,25 @@ class APITest(jtu.JaxTestCase):
                                 "tracer created on line"):
       g()
 
+  def test_escaped_tracer_omnistaging_top_trace(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test is omnistaging-specific")
+
+    count = 1
+
+    def f(_, __):
+      nonlocal count
+      count = jnp.add(count, 1)
+      return None, None
+
+    lax.scan(f, None, None, length=2)  # leaked a tracer! (of level 1!)
+
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "tracer created on line"):
+      # The following call will try and raise the ones array to the count tracer
+      # level, which is no longer live.
+      jax.jit(jnp.add)(jnp.ones(()), count)
+
   def test_pmap_static_kwarg_error_message(self):
     # https://github.com/google/jax/issues/3007
     def f(a, b):
