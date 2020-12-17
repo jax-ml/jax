@@ -148,9 +148,13 @@ def prepare_wheel(sources_path):
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.pyd"))
+  if r.Rlocation("__main__/jaxlib/cusolver.py") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver.py"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng.py"))
+  if r.Rlocation("__main__/jaxlib/rocblas_kernels.so") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocblas_kernels.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocsolver.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/version.py"))
-  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver.py"))
-  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng.py"))
 
   if _is_windows():
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.pyd"))
