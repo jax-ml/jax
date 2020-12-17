@@ -501,6 +501,11 @@ def xla_computation(fun: Callable,
     Computation and the second element is a pytree representing the structure,
     shapes, and dtypes of the output of ``fun``.
 
+    Concrete example arguments are not always necessary. For those arguments not
+    indicated by ``static_argnums``, any object with ``shape`` and ``dtype``
+    attributes is acceptable (excepting namedtuples, which are treated as Python
+    containers).
+
   For example:
 
   >>> import jax
@@ -519,6 +524,13 @@ def xla_computation(fun: Callable,
   }
   <BLANKLINE>
   <BLANKLINE>
+
+
+  Alternatively, the assignment to ``c`` above could be written:
+
+  >>> import types
+  >>> scalar = types.SimpleNamespace(shape=(), dtype=np.float32)
+  >>> c = jax.xla_computation(f)(scalar)
 
 
   Here's an example that involves a parallel collective and axis name:
