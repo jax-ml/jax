@@ -878,12 +878,15 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_iota(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
-  @primitive_harness.parameterized(primitive_harness.lax_add_mul)
-  def test_add_mul(self, harness: primitive_harness.Harness):
+  @primitive_harness.parameterized(primitive_harness.lax_add)
+  def test_add(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
-  @primitive_harness.parameterized(primitive_harness.lax_min_max)
-  def test_min_max(self, harness: primitive_harness.Harness):
+  @primitive_harness.parameterized(primitive_harness.lax_mul)
+  def test_mul(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  def _min_max_test_util(self, harness: primitive_harness.Harness):
     # TODO(bchetioui): discrepancies between TF & JAX when comparing with NaN;
     # JAX always returns NaN, while TF returns the value NaN is compared with.
     def custom_assert(result_jax, result_tf):
@@ -895,8 +898,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            custom_assert=custom_assert,
                            always_custom_assert=always_custom_assert)
 
+  @primitive_harness.parameterized(primitive_harness.lax_min)
+  def test_min(self, harness: primitive_harness.Harness):
+    self._min_max_test_util(harness)
+
+  @primitive_harness.parameterized(primitive_harness.lax_max)
+  def test_max(self, harness: primitive_harness.Harness):
+    self._min_max_test_util(harness)
+
   @primitive_harness.parameterized(primitive_harness.lax_div_rem)
-  def test_div(self, harness: primitive_harness.Harness):
+  def test_div_rem(self, harness: primitive_harness.Harness):
     dividend, divisor = harness.dyn_args_maker(self.rng())
     prim = harness.params["prim"]
     if dtypes.issubdtype(dividend.dtype, np.integer):

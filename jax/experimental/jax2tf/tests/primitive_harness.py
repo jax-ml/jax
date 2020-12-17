@@ -504,26 +504,6 @@ xla_device_put = tuple( # Validate dtypes
   ]
 )
 
-def _make_sub_harness(name, *, lhs_shape=(2, 3), rhs_shape=(2, 3),
-                      dtype=np.float32):
-  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
-                 lax.sub,
-                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype)],
-                 lhs_shape=lhs_shape,
-                 rhs_shape=rhs_shape,
-                 dtype=dtype)
-
-lax_sub = tuple( # Validate dtypes
-  _make_sub_harness("dtypes", dtype=dtype)
-  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
-) + tuple( # Validate broadcasting behaviour
-  _make_sub_harness("broadcasting", lhs_shape=lhs_shape, rhs_shape=rhs_shape)
-  for lhs_shape, rhs_shape in [
-    ((), (2, 3)),     # broadcast scalar
-    ((1, 2), (3, 2)), # broadcast along specific axis
-  ]
-)
-
 def _make_bitcast_convert_type_harness(name, *, shape=(2, 3), dtype=np.float32,
                                        new_dtype=np.float32):
   return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newdtype={np.dtype(new_dtype).name}",
@@ -718,58 +698,6 @@ lax_iota = tuple( # Validate dtypes
   ]
 )
 
-lax_add_mul = tuple(
-  Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
-          f_jax,
-          [lhs, rhs],
-          f_jax=f_jax,
-          dtype=dtype)
-  for f_jax in [lax.add, lax.mul]
-  for dtype in filter(lambda t: t != np.bool_, jtu.dtypes.all)
-  for lhs, rhs in [
-    (np.array([1, 2], dtype=dtype), np.array([3, 4], dtype=dtype))
-  ]
-) + tuple(
-  Harness(f"fun={f_jax.__name__}_bounds_{jtu.dtype_str(dtype)}",
-          f_jax,
-          [lhs, rhs],
-          f_jax=f_jax,
-          dtype=dtype)
-  for f_jax in [lax.add, lax.mul]
-  for dtype in filter(lambda t: t != np.bool_, jtu.dtypes.all)
-  for lhs, rhs in [
-    (np.array([3, 3], dtype=dtype),
-     np.array([_get_max_identity(dtype), _get_min_identity(dtype)], dtype=dtype))
-  ]
-)
-
-lax_min_max = tuple(
-  Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
-          f_jax,
-          [lhs, rhs],
-          f_jax=f_jax,
-          dtype=dtype)
-  for f_jax in [lax.min, lax.max]
-  for dtype in jtu.dtypes.all
-  for lhs, rhs in [
-    (np.array([1, 2], dtype=dtype), np.array([3, 4], dtype=dtype))
-  ]
-) + tuple(
-  Harness(f"fun={f_jax.__name__}_inf_nan_{jtu.dtype_str(dtype)}_{lhs[0]}_{rhs[0]}",
-          f_jax,
-          [lhs, rhs],
-          f_jax=f_jax,
-          dtype=dtype)
-  for f_jax in [lax.min, lax.max]
-  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
-  for lhs, rhs in [
-    (np.array([np.inf, np.inf], dtype=dtype),
-     np.array([np.nan, np.nan], dtype=dtype)),
-    (np.array([-np.inf, -np.inf], dtype=dtype),
-     np.array([np.nan, np.nan], dtype=dtype))
-  ]
-)
-
 def _make_div_rem_harness(name, *, shapes=((2,), (2,)), dtype=np.float32,
                           arrs=(None, None), prim=lax.div_p):
   lhs, rhs = arrs
@@ -812,141 +740,106 @@ lax_div_rem = tuple( # Validate dtypes
   ]
 )
 
-def _make_binary_elementwise_harness(name, *, prim, shapes=((20, 20), (20, 20)),
-                                     dtype):
-  lhs_shape, rhs_shape = shapes
-  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
-                 prim.bind,
-                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype)],
-                 prim=prim,
-                 dtype=dtype,
-                 shapes=shapes)
+def _make_binary_elementwise_harnesses(prim, dtypes, default_dtype=np.float32):
+  def _make_binary_elementwise_harness(name, *, shapes=((20, 20), (20, 20)),
+                                       dtype):
+    lhs_shape, rhs_shape = shapes
+    return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
+                   prim.bind,
+                   [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype)],
+                   prim=prim,
+                   dtype=dtype,
+                   shapes=shapes)
+  return (
+      tuple( # Validate dtypes
+        _make_binary_elementwise_harness("dtypes", dtype=dtype)
+        for dtype in dtypes
+      ) + tuple( # Validate broadcasting
+        _make_binary_elementwise_harness("broadcasting", dtype=default_dtype,
+                                         shapes=shapes)
+        for shapes in [
+            ((20, 20), (1, 20)), # broadcasting rhs
+            ((1, 20), (20, 20)), # broadcasting lhs
+        ]
+      ))
 
-lax_atan2 = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.atan2_p, dtype=dtype)
-  for dtype in jtu.dtypes.all_floating
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting", prim=lax.atan2_p,
-                                   dtype=np.float32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
+lax_add = _make_binary_elementwise_harnesses(
+    prim=lax.add_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
+
+lax_mul = _make_binary_elementwise_harnesses(
+    prim=lax.mul_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
+
+lax_atan2 = _make_binary_elementwise_harnesses(prim=lax.atan2_p,
+                                               dtypes=jtu.dtypes.all_floating)
+
+lax_igamma = _make_binary_elementwise_harnesses(prim=lax.igamma_p,
+                                                dtypes=jtu.dtypes.all_floating)
+
+lax_igammac = _make_binary_elementwise_harnesses(prim=lax.igammac_p,
+                                                 dtypes=jtu.dtypes.all_floating)
+
+lax_nextafter = _make_binary_elementwise_harnesses(
+    prim=lax.nextafter_p, dtypes=jtu.dtypes.all_floating)
+
+lax_and = _make_binary_elementwise_harnesses(
+    prim=lax.and_p, default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
+           jtu.dtypes.boolean)
+
+lax_or = _make_binary_elementwise_harnesses(
+    prim=lax.or_p, default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
+           jtu.dtypes.boolean)
+
+lax_xor = _make_binary_elementwise_harnesses(
+    prim=lax.xor_p, default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
+           jtu.dtypes.boolean)
+
+lax_shift_left = _make_binary_elementwise_harnesses(
+    prim=lax.shift_left_p, default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
+
+lax_shift_right_logical = _make_binary_elementwise_harnesses(
+    prim=lax.shift_right_logical_p, default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
+
+lax_shift_right_arithmetic = _make_binary_elementwise_harnesses(
+    prim=lax.shift_right_arithmetic_p, default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
+
+lax_sub = _make_binary_elementwise_harnesses(
+    prim=lax.sub_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
+
+_min_max_special_cases = tuple(
+  (lhs, rhs)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+  for lhs, rhs in [
+    (np.array([np.inf, np.inf], dtype=dtype),
+     np.array([np.nan, np.nan], dtype=dtype)),
+    (np.array([-np.inf, -np.inf], dtype=dtype),
+     np.array([np.nan, np.nan], dtype=dtype))
   ]
 )
 
-lax_igamma = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.igamma_p, dtype=dtype)
-  for dtype in jtu.dtypes.all_floating
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting", prim=lax.igamma_p,
-                                   dtype=np.float32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
+lax_min = (
+  _make_binary_elementwise_harnesses(prim=lax.min_p, dtypes=jtu.dtypes.all)
+) + tuple( # Validate special cases
+  Harness(f"inf_nan_{jtu.dtype_str(lhs.dtype)}_{lhs[0]}_{rhs[0]}",
+          lax.min_p.bind,
+          [lhs, rhs],
+          dtype=lhs.dtype)
+  for lhs, rhs in _min_max_special_cases
 )
 
-lax_igammac = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.igammac_p, dtype=dtype)
-  for dtype in jtu.dtypes.all_floating
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting", prim=lax.igammac_p,
-                                   dtype=np.float32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
-)
-
-lax_nextafter = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.nextafter_p, dtype=dtype)
-  for dtype in jtu.dtypes.all_floating
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting", prim=lax.nextafter_p,
-                                   dtype=np.float32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
-)
-
-lax_and = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.and_p, dtype=dtype)
-  for dtype in (jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
-                jtu.dtypes.boolean)
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting", prim=lax.and_p,
-                                   dtype=np.int32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
-)
-
-lax_or = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.or_p, dtype=dtype)
-  for dtype in (jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
-                jtu.dtypes.boolean)
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting", prim=lax.or_p,
-                                   dtype=np.int32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
-)
-
-lax_xor = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.xor_p, dtype=dtype)
-  for dtype in (jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
-                jtu.dtypes.boolean)
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting", prim=lax.xor_p,
-                                   dtype=np.int32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
-)
-
-lax_shift_left = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.shift_left_p, dtype=dtype)
-  for dtype in (jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting", prim=lax.shift_left_p,
-                                   dtype=np.int32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
-)
-
-lax_shift_right_logical = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.shift_right_logical_p,
-                                   dtype=dtype)
-  for dtype in (jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting",
-                                   prim=lax.shift_right_logical_p,
-                                   dtype=np.int32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
-)
-
-lax_shift_right_arithmetic = tuple( # Validate dtypes
-  _make_binary_elementwise_harness("dtypes", prim=lax.shift_right_arithmetic_p,
-                                   dtype=dtype)
-  for dtype in (jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
-) + tuple( # Validate broadcasting
-  _make_binary_elementwise_harness("broadcasting",
-                                   prim=lax.shift_right_arithmetic_p,
-                                   dtype=np.int32, shapes=shapes)
-  for shapes in [
-      ((20, 20), (1, 20)), # broadcasting rhs
-      ((1, 20), (20, 20)), # broadcasting lhs
-  ]
+lax_max = (
+  _make_binary_elementwise_harnesses(prim=lax.max_p, dtypes=jtu.dtypes.all)
+) + tuple( # Validate special cases
+  Harness(f"inf_nan_{jtu.dtype_str(lhs.dtype)}_{lhs[0]}_{rhs[0]}",
+          lax.max_p.bind,
+          [lhs, rhs],
+          dtype=lhs.dtype)
+  for lhs, rhs in _min_max_special_cases
 )
 
 def _make_broadcast_in_dim_harness(name, *, dtype=np.float32,
