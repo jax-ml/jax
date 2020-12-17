@@ -329,7 +329,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
   assert isinstance(ans, xe.XlaOp)
   c.clear_op_metadata()
   try:
-    return c.build()
+    return c.build(ans)
   except RuntimeError as e:
     msg = (" ".join(map(str, e.args)) + "\n"
            "This is a bug in JAX's shape-checking rules; please report it!\n"

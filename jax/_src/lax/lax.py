@@ -1135,7 +1135,6 @@ def reduce(operands: Array, init_values: Array, computation: Callable,
     return convert_element_type(monoid_reducer(*flat_operands, dimensions), weak_type=weak_type)
   else:
     flat_init_avals = safe_map(_abstractify, flat_init_values)
-    # breakpoint()
     jaxpr, consts, out_tree = _variadic_reduction_jaxpr(
         computation, tuple(flat_init_avals), init_value_tree)
     out = reduce_p.bind(*(flat_operands + flat_init_values), computation=computation,

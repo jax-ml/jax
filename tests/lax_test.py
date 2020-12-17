@@ -2392,5 +2392,11 @@ class LazyConstantTest(jtu.JaxTestCase):
     self.assertTrue(py_op.aval.weak_type)
     self.assertFalse(lax_op.aval.weak_type)
 
+  def testCumsumLengthOne(self):
+    # regression test for issue 4672
+    x = lax.full((1,), 1)
+    out = lax.cumsum(x)
+    self.assertArraysEqual(out, x)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
