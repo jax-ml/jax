@@ -19,6 +19,7 @@ from absl.testing import absltest
 import numpy as np
 import unittest
 
+import jax
 from jax import test_util as jtu
 import jax.numpy as jnp
 import jax.scipy.special
@@ -378,6 +379,14 @@ class JetTest(jtu.JaxTestCase):
 
     assert g_out_primals == f_out_primals
     assert g_out_series == f_out_series
+
+  def test_add_any(self):
+    # https://github.com/google/jax/issues/5217
+    f = lambda x, eps: x * eps + eps + x
+    def g(eps):
+      x = jnp.array(1.)
+      return jax.grad(f)(x, eps)
+    jet(g, (1.,), ([1.],))  # doesn't crash
 
 
 if __name__ == '__main__':
