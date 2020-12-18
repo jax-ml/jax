@@ -62,6 +62,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
                   bool_env('JAX_DEBUG_NANS', False),
                   'Add nan checks to every operation.')
+flags.DEFINE_bool('jax_debug_infs',
+                  bool_env('JAX_DEBUG_infs', False),
+                  'Add inf checks to every operation.')
 flags.DEFINE_bool('jax_log_compiles',
                   bool_env('JAX_LOG_COMPILES', False),
                   'Print a message each time a `jit` computation is compiled.')
@@ -350,6 +353,7 @@ def _execute_compiled_primitive(prim, compiled, result_handler, *args):
   input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
   out_bufs = compiled.execute(input_bufs)
   if FLAGS.jax_debug_nans: check_nans(prim, out_bufs)
+  if FLAGS.jax_debug_infs: check_infs(prim, out_bufs)
   return result_handler(*out_bufs)
 
 def _execute_replicated_primitive(prim, compiled, result_handler, *args):
@@ -371,6 +375,18 @@ def _check_nans(name, xla_shape, buf):
   if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
     if np.any(np.isnan(buf.to_py())):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
+
+def check_infs(prim, bufs):
+  for buf in bufs:
+    # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
+    # the default.
+    _check_infs(prim.name, getattr(buf, "xla_shape", buf.shape)(), buf)
+
+def _check_infs(name, xla_shape, buf):
+  assert not xla_shape.is_tuple()
+  if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
+    if np.any(np.isinf(buf.to_py())):
+      raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 ### compiling jaxprs
 
@@ -571,7 +587,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_inv
   try:
     return compiled_fun(*args)
   except FloatingPointError:
-    assert FLAGS.jax_debug_nans  # compiled_fun can only raise in this case
+    assert FLAGS.jax_debug_nans or FLAGS.jax_debug_infs  # compiled_fun can only raise in this case
     print("Invalid value encountered in the output of a jit function. "
           "Calling the de-optimized version.")
     # We want to run the wrapped function again (after _xla_callable already ran
@@ -829,6 +845,7 @@ def _execute_compiled(compiled: XlaExecutable, avals, handlers, *args):
   input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
   out_bufs = compiled.execute(input_bufs)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
+  if FLAGS.jax_debug_infs: check_infs(xla_call_p, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
 def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
@@ -837,6 +854,7 @@ def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
       for device in compiled.local_devices()]
   out_bufs = compiled.execute_on_local_devices(input_bufs)[0]
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
+  if FLAGS.jax_debug_infs: check_infs(xla_call_p, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers, *args):
