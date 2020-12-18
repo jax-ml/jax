@@ -5898,21 +5898,25 @@ ad.primitive_jvps[ad_util.stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[ad_util.stop_gradient_p] = _stop_gradient_batch_rule
 
 
-def create_token(x):
+def create_token(_=None):
   """Creates an XLA token value with no preconditions for sequencing effects.
 
   Experimental.
 
-  Args:
-    x: a dummy argument used to tie the CreateToken operator into a trace. The
-       value of `x` is ignored.
+  The argument is ignored. It exists for backward compatibility.
   """
-  # x is a dummy argument used to tie the operator into a trace.
-  return create_token_p.bind(stop_gradient(x))
+  if config.omnistaging_enabled:
+    return create_token_p.bind()
+  else:
+    x = _
+    if x is None:
+      raise ValueError(
+          'create_token needs a tie-in operand unless omnistaging is enabled.')
+    return create_token_p.bind(stop_gradient(x))
 
 create_token_p = Primitive("create_token")
 create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
-create_token_p.def_abstract_eval(lambda _: abstract_token)
+create_token_p.def_abstract_eval(lambda *_: abstract_token)
 xla.translations[create_token_p] = lambda c, *_: xops.CreateToken(c)
 
 def after_all(*operands):
