@@ -1207,23 +1207,17 @@ def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute
   s, u, vt, info = gesvd_impl(c, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
-  if info is not None:
-    ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
-    s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
-                             _nan_like(c, s))
-  else:
-    pass # rocsolver does not return info
+  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
+                           _nan_like(c, s))
 
   result = [s]
 
   if compute_uv:
-    if info is not None:
-      u = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), u,
-                               _nan_like(c, u))
-      vt = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vt,
-                                _nan_like(c, vt))
-    else:
-      pass # rocsolver does not return info
+    u = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), u,
+                             _nan_like(c, u))
+    vt = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vt,
+                              _nan_like(c, vt))
     result += [u, vt]
 
   return xops.Tuple(c, result)
