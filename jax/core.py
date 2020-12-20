@@ -779,8 +779,13 @@ def full_lower(val):
     return val
 
 def find_top_trace(xs) -> Trace:
-  top_main = max((x._trace.main for x in xs if isinstance(x, Tracer)),
-                 default=None, key=attrgetter('level'))
+  top_tracer = max((x for x in xs if isinstance(x, Tracer)),
+                    default=None, key=attrgetter('_trace.level'))
+  if top_tracer is not None:
+    top_tracer._assert_live()
+    top_main = top_tracer._trace.main  # type: Optional[MainTrace]
+  else:
+    top_main = None
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
