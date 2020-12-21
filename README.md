@@ -219,7 +219,7 @@ def predict(params, input_vec):
   assert input_vec.ndim == 1
   for W, b in params:
     output_vec = jnp.dot(W, input_vec) + b  # `input_vec` on the right-hand side!
-    input_vec = jnp.tanh(output_vec)
+    output_vec = jnp.tanh(output_vec)
   return output_vec
 ```
 
