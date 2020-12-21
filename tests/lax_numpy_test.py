@@ -1477,6 +1477,45 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np.testing.assert_equal(arr, jnp_res[2:-3, 3:-1])
     np.testing.assert_equal(np_res[2:-3, 3:-1], jnp_res[2:-3, 3:-1])
 
+  def testPadKwargs(self):
+    modes = {
+        'constant': {'constant_values': 0},
+        'edge': {},
+        'linear_ramp': {'end_values': 0},
+        'maximum': {'stat_length': None},
+        'mean': {'stat_length': None},
+        'median': {'stat_length': None},
+        'minimum': {'stat_length': None},
+        'reflect': {'reflect_type': 'even'},
+        'symmetric': {'reflect_type': 'even'},
+        'wrap': {},
+        'empty': {}
+    }
+    arr = [1, 2, 3]
+    pad_width = 1
+
+    for mode in modes.keys():
+      allowed = modes[mode]
+      not_allowed = {}
+      for kwargs in modes.values():
+        if kwargs != allowed:
+          not_allowed.update(kwargs)
+
+      # Test if allowed keyword arguments pass
+      jnp.pad(arr, pad_width, mode, **allowed)
+      # Test if prohibited keyword arguments of other modes raise an error
+      match = "unsupported keyword arguments for mode '{}'".format(mode)
+      for key, value in not_allowed.items():
+        with self.assertRaisesRegex(ValueError, match):
+          jnp.pad(arr, pad_width, mode, **{key: value})
+
+    # Test if unsupported mode raise error.
+    unsupported_modes = [1, None, "foo"]
+    for mode in unsupported_modes:
+      match = "Unimplemented padding mode '{}' for np.pad.".format(mode)
+      with self.assertRaisesRegex(NotImplementedError, match):
+        jnp.pad(arr, pad_width, mode)
+
   def testPadWithNumpyPadWidth(self):
     a = [1, 2, 3, 4, 5]
     f = jax.jit(
@@ -4801,7 +4840,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogramdd': ['normed'],
       'ones': ['order'],
       'ones_like': ['subok', 'order'],
-      'pad': ['kwargs'],
       'zeros_like': ['subok', 'order']
     }
 
@@ -4809,7 +4847,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'broadcast_to': ['arr'],
       'einsum': ['precision'],
       'einsum_path': ['subscripts'],
-      'pad': ['constant_values'],
     }
 
     mismatches = {}

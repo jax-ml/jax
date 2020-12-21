@@ -2543,17 +2543,41 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values, refle
     return _pad_empty(array, pad_width)
 
   else:
-    msg = "Unimplemented padding mode '{}' for np.pad."
-    raise NotImplementedError(msg.format(mode))
+    assert False, ("Should not be reached since pad already handled unsupported and"
+                   "not implemented modes")
 
 
 @_wraps(np.pad)
-def pad(array, pad_width, mode="constant", constant_values=0, stat_length=None,
-        end_values=0, reflect_type="even"):
+def pad(array, pad_width, mode="constant", **kwargs):
   if isinstance(pad_width, Iterable):
     pad_width = tuple(
         tuple(int(i) for i in x) if isinstance(x, Iterable) else x
         for x in pad_width)
+  allowed_kwargs = {
+      'empty': [], 'edge': [], 'wrap': [],
+      'constant': ['constant_values'],
+      'linear_ramp': ['end_values'],
+      'maximum': ['stat_length'],
+      'mean': ['stat_length'],
+      'median': ['stat_length'],
+      'minimum': ['stat_length'],
+      'reflect': ['reflect_type'],
+      'symmetric': ['reflect_type'],
+  }
+  try:
+    unsupported_kwargs = set(kwargs) - set(allowed_kwargs[mode])
+  except KeyError:
+    msg = "Unimplemented padding mode '{}' for np.pad."
+    raise NotImplementedError(msg.format(mode))
+  if unsupported_kwargs:
+    raise ValueError("unsupported keyword arguments for mode '{}': {}"
+                     .format(mode, unsupported_kwargs))
+  # Set default value if not given.
+  constant_values = kwargs.get('constant_values', 0)
+  stat_length = kwargs.get('stat_length', None)
+  end_values = kwargs.get('end_values', 0)
+  reflect_type = kwargs.get('reflect_type', "even")
+
   return _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type)
 
 
