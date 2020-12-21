@@ -558,7 +558,7 @@ batching.primitive_batchers[id_tap_p] = _id_tap_batching_rule
 
 
 def _id_tap_masking_rule(operands, operands_logical_shapes, **params):
-  new_params = _add_transform(params, "mask", operands_logical_shapes)
+  new_params = _add_transform(params, "mask", tuple(operands_logical_shapes))
   return id_tap_p.bind(*operands, **new_params)
 
 
@@ -802,6 +802,17 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 out_trees="illegal param"
             ),
             eqn.source_info))
+  elif eqn.primitive is core.named_call_p:
+    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
+    eqns.append(
+        core.new_jaxpr_eqn(
+            eqn.invars + [input_token_var], eqn.outvars + [output_token_var],
+            eqn.primitive,
+            dict(
+                eqn.params,
+                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
+            ),
+          eqn.source_info))
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
 

@@ -1329,28 +1329,16 @@ class HostCallbackTest(jtu.JaxTestCase):
         1.""", testing_stream.output)
 
   def test_mask(self):
-    # TODO(necula)
-    raise SkipTest("masking has regressed")
+
     @functools.partial(api.mask, in_shapes=['n'], out_shape='')
     def padded_sum(x):
       return jnp.sum(hcb.id_print(x, what="x", output_stream=testing_stream))
     args = [jnp.arange(4)], dict(n=np.int64(2))
-    assertMultiLineStrippedEqual(self, """
-        { lambda c f ; a b.
-          let d = lt c b
-              e = id_tap[ func=_print
-                          logical_shapes=[(Traced<ShapedArray(int32[]):JaxprTrace(level=0/0)>,)]
-                          transforms=('mask',)
-                          what=x ] a
-              g = select d e f
-              h = reduce_sum[ axes=(0,) ] g
-          in (h,) }""", str(api.make_jaxpr(padded_sum)(*args)))
-
     _ = padded_sum(*args)
+    hcb.barrier_wait()
     self.assertMultiLineStrippedEqual("""
-        logical_shapes: [(2,)] transforms: ['mask',) what: x
-        [0 1 2 3]
-          """, testing_stream.output)
+        transforms: [('mask', {'logical_shapes': ((2,),)})] what: x
+        [0 1 2 3]""", testing_stream.output)
     testing_stream.reset()
 
   def test_callback_delay(self):
@@ -1459,6 +1447,26 @@ class HostCallbackTest(jtu.JaxTestCase):
     expected = """
       3
       10"""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+
+  def test_named_call(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("Test requires omnistaging")
+    def tap_scalar(init, do_print=False):
+      @functools.partial(api.named_call, name="step")
+      def step(acc, step_nr):
+        acc = acc + step_nr
+        maybe_print(do_print, step_nr, what="step_nr")
+        return acc, None
+
+      return lax.scan(step, init, np.arange(2))
+    self.assertAllClose(tap_scalar(3., do_print=False), tap_scalar(3., do_print=True))
+    hcb.barrier_wait()
+    expected = """
+      what: step_nr
+      0
+      what: step_nr
+      1"""
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
 
@@ -1863,6 +1871,32 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                     in (d,) }
                        cond_nconsts=0 ] 0 1 a c
           in (b, d) }""", loss, [2])
+
+  def test_named_call(self):
+
+    def tap_scalar(init, do_print=False):
+      @functools.partial(api.named_call, name="step")
+      def step(acc, step_nr):
+        acc = acc + step_nr
+        maybe_print(do_print, step_nr, what="step_nr")
+        return acc, None
+
+      return lax.scan(step, init, np.arange(2, dtype=np.int32))
+    self.assertRewrite("""
+        { lambda a ; b d.
+          let c = scan[ jaxpr={ lambda  ; a b.
+                                let c = named_call[ call_jaxpr={ lambda  ; a b.
+                                                                 let c = add a b
+                                                                 in (c,) }
+                                                    name=step ] a b
+                                in (c,) }
+                        length=2
+                        linear=(False, False)
+                        num_carry=1
+                        num_consts=0
+                        reverse=False
+                        unroll=1 ] b a
+          in (c, d) }""", tap_scalar, [np.int32(3)])
 
   def test_pmap(self):
     def f(xv):
