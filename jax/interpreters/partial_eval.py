@@ -199,16 +199,6 @@ class JaxprTrace(Trace):
                    PartialVal.unknown(pval[0])
                    for pval, out_axis in zip(out_pvals, out_axes)]
 
-    # Avoid staging out trivial calls, but maps may involve broadcasting.
-    if not jaxpr.eqns and not primitive.map_primitive:
-      env = {core.unitvar: core.unit}
-      map(env.setdefault, jaxpr.invars, (*env_tracers, *tracers))
-      map(env.setdefault, jaxpr.constvars, consts)
-      return [v.val if type(v) is Literal
-              else pval.get_known() if pval.is_known()
-              else env[v]
-              for v, pval in zip(jaxpr.outvars, out_pvals)]
-
     # Skip known invars and outvars, and lift constants as regular invars
     in_knowns = tuple(t.pval.is_known() for t in it.chain(env_tracers, tracers))
     out_unknowns = tuple(not pval.is_known() for pval in out_pvals)
