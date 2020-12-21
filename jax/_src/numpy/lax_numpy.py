@@ -2521,29 +2521,30 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values, refle
   if mode == "constant":
     return _pad_constant(array, pad_width, constant_values)
 
-  if mode == "wrap":
+  elif mode == "wrap":
     return _pad_wrap(array, pad_width)
 
-  if mode in ("symmetric", "reflect"):
+  elif mode in ("symmetric", "reflect"):
     return _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type)
 
-  if mode == "edge":
+  elif mode == "edge":
     return _pad_edge(array, pad_width)
 
-  if mode == "linear_ramp":
+  elif mode == "linear_ramp":
     end_values = _broadcast_to_pairs(end_values, nd, "end_values")
     return _pad_linear_ramp(array, pad_width, end_values)
 
-  if mode in stat_funcs:
+  elif mode in stat_funcs:
     if stat_length is not None:
       stat_length = _broadcast_to_pairs(stat_length, nd, "stat_length")
     return _pad_stats(array, pad_width, stat_length, stat_funcs[mode])
 
-  if mode == "empty":
+  elif mode == "empty":
     return _pad_empty(array, pad_width)
 
-  assert False, ("Should not be reached since pad already handled unsupported and"
-                 "not implemented modes")
+  else:
+    assert False, ("Should not be reached since pad already handled unsupported and"
+                   "not implemented modes")
 
 
 @_wraps(np.pad)
