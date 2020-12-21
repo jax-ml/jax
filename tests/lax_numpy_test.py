@@ -1509,6 +1509,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         with self.assertRaisesRegex(ValueError, match):
           jnp.pad(arr, pad_width, mode, **{key: value})
 
+    # Test if unsupported mode raise error.
+    unsupported_modes = [1, None, "foo"]
+    for mode in unsupported_modes:
+      match = "Unimplemented padding mode '{}' for np.pad.".format(mode)
+      with self.assertRaisesRegex(NotImplementedError, match):
+        jnp.pad(arr, pad_width, mode)
+
   def testPadWithNumpyPadWidth(self):
     a = [1, 2, 3, 4, 5]
     f = jax.jit(
