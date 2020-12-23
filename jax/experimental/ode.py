@@ -169,8 +169,7 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
              "\n{}.")
       raise TypeError(msg.format(arg))
 
-  converted, consts = custom_derivatives.closure_convert(
-      func, (y0, t[0], *args))
+  converted, consts = custom_derivatives.closure_convert(func, y0, t[0], *args)
   return _odeint_wrapper(converted, rtol, atol, mxstep, y0, t, *args, *consts)
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3))

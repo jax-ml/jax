@@ -840,7 +840,7 @@ class Residuals:
     return cls(jaxpr, in_tree, out_tree, consts)
 
 
-def closure_convert(fun, example_args):
+def closure_convert(fun, *example_args):
   """Closure conversion utility, for use with higher-order custom derivatives.
 
   To define custom derivatives such as with ``jax.custom_vjp(f)``, the target
@@ -867,7 +867,7 @@ def closure_convert(fun, example_args):
   Example usage::
 
     def minimize(objective_fn, x0):
-      converted_fn, *aux_args = closure_convert(objective_fn, x0)
+      converted_fn, aux_args = closure_convert(objective_fn, x0)
       return _minimize(converted_fn, x0, *aux_args)
 
     @partial(custom_vjp, nondiff_argnums=(0,))
@@ -882,19 +882,20 @@ def closure_convert(fun, example_args):
 
     def rev(objective_fn, res, g):
       y, args = res
-      y_bar, args_bar = g
+      y_bar = g
       # ... custom reverse-mode AD ...
-      return x0_bar, *in_args_bar
+      return x0_bar, *args_bars
 
     _minimize.defvjp(fwd, rev)
 
   Args:
     fun: Python callable to be converted. Must be a pure function.
-    example_args: A tuple of arrays, scalars, or (nested) standard Python
-      containers (tuples, lists, dicts, namedtuples, i.e., pytrees) thereof,
-      used to determine the types of the formal arguments to ``fun``. This
-      type-specialized form of ``fun`` is the function that will be closure
-      converted.
+    example_args: Arrays, scalars, or (nested) standard Python
+      containers (tuples, lists, dicts, namedtuples, i.e., pytrees)
+      thereof, used to determine the types of the formal arguments to
+      ``fun``. This type-specialized form of ``fun`` is the function
+      that will be closure converted.
+
   """
   flat_args, in_tree = tree_flatten(example_args)
   in_avals = tuple(map(abstractify, flat_args))

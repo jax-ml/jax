@@ -13,6 +13,11 @@ jax 0.2.8 (Unreleased)
 ----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.7...master>`_.
 
+* New features:
+
+  * Add ``jax.closure_convert`` for use with higher-order custom
+    derivative functions. (`#5244 <https://github.com/google/jax/pull/5244>`_)
+
 * Bug fixes:
 
   * ``jax.numpy.arccosh`` now returns the same branch as ``numpy.arccosh`` for
