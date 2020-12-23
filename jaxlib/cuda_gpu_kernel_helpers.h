@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #ifndef JAXLIB_CUDA_GPU_KERNEL_HELPERS_H_
-#define JAXLIB_CUDA_KERNEL_HELPERS_H_
+#define JAXLIB_CUDA_GPU_KERNEL_HELPERS_H_
 
 #include <memory>
 
