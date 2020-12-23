@@ -5898,7 +5898,7 @@ def infeed(token, shape=None, partitions=None):
   """Consumes an infeed value of `shape` from the host. Experimental.
 
   `token` is used to sequence infeed and outfeed effects.
-  `partitions` may be specifed inside a `sharded_jit` function.
+  `partitions` may be specified inside a `sharded_jit` function.
   """
   flat_shapes, treedef = pytree.flatten(shape)
   for shape in flat_shapes:
