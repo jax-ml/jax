@@ -1101,7 +1101,7 @@ tf_impl[lax.lt_p] = tf.math.less
 
 tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
-def _convert_element_type(operand, *, new_dtype, weak_type=False):
+def _convert_element_type(operand, *, new_dtype):
   old_dtype = operand.dtype.as_numpy_dtype
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
