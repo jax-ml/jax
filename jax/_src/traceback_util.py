@@ -19,7 +19,6 @@ import types
 
 from jax import util
 
-
 _exclude_paths = [__file__, util.__file__]
 
 def register_exclusion(path):
