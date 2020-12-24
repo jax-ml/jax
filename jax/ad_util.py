@@ -37,6 +37,7 @@ def add_jaxvals(x, y):
     return add_jaxvals_p.bind(x, y)
 
 add_jaxvals_p = Primitive('add_any')
+add_any_p = add_jaxvals_p
 
 @add_jaxvals_p.def_impl
 def add_impl(xs, ys):

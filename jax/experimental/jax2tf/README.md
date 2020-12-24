@@ -12,7 +12,7 @@ or TensorFlow Hub.
 We describe below some general concepts and capabilities.
 More involved examples, including using jax2tf with
 Flax models and their use with TensorFlow Hub and Keras, are described in the
-[examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
+[examples directory](http://g3doc/third_party/py/jax/experimental/jax2tf/examples/README.md).
 
 See also some internal ongoing design discussions at `go/jax2tf-doc`.
 
@@ -82,7 +82,7 @@ tf.saved_model.save(my_model, '/some/directory')
 ```
 
 For examples of how to save a Flax or Haiku model as a SavedModel see the 
-[examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
+[examples directory](http://g3doc/third_party/py/jax/experimental/jax2tf/examples/README.md).
 
 
 ## Differentiation
@@ -126,7 +126,7 @@ for CUDA. One must be mindful to install a version of CUDA that is compatible
 with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
 [TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
 
-As of today, the tests are run using `tf_nightly==2.5.0-dev20201207`.
+As of today, the tests are run using `tf_nightly==2.5.0-dev20201223`.
 
 ## Caveats
 
@@ -178,7 +178,7 @@ We use the following such TFXLA:
 A small number of JAX primitives are converted only
 for certain data types, when the required TensorFlow ops are not implemented for some
 data types on certain devices. There is an
-[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+[up-to-date list of unimplemented cases](http://g3doc/third_party/py/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 
 ### Missing features
 

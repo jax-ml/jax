@@ -38,7 +38,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_basics(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
     _, res_tf = self.ConvertAndCompare(f_jax, jnp.float_(0.7))
-    self.assertIsInstance(res_tf, tf.Tensor)
 
   def test_pytrees(self):
     # Take and return pytrees
