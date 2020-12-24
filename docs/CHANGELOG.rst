@@ -24,6 +24,11 @@ jax 0.2.8 (Unreleased)
   * ``host_callback.outfeed_receiver`` has been removed (it is not necessary,
     and was deprecated a few months ago).
 
+* Breaking changes:
+
+  * ``jax.numpy.pad`` now take keyword arguments. Positional argument ``constant_values``
+    has been removed. In addition, passing unsupported keyword arguments raises an error.
+
 jax 0.2.7 (Dec 4 2020)
 ----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.6...jax-v0.2.7>`_.
