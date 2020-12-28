@@ -107,6 +107,16 @@ pytype_library(
 )
 
 pytype_library(
+    name = "kmeans",
+    srcs = ["experimental/kmeans.py"],
+    srcs_version = "PY3",
+    deps = [
+        ":jax",
+        "//third_party/py/numpy",
+    ],
+)
+
+pytype_library(
     name = "experimental_doubledouble",
     srcs = ["experimental/doubledouble.py"],
     srcs_version = "PY3",
