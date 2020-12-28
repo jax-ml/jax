@@ -1,6 +1,6 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2020-12-27* (YYYY-MM-DD)
+*Last generated on: 2020-12-28* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 

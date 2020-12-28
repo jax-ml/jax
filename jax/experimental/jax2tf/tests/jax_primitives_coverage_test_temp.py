@@ -79,7 +79,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     unique_limitations = {}
 
     def unique_hash(l: primitive_harness.Limitation):
-      return hash((l.harness.group_name, l.description, l.for_devices, l.for_dtypes))
+      return hash((l.harness.group_name, l.description, l.devices, l.dtypes))
 
     for h in harnesses:
       harness_groups[h.group_name].append(h)
@@ -107,10 +107,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
 | --- | --- | --- | --- | --- |"""]
     for l in sorted(unique_limitations.values(), key=lambda l: str(l.harness.group_name)):
-      devices = ", ".join(l.for_devices)
+      devices = ", ".join(l.devices)
       primitive_unimpl_table.append(
         f"|{l.harness.group_name}|{l.description}|"
-        f"{primitive_harness.dtypes_to_str(l.for_dtypes, empty_means_all=True)}|{devices}|")
+        f"{primitive_harness.dtypes_to_str(l.dtypes, empty_means_all=True)}|{devices}|")
 
     if not os.environ.get("JAX_OUTPUT_LIMITATIONS_DOC"):
       raise unittest.SkipTest("Set JAX_OUTPUT_LIMITATIONS_DOC=1 to enable the generation of the documentation")

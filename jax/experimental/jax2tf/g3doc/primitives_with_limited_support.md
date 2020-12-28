@@ -122,7 +122,6 @@ We use the following abbreviations for sets of dtypes:
 | --- | --- | --- | --- | --- | ---|
 |acos|TF error: op not defined for dtype|bfloat16, complex64, float16|cpu, gpu|eager, graph|
 |acos|TF error: op not defined for dtype|complex128|cpu, gpu|eager, graph|
-|acosh|TF error: TODO: investigate large numeric difference|complex128|cpu,|compiled, eager, graph|
 |acosh|TF error: op not defined for dtype|bfloat16, float16|cpu, gpu|eager, graph|
 |add|TF error: op not defined for dtype|uint16, uint32|cpu, gpu, tpu|compiled, eager, graph|
 |add|TF error: op not defined for dtype|uint64|cpu, gpu|compiled, eager, graph|
@@ -141,8 +140,8 @@ We use the following abbreviations for sets of dtypes:
 |cholesky|TF error: function not compilable|all_complex|cpu, gpu|compiled|
 |cholesky|TF error: op not defined for dtype|all_complex|tpu|compiled|
 |clamp|TF error: op not defined for dtype|int8, uint16, uint32, uint64|cpu, gpu, tpu|compiled, eager, graph|
-|conv_general_dilated|TF error: XLA bug in the HLO -> LLVM IR lowering|all_complex|cpu, gpu|compiled, eager, graph|
 |conv_general_dilated|TF error: jax2tf BUG: batch_group_count > 1 not yet converted||cpu, gpu, tpu|compiled, eager, graph|
+|conv_general_dilated|TF error: XLA bug in the HLO -> LLVM IR lowering|all_complex|cpu, gpu|compiled, eager, graph|
 |cosh|TF error: op not defined for dtype|float16|cpu, gpu|eager, graph|
 |cummax|TF error: op not defined for dtype|complex128, uint64|cpu, gpu|compiled, eager, graph|
 |cummax|TF error: op not defined for dtype|complex64, int8, uint16, uint32|cpu, gpu, tpu|compiled, eager, graph|
@@ -153,7 +152,6 @@ We use the following abbreviations for sets of dtypes:
 |cumsum|TF error: op not defined for dtype|uint64|cpu, gpu|compiled, eager, graph|
 |cumsum|TF error: op not defined for dtype|complex64|tpu|compiled|
 |cumsum|TF error: op not defined for dtype|uint16, uint32|cpu, gpu, tpu|compiled, eager, graph|
-|custom_linear_solve|Numeric comparison disabled: TODO: large numerical discrepancy|float32|tpu|compiled|
 |digamma|TF error: op not defined for dtype|bfloat16|cpu, gpu|eager, graph|
 |div|TF error: op not defined for dtype|all_unsigned_integers, int16, int8|cpu, gpu, tpu|compiled, eager, graph|
 |div|TF error: TF integer division fails if divisor contains 0; JAX returns NaN|all_integers|cpu, gpu, tpu|compiled, eager, graph|
@@ -162,8 +160,6 @@ We use the following abbreviations for sets of dtypes:
 |eig|TF error: function not compilable||cpu, gpu, tpu|compiled|
 |eig|TF error: TF Conversion of eig is not implemented when both compute_left_eigenvectors and compute_right_eigenvectors are set to True||cpu, gpu, tpu|compiled, eager, graph|
 |eigh|TF error: function not compilable|all_complex|cpu, gpu, tpu|compiled|
-|eigh|Numeric comparison disabled: TODO: numeric discrepancies|float64|cpu, gpu|compiled|
-|eigh|Numeric comparison disabled: TODO: numeric discrepancies|float16|tpu|compiled|
 |erf|TF error: op not defined for dtype|bfloat16|cpu, gpu|eager, graph|
 |erf_inv|TF error: op not defined for dtype|bfloat16, float16|cpu, gpu|eager, graph|
 |erfc|TF error: op not defined for dtype|bfloat16|cpu, gpu|eager, graph|
@@ -174,10 +170,7 @@ We use the following abbreviations for sets of dtypes:
 |gt|TF error: op not defined for dtype|bool|cpu, gpu, tpu|compiled, eager, graph|
 |gt|TF error: op not defined for dtype|uint16, uint32|cpu, gpu|eager, graph|
 |gt|TF error: op not defined for dtype|uint64|cpu, gpu|eager, graph|
-|igammac|Numeric comparison disabled: TODO: nan vs. non-nan|float32|tpu|compiled|
 |integer_pow|TF error: op not defined for dtype|all_unsigned_integers, int16, int8|cpu, gpu, tpu|compiled, eager, graph|
-|integer_pow|Numeric comparison disabled: TODO: large numeric difference|complex64|tpu|compiled|
-|integer_pow|Numeric comparison disabled: TODO: large numeric difference for overflow|float32, int32, int64|cpu, gpu, tpu|compiled, eager, graph|
 |le|TF error: op not defined for dtype|bool|cpu, gpu, tpu|compiled, eager, graph|
 |le|TF error: op not defined for dtype|uint16, uint32|cpu, gpu|eager, graph|
 |le|TF error: op not defined for dtype|uint64|cpu, gpu|eager, graph|
@@ -216,10 +209,10 @@ We use the following abbreviations for sets of dtypes:
 |rev|TF error: op not defined for dtype|uint32, uint64|cpu, gpu, tpu|compiled, eager, graph|
 |round|TF error: op not defined for dtype|bfloat16|cpu, gpu|eager, graph|
 |rsqrt|TF error: op not defined for dtype|bfloat16|cpu, gpu|eager, graph|
-|scatter_add|TF error: op not defined for dtype|bool, complex64, int8, uint16, uint32|cpu, gpu, tpu|compiled, eager, graph|
-|scatter_max|TF error: op not defined for dtype|bool, complex64, int8, uint16, uint32|cpu, gpu, tpu|compiled, eager, graph|
+|scatter_add|TF error: op not defined for dtype|bool, complex64, int8, uint16, uint32, uint64|cpu, gpu, tpu|compiled, eager, graph|
+|scatter_max|TF error: op not defined for dtype|all_complex, bool, int8, uint16, uint32, uint64|cpu, gpu, tpu|compiled, eager, graph|
 |scatter_min|TF error: op not defined for dtype|all_complex, bool, int8, uint16, uint32, uint64|cpu, gpu, tpu|compiled, eager, graph|
-|scatter_mul|TF error: op not defined for dtype|bool, complex64, int8, uint16, uint32|cpu, gpu, tpu|compiled, eager, graph|
+|scatter_mul|TF error: op not defined for dtype|bool, complex64, int8, uint16, uint32, uint64|cpu, gpu, tpu|compiled, eager, graph|
 |select_and_gather_add|TF error: op not defined for dtype|float32|tpu|compiled|
 |select_and_gather_add|TF error: jax2tf unimplemented|float64|cpu, gpu|compiled, eager, graph|
 |select_and_scatter_add|TF error: op not defined for dtype|uint16, uint32|cpu, gpu, tpu|compiled, eager, graph|

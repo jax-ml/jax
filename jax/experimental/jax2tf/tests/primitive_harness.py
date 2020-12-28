@@ -209,7 +209,7 @@ class Harness:
              one_containing: Optional[str] = None) -> bool:
     if not include_jax_unimpl:
       if any([
-        device_under_test in l.for_devices
+        device_under_test in l.devices
         for l in self.jax_unimplemented
         if l.filter(device_under_test)
       ]):
@@ -297,8 +297,8 @@ class Limitation:
       *,
       harness: Harness = None,
       enabled: bool = True,
-      for_devices: Sequence[str] = ("cpu", "gpu", "tpu"),
-      for_dtypes=(),
+      devices: Sequence[str] = ("cpu", "gpu", "tpu"),
+      dtypes=(),
   ):
     """Args:
 
@@ -310,34 +310,33 @@ class Limitation:
         limitation. Used for reports.
       enabled: whether this limitation is enabled for the harness in which
         it appears. This is only used during testing to know whether to ignore
-        harness errors. Use this sparingly, prefer `for_devices` and
-        `for_dtypes` for enabled conditions that are included in reports.
-      for_devices: the list of device types for which this applies. Used for
+        harness errors. Use this sparingly, prefer `devices` and
+        `dtypes` for enabled conditions that are included in reports.
+      devices: the list of device types for which this applies. Used for
         filtering during harness execution, and for reports.
-      for_dtypes: the list of dtypes for which this applies. Used for filtering
+      dtypes: the list of dtypes for which this applies. Used for filtering
         during harness execution, and for reports.
     """
     self.harness = harness  # type: Harness
     assert isinstance(description, str), f"{description}"
     self.description = description
-    if isinstance(for_devices, str):
-      for_devices = (for_devices,)
+    if isinstance(devices, str):
+      devices = (devices,)
     else:
-      for_devices = tuple(for_devices)
-    self.for_devices = for_devices
-    if not isinstance(for_dtypes, Iterable):
-      for_dtypes = (for_dtypes,)
+      devices = tuple(devices)
+    self.devices = devices
+    if not isinstance(dtypes, Iterable):
+      dtypes = (dtypes,)
     else:
-      for_dtypes = tuple(for_dtypes)
-    self.for_dtypes = for_dtypes
+      dtypes = tuple(dtypes)
+    self.dtypes = dtypes
     self.enabled = enabled  # Does it apply to the current harness?
-    assert isinstance(for_dtypes, Iterable), f"{for_dtypes}"
 
   def filter(self, device_under_test: str) -> bool:
     """Check that a limitation is enabled for the current harness and device."""
     return (self.enabled and
-            (not self.for_dtypes or self.harness.dtype in self.for_dtypes) and
-            device_under_test in self.for_devices)
+            (not self.dtypes or self.harness.dtype in self.dtypes) and
+            device_under_test in self.devices)
 
 
 def parameterized(harnesses: Iterable[Harness],
@@ -369,7 +368,7 @@ def parameterized(harnesses: Iterable[Harness],
       raise ValueError(
         f"Cannot find test case with name containing {one_containing}."
         "Names are:"
-        "\n".join([harness.name for harness in harnesses]))
+        "\n".join([harness.fullname for harness in harnesses]))
     cases = cases[0:1]
   if not cases:
     # We filtered out all the harnesses.
@@ -952,7 +951,7 @@ _make_binary_elementwise_harnesses(
   dtypes=jtu.dtypes.all_floating,
   jax_unimplemented=lambda *_, dtype, **kwargs: [
     Limitation(
-      "XLA internal error", for_dtypes=[np.float16, dtypes.bfloat16]),
+      "XLA internal error", dtypes=[np.float16, dtypes.bfloat16]),
   ])
 
 _make_binary_elementwise_harnesses(
@@ -960,7 +959,7 @@ _make_binary_elementwise_harnesses(
   dtypes=jtu.dtypes.all_floating,
   jax_unimplemented=lambda *_, dtype, **kwargs: [
     Limitation(
-      "XLA internal error", for_dtypes=[np.float16, dtypes.bfloat16]),
+      "XLA internal error", dtypes=[np.float16, dtypes.bfloat16]),
   ])
 
 _make_binary_elementwise_harnesses(
@@ -1201,7 +1200,7 @@ def _make_scatter_harness(name,
     ],
     jax_unimplemented=[
       Limitation(
-        "not implemented", for_devices="tpu", for_dtypes=np.complex64)
+        "not implemented", devices="tpu", dtypes=np.complex64)
     ],
     f_lax=f_lax,
     shape=shape,
@@ -1336,8 +1335,8 @@ def _make_cumreduce_harness(name,
     limitations.append(
       Limitation(
         "not implemented",
-        for_devices="tpu",
-        for_dtypes=np.complex64,
+        devices="tpu",
+        dtypes=np.complex64,
       ))
   define(
     f_jax.__name__,
@@ -1464,8 +1463,8 @@ for dtype in jtu.dtypes.all_inexact:
       jax_unimplemented=[
         Limitation(
           "unimplemented",
-          for_dtypes=[np.float16],
-          for_devices=("cpu", "gpu"))
+          dtypes=[np.float16],
+          devices=("cpu", "gpu"))
       ],
       shape=shape,
       dtype=dtype)
@@ -1483,8 +1482,8 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
         jax_unimplemented=[
           Limitation(
             "unimplemented",
-            for_devices=("cpu", "gpu"),
-            for_dtypes=[np.float16, dtypes.bfloat16]),
+            devices=("cpu", "gpu"),
+            dtypes=[np.float16, dtypes.bfloat16]),
         ],
         shape=shape,
         dtype=dtype,
@@ -1517,7 +1516,7 @@ def _make_fft_harness(name,
     jax_unimplemented=[
       Limitation(
         "only 1D FFT is currently supported b/140351181.",
-        for_devices="tpu",
+        devices="tpu",
         enabled=len(fft_lengths) > 1),
     ],
     rng_factory=_fft_rng_factory(dtype),
@@ -1576,12 +1575,12 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
           jax_unimplemented=[
             Limitation(
               "unimplemented",
-              for_devices=("cpu", "gpu"),
-              for_dtypes=[np.float16, dtypes.bfloat16]),
+              devices=("cpu", "gpu"),
+              dtypes=[np.float16, dtypes.bfloat16]),
             Limitation(
               "complex not implemented",
-              for_devices="tpu",
-              for_dtypes=[np.complex64, np.complex128])
+              devices="tpu",
+              dtypes=[np.complex64, np.complex128])
           ],
           shape=shape,
           dtype=dtype,
@@ -1602,11 +1601,11 @@ for dtype in jtu.dtypes.all_inexact:
           ],
           jax_unimplemented=[
             Limitation(
-              "only supported on CPU in JAX", for_devices=("tpu", "gpu")),
+              "only supported on CPU in JAX", devices=("tpu", "gpu")),
             Limitation(
               "unimplemented",
-              for_devices="cpu",
-              for_dtypes=[np.float16, dtypes.bfloat16])
+              devices="cpu",
+              dtypes=[np.float16, dtypes.bfloat16])
           ],
           shape=shape,
           dtype=dtype,
@@ -1643,12 +1642,12 @@ for dtype in jtu.dtypes.all_inexact:
         jax_unimplemented=[
           Limitation(
             "complex eigh not supported ",
-            for_devices="tpu",
-            for_dtypes=[np.complex64, np.complex128]),
+            devices="tpu",
+            dtypes=[np.complex64, np.complex128]),
           Limitation(
-            "unimplemented", for_devices="cpu", for_dtypes=[np.float16]),
+            "unimplemented", devices="cpu", dtypes=[np.float16]),
           Limitation(
-            "unimplemented", for_devices="gpu", for_dtypes=[np.float16]),
+            "unimplemented", devices="gpu", dtypes=[np.float16]),
         ],
         shape=shape,
         dtype=dtype,
@@ -1666,7 +1665,7 @@ for dtype in jtu.dtypes.all_inexact:
       lax.linalg.lu, [RandArg(shape, dtype)],
       jax_unimplemented=[
         Limitation(
-          "unimplemented", for_dtypes=[np.float16, dtypes.bfloat16])
+          "unimplemented", dtypes=[np.float16, dtypes.bfloat16])
       ],
       shape=shape,
       dtype=dtype)
@@ -1699,7 +1698,7 @@ def _make_triangular_solve_harness(name,
             RandArg(b_shape, dtype)],
     jax_unimplemented=[
       Limitation(
-        "not implemented", for_devices="gpu", for_dtypes=[np.float16]),
+        "not implemented", devices="gpu", dtypes=[np.float16]),
     ],
     dtype=dtype,
     a_shape=a_shape,
@@ -2053,7 +2052,7 @@ def _make_select_and_scatter_add_harness(name,
     jax_unimplemented=[
       Limitation(
         "works only for 2 or more inactive dimensions",
-        for_devices="tpu",
+        devices="tpu",
         enabled=(nb_inactive_dims < 2))
     ],
     shape=shape,
@@ -2175,8 +2174,7 @@ def _make_reduce_window_harness(name,
   limitations = []
   if computation.__name__ in ("max", "mul", "min"):
     limitations.append(
-      Limitation(
-        "unimplemented in XLA", for_devices="tpu", for_dtypes=np.complex64))
+      Limitation("unimplemented in XLA", devices="tpu", dtypes=np.complex64))
   define(
     prim_name,
     f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}"
