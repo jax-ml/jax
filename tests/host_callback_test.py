@@ -703,9 +703,6 @@ class HostCallbackTest(jtu.JaxTestCase):
   def test_jit_types(self, nr_args=2, dtype=jnp.int16, shape=(2,)):
     if dtype in (jnp.complex64, jnp.complex128, jnp.bool_):
       raise SkipTest(f"id_print jit not implemented for {dtype}.")
-    if jtu.device_under_test() == "tpu":
-      if dtype in (jnp.int16,):
-        raise SkipTest(f"transfering {dtype} not supported on TPU")
     args = [jnp.arange(prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
       args = args * nr_args

@@ -126,7 +126,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                   [ 45, -81,  81]], dtype=jnp.float32)
     jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
 
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj,pfau): nan on tpu, investigate
   def testDetGradOfSingularMatrixCorank2(self):
     # Rank 1 matrix with zero gradient
     b = jnp.array([[ 36, -42,  18],

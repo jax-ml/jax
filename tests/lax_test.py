@@ -2256,7 +2256,6 @@ class LazyConstantTest(jtu.JaxTestCase):
           [(2, 3, 4, 2), (0, 2, 3)],
           [(1001, 1001), (0, 1)],
       ]))
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate failure
   def testDeltaConstant(self, dtype, shape, axes):
     make_const = lambda: lax._delta(dtype, shape, axes)
     # don't check the asarray case, just assume it's right
