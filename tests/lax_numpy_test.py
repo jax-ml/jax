@@ -1024,7 +1024,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = {np.float16: 1e-2, np.float32: 1e-5, np.float64: 1e-14,
            np.complex128: 1e-14}
     if jtu.device_under_test() == "tpu":
-      tol[np.float32] = tol[np.complex64] = 2e-1
+      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 2e-1
     def np_dot(x, y):
       x = x.astype(np.float32) if lhs_dtype == jnp.bfloat16 else x
       y = y.astype(np.float32) if rhs_dtype == jnp.bfloat16 else y
@@ -1062,7 +1062,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = {np.float16: 1e-2, np.float32: 2e-2, np.float64: 1e-12,
            np.complex128: 1e-12}
     if jtu.device_under_test() == "tpu":
-      tol[np.float32] = tol[np.complex64] = 4e-2
+      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 4e-2
     self._CheckAgainstNumpy(np_fun, jnp.matmul, args_maker, tol=tol)
     self._CompileAndCheck(jnp.matmul, args_maker, atol=tol, rtol=tol)
 
@@ -1095,7 +1095,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = {np.float16: 1e-1, np.float32: 1e-3, np.float64: 1e-12,
            np.complex64: 1e-3, np.complex128: 1e-12}
     if jtu.device_under_test() == "tpu":
-      tol[np.float32] = tol[np.complex64] = 2e-1
+      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 2e-1
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -4210,10 +4210,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = jtu.ignore_warning(
       category=RuntimeWarning, message="invalid value encountered.*")(np_fun)
     jnp_fun = partial(jnp.corrcoef, rowvar=rowvar)
+    tol = 1e-2 if jtu.device_under_test() == "tpu" else None
     self._CheckAgainstNumpy(
         np_fun, jnp_fun, args_maker, check_dtypes=False,
-        tol=1e-2 if jtu.device_under_test() == "tpu" else None)
-    self._CompileAndCheck(jnp_fun, args_maker)
+        tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(jtu.format_shape_dtype_string(shape, dtype),
