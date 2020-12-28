@@ -220,9 +220,13 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         if not had_custom_assert:
           if custom_assert is not None and (mode in ("eager", "graph") or
                                             always_custom_assert):
+            logging.info(
+              f"[{self._testMethodName}] mode={mode}: Running custom_assert with tol={max_tol} (passed as input)")
             # If we have a custom assert, use it even if we expect incorrect results
             custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
           else:
+            logging.info(
+              f"[{self._testMethodName}] mode={mode}: Running default assert with tol={max_tol}")
             # In compiled mode we expect the same result as JAX by default
             self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
       else:
