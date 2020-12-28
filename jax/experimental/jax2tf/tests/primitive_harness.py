@@ -138,6 +138,7 @@ class Harness:
   params: Dict[str, Any]
 
   def __init__(self,
+               group_name,
                name,
                fun,
                arg_descriptors,
@@ -147,7 +148,7 @@ class Harness:
                jax_unimplemented: Sequence["Limitation"] = (),
                **params):
     """See class docstring."""
-    self.group_name = ""
+    self.group_name = group_name
     self.name = name
     self.fun = fun  # type: ignore[assignment]
     self.arg_descriptors = arg_descriptors
@@ -225,31 +226,31 @@ def dtypes_to_str(dtype_list: Sequence, empty_means_all=False) -> str:
     return "all"
 
   names = set([np.dtype(dt).name for dt in dtype_list])
-  signed_integers = {"int8", "int16", "int32", "int64"}
-  if all([t in names for t in signed_integers]):
-    names = (names - signed_integers).union({"all_signed_integers"})
-  unsigned_integers = {"uint8", "uint16", "uint32", "uint64"}
-  if all([t in names for t in unsigned_integers]):
-    names = (names - unsigned_integers).union({"all_unsigned_integers"})
-  all_integers = {"all_signed_integers", "all_unsigned_integers"}
-  if all([t in names for t in all_integers]):
-    names = (names - all_integers).union({"all_integers"})
+  signed = {"int8", "int16", "int32", "int64"}
+  if all([t in names for t in signed]):
+    names = (names - signed) | {"signed"}
+  integers = {"uint8", "uint16", "uint32", "uint64"}
+  if all([t in names for t in integers]):
+    names = (names - integers) | {"unsigned"}
+  integer = {"signed", "unsigned"}
+  if all([t in names for t in integer]):
+    names = (names - integer) | {"integer"}
 
-  all_float = {"bfloat16", "float16", "float32", "float64"}
-  if all([t in names for t in all_float]):
-    names = (names - all_float).union({"all_float"})
+  floating = {"bfloat16", "float16", "float32", "float64"}
+  if all([t in names for t in floating]):
+    names = (names - floating) | {"floating"}
 
-  all_complex = {"complex64", "complex128"}
-  if all([t in names for t in all_complex]):
-    names = (names - all_complex).union({"all_complex"})
+  complex = {"complex64", "complex128"}
+  if all([t in names for t in complex]):
+    names = (names - complex) | {"complex"}
 
-  all_inexact = {"all_float", "all_complex"}
-  if all([t in names for t in all_inexact]):
-    names = (names - all_inexact).union({"all_inexact"})
+  inexact = {"", "all_complex"}
+  if all([t in names for t in inexact]):
+    names = (names - inexact) | {"inexact"}
 
-  all_types = {"all_integers", "all_inexact", "bool"}
+  all_types = {"integer", "inexact", "bool"}
   if all([t in names for t in all_types]):
-    names = (names - all_types).union({"all"})
+    names = (names - all_types) | {"all"}
 
   return ", ".join(sorted(list(names)))
 
@@ -270,15 +271,13 @@ def define(
     **params):
   """Defines a harness and stores it in `all_harnesses`. See Harness."""
   group_name = str(group_name)
-  h = Harness(
-    name,
+  h = Harness(group_name, name,
     fun,
     arg_descriptors,
     rng_factory=rng_factory,
     jax_unimplemented=jax_unimplemented,
     dtype=dtype,
     **params)
-  h.group_name = group_name
   for l in jax_unimplemented:
     assert not l.harness
     l.harness = h
@@ -306,8 +305,7 @@ class Limitation:
         except when constructing the Limitations for the jax_unimplemented
         argument to the Harness constructor.
       description: text to augment the harness group name with the description
-      of the
-        limitation. Used for reports.
+      of the limitation. Used for reports.
       enabled: whether this limitation is enabled for the harness in which
         it appears. This is only used during testing to know whether to ignore
         harness errors. Use this sparingly, prefer `devices` and
@@ -1200,7 +1198,7 @@ def _make_scatter_harness(name,
     ],
     jax_unimplemented=[
       Limitation(
-        "not implemented", devices="tpu", dtypes=np.complex64)
+        "unimplemented", devices="tpu", dtypes=np.complex64)
     ],
     f_lax=f_lax,
     shape=shape,
@@ -1334,7 +1332,7 @@ def _make_cumreduce_harness(name,
   if f_jax.__name__ != "cumsum":
     limitations.append(
       Limitation(
-        "not implemented",
+        "unimplemented",
         devices="tpu",
         dtypes=np.complex64,
       ))
@@ -1698,7 +1696,7 @@ def _make_triangular_solve_harness(name,
             RandArg(b_shape, dtype)],
     jax_unimplemented=[
       Limitation(
-        "not implemented", devices="gpu", dtypes=[np.float16]),
+        "unimplemented", devices="gpu", dtypes=[np.float16]),
     ],
     dtype=dtype,
     a_shape=a_shape,

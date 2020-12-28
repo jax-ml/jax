@@ -125,7 +125,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     match the value from the JAX execution.
 
     Args:
-      func_jax: the function to invoke (``func_jax(**args)``)
+      func_jax: the function to invoke (``func_jax(*args)``)
       args: the arguments.
       enable_xla: if True, allows the use of XLA ops in jax2tf.convert
         (default: True).

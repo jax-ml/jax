@@ -13,148 +13,148 @@ data types. The following table shows the dtypes at which
 by the current harnesses on any device.)
 
 Note also that the set of supported dtypes include 64-bit types
-(`float64`, `int64`, `uint64`, `complex128`) only of the
+(`float64`, `int64`, `uint64`, `complex128`) only if the
 flag `--jax_enable_x64` is set (or the JAX_ENABLE_X64 environment
 variable).
 
 We use the following abbreviations for sets of dtypes:
 
-  * `all_signed_integers` = `int8`, `int16`, `int32`, `int64`
-  * `all_unsigned_integers` = `uint8`, `uint16`, `uint32`, `uint64`
-  * `all_integers` = `all_signed_integers`, `all_unsigned_integers`
-  * `all_float` = `float16`, `bfloat16`, `float32`, `float64`
-  * `all_complex` = `complex64`, `complex128`
-  * `all_inexact` = `all_float`, `all_complex`
-  * `all` = `all_integers`, `all_inexact`, `bool`
+  * `signed` = `int8`, `int16`, `int32`, `int64`
+  * `unsigned` = `uint8`, `uint16`, `uint32`, `uint64`
+  * `integer` = `signed`, `nsigned`
+  * `floating` = `float16`, `bfloat16`, `float32`, `float64`
+  * `complex` = `complex64`, `complex128`
+  * `inexact` = `floating`, `complex`
+  * `all` = `integer`, `inexact`, `bool`
 
 In order to experiment with increased coverage, add more harnesses for
 more data types.
 
 
-| Primitive | Nr. test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
+| Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
 | --- | --- | --- | --- | --- |
-| abs | 10 | all_inexact, all_signed_integers | all_unsigned_integers, bool |
-| acos | 6 | all_inexact | all_integers, bool |
-| acosh | 6 | all_inexact | all_integers, bool |
-| add | 16 | all_inexact, all_integers | bool |
-| add_any | 14 | all_inexact, all_integers | bool |
-| and | 11 | all_integers, bool | all_inexact |
-| argmax | 22 | all_float, all_integers, bool | all_complex |
-| argmin | 22 | all_float, all_integers, bool | all_complex |
-| asin | 6 | all_inexact | all_integers, bool |
-| asinh | 6 | all_inexact | all_integers, bool |
-| atan | 6 | all_inexact | all_integers, bool |
-| atan2 | 6 | all_float | all_complex, all_integers, bool |
-| atanh | 6 | all_inexact | all_integers, bool |
-| bessel_i0e | 4 | all_float | all_complex, all_integers, bool |
-| bessel_i1e | 4 | all_float | all_complex, all_integers, bool |
-| bitcast_convert_type | 41 | all |  |
-| broadcast | 17 | all |  |
-| broadcast_in_dim | 19 | all |  |
-| ceil | 4 | all_float | all_complex, all_integers, bool |
-| cholesky | 30 | all_inexact | all_integers, bool |
-| clamp | 17 | all_float, all_integers | all_complex, bool |
-| complex | 4 | float32, float64 | all_complex, all_integers, bfloat16, bool, float16 |
-| concatenate | 17 | all |  |
-| conj | 5 | all_complex, float32, float64 | all_integers, bfloat16, bool, float16 |
-| conv_general_dilated | 58 | all_inexact | all_integers, bool |
-| convert_element_type | 201 | all |  |
-| cos | 6 | all_inexact | all_integers, bool |
-| cosh | 6 | all_inexact | all_integers, bool |
-| cummax | 17 | all_inexact, all_integers | bool |
-| cummin | 17 | all_inexact, all_integers | bool |
-| cumprod | 17 | all_inexact, all_integers | bool |
-| cumsum | 17 | all_inexact, all_integers | bool |
-| custom_linear_solve | 4 | float32, float64 | all_complex, all_integers, bfloat16, bool, float16 |
-| device_put | 16 | all |  |
-| digamma | 4 | all_float | all_complex, all_integers, bool |
-| div | 20 | all_inexact, all_integers | bool |
-| dot_general | 125 | all |  |
-| dynamic_slice | 32 | all |  |
-| dynamic_update_slice | 21 | all |  |
-| eig | 72 | all_inexact | all_integers, bool |
-| eigh | 36 | all_inexact | all_integers, bool |
-| eq | 17 | all |  |
-| erf | 4 | all_float | all_complex, all_integers, bool |
-| erf_inv | 4 | all_float | all_complex, all_integers, bool |
-| erfc | 4 | all_float | all_complex, all_integers, bool |
-| exp | 6 | all_inexact | all_integers, bool |
-| expm1 | 6 | all_inexact | all_integers, bool |
-| fft | 20 | all_complex, float32, float64 | all_integers, bfloat16, bool, float16 |
-| floor | 4 | all_float | all_complex, all_integers, bool |
-| gather | 37 | all |  |
-| ge | 15 | all_float, all_integers, bool | all_complex |
-| gt | 15 | all_float, all_integers, bool | all_complex |
-| igamma | 6 | all_float | all_complex, all_integers, bool |
-| igammac | 6 | all_float | all_complex, all_integers, bool |
-| imag | 2 | all_complex | all_float, all_integers, bool |
-| integer_pow | 34 | all_inexact, all_integers | bool |
-| iota | 16 | all_inexact, all_integers | bool |
-| is_finite | 4 | all_float | all_complex, all_integers, bool |
-| le | 15 | all_float, all_integers, bool | all_complex |
-| lgamma | 4 | all_float | all_complex, all_integers, bool |
-| log | 6 | all_inexact | all_integers, bool |
-| log1p | 6 | all_inexact | all_integers, bool |
-| lt | 15 | all_float, all_integers, bool | all_complex |
-| lu | 18 | all_inexact | all_integers, bool |
-| max | 29 | all |  |
-| min | 29 | all |  |
-| mul | 16 | all_inexact, all_integers | bool |
-| ne | 17 | all |  |
-| neg | 14 | all_inexact, all_integers | bool |
-| nextafter | 6 | all_float | all_complex, all_integers, bool |
-| or | 11 | all_integers, bool | all_inexact |
-| pad | 90 | all |  |
-| population_count | 8 | all_integers | all_inexact, bool |
-| pow | 10 | all_inexact | all_integers, bool |
-| qr | 60 | all_inexact | all_integers, bool |
-| random_gamma | 4 | float32, float64 | all_complex, all_integers, bfloat16, bool, float16 |
-| random_split | 5 | uint32 | all |
-| real | 2 | all_complex | all_float, all_integers, bool |
-| reduce_and | 1 | bool | all_inexact, all_integers |
-| reduce_max | 15 | all |  |
-| reduce_min | 15 | all |  |
-| reduce_or | 1 | bool | all_inexact, all_integers |
-| reduce_prod | 14 | all_inexact, all_integers | bool |
-| reduce_sum | 14 | all_inexact, all_integers | bool |
-| reduce_window_add | 33 | all_inexact, all_integers | bool |
-| reduce_window_max | 37 | all |  |
-| reduce_window_min | 15 | all |  |
-| reduce_window_mul | 42 | all_inexact, all_integers | bool |
-| regularized_incomplete_beta | 4 | all_float | all_complex, all_integers, bool |
-| rem | 18 | all_float, all_integers | all_complex, bool |
-| reshape | 19 | all |  |
-| rev | 19 | all |  |
-| round | 7 | all_float | all_complex, all_integers, bool |
-| rsqrt | 6 | all_inexact | all_integers, bool |
-| scatter_add | 14 | all_inexact, all_integers | bool |
-| scatter_max | 15 | all |  |
-| scatter_min | 19 | all |  |
-| scatter_mul | 14 | all_inexact, all_integers | bool |
-| select | 16 | all |  |
-| select_and_gather_add | 15 | all_float | all_complex, all_integers, bool |
-| select_and_scatter_add | 27 | all_float, all_integers, bool | all_complex |
-| shift_left | 10 | all_integers | all_inexact, bool |
-| shift_right_arithmetic | 10 | all_integers | all_inexact, bool |
-| shift_right_logical | 10 | all_integers | all_inexact, bool |
-| sign | 14 | all_inexact, all_integers | bool |
-| sin | 6 | all_inexact | all_integers, bool |
-| sinh | 6 | all_inexact | all_integers, bool |
-| slice | 24 | all |  |
-| sort | 21 | all |  |
-| sqrt | 6 | all_inexact | all_integers, bool |
-| squeeze | 23 | all |  |
-| stop_gradient | 15 | all |  |
-| sub | 16 | all_inexact, all_integers | bool |
-| svd | 120 | all_inexact | all_integers, bool |
-| tan | 6 | all_inexact | all_integers, bool |
-| tanh | 6 | all_inexact | all_integers, bool |
-| tie_in | 15 | all |  |
-| top_k | 15 | all_float, all_integers, bool | all_complex |
-| transpose | 17 | all |  |
-| triangular_solve | 26 | all_inexact | all_integers, bool |
-| xor | 11 | all_integers, bool | all_inexact |
-| zeros_like | 15 | all |  |
+| abs | 10 | complex, floating, signed | bool, unsigned |
+| acos | 6 | complex, floating | bool, integer |
+| acosh | 6 | complex, floating | bool, integer |
+| add | 16 | complex, floating, integer | bool |
+| add_any | 14 | complex, floating, integer | bool |
+| and | 11 | bool, integer | complex, floating |
+| argmax | 22 | bool, floating, integer | complex |
+| argmin | 22 | bool, floating, integer | complex |
+| asin | 6 | complex, floating | bool, integer |
+| asinh | 6 | complex, floating | bool, integer |
+| atan | 6 | complex, floating | bool, integer |
+| atan2 | 6 | floating | bool, complex, integer |
+| atanh | 6 | complex, floating | bool, integer |
+| bessel_i0e | 4 | floating | bool, complex, integer |
+| bessel_i1e | 4 | floating | bool, complex, integer |
+| bitcast_convert_type | 41 | bool, complex, floating, integer |  |
+| broadcast | 17 | bool, complex, floating, integer |  |
+| broadcast_in_dim | 19 | bool, complex, floating, integer |  |
+| ceil | 4 | floating | bool, complex, integer |
+| cholesky | 30 | complex, floating | bool, integer |
+| clamp | 17 | floating, integer | bool, complex |
+| complex | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
+| concatenate | 17 | bool, complex, floating, integer |  |
+| conj | 5 | complex, float32, float64 | bfloat16, bool, float16, integer |
+| conv_general_dilated | 58 | complex, floating | bool, integer |
+| convert_element_type | 201 | bool, complex, floating, integer |  |
+| cos | 6 | complex, floating | bool, integer |
+| cosh | 6 | complex, floating | bool, integer |
+| cummax | 17 | complex, floating, integer | bool |
+| cummin | 17 | complex, floating, integer | bool |
+| cumprod | 17 | complex, floating, integer | bool |
+| cumsum | 17 | complex, floating, integer | bool |
+| custom_linear_solve | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
+| device_put | 16 | bool, complex, floating, integer |  |
+| digamma | 4 | floating | bool, complex, integer |
+| div | 20 | complex, floating, integer | bool |
+| dot_general | 125 | bool, complex, floating, integer |  |
+| dynamic_slice | 32 | bool, complex, floating, integer |  |
+| dynamic_update_slice | 21 | bool, complex, floating, integer |  |
+| eig | 72 | complex, floating | bool, integer |
+| eigh | 36 | complex, floating | bool, integer |
+| eq | 17 | bool, complex, floating, integer |  |
+| erf | 4 | floating | bool, complex, integer |
+| erf_inv | 4 | floating | bool, complex, integer |
+| erfc | 4 | floating | bool, complex, integer |
+| exp | 6 | complex, floating | bool, integer |
+| expm1 | 6 | complex, floating | bool, integer |
+| fft | 20 | complex, float32, float64 | bfloat16, bool, float16, integer |
+| floor | 4 | floating | bool, complex, integer |
+| gather | 37 | bool, complex, floating, integer |  |
+| ge | 15 | bool, floating, integer | complex |
+| gt | 15 | bool, floating, integer | complex |
+| igamma | 6 | floating | bool, complex, integer |
+| igammac | 6 | floating | bool, complex, integer |
+| imag | 2 | complex | bool, floating, integer |
+| integer_pow | 34 | complex, floating, integer | bool |
+| iota | 16 | complex, floating, integer | bool |
+| is_finite | 4 | floating | bool, complex, integer |
+| le | 15 | bool, floating, integer | complex |
+| lgamma | 4 | floating | bool, complex, integer |
+| log | 6 | complex, floating | bool, integer |
+| log1p | 6 | complex, floating | bool, integer |
+| lt | 15 | bool, floating, integer | complex |
+| lu | 18 | complex, floating | bool, integer |
+| max | 29 | bool, complex, floating, integer |  |
+| min | 29 | bool, complex, floating, integer |  |
+| mul | 16 | complex, floating, integer | bool |
+| ne | 17 | bool, complex, floating, integer |  |
+| neg | 14 | complex, floating, integer | bool |
+| nextafter | 6 | floating | bool, complex, integer |
+| or | 11 | bool, integer | complex, floating |
+| pad | 90 | bool, complex, floating, integer |  |
+| population_count | 8 | integer | bool, complex, floating |
+| pow | 10 | complex, floating | bool, integer |
+| qr | 60 | complex, floating | bool, integer |
+| random_gamma | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
+| random_split | 5 | uint32 | bool, complex, floating, integer |
+| real | 2 | complex | bool, floating, integer |
+| reduce_and | 1 | bool | complex, floating, integer |
+| reduce_max | 15 | bool, complex, floating, integer |  |
+| reduce_min | 15 | bool, complex, floating, integer |  |
+| reduce_or | 1 | bool | complex, floating, integer |
+| reduce_prod | 14 | complex, floating, integer | bool |
+| reduce_sum | 14 | complex, floating, integer | bool |
+| reduce_window_add | 33 | complex, floating, integer | bool |
+| reduce_window_max | 37 | bool, complex, floating, integer |  |
+| reduce_window_min | 15 | bool, complex, floating, integer |  |
+| reduce_window_mul | 42 | complex, floating, integer | bool |
+| regularized_incomplete_beta | 4 | floating | bool, complex, integer |
+| rem | 18 | floating, integer | bool, complex |
+| reshape | 19 | bool, complex, floating, integer |  |
+| rev | 19 | bool, complex, floating, integer |  |
+| round | 7 | floating | bool, complex, integer |
+| rsqrt | 6 | complex, floating | bool, integer |
+| scatter_add | 14 | complex, floating, integer | bool |
+| scatter_max | 15 | bool, complex, floating, integer |  |
+| scatter_min | 19 | bool, complex, floating, integer |  |
+| scatter_mul | 14 | complex, floating, integer | bool |
+| select | 16 | bool, complex, floating, integer |  |
+| select_and_gather_add | 15 | floating | bool, complex, integer |
+| select_and_scatter_add | 27 | bool, floating, integer | complex |
+| shift_left | 10 | integer | bool, complex, floating |
+| shift_right_arithmetic | 10 | integer | bool, complex, floating |
+| shift_right_logical | 10 | integer | bool, complex, floating |
+| sign | 14 | complex, floating, integer | bool |
+| sin | 6 | complex, floating | bool, integer |
+| sinh | 6 | complex, floating | bool, integer |
+| slice | 24 | bool, complex, floating, integer |  |
+| sort | 21 | bool, complex, floating, integer |  |
+| sqrt | 6 | complex, floating | bool, integer |
+| squeeze | 23 | bool, complex, floating, integer |  |
+| stop_gradient | 15 | bool, complex, floating, integer |  |
+| sub | 16 | complex, floating, integer | bool |
+| svd | 120 | complex, floating | bool, integer |
+| tan | 6 | complex, floating | bool, integer |
+| tanh | 6 | complex, floating | bool, integer |
+| tie_in | 15 | bool, complex, floating, integer |  |
+| top_k | 15 | bool, floating, integer | complex |
+| transpose | 17 | bool, complex, floating, integer |  |
+| triangular_solve | 26 | complex, floating | bool, integer |
+| xor | 11 | bool, integer | complex, floating |
+| zeros_like | 15 | bool, complex, floating, integer |  |
 
 ## Partially implemented data types for primitives
 
@@ -168,7 +168,7 @@ devices.
 
 The following table shows which of the supported data types
 are partially implemented for each primitive. This table already
-excludes the data types not supported (previous table).
+excludes the unsupported data types (previous table).
 
 In order to see the actual errors for all entries above look at
 the logs of the `test_jax_implemented` from `jax_primitives_coverage_test.py`.
@@ -177,12 +177,12 @@ the logs of the `test_jax_implemented` from `jax_primitives_coverage_test.py`.
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
 | --- | --- | --- | --- | --- |
 |cholesky|unimplemented|float16|cpu, gpu|
-|cummax|not implemented|complex64|tpu|
-|cummin|not implemented|complex64|tpu|
-|cumprod|not implemented|complex64|tpu|
+|cummax|unimplemented|complex64|tpu|
+|cummin|unimplemented|complex64|tpu|
+|cumprod|unimplemented|complex64|tpu|
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|
-|eigh|complex eigh not supported |all_complex|tpu|
+|eigh|complex eigh not supported |complex|tpu|
 |eigh|unimplemented|float16|cpu|
 |eigh|unimplemented|float16|gpu|
 |fft|only 1D FFT is currently supported b/140351181.|all|tpu|
@@ -194,15 +194,15 @@ the logs of the `test_jax_implemented` from `jax_primitives_coverage_test.py`.
 |reduce_window_max|unimplemented in XLA|complex64|tpu|
 |reduce_window_min|unimplemented in XLA|complex64|tpu|
 |reduce_window_mul|unimplemented in XLA|complex64|tpu|
-|scatter_add|not implemented|complex64|tpu|
-|scatter_max|not implemented|complex64|tpu|
-|scatter_min|not implemented|complex64|tpu|
-|scatter_mul|not implemented|complex64|tpu|
+|scatter_add|unimplemented|complex64|tpu|
+|scatter_max|unimplemented|complex64|tpu|
+|scatter_min|unimplemented|complex64|tpu|
+|scatter_mul|unimplemented|complex64|tpu|
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|
 |svd|unimplemented|bfloat16, float16|cpu, gpu|
-|svd|complex not implemented|all_complex|tpu|
+|svd|complex not implemented|complex|tpu|
 |tie_in|requires omnistaging to be disabled|all|cpu, gpu, tpu|
-|triangular_solve|not implemented|float16|gpu|
+|triangular_solve|unimplemented|float16|gpu|
 
 ## Table generation
 

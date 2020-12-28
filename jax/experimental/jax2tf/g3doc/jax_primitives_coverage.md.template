@@ -13,19 +13,19 @@ data types. The following table shows the dtypes at which
 by the current harnesses on any device.)
 
 Note also that the set of supported dtypes include 64-bit types
-(`float64`, `int64`, `uint64`, `complex128`) only of the
+(`float64`, `int64`, `uint64`, `complex128`) only if the
 flag `--jax_enable_x64` is set (or the JAX_ENABLE_X64 environment
 variable).
 
 We use the following abbreviations for sets of dtypes:
 
-  * `all_signed_integers` = `int8`, `int16`, `int32`, `int64`
-  * `all_unsigned_integers` = `uint8`, `uint16`, `uint32`, `uint64`
-  * `all_integers` = `all_signed_integers`, `all_unsigned_integers`
-  * `all_float` = `float16`, `bfloat16`, `float32`, `float64`
-  * `all_complex` = `complex64`, `complex128`
-  * `all_inexact` = `all_float`, `all_complex`
-  * `all` = `all_integers`, `all_inexact`, `bool`
+  * `signed` = `int8`, `int16`, `int32`, `int64`
+  * `unsigned` = `uint8`, `uint16`, `uint32`, `uint64`
+  * `integer` = `signed`, `nsigned`
+  * `floating` = `float16`, `bfloat16`, `float32`, `float64`
+  * `complex` = `complex64`, `complex128`
+  * `inexact` = `floating`, `complex`
+  * `all` = `integer`, `inexact`, `bool`
 
 In order to experiment with increased coverage, add more harnesses for
 more data types.
@@ -44,7 +44,7 @@ devices.
 
 The following table shows which of the supported data types
 are partially implemented for each primitive. This table already
-excludes the data types not supported (previous table).
+excludes the unsupported data types (previous table).
 
 In order to see the actual errors for all entries above look at
 the logs of the `test_jax_implemented` from `jax_primitives_coverage_test.py`.

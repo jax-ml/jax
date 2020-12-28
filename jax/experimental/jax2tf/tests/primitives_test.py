@@ -26,7 +26,7 @@ that we get the same result as in JAX
 
 Some harnesses need specific tolerances, or even custom equality assertions.
 Also, for some harnesses we need to specify some data types that result
-in Tensorflow errors (for some decvices and compilation modes). These limitations
+in Tensorflow errors (for some devices and compilation modes). These limitations
 are captured as Jax2TfLimitation objects.
 
 From the limitations objects, we generate a [report](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
@@ -42,7 +42,7 @@ in `tf_test_util.ConvertAndCompare`.
 IMPORTANT: If you need to customize the testing of a particular primitive
 conversion, you must create a class method in Jax2TfLimitation,
 with the same name as the harness.group_name (typically the same as the
-primitive names). That class method should return the list of Jax2tfLimitation
+primitive name). That class method should return the list of Jax2tfLimitation
 objects for the harness.
 See `Jax2TfLimitation.limitations_for_harness`. If a group name does
 not need limitations, then it must be listed in the
@@ -229,7 +229,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                         np.array([4.5, 10, 17.5], jnp.bfloat16))
 
   def test_generate_limitations_doc(self):
-    """Generates limited_support.md. See the doc for instructions."""
+    """Generates primitives_with_limited_support.md. See the doc for instructions."""
 
     harnesses = [h for h in primitive_harness.all_harnesses
                  if h.filter(h, include_jax_unimpl=False)]
@@ -732,7 +732,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       operand, = args
       inner_dimension = operand.shape[-1]
 
-      # Test ported from tests.test.testEig
+      # Test ported from tests.linlag_test.testEig
       # Norm, adjusted for dimension and type.
       def norm(x):
         norm = np.linalg.norm(x, axis=(-2, -1))

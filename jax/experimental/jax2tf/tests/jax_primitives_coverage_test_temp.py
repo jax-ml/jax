@@ -13,7 +13,7 @@
 # limitations under the License.
 """Tests the primitive harness limitations.
 
-Runs all the harnesses surfaces the errors and detects cases when we have
+Runs all the harnesses surfaces the errors, and detects cases when we have
 too many or too few limitations.
 
 """
@@ -87,7 +87,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         unique_limitations[unique_hash(l)] = l
 
     primitive_coverage_table = ["""
-| Primitive | Nr. test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
+| Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
 | --- | --- | --- | --- | --- |"""]
     all_dtypes = set(jtu.dtypes.all)
 

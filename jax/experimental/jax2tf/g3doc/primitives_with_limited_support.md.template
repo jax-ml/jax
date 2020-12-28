@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): {{generation-date}}*
+*Last generated on (YYYY-MM-DD): {{generation_date}}*
 
 We do not yet have support for `pmap` (with its collective primitives),
 nor for `sharded_jit` (SPMD partitioning).
@@ -80,13 +80,6 @@ Additionally, some primitives have numerical differences between JAX and TF in s
   * `lu` may return different but equally valid results when the LU
   decomposition is not unique.
 
-## Updating the documentation
-
-To update this documentation, run the following command:
-
-```
-  JAX_ENABLE_X64=1 JAX_OUTPUT_LIMITATIONS_DOC=1 python jax/experimental/jax2tf/tests/primitives_test.py JaxPrimitiveTest.test_generate_limitations_doc
-```
 
 ## Generated summary of primitives with limited support in Tensorflow
 
@@ -99,7 +92,7 @@ in the table are for the Tensorflow ops to which the primitive is converted to.
 In general, each JAX primitive is mapped
 to one Tensorflow op, e.g., `sin` is mapped to `tf.math.sin`.
 
-The errors apply only at certain the devices and compilation modes ("eager",
+The errors apply only for certain devices and compilation modes ("eager",
 "graph", and "compiled"). In general, "eager" and "graph" mode share the same errors.
 On TPU only "compiled" mode is ever used.
 
@@ -109,13 +102,20 @@ list of unsupported or partially-supported primitives](https://github.com/google
 
 We use the following abbreviations for sets of dtypes:
 
-  * `all_signed_integers` = `int8`, `int16`, `int32`, `int64`
-  * `all_unsigned_integers` = `uint8`, `uint16`, `uint32`, `uint64`
-  * `all_integers` = `all_signed_integers`, `all_unsigned_integers`
-  * `all_float` = `float16`, `bfloat16`, `float32`, `float64`
-  * `all_complex` = `complex64`, `complex128`
-  * `all_inexact` = `all_float`, `all_complex`
-  * `all` = `all_integers`, `all_inexact`, `bool`
+  * `signed` = `int8`, `int16`, `int32`, `int64`
+  * `unsigned` = `uint8`, `uint16`, `uint32`, `uint64`
+  * `integer` = `signed`, `nsigned`
+  * `floating` = `float16`, `bfloat16`, `float32`, `float64`
+  * `complex` = `complex64`, `complex128`
+  * `inexact` = `floating`, `complex`
+  * `all` = `integer`, `inexact`, `bool`
 
 {{limited-support-table}}
 
+## Updating the documentation
+
+To update this documentation, run the following command:
+
+```
+  JAX_ENABLE_X64=1 JAX_OUTPUT_LIMITATIONS_DOC=1 python jax/experimental/jax2tf/tests/primitives_test.py JaxPrimitiveTest.test_generate_limitations_doc
+```
