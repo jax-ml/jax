@@ -582,8 +582,13 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def conv_general_dilated(cls, harness: primitive_harness.Harness):
-    # if device == "gpu" and dtype in [np.complex64, np.complex128]:
-    #   raise unittest.SkipTest("TODO: crash on GPU in TF")
+    if jtu.device_under_test() == "gpu" and harness.dtype in [np.complex64, np.complex128]:
+      # It is not enough to add a limitation for this, because when this test
+      # runs with the LLVM debug-mode, it segfaults.
+      #   assert.h assertion failed at third_party/llvm/llvm-project/llvm/lib/IR/Instructions.cpp:2471
+      #      in void llvm::BinaryOperator::AssertOK(): getType()->isFPOrFPVectorTy() &&
+      #      "Tried to create a floating-point operation on a " "non-floating-point type!"
+      raise unittest.SkipTest("crash on GPU in TF/LLVM")
     return [
         Jax2TfLimitation(
             harness,
