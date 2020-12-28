@@ -12,69 +12,66 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import atexit
 import contextlib
 import logging
 import numpy as np
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Sequence
 import tensorflow as tf  # type: ignore[import]
 
 import jax
 from jax.config import config
 from jax import dtypes
 from jax.experimental import jax2tf
-from jax.experimental.jax2tf.tests import correctness_stats
 from jax.interpreters import masking
 from jax import test_util as jtu
 from jax import tree_util
 from jax import numpy as jnp
 
-import os
-
-
-if os.getenv('JAX2TF_OUTPUT_LIMITATIONS') is not None:
-  output_file = os.path.join(os.path.dirname(__file__),
-                             '../g3doc/primitives_with_limited_support.md')
-  template_file = os.path.join(os.path.dirname(__file__),
-                               '../g3doc/primitives_with_limited_support.md.template')
-  atexit.register(correctness_stats.pprint_all_limitations,
-                  output_file, template_file)
-
 
 def _make_tf_args(args):
+
   def _convert_if_bfloat16(v):
     if hasattr(v, "dtype"):
-      return tf.convert_to_tensor(np.array(v, jnp.float32) if
-                                  v.dtype == jnp.bfloat16 else v,
-                                  jax2tf.jax2tf.to_tf_dtype(v.dtype))
+      return tf.convert_to_tensor(
+          np.array(v, jnp.float32) if v.dtype == jnp.bfloat16 else v,
+          jax2tf.jax2tf.to_tf_dtype(v.dtype))
     return v
+
   return tf.nest.map_structure(_convert_if_bfloat16, args)
+
 
 def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
   # tf_args can be PyTrees
   def _make_one_arg_signature(tf_arg):
     return tf.TensorSpec(np.shape(tf_arg), tf_arg.dtype)
+
   return tf.nest.map_structure(_make_one_arg_signature, list(tf_args))
+
 
 def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   if mode == "eager":
-    return func_tf(*tf_args)
+    return func_tf(*tf_args)  # EAGER
   elif mode == "graph":
     return tf.function(
-      func_tf, autograph=False,
-      input_signature=_make_tf_input_signature(*tf_args))(*tf_args)
+        func_tf,
+        autograph=False,
+        input_signature=_make_tf_input_signature(*tf_args))(*tf_args)  # GRAPH
   elif mode == "compiled":
     # Adding an explicit input_signature prevents TF from constant-folding
     # the computation eagerly before compilation
     return tf.function(
-      func_tf, autograph=False,
-      experimental_compile=True,
-      input_signature=_make_tf_input_signature(*tf_args))(*tf_args)
+        func_tf,
+        autograph=False,
+        experimental_compile=True,
+        input_signature=_make_tf_input_signature(*tf_args))(
+            *tf_args)  # COMPILED
   else:
     assert False, (
         f"Expected 'eager', 'graph', or 'compiled' for mode: got '{mode}'")
 
+
 class JaxToTfTestCase(jtu.JaxTestCase):
+
   def setUp(self):
     super().setUp()
     # Ensure that all TF ops are created on the proper device (TPU or GPU or CPU)
@@ -91,103 +88,34 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       self.assertEqual(jtu.device_under_test().upper(),
                        self.tf_default_device.device_type)
 
-    self._collect_limitations = False
-
     with contextlib.ExitStack() as stack:
       stack.enter_context(tf.device(self.tf_default_device))
       self.addCleanup(stack.pop_all().close)
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
     """Compares dtypes across JAX and TF dtypes. Overrides super method."""
+
     def to_numpy_dtype(dt):
       return dt if isinstance(dt, np.dtype) else dt.as_numpy_dtype
 
     if not config.FLAGS.jax_enable_x64 and canonicalize_dtypes:
-      self.assertEqual(dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(x))),
-                       dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(y))))
+      self.assertEqual(
+          dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(x))),
+          dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(y))))
     else:
-      self.assertEqual(to_numpy_dtype(jtu._dtype(x)),
-                       to_numpy_dtype(jtu._dtype(y)))
+      self.assertEqual(
+          to_numpy_dtype(jtu._dtype(x)), to_numpy_dtype(jtu._dtype(y)))
 
-  def _enable_limitations_collection(self):
-    # No need to monkey patch again
-    if self._collect_limitations:
-      return
-
-    self._collect_limitations = True
-
-    original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
-
-    # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
-    # resulting primitive in a categorizer.
-    def _new_get_primitive_impl(s, p):
-      impl, impl_needs_avals = original_impl(s, p)
-      return correctness_stats.collect_limitations(p, impl), impl_needs_avals
-    jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = _new_get_primitive_impl  # type: ignore
-
-    def restore_get_primitive_impl():
-      jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = original_impl
-
-    # Restore the original jax2tf.TensorFlowTrace.get_primitive_impl
-    # implementation at the end of the test.
-    self.addCleanup(restore_get_primitive_impl)
-
-  def RunAndDetectLimitations(self, func_tf: Callable, *tf_args, mode: str):
-    """
-    Runs a jax2tf-converted function and catches exceptions thrown by known
-    limitations. If an unexpected exception is encountered, it is thrown.
-
-    Args:
-      func_tf: a function constructed by calling jax2tf.convert(func_jax) for
-        some JAX function func_jax.
-      tf_args: the arguments to be passed to func_tf
-      mode: the mode in which to execute to execute func_tf. Valid values are
-        "eager", "graph", and "compiled".
-
-    Returns:
-      If running func_tf in the appropriate mode succeeds, the result is of
-      the call is returned. Otherwise, the function returns None.
-    """
-    self._enable_limitations_collection()
-
-    def expected_missing_tf_support(lim: correctness_stats.Limitation):
-      return (lim.error_type == correctness_stats.CATEGORY_MISSING_TF_SUPPORT and
-              self.tf_default_device.device_type in lim.devices)
-
-    current_limitations_len = len(correctness_stats.all_limitations)
-    result_tf = None
-
-    try:
-      result_tf = _run_tf_function(func_tf, *tf_args, mode=mode)
-      tf_exception = None
-    except Exception as e:
-      tf_exception = e
-
-    new_limitations = (
-      correctness_stats.all_limitations[current_limitations_len:])
-    if new_limitations:
-      for lim in new_limitations:
-        print("Detected limitation: {} for {} devices."
-              .format(lim.error_string, ', '.join(lim.devices)))
-
-    if any(map(expected_missing_tf_support, new_limitations)):
-      if tf_exception is not None:
-        print(f"Encountered expected exception for mode={mode}: {tf_exception}")
-      else:
-        print(f"WARNING: did not encounter expected exception for mode={mode}")
-    else:
-      if tf_exception is not None:
-        raise tf_exception
-
-    # result_tf is None here if an expected limitation was encountered.
-    return result_tf
-
-  def ConvertAndCompare(self, func_jax: Callable, *args,
+  def ConvertAndCompare(self,
+                        func_jax: Callable,
+                        *args,
+                        enable_xla: bool = True,
+                        limitations: Optional[Callable[[str, str],
+                                                       Sequence]] = None,
                         custom_assert: Optional[Callable] = None,
                         always_custom_assert: bool = False,
-                        enable_xla: bool = True,
                         atol=None,
-                        rtol=None) -> Tuple[Any, Any]:
+                        rtol=None):
     """Compares jax_func(*args) with convert(jax_func)(*args).
 
     It compares the result of JAX, TF ("eager" mode),
@@ -197,49 +125,133 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     match the value from the JAX execution.
 
     Args:
-      custom_assert: a function that will be called
-        `custom_assert(result_jax, result_tf)` to assert equality of the
-        results. Use this function when JAX and TF produce different results.
-        This function is only used for "eager" and "graph" modes by default, not
-        for the "compiled" mode, because in that case we expect the results to
+      func_jax: the function to invoke (``func_jax(*args)``)
+      args: the arguments.
+      enable_xla: if True, allows the use of XLA ops in jax2tf.convert
+        (default: True).
+      limitations: a function that will be invoked with the device_under_test,
+        e.g., "tpu", and the current TF compilation mode, e.g., "eager", to get
+        the set of applicable limitations for this harness. If non-empty then
+        expect a failure.
+      custom_assert: a function that will be called `custom_assert(result_jax,
+        result_tf)` to assert equality of the results. The result_tf has been
+        converted to numpy. Use this function when
+        JAX and TF produce different results. This function is only used for
+        "eager" and "graph" modes by default, not for the "compiled" mode,
+        because in that case we expect the results to
         be equal (default: None).
       always_custom_assert: if True, custom_assert is also called in "compiled"
         mode. This is useful in cases where JAX and TF produce different but
         equally valid results (default: False).
-      enable_xla: if True, allows the use of XLA ops in jax2tf.convert
-        (default: True).
     """
-    # Run JAX
-    result_jax = func_jax(*args)
-    # Run TF in all execution modes
-    func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
+    # Run JAX. Should not fail, we assume that the harness has been filtered
+    # already by JAX unimplemented primitives.
+    result_jax = func_jax(*args)  # JAX
+    result_tf = None
 
+    func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
     tf_args = _make_tf_args(args)
 
-    for mode in ("eager", "graph", "compiled"):
-      result_tf = self.RunAndDetectLimitations(func_tf, *tf_args, mode=mode)
-      if result_tf is None:
-        continue
+    unexpected_successes = []
+    for mode in ("compiled", "eager", "graph"):
+      try:
+        result_tf = _run_tf_function(func_tf, *tf_args, mode=mode)
+        tf_exception = None
+      except Exception as e:
+        tf_exception = e
 
-      if custom_assert is not None and (mode in ("eager", "graph") or
-                                        always_custom_assert):
-        # If we have a custom assert, use it even if we expect incorrect results
-        custom_assert(result_jax, result_tf)
+      if limitations is not None:
+        dut = jtu.device_under_test()
+        lookup_mode = mode if dut != "tpu" else "compiled"
+        jax2tf_limits = limitations(dut, lookup_mode)
       else:
-        # In compiled mode we expect the same result as JAX by default
-        self.assertAllClose(result_jax, result_tf, atol=atol, rtol=rtol)
+        jax2tf_limits = []
 
-    return (result_jax, result_tf)
+      expect_tf_error = any([l.expect_tf_error for l in jax2tf_limits])
+      if tf_exception:
+        if expect_tf_error:
+          logging.info(
+              f"[{self._testMethodName}] Found expected TF {mode} failure "
+              f" {tf_exception}; enabled limitations {[l.description for l in jax2tf_limits if l.expect_tf_error]}"
+          )
+          continue
+        else:
+          raise tf_exception
+      else:
+        if expect_tf_error:
+          # It is more ergonomic to print all successful modes once
+          msg = (f"mode: {mode}; enabled limitations "
+                 f"{[l.description for l in jax2tf_limits if l.expect_tf_error]}")
+          unexpected_successes.append(msg)
+          logging.warning(f"Unexpected successful mode: {msg}")
+        else:
+          pass
 
-  def TransformConvertAndCompare(self, func: Callable,
-                                 arg,
+      # Convert results to np.arrays
+      result_tf = tf.nest.map_structure(lambda t: t.numpy(), result_tf)  # type: ignore
+
+      def max_with_None(tol1, tol2):
+        if tol1 is None:
+          return tol2
+        elif tol2 is None:
+          return tol1
+        else:
+          return max(tol1, tol2)
+      max_tol = None
+      max_tol = max_with_None(max_tol, atol)
+      max_tol = max_with_None(max_tol, rtol)
+      had_custom_assert = False
+      if max_tol is not None:
+        logging.info(
+          f"[{self._testMethodName}] mode={mode} Starting with tol={max_tol}")
+      disable_comparison = any([l.disable_comparison for l in jax2tf_limits])
+      if not disable_comparison:
+        for lim in jax2tf_limits:
+          if lim.tol is not None:
+            max_tol = max_with_None(max_tol, lim.tol)
+            logging.info(
+              f"[{self._testMethodName}] mode={mode}: Updating tolerance to tol={max_tol} due to {lim.description}")
+          if lim.custom_assert is not None:
+            logging.info(
+              f"[{self._testMethodName}] mode={mode}: Running custom_assert with tol={max_tol} due to {lim.description}")
+            lim.custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
+            had_custom_assert = True
+
+        if not had_custom_assert:
+          if custom_assert is not None and (mode in ("eager", "graph") or
+                                            always_custom_assert):
+            logging.info(
+              f"[{self._testMethodName}] mode={mode}: Running custom_assert with tol={max_tol} (passed as input)")
+            # If we have a custom assert, use it even if we expect incorrect results
+            custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
+          else:
+            logging.info(
+              f"[{self._testMethodName}] mode={mode}: Running default assert with tol={max_tol}")
+            # In compiled mode we expect the same result as JAX by default
+            self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
+      else:
+        logging.warning(
+          f"[{self._testMethodName}] mode={mode}: Disable numeric comparison"
+          f"; enabled limitations {[l.description for l in jax2tf_limits if l.expect_tf_error]}"
+        )
+
+    if unexpected_successes:
+      msg = (f"[{self._testMethodName}] The following are unexpected "
+             "successful modes:\n" + "\n".join(unexpected_successes))
+      logging.warning(msg)
+      # Uncomment the below if you want to see warnings as failures
+      #self.assertEmpty(msg)
+    return result_jax, result_tf
+
+  def TransformConvertAndCompare(self, func: Callable, arg,
                                  transform: Optional[str]):
     """Like ConvertAndCompare but first applies a transformation.
 
     `func` must be a function from one argument to one result. `arg` is
     the argument before the transformation.
 
-    `transform` can be None, "jit", "jvp", "grad", "vmap", "jvp_vmap", "grad_vmap"
+    `transform` can be None, "jit", "jvp", "grad", "vmap", "jvp_vmap",
+    "grad_vmap"
     """
     if transform is None:
       return self.ConvertAndCompare(func, arg)
@@ -256,8 +268,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     if transform == "jvp_vmap":
       jvp_func = lambda x, xt: jax.jvp(jax.vmap(func), (x,), (xt,))
       t_arg = np.stack([arg] * 4)
-      return self.ConvertAndCompare(jvp_func, t_arg,
-                                    np.full_like(t_arg, 0.1))
+      return self.ConvertAndCompare(jvp_func, t_arg, np.full_like(t_arg, 0.1))
     if transform == "grad_vmap":
       grad_func = jax.grad(lambda x: jnp.sum(jax.vmap(func)(x)))
       t_arg = np.stack([arg] * 4)
@@ -272,29 +283,35 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     Args:
       f_jax: a JAX function of `n` arguments
-      input_signature: used as the input signature
-        for the tf.function.
-      in_shapes: if given, it must be a sequence of `n` shape specifications
-        and must match the `input_signature`. (see jax2tf.convert).
+      input_signature: used as the input signature for the tf.function.
+      in_shapes: if given, it must be a sequence of `n` shape specifications and
+        must match the `input_signature`. (see jax2tf.convert).
     """
-    f_tf = tf.function(jax2tf.convert(f_jax, in_shapes=in_shapes),
-                       autograph=False,
-                       input_signature=input_signature)
+    f_tf = tf.function(
+        jax2tf.convert(f_jax, in_shapes=in_shapes),
+        autograph=False,
+        input_signature=input_signature)
     concrete_f_tf = f_tf.get_concrete_function(*input_signature)
     if expected_output_signature:
       concrete_output_tf_shape = concrete_f_tf.output_shapes
       assert not isinstance(concrete_output_tf_shape, tuple)  # A single result
-      self.assertEqual(tuple(expected_output_signature.shape),
-                       tuple(concrete_output_tf_shape))
+      self.assertEqual(
+          tuple(expected_output_signature.shape),
+          tuple(concrete_output_tf_shape))
     return f_tf
 
   def MakeInputSignature(self, *in_shapes):
     """From a pytree of in_shape string specification, make a pytree of tf.TensorSpec.
+
     Dimension variables are replaced with None.
     """
+
     def in_shape_to_tensorspec(in_shape: str) -> tf.TensorSpec:
       in_spec = masking.parse_spec(in_shape)
-      return tf.TensorSpec(tuple(int(dim_spec) if dim_spec.is_constant else None
-                                 for dim_spec in in_spec), dtype=tf.float32)
+      return tf.TensorSpec(
+          tuple(
+              int(dim_spec) if dim_spec.is_constant else None
+              for dim_spec in in_spec),
+          dtype=tf.float32)
 
     return tree_util.tree_multimap(in_shape_to_tensorspec, in_shapes)
