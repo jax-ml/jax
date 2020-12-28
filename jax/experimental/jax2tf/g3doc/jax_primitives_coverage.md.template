@@ -21,7 +21,7 @@ We use the following abbreviations for sets of dtypes:
 
   * `signed` = `int8`, `int16`, `int32`, `int64`
   * `unsigned` = `uint8`, `uint16`, `uint32`, `uint64`
-  * `integer` = `signed`, `nsigned`
+  * `integer` = `signed`, `unsigned`
   * `floating` = `float16`, `bfloat16`, `float32`, `float64`
   * `complex` = `complex64`, `complex128`
   * `inexact` = `floating`, `complex`
