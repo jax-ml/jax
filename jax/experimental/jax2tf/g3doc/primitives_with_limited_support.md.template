@@ -7,10 +7,10 @@ nor for `sharded_jit` (SPMD partitioning).
 
 A few JAX primitives are converted to TF ops that have incomplete coverage
 for data types on different kinds of devices. The most [up-to-date list of
-limitations is generated automatically](#generated-summary-of-primitives-with-limited-support)
+limitations is generated automatically](#generated-summary-of-primitives-with-limited-support-in-tensorflow)
 by the jax2tf coverage tests.
 More detailed information can be found in the
-[source code of categorize](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/primitives_test.py)
+[source code for the limitation specification](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/primitives_test.py)
 for some cases.
 
 Additionally, some primitives have numerical differences between JAX and TF in some corner cases:
@@ -98,7 +98,7 @@ On TPU only "compiled" mode is ever used.
 
 
 This table only shows errors for cases that are working in JAX (see [separate
-list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
+list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
 
 We use the following abbreviations for sets of dtypes:
 

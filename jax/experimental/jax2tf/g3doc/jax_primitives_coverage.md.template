@@ -4,20 +4,22 @@
 
 ## Supported data types for primitives
 
-We use a set of {{nr_harnesses}} test harnesses for testing
+We use a set of {{nr_harnesses}} test harnesses to test
 the implementation of {{nr_primitives}} numeric JAX primitives.
-Not all primitives are supported in JAX at all
-data types. The following table shows the dtypes at which
-**primitives are NOT supported on any device**.
+We consider a JAX primitive supported for a particular data
+type if it is supported on at least one device type.
+The following table shows the dtypes at which primitives
+are supported in JAX and at which dtypes they are not
+supported on any device.
 (In reality, this shows for each primitive what dtypes are not covered
-by the current harnesses on any device.)
+by the current test harnesses on any device.)
 
-Note also that the set of supported dtypes include 64-bit types
+The set of supported dtypes include 64-bit types
 (`float64`, `int64`, `uint64`, `complex128`) only if the
-flag `--jax_enable_x64` is set (or the JAX_ENABLE_X64 environment
-variable).
+flag `--jax_enable_x64` or the JAX_ENABLE_X64 environment
+variable are set.
 
-We use the following abbreviations for sets of dtypes:
+We use below the following abbreviations for sets of dtypes:
 
   * `signed` = `int8`, `int16`, `int32`, `int64`
   * `unsigned` = `uint8`, `uint16`, `uint32`, `uint64`
@@ -27,14 +29,14 @@ We use the following abbreviations for sets of dtypes:
   * `inexact` = `floating`, `complex`
   * `all` = `integer`, `inexact`, `bool`
 
-In order to experiment with increased coverage, add more harnesses for
-more data types.
+See the comment in `primitive_harness.py` for a description
+of test harnesses and their definitions.
 
 {{primitive_coverage_table}}
 
 ## Partially implemented data types for primitives
 
-In some cases, a primitive is supported at a given data type but
+In some cases, a primitive is supported in JAX at a given data type but
 it may be missing implementations for some of the devices.
 For example, the eigen decomposition (`lax.eig`) is implemented
 in JAX using custom kernels only on CPU and GPU. There is no
@@ -46,14 +48,15 @@ The following table shows which of the supported data types
 are partially implemented for each primitive. This table already
 excludes the unsupported data types (previous table).
 
-In order to see the actual errors for all entries above look at
-the logs of the `test_jax_implemented` from `jax_primitives_coverage_test.py`.
+In order to see the actual errors for all entries look through
+the logs of the `test_jax_implemented` from `jax_primitives_coverage_test.py`
+and search for "limitation".
 
 {{primitive_unimpl_table}}
 
 ## Table generation
 
-To regenerate this table run on a CPU machine::
+To regenerate this table run (on a CPU machine):
 
 ```
   JAX_OUTPUT_LIMITATIONS_DOC=1 JAX_ENABLE_X64=1 python jax/experimental/jax2tf/tests/jax_primitives_coverage_test.py JaxPrimitiveTest.test_generate_primitives_coverage_doc

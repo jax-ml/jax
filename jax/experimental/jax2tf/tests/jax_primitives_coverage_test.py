@@ -41,6 +41,10 @@ from jax.experimental.jax2tf.tests import primitive_harness
 
 class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
+  # This test runs for all primitive harnesses. For each primitive "xxx" the
+  # test will be called "test_jax_implemented_xxx_...". The test harnesses,
+  # including which dtypes are expected to fail, are defined in the
+  # file primitive_harness.py.
   @primitive_harness.parameterized(primitive_harness.all_harnesses,
                                    include_jax_unimpl=True)
   @jtu.ignore_warning(category=UserWarning,
