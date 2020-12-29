@@ -88,7 +88,7 @@ class custom_jvp:
   :py:func:`~jax.custom_jvp.defjvp` for defining a *single* custom JVP rule for
   all the function's inputs, and for convenience
   :py:func:`~jax.custom_jvp.defjvps`, which wraps
-  :py:func:`~jax.custom_jvp.defjvp`, and allows you to provide seperate
+  :py:func:`~jax.custom_jvp.defjvp`, and allows you to provide separate
   definitions for the partial derivatives of the function w.r.t. each of its
   arguments.
 
