@@ -1021,6 +1021,15 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CompileAndCheck(op, args_maker)
 
+  def testBroadcastInDimOperandShapeTranspose(self):
+    # Regression test for https://github.com/google/jax/issues/5276
+    def f(x):
+      return lax.broadcast_in_dim(x, (2, 3, 4), broadcast_dimensions=(0, 1, 2)).sum()
+    def g(x):
+      return lax.broadcast_in_dim(x.reshape((3,)), (2, 3, 4), broadcast_dimensions=(1,)).sum()
+    x = np.ones((1, 3, 1))
+    self.assertArraysEqual(jax.grad(f)(x), jax.grad(g)(x))
+
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_inshape={}_outshape={}_bcdims={}".format(
       jtu.format_shape_dtype_string(inshape, np.float32),
