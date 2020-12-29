@@ -75,16 +75,14 @@ traceback_util.register_exclusion(__file__)
 
 AxisName = Any
 
-# This TypeVar is used below to express the fact that function call signatures
-# are invariant under the jit, vmap, and pmap transformations.
-# Specifically, we statically assert that the return type is invariant.
-# Until PEP-612 is implemented, we cannot express the same invariance for
-# function arguments.
-# Note that the return type annotations will generally not strictly hold
+# These TypeVars are used below to express the fact that function types
+# (i.e. call signatures) are invariant under the jit, vmap, and pmap
+# transformations.
+# Note that the function type annotations will generally not strictly hold
 # in JIT internals, as Tracer values are passed through the function.
 # Should this raise any type errors for the tracing code in future, we can disable
 # type checking in parts of the tracing code, or remove these annotations.
-T = TypeVar("T")
+F = TypeVar("F", bound=Callable)
 
 map = safe_map
 zip = safe_zip
@@ -116,11 +114,13 @@ class _ThreadLocalState(threading.local):
 _thread_local_state = _ThreadLocalState()
 
 
-def jit(fun: Callable[..., T],
-        static_argnums: Union[int, Iterable[int]] = (),
-        device=None,
-        backend: Optional[str] = None,
-        donate_argnums: Union[int, Iterable[int]] = ()) -> Callable[..., T]:
+def jit(
+  fun: F,
+  static_argnums: Union[int, Iterable[int]] = (),
+  device=None,
+  backend: Optional[str] = None,
+  donate_argnums: Union[int, Iterable[int]] = (),
+) -> F:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -182,12 +182,12 @@ def jit(fun: Callable[..., T],
 
 
 def _python_jit(
-    fun: Callable,
+    fun: F,
     static_argnums: Union[int, Iterable[int]] = (),
     device=None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = ()
-) -> Callable:
+) -> F:
   """The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit."""
   _check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)
@@ -234,11 +234,12 @@ class _BackendAndDeviceInfo(NamedTuple):
 
 
 def _cpp_jit(
-    fun: Callable,
+    fun: F,
     static_argnums: Union[int, Iterable[int]] = (),
     device=None,
     backend: Optional[str] = None,
-    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
+    donate_argnums: Union[int, Iterable[int]] = (),
+) -> F:
   """An implementation of `jit` that tries to do as much as possible in C++.
 
   The goal of this function is to speed up the time it takes to process the
@@ -1067,7 +1068,7 @@ def _dtype(x):
   return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
 
-def vmap(fun: Callable[..., T], in_axes=0, out_axes=0, axis_name=None) -> Callable[..., T]:
+def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -1264,14 +1265,18 @@ def _mapped_axis_size(tree, vals, dims, name):
       sizes = tree_unflatten(tree, sizes)
       raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from None
 
-def pmap(fun: Callable[..., T],
-         axis_name: Optional[AxisName] = None, *, in_axes=0, out_axes=0,
-         static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-         devices=None, backend: Optional[str] = None,
-         axis_size: Optional[int] = None,
-         donate_argnums: Union[int, Iterable[int]] = (),
-         global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None
-         ) -> Callable[..., T]:
+def pmap(
+  fun: F,
+  axis_name: Optional[AxisName] = None,
+  *,
+  in_axes=0,
+  out_axes=0,
+  static_broadcasted_argnums: Union[int, Iterable[int]] = (),
+  devices=None, backend: Optional[str] = None,
+  axis_size: Optional[int] = None,
+  donate_argnums: Union[int, Iterable[int]] = (),
+  global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
+) -> F:
   """Parallel map with support for collective operations.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data (SPMD)
