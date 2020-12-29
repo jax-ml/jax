@@ -62,7 +62,7 @@ If your ``jit`` decorated function takes tens of seconds (or more!) to run the
 first time you call it, but executes quickly when called again, JAX is taking a
 long time to trace or compile your code.
 
-This is usually an symptom of calling your function generating a large amount of
+This is usually a symptom of calling your function generating a large amount of
 code in JAX's internal representation, typically because it makes heavy use of
 Python control flow such as ``for`` loop. For a handful of loop iterations
 Python is OK, but if you need _many_ loop iterations, you should rewrite your
@@ -235,7 +235,7 @@ Most often values computed from tracer values are themselves tracer values.
 There are very few exceptions, when a computation can be entirely done
 using the abstract value carried by a tracer, in which case the result
 can be a regular value. For example, getting the shape of a tracer
-with ``ShapedArray`` abstract value. Another example, is when explicitly
+with ``ShapedArray`` abstract value. Another example is when explicitly
 casting a concrete tracer value to a regular type, e.g., ``int(x)`` or
 ``x.astype(float)``.
 Another such situation is for ``bool(x)``, which produces a Python bool when
