@@ -1157,6 +1157,7 @@ class LaxTest(jtu.JaxTestCase):
        .format(jtu.format_shape_dtype_string(shape, dtype), pads),
        "shape": shape, "dtype": dtype, "pads": pads}
       for dtype in default_dtypes
+      # pads: lo, hi, int
       for shape, pads in [
           ((0, 2), [(1, 2, 1), (0, 1, 0)]),
           ((2, 3), [(1, 2, 1), (0, 1, 0)]),
@@ -1169,7 +1170,9 @@ class LaxTest(jtu.JaxTestCase):
           ((4, 2), [(-1, -2, 0), (1, 2, 0)]),
           ((4, 2), [(-1, 2, 0), (1, 2, 2)]),
           ((5,), [(-1, -2, 2),]),
-          ((4, 2), [(-1, -2, 1), (1, 2, 2)])
+          ((4, 2), [(-1, -2, 1), (1, 2, 2)]),
+          ((2,), [(-1, -1, 0)]),  # Final size 0
+          ((2, 2), [(1, -3, 0), (-3, 1, 0)]),  # one negative edge removes what the other edge adds
       ]))
   def testPad(self, shape, dtype, pads):
     rng = jtu.rand_small(self.rng())
@@ -1190,6 +1193,7 @@ class LaxTest(jtu.JaxTestCase):
         [(0, 0, 0), (-1, -1, 0)],  # negative padding
         [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
         [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
+        [(1, -3, 0), (-4, 1, 0)],  # one negative edge removes what the other edge adds
       ]))
   def testPadAgainstNumpy(self, shape, dtype, pads):
     rng = jtu.rand_small(self.rng())
@@ -1201,8 +1205,12 @@ class LaxTest(jtu.JaxTestCase):
   def testPadErrors(self):
     with self.assertRaisesRegex(ValueError, "padding_config"):
       lax.pad(np.zeros(2), 0., [(0, 1, 0), (0, 1, 0)])
-    with self.assertRaisesRegex(ValueError, "padding_config"):
+    with self.assertRaisesRegex(ValueError, "Dilation factors must be all positive"):
       lax.pad(np.zeros(2), 0., [(0, 1, -1)])
+    with self.assertRaisesRegex(ValueError, "Dimension size after padding is not at least 0"):
+      lax.pad(np.zeros(2), 0., [(-3, 0, 0)])
+    with self.assertRaisesRegex(ValueError, "Dimension size after padding is not at least 0"):
+      lax.pad(np.zeros(2), 0., [(-4, 0, 1)])
 
   def testReverse(self):
     rev = api.jit(lambda operand: lax.rev(operand, dimensions))

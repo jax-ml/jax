@@ -38,7 +38,7 @@ from jax import tree_util
 from jax.config import flags, config
 from jax.core import (Primitive, _canonicalize_dimension, UnshapedArray,
                       ShapedArray, ConcreteArray, raise_to_shaped,
-                      abstract_token, canonicalize_shape)
+                      abstract_token, canonicalize_shape, Shape)
 from jax.abstract_arrays import array_types
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -48,7 +48,7 @@ from jax.interpreters import invertible_ad as iad
 from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.util import (cache, safe_zip, partial, prod, safe_map, canonicalize_axis,
-                      split_list)
+                      split_list, unzip3)
 from jax.tree_util import tree_map
 from jax.lib import pytree
 from jax.lib import xla_bridge
@@ -66,7 +66,6 @@ _reduce = functools.reduce
 
 Array = Any
 DType = Any
-Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
   assert shapes
@@ -76,14 +75,14 @@ def _try_broadcast_shapes(shapes):
   if not rank: return ()  # scalar case
   result_shape = [None] * rank
   for i, sizes in enumerate(zip(*shapes)):
-    if sizes[:-1] == sizes[1:]:
-      result_shape[i] = sizes[0]  # all equal sizes for this dimension
+    # Dim[i]: Must have equal sizes other than 1-sized axes
+    not_ones = [s for s in sizes if not masking.must_equal(s, 1)]
+    if masking.must_equal(not_ones[:-1], not_ones[1:]):
+      result_shape[i] = not_ones[0] if not_ones else 1
     else:
-      sizes = [d for d in sizes if d != 1]
-      if sizes[:-1] != sizes[1:]:
-        return None  # must have equal sizes other than 1-sized axes
-      result_shape[i] = sizes[0] if sizes else 1
+      return None
   return tuple(result_shape)
+
 
 @cache()
 def broadcast_shapes(*shapes):
@@ -92,10 +91,12 @@ def broadcast_shapes(*shapes):
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
   shapes = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
-  result_shape = _try_broadcast_shapes(shapes)
-  if result_shape is None:
-    raise ValueError("Incompatible shapes for broadcasting: {}"
-                     .format(tuple(map(tuple, shapes))))
+  with masking.shape_error(
+      ValueError(f"Incompatible shapes for broadcasting: {tuple(map(tuple, shapes))}")) as e:
+    result_shape = _try_broadcast_shapes(shapes)
+    if result_shape is None:
+      raise e
+
   return result_shape
 
 def _identity(x): return x
@@ -692,6 +693,9 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   """Wraps XLA's `BroadcastInDim
   <https://www.tensorflow.org/xla/operation_semantics#broadcastindim>`_
   operator.
+
+  The ith dimension of operand is mapped to the broadcast_dimensions[i]
+  dimension of the target shape.
   """
   shape = _broadcast_in_dim_shape_rule(
     operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
@@ -718,9 +722,8 @@ def reshape(operand: Array, new_sizes: Shape,
   """
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
-  same_shape = np.shape(operand) == new_sizes
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(np.ndim(operand)))
-  if np.shape(operand) and same_shape and same_dims:
+  if np.shape(operand) and same_dims and masking.must_equal(np.shape(operand), new_sizes):
     return operand
   else:
     return reshape_p.bind(
@@ -3072,16 +3075,20 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision):
     raise TypeError(msg.format(rhs_batch, rhs_contracting))
   lhs_batch_shape = np.take(lhs.shape, lhs_batch)
   rhs_batch_shape = np.take(rhs.shape, rhs_batch)
-  if not np.all(np.equal(lhs_batch_shape, rhs_batch_shape)):
-    msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
-           "to have the same shape, got {} and {}.")
-    raise TypeError(msg.format(lhs_batch_shape, rhs_batch_shape))
+  with masking.shape_error(TypeError(
+      "dot_general requires lhs batch dimensions and "
+      "rhs batch dimensions to have the same shape, "
+      f"got {lhs_batch_shape} and {rhs_batch_shape}.")) as e:
+    if not np.all(np.equal(lhs_batch_shape, rhs_batch_shape)):
+      raise e
   lhs_contracting_shape = np.take(lhs.shape, lhs_contracting)
   rhs_contracting_shape = np.take(rhs.shape, rhs_contracting)
-  if not np.all(np.equal(lhs_contracting_shape, rhs_contracting_shape)):
-    msg = ("dot_general requires contracting dimensions to have the same "
-           "shape, got {} and {}.")
-    raise TypeError(msg.format(lhs_contracting_shape, rhs_contracting_shape))
+  with masking.shape_error(TypeError(
+      "dot_general requires lhs batch dimensions and "
+      "rhs batch dimensions to have the same shape, "
+      f"got {lhs_contracting_shape} and {rhs_contracting_shape}.")) as e:
+    if not np.all(np.equal(lhs_contracting_shape, rhs_contracting_shape)):
+      raise e
 
   batch_shape = tuple(lhs_batch_shape)
   lhs_contract_or_batch = tuple(sorted(tuple(lhs_contracting) + tuple(lhs_batch)))
@@ -3285,13 +3292,13 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
            'dimensions, got {} for operand ndim {} and shape {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand_ndim, shape))
-  if any(operand.shape[i] != shape[broadcast_dimensions[i]] and
-         operand.shape[i] != 1 for i in range(operand_ndim)):
+  if not all([masking.must_equal_any(operand.shape[i], 1, shape[broadcast_dimensions[i]])
+              for i in range(operand_ndim)]):
     msg = (
-        "broadcast_in_dim operand dimension sizes must either be 1, or be "
-        "equal to their corresponding dimensions in the target broadcast "
-        "shape; got operand of shape {}, target broadcast shape {}, "
-        "broadcast_dimensions {} ")
+      "broadcast_in_dim operand dimension sizes must either be 1, or be "
+      "equal to their corresponding dimensions in the target broadcast "
+      "shape; got operand of shape {}, target broadcast shape {}, "
+      "broadcast_dimensions {} ")
     raise TypeError(msg.format(operand.shape, shape, broadcast_dimensions))
   if (len(broadcast_dimensions) != len(set(broadcast_dimensions)) or
       tuple(broadcast_dimensions) != tuple(sorted(broadcast_dimensions))):
@@ -3430,15 +3437,22 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
 
 def _pad_shape_rule(operand, padding_value, *, padding_config):
   del padding_value
+  op_shape = np.shape(operand)
   if not len(padding_config) == np.ndim(operand):
     raise ValueError("length of padding_config must equal the number of axes "
                      f"of operand, got padding_config {padding_config} "
-                     f"for operand shape {np.shape(operand)}")
-  if not all(i >= 0 for _, _, i in padding_config):
-    raise ValueError("interior padding in padding_config must be nonnegative, "
-                     f"got padding_config {padding_config}")
-  return tuple(l + h + d + (_max(0, d - 1) * i if i > 0 else 0)
-               for (l, h, i), d in zip(padding_config, np.shape(operand)))
+                     f"for operand shape {op_shape}")
+  lows, highs, ints = unzip3(padding_config)
+  # Compute lo + hi + shape_i + (int * (shape_i - 1) if shape_i >= 1 else 0)
+  # or, lo + hi + ((int + 1) * (shape_i - 1) if shape_i >= 1 else 0)
+  after_interior = masking.dilate_shape(op_shape, tuple([i + 1 for i in ints]))
+  res_shape = tuple(safe_map(lambda l, h, s: l + h + s, lows, highs, after_interior))
+  if not all(masking.must_equal_or_greater(d, 0) for d in res_shape):
+    msg = (f"Dimension size after padding is not at least 0, "
+           f"got result shape {res_shape}, for padding_config {padding_config}"
+           f" and operand shape {op_shape}")
+    raise ValueError(msg)
+  return res_shape
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
@@ -3522,10 +3536,12 @@ def _compute_squeeze_shape(shape, dimensions):
     raise ValueError(f"dimensions are not unique: {dimensions}")
   if not all(0 <= d < len(shape) for d in dims_set):
     raise ValueError(f"dimensions outside range [0, ndim): {dimensions}")
-  if any(shape[d] != 1 for d in dimensions):
-    raise ValueError(
+  with masking.shape_error(ValueError(
         "cannot select an axis to squeeze out which has size not equal to "
-        f"one, got shape={shape} and dimensions={dimensions}")
+        f"one, got shape={shape} and dimensions={dimensions}")) as e:
+    if any(shape[d] != 1 for d in dimensions):
+      raise e
+
   return tuple(s for i, s in enumerate(shape) if i not in dims_set)
 
 def _squeeze_translation_rule(c, arg, *, dimensions):
@@ -3644,9 +3660,10 @@ def _reshape_masking_rule(padded_args, logical_shapes, polymorphic_shapes,
     poly_dims = [i for i, size in enumerate(shape) if is_poly(size)]
     return [prod(shape[start:stop])
             for start, stop in zip([0] + poly_dims, poly_dims + [len(shape)])]
-  if merge_const_sizes(old_shape) != merge_const_sizes(new_sizes):
-    raise NotImplementedError(
-      "Reshape on padded dimensions causing fragmentation is not supported.")
+  with masking.shape_error(NotImplementedError(
+      "Reshape on padded dimensions causing fragmentation is not supported.")) as e:
+    if merge_const_sizes(old_shape) != merge_const_sizes(new_sizes):
+      raise e
 
   return reshape(operand,
                  new_sizes=masking.padded_shape_as_value(new_sizes),
@@ -3846,9 +3863,10 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
       msg = ("slice strides must have length equal to the number of dimensions "
              "of the operand, got strides {} for operand shape {}.")
       raise TypeError(msg.format(strides, operand.shape))
-    if not np.all(np.greater(strides, 0)):
-      msg = "slice strides must be positive, got {}"
-      raise TypeError(msg.format(strides))
+    with masking.shape_error(TypeError(
+        f"slice strides must be positive, got {strides}.")) as e:
+      if not np.all(np.greater(strides, 0)):
+        raise e
 
   diff = np.subtract(limit_indices, start_indices)
   # Not np.divmod since Poly.__rdivmod__ is ignored by NumPy, breaks poly stride
@@ -6033,14 +6051,11 @@ xla.translations[iota_p] = _iota_translation_rule
 _ndim = np.ndim
 
 
-def _dilate_shape(shape, dilation):
-  """Utility function for computing the shape resulting from a dilation."""
-  if not np.all(np.greater(dilation, 0)):
-    msg = "All dilations must be positive, got {}."
-    raise TypeError(msg.format(dilation))
-  dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
-  return np.where(shape == 0, 0,
-                   np.multiply(dilation, np.subtract(shape, 1)) + 1)
+def _dilate_shape(shape: Shape, dilation: Shape) -> Shape:
+  """Computes the shape resulting from a dilation."""
+  if len(dilation) < len(shape):
+    dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
+  return np.array(masking.dilate_shape(shape, dilation))
 
 def _ceil_divide(x1, x2):
   return -np.floor_divide(np.negative(x1), x2)
@@ -6121,7 +6136,7 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
                                               axis=1))
   out_space = np.floor_divide(
     np.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
-  out_space = np.maximum(0, out_space)
+  out_space = np.maximum(out_space, 0)
   assert lhs_shape[0] % batch_group_count == 0
   out_shape = (lhs_shape[0] // batch_group_count, rhs_shape[0])
   return tuple(out_shape + tuple(out_space))

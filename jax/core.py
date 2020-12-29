@@ -1136,6 +1136,9 @@ raise_to_shaped_mappings : Dict[type, Callable] = {
 # Registry for valid dimension types. This is used by masking.Poly.
 _DIMENSION_TYPES: Set[type] = {int}
 
+DimSize = Any  # A member of _DIMENSION_TYPES
+Shape = Sequence[DimSize]
+
 def _canonicalize_dimension(dim):
   if type(dim) in _DIMENSION_TYPES:
     return dim

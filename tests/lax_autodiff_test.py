@@ -271,7 +271,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        for strides in all_strides
        for dtype in float_dtypes
        for padding in ["VALID", "SAME"]))
-  def testConvGrad(self, lhs_shape, rhs_shape, dtype, strides, padding):
+  def testConvGrad(self, lhs_shape=(3, 2, 3, 4), rhs_shape=(3, 2, 1, 2),
+                   dtype=dtypes.bfloat16, strides=(1, 2), padding='VALID'):
     rng = jtu.rand_small(self.rng())
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)

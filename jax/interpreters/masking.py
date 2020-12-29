@@ -18,13 +18,13 @@ from functools import partial, reduce
 from itertools import chain, product
 import operator as op
 import string
-from typing import Callable, Dict, Optional, Sequence, Union, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 import numpy as np
 
 from .. import core, dtypes
 from ..tree_util import tree_unflatten
-from ..core import ShapedArray, Trace, Tracer
+from ..core import ShapedArray, Trace, Tracer, DimSize, Shape
 from ..util import safe_map, safe_zip, unzip2, prod, wrap_name
 from .. import linear_util as lu
 
@@ -105,7 +105,7 @@ def eval_poly_shape(shape, values_dict):
 def eval_poly(poly, values_dict):
   return poly.evaluate(values_dict) if type(poly) is Poly else poly
 
-def _ensure_poly(p: 'Size') -> 'Poly':
+def _ensure_poly(p: DimSize) -> 'Poly':
   if isinstance(p, Poly): return p
   return Poly({Mon(): p})
 
@@ -113,7 +113,7 @@ def _polys_to_ints(shape):
   return tuple(int(d) if type(d) is Poly and d.is_constant else d
                for d in shape)
 
-def is_polymorphic(shape: Sequence['Size']):
+def is_polymorphic(shape: Shape):
   return any(map(lambda d: type(d) is Poly, shape))
 
 class UndefinedPoly(Exception):
@@ -124,6 +124,33 @@ class UndefinedPoly(Exception):
   for any `Val`, a non-negative integer valuation of the shape variables.
   """
   pass
+
+
+def shape_comp(thunk: Callable, on_error):
+  """Return the result of thunk() if succcesful, or on_error if UndefinedPoly"""
+  try:
+    return thunk()
+  except UndefinedPoly:
+    return on_error
+
+@contextmanager
+def shape_error(exc: Exception):
+  try:
+    yield exc
+  except UndefinedPoly as undef:
+    raise type(exc)(exc.args[0] + f". Due to {undef}.")
+
+def must_equal(v1, v2):
+  """Returns True if v1 == v2 is defined and is True"""
+  return shape_comp(lambda: v1 == v2, False)
+
+def must_equal_or_greater(v1, v2):
+  """Returns True if v1 >= v2 is defined and is True"""
+  return shape_comp(lambda: v1 >= v2, False)
+
+def must_equal_any(v1, *others):
+  """Returns True if at least one of the v1 == other is defined and is True."""
+  return any(must_equal(v1, o) for o in others)
 
 class Poly(dict):
   """Polynomial with integer coefficients for polymorphic shapes.
@@ -148,19 +175,19 @@ class Poly(dict):
   def __hash__(self):
     return hash(tuple(sorted(self.items())))
 
-  def __add__(self, other: 'Size') -> 'Poly':
+  def __add__(self, other: DimSize) -> 'Poly':
     coeffs = self.copy()
     for mon, coeff in _ensure_poly(other).items():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
     return Poly(coeffs)
 
-  def __sub__(self, other: 'Size') -> 'Poly':
+  def __sub__(self, other: DimSize) -> 'Poly':
     return self + -other
 
   def __neg__(self) -> 'Poly':
     return Poly({mon: -coeff for mon, coeff in self.items()})
 
-  def __mul__(self, other: 'Size') -> 'Poly':
+  def __mul__(self, other: DimSize) -> 'Poly':
     other = _ensure_poly(other)
     coeffs: Dict[Mon, int] = {}
     for (mon1, coeff1), (mon2, coeff2) in product(self.items(), other.items()):
@@ -168,24 +195,24 @@ class Poly(dict):
       coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
     return Poly(coeffs)
 
-  def __rmul__(self, other: 'Size') -> 'Poly':
+  def __rmul__(self, other: DimSize) -> 'Poly':
     return self * other  # multiplication commutes
 
-  def __radd__(self, other: 'Size') -> 'Poly':
+  def __radd__(self, other: DimSize) -> 'Poly':
     return self + other  # addition commutes
 
-  def __rsub__(self, other: 'Size') -> 'Poly':
+  def __rsub__(self, other: DimSize) -> 'Poly':
     return _ensure_poly(other) - self
 
-  def __floordiv__(self, divisor: 'Size') -> 'Poly':
+  def __floordiv__(self, divisor: DimSize) -> 'Poly':
     q, _ = divmod(self, divisor)  # type: ignore
     return q
 
-  def __mod__(self, divisor: 'Size') -> int:
+  def __mod__(self, divisor: DimSize) -> int:
     _, r = divmod(self, divisor)  # type: ignore
     return r
 
-  def __divmod__(self, divisor: 'Size') -> Tuple['Poly', int]:
+  def __divmod__(self, divisor: DimSize) -> Tuple['Poly', int]:
     """
     Floor division with remainder (divmod) generalized to polynomials. To allow
     ensuring '0 <= remainder < divisor' for consistency with integer divmod, the
@@ -210,7 +237,7 @@ class Poly(dict):
       dividend -= q * divisor + r
     return quotient, int(remainder)
 
-  def __rdivmod__(self, dividend: 'Size') -> Tuple['Poly', int]:
+  def __rdivmod__(self, dividend: DimSize) -> Tuple['Poly', int]:
     return divmod(_ensure_poly(dividend), self)  # type: ignore
 
   def __eq__(self, other):
@@ -226,22 +253,25 @@ class Poly(dict):
   def __ne__(self, other):
     return not self == other
 
-  def __ge__(self, other: 'Size'):
+  def __ge_helper(self, other: DimSize, what: str) -> bool:
     lb, ub = (self - other).bounds()
     if lb is not None and lb >= 0:
       return True
     if ub is not None and ub < 0:
       return False
-    raise UndefinedPoly(f"Polynomial comparison {self} >= {other} is inconclusive")
+    raise UndefinedPoly(f"Polynomial comparison {what} is inconclusive")
 
-  def __le__(self, other: 'Size'):
-    return _ensure_poly(other) >= self
+  def __ge__(self, other: DimSize):
+    return self.__ge_helper(other, f"{self} >= {other}")
 
-  def __lt__(self, other: 'Size'):
-    return not (self >= other)
+  def __le__(self, other: DimSize):
+    return _ensure_poly(other).__ge_helper(self, f"{self} <= {other}")
 
-  def __gt__(self, other: 'Size'):
-    return not (_ensure_poly(other) >= self)
+  def __lt__(self, other: DimSize):
+    return not self.__ge_helper(other, f"{self} < {other}")
+
+  def __gt__(self, other: DimSize):
+    return not _ensure_poly(other).__ge_helper(self, f"{self} > {other}")
 
   def __str__(self):
     return ' + '.join(f'{c} {mon}' if c != 1 or mon.degree == 0 else str(mon)
@@ -282,7 +312,7 @@ class Poly(dict):
     """Returns the highest degree term that comes first lexicographically."""
     return max(self.items())
 
-Size = Union[int, Poly]
+core._DIMENSION_TYPES.add(Poly)
 
 def pow(x, deg):
   try:
@@ -301,7 +331,27 @@ def mul(coeff, mon):
     return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
 
 
-core._DIMENSION_TYPES.add(Poly)
+def dilate_shape(shape: Shape, dilation: Shape) -> Shape:
+  """The new shape after interior padding.
+  Each dimension must have dilation >= 1 and the new shape is
+     1 + dilation[i] * (shape[i] - 1)  if shape[i] >= 1
+  or
+     0 otherwise (assumes shape[i] >= 0)
+  """
+  def new_dim(shape_i: DimSize, dilation_i: DimSize) -> DimSize:
+    # Checking shape_i >= 0 may be undefined; we don't need it if dilation_i == 1
+    if must_equal(dilation_i, 1):
+      return shape_i
+    if not must_equal_or_greater(dilation_i, 1):
+      raise ValueError(f"Dilation factors must be all positive: {dilation}")
+
+    with shape_error(ValueError(
+        "when dilation factor is not 1 the shape dimension must be positive, "
+        f"for shape {shape} and dilation {dilation}")):
+      return (1 + dilation_i * (shape_i - 1)) if shape_i >= 1 else 0
+
+  return tuple(safe_map(new_dim, shape, dilation))
+
 
 class Mon(dict):
   # TODO: move this before Poly in the file
@@ -386,6 +436,8 @@ def parse_spec(spec=''):
   if spec[0] == '(':
     if spec[-1] != ')': raise ShapeSyntaxError(spec)
     spec = spec[1:-1]
+    if not spec:
+      return ShapeSpec(())
   dims = map(_parse_dim, spec.replace(' ', '').strip(',').split(','))
   return ShapeSpec(dims)
 
@@ -426,7 +478,8 @@ class S_(object):
 s_ = S_()
 
 def _shape_spec_consistent(spec, expr):
-  return all(a == b for a, b in zip(spec, expr) if a is not _monomorphic_dim)
+  return all(must_equal(a, b)
+             for a, b in zip(spec, expr) if a is not _monomorphic_dim)
 
 class MaskTracer(Tracer):
   __slots__ = ["val", "polymorphic_shape"]

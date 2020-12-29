@@ -14,6 +14,7 @@
 
 from functools import partial
 import itertools as it
+import re
 from unittest import SkipTest
 
 import numpy as np
@@ -66,6 +67,7 @@ class PolyTest(jtu.JaxTestCase):
       ['m + 3 * k', 'ShapeSpec(3 k + m)'],
       ['-3 + k + k * k', 'ShapeSpec(k^2 + k + -3)'],
       ['', 'ShapeSpec()'],
+      ['()', 'ShapeSpec()'],
       ['_', 'ShapeSpec(_)'],
   ])
   def test_parse_spec(self, spec, ans):
@@ -108,7 +110,7 @@ class PolyTest(jtu.JaxTestCase):
     self.assertEqual(quotient, dividend // divisor)
 
   def test_Poly_compare(self):
-    poly = Poly({Mon(): 3, Mon({'n': 1}): 4})
+    poly = Poly({Mon(): 3, Mon({'n': 1}): 4})  # 4n + 3
     # Assume poly > 0 to make various shape rules work with polymorphic shapes:
     assert poly >= 0
     assert poly >= 1
@@ -122,10 +124,49 @@ class PolyTest(jtu.JaxTestCase):
     assert poly >= poly - 1
     assert poly < poly + 1
 
-    poly >= 3
-    poly > 2
+    # Test all 4 comparison operators., with the boundary cases
+    self.assertTrue(poly >= 3)
     with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
       poly >= 4
+
+    self.assertFalse(poly < 3)
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly < 4
+
+    self.assertTrue(poly > 2)
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly > 3
+
+    self.assertFalse(poly <= 2)
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly <= 3
+
+    poly2 = Poly({Mon(): 3, Mon({'n': 1}): -4})  # -4n + 3
+    self.assertTrue(poly2 <= 3)
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly2 <= 2
+
+    self.assertFalse(poly2 > 3)
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly2 > 2
+
+    self.assertTrue(poly2 < 4)
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly2 < 3
+
+    self.assertFalse(poly2 >= 4)
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly2 >= 3
+
+    poly3 = Poly({Mon({'n': 1}): -4, Mon({'m': 1}): 4})  # 4n - 4m
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly3 >= 0
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly3 < 0
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly3 > 0
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly3 < 0
 
   n = Poly({Mon({'n': 1}): 1})
   m = Poly({Mon({'m': 1}): 1})
@@ -282,7 +323,6 @@ class MaskingTest(jtu.JaxTestCase):
                jtu.rand_default(self.rng()))
 
   def test_arithmetic(self):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     @partial(mask, in_shapes=['(n, m)', 'm'], out_shape='(n, m)')
     def times(x, y):
       return x * y
@@ -465,34 +505,80 @@ class MaskingTest(jtu.JaxTestCase):
     self.check(fun, ['n'], '(n+3,)', {'n': 2}, [(3,)], ['float32'],
                jtu.rand_default(self.rng()))
 
+  # padding_config = (low, high, interior), for each dimension
   @parameterized.named_parameters({
       'testcase_name': "padding_config={}_shapes={}".format(padding_config,
                                                             shape),
       'padding_config': padding_config,
-      'shape': shape} for padding_config, shape in (
-          (((1, 2, 0),), (2,)),
-          (((1, 2, 0), (3, 4, 0)), (1, 2)),
-          (((0, 0, 0), (0, 0, 0)), (1, 2)),
-          (((1, 2, 3),), (2,)),
-          (((1, 2, 1), (3, 4, 2)), (3, 2)),
-          (((-1, 2, 0),), (2,)),
-          (((-1, -2, 0), (1, 2, 0)), (4, 2)),
-          (((-1, 2, 0), (1, 2, 2)), (4, 2)),
-          (((-1, -2, 2),), (5,)),
-          (((-1, -2, 1), (1, 2, 2)), (4, 2))))
-  def test_pad(self, padding_config, shape):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
+      'shape': shape, 'in_shape': in_shape, 'out_shape': out_shape}
+      for padding_config, shape, in_shape, out_shape in (
+          (((1, 2, 0),), (2,), 'n + 1', 'n + 4'),
+          # If the interior padding is 0, we don't need to check if the original
+          # dimension size is >= 1
+          (((1, 2, 0), (-3, 4, 0)), (1, 2), 'n, m', 'n + 3, m + 1'),
+          (((0, 0, 0), (0, 0, 0)), (1, 2), 'n, m', 'n, m'),
+          (((1, 2, 3),), (2,), 'n + 1', '4 * n + 4'),
+          (((1, 2, 1), (3, 4, 2)), (3, 2), 'n + 1, m + 1', '2 * n + 4, 3 * m + 8'),
+          (((-1, 2, 0),), (2,), 'n + 1', 'n + 2'),
+          (((-1, -2, 0), (1, 2, 0)), (4, 2), 'n + 3, m', 'n, m + 3'),
+          (((-1, 2, 0), (1, 2, 2)), (4, 2), 'n, m + 1', 'n + 1, 3 * m + 4'),
+          (((-1, -2, 2),), (5,), 'n + 3', '3 * n + 4'),
+          (((-1, -2, 1), (1, 2, 2)), (4, 2), 'n + 3, m + 1', '2 * n + 2, 3 * m + 4')
+      ))
+  def test_pad(self, padding_config=((1, 2, 3),), shape=(2,),
+               in_shape="n + 1", out_shape="4 * n + 4"):
     def pad(x):
-      return lax.pad(x, jnp.array(1., x.dtype), padding_config)
+      return lax.pad(x, np.array(1., x.dtype), padding_config)
 
-    if len(shape) == 1:
-      padding_config_, = padding_config
-      linear_coeff = padding_config_[2] + 1
-      const_coeff = sum(padding_config_[:2]) - padding_config_[2]
-      out_shape = str(linear_coeff) + ' * h + ' + str(const_coeff)
-      self.check(pad, ['h'], out_shape, dict(h=shape[0]),
-                 [tuple(np.add(shape, 1))], ['float_'],
-                 jtu.rand_default(self.rng()))
+    logical_env = dict(n=2, m=3)
+    self.check(pad, [in_shape], out_shape, logical_env,
+               [tuple(np.add(shape, 1))], ['float_'],
+               jtu.rand_default(self.rng()))
+
+  def test_pad_errors(self):
+
+    def check_one_pad(padding_config, in_shape,
+                      error_msg):
+      with self.assertRaisesRegex(ValueError, re.escape(error_msg)):
+        shapecheck([in_shape], "n")(
+            lambda x: lax.pad(x, np.array(1., x.dtype), padding_config))
+
+    check_one_pad(
+        [(-1, 0, 0)], "n",
+        "Dimension size after padding is not at least 0, got result shape (n + -1,)")
+    check_one_pad([(-2, 0, 2)], "n + 1",
+        "Dimension size after padding is not at least 0, got result shape (3 n + -1,)")
+    check_one_pad(
+        [(0, 0, 1)], "n",
+        ("when dilation factor is not 1 the shape dimension must be positive, "
+         "for shape (n,) and dilation (2,). "
+         "Due to Polynomial comparison n >= 1 is inconclusive."))
+
+  def test_squeeze_shapecheck(self):
+    def check_one_squeeze(in_shape, dimensions, out_shape):
+      shapecheck([in_shape], out_shape)(lambda x: lax.squeeze(x, dimensions))
+
+    check_one_squeeze("m, 1", (1,), "m")
+    check_one_squeeze("m, 1, n, 1", (1, 3), "m, n")
+
+  def test_squeeze_shapecheck_errors(self):
+    def check_one_squeeze(in_shape, dimensions, err_msg):
+      with self.assertRaisesRegex(ValueError, err_msg):
+        shapecheck([in_shape], "should_not_be_needed")(
+          lambda x: lax.squeeze(x, dimensions))
+
+    check_one_squeeze("m, 1", (0,),
+                      re.escape("cannot select an axis to squeeze out which has size not equal to one, got shape=(m, 1) and dimensions=(0,)"))
+
+  def test_matmul(self):
+    log_env = dict(n=2, m=3, p=4, b1=5, b2=6)
+    self.check(jnp.matmul, ['n, m', 'm, p'], 'n, p', log_env, [(8, 8), (8, 8)],
+               ['float_', 'float_'],
+               jtu.rand_default(self.rng()))
+
+    self.check(jnp.matmul, ['b1, b2, n, m', 'm, p'], 'b1, b2, n, p', log_env, [(8, 8, 8, 8), (8, 8)],
+               ['float_', 'float_'],
+               jtu.rand_default(self.rng()))
 
 
   # TODO(mattjj,j-towns): fix test failure and reenable.
@@ -524,26 +610,28 @@ class MaskingTest(jtu.JaxTestCase):
     # conv_general_dilated implementation:
     if (lhs_dilation is None or not isinstance(padding, str))))
   def test_conv(
-          self, padding, lhs_dilation, dimension_numbers, lhs_perm,
-          rhs_perm, out_perm):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
+          self, padding='VALID', lhs_dilation=None,
+          dimension_numbers=('NCHW', 'HWIO', 'NHWC'),
+          lhs_perm=(0, 1, 2, 3),
+          rhs_perm=(2, 3, 1, 0), out_perm=(0, 2, 3, 1)):
     def conv(lhs, rhs):
       return lax.conv_general_dilated(
         lhs, rhs, (1, 1), padding, lhs_dilation=lhs_dilation,
         dimension_numbers=dimension_numbers)
 
     template =  '({}, {}, {}, {})'
-    lhs_shape = template.format(*np.take(['n', 'c', 'h', 'w'], lhs_perm))
+    # Ensure that the h and w dimensions are known to be big enough
+    lhs_shape = template.format(*np.take(['n', 'c', 'h + 1', 'w + 2'], lhs_perm))
     rhs_shape = template.format(*np.take(['o', 'c', '2', '3'], rhs_perm))
     if padding == 'VALID':
       out_shape = template.format(
-        *np.take(['n', 'o', 'h+-1', 'w+-2'], out_perm))
+        *np.take(['n', 'o', 'h', 'w'], out_perm))
     elif lhs_dilation:
       out_shape = template.format(
-        *np.take(['n', 'o', 'h', '2*w+-1'], out_perm))
+        *np.take(['n', 'o', 'h + 1', '2*w+3'], out_perm))
     else:
       out_shape = template.format(
-        *np.take(['n', 'o', 'h', 'w'], out_perm))
+        *np.take(['n', 'o', 'h + 1', 'w + 2'], out_perm))
 
     logical_env = dict(n=3, c=2, h=4, w=5, o=6)
 
@@ -574,7 +662,6 @@ class MaskingTest(jtu.JaxTestCase):
   def test_conv_strided(
           self, padding, lhs_dilation, dimension_numbers, lhs_perm,
           rhs_perm, out_perm):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     def conv(lhs, rhs):
       return lax.conv_general_dilated(
         lhs, rhs, (2, 1), padding, lhs_dilation=lhs_dilation,
@@ -583,13 +670,13 @@ class MaskingTest(jtu.JaxTestCase):
     template =  '({}, {}, {}, {})'
     rhs_shape = template.format(*np.take(['o', 'c', '2', '3'], rhs_perm))
     if padding == 'VALID':
-      lhs_shape = template.format(*np.take(['n', 'c', '2*h+1', 'w'], lhs_perm))
+      lhs_shape = template.format(*np.take(['n', 'c', '2*h+1', 'w + 2'], lhs_perm))
       lhs_shape_padded = tuple(np.take([4, 3, 5, 7], lhs_perm))
-      out_shape = template.format(*np.take(['n', 'o', 'h', 'w+-2'], out_perm))
+      out_shape = template.format(*np.take(['n', 'o', 'h', 'w'], out_perm))
     elif lhs_dilation:
-      lhs_shape = template.format(*np.take(['n', 'c', '2*h', 'w'], lhs_perm))
+      lhs_shape = template.format(*np.take(['n', 'c', '2*h', 'w + 1'], lhs_perm))
       lhs_shape_padded = tuple(np.take([4, 3, 6, 7], lhs_perm))
-      out_shape = template.format(*np.take(['n', 'o', 'h', '2*w+-1'], out_perm))
+      out_shape = template.format(*np.take(['n', 'o', 'h', '2*w+1'], out_perm))
     else:
       lhs_shape = template.format(*np.take(['n', 'c', '2*h', 'w'], lhs_perm))
       lhs_shape_padded = tuple(np.take([4, 3, 6, 7], lhs_perm))
@@ -643,17 +730,15 @@ class MaskingTest(jtu.JaxTestCase):
     # self.check(lambda x: x[-2::-1], ['n'], dict(n=jnp.array([2, 3])), 'n+-1')
 
   def test_lax_slice(self):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
-    self.check(lambda x: lax.slice(x, (1,), (x.shape[0],)), ['n'], 'n+-1',
+    self.check(lambda x: lax.slice(x, (1,), (x.shape[0],)), ['n + 1'], 'n',
                {'n': 2}, [(3,)], ['float_'], jtu.rand_default(self.rng()))
     # TODO self.check(lambda x: lax.slice(x, (x.shape[0] // 2,), (x.shape[0],)),
     #  ['2*n'], 'n', {'n': 2}, [(6,)], ['float_'], jtu.rand_default(self.rng()))
     self.check(lambda x: lax.slice(x, (0,), (x.shape[0],), (x.shape[0],)),
-               ['n'], '1', {'n': 2}, [(5,)], ['float_'],
+               ['n + 1'], '1', {'n': 2}, [(5,)], ['float_'],
                jtu.rand_default(self.rng()))
 
   def test_reshape(self):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     self.check(lambda x: jnp.reshape(x, (x.shape[1], 2, 4, 1)),
                ['1, n, 4, 2'], 'n, 2, 4, 1', dict(n=2), [(1, 3, 4, 2)],
                ['float_'], jtu.rand_default(self.rng()))
@@ -715,8 +800,13 @@ class MaskingTest(jtu.JaxTestCase):
     raise SkipTest("not yet implemented")
     # TODO needs fix for https://github.com/google/jax/issues/2155
 
-  def test_broadcast_in_dim(self):
-    raise SkipTest
+  def test_broadcast_in_dim_shapecheck(self):
+    #shapecheck(['n', '1'], ['n', 'n'])(jnp.broadcast_arrays)
+    #shapecheck(['n, m, o', '1', 'm, 1'], ['n, m, o', 'n, m, o', 'n, m, o'])(jnp.broadcast_arrays)
+    with self.assertRaisesRegex(ValueError,
+                                "Incompatible shapes for broadcasting:"):
+      shapecheck(['n', '2'], ['n', 'n'])(jnp.broadcast_arrays)
+
 
   def test_destructure(self):
     def d(key):
@@ -732,7 +822,6 @@ class MaskingTest(jtu.JaxTestCase):
                {'n': 2}, [(3,)], ['float_'], jtu.rand_default(self.rng()))
 
   def test_split(self):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     self.check(lambda x: jnp.split(x, 2), ['2*n'], ['n', 'n'], dict(n=4),
                [(8,)], ['float_'], jtu.rand_default(self.rng()))
     self.check(lambda x: jnp.split(x, [10]), ['n'], ['10', 'n+-10'], dict(n=12),

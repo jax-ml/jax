@@ -45,6 +45,7 @@ from jax import dtypes
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import flags, config
 from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
+from jax.interpreters import masking
 from jax.interpreters.masking import Poly
 from jax import lax
 from jax._src.lax.lax import _device_put_raw
@@ -1672,19 +1673,17 @@ def broadcast_to(arr, shape):
   arr = arr if isinstance(arr, ndarray) else array(arr)
   shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
-  if arr_shape == shape:
+  if masking.must_equal(arr_shape, shape):
     return arr
   else:
     nlead = len(shape) - len(arr_shape)
-    compatible = np.equal(arr_shape, shape[nlead:]) | np.equal(arr_shape, 1)
-    if nlead < 0 or not np.all(compatible):
+    if (nlead < 0 or
+        not _all(masking.must_equal_any(arr_shape[d], 1, shape[nlead + d])
+                 for d in range(len(arr_shape)))):
       msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
       raise ValueError(msg.format(arr_shape, shape))
-    diff, = np.where(np.not_equal(shape[nlead:], arr_shape))
-    new_dims = tuple(range(nlead)) + tuple(nlead + diff)
-    kept_dims = tuple(np.delete(np.arange(len(shape)), new_dims))
-    return lax.broadcast_in_dim(squeeze(arr, tuple(diff)), shape, kept_dims)
 
+    return lax.broadcast_in_dim(arr, shape, tuple(nlead + np.arange(len(arr_shape))))
 
 def _split(op, ary, indices_or_sections, axis=0):
   axis = core.concrete_or_error(int, axis, f"in jax.numpy.{op} argument `axis`")
@@ -1693,8 +1692,7 @@ def _split(op, ary, indices_or_sections, axis=0):
     indices_or_sections = np.array(
         [core.concrete_or_error(np.int64, i_s, f"in jax.numpy.{op} argument 1")
          for i_s in indices_or_sections], np.int64)
-    split_indices = np.concatenate([[np.int64(0)], indices_or_sections,
-                                    [np.int64(size)]])
+    split_indices = np.concatenate([[0], indices_or_sections, [size]])
   else:
     indices_or_sections = core.concrete_or_error(np.int64, indices_or_sections,
                                                  f"in jax.numpy.{op} argument 1")
@@ -3525,13 +3523,13 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
       idx_b_other.append(i)
     elif bb is None:
       idx_a_other.append(i)
-    elif ba == 1:
+    elif masking.must_equal(ba, 1):
       idx_b_other.append(i)
       a_squeeze.append(len(idx_batch) + len(idx_a_other) + len(a_squeeze))
-    elif bb == 1:
+    elif masking.must_equal(bb, 1):
       idx_a_other.append(i)
       b_squeeze.append(len(idx_batch) + len(idx_b_other) + len(b_squeeze))
-    elif ba == bb:
+    elif masking.must_equal(ba, bb):
       a_batch.append(len(idx_batch) + len(idx_a_other))
       b_batch.append(len(idx_batch) + len(idx_b_other))
       idx_batch.append(i)
