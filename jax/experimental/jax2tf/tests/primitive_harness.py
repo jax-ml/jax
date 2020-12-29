@@ -244,7 +244,7 @@ def dtypes_to_str(dtype_list: Sequence, empty_means_all=False) -> str:
   if all([t in names for t in complex]):
     names = (names - complex) | {"complex"}
 
-  inexact = {"", "all_complex"}
+  inexact = {"floating", "complex"}
   if all([t in names for t in inexact]):
     names = (names - inexact) | {"inexact"}
 
@@ -329,6 +329,12 @@ class Limitation:
       dtypes = tuple(dtypes)
     self.dtypes = dtypes
     self.enabled = enabled  # Does it apply to the current harness?
+
+  def __str__(self):
+    return (f"\"{self.description}\" devices={self.devices} "
+            f"dtypes={[np.dtype(dt).name for dt in self.dtypes]}")
+  __repr__ = __str__
+
 
   def filter(self, device_under_test: str) -> bool:
     """Check that a limitation is enabled for the current harness and device."""

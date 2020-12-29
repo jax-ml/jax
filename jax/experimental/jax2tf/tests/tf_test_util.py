@@ -152,43 +152,51 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
     tf_args = _make_tf_args(args)
 
-    unexpected_successes = []
+    unexpected_successes: List[str] = []
+    # Run the "compiled" mode first, it is most important
     for mode in ("compiled", "eager", "graph"):
+      def log_message(extra):
+        return f"[{self._testMethodName}] mode={mode}: {extra}"
+
+      if limitations is not None:
+        dut = jtu.device_under_test()
+        # For TPU all modes should behave like the compiled one
+        lookup_mode = mode if dut != "tpu" else "compiled"
+        jax2tf_limits = limitations(dut, lookup_mode)
+      else:
+        jax2tf_limits = []
+
+      skip_tf_run = [l for l in jax2tf_limits if l.skip_tf_run]
+      if skip_tf_run:
+        logging.info(log_message(f"Skip TF run due to limitations {skip_tf_run}"))
+        continue
+
       try:
         result_tf = _run_tf_function(func_tf, *tf_args, mode=mode)
         tf_exception = None
       except Exception as e:
         tf_exception = e
 
-      if limitations is not None:
-        dut = jtu.device_under_test()
-        lookup_mode = mode if dut != "tpu" else "compiled"
-        jax2tf_limits = limitations(dut, lookup_mode)
-      else:
-        jax2tf_limits = []
-
-      expect_tf_error = any([l.expect_tf_error for l in jax2tf_limits])
+      expect_tf_error = [l for l in jax2tf_limits if l.expect_tf_error]
       if tf_exception:
         if expect_tf_error:
-          logging.info(
-              f"[{self._testMethodName}] Found expected TF {mode} failure "
-              f" {tf_exception}; enabled limitations {[l.description for l in jax2tf_limits if l.expect_tf_error]}"
-          )
+          logging.info(log_message(
+            "Found expected TF error with enabled limitations "
+            f"{expect_tf_error}; TF error is {tf_exception}"))
           continue
         else:
           raise tf_exception
       else:
         if expect_tf_error:
           # It is more ergonomic to print all successful modes once
-          msg = (f"mode: {mode}; enabled limitations "
-                 f"{[l.description for l in jax2tf_limits if l.expect_tf_error]}")
-          unexpected_successes.append(msg)
-          logging.warning(f"Unexpected successful mode: {msg}")
-        else:
-          pass
+          logging.warning(log_message(
+            f"Unexpected success with known limitations {expect_tf_error}"))
+          unexpected_successes.append(f"{mode}: {expect_tf_error}")
 
-      # Convert results to np.arrays
-      result_tf = tf.nest.map_structure(lambda t: t.numpy(), result_tf)  # type: ignore
+      skip_comparison = [l for l in jax2tf_limits if l.skip_comparison]
+      if skip_comparison:
+        logging.warning(log_message(f"Skip result comparison due to {skip_comparison}"))
+        continue
 
       def max_with_None(tol1, tol2):
         if tol1 is None:
@@ -200,40 +208,33 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       max_tol = None
       max_tol = max_with_None(max_tol, atol)
       max_tol = max_with_None(max_tol, rtol)
-      had_custom_assert = False
       if max_tol is not None:
-        logging.info(
-          f"[{self._testMethodName}] mode={mode} Starting with tol={max_tol}")
-      disable_comparison = any([l.disable_comparison for l in jax2tf_limits])
-      if not disable_comparison:
-        for lim in jax2tf_limits:
-          if lim.tol is not None:
-            max_tol = max_with_None(max_tol, lim.tol)
-            logging.info(
-              f"[{self._testMethodName}] mode={mode}: Updating tolerance to tol={max_tol} due to {lim.description}")
-          if lim.custom_assert is not None:
-            logging.info(
-              f"[{self._testMethodName}] mode={mode}: Running custom_assert with tol={max_tol} due to {lim.description}")
-            lim.custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
-            had_custom_assert = True
+        logging.info(log_message(f"Starting with tol={max_tol}"))
 
-        if not had_custom_assert:
-          if custom_assert is not None and (mode in ("eager", "graph") or
-                                            always_custom_assert):
-            logging.info(
-              f"[{self._testMethodName}] mode={mode}: Running custom_assert with tol={max_tol} (passed as input)")
-            # If we have a custom assert, use it even if we expect incorrect results
-            custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
-          else:
-            logging.info(
-              f"[{self._testMethodName}] mode={mode}: Running default assert with tol={max_tol}")
-            # In compiled mode we expect the same result as JAX by default
-            self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
-      else:
-        logging.warning(
-          f"[{self._testMethodName}] mode={mode}: Disable numeric comparison"
-          f"; enabled limitations {[l.description for l in jax2tf_limits if l.expect_tf_error]}"
-        )
+      # Convert results to np.arrays
+      result_tf = tf.nest.map_structure(lambda t: t.numpy(), result_tf)  # type: ignore
+
+      had_custom_assert = False
+      for lim in jax2tf_limits:
+        if lim.tol is not None:
+          max_tol = max_with_None(max_tol, lim.tol)
+          logging.info(log_message(f"Updating to tol={max_tol} due to {lim}"))
+        if lim.custom_assert is not None:
+          logging.info(log_message(f"Running custom_assert with tol={max_tol} due to {lim}"))
+          lim.custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
+          had_custom_assert = True
+
+      if not had_custom_assert:
+        if custom_assert is not None and (mode in ("eager", "graph") or
+                                          always_custom_assert):
+          logging.info(log_message(f"Running custom_assert with tol={max_tol} (passed as input)"))
+          # If we have a custom assert, use it even if we expect incorrect results
+          custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
+        else:
+          logging.info(log_message(f"Running default assert with tol={max_tol}"))
+          # In compiled mode we expect the same result as JAX by default
+          self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
+
 
     if unexpected_successes:
       msg = (f"[{self._testMethodName}] The following are unexpected "
