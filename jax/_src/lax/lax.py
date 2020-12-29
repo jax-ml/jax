@@ -3302,8 +3302,6 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
   return shape
 
 def _broadcast_in_dim_transpose_rule(ct, operand, *, shape, broadcast_dimensions):
-  if type(ct) is ad_util.Zero:
-    return ad_util.Zero
   shape_in = operand.aval.shape
   unit_dimensions = tuple(i for i, s in enumerate(shape_in) if s == 1)
   bdims = tuple(np.delete(broadcast_dimensions, unit_dimensions))
@@ -3323,8 +3321,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
-ad.primitive_jvps[broadcast_in_dim_p] = partial(ad.linear_jvp, broadcast_in_dim_p)
-ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
+ad.deflinear2(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 
 
