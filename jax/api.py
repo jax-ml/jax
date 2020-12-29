@@ -154,7 +154,7 @@ def jit(fun: Callable[..., T],
       computation has finished. In some cases XLA can make use of donated
       buffers to reduce the amount of memory needed to perform a computation,
       for example recycling one of your input buffers to store a result. You
-      should not re-use buffers that you donate to a computation, JAX will raise
+      should not reuse buffers that you donate to a computation, JAX will raise
       an error if you try to.
 
   Returns:
@@ -466,10 +466,10 @@ def xla_computation(fun: Callable,
       functions that involve parallel communication collectives, and it
       specifies the axis name/size environment that would be set up by
       applications of :py:func:`jax.pmap`. See the examples below.
-    in_parts: Optional, how each argument to ``fun`` should partitioned or
+    in_parts: Optional, how each argument to ``fun`` should be partitioned or
       replicated. This is used to specify partitioned XLA computations, see
       ``sharded_jit`` for more info.
-    out_parts: Optional, how each output of ``fun`` should partitioned or
+    out_parts: Optional, how each output of ``fun`` should be partitioned or
       replicated. This is used to specify partitioned XLA computations, see
       ``sharded_jit`` for more info.
     backend: This is an experimental feature and the API is likely to change.
@@ -492,7 +492,7 @@ def xla_computation(fun: Callable,
       computation has finished. In some cases XLA can make use of donated
       buffers to reduce the amount of memory needed to perform a computation,
       for example recycling one of your input buffers to store a result. You
-      should not re-use buffers that you donate to a computation, JAX will raise
+      should not reuse buffers that you donate to a computation, JAX will raise
       an error if you try to.
 
   Returns:
@@ -1349,7 +1349,7 @@ def pmap(fun: Callable[..., T],
       computation has finished. In some cases XLA can make use of donated
       buffers to reduce the amount of memory needed to perform a computation,
       for example recycling one of your input buffers to store a result. You
-      should not re-use buffers that you donate to a computation, JAX will raise
+      should not reuse buffers that you donate to a computation, JAX will raise
       an error if you try to.
     global_arg_shapes: Optional, must be set when using pmap(sharded_jit) and
       the partitioned values span multiple processes. The global cross-process
