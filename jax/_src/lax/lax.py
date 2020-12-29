@@ -4880,11 +4880,13 @@ def _reduce_shape_rule(*args, computation, jaxpr, consts, dimensions):
 
 
 def _reduce_dtype_rule(*args, computation, jaxpr, consts, dimensions):
-  _, init_value_args = split_list(args, [len(args) // 2])
-  return [
-      dtypes.canonicalize_dtype(in_arg.dtype)
-      for in_arg in init_value_args
-  ]
+  operand_args, init_value_args = split_list(args, [len(args) // 2])
+  operand_dtypes = [dtypes.canonicalize_dtype(op.dtype) for op in operand_args]
+  init_value_dtypes = [dtypes.canonicalize_dtype(init.dtype) for init in init_value_args]
+  if operand_dtypes != init_value_dtypes:
+    raise TypeError(f"operand dtypes should match corresponding initial value dtypes; got "
+                    f"operands={operand_args} and initial_values={init_value_args}")
+  return operand_dtypes
 
 
 def _reduce_translation_rule(c, *values, computation, jaxpr,
