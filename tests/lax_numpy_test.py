@@ -1516,6 +1516,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       with self.assertRaisesRegex(NotImplementedError, match):
         jnp.pad(arr, pad_width, mode)
 
+  @unittest.skipIf(numpy_version < (1, 17, 0), "function mode is new in numpy 1.17.0")
+  def testPadFunction(self):
+    def np_pad_with(vector, pad_width, iaxis, kwargs):
+      pad_value = kwargs.get('padder', 10)
+      vector[:pad_width[0]] = pad_value
+      vector[-pad_width[1]:] = pad_value
+
+    def jnp_pad_with(vector, pad_width, iaxis, kwargs):
+      pad_value = kwargs.get('padder', 10)
+      vector = jax.ops.index_update(
+          vector, jax.ops.index[:pad_width[0]], pad_value)
+      vector = jax.ops.index_update(
+          vector, jax.ops.index[-pad_width[1]:], pad_value)
+      return vector
+
+    arr = np.arange(6).reshape(2, 3)
+    np_res = np.pad(arr, 2, np_pad_with)
+    jnp_res = jnp.pad(arr, 2, jnp_pad_with)
+    np.testing.assert_equal(np_res, jnp_res)
+
+    arr = np.arange(24).reshape(2, 3, 4)
+    np_res = np.pad(arr, 1, np_pad_with, padder=100)
+    jnp_res = jnp.pad(arr, 1, jnp_pad_with, padder=100)
+    np.testing.assert_equal(np_res, jnp_res)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(arr.shape, arr.dtype)]
+    jnp_fun = partial(jnp.pad, pad_width=1, mode=jnp_pad_with)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testPadWithNumpyPadWidth(self):
     a = [1, 2, 3, 4, 5]
     f = jax.jit(
