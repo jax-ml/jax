@@ -22,7 +22,7 @@ import collections
 import datetime
 import logging
 import os
-from typing import Dict, Sequence
+from typing import Any, Dict, Sequence, Tuple
 import unittest
 
 from absl.testing import absltest
@@ -31,6 +31,7 @@ from jax import test_util as jtu
 from jax.config import config
 from jax.experimental.jax2tf.tests import tf_test_util
 
+import numpy as np
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
@@ -53,7 +54,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     """Runs all harnesses just with JAX to verify the jax_unimplemented field.
     """
     jax_unimpl = [l for l in harness.jax_unimplemented
-                  if l.filter(jtu.device_under_test())]
+                  if l.filter(device=jtu.device_under_test(),
+                              dtype=harness.dtype)]
     try:
       harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     except Exception as e:
@@ -80,15 +82,18 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     print(f"Found {len(harnesses)} harnesses")
 
     harness_groups: Dict[str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
-    unique_limitations = {}
 
-    def unique_hash(l: primitive_harness.Limitation):
-      return hash((l.harness.group_name, l.description, l.devices, l.dtypes))
+    def unique_hash(h: primitive_harness.Harness, l: primitive_harness.Limitation):
+      return (h.group_name, l.description, l.devices,
+              tuple([np.dtype(d).name for d in l.dtypes]))
+
+    unique_limitations: Dict[Any, Tuple[primitive_harness.Harness,
+                                        primitive_harness.Limitation]] = {}
 
     for h in harnesses:
       harness_groups[h.group_name].append(h)
       for l in h.jax_unimplemented:
-        unique_limitations[unique_hash(l)] = l
+        unique_limitations[hash(unique_hash(h, l))] = (h, l)
 
     primitive_coverage_table = ["""
 | Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
@@ -110,10 +115,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     primitive_unimpl_table = ["""
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
 | --- | --- | --- | --- | --- |"""]
-    for l in sorted(unique_limitations.values(), key=lambda l: str(l.harness.group_name)):
+    for h, l in sorted(
+        unique_limitations.values(), key=lambda pair: unique_hash(*pair)):
       devices = ", ".join(l.devices)
       primitive_unimpl_table.append(
-        f"|{l.harness.group_name}|{l.description}|"
+        f"|{h.group_name}|{l.description}|"
         f"{primitive_harness.dtypes_to_str(l.dtypes, empty_means_all=True)}|{devices}|")
 
     if not os.environ.get("JAX_OUTPUT_LIMITATIONS_DOC"):

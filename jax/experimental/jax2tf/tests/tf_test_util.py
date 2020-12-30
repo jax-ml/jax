@@ -28,6 +28,8 @@ from jax import tree_util
 from jax import numpy as jnp
 
 
+DType = Any
+
 def _make_tf_args(args):
 
   def _convert_if_bfloat16(v):
@@ -110,12 +112,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                         func_jax: Callable,
                         *args,
                         enable_xla: bool = True,
-                        limitations: Optional[Callable[[str, str],
-                                                       Sequence]] = None,
-                        custom_assert: Optional[Callable] = None,
-                        always_custom_assert: bool = False,
-                        atol=None,
-                        rtol=None):
+                        limitations: Sequence = ()):
     """Compares jax_func(*args) with convert(jax_func)(*args).
 
     It compares the result of JAX, TF ("eager" mode),
@@ -129,20 +126,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       args: the arguments.
       enable_xla: if True, allows the use of XLA ops in jax2tf.convert
         (default: True).
-      limitations: a function that will be invoked with the device_under_test,
-        e.g., "tpu", and the current TF compilation mode, e.g., "eager", to get
-        the set of applicable limitations for this harness. If non-empty then
-        expect a failure.
-      custom_assert: a function that will be called `custom_assert(result_jax,
-        result_tf)` to assert equality of the results. The result_tf has been
-        converted to numpy. Use this function when
-        JAX and TF produce different results. This function is only used for
-        "eager" and "graph" modes by default, not for the "compiled" mode,
-        because in that case we expect the results to
-        be equal (default: None).
-      always_custom_assert: if True, custom_assert is also called in "compiled"
-        mode. This is useful in cases where JAX and TF produce different but
-        equally valid results (default: False).
+      limitations: the set of limitations for this harness (not yet filtered
+        by mode).
     """
     # Run JAX. Should not fail, we assume that the harness has been filtered
     # already by JAX unimplemented primitives.
@@ -158,13 +143,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       def log_message(extra):
         return f"[{self._testMethodName}] mode={mode}: {extra}"
 
-      if limitations is not None:
-        dut = jtu.device_under_test()
-        # For TPU all modes should behave like the compiled one
-        lookup_mode = mode if dut != "tpu" else "compiled"
-        jax2tf_limits = limitations(dut, lookup_mode)
-      else:
-        jax2tf_limits = []
+      dut = jtu.device_under_test()
+      # For TPU all modes should behave like the compiled one
+      lookup_mode = mode if dut != "tpu" else "compiled"
+      jax2tf_limits = tuple(filter(lambda l: l.filter(mode=lookup_mode), limitations))
 
       skip_tf_run = [l for l in jax2tf_limits if l.skip_tf_run]
       if skip_tf_run:
@@ -198,43 +180,27 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         logging.warning(log_message(f"Skip result comparison due to {skip_comparison}"))
         continue
 
-      def max_with_None(tol1, tol2):
-        if tol1 is None:
-          return tol2
-        elif tol2 is None:
-          return tol1
-        else:
-          return max(tol1, tol2)
       max_tol = None
-      max_tol = max_with_None(max_tol, atol)
-      max_tol = max_with_None(max_tol, rtol)
-      if max_tol is not None:
-        logging.info(log_message(f"Starting with tol={max_tol}"))
+      max_tol_lim = None if not jax2tf_limits else jax2tf_limits[0].get_max_tolerance_limitation(jax2tf_limits)
+      if max_tol_lim is not None:
+        max_tol = max_tol_lim.tol
+        logging.info(log_message(f"Using tol={max_tol} due to {max_tol_lim}"))
 
       # Convert results to np.arrays
       result_tf = tf.nest.map_structure(lambda t: t.numpy(), result_tf)  # type: ignore
 
-      had_custom_assert = False
-      for lim in jax2tf_limits:
-        if lim.tol is not None:
-          max_tol = max_with_None(max_tol, lim.tol)
-          logging.info(log_message(f"Updating to tol={max_tol} due to {lim}"))
-        if lim.custom_assert is not None:
-          logging.info(log_message(f"Running custom_assert with tol={max_tol} due to {lim}"))
-          lim.custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
-          had_custom_assert = True
+      custom_assert_lim = [l for l in jax2tf_limits if l.custom_assert]
+      assert len(custom_assert_lim) <= 1, f"Expecting at most one applicable limitation with custom_assert, found {custom_assert_lim}"
 
-      if not had_custom_assert:
-        if custom_assert is not None and (mode in ("eager", "graph") or
-                                          always_custom_assert):
-          logging.info(log_message(f"Running custom_assert with tol={max_tol} (passed as input)"))
-          # If we have a custom assert, use it even if we expect incorrect results
-          custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
-        else:
-          logging.info(log_message(f"Running default assert with tol={max_tol}"))
-          # In compiled mode we expect the same result as JAX by default
-          self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
+      if custom_assert_lim:
+        logging.info(log_message(f"Running custom_assert with tol={max_tol} due to {custom_assert_lim[0]}"))
+        custom_assert_lim[0].custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
+      else:
+        logging.info(log_message(f"Running default assert with tol={max_tol}"))
+        # In compiled mode we expect the same result as JAX by default
+        self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
 
+    # end "for mode"
 
     if unexpected_successes:
       msg = (f"[{self._testMethodName}] The following are unexpected "

@@ -1,87 +1,19 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-12-29*
+*Last generated on (YYYY-MM-DD): 2020-12-31*
 
-We do not yet have support for `pmap` (with its collective primitives),
-nor for `sharded_jit` (SPMD partitioning).
+This document summarizes known limitations of the jax2tf conversion.
+There are several kinds of limitations.
 
-A few JAX primitives are converted to TF ops that have incomplete coverage
-for data types on different kinds of devices. The most [up-to-date list of
-limitations is generated automatically](#generated-summary-of-primitives-with-limited-support-in-tensorflow)
-by the jax2tf coverage tests.
-More detailed information can be found in the
-[source code for the limitation specification](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/primitives_test.py)
-for some cases.
+  * There are some JAX primitives that are converted to TF ops that have incomplete coverage
+  for data types on different kinds of devices,
+  see [below](#generated-summary-of-primitives-with-unimplemented-support-in-tensorflow).
 
-Additionally, some primitives have numerical differences between JAX and TF in some corner cases:
-
-  * `top_k` is implemented using `tf.math.top_k` which has limited functionality. There are
-  silent errors when the array contains `inf` and `NaN` (they are sorted differently in TF vs. XLA).
-
-  * `digamma` is converted to `tf.math.digamma` with the following limitations (all
-  at the singularity points 0 and -1):
-  At singularity points with dtype float32 JAX returns `NaN` and TF returns `inf`.
-
-  * `igamma` and `igammac` are implemented using `tf.math.igamma` and `tf.math.igammac`,
-  with the following limitations: At undefined points (both arguments 0 for `igamma` and
-  both arguments less or equal to 0 for `igammac`) JAX returns `NaN` and TF returns 0 or
-  JAX returns 1 and TF returns `NaN`.
-
-  * `integer_pow` does not have the right overflow behavior in compiled mode
-  for int32 and int64 dtypes. Additionally, the overflow behavior for floating
-  point and complex numbers produces `NaN`s and `+inf`/`-inf` differently in
-  JAX and TF.
-
-  * `erf_inv` is converted to `tf.math.erfinv` with discrepancies at
-  undefined points (< -1 or > 1): At undefined points with dtype float32 JAX
-  returns `NaN` and TF returns `+inf` or `-inf`.
-
-  * QR decomposition is implemented using `tf.linalg.qr` with
-  the following limitations: QR for complex numbers will not work when using XLA
-  because it is not implemented in XLA. (It works in JAX on CPU and GPU
-  using custom calls to Lapack and Cusolver; it does not work in JAX on TPU.)
-  It is likely that on CPU and GPU the TF version is slower than the JAX version.
-
-  * `svd` is implemented using `tf.linalg.svd` and `tf.linalg.adjoint`:
-  SVD weirdly works for bfloat16 on TPU for JAX, but fails for TF (this
-  is related to a more general bfloat16 type casting problem).
-  The conversion does not work for complex types because XLA does
-  not implement support for complexes (once again, it works with JAX
-  because the implementation there uses custom calls to cusolver).
-
-  * `select_and_gather_add` is implemented using `XlaReduceWindow`:
-  This JAX primitive is not exposed directly in the JAX API but
-  arises from JVP of `lax.reduce_window` for reducers `lax.max` or
-  `lax.min`. It also arises from second-order VJP of the same.
-
-  * `select_and_scatter`: We decided to explicitly throw an error
-  when trying to translate this operation. The reason is that
-  the operation is not exposed in lax, and here mostly
-  for completion purposes. It is not expected that this
-  operation will ever have a use case.
-
-  * `acos`, `asin`, `atan`, and their hyperbolic counterparts
-  `acosh`, `asinh`, `atanh` return equally valid but possibly
-  different results when the parameter has a complex dtype.
-
-  * `min` and `max` return different values when one of the elements
-  being compared is NaN. JAX always returns NaN, while TF returns
-  the value NaN is compared with.
-
-  * `cholesky` returns potentially different values in the strictly
-  upper triangular part of the result. This does not matter for
-  correctness, because this part of the matrix is not considered in
-  the result.
-
-  * `eig` and `eigh` return eigenvalues and eigenvectors in a
-  potentially different order. The eigenvectors may also be
-  different, but equally valid.
-
-  * `lu` may return different but equally valid results when the LU
-  decomposition is not unique.
+  * There are some cases when the converted program computes different results than
+  the JAX program, see [below](#generated-summary-of-primitives-with-known-numerical-discrepancies-in-tensorflow).
 
 
-## Generated summary of primitives with limited support in Tensorflow
+## Generated summary of primitives with unimplemented support in Tensorflow
 
 The following JAX primitives are converted to Tensorflow but the result of the
 conversion may trigger runtime errors when run on certain devices and with
@@ -94,11 +26,13 @@ to one Tensorflow op, e.g., `sin` is mapped to `tf.math.sin`.
 
 The errors apply only for certain devices and compilation modes ("eager",
 "graph", and "compiled"). In general, "eager" and "graph" mode share the same errors.
-On TPU only "compiled" mode is ever used.
-
+On TPU only the "compiled" mode is relevant.
 
 This table only shows errors for cases that are working in JAX (see [separate
 list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
+
+We do not yet have support for `pmap` (with its collective primitives),
+nor for `sharded_jit` (SPMD partitioning).
 
 We use the following abbreviations for sets of dtypes:
 
@@ -110,14 +44,17 @@ We use the following abbreviations for sets of dtypes:
   * `inexact` = `floating`, `complex`
   * `all` = `integer`, `inexact`, `bool`
 
+More detailed information can be found in the
+[source code for the limitation specification](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/primitives_test.py).
+
 
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |
 | --- | --- | --- | --- | --- | ---|
-| acos | TF error: op not defined for dtype | bfloat16, complex64, float16 | cpu, gpu | eager, graph |
 | acos | TF error: op not defined for dtype | complex128 | cpu, gpu | eager, graph |
+| acos | TF error: op not defined for dtype | bfloat16, complex64, float16 | cpu, gpu | eager, graph |
 | acosh | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
-| add | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | add | TF error: op not defined for dtype | uint64 | cpu, gpu | compiled, eager, graph |
+| add | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | add_any | TF error: op not defined for dtype | uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | asin | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | asin | TF error: op not defined for dtype | complex | cpu, gpu, tpu | compiled, eager, graph |
@@ -134,8 +71,8 @@ We use the following abbreviations for sets of dtypes:
 | cholesky | TF error: op not defined for dtype | complex | tpu | compiled |
 | clamp | TF error: op not defined for dtype | int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | conv_general_dilated | TF test skipped: TF error: TODO: TF/LLVM crash | complex | gpu | compiled, eager, graph |
-| conv_general_dilated | TF error: jax2tf BUG: batch_group_count > 1 not yet converted | all | cpu, gpu, tpu | compiled, eager, graph |
 | conv_general_dilated | TF error: XLA bug in the HLO -> LLVM IR lowering | complex | cpu, gpu | compiled, eager, graph |
+| conv_general_dilated | TF error: jax2tf BUG: batch_group_count > 1 not yet converted | all | cpu, gpu, tpu | compiled, eager, graph |
 | cosh | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
 | cummax | TF error: op not defined for dtype | complex128, uint64 | cpu, gpu | compiled, eager, graph |
 | cummax | TF error: op not defined for dtype | complex64, int8, uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
@@ -144,63 +81,63 @@ We use the following abbreviations for sets of dtypes:
 | cumprod | TF error: op not defined for dtype | uint64 | cpu, gpu | compiled, eager, graph |
 | cumprod | TF error: op not defined for dtype | uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | cumsum | TF error: op not defined for dtype | uint64 | cpu, gpu | compiled, eager, graph |
-| cumsum | TF error: op not defined for dtype | complex64 | tpu | compiled |
 | cumsum | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
+| cumsum | TF error: op not defined for dtype | complex64 | tpu | compiled |
 | digamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| div | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | div | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
-| dot_general | TF error: op not defined for dtype | bool, int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
+| div | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | dot_general | TF error: op not defined for dtype | int64 | cpu, gpu | compiled |
-| eig | TF error: function not compilable | all | cpu, gpu, tpu | compiled |
+| dot_general | TF error: op not defined for dtype | bool, int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | eig | TF error: TF Conversion of eig is not implemented when both compute_left_eigenvectors and compute_right_eigenvectors are set to True | all | cpu, gpu, tpu | compiled, eager, graph |
+| eig | TF error: function not compilable | all | cpu, gpu, tpu | compiled |
 | eigh | TF error: function not compilable | complex | cpu, gpu, tpu | compiled |
 | erf | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | erf_inv | TF test skipped: TF error: TODO: erf_inv bug on TPU: nan vs non-nan | float32 | tpu | compiled, eager, graph |
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | erfc | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | fft | TF error: TF function not compileable | complex128, float64 | cpu, gpu | compiled |
-| ge | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | ge | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu | eager, graph |
 | ge | TF error: op not defined for dtype | uint64 | cpu, gpu | eager, graph |
-| gt | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
+| ge | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | gt | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu | eager, graph |
 | gt | TF error: op not defined for dtype | uint64 | cpu, gpu | eager, graph |
+| gt | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | integer_pow | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
-| le | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | le | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu | eager, graph |
 | le | TF error: op not defined for dtype | uint64 | cpu, gpu | eager, graph |
+| le | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | lgamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| lt | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | lt | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu | eager, graph |
 | lt | TF error: op not defined for dtype | uint64 | cpu, gpu | eager, graph |
+| lt | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | lu | TF error: op not defined for dtype | complex64 | tpu | compiled |
-| max | TF error: op not defined for dtype | bool, complex64, int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | max | TF error: op not defined for dtype | complex128 | cpu, gpu | compiled, eager, graph |
-| min | TF error: op not defined for dtype | bool, complex64, int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
+| max | TF error: op not defined for dtype | bool, complex64, int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | min | TF error: op not defined for dtype | complex128 | cpu, gpu | compiled, eager, graph |
+| min | TF error: op not defined for dtype | bool, complex64, int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | mul | TF error: op not defined for dtype | uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | neg | TF error: op not defined for dtype | unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | nextafter | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | population_count | TF error: op not defined for dtype | uint32, uint64 | cpu, gpu | eager, graph |
 | qr | TF error: op not defined for dtype | bfloat16 | tpu | compiled |
-| reduce_max | TF error: op not defined for dtype | complex64 | cpu, gpu, tpu | compiled, eager, graph |
 | reduce_max | TF error: op not defined for dtype | complex128 | cpu, gpu, tpu | compiled, eager, graph |
-| reduce_min | TF error: op not defined for dtype | complex64 | cpu, gpu, tpu | compiled, eager, graph |
+| reduce_max | TF error: op not defined for dtype | complex64 | cpu, gpu, tpu | compiled, eager, graph |
 | reduce_min | TF error: op not defined for dtype | complex128 | cpu, gpu, tpu | compiled, eager, graph |
+| reduce_min | TF error: op not defined for dtype | complex64 | cpu, gpu, tpu | compiled, eager, graph |
+| reduce_window_add | TF error: op not defined for dtype | uint64 | cpu, gpu | compiled, eager, graph |
 | reduce_window_add | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | reduce_window_add | TF error: op not defined for dtype | complex64 | tpu | compiled, eager, graph |
-| reduce_window_add | TF error: op not defined for dtype | uint64 | cpu, gpu | compiled, eager, graph |
-| reduce_window_max | TF error: op not defined for dtype | bool, complex64, uint32 | cpu, gpu, tpu | compiled, eager, graph |
-| reduce_window_max | TF error: op not defined for dtype | complex128, uint64 | cpu, gpu | compiled, eager, graph |
 | reduce_window_max | TF error: TF kernel missing, except when the initial_value is the minimum for the dtype | int8, uint16 | cpu, gpu, tpu | compiled, eager, graph |
-| reduce_window_min | TF error: op not defined for dtype | bool, complex64, int8, uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
+| reduce_window_max | TF error: op not defined for dtype | complex128, uint64 | cpu, gpu | compiled, eager, graph |
+| reduce_window_max | TF error: op not defined for dtype | bool, complex64, uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | reduce_window_min | TF error: op not defined for dtype | complex128, uint64 | cpu, gpu | compiled, eager, graph |
-| reduce_window_mul | TF error: op not defined for dtype | uint32 | cpu, gpu, tpu | compiled, eager, graph |
+| reduce_window_min | TF error: op not defined for dtype | bool, complex64, int8, uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | reduce_window_mul | TF error: op not defined for dtype | uint64 | cpu, gpu | compiled, eager, graph |
+| reduce_window_mul | TF error: op not defined for dtype | uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | regularized_incomplete_beta | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
-| rem | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | rem | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
 | rem | TF error: op not defined for dtype | float16 | cpu, gpu, tpu | eager, graph |
+| rem | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | rev | TF error: op not defined for dtype | uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | round | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | rsqrt | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
@@ -208,21 +145,56 @@ We use the following abbreviations for sets of dtypes:
 | scatter_max | TF error: op not defined for dtype | bool, complex, int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | scatter_min | TF error: op not defined for dtype | bool, complex, int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | scatter_mul | TF error: op not defined for dtype | bool, complex64, int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
-| select_and_gather_add | TF error: op not defined for dtype | float32 | tpu | compiled |
-| select_and_gather_add | TF error: jax2tf unimplemented | float64 | cpu, gpu | compiled, eager, graph |
-| select_and_scatter_add | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
+| select_and_gather_add | TF error: This JAX primitives is not not exposed directly in the JAX API but arises from JVP of `lax.reduce_window` for reducers `lax.max` or `lax.min`. It also arises from second-order VJP of the same. Implemented using XlaReduceWindow | float32 | tpu | compiled |
+| select_and_gather_add | TF error: jax2tf unimplemented for 64-bit inputs because the current implementation relies on packing two values into a single value. This can be fixed by using a variadic XlaReduceWindow, when available | float64 | cpu, gpu | compiled, eager, graph |
 | select_and_scatter_add | TF error: op not defined for dtype | uint64 | cpu, gpu | compiled, eager, graph |
+| select_and_scatter_add | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | sign | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | sinh | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
-| sort | TF error: op not defined for dtype | complex | cpu, gpu | eager, graph |
 | sort | TF error: TODO: XlaSort does not support more than 2 arrays | all | cpu, gpu, tpu | compiled, eager, graph |
 | sort | TF error: TODO: XlaSort does not support sorting axis | all | cpu, gpu, tpu | compiled, eager, graph |
+| sort | TF error: op not defined for dtype | complex | cpu, gpu | eager, graph |
 | sub | TF error: op not defined for dtype | uint64 | cpu, gpu, tpu | compiled, eager, graph |
-| svd | TF error: function not compilable | complex | cpu, gpu | compiled |
+| svd | TF error: function not compilable. Implemented using `tf.linalg.svd` and `tf.linalg.adjoint` | complex | cpu, gpu | compiled |
 | svd | TF error: op not defined for dtype | bfloat16 | tpu | compiled |
 | top_k | TF error: op not defined for dtype | int64, uint64 | cpu, gpu | compiled |
 | triangular_solve | TF error: op not defined for dtype | bfloat16 | cpu, gpu, tpu | compiled, eager, graph |
 | triangular_solve | TF error: op not defined for dtype | float16 | cpu, gpu, tpu | eager, graph |
+
+## Generated summary of primitives with known numerical discrepancies in Tensorflow
+
+In general, we expect a JAX program to produce the same exact answer as its conversion
+with jax2tf. The following table lists that cases when this does not quite hold:
+
+
+| Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |
+| --- | --- | --- | --- | --- | ---|
+| acos | May return different but still correct results | complex | cpu, gpu, tpu | compiled, eager, graph |
+| acosh | May return different but still correct results | complex | cpu, gpu, tpu | compiled, eager, graph |
+| asin | May return different but still correct results | complex | cpu, gpu, tpu | compiled, eager, graph |
+| asinh | May return different but still correct results | complex | cpu, gpu, tpu | compiled, eager, graph |
+| atan | May return different but still correct results | complex | cpu, gpu, tpu | compiled, eager, graph |
+| atanh | May return different but still correct results | complex | cpu, gpu, tpu | compiled, eager, graph |
+| cholesky | May return different values in the strictly upper triangular part of the result. This does not matter for correctness, because this part of the matrix is not considered in the result. | all | cpu, gpu, tpu | compiled, eager, graph |
+| custom_linear_solve | Numeric comparision disabled: TODO: large numerical discrepancy | float32 | tpu | compiled |
+| digamma | May return different results at singularity points 0 and -1.JAX returns nan and TF returns inf | bfloat16 | cpu, gpu, tpu | eager, graph |
+| eig | May return the eigenvalues and eigenvectors in a potentially different order. The eigenvectors may also be different, but equally valid. | all | cpu, gpu, tpu | eager, graph |
+| eigh | May return the eigenvalues and eigenvectors in a potentially different order. The eigenvectors may also be different, but equally valid. | all | cpu, gpu, tpu | compiled, eager, graph |
+| eigh | Numeric comparision disabled: TODO: numeric discrepancies | float64 | cpu, gpu | compiled |
+| eigh | Numeric comparision disabled: TODO: numeric discrepancies | float16 | tpu | compiled |
+| erf_inv | May return different results at undefined points (< -1 or > 1): JAX returns `NaN` and TF returns `+inf` or `-inf`. | float32, float64 | cpu, gpu, tpu | compiled, eager, graph |
+| igamma | May return different results at undefined points (both arguments 0). JAX returns `NaN` and TF returns 0 or JAX returns 1 and TF returns `NaN` | all | cpu, gpu, tpu | eager, graph |
+| igammac | May return different results at undefined points (both arguments less or equal 0). JAX returns `NaN` and TF returns 0 or JAX returns 1 and TF returns `NaN` | all | cpu, gpu, tpu | eager, graph |
+| integer_pow | Numeric comparision disabled: Different overflow behavior for large exponents.  | float32, int32, int64 | cpu, gpu, tpu | compiled, eager, graph |
+| integer_pow | Numeric comparision disabled: Different overflow behavior for large exponents. It and `+inf`/`-inf` differently in JAX and TF. | complex64 | tpu | compiled |
+| integer_pow | custom numeric comparison | complex | cpu, gpu, tpu | compiled, eager, graph |
+| lu | May return different, but also correct, results when the decomposition is not unique | all | cpu, gpu, tpu | compiled, eager, graph |
+| max | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
+| min | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
+| pow | custom numeric comparison | complex | cpu, gpu, tpu | compiled, eager, graph |
+| sort | Numeric comparision disabled: TODO: TF non-stable multiple-array sort | all | gpu | compiled, eager, graph |
+| svd | custom numeric comparison | all | cpu, gpu, tpu | compiled, eager, graph |
+| top_k | Produces different results when the array contains `inf` and `NaN` (they are sorted differently in TF vs. XLA). | floating | cpu, gpu, tpu | compiled, eager, graph |
 
 ## Updating the documentation
 
