@@ -2470,9 +2470,6 @@ def _pad_empty(array, pad_width):
 
 
 def _pad_func(array, pad_width, func, **kwargs):
-  # Note: In numpy, `func` should modify a rank 1 array in-place.
-  # However, since Jax arrays are immutable, `func` should return
-  # the modified array.
   pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
   padded = _pad_constant(array, np.array(pad_width), 0)
   for axis in range(ndim(padded)):
@@ -2552,7 +2549,11 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values, refle
                    "not implemented modes")
 
 
-@_wraps(np.pad)
+@_wraps(np.pad, lax_description="""\
+Unlike numpy, JAX "function" mode's argument (which is another function) should return
+the modified array. This is because Jax arrays are immutable.
+(In numpy, "function" mode's argument should modify a rank 1 array in-place.)
+""")
 def pad(array, pad_width, mode="constant", **kwargs):
   if isinstance(pad_width, Iterable):
     pad_width = tuple(
