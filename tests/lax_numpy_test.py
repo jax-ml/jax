@@ -1541,6 +1541,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_res = jnp.pad(arr, 1, jnp_pad_with, padder=100)
     np.testing.assert_equal(np_res, jnp_res)
 
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(arr.shape, arr.dtype)]
+    jnp_fun = partial(jnp.pad, pad_width=1, mode=jnp_pad_with)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testPadWithNumpyPadWidth(self):
     a = [1, 2, 3, 4, 5]
     f = jax.jit(
