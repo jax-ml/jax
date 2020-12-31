@@ -1,6 +1,6 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2020-12-29* (YYYY-MM-DD)
+*Last generated on: 2020-12-31* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
@@ -202,8 +202,8 @@ and search for "limitation".
 |scatter_min|unimplemented|complex64|tpu|
 |scatter_mul|unimplemented|complex64|tpu|
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|
+|svd|complex not implemented. Works in JAX for CPU and GPU with custom kernels|complex|tpu|
 |svd|unimplemented|bfloat16, float16|cpu, gpu|
-|svd|complex not implemented|complex|tpu|
 |tie_in|requires omnistaging to be disabled|all|cpu, gpu, tpu|
 |triangular_solve|unimplemented|float16|gpu|
 

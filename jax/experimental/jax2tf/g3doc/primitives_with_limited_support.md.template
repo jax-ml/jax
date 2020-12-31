@@ -2,86 +2,18 @@
 
 *Last generated on (YYYY-MM-DD): {{generation_date}}*
 
-We do not yet have support for `pmap` (with its collective primitives),
-nor for `sharded_jit` (SPMD partitioning).
+This document summarizes known limitations of the jax2tf conversion.
+There are several kinds of limitations.
 
-A few JAX primitives are converted to TF ops that have incomplete coverage
-for data types on different kinds of devices. The most [up-to-date list of
-limitations is generated automatically](#generated-summary-of-primitives-with-limited-support-in-tensorflow)
-by the jax2tf coverage tests.
-More detailed information can be found in the
-[source code for the limitation specification](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/primitives_test.py)
-for some cases.
+  * There are some JAX primitives that are converted to TF ops that have incomplete coverage
+  for data types on different kinds of devices,
+  see [below](#generated-summary-of-primitives-with-unimplemented-support-in-tensorflow).
 
-Additionally, some primitives have numerical differences between JAX and TF in some corner cases:
-
-  * `top_k` is implemented using `tf.math.top_k` which has limited functionality. There are
-  silent errors when the array contains `inf` and `NaN` (they are sorted differently in TF vs. XLA).
-
-  * `digamma` is converted to `tf.math.digamma` with the following limitations (all
-  at the singularity points 0 and -1):
-  At singularity points with dtype float32 JAX returns `NaN` and TF returns `inf`.
-
-  * `igamma` and `igammac` are implemented using `tf.math.igamma` and `tf.math.igammac`,
-  with the following limitations: At undefined points (both arguments 0 for `igamma` and
-  both arguments less or equal to 0 for `igammac`) JAX returns `NaN` and TF returns 0 or
-  JAX returns 1 and TF returns `NaN`.
-
-  * `integer_pow` does not have the right overflow behavior in compiled mode
-  for int32 and int64 dtypes. Additionally, the overflow behavior for floating
-  point and complex numbers produces `NaN`s and `+inf`/`-inf` differently in
-  JAX and TF.
-
-  * `erf_inv` is converted to `tf.math.erfinv` with discrepancies at
-  undefined points (< -1 or > 1): At undefined points with dtype float32 JAX
-  returns `NaN` and TF returns `+inf` or `-inf`.
-
-  * QR decomposition is implemented using `tf.linalg.qr` with
-  the following limitations: QR for complex numbers will not work when using XLA
-  because it is not implemented in XLA. (It works in JAX on CPU and GPU
-  using custom calls to Lapack and Cusolver; it does not work in JAX on TPU.)
-  It is likely that on CPU and GPU the TF version is slower than the JAX version.
-
-  * `svd` is implemented using `tf.linalg.svd` and `tf.linalg.adjoint`:
-  SVD weirdly works for bfloat16 on TPU for JAX, but fails for TF (this
-  is related to a more general bfloat16 type casting problem).
-  The conversion does not work for complex types because XLA does
-  not implement support for complexes (once again, it works with JAX
-  because the implementation there uses custom calls to cusolver).
-
-  * `select_and_gather_add` is implemented using `XlaReduceWindow`:
-  This JAX primitive is not exposed directly in the JAX API but
-  arises from JVP of `lax.reduce_window` for reducers `lax.max` or
-  `lax.min`. It also arises from second-order VJP of the same.
-
-  * `select_and_scatter`: We decided to explicitly throw an error
-  when trying to translate this operation. The reason is that
-  the operation is not exposed in lax, and here mostly
-  for completion purposes. It is not expected that this
-  operation will ever have a use case.
-
-  * `acos`, `asin`, `atan`, and their hyperbolic counterparts
-  `acosh`, `asinh`, `atanh` return equally valid but possibly
-  different results when the parameter has a complex dtype.
-
-  * `min` and `max` return different values when one of the elements
-  being compared is NaN. JAX always returns NaN, while TF returns
-  the value NaN is compared with.
-
-  * `cholesky` returns potentially different values in the strictly
-  upper triangular part of the result. This does not matter for
-  correctness, because this part of the matrix is not considered in
-  the result.
-
-  * `eig` and `eigh` return eigenvalues and eigenvectors in a
-  potentially different order. The eigenvectors may also be
-  different, but equally valid.
-
-  * `lu` may return different but equally valid results when the LU
-  decomposition is not unique.
+  * There are some cases when the converted program computes different results than
+  the JAX program, see [below](#generated-summary-of-primitives-with-known-numerical-discrepancies-in-tensorflow).
 
 
-## Generated summary of primitives with limited support in Tensorflow
+## Generated summary of primitives with unimplemented support in Tensorflow
 
 The following JAX primitives are converted to Tensorflow but the result of the
 conversion may trigger runtime errors when run on certain devices and with
@@ -94,11 +26,13 @@ to one Tensorflow op, e.g., `sin` is mapped to `tf.math.sin`.
 
 The errors apply only for certain devices and compilation modes ("eager",
 "graph", and "compiled"). In general, "eager" and "graph" mode share the same errors.
-On TPU only "compiled" mode is ever used.
-
+On TPU only the "compiled" mode is relevant.
 
 This table only shows errors for cases that are working in JAX (see [separate
 list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
+
+We do not yet have support for `pmap` (with its collective primitives),
+nor for `sharded_jit` (SPMD partitioning).
 
 We use the following abbreviations for sets of dtypes:
 
@@ -110,7 +44,17 @@ We use the following abbreviations for sets of dtypes:
   * `inexact` = `floating`, `complex`
   * `all` = `integer`, `inexact`, `bool`
 
-{{limited-support-table}}
+More detailed information can be found in the
+[source code for the limitation specification](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/primitives_test.py).
+
+{{tf_error_table}}
+
+## Generated summary of primitives with known numerical discrepancies in Tensorflow
+
+In general, we expect a JAX program to produce the same exact answer as its conversion
+with jax2tf. The following table lists that cases when this does not quite hold:
+
+{{tf_numerical_discrepancies_table}}
 
 ## Updating the documentation
 

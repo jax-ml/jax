@@ -61,7 +61,7 @@ import numpy as np
 FLAGS = config.FLAGS
 
 Rng = Any  # A random number generator
-
+DType = np.dtype
 
 class RandArg(NamedTuple):
   """Descriptor for a randomly generated argument.
@@ -69,7 +69,7 @@ class RandArg(NamedTuple):
   See description of `Harness`.
   """
   shape: Tuple[int, ...]
-  dtype: np.dtype
+  dtype: DType
 
 
 class StaticArg(NamedTuple):
@@ -130,6 +130,7 @@ class Harness:
   fun: Callable
   # Describes how to construct arguments, see the class docstring.
   arg_descriptors: Sequence[Union[RandArg, StaticArg, CustomArg, Any]]
+  dtype: DType
   # A set of limitations describing the cases that are not supported or
   # partially implemented in JAX for this harness.
   jax_unimplemented: Sequence["Limitation"]
@@ -212,7 +213,7 @@ class Harness:
       if any([
         device_under_test in l.devices
         for l in self.jax_unimplemented
-        if l.filter(device_under_test)
+        if l.filter(device=device_under_test, dtype=self.dtype)
       ]):
         return False
 
@@ -220,7 +221,7 @@ class Harness:
       return False
     return True
 
-def dtypes_to_str(dtype_list: Sequence, empty_means_all=False) -> str:
+def dtypes_to_str(dtype_list: Sequence[DType], empty_means_all=False) -> str:
   """User-friendly description of a set of dtypes"""
   if not dtype_list and empty_means_all:
     return "all"
@@ -278,9 +279,6 @@ def define(
     jax_unimplemented=jax_unimplemented,
     dtype=dtype,
     **params)
-  for l in jax_unimplemented:
-    assert not l.harness
-    l.harness = h
   all_harnesses.append(h)
 
 
@@ -294,16 +292,11 @@ class Limitation:
       self,
       description: str,
       *,
-      harness: Harness = None,
       enabled: bool = True,
       devices: Sequence[str] = ("cpu", "gpu", "tpu"),
-      dtypes=(),
+      dtypes: Sequence[DType] = (),
   ):
     """Args:
-
-      harness: the harness to which this primitive belongs. You must pass this,
-        except when constructing the Limitations for the jax_unimplemented
-        argument to the Harness constructor.
       description: text to augment the harness group name with the description
       of the limitation. Used for reports.
       enabled: whether this limitation is enabled for the harness in which
@@ -315,7 +308,6 @@ class Limitation:
       dtypes: the list of dtypes for which this applies. Used for filtering
         during harness execution, and for reports.
     """
-    self.harness = harness  # type: Harness
     assert isinstance(description, str), f"{description}"
     self.description = description
     if isinstance(devices, str):
@@ -335,12 +327,13 @@ class Limitation:
             f"dtypes={[np.dtype(dt).name for dt in self.dtypes]}")
   __repr__ = __str__
 
-
-  def filter(self, device_under_test: str) -> bool:
-    """Check that a limitation is enabled for the current harness and device."""
+  def filter(self,
+             device: Optional[str] = None,
+             dtype: Optional[DType] = None) -> bool:
+    """Check that a limitation is enabled for the given dtype and device."""
     return (self.enabled and
-            (not self.dtypes or self.harness.dtype in self.dtypes) and
-            device_under_test in self.devices)
+            (not self.dtypes or dtype is None or dtype in self.dtypes) and
+            (device is None or device in self.devices))
 
 
 def parameterized(harnesses: Iterable[Harness],
@@ -382,7 +375,7 @@ def parameterized(harnesses: Iterable[Harness],
 
 ###############################################################################
 ###                    Harness definitions                                  ###
-
+###############################################################################
 
 def _make_unary_elementwise_harness(*, prim, shape=(20, 20), dtype):
   define(
@@ -1582,7 +1575,7 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
               devices=("cpu", "gpu"),
               dtypes=[np.float16, dtypes.bfloat16]),
             Limitation(
-              "complex not implemented",
+              "complex not implemented. Works in JAX for CPU and GPU with custom kernels",
               devices="tpu",
               dtypes=[np.complex64, np.complex128])
           ],
