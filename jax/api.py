@@ -68,7 +68,8 @@ from .interpreters import batching
 from .interpreters import masking
 from .interpreters import invertible_ad as iad
 from .interpreters.invertible_ad import custom_ivjp
-from .custom_derivatives import custom_jvp, custom_vjp, custom_gradient
+from .custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
+                                 custom_vjp)
 from .config import flags, config, bool_env
 
 traceback_util.register_exclusion(__file__)
