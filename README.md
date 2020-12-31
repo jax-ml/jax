@@ -2,7 +2,10 @@
 <img src="https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
-# JAX: Autograd and XLA ![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)
+# JAX: Autograd and XLA
+
+![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)
+![PyPI version](https://img.shields.io/pypi/v/jax)
 
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
