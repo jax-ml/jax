@@ -398,8 +398,8 @@ def _sharding_constraint_translation_rule(c, x_node, partitions):
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
 sharding_constraint_p.def_abstract_eval(lambda x, partitions: x)
-ad.deflinear(sharding_constraint_p,
-             lambda ct, partitions: (with_sharding_constraint(ct, partitions),))
+ad.deflinear2(sharding_constraint_p,
+              lambda ct, _, partitions: (with_sharding_constraint(ct, partitions),))
 xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
 
 def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):

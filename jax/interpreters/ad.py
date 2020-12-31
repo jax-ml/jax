@@ -510,8 +510,8 @@ def zero_jvp(primitive, primals, tangents, **params):
   return r, Zero.from_value(r)
 
 
-deflinear(zeros_like_p, lambda t: [Zero.from_value(t)])
-deflinear(add_jaxvals_p, lambda t: (t, t))
+deflinear2(zeros_like_p, lambda t, _: [Zero.from_value(t)])
+deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
 
 def instantiate_zeros(tangent):
   if type(tangent) is Zero:

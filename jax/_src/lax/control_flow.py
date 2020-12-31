@@ -2522,7 +2522,7 @@ def _cumred_shape_rule(x, *, axis: int, reverse: bool):
         "axis {} is out of bounds for array of shape {}".format(axis, x.shape))
   return x.shape
 
-def _cumsum_transpose_rule(t, *, axis: int, reverse: bool):
+def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
   return [cumsum(t, axis=axis, reverse=not reverse)]
 
 
@@ -2557,7 +2557,7 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
 cumsum_p = lax.standard_primitive(
   _cumred_shape_rule, partial(_cumred_dtype_rule, "cumsum"),
   'cumsum')
-ad.deflinear(cumsum_p, _cumsum_transpose_rule)
+ad.deflinear2(cumsum_p, _cumsum_transpose_rule)
 xla.backend_specific_translations['tpu'][cumsum_p] = xla.lower_fun(
   partial(_cumred_tpu_translation_rule, lax._reduce_window_sum),
   multiple_results=False)
