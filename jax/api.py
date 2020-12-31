@@ -117,7 +117,7 @@ _thread_local_state = _ThreadLocalState()
 def jit(
   fun: F,
   static_argnums: Union[int, Iterable[int]] = (),
-  device=None,
+  device: Optional[xc.Device] = None,
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
 ) -> F:
@@ -184,7 +184,7 @@ def jit(
 def _python_jit(
     fun: F,
     static_argnums: Union[int, Iterable[int]] = (),
-    device=None,
+    device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = ()
 ) -> F:
@@ -236,7 +236,7 @@ class _BackendAndDeviceInfo(NamedTuple):
 def _cpp_jit(
     fun: F,
     static_argnums: Union[int, Iterable[int]] = (),
-    device=None,
+    device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
 ) -> F:
@@ -1262,7 +1262,8 @@ def pmap(
   in_axes=0,
   out_axes=0,
   static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-  devices=None, backend: Optional[str] = None,
+  devices: Optional[Sequence[xc.Device]] = None,
+  backend: Optional[str] = None,
   axis_size: Optional[int] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
   global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
