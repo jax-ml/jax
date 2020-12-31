@@ -52,7 +52,7 @@ jobs:
       matrix:
         include:
           - name-prefix: "with many tests"
-            python-version: 3.6
+            python-version: 3.8
             os: ubuntu-latest
             enable-x64: 0
             enable-omnistaging: 1
