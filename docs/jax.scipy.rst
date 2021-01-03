@@ -38,6 +38,16 @@ jax.scipy.ndimage
 
    map_coordinates
 
+jax.scipy.optimize
+------------------
+
+.. automodule:: jax.scipy.optimize
+
+.. autosummary::
+  :toctree: _autosummary
+
+   minimize
+
 jax.scipy.signal
 ----------------
 
