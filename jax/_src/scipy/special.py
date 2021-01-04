@@ -29,6 +29,7 @@ from jax._src.numpy.util import _wraps
 def gammaln(x):
   x, = _promote_args_inexact("gammaln", x)
   return lax.lgamma(x)
+ad.defjvp(lax.lgamma_p, lambda g, x: lax.mul(g, digamma(x)))
 
 
 @_wraps(osp_special.betaln)
