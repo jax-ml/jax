@@ -40,7 +40,7 @@ NumPy arrays to the device computation.
 Host computation is useful, e.g., when a device computation needs some data
 that requires I/O on the host, or it needs a library that is available on the
 host and you do not want to code it in JAX.
-For example, eigen decomposition in JAX does not work on TPU.
+For example, eigen decomposition for general matrices in JAX does not work on TPU.
 We can call the Numpy implementation from any JAX accelerator computation,
 using a host computation::
 
@@ -447,7 +447,7 @@ def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
         "Support for **kwargs in ``id_tap`` has been removed. Instead, "
         "pre-apply keyword arguments, either by using a closure or by passing "
         "``functools.partial(tap_func, **kwargs)``.")
-    raise ValueError(msg)
+    raise TypeError(msg)
 
   _initialize_outfeed_receiver()  # Lazy initialization
   api._check_callable(tap_func)

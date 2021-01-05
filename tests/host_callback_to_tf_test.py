@@ -83,8 +83,9 @@ def call_tf_simple_ad(tf_fun: Callable, arg, *, result_shape):
         res = tf_fun(arg_var)
 
       dres_darg = tape.gradient(res, sources=arg_var,
+                                output_gradients=ct_res,
                                 unconnected_gradients=tf.UnconnectedGradients.ZERO)
-      return dres_darg * ct_res
+      return dres_darg
 
     return (call_tf_simple_ad(tf_vjp_fun, (arg, ct_res),
                               result_shape=arg),)
