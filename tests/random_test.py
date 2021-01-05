@@ -211,9 +211,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
+      {"testcase_name": "dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in complex_dtypes))
-  def testNormal(self, dtype):
+  def testNormalComplex(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
     crand = api.jit(rand)
