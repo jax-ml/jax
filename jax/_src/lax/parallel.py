@@ -461,7 +461,7 @@ def _notuple_allreduce_translation_rule(prim, c, *args, axis_name, axis_env,
             else all_reduce(x) for x in args]
   return xops.Tuple(c, outs)
 
-def _psum_transpose_rule(cts, axis_name, axis_index_groups):
+def _psum_transpose_rule(cts, *args, axis_name, axis_index_groups):
   nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
   nonzero_in_cts = psum_p.bind(*nonzero_out_cts, axis_name=axis_name,
                                axis_index_groups=axis_index_groups)
@@ -473,7 +473,7 @@ psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
 pxla.soft_pmap_rules[psum_p] = \
     partial(_allreduce_soft_pmap_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = partial(_allreduce_translation_rule, lax.add_p)  # type: ignore
-ad.deflinear(psum_p, _psum_transpose_rule)
+ad.deflinear2(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 batching.primitive_batchers[psum_p] = partial(_collective_batcher, psum_p)
 batching.collective_rules[psum_p] = \
@@ -534,7 +534,7 @@ def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
     full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
   return xops.CollectivePermute(x, full_perm)
 
-def _ppermute_transpose_rule(t, perm, axis_name):
+def _ppermute_transpose_rule(t, x, perm, axis_name):
   srcs, dsts = unzip2(perm)
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
@@ -551,7 +551,7 @@ def _ppermute_batcher(frame, vals_in, dims_in, axis_name, perm):
 
 ppermute_p = core.Primitive('ppermute')
 ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
-ad.deflinear(ppermute_p, _ppermute_transpose_rule)
+ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
 batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
@@ -603,7 +603,7 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
       x = xla.lower_fun(partial(lax.squeeze, dimensions=(split_axis,)), multiple_results=False)(c, x)
       return x
 
-def _all_to_all_transpose_rule(cts, axis_name, split_axis, concat_axis, axis_index_groups):
+def _all_to_all_transpose_rule(cts, x, axis_name, split_axis, concat_axis, axis_index_groups):
   return (all_to_all(
       cts,
       axis_name=axis_name,
@@ -658,7 +658,7 @@ def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_
 all_to_all_p = core.Primitive('all_to_all')
 all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
-ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
+ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
 batching.collective_rules[all_to_all_p] = _all_to_all_batched_collective

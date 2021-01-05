@@ -116,7 +116,7 @@ def _irfft_transpose(t, fft_lengths):
   assert out.dtype == _complex_dtype(t.dtype), (out.dtype, t.dtype)
   return out
 
-def fft_transpose_rule(t, fft_type, fft_lengths):
+def fft_transpose_rule(t, operand, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
     result = _rfft_transpose(t, fft_lengths)
   elif fft_type == xla_client.FftType.IRFFT:
@@ -135,7 +135,7 @@ fft_p = Primitive('fft')
 fft_p.def_impl(fft_impl)
 fft_p.def_abstract_eval(fft_abstract_eval)
 xla.translations[fft_p] = fft_translation_rule
-ad.deflinear(fft_p, fft_transpose_rule)
+ad.deflinear2(fft_p, fft_transpose_rule)
 batching.primitive_batchers[fft_p] = fft_batching_rule
 if pocketfft:
   xla.backend_specific_translations['cpu'][fft_p] = pocketfft.pocketfft

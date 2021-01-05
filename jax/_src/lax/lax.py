@@ -2134,7 +2134,7 @@ _any = _int | _float | _complex | _bool
 _bool_or_int = _int | _bool
 
 neg_p = standard_unop(_num, 'neg')
-ad.deflinear(neg_p, lambda t: [neg(t)])
+ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
 
 def _sign_translation_rule(c, x):
   shape = c.get_shape(x)
@@ -2373,15 +2373,15 @@ ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
 
 real_p = unop(_complex_basetype, _complex, 'real')
-ad.deflinear(real_p, lambda t: [complex(t, np.zeros((), _dtype(t)))])
+ad.deflinear2(real_p, lambda t, _: [complex(t, np.zeros((), _dtype(t)))])
 
 imag_p = unop(_complex_basetype, _complex, 'imag')
-ad.deflinear(imag_p, lambda t: [complex(np.zeros((), _dtype(t)), neg(t))])
+ad.deflinear2(imag_p, lambda t, _: [complex(np.zeros((), _dtype(t)), neg(t))])
 
 _complex_dtype = lambda dtype, *args: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
-ad.deflinear(complex_p, lambda t: [real(t), imag(neg(t))])
+ad.deflinear2(complex_p, lambda t, *args: [real(t), imag(neg(t))])
 
 conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
 
@@ -3248,7 +3248,7 @@ def _broadcast_batch_rule(batched_args, batch_dims, *, sizes):
 
 broadcast_p = standard_primitive(
     _broadcast_shape_rule, _input_dtype, 'broadcast')
-ad.deflinear(broadcast_p, lambda t, sizes: [_reduce_sum(t, range(len(sizes)))])
+ad.deflinear2(broadcast_p, lambda t, _, sizes: [_reduce_sum(t, range(len(sizes)))])
 batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
@@ -3416,7 +3416,7 @@ def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
 concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
     _concatenate_translation_rule)
-ad.deflinear(concatenate_p, _concatenate_transpose_rule)
+ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
 
@@ -3486,8 +3486,7 @@ def _pad_masking_rule(padded_vals, logical_shapes, padding_config):
 
 pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad',
                            translation_rule=_pad_translation_rule)
-ad.deflinear(pad_p, _pad_transpose)
-ad.primitive_transposes[pad_p] = _pad_transpose
+ad.deflinear2(pad_p, _pad_transpose)
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 masking.masking_rules[pad_p] = _pad_masking_rule
 
@@ -3677,7 +3676,7 @@ def _rev_batch_rule(batched_args, batch_dims, *, dimensions):
   return rev(operand, new_dimensions), bdim
 
 rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev')
-ad.deflinear(rev_p, lambda t, dimensions: [rev(t, dimensions)])
+ad.deflinear2(rev_p, lambda t, _, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 
@@ -3714,8 +3713,8 @@ def _transpose_masking_rule(padded_vals, logical_shapes, permutation):
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 transpose_p.def_impl(_transpose_impl)
-ad.deflinear(transpose_p,
-             lambda t, permutation: [transpose(t, np.argsort(permutation))])
+ad.deflinear2(transpose_p,
+              lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
 masking.masking_rules[transpose_p] = _transpose_masking_rule
 

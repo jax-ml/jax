@@ -1384,7 +1384,7 @@ device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
 device_put_p.def_abstract_eval(lambda x, device=None: x)
 translations[device_put_p] = lambda c, x, device=None: x
-ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
+ad.deflinear2(device_put_p, lambda cotangent, _, **kwargs: [cotangent])
 masking.defvectorized(device_put_p)
 
 
