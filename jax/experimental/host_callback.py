@@ -40,7 +40,7 @@ NumPy arrays to the device computation.
 Host computation is useful, e.g., when a device computation needs some data
 that requires I/O on the host, or it needs a library that is available on the
 host and you do not want to code it in JAX.
-For example, eigen decomposition in JAX does not work on TPU.
+For example, eigen decomposition for general matrices in JAX does not work on TPU.
 We can call the Numpy implementation from any JAX accelerator computation,
 using a host computation::
 
