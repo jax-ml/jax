@@ -167,22 +167,28 @@ def register_pytree_node_class(cls):
   register_pytree_node(cls, op.methodcaller('tree_flatten'), cls.tree_unflatten)
   return cls
 
-def tree_map(f: Callable[[Any], Any], tree: Any) -> Any:
+def tree_map(f: Callable[[Any], Any], tree: Any,
+             is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
   """Maps a function over a pytree to produce a new pytree.
 
   Args:
     f: unary function to be applied at each leaf.
     tree: a pytree to be mapped over.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether
+      the flattening should traverse the current object, or if it should be
+      stopped immediately, with the whole subtree being treated as a leaf.
 
   Returns:
     A new pytree with the same structure as `tree` but with the value at each
     leaf given by ``f(x)`` where ``x`` is the value at the corresponding leaf in
     the input ``tree``.
   """
-  leaves, treedef = pytree.flatten(tree)
+  leaves, treedef = tree_flatten(tree, is_leaf)
   return treedef.unflatten(map(f, leaves))
 
-def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any) -> Any:
+def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any,
+                  is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
   """Maps a multi-input function over pytree args to produce a new pytree.
 
   Args:
@@ -192,6 +198,10 @@ def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any) -> Any:
       positional argument to ``f``.
     *rest: a tuple of pytrees, each of which has the same structure as tree or
       or has tree as a prefix.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether
+      the flattening should traverse the current object, or if it should be
+      stopped immediately, with the whole subtree being treated as a leaf.
 
   Returns:
     A new pytree with the same structure as ``tree`` but with the value at each
@@ -199,7 +209,7 @@ def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any) -> Any:
     leaf in ``tree`` and ``xs`` is the tuple of values at corresponding nodes in
     ``rest``.
   """
-  leaves, treedef = pytree.flatten(tree)
+  leaves, treedef = tree_flatten(tree, is_leaf)
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
