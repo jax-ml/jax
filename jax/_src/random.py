@@ -207,9 +207,9 @@ threefry2x32_p.multiple_results = True
 threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
-xla.translations[threefry2x32_p] = xla.lower_fun(
+xla.translations_with_avals[threefry2x32_p] = xla.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=False),
-    multiple_results=True)
+    multiple_results=True, with_avals=True)
 xla.backend_specific_translations['cpu'][threefry2x32_p] = xla.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=True),
     multiple_results=True)
@@ -1027,9 +1027,9 @@ random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
 random_gamma_p.def_abstract_eval(lambda key, a: core.raise_to_shaped(a))
 ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
-xla.translations[random_gamma_p] = xla.lower_fun(
+xla.translations_with_avals[random_gamma_p] = xla.lower_fun(
     partial(_gamma_impl, use_vmap=True),
-    multiple_results=False)
+    multiple_results=False, with_avals=True)
 xla.backend_specific_translations['cpu'][random_gamma_p] = xla.lower_fun(
     partial(_gamma_impl, use_vmap=False),
     multiple_results=False)
