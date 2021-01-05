@@ -73,6 +73,12 @@ try:
 except ImportError:
   cuda_prng = None
 
+# Jaxlib code is split between the Jax and the Tensorflow repositories.
+# Only for the internal usage of the JAX developers, we expose a version
+# number that can be used to perform changes without breaking the master
+# branch on the Jax github.
+_xla_extension_version = getattr(xla_client, '_version', 0)
+
 try:
   from jaxlib import tpu_client  # pytype: disable=import-error
 except:
