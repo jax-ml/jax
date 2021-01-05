@@ -13,33 +13,41 @@
 # limitations under the License.
 
 import contextlib
+import itertools
 import os.path
 import threading
-from typing import Any, Optional
+from typing import Any, Optional, Iterator
 
 import jax.version
 from jax.lib import xla_client
 
 from jax._src import traceback_util
+from jax._src.traceback_util import path_starts_with
 traceback_util.register_exclusion(__file__)
 
 
 Traceback = Any  # xla_client.Traceback
 Frame = Any  # xla_client.Traceback::Frame
 
-_jax_path = os.path.dirname(jax.version.__file__)
+_exclude_paths = [os.path.dirname(jax.version.__file__)]
 
-def user_frame(source_info: Optional[Traceback]) -> Optional[Frame]:
+def register_exclusion(path):
+  _exclude_paths.append(path)
+
+def user_frames(source_info: Optional[Traceback]) -> Iterator[Frame]:
   """Heuristic that guesses the identity of the user's code in a stack trace."""
   # Guess the user's frame is the innermost frame not in the jax source tree
-  return next((x for x in (source_info.frames if source_info else [])
-               if not x.file_name.startswith(_jax_path)), None)
+  return (x for x in (source_info.frames if source_info else [])
+          if not any(path_starts_with(x.file_name, p) for p in _exclude_paths))
 
+def user_frame(source_info: Optional[Traceback]) -> Optional[Frame]:
+  return next(user_frames(source_info), None)
 
-def summarize(source_info: Optional[Traceback]) -> str:
-  frame = user_frame(source_info)
-  return (f"{frame.file_name}:{frame.line_num} ({frame.function_name})"
-          if frame else "unknown")
+def summarize(source_info: Optional[Traceback], num_frames=1) -> str:
+  frames = itertools.islice(user_frames(source_info), num_frames)
+  frame_strs = [f"{frame.file_name}:{frame.line_num} ({frame.function_name})"
+                if frame else "unknown" for frame in frames]
+  return '\n'.join(reversed(frame_strs))
 
 
 class _SourceInfoContext(threading.local):

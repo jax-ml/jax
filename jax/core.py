@@ -384,19 +384,19 @@ class Trace:
       elif val._trace.sublevel < sublevel:
         return self.sublift(val)
       else:
-        raise escaped_tracer_error("Can't lift sublevels {} to {}"
-                                   .format(val._trace.sublevel, sublevel))
+        raise escaped_tracer_error(
+            val, f"Can't lift sublevels {val._trace.sublevel} to {sublevel}.")
     elif val._trace.level < level:
       if val._trace.sublevel > sublevel:
-        raise escaped_tracer_error("Incompatible sublevel: {}, {}"
-                                   .format(val._trace, (level, sublevel)))
+        raise escaped_tracer_error(
+            val, f"Incompatible sublevel: {val._trace}, {(level, sublevel)}.")
       return self.lift(val)
     elif val._trace.level > level:
-      raise escaped_tracer_error("Can't lift level {} to {}"
-                                 .format(val, self))
+      raise escaped_tracer_error(
+          val, f"Can't lift level {val} to {self}.")
     else:  # val._trace.level == self.level:
-      raise escaped_tracer_error("Different traces at same level: {}, {}"
-                                 .format(val, self))
+      raise escaped_tracer_error(
+          val, f"Different traces at same level: {val}, {self}.")
 
   def pure(self, val):
     raise NotImplementedError("must override")
@@ -434,20 +434,30 @@ class Trace:
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)
 
-def escaped_tracer_error(detail=None):
+def escaped_tracer_error(tracer, detail=None, num_frames=10):
   msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
          "through global state from a previously traced function.\n"
          "The functions being transformed should not save traced values to "
          "global state.")
   if detail:
     msg += " Detail: {}.".format(detail)
+  try:
+    line_info = tracer._line_info
+  except AttributeError:
+    pass
+  else:
+    msg += ('\nThe tracer that caused this error was created on line '
+            f'{source_info_util.summarize(line_info)}.\n'
+            f'When the tracer was created, the final {num_frames} stack frames '
+            '(most recent last) were:\n'
+            f'{source_info_util.summarize(line_info, num_frames=num_frames)}')
   return UnexpectedTracerError(msg)
 
 class UnexpectedTracerError(Exception): pass
 
 class Tracer:
   __array_priority__ = 1000
-  __slots__ = ['_trace', '__weakref__']
+  __slots__ = ['_trace', '__weakref__', '_line_info']
 
   def __array__(self, *args, **kw):
     msg = ("The numpy.ndarray conversion method __array__() was called on "

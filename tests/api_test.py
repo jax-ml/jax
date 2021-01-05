@@ -1997,7 +1997,7 @@ class APITest(jtu.JaxTestCase):
       lax.scan(f, None, None, length=2)
 
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "tracer created on line"):
+                                "was created on line"):
       g()
 
   def test_escaped_tracer_omnistaging_top_trace(self):
@@ -2014,7 +2014,7 @@ class APITest(jtu.JaxTestCase):
     lax.scan(f, None, None, length=2)  # leaked a tracer! (of level 1!)
 
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "tracer created on line"):
+                                "was created on line"):
       # The following call will try and raise the ones array to the count tracer
       # level, which is no longer live.
       jax.jit(jnp.add)(jnp.ones(()), count)

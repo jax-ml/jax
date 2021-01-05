@@ -426,7 +426,7 @@ class JaxprTracer(Tracer):
     pv, const = pval
     if isinstance(const, Tracer) and const._trace.level >= trace.level:
       raise core.escaped_tracer_error(
-          "Tracer from a higher level: {} in trace {}".format(const, trace))
+          const, "Tracer from a higher level: {} in trace {}".format(const, trace))
     self._trace = trace
     self.pval = pval
     self.recipe = recipe
@@ -622,7 +622,7 @@ def tracers_to_jaxpr(
     elif isinstance(recipe, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
         raise core.escaped_tracer_error(
-            "Tracer not among input tracers {}".format(t))
+            t, "Tracer not among input tracers {}".format(t))
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
       env[cast(core.Var, getvar(t))] = recipe.val
@@ -897,12 +897,12 @@ def _move_to_front(lst: Sequence, to_move: Sequence[bool]) -> Sequence:
 
 
 class DynamicJaxprTracer(core.Tracer):
-  __slots__ = ['aval', 'line_info']
+  __slots__ = ['aval']
 
   def __init__(self, trace, aval, line_info=None):
     self._trace = trace
+    self._line_info = line_info
     self.aval = aval
-    self.line_info = line_info
 
   def full_lower(self):
     return self
@@ -936,8 +936,7 @@ class DynamicJaxprTracer(core.Tracer):
 
   def _assert_live(self) -> None:
     if not self._trace.main.jaxpr_stack:  # type: ignore
-      msg = f"tracer created on line {source_info_util.summarize(self.line_info)}"
-      raise core.escaped_tracer_error(msg)
+      raise core.escaped_tracer_error(self, None)
 
 class JaxprStackFrame:
   __slots__ = ['newvar', 'tracer_to_var', 'constid_to_var', 'constvar_to_val',
@@ -1031,11 +1030,7 @@ class DynamicJaxprTrace(core.Trace):
   def getvar(self, tracer):
     var = self.frame.tracer_to_var.get(id(tracer))
     if var is None:
-      if tracer.line_info is not None:
-        detail = f"tracer created on line {source_info_util.summarize(tracer.line_info)}"
-      else:
-        detail = None
-      raise core.escaped_tracer_error(detail)
+      raise core.escaped_tracer_error(tracer)
     return var
 
   def makevar(self, tracer):
