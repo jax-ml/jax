@@ -244,10 +244,11 @@ def _matvec_multiply(a, b):
   return lax.dot(a, b, precision=lax.Precision.HIGHEST)
 
 def _check_solve_shapes(a, b):
-  if not (a.ndim >= 2 and a.shape[-1] == a.shape[-2] and b.ndim >= 1):
-    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
-           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
-    raise ValueError(msg.format(a.shape, b.shape))
+  if not (a.ndim >= 2 and b.ndim in [a.ndim, a.ndim - 1] and
+          a.shape[-1] == a.shape[-2] == b.shape[a.ndim - 2]):
+    raise ValueError(
+        "The arguments to solve must have shapes a=[..., m, m] and "
+        f"b=[..., m, k] or b=[..., m]; got a={a.shape} and b={b.shape}")
 
 def _solve(a, b):
   _check_solve_shapes(a, b)
@@ -956,7 +957,7 @@ def lu_pivots_to_permutation(swaps, m):
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
 def _lu_solve_core(lu, permutation, b, trans):
   m = lu.shape[0]
-  x = jnp.reshape(b, (m, -1))
+  x = jnp.reshape(b, (m, np.prod(b.shape[1:])))
   if trans == 0:
     x = x[permutation, :]
     x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)

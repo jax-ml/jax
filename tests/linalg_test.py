@@ -707,6 +707,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           ((8, 8), (8, 4)),
           ((1, 2, 2), (3, 2)),
           ((2, 1, 3, 3), (2, 4, 3, 4)),
+          ((1, 0, 0), (1, 0, 2)),
       ]
       for dtype in float_types + complex_types))
   def testSolve(self, lhs_shape, rhs_shape, dtype):
@@ -722,7 +723,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
-      for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (5, 5, 5)]
+      for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (5, 5, 5), (0, 0)]
       for dtype in float_types))
   def testInv(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
