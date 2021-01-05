@@ -609,8 +609,8 @@ def normal(key: jnp.ndarray,
   Returns:
     A random array with the specified shape and dtype.
   """
-  if not dtypes.issubdtype(dtype, np.floating):
-    raise ValueError(f"dtype argument to `normal` must be a float dtype, "
+  if not dtypes.issubdtype(dtype, np.inexact):
+    raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
@@ -618,6 +618,19 @@ def normal(key: jnp.ndarray,
 
 @partial(jit, static_argnums=(1, 2))
 def _normal(key, shape, dtype) -> jnp.ndarray:
+  if dtypes.issubdtype(dtype, np.complexfloating):
+    sqrt2 = np.array(np.sqrt(2), dtype)
+
+    key_re, key_im = split(key)
+    dtype = dtypes.dtype_real(dtype)
+    _re = _normal_real(key_re, shape, dtype)
+    _im = _normal_real(key_im, shape, dtype)
+    return 1 / sqrt2 * (_re + 1j * _im)
+  else:
+    return _normal_real(key, shape, dtype) # type: ignore
+
+@partial(jit, static_argnums=(1, 2))
+def _normal_real(key, shape, dtype) -> jnp.ndarray:
   _check_shape("normal", shape)
   lo = np.nextafter(np.array(-1., dtype), 0., dtype=dtype)
   hi = np.array(1., dtype)

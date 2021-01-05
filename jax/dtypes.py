@@ -165,6 +165,17 @@ def issubdtype(a, b):
 can_cast = np.can_cast
 issubsctype = np.issubsctype
 
+# Return the type holding the real part of the input type
+def dtype_real(typ):
+  if np.issubdtype(typ, np.complexfloating):
+    if typ == np.dtype('complex64'):
+      return np.dtype('float32')
+    elif typ == np.dtype('complex128'):
+      return np.dtype('float64')
+    else:
+      raise TypeError("Unknown complex floating type {}".format(typ))
+  else:
+    return typ
 
 # Enumeration of all valid JAX types in order.
 _weak_types = [int, float, complex]
