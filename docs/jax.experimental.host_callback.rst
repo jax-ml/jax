@@ -11,7 +11,7 @@ API
 .. autofunction:: id_print
 .. autofunction:: call
 .. autofunction:: barrier_wait
-.. autoexception:: TapFunctionException
+.. autoexception:: CallbackException
 
 
 

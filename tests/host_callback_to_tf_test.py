@@ -30,6 +30,8 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental import host_callback as hcb
 
+import numpy as np
+
 try:
   import tensorflow as tf
 except ImportError:
@@ -46,7 +48,8 @@ def call_tf_no_ad(tf_fun: Callable, arg, *, result_shape):
   JAX staged computation."""
 
   def tf_to_numpy(t):
-    return t.numpy() if isinstance(t, tf.Tensor) else t
+    # Turn the Tensor to NumPy array without copying.
+    return np.array(memoryview(t)) if isinstance(t, tf.Tensor) else t
 
   return hcb.call(lambda arg: tf.nest.map_structure(tf_to_numpy,
                                                     tf_fun(arg)),
@@ -83,8 +86,9 @@ def call_tf_simple_ad(tf_fun: Callable, arg, *, result_shape):
         res = tf_fun(arg_var)
 
       dres_darg = tape.gradient(res, sources=arg_var,
+                                output_gradients=ct_res,
                                 unconnected_gradients=tf.UnconnectedGradients.ZERO)
-      return dres_darg * ct_res
+      return dres_darg
 
     return (call_tf_simple_ad(tf_vjp_fun, (arg, ct_res),
                               result_shape=arg),)
@@ -196,10 +200,7 @@ class CallToTFTest(jtu.JaxTestCase):
     x = 4.
     self.assertAllClose(f_jax(x), f_outside(x))
 
-    # print(f"outside_jaxpr = {api.make_jaxpr(f_outside)(xy)}")
-    # print(api.xla_computation(f_outside)(4.).as_hlo_text())
     grad_f = api.grad(f_outside)(x)
-    # print(f"grad_outside_jaxpr = {api.make_jaxpr(api.grad(f_outside))(xy)}")
     self.assertAllClose(api.grad(f_jax)(x), grad_f)
 
   def test_grad_pytree(self):
@@ -217,11 +218,8 @@ class CallToTFTest(jtu.JaxTestCase):
       return 3. * dict_ab["a"] + 4. * dict_ab["b"]
 
     xy = (5., 6.)
-    # print(f"outside_jaxpr = {api.make_jaxpr(f_outside)(xy)}")
-    # print(api.xla_computation(f_outside)(xy).as_hlo_text())
     self.assertAllClose(f_jax(xy), f_outside(xy))
     res_jax = api.grad(f_jax)(xy)
-    # print(f"grad_outside_jaxpr = {api.make_jaxpr(api.grad(f_outside))(xy)}")
     self.assertAllClose(res_jax, api.grad(f_outside)(xy))
 
   @parameterized.named_parameters(
@@ -246,9 +244,6 @@ class CallToTFTest(jtu.JaxTestCase):
       grad_outside = api.grad(grad_outside)
 
     res_jax = grad_jax(5.)
-    # print(f"res_jax = {res_jax}")
-    # print(f"jax_jaxpr = {api.make_jaxpr(api.grad(f_jax))(3.)}")
-    # print(f"outside_jaxpr = {api.make_jaxpr(api.grad(f_outside))(3.)}")
     self.assertAllClose(res_jax, grad_outside(5.))
 
 

@@ -247,7 +247,7 @@ are processed asyncronously with the device computation.
 Exceptions from the user-defined callback functions are logged along with their
 stack traces, but the receiving threads are not stopped. Instead the last
 exception is recorded and the subsequent :func:`barrier_wait` will
-raise :exc:`TapFunctionException` if any exception had occurred
+raise :exc:`CallbackException` if any exception had occurred
 in one of the tap functions. This exception will include the text and the
 stack trace of the last exception encountered.
 
@@ -447,7 +447,7 @@ def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
         "Support for **kwargs in ``id_tap`` has been removed. Instead, "
         "pre-apply keyword arguments, either by using a closure or by passing "
         "``functools.partial(tap_func, **kwargs)``.")
-    raise ValueError(msg)
+    raise TypeError(msg)
 
   _initialize_outfeed_receiver()  # Lazy initialization
   api._check_callable(tap_func)
@@ -1469,20 +1469,22 @@ xla.translations[id_p] = lambda c, *args: xops.Tuple(c, args)
 xla.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)
 
 
-class TapFunctionException(Exception):
-  """Signals that some tap function had exceptions.
+class CallbackException(Exception):
+  """Signals that some callback function had exceptions.
 
   Raised by :func:`barrier_wait`.
+  See module documentation for details.
   """
   pass
 
+TapFunctionException = CallbackException  # For backwards compatibility
 
 # For now we keep a single outfeed receiver
 class _OutfeedReceiverData:
   """Keep track of the outfeed receiver data."""
   receiver: Any
   lock: threading.Lock
-  last_tap_exception: Optional[str]
+  last_callback_exception: Optional[Tuple[Exception, str]]
   clients: Tuple[XlaLocalClient, ...]
   devices: Tuple[XlaDevice, ...]
   consumer_registry: Dict[_ConsumerCallable, int]
@@ -1491,7 +1493,7 @@ class _OutfeedReceiverData:
   def __init__(self):
     self.receiver = None  # Initialize lazily, when first needed
     self.lock = threading.Lock()
-    self.last_tap_exception = None
+    self.last_callback_exception = None
     self.clients = ()
     self.devices = ()
     # The consumer registries must be live for the lifetime of the program,
@@ -1520,11 +1522,10 @@ def _outfeed_receiver_callback(device, consumer_id, arrays):
   assert consumer is not None, "We should have crashed in the runtime"
   try:
     consumer.invoke(arrays, device)
-  except Exception:
-    edata = traceback.format_exc()
-    logging.error("Postponing exception raised in tap function: %s", edata)
-    _outfeed_receiver.last_tap_exception = edata
-    return
+  except Exception as e:
+    formatted_e = traceback.format_exc()
+    logging.error("Postponing exception raised in callback function: %s", formatted_e)
+    _outfeed_receiver.last_callback_exception = (e, formatted_e)
 
 
 def _initialize_outfeed_receiver(
@@ -1578,7 +1579,7 @@ def barrier_wait(logging_name: Optional[str] = None):
 
   Waits until all outfeed from computations already running on all devices
   has been received and processed by the Python callbacks. Raises
-  TapFunctionException if there were exceptions while processing the callbacks.
+  Callback if there were exceptions while processing the callbacks.
 
   This works by enqueueing a special tap computation to all devices to which
   we are listening for outfeed. Once all those tap computations are done, we
@@ -1619,12 +1620,12 @@ def barrier_wait(logging_name: Optional[str] = None):
   with lock:
     cv.wait_for(lambda: num_at_large == 0)
   logging.vlog(2, f"barrier_wait[{logging_name}]: done")
-  if _outfeed_receiver.last_tap_exception is not None:
-    last_exception = _outfeed_receiver.last_tap_exception
-    _outfeed_receiver.last_tap_exception = None
-    raise TapFunctionException(
-        "There were exceptions during id_tap processing. "
-        f"Last one was: {last_exception}")
+  if _outfeed_receiver.last_callback_exception is not None:
+    last_exception, formatted_last_exception = _outfeed_receiver.last_callback_exception
+    _outfeed_receiver.last_callback_exception = None
+    raise CallbackException(
+        "There were exceptions during callback processing. "
+        f"Last one was: {formatted_last_exception}") from last_exception
 
 
 def stop_outfeed_receiver():

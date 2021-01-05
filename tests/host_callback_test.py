@@ -283,9 +283,9 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
       return x3
 
     with self.assertRaisesRegex(
-        hcb.TapFunctionException,
-        re.compile("There were exceptions during id_tap processing. Last one was:.*"
-                   "ValueError: Some user message", re.DOTALL)):
+       hcb.CallbackException,
+       re.compile("There were exceptions during callback processing. Last one was:.*"
+                  "ValueError: Some user message", re.DOTALL)):
       func(0)
       hcb.barrier_wait()
 
@@ -795,7 +795,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
       return x3
 
     res = api.jit(func)(0)  # No error yet
-    with self.assertRaises(hcb.TapFunctionException):
+    with self.assertRaises(hcb.CallbackException):
       hcb.barrier_wait()
 
     # Even though the receiver thread raised, the main thread should still
@@ -1549,7 +1549,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     def func(x, transforms, y):
       pass
 
-    with self.assertRaisesRegex(ValueError, r"Support for \*\*kwargs in ``id_tap``"):
+    with self.assertRaisesRegex(TypeError, r"Support for \*\*kwargs in ``id_tap``"):
       hcb.id_tap(func, 1, y=2)
 
   def test_odeint(self):
@@ -1827,9 +1827,9 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     # Both on GPU and TPU we also get an error during the barrier_wait at the
     # end of the test. Run a barrier_wait now, to consume that error.
     with self.assertRaisesRegex(
-        hcb.TapFunctionException,
+        hcb.CallbackException,
         re.compile(
-            "There were exceptions during id_tap processing.*Last one was:.*" +
+            "There were exceptions during callback processing.*Last one was:.*" +
             expected_exc_txt,
             re.DOTALL)):
       hcb.barrier_wait("Waiting for error")
@@ -1942,9 +1942,6 @@ class CallJaxTest(jtu.JaxTestCase):
       return 2. * call_jax_other_device(jnp.sin, x, device=self.outside_device)
 
     res_jax = api.grad(f_jax)(3.)
-    # print(f"res_jax = {res_jax}")
-    # print(f"jax_jaxpr = {api.make_jaxpr(api.grad(f_jax))(3.)}")
-    # print(f"outside_jaxpr = {api.make_jaxpr(api.grad(f_outside))(3.)}")
     self.assertAllClose(res_jax, api.grad(f_outside)(3.))
 
   def test_grad_pytree(self):
@@ -1957,9 +1954,6 @@ class CallJaxTest(jtu.JaxTestCase):
 
     x = dict(a=3., b=4.)
     res_jax = api.grad(f_jax)(x)
-    # print(f"res_jax = {res_jax}")
-    # print(f"jax_jaxpr = {api.make_jaxpr(api.grad(f_jax))(3.)}")
-    # print(f"outside_jaxpr = {api.make_jaxpr(api.grad(f_outside))(3.)}")
     self.assertAllClose(res_jax, api.grad(f_outside)(x))
 
   def test_grad_of_grad(self):
@@ -1970,12 +1964,7 @@ class CallJaxTest(jtu.JaxTestCase):
       return 2. * call_jax_other_device(lambda x: x * x * x, x, device=self.outside_device)
 
     res_jax = api.grad(api.grad(f_jax))(5.)
-    # print(f"res_jax = {res_jax}")
-    # print(f"jax_jaxpr = {api.make_jaxpr(api.grad(api.grad(f_jax)))(5.)}")
-    # print(f"outside_jaxpr = {api.make_jaxpr(api.grad(api.grad(f_outside)))(5.)}")
-    # print(f"outside xla = {api.xla_computation(api.grad(api.grad(f_outside)))(5.).as_hlo_text()}")
     res_outside = api.grad(api.grad(f_outside))(5.)
-    # print(f"res_outside = {res_outside}")
     self.assertAllClose(res_jax, res_outside)
 
 
