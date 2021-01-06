@@ -352,8 +352,7 @@ def _execute_compiled_primitive(prim, compiled, result_handler, *args):
   device, = compiled.local_devices()
   input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
   out_bufs = compiled.execute(input_bufs)
-  if FLAGS.jax_debug_nans: check_nans(prim, out_bufs)
-  if FLAGS.jax_debug_infs: check_infs(prim, out_bufs)
+  check_special(prim, out_bufs)
   return result_handler(*out_bufs)
 
 def _execute_replicated_primitive(prim, compiled, result_handler, *args):
@@ -364,28 +363,18 @@ def _execute_replicated_primitive(prim, compiled, result_handler, *args):
   return result_handler(*out_bufs)
 
 
-def check_nans(prim, bufs):
+def check_special(prim, bufs):
   for buf in bufs:
     # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
     # the default.
-    _check_nans(prim.name, getattr(buf, "xla_shape", buf.shape)(), buf)
+    _check_special(prim.name, getattr(buf, "xla_shape", buf.shape)(), buf)
 
-def _check_nans(name, xla_shape, buf):
+def _check_special(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
   if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
-    if np.any(np.isnan(buf.to_py())):
+    if FLAGS.jax_debug_nans and np.any(np.isnan(buf.to_py())):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
-
-def check_infs(prim, bufs):
-  for buf in bufs:
-    # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
-    # the default.
-    _check_infs(prim.name, getattr(buf, "xla_shape", buf.shape)(), buf)
-
-def _check_infs(name, xla_shape, buf):
-  assert not xla_shape.is_tuple()
-  if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
-    if np.any(np.isinf(buf.to_py())):
+    if FLAGS.jax_debug_infs and np.any(np.isinf(buf.to_py())):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 ### compiling jaxprs
@@ -844,8 +833,7 @@ def _execute_compiled(compiled: XlaExecutable, avals, handlers, *args):
   device, = compiled.local_devices()
   input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
   out_bufs = compiled.execute(input_bufs)
-  if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
-  if FLAGS.jax_debug_infs: check_infs(xla_call_p, out_bufs)
+  check_special(xla_call_p, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
 def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
@@ -853,8 +841,7 @@ def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
       list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
       for device in compiled.local_devices()]
   out_bufs = compiled.execute_on_local_devices(input_bufs)[0]
-  if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
-  if FLAGS.jax_debug_infs: check_infs(xla_call_p, out_bufs)
+  check_special(xla_call_p, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers, *args):

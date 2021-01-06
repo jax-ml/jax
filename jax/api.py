@@ -369,10 +369,10 @@ def _cpp_jit(
   @api_boundary
   def f_jitted(*args, **kwargs):
     # TODO(jblespiau): Move this to C++.
-    if FLAGS.jax_debug_nans and not _jit_is_disabled():
+    if not _jit_is_disabled():
       device_arrays = cpp_jitted_f(*args, **kwargs)
       try:
-        xla.check_nans(xla.xla_call_p, [
+        xla.check_special(xla.xla_call_p, [
             da.device_buffer
             for da in tree_leaves(device_arrays)
             if hasattr(da, "device_buffer")
