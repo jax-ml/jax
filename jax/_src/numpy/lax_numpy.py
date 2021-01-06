@@ -29,7 +29,7 @@ import collections
 import operator
 import os
 import types
-from typing import Sequence, FrozenSet, Tuple, Union, Iterable
+from typing import Sequence, FrozenSet, Optional, Tuple, Union, Iterable, cast
 from textwrap import dedent as _dedent
 import warnings
 
@@ -694,7 +694,7 @@ def signbit(x):
 
 
 @_wraps(np.trapz)
-def trapz(y, x=None, dx=1.0, axis=-1):
+def trapz(y, x=None, dx=1.0, axis: int = -1):
   _check_arraylike('trapz', y)
   y = moveaxis(y, axis, -1)
   if x is not None:
@@ -1062,7 +1062,7 @@ def rot90(m, k=1, axes=(0, 1)):
 
 
 @_wraps(np.flip)
-def flip(m, axis=None):
+def flip(m, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   _check_arraylike("flip", m)
   if axis is None:
     return lax.rev(m, list(range(len(shape(m)))))
@@ -1122,7 +1122,7 @@ def angle(z):
 
 
 @_wraps(np.diff)
-def diff(a, n=1, axis=-1, prepend=None, append=None):
+def diff(a, n=1, axis: int = -1, prepend=None, append=None):
   _check_arraylike("diff", a)
   if n == 0:
     return a
@@ -1159,12 +1159,12 @@ def diff(a, n=1, axis=-1, prepend=None, append=None):
   slice2 = [slice(None)] * nd
   slice1[axis] = slice(1, None)
   slice2[axis] = slice(None, -1)
-  slice1 = tuple(slice1)
-  slice2 = tuple(slice2)
+  slice1_tuple = tuple(slice1)
+  slice2_tuple = tuple(slice2)
 
   op = not_equal if a.dtype == np.bool_ else subtract
   for _ in range(n):
-    a = op(a[slice1], a[slice2])
+    a = op(a[slice1_tuple], a[slice2_tuple])
 
   return a
 
@@ -1237,7 +1237,8 @@ def _gradient(a, varargs, axis):
 
 
 @_wraps(np.gradient)
-def gradient(f, *varargs, axis=None, edge_order=None):
+def gradient(f, *varargs, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+             edge_order=None):
   if edge_order is not None:
     raise NotImplementedError("The 'edge_order' argument to jnp.gradient is not supported.")
   return _gradient(f, varargs, axis)
@@ -1361,7 +1362,7 @@ def unravel_index(indices, shape):
 
 
 @_wraps(np.squeeze)
-def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
+def squeeze(a, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   _check_arraylike("squeeze", a)
   if axis is None:
     a_shape = shape(a)
@@ -1380,7 +1381,7 @@ def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
 
 
 @_wraps(np.swapaxes)
-def swapaxes(a, axis1, axis2):
+def swapaxes(a, axis1: int, axis2: int):
   _check_arraylike("swapaxes", a)
   perm = np.arange(ndim(a))
   perm[axis1], perm[axis2] = perm[axis2], perm[axis1]
@@ -1388,23 +1389,27 @@ def swapaxes(a, axis1, axis2):
 
 
 @_wraps(np.moveaxis)
-def moveaxis(a, source, destination):
+def moveaxis(a, source: Union[int, Sequence[int]],
+             destination: Union[int, Sequence[int]]):
   _check_arraylike("moveaxis", a)
+  source_axes: Tuple[int, ...]
+  destination_axes: Tuple[int, ...]
   try:
-    source = (operator.index(source),)
+    source_axes = (operator.index(source),)
   except TypeError:
-    pass
+    source_axes = tuple(cast(Sequence[int], source))
   try:
-    destination = (operator.index(destination),)
+    destination_axes = (operator.index(destination),)
   except TypeError:
-    pass
-  source = tuple(_canonicalize_axis(i, ndim(a)) for i in source)
-  destination = tuple(_canonicalize_axis(i, ndim(a)) for i in destination)
-  if len(source) != len(destination):
+    destination_axes = tuple(cast(Sequence[int], destination))
+  source_axes = tuple(_canonicalize_axis(i, ndim(a)) for i in source_axes)
+  destination_axes = tuple(_canonicalize_axis(i, ndim(a))
+                           for i in destination_axes)
+  if len(source_axes) != len(destination_axes):
     raise ValueError("Inconsistent number of elements: {} vs {}"
-                     .format(len(source), len(destination)))
-  perm = [i for i in range(ndim(a)) if i not in source]
-  for dest, src in sorted(zip(destination, source)):
+                     .format(len(source_axes), len(destination_axes)))
+  perm = [i for i in range(ndim(a)) if i not in source_axes]
+  for dest, src in sorted(zip(destination_axes, source_axes)):
     perm.insert(dest, src)
   return lax.transpose(a, perm)
 
@@ -1715,7 +1720,7 @@ def _split(op, ary, indices_or_sections, axis=0):
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
 @_wraps(np.split)
-def split(ary, indices_or_sections, axis=0):
+def split(ary, indices_or_sections, axis: int = 0):
   return _split("split", ary, indices_or_sections, axis=axis)
 
 def _split_on_axis(np_fun, axis):
@@ -1729,7 +1734,7 @@ hsplit = _split_on_axis(np.hsplit, axis=1)
 dsplit = _split_on_axis(np.dsplit, axis=2)
 
 @_wraps(np.array_split)
-def array_split(ary, indices_or_sections, axis=0):
+def array_split(ary, indices_or_sections, axis: int = 0):
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
 @_wraps(np.clip)
@@ -1925,34 +1930,40 @@ def _reduction_init_val(a, init_val):
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 
 @_wraps(np.sum)
-def sum(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=None):
+def sum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+        out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "sum", np.sum, lax.add, 0,
                     bool_op=lax.bitwise_or, upcast_f16_for_computation=True,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where_=where)
 
 @_wraps(np.prod)
-def prod(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=None):
+def prod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+         out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "prod", np.prod, lax.mul, 1,
                     bool_op=lax.bitwise_and, upcast_f16_for_computation=True,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where_=where)
 
 @_wraps(np.max)
-def max(a, axis=None, out=None, keepdims=None, initial=None, where=None):
+def max(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+        keepdims=None, initial=None, where=None):
   return _reduction(a, "max", np.max, lax.max, -np.inf, has_identity=False,
                     axis=axis, out=out, keepdims=keepdims, initial=initial, where_=where)
 
 @_wraps(np.min)
-def min(a, axis=None, out=None, keepdims=None, initial=None, where=None):
+def min(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+        keepdims=None, initial=None, where=None):
   return _reduction(a, "min", np.min, lax.min, np.inf, has_identity=False,
                     axis=axis, out=out, keepdims=keepdims, initial=initial, where_=where)
 
 @_wraps(np.all)
-def all(a, axis=None, out=None, keepdims=None):
+def all(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+        keepdims=None):
   return _reduction(a, "all", np.all, lax.bitwise_and, True, preproc=_cast_to_bool,
                     axis=axis, out=out, keepdims=keepdims)
 
 @_wraps(np.any)
-def any(a, axis=None, out=None, keepdims=None):
+def any(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+        keepdims=None):
   return _reduction(a, "any", np.any, lax.bitwise_or, False, preproc=_cast_to_bool,
                     axis=axis, out=out, keepdims=keepdims)
 
@@ -1963,7 +1974,8 @@ alltrue = all
 sometrue = any
 
 @_wraps(np.mean)
-def mean(a, axis=None, dtype=None, out=None, keepdims=False):
+def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+         out=None, keepdims=False):
   _check_arraylike("mean", a)
   lax._check_user_dtype_supported(dtype, "mean")
   if out is not None:
@@ -1985,7 +1997,8 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
       lax.convert_element_type(normalizer, dtype))
 
 @_wraps(np.average)
-def average(a, axis=None, weights=None, returned=False):
+def average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
+            returned=False):
   a = asarray(a)
 
   if weights is None: # Treat all weights as 1
@@ -2034,7 +2047,8 @@ def average(a, axis=None, weights=None, returned=False):
 
 
 @_wraps(np.var)
-def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+def var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+        out=None, ddof=0, keepdims=False):
   _check_arraylike("var", a)
   lax._check_user_dtype_supported(dtype, "var")
   if out is not None:
@@ -2080,7 +2094,8 @@ def _var_promote_types(a_dtype, dtype):
 
 
 @_wraps(np.std)
-def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+def std(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+        out=None, ddof=0, keepdims=False):
   _check_arraylike("std", a)
   lax._check_user_dtype_supported(dtype, "std")
   if out is not None:
@@ -2089,7 +2104,8 @@ def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 
 
 @_wraps(np.ptp)
-def ptp(a, axis=None, out=None, keepdims=False):
+def ptp(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+        keepdims=False):
   _check_arraylike("ptp", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.ptp is not supported.")
@@ -2104,7 +2120,8 @@ def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
 
 
 @_wraps(np.count_nonzero)
-def count_nonzero(a, axis=None, keepdims=False):
+def count_nonzero(a, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+                  keepdims=False):
   _check_arraylike("count_nonzero", a)
   return sum(lax.ne(a, _constant_like(a, 0)), axis=axis,
              dtype=dtypes.canonicalize_dtype(np.int_), keepdims=keepdims)
@@ -2145,27 +2162,32 @@ def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
     return out
 
 @_wraps(np.nanmin)
-def nanmin(a, axis=None, out=None, keepdims=None):
+def nanmin(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+           keepdims=None):
   return _nan_reduction(a, 'nanmin', min, inf, nan_if_all_nan=True,
                         axis=axis, out=out, keepdims=keepdims)
 
 @_wraps(np.nanmax)
-def nanmax(a, axis=None, out=None, keepdims=None):
+def nanmax(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+           keepdims=None):
   return _nan_reduction(a, 'nanmax', max, -inf, nan_if_all_nan=True,
                         axis=axis, out=out, keepdims=keepdims)
 
 @_wraps(np.nansum)
-def nansum(a, axis=None, dtype=None, out=None, keepdims=None):
+def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+           out=None, keepdims=None):
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims)
 
 @_wraps(np.nanprod)
-def nanprod(a, axis=None, dtype=None, out=None, keepdims=None):
+def nanprod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+            out=None, keepdims=None):
   return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims)
 
 @_wraps(np.nanmean)
-def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
+def nanmean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+            out=None, keepdims=False):
   _check_arraylike("nanmean", a)
   lax._check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
@@ -2182,7 +2204,8 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
 
 
 @_wraps(np.nanvar)
-def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+           out=None, ddof=0, keepdims=False):
   _check_arraylike("nanvar", a)
   lax._check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
@@ -2212,7 +2235,8 @@ def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 
 
 @_wraps(np.nanstd)
-def nanstd(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+def nanstd(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+           out=None, ddof=0, keepdims=False):
   _check_arraylike("nanstd", a)
   lax._check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
@@ -2246,7 +2270,9 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
     return reduction(a, axis)
 
   @_wraps(np_reduction)
-  def cumulative_reduction(a, axis=None, dtype=None, out=None):
+  def cumulative_reduction(a,
+                           axis: Optional[Union[int, Tuple[int, ...]]] = None,
+                           dtype=None, out=None):
     _check_arraylike(np_reduction.__name__, a)
     if out is not None:
       raise NotImplementedError(f"The 'out' argument to jnp.{np_reduction.__name__} "
@@ -2267,7 +2293,7 @@ nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
 
 
 @_wraps(np.unwrap)
-def unwrap(p, discont=pi, axis=-1):
+def unwrap(p, discont=pi, axis: int = -1):
   _check_arraylike("unwrap", p)
   dd = diff(p, axis=axis)
   ddmod = mod(dd + pi, 2 * pi) - pi
@@ -2592,7 +2618,7 @@ def pad(array, pad_width, mode="constant", **kwargs):
 
 
 @_wraps(np.stack)
-def stack(arrays, axis=0, out=None):
+def stack(arrays, axis: int =0, out=None):
   if not len(arrays):
     raise ValueError("Need at least one array to stack.")
   if out is not None:
@@ -2619,7 +2645,7 @@ def tile(A, reps):
   return reshape(result, tuple(np.multiply(A_shape, reps)))
 
 @_wraps(np.concatenate)
-def concatenate(arrays, axis=0):
+def concatenate(arrays, axis: int = 0):
   _check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
@@ -2958,7 +2984,7 @@ def _wrap_numpy_nullary_function(f):
 
 @_wraps(np.linspace)
 def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
-             axis=0):
+             axis: int = 0):
   """Implementation of linspace differentiable in start and stop args."""
   lax._check_user_dtype_supported(dtype, "linspace")
   if num < 0:
@@ -3006,7 +3032,8 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
 
 
 @_wraps(np.logspace)
-def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
+def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
+             axis: int = 0):
   """Implementation of logspace differentiable in start and stop args."""
   lax._check_user_dtype_supported(dtype, "logspace")
   dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
@@ -3019,7 +3046,7 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
 
 
 @_wraps(np.geomspace)
-def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
+def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   """Implementation of geomspace differentiable in start and stop args."""
   lax._check_user_dtype_supported(dtype, "geomspace")
   dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
@@ -3133,7 +3160,7 @@ will be repeated.
 
 
 @_wraps(np.repeat, lax_description=_TOTAL_REPEAT_LENGTH_DOC)
-def repeat(a, repeats, axis=None, *, total_repeat_length=None):
+def repeat(a, repeats, axis: Optional[int] = None, *, total_repeat_length=None):
   _check_arraylike("repeat", a)
 
   if axis is None:
@@ -3232,7 +3259,7 @@ def triu(m, k=0):
 
 
 @_wraps(np.trace)
-def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
+def trace(a, offset=0, axis1: int = 0, axis2: int = 1, dtype=None, out=None):
   _check_arraylike("trace", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
@@ -3303,7 +3330,7 @@ def diag_indices_from(arr):
   return diag_indices(arr.shape[0], ndim=arr.ndim)
 
 @_wraps(np.diagonal)
-def diagonal(a, offset=0, axis1=0, axis2=1):
+def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
   _check_arraylike("diagonal", a)
   a_shape = shape(a)
   a_ndims = len(a_shape)
@@ -3436,7 +3463,7 @@ def polysub(a1, a2):
 
 
 @_wraps(np.append)
-def append(arr, values, axis=None):
+def append(arr, values, axis: Optional[int] = None):
   if axis is None:
     return concatenate([ravel(arr), ravel(values)], 0)
   else:
@@ -3444,7 +3471,7 @@ def append(arr, values, axis=None):
 
 
 @_wraps(np.apply_along_axis)
-def apply_along_axis(func1d, axis, arr, *args, **kwargs):
+def apply_along_axis(func1d, axis: int, arr, *args, **kwargs):
   num_dims = ndim(arr)
   axis = _canonicalize_axis(axis, num_dims)
   func = lambda arr: func1d(arr, *args, **kwargs)
@@ -3783,7 +3810,8 @@ def _cross(a, b, axisa, axisb, axisc):
   return moveaxis(c, 0, axisc)
 
 @_wraps(np.cross)
-def cross(a, b, axisa=-1, axisb=-1, axisc=-1, axis=None):
+def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
+          axis: Optional[int] = None):
   if axis is not None:
     axisa = axis
     axisb = axis
@@ -3833,7 +3861,7 @@ def argwhere(a):
 
 
 @_wraps(np.argmax)
-def argmax(a, axis=None, out=None):
+def argmax(a, axis: Optional[int] = None, out=None):
   _check_arraylike("argmax", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmax is not supported.")
@@ -3845,7 +3873,7 @@ def argmax(a, axis=None, out=None):
   return lax.argmax(a, _canonicalize_axis(axis, a.ndim), int64)
 
 @_wraps(np.argmin)
-def argmin(a, axis=None, out=None):
+def argmin(a, axis: Optional[int] = None, out=None):
   _check_arraylike("argmin", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmin is not supported.")
@@ -3863,7 +3891,7 @@ an error.
 """
 
 @_wraps(np.nanargmax, lax_description=_NANARG_DOC.format("max"))
-def nanargmax(a, axis=None):
+def nanargmax(a, axis: Optional[int] = None):
   _check_arraylike("nanargmax", a)
   if not issubdtype(_dtype(a), inexact):
     return argmax(a, axis=axis)
@@ -3873,7 +3901,7 @@ def nanargmax(a, axis=None):
   return where(all(nan_mask, axis=axis), -1, res)
 
 @_wraps(np.nanargmin, lax_description=_NANARG_DOC.format("min"))
-def nanargmin(a, axis=None):
+def nanargmin(a, axis: Optional[int] = None):
   _check_arraylike("nanargmin", a)
   if not issubdtype(_dtype(a), inexact):
     return argmin(a, axis=axis)
@@ -3884,7 +3912,7 @@ def nanargmin(a, axis=None):
 
 
 @_wraps(np.sort)
-def sort(a, axis=-1, kind='quicksort', order=None):
+def sort(a, axis: Optional[int] = -1, kind='quicksort', order=None):
   _check_arraylike("sort", a)
   if kind != 'quicksort':
     warnings.warn("'kind' argument to sort is ignored.")
@@ -3917,7 +3945,7 @@ def lexsort(keys, axis=-1):
 
 
 @_wraps(np.argsort)
-def argsort(a, axis=-1, kind='quicksort', order=None):
+def argsort(a, axis: Optional[int] = -1, kind='quicksort', order=None):
   _check_arraylike("argsort", a)
   if kind != 'quicksort':
     warnings.warn("'kind' argument to argsort is ignored.")
@@ -3927,9 +3955,9 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
   if axis is None:
     return argsort(a.ravel(), 0)
   else:
-    axis = _canonicalize_axis(axis, ndim(a))
-    iota = lax.broadcasted_iota(np.int64, shape(a), axis)
-    _, perm = lax.sort_key_val(a, iota, dimension=axis)
+    axis_num = _canonicalize_axis(axis, ndim(a))
+    iota = lax.broadcasted_iota(np.int64, shape(a), axis_num)
+    _, perm = lax.sort_key_val(a, iota, dimension=axis_num)
     return perm
 
 
@@ -3963,14 +3991,14 @@ def _roll(a, shift, axis):
 
 
 @_wraps(np.roll)
-def roll(a, shift, axis=None):
+def roll(a, shift, axis: Optional[Union[int, Sequence[int]]] = None):
   if isinstance(axis, list):
     axis = tuple(axis)
   return _roll(a, shift, axis)
 
 
 @_wraps(np.rollaxis)
-def rollaxis(a, axis, start=0):
+def rollaxis(a, axis: int, start=0):
   _check_arraylike("rollaxis", a)
   a_ndim = ndim(a)
   axis = _canonicalize_axis(axis, a_ndim)
@@ -3984,7 +4012,7 @@ def rollaxis(a, axis, start=0):
 
 
 @_wraps(np.packbits)
-def packbits(a, axis=None, bitorder='big'):
+def packbits(a, axis: Optional[int] = None, bitorder='big'):
   a = asarray(a)
   if not (issubdtype(dtype(a), integer) or issubdtype(dtype(a), bool_)):
     raise TypeError('Expected an input array of integer or boolean data type')
@@ -4009,7 +4037,7 @@ def packbits(a, axis=None, bitorder='big'):
 
 
 @_wraps(np.unpackbits)
-def unpackbits(a, axis=None, count=None, bitorder='big'):
+def unpackbits(a, axis: Optional[int] = None, count=None, bitorder='big'):
   a = asarray(a)
   if dtype(a) != uint8:
     raise TypeError("Expected an input array of unsigned byte data type")
@@ -4028,7 +4056,7 @@ def unpackbits(a, axis=None, count=None, bitorder='big'):
 
 
 @_wraps(np.take)
-def take(a, indices, axis=None, out=None, mode=None):
+def take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
 
@@ -4037,26 +4065,27 @@ def take(a, indices, axis=None, out=None, mode=None):
 
   if axis is None:
     a = ravel(a)
-    axis = 0
-  axis = _canonicalize_axis(axis, ndim(a))
+    axis_idx = 0
+  else:
+    axis_idx = _canonicalize_axis(axis, ndim(a))
 
   if mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
     raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
-    indices = mod(indices, _constant_like(indices, a.shape[axis]))
+    indices = mod(indices, _constant_like(indices, a.shape[axis_idx]))
   elif mode != "clip" and mode is not None:
     raise ValueError("Invalid mode '{}' for np.take".format(mode))
 
   index_dims = len(shape(indices))
   slice_sizes = list(shape(a))
-  slice_sizes[axis] = _min(indices.size, 1)
+  slice_sizes[axis_idx] = _min(indices.size, 1)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(
-      list(range(axis)) +
-      list(range(axis + index_dims, len(a.shape) + index_dims - 1))),
-    collapsed_slice_dims=(axis,),
-    start_index_map=(axis,))
+      list(range(axis_idx)) +
+      list(range(axis_idx + index_dims, len(a.shape) + index_dims - 1))),
+    collapsed_slice_dims=(axis_idx,),
+    start_index_map=(axis_idx,))
   return lax.gather(a, indices[..., None], dimension_numbers=dnums,
                     slice_sizes=tuple(slice_sizes))
 
@@ -4144,7 +4173,7 @@ def _take_along_axis(arr, indices, axis):
 
 
 @_wraps(getattr(np, "take_along_axis", None), update_doc=False)
-def take_along_axis(arr, indices, axis):
+def take_along_axis(arr, indices, axis: Optional[int]):
   _check_arraylike("take_along_axis", arr)
   return _take_along_axis(arr, indices, axis)
 
@@ -4202,7 +4231,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
 
 @_wraps(np.unique)
 def unique(ar, return_index=False, return_inverse=False,
-           return_counts=False, axis=None):
+           return_counts=False, axis: Optional[int] = None):
   ar = core.concrete_or_error(asarray, ar, "The error arose in jnp.unique()")
 
   if iscomplexobj(ar):
@@ -4689,7 +4718,7 @@ def extract(condition, arr):
 
 
 @_wraps(np.compress)
-def compress(condition, a, axis=None, out=None):
+def compress(condition, a, axis: Optional[int] = None, out=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.compress is not supported.")
   if ndim(condition) != 1:
@@ -4787,8 +4816,8 @@ def corrcoef(x, y=None, rowvar=True):
 
 
 @_wraps(getattr(np, "quantile", None))
-def quantile(a, q, axis=None, out=None, overwrite_input=False,
-             interpolation="linear", keepdims=False):
+def quantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+             overwrite_input=False, interpolation="linear", keepdims=False):
   _check_arraylike("quantile", a, q)
   if overwrite_input or out is not None:
     msg = ("jax.numpy.quantile does not support overwrite_input=True or "
@@ -4797,8 +4826,9 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
   return _quantile(a, q, axis, interpolation, keepdims, False)
 
 @_wraps(getattr(np, "nanquantile", None))
-def nanquantile(a, q, axis=None, out=None, overwrite_input=False,
-                interpolation="linear", keepdims=False):
+def nanquantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+                out=None, overwrite_input=False, interpolation="linear",
+                keepdims=False):
   _check_arraylike("nanquantile", a, q)
   if overwrite_input or out is not None:
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
@@ -4975,29 +5005,33 @@ def piecewise(x, condlist, funclist, *args, **kw):
 
 
 @_wraps(np.percentile)
-def percentile(a, q, axis=None, out=None, overwrite_input=False,
-               interpolation="linear", keepdims=False):
+def percentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+               out=None, overwrite_input=False, interpolation="linear",
+               keepdims=False):
   _check_arraylike("percentile", a)
   q = true_divide(asarray(q), float32(100.0))
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, keepdims=keepdims)
 
 @_wraps(np.nanpercentile)
-def nanpercentile(a, q, axis=None, out=None, overwrite_input=False,
-                  interpolation="linear", keepdims=False):
+def nanpercentile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+                  out=None, overwrite_input=False, interpolation="linear",
+                  keepdims=False):
   _check_arraylike("nanpercentile", a)
   q = true_divide(asarray(q), float32(100.0))
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                      interpolation=interpolation, keepdims=keepdims)
 
 @_wraps(np.median)
-def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
+def median(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+           overwrite_input=False, keepdims=False):
   _check_arraylike("median", a)
   return quantile(a, 0.5, axis=axis, out=out, overwrite_input=overwrite_input,
                   keepdims=keepdims, interpolation='midpoint')
 
 @_wraps(np.nanmedian)
-def nanmedian(a, axis=None, out=None, overwrite_input=False, keepdims=False):
+def nanmedian(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+              overwrite_input=False, keepdims=False):
   _check_arraylike("nanmedian", a)
   return nanquantile(a, 0.5, axis=axis, out=out,
                      overwrite_input=overwrite_input, keepdims=keepdims,

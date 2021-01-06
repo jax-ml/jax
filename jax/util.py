@@ -245,7 +245,7 @@ def wrap_name(name, transform_name):
 def extend_name_stack(stack, name=''):
   return stack + name + '/'
 
-def canonicalize_axis(axis, num_dims):
+def canonicalize_axis(axis, num_dims) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
   if not -num_dims <= axis < num_dims:
