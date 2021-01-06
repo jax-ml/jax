@@ -24,6 +24,10 @@ jax 0.2.8 (Unreleased)
   * ``host_callback.outfeed_receiver`` has been removed (it is not necessary,
     and was deprecated a few months ago).
 
+* New features:
+
+  * New flag for debugging ``inf``s, analagous to that for ``NaN``s (`#5224 <https://github.com/google/jax/pull/5224>`_).
+
 jax 0.2.7 (Dec 4 2020)
 ----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.6...jax-v0.2.7>`_.
