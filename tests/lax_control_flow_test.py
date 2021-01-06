@@ -2464,7 +2464,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda: core.check_jaxpr(jaxpr))
 
   def test_cond_typecheck_param(self):
-    raise SkipTest("TODO: test is flaky b/176769043")
     def new_jaxpr():
       jaxpr = api.make_jaxpr(
           lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
