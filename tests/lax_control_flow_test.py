@@ -1930,18 +1930,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
                         rtol={np.float64:1e-7})
 
+  @parameterized.named_parameters(
+      {"testcase_name": "direct_solve",
+       "tangent_solve": lambda g, y: jnp.linalg.solve(api.jacobian(g)(y), y)},
+      {"testcase_name": "iterative_solve",
+       "tangent_solve": lambda g, y: jsp.sparse.linalg.gmres(g, y)[0]},
+  )
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
-  def test_custom_root_vector_with_solve_closure(self):
-
-    def vector_solve(f, y):
-      return jnp.linalg.solve(api.jacobian(f)(y), y)
+  def test_custom_root_vector_with_solve_closure(self, tangent_solve):
 
     def linear_solve(a, b):
       f = lambda y: high_precision_dot(a, y) - b
       x0 = jnp.zeros_like(b)
       solution = jnp.linalg.solve(a, b)
       oracle = lambda func, x0: solution
-      return lax.custom_root(f, x0, oracle, vector_solve)
+      return lax.custom_root(f, x0, oracle, tangent_solve)
 
     rng = np.random.RandomState(0)
     a = rng.randn(2, 2)
