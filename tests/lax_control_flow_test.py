@@ -27,6 +27,7 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
+import jax
 from jax import api
 from jax import core
 from jax import lax
@@ -94,6 +95,12 @@ def posify(matrix):
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    jax._src.lax.control_flow._initial_style_open_jaxpr.cache_clear()
+    jax._src.lax.control_flow._initial_style_jaxpr.cache_clear()
+    jax._src.lax.control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
 
   def testWhileWithTuple(self):
     limit = 10
