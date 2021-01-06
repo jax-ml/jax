@@ -875,25 +875,20 @@ def _add_transform(params: Dict, name: str, *transform_params) -> Dict:
 # TODO(necula): there must be a better way to do this.
 # The AttributeError is for regular values, the KeyError is for ConcreteArray
 def _instantiate_zeros(arg, tan):
-  """Turn special ad.zero tangents into arrays of 0s."""
+  """Turn special ad.zero tangents into arrays of 0s for sending to host."""
+  # return ad.instantiate_zeros(tan)
   if type(tan) is not ad.Zero:
     return tan
 
-  try:
-    aval = arg.aval
-    return ad.instantiate_zeros_aval(aval, tan)
-  except (AttributeError, KeyError):
-    # We get here for regular Python values
-    return ad.zeros_like_jaxval(arg)
-
-
-def _instantiate_zeros_aval(aval, tan):
-  """Turn special ad.zero tangents into arrays of 0s."""
-  if type(tan) is not ad.Zero:
-    return tan
-
-  return ad.instantiate_zeros_aval(aval, tan)
-
+  if tan.aval is core.abstract_unit:
+    if ad.is_undefined_primal(arg):
+      aval = arg.aval
+    else:
+      aval = core.raise_to_shaped(core.get_aval(arg))
+  else:
+    aval = tan.aval
+  res = ad.instantiate_zeros_aval(aval, tan)
+  return res
 
 def _id_tap_jvp_rule(primals, tangents, **params):
   tangent_instantiated = tuple(map(_instantiate_zeros, primals, tangents))
@@ -1579,7 +1574,7 @@ def barrier_wait(logging_name: Optional[str] = None):
 
   Waits until all outfeed from computations already running on all devices
   has been received and processed by the Python callbacks. Raises
-  Callback if there were exceptions while processing the callbacks.
+  CallbackException if there were exceptions while processing the callbacks.
 
   This works by enqueueing a special tap computation to all devices to which
   we are listening for outfeed. Once all those tap computations are done, we

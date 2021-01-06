@@ -49,7 +49,7 @@ def call_tf_no_ad(tf_fun: Callable, arg, *, result_shape):
 
   def tf_to_numpy(t):
     # Turn the Tensor to NumPy array without copying.
-    return np.array(memoryview(t)) if isinstance(t, tf.Tensor) else t
+    return np.asarray(memoryview(t)) if isinstance(t, tf.Tensor) else t
 
   return hcb.call(lambda arg: tf.nest.map_structure(tf_to_numpy,
                                                     tf_fun(arg)),
@@ -162,6 +162,7 @@ class CallToTFTest(jtu.JaxTestCase):
   def setUp(self):
     if tf is None:
       raise unittest.SkipTest("Test requires tensorflow")
+    super().setUp()
 
   @parameterized.named_parameters(
       dict(

@@ -26,12 +26,14 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import api
+from jax.config import config
+from jax import dtypes
+from jax.experimental import host_callback as hcb
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
-from jax.config import config
-from jax.experimental import host_callback as hcb
 from jax.lib import xla_bridge
+
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -201,6 +203,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     testing_stream.reset()
     testing_stream.test_method_name = self._testMethodName
     self.old_flags = os.getenv("XLA_FLAGS", "")
+    super().setUp()
 
   def tearDown(self) -> None:
     if os.getenv("XLA_FLAGS") != self.old_flags:
@@ -961,6 +964,37 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           0.00 )""", testing_stream.output)
     testing_stream.reset()
 
+  @skipIf(not config.omnistaging_enabled,
+          "test works only with omnistaging enabled")
+  def test_jvp_float0(self):
+    def f(x, yint):
+      x, yint = hcb.id_tap(lambda arg, _: arg, (x, yint))
+      return x * yint
+
+    res = api.jvp(f, (2., 3), (0.2, np.zeros((), dtypes.float0)))
+    self.assertAllClose((6., 0.6), res)
+
+  @skipIf(not config.omnistaging_enabled,
+          "test works only with omnistaging enabled")
+  def test_grad_float0(self):
+    def func(x, yint):
+      x, yint = hcb.id_print((x, yint), what="pair", output_stream=testing_stream)
+      return x * yint
+
+    grad_func = api.grad(func)
+
+    res_grad = grad_func(jnp.float32(5.), jnp.int32(2))
+    self.assertAllClose(2., res_grad, check_dtypes=False)
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+        what: pair
+        ( 5.00
+          2 )
+        transforms: ['jvp', 'transpose'] what: pair
+        ( 2.00
+          False )""", testing_stream.output)
+    testing_stream.reset()
+
   def test_vmap(self):
     vmap_fun1 = api.vmap(fun1)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
@@ -1076,6 +1110,61 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         transforms: [('batch', {'batch_dims': (0,)})] where: 3
         [2 2 2 3 4]""", testing_stream.output)
     testing_stream.reset()
+
+  @skipIf(not config.omnistaging_enabled,
+          "test works only with omnistaging enabled")
+  def test_composed(self):
+    def power(x, n):
+      x, n = hcb.id_print((x, n), output_stream=testing_stream)
+      return x * x * n * x
+
+    def f(x, n):
+      return x * power(x + 1., n)
+
+    x = 3.
+    print("impl = ", f(x, 2.))
+    hcb.barrier_wait()
+    expected = """
+        ( 4.
+          2. )"""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+    testing_stream.reset()
+
+    print("jvp = ", api.jvp(lambda x: f(x, 2.), (x,), (1.,)))
+    hcb.barrier_wait()
+    expected = """
+        transforms: ['jvp']
+        ( ( 4.
+            2. )
+          ( 1.
+            0. ) )"""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+    testing_stream.reset()
+
+    print("grad = ", api.grad(f)(x, 2.))
+    hcb.barrier_wait()
+    expected = """
+        ( 4.
+          2. )
+        transforms: ['jvp', 'transpose']
+        ( 288.
+          192. )"""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+    testing_stream.reset()
+
+    xv = np.array([3., 4.])
+    print("vmap o grad = ", api.vmap(api.grad(f))(xv, np.array([2., 3.])))
+    hcb.barrier_wait()
+    expected = """
+        transforms: [('batch', {'batch_dims': (0, 0)})]
+        ( [4. 5.]
+          [2. 3.] )
+        transforms: ['jvp', 'transpose', ('batch', {'batch_dims': (0, 0)})]
+        ( [288. 900.]
+          [192. 500.] )"""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+    testing_stream.reset()
+
 
   def test_pmap(self):
     xv = jnp.arange(api.device_count(), dtype=jnp.int32)
@@ -1460,8 +1549,8 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
               ( 3 ) ) )
           ( ( [0.  0.1 0.2 0.3 0.4]
               [0.  0.2 0.4 0.6 0.8] )
-            ( ( 0 )
-              ( 0 ) ) ) )""", testing_stream.output)
+            ( ( False )
+              ( False ) ) ) )""", testing_stream.output)
     testing_stream.reset()
 
     # Now with JIT
@@ -1605,22 +1694,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
       1"""
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
-  def test_composed(self):
-    def power(x, n):
-      x, n = hcb.id_print((x, n))
-      return x ** n
 
-    def f(x, n):
-      return x * power(x + 1., n)
-
-    x = 3.
-    print("impl = ", f(x, 2.))
-    print("jvp = ", api.jvp(lambda x: f(x, 2), (x,), (1.,)))
-    print("grad = ", api.grad(f)(x, 2.))
-    xv = np.array([3., 4.])
-    print("vmap o grad = ", api.vmap(api.grad(f))(xv, np.array([2., 3.])))
 
 
 class HostCallbackCallTest(jtu.JaxTestCase):
@@ -1629,9 +1703,11 @@ class HostCallbackCallTest(jtu.JaxTestCase):
   def setUp(self):
     testing_stream.reset()
     testing_stream.test_method_name = self._testMethodName
+    super().setUp()
 
   def tearDown(self) -> None:
     hcb.barrier_wait("HostCallbackCallTest.tearDown")
+    super().tearDown()
 
   def call_log_testing_stream(self, func, arg, *, result_shape, name=""):
     """Call `func` and log inputs and outputs to the testing stream"""
@@ -1909,6 +1985,7 @@ class CallJaxTest(jtu.JaxTestCase):
       if len(api.devices("cpu")) == 1:
         raise SkipTest("Test needs at least two devices. On CPU use XLA_FLAGS=--xla_force_host_platform_device_count=2")
       self.outside_device = api.devices("cpu")[1]
+    super().setUp()
 
   def test_impl(self):
     def f_jax(x):
