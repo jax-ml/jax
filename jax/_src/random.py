@@ -28,7 +28,7 @@ from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
 from jax import core
-from jax.numpy.linalg import cholesky
+from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
@@ -642,7 +642,8 @@ def multivariate_normal(key: jnp.ndarray,
                         mean: jnp.ndarray,
                         cov: jnp.ndarray,
                         shape: Optional[Sequence[int]] = None,
-                        dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
+                        dtype: np.dtype = dtypes.float_,
+                        method: str = 'cholesky') -> jnp.ndarray:
   """Sample multivariate normal random values with given mean and covariance.
 
   Args:
@@ -657,22 +658,25 @@ def multivariate_normal(key: jnp.ndarray,
       broadcasting together the batch shapes of ``mean`` and ``cov``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
-
+    method: optinoal, a method to compute the factor of ``cov``.
+      Must be one of 'svd', eigh, and 'cholesky'. Default 'cholesky'.
   Returns:
     A random array with the specified dtype and shape given by
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
+  if method not in {'svd', 'eigh', 'cholesky'}:
+    raise ValueError("method must be one of {'svd', 'eigh', 'cholesky'}")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype)  # type: ignore
+  return _multivariate_normal(key, mean, cov, shape, dtype, method)  # type: ignore
 
-@partial(jit, static_argnums=(3, 4))
-def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
+@partial(jit, static_argnums=(3, 4, 5))
+def _multivariate_normal(key, mean, cov, shape, dtype, method) -> jnp.ndarray:
   if not np.ndim(mean) >= 1:
     msg = "multivariate_normal requires mean.ndim >= 1, got mean.ndim == {}"
     raise ValueError(msg.format(np.ndim(mean)))
@@ -690,9 +694,16 @@ def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
   else:
     _check_shape("normal", shape, mean.shape[:-1], cov.shape[:-2])
 
-  chol_factor = cholesky(cov)
+  if method == 'svd':
+    (u, s, _) = svd(cov)
+    factor = u * jnp.sqrt(s)
+  elif method == 'eigh':
+    (w, v) = eigh(cov)
+    factor = v * jnp.sqrt(w)
+  else: # 'cholesky'
+    factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
-  return mean + jnp.einsum('...ij,...j->...i', chol_factor, normal_samples)
+  return mean + jnp.einsum('...ij,...j->...i', factor, normal_samples)
 
 
 def truncated_normal(key: jnp.ndarray,
