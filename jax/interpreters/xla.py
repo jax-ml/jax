@@ -63,7 +63,7 @@ flags.DEFINE_bool('jax_debug_nans',
                   bool_env('JAX_DEBUG_NANS', False),
                   'Add nan checks to every operation.')
 flags.DEFINE_bool('jax_debug_infs',
-                  bool_env('JAX_DEBUG_infs', False),
+                  bool_env('JAX_DEBUG_INFS', False),
                   'Add inf checks to every operation.')
 flags.DEFINE_bool('jax_log_compiles',
                   bool_env('JAX_LOG_COMPILES', False),
