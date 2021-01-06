@@ -48,6 +48,25 @@ class InfeedTest(jtu.JaxTestCase):
     device.transfer_to_infeed((z,))
     self.assertAllClose(f(x), x + y + z)
 
+  def testInfeedPytree(self):
+
+    x = np.float32(1.5)
+    y = np.reshape(np.arange(12, dtype=np.int16), (3, 4))
+    to_infeed = dict(a=x, b=y)
+    to_infeed_shape = dict(a=jax.ShapedArray((), dtype=np.float32),
+                           b=jax.ShapedArray((3, 4), dtype=np.int16))
+    @jax.jit
+    def f(x):
+      token = lax.create_token(x)
+      res, token = lax.infeed(token, shape=to_infeed_shape)
+      return res
+
+    device = jax.local_devices()[0]
+    # We must transfer the flattened data, as a tuple!!!
+    flat_to_infeed, _ = jax.tree_flatten(to_infeed)
+    device.transfer_to_infeed(tuple(flat_to_infeed))
+    self.assertAllClose(f(x), to_infeed)
+
   def testInfeedThenOutfeed(self):
     hcb.stop_outfeed_receiver()
 

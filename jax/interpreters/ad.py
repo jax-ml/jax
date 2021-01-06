@@ -521,7 +521,7 @@ def instantiate_zeros(tangent):
   else:
     return tangent
 
-# This function seems similar to instantaite_zeros, but it is sometimes used
+# This function seems similar to instantiate_zeros, but it is sometimes used
 # to instantiate zero abstract units with a different aval
 def instantiate_zeros_aval(aval, tangent):
   if type(tangent) is Zero:
