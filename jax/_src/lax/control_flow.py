@@ -2268,7 +2268,8 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
                     'differentiation of custom_linear_solve')
 
   params, b = _split_linear_solve_args(primals, const_lengths)
-  assert all(ad.is_undefined_primal(x) for x in b)
+  assert not any(ad.is_undefined_primal(x) for p in params for x in p), params
+  assert all(ad.is_undefined_primal(x) for x in b), b
   cotangent_b = linear_solve_p.bind(
       *(_flatten(params.transpose()) + cotangent),
       const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose())
