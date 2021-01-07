@@ -1405,44 +1405,70 @@ def _make_sort_harness(name,
                        dtype=np.float32,
                        dimension=0,
                        is_stable=False,
-                       nb_arrays=1):
+                       num_keys=1):
   if operands is None:
-    operands = [RandArg(shape, dtype) for _ in range(nb_arrays)]
+    operands = [RandArg(shape, dtype)]
   define(
-    lax.sort_p,
-    f"{name}_nbarrays={nb_arrays}_shape={jtu.format_shape_dtype_string(operands[0].shape, operands[0].dtype)}_axis={dimension}_isstable={is_stable}",
-    lambda *args: lax.sort_p.bind(
-      *args[:-2], dimension=args[-2], is_stable=args[-1], num_keys=1),
-    [*operands, StaticArg(dimension),
-     StaticArg(is_stable)],
-    shape=operands[0].shape,
-    dimension=dimension,
-    dtype=operands[0].dtype,
-    is_stable=is_stable,
-    nb_arrays=nb_arrays)
+      lax.sort_p,
+      f"{name}_num_arrays={len(operands)}_shape={jtu.format_shape_dtype_string(operands[0].shape, operands[0].dtype)}_axis={dimension}_isstable={is_stable}_num_keys={num_keys}",
+      lambda *args: lax.sort_p.bind(
+          *args[:-3], dimension=args[-3], is_stable=args[-2], num_keys=args[-1]
+      ), [
+          *operands,
+          StaticArg(dimension),
+          StaticArg(is_stable),
+          StaticArg(num_keys)
+      ],
+      shape=operands[0].shape,
+      dimension=dimension,
+      dtype=operands[0].dtype,
+      is_stable=is_stable,
+      num_keys=num_keys,
+      num_arrays=len(operands))
 
+
+_lax_sort_multiple_array_shape = (100,)
+# In order to test lexicographic ordering and sorting stability, the first
+# array contains only integers 0 and 1
+_lax_sort_multiple_array_first_arg = (
+    np.random.uniform(0, 2, _lax_sort_multiple_array_shape).astype(np.int32))
 
 # Validate dtypes
 for dtype in jtu.dtypes.all:
   _make_sort_harness("dtypes", dtype=dtype)
 
 # Validate dimensions
-_make_sort_harness("dimensions", dimension=1)
+for dimension in [0, 1]:
+  _make_sort_harness("dimensions", dimension=dimension)
 # Validate stable sort
 _make_sort_harness("is_stable", is_stable=True)
 # Potential edge cases
 for operands, dimension in [
-  ([np.array([+np.inf, np.nan, -np.nan, -np.inf, 2], dtype=np.float32)], -1)
+  ([np.array([+np.inf, np.nan, -np.nan, -np.inf, 2], dtype=np.float32)], 0)
 ]:
   _make_sort_harness("edge_cases", operands=operands, dimension=dimension)
 
-# Validate multiple arrays
-for nb_arrays, dtype in [
-  (2, np.float32),  # equivalent to sort_key_val
-  (2, np.bool_),  # unsupported
-  (3, np.float32),  # unsupported
-]:
-  _make_sort_harness("multiple_arrays", nb_arrays=nb_arrays, dtype=dtype)
+# Validate multiple arrays, num_keys, and is_stable
+for is_stable in [False, True]:
+  for operands in (
+      [
+          _lax_sort_multiple_array_first_arg,
+          RandArg(_lax_sort_multiple_array_shape, np.int32)
+      ],
+      [
+          _lax_sort_multiple_array_first_arg,
+          RandArg(_lax_sort_multiple_array_shape, np.int32),
+          RandArg(_lax_sort_multiple_array_shape, np.float32)
+      ],
+  ):
+    for num_keys in range(1, len(operands) + 1):
+      _make_sort_harness(
+          "multiple_arrays",
+          operands=operands,
+          num_keys=num_keys,
+          is_stable=is_stable,
+          shape=_lax_sort_multiple_array_first_arg.shape,
+          dtype=_lax_sort_multiple_array_first_arg.dtype)
 
 
 def _make_cholesky_arg(shape, dtype, rng):

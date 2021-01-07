@@ -15,7 +15,7 @@
 import functools
 import re
 import string
-from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import jax
 from jax import ad_util, api, api_util, config
@@ -1221,8 +1221,8 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
 
   def convert_dilation_and_compute_result(tf_padding, tf_dim_nums):
     no_dilation = [1] * nb_spatial_dimensions
-      # TODO(bchetioui): is there a generic way to do a transposed atrous
-      # convolution in TensorFlow?
+    # TODO(bchetioui): is there a generic way to do a transposed atrous
+    # convolution in TensorFlow?
     if not (list(lhs_dilation) == no_dilation or
             list(rhs_dilation) == no_dilation):
       return "Both LHS and RHS dilations are set"
@@ -1299,35 +1299,35 @@ def _dot_general(lhs, rhs, dimension_numbers, precision):
       and 1 <= rhs_dim - len(rhs_batch) <= 2
       and lhs_contracting == (len(lhs.shape) - 1,)
       and rhs_contracting == (len(lhs_batch),)):
-        # All the inputs to tf.linalg.matmul must have 2 inner dimensions,
-        # after their batch dimensions, so we need to expand the dimensions
-        # appropriately. We can get to this branch with three combinations of
-        # inner shapes:
-        # - lhs.inner_shape == [a, b], rhs.inner_shape == [b, c]
-        #   - in this case, the resulting inner shape is [a, c];
-        # - lhs.inner_shape == [b]   , rhs.inner_shape == [b, c]
-        #   - in this case, we need to expand lhs to [1, b], and the resulting
-        #     shape is [c]. We need to squeeze the result of tf.linalg.matmul
-        #     as it will have shape [1, c];
-        # - lhs.shape == [batch] + [a, b], rhs.shape == [batch] + [b]
-        #   - in this case, we need to expand rhs to [b, 1], and the resulting
-        #     shape is [a]. We need to squeeze the result of tf.linalg.matmul
-        #     as it will have shape [a, 1];
-        # - lhs.shape == [batch] + [b]   , rhs.shape == [batch] + [b]
-        #   - in this case, we need to expand lhs to [1, b] and rhs to [b, 1],
-        #     and the resulting shape is (). We need to squeeze the result of
-        #     tf.linalg.matmul as it will have shape [1, 1].
-        squeeze_idxs = []
-        if lhs_dim - len(lhs_batch) == 1:
-          lhs = tf.expand_dims(lhs, lhs_dim - 1)
-          squeeze_idxs.append(len(lhs.shape) - 2)
-        if rhs_dim - len(rhs_batch) == 1:
-          rhs = tf.expand_dims(rhs, rhs_dim - 2)
-          squeeze_idxs.append(len(rhs.shape) - 1)
-        result = tf.linalg.matmul(lhs, rhs)
-        if len(squeeze_idxs) != 0:
-          result = tf.squeeze(result, squeeze_idxs)
-        return result
+    # All the inputs to tf.linalg.matmul must have 2 inner dimensions,
+    # after their batch dimensions, so we need to expand the dimensions
+    # appropriately. We can get to this branch with three combinations of
+    # inner shapes:
+    # - lhs.inner_shape == [a, b], rhs.inner_shape == [b, c]
+    #   - in this case, the resulting inner shape is [a, c];
+    # - lhs.inner_shape == [b]   , rhs.inner_shape == [b, c]
+    #   - in this case, we need to expand lhs to [1, b], and the resulting
+    #     shape is [c]. We need to squeeze the result of tf.linalg.matmul
+    #     as it will have shape [1, c];
+    # - lhs.shape == [batch] + [a, b], rhs.shape == [batch] + [b]
+    #   - in this case, we need to expand rhs to [b, 1], and the resulting
+    #     shape is [a]. We need to squeeze the result of tf.linalg.matmul
+    #     as it will have shape [a, 1];
+    # - lhs.shape == [batch] + [b]   , rhs.shape == [batch] + [b]
+    #   - in this case, we need to expand lhs to [1, b] and rhs to [b, 1],
+    #     and the resulting shape is (). We need to squeeze the result of
+    #     tf.linalg.matmul as it will have shape [1, 1].
+    squeeze_idxs = []
+    if lhs_dim - len(lhs_batch) == 1:
+      lhs = tf.expand_dims(lhs, lhs_dim - 1)
+      squeeze_idxs.append(len(lhs.shape) - 2)
+    if rhs_dim - len(rhs_batch) == 1:
+      rhs = tf.expand_dims(rhs, rhs_dim - 2)
+      squeeze_idxs.append(len(rhs.shape) - 1)
+    result = tf.linalg.matmul(lhs, rhs)
+    if len(squeeze_idxs) != 0:
+      result = tf.squeeze(result, squeeze_idxs)
+    return result
 
   new_id = iter(string.ascii_letters)
   lhs_axis_ids = [next(new_id) for _ in lhs.shape]
@@ -1405,8 +1405,6 @@ def _pad(operand, padding_value, *, padding_config,
   if not _enable_xla:
     raise _xla_path_disabled_error("pad")
   out = tfxla.pad(operand, padding_value, low, high, interior)
-  # TODO(necula): implement shape inference for XlaPad
-  out.set_shape(_aval_to_tf_shape(_out_aval))
   return out
 tf_impl_with_avals[lax.pad_p] = _pad
 
@@ -1987,29 +1985,72 @@ def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
 
   conversion_dtype = promote_tf_dtype(operand.dtype)
   if conversion_dtype:
-    values, indices = tf.math.top_k(tf.dtypes.cast(operand, conversion_dtype), k=k, sorted=True)
+    values, indices = tf.math.top_k(tf.dtypes.cast(operand, conversion_dtype),
+                                    k=k, sorted=True)
     return tf.dtypes.cast(values, operand.dtype), indices
   else:
     return tf.math.top_k(operand, k=k, sorted=True)
 
 tf_impl[lax.top_k_p] = _top_k
 
-def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tuple[TfVal, ...]:
-  if num_keys != 1:
-    raise NotImplementedError("TODO: multiple keys")
-  if len(operand) > 2:
-    raise NotImplementedError("TODO: handle > 2 tensors")
-  if is_stable:
-    raise NotImplementedError("TODO: implement stable version of XlaSort")
-  if dimension == len(operand[0].shape) - 1:
-    if not _enable_xla:
-      raise _xla_path_disabled_error("sort")
-    if len(operand) == 2:
-      return tuple(tfxla.key_value_sort(operand[0], operand[1]))
-    else:
-      return (tfxla.sort(operand[0]),)
-  else:
-    raise NotImplementedError("TODO: implement XlaSort for all axes")
+
+def _sort(*operands: TfVal, dimension: int, is_stable: bool,
+          num_keys: int) -> Tuple[TfVal, ...]:
+  if not _enable_xla:
+    raise _xla_path_disabled_error("sort")
+  assert 1 <= num_keys <= len(operands)
+  assert all([operands[0].shape == op.shape for op in operands[1:]])
+  assert 0 <= dimension < len(
+      operands[0].shape
+  ), f"Invalid {dimension} for ndim {len(operands[0].shape)}"
+
+  # The comparator is a 2N-argument TF function, with arguments [2k] and [2k +1]
+  # corresponding to two scalars from operand[k].
+  def lexicographic_comparator_old(*tf_args: TfVal) -> TfVal:
+    assert len(tf_args) == 2 * len(operands)
+    # We build a comparison:
+    #     arg[0] < arg[1] or (arg[0] == arg[1] and (arg[2] < arg[3] or ...))
+    # all the way to arg[2 * num_keys - 2] < arg[2 * num_keys - 1]
+    inside_comparison = None
+    for key_idx in range(num_keys - 1, -1, -1):
+      a = tf_args[2 * key_idx]
+      b = tf_args[2 * key_idx + 1]
+      a_lt_b = tf.math.less(a, b)
+      if inside_comparison is None:
+        inside_comparison = a_lt_b
+      else:
+        inside_comparison = tf.math.logical_or(
+            a_lt_b, tf.math.logical_and(tf.math.equal(a, b), inside_comparison))
+    return inside_comparison
+
+  comparator_spec: List[tf.TensorSpec] = []
+  comparator_jax_in_avals: List[core.AbstractValue] = []
+  for op in operands:
+    o_spec = tf.TensorSpec((), dtype=op.dtype)
+    comparator_spec.extend([o_spec, o_spec])
+    o_aval = core.ShapedArray((), to_jax_dtype(op.dtype))
+    comparator_jax_in_avals.extend([o_aval, o_aval])
+
+  # Use the same comparator that JAX uses when compiling to XLA, to get the
+  # proper NaN/Inf total order, and the lexicographic ordering.
+  # The comparator is a 2N-argument TF function, with arguments [2k] and [2k +1]
+  # corresponding to two scalars from operand[k].
+  def lexicographic_comparator(*tf_args: TfVal) -> TfVal:
+    return _convert_jax_impl(
+        lax._sort_lt_comparator, multiple_results=False)(
+            *tf_args,
+            _in_avals=comparator_jax_in_avals,
+            _out_aval=core.ShapedArray((), np.bool_),
+            num_keys=num_keys)
+
+  xla_comparator_computation = (
+      tf.function(lexicographic_comparator,
+                  autograph=False).get_concrete_function(*comparator_spec))
+  results = tfxla.variadic_sort(operands, dimension=dimension,
+                                is_stable=is_stable,
+                                comparator=xla_comparator_computation)
+  return results
+
 
 tf_impl[lax.sort_p] = _sort
 

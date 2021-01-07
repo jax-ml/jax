@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-12-31*
+*Last generated on (YYYY-MM-DD): 2021-01-07*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -151,9 +151,8 @@ More detailed information can be found in the
 | select_and_scatter_add | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
 | sign | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | sinh | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
-| sort | TF error: TODO: XlaSort does not support more than 2 arrays | all | cpu, gpu, tpu | compiled, eager, graph |
-| sort | TF error: TODO: XlaSort does not support sorting axis | all | cpu, gpu, tpu | compiled, eager, graph |
-| sort | TF error: op not defined for dtype | complex | cpu, gpu | eager, graph |
+| sort | TF error: op not defined for dtype | complex, float64 | cpu, gpu | compiled, eager, graph |
+| sort | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | sub | TF error: op not defined for dtype | uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | svd | TF error: function not compilable. Implemented using `tf.linalg.svd` and `tf.linalg.adjoint` | complex | cpu, gpu | compiled |
 | svd | TF error: op not defined for dtype | bfloat16 | tpu | compiled |
