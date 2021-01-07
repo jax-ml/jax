@@ -65,7 +65,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
-from jax.experimental import jax2tf
 from jax.interpreters import xla
 
 import numpy as np
@@ -287,31 +286,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_reduce_ops_with_boolean_input(self, f_jax):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
-
-  # test_bfloat16_constant checks that https://github.com/google/jax/issues/3942 is
-  # fixed
-  # TODO(bchetioui): re-enable this test once recursion issues are addressed.
-  @unittest.skipIf(True, "Infinite recursion after changes in #5085")
-  def test_bfloat16_constant(self):
-
-    def jax_fn_scalar(x):
-      x = x.astype(jnp.bfloat16)
-      x *= 2.
-      return x
-
-    def jax_fn_array(x):
-      x = x.astype(jnp.bfloat16)
-      x *= np.array([1.5, 2.5, 3.5], jnp.bfloat16)
-      return x
-
-    tf_fn_scalar = jax2tf.convert(jax_fn_scalar)
-    self.assertAllClose(tf_fn_scalar(1.375).numpy(), jnp.bfloat16(2.750))
-
-    tf_fn_array = jax2tf.convert(jax_fn_array)
-    self.assertAllClose(
-        tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
-                                                   jnp.bfloat16))
-
 
 
 if __name__ == "__main__":
