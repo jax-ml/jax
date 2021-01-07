@@ -421,6 +421,26 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(my_test_function)(2)
     self.assertIn("my_test_function/foo", log[0])
 
+  def test_bfloat16_constant(self):
+    # Re: https://github.com/google/jax/issues/3942
+    def jax_fn_scalar(x):
+      x = x.astype(jnp.bfloat16)
+      x *= 2.
+      return x
+
+    def jax_fn_array(x):
+      x = x.astype(jnp.bfloat16)
+      x *= np.array([1.5, 2.5, 3.5], jnp.bfloat16)
+      return x
+
+    tf_fn_scalar = jax2tf.convert(jax_fn_scalar)
+    self.assertAllClose(tf_fn_scalar(1.375).numpy(), jnp.bfloat16(2.750))
+
+    tf_fn_array = jax2tf.convert(jax_fn_array)
+    self.assertAllClose(
+        tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
+                                                   jnp.bfloat16))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
