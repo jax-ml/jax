@@ -159,6 +159,9 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_slow_all_to_all_warning()
   def testTrees(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
       n = lax.psum(1, axis_name)
@@ -182,9 +185,7 @@ class PmapTest(jtu.JaxTestCase):
     assert_allclose(jax_f(lax.psum)(x), np_f(np.sum)(x))
     assert_allclose(jax_f(lax.pmean)(x), np_f(np.mean)(x))
     assert_allclose(jax_f(ptranspose)(x), np_transpose(x))
-    # NOTE: ppermute only supported on TPU.
-    if jtu.device_under_test() not in ("cpu", "gpu"):
-      assert_allclose(jax_f(protate)(x), np_rotate(x))
+    assert_allclose(jax_f(protate)(x), np_rotate(x))
 
   def testCollectivesWithTreesOfDifferentDtypes(self):
     n = len(jax.devices())
@@ -217,8 +218,9 @@ class PmapTest(jtu.JaxTestCase):
       "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
   def testAllToAll(self, split_axis, concat_axis):
-    if jtu.device_under_test() != "tpu":
-      raise SkipTest("all_to_all not implemented on non-TPU platforms")
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+
     pmap_in_axis = 0
     shape = (xla_bridge.device_count(),) * 3
     x = np.arange(np.prod(shape)).reshape(shape)
@@ -238,8 +240,9 @@ class PmapTest(jtu.JaxTestCase):
        "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
   def testAllToAllSplitAxis(self, split_axis, concat_axis):
-    if jtu.device_under_test() != "tpu":
-      raise SkipTest("all_to_all not implemented on non-TPU platforms")
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+
     if xla_bridge.device_count() < 4:
       raise SkipTest("test requires at least four devices")
     pmap_in_axis = 0
@@ -662,7 +665,6 @@ class PmapTest(jtu.JaxTestCase):
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testCollectivePermute(self):
     device_count = xla_bridge.device_count()
     rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
@@ -674,7 +676,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.roll(x, shift=1, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
+  @jtu.skip_on_devices("cpu")
   def testCollectivePermuteGrad(self):
     device_count = xla_bridge.device_count()
     shift_right = [(i, (i + 1)) for i in range(device_count - 1)]
@@ -687,7 +689,6 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.concatenate([np.pi + np.arange(1, device_count), [0]])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testCollectivePermuteCyclicGrad(self):
     device_count = xla_bridge.device_count()
     shift_right = [(i, (i + 1) % device_count) for i in range(device_count)]
@@ -703,7 +704,6 @@ class PmapTest(jtu.JaxTestCase):
 
     jtu.check_grads(g, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2)
 
-  @jtu.skip_on_devices("cpu")
   def testCollectivePermuteCyclicWithPShuffle(self):
     device_count = xla_bridge.device_count()
     values = np.arange(device_count)
@@ -713,7 +713,6 @@ class PmapTest(jtu.JaxTestCase):
     ans = np.asarray(pmap(f, "i")(values))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu")
   def testPShuffleWithBadPerm(self):
     device_count = xla_bridge.device_count()
     bad_perm = list(range(device_count))
@@ -724,7 +723,6 @@ class PmapTest(jtu.JaxTestCase):
       ValueError,
       "`perm` does not represent a permutation: \\[1.*\\]", g)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testPpermuteWithZipObject(self):
     # https://github.com/google/jax/issues/1703
     num_devices = xla_bridge.device_count()
@@ -734,7 +732,6 @@ class PmapTest(jtu.JaxTestCase):
     expected = jnp.asarray(perm, dtype=jnp.float32)
     self.assertAllClose(result, expected)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):
     # This is a test of collective_permute implementing a simple halo exchange
     # to run a rule 30 simulation: https://en.wikipedia.org/wiki/Rule_30
@@ -804,7 +801,6 @@ class PmapTest(jtu.JaxTestCase):
     print(ans)
     self.assertEqual(ans, expected)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testReduceMax(self):
     f = pmap(lambda x: x - lax.pmax(x, 'i'), axis_name='i')
 
@@ -815,7 +811,6 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testReduceMin(self):
     f = pmap(lambda x: x - lax.pmin(x, 'i'), axis_name='i')
 
@@ -1034,6 +1029,8 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(f('i')(x), expected_j.T, check_dtypes=False)
 
   def testAxisIndexNd(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("axis_index doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
     if device_count < 4:
       raise SkipTest("test requires at least four devices")
@@ -1130,12 +1127,10 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
     self.assertAllClose(bz2, bz2, check_dtypes=False)
 
-  @jtu.skip_on_devices("gpu")
   def testPswapaxes(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
-    # TODO: AllToAll not yet implemented on XLA:CPU
-    if jtu.device_under_test() == "cpu":
-      device_count = 1
     shape = (device_count, 3, device_count, 5)
     x = np.arange(prod(shape)).reshape(shape)
 
@@ -1143,12 +1138,10 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("gpu")
   def testGradOfPswapaxes(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
-    # TODO: AllToAll not yet implemented on XLA:CPU
-    if jtu.device_under_test() == "cpu":
-      device_count = 1
     shape = (device_count, 1, device_count)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     w = np.arange(device_count, dtype=np.float32)
@@ -1163,6 +1156,8 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testAllToAllReplicaGroups(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
     # If num_devices = 4, these would be the inputs/outputs:
     # input = [[0, 1], [2, 3], [4, 5], [6, 7]]
     # axis_index_groups = [[0, 1], [2, 3]]
@@ -1191,6 +1186,8 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(fn(x), expected, check_dtypes=False)
 
   def testGradOfAllToAllReplicaGroups(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
     if device_count % 2 != 0:
       raise SkipTest('test requires an even number of devices')
