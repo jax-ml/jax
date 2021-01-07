@@ -2625,6 +2625,7 @@ def omnistaging_disabler() -> None:
     closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     return closed_jaxpr, consts, out_tree()
 
+  @cache()
   def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                                               in_tree, in_avals):
     # When staging the branches of a conditional into jaxprs, constants are
