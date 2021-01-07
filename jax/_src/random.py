@@ -1205,7 +1205,7 @@ def gumbel(key, shape=(), dtype=dtypes.float_):
 def _gumbel(key, shape, dtype):
   _check_shape("gumbel", shape)
   return -jnp.log(-jnp.log(
-      uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)))
+      uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
 
 
 def categorical(key, logits, axis=-1, shape=None):
