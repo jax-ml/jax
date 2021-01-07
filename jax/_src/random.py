@@ -658,7 +658,7 @@ def multivariate_normal(key: jnp.ndarray,
       broadcasting together the batch shapes of ``mean`` and ``cov``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
-    method: optinoal, a method to compute the factor of ``cov``.
+    method: optional, a method to compute the factor of ``cov``.
       Must be one of 'svd', eigh, and 'cholesky'. Default 'cholesky'.
   Returns:
     A random array with the specified dtype and shape given by
