@@ -620,11 +620,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dim={}_dtype={}".format(dim, np.dtype(dtype)),
-       "dim": dim, "dtype": dtype}
+      {"testcase_name": "_dim={}_dtype={}_method={}".format(
+          dim, np.dtype(dtype), method),
+       "dim": dim, "dtype": dtype, "method": method}
       for dim in [1, 3, 5]
-      for dtype in float_dtypes))
-  def testMultivariateNormal(self, dim, dtype):
+      for dtype in float_dtypes
+      for method in ['svd', 'eigh', 'cholesky']))
+  def testMultivariateNormal(self, dim, dtype, method):
     r = np.random.RandomState(dim)
     mean = r.randn(dim)
     cov_factor = r.randn(dim, dim)
@@ -632,7 +634,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     key = random.PRNGKey(0)
     rand = partial(random.multivariate_normal, mean=mean, cov=cov,
-                   shape=(10000,))
+                   shape=(10000,), method=method)
     crand = api.jit(rand)
 
     uncompiled_samples = np.asarray(rand(key), np.float64)
