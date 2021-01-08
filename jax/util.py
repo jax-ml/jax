@@ -21,6 +21,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+partial = functools.partial
 
 def safe_zip(*args):
   n = len(args[0])
@@ -89,12 +90,6 @@ def split_dict(dct, names):
 
 def concatenate(xs):
   return list(it.chain.from_iterable(xs))
-
-def partial(fun, *args, **kwargs):
-  wrapped = functools.partial(fun, *args, **kwargs)
-  functools.update_wrapper(wrapped, fun)
-  wrapped._bound_args = args
-  return wrapped
 
 class partialmethod(functools.partial):
   def __get__(self, instance, owner):
