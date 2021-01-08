@@ -180,9 +180,16 @@ def convert(fun: Callable, *,
 
   def converted_fun(*args: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
-    if config.omnistaging_enabled and not core.trace_state_clean():
-      raise ValueError("convert must be used outside all JAX transformations."
-                       + f"Trace state: {core.thread_local_state.trace_state}")
+    if config.omnistaging_enabled:
+      if not core.trace_state_clean():
+        raise ValueError("convert must be used outside all JAX transformations."
+                         + f"Trace state: {core.thread_local_state.trace_state}")
+    else:
+      if (core.thread_local_state.trace_state.trace_stack.downward or
+          core.thread_local_state.trace_state.trace_stack.upward or
+          core.thread_local_state.trace_state.substack != [core.Sublevel(0)]):
+        raise ValueError("convert must be used outside all JAX transformations."
+                         + f"Trace state: {core.thread_local_state.trace_state}")
 
     # This function may take pytrees of TfVals. We can only set
     # tf.custom_gradient on functions that take a flat argument list.
