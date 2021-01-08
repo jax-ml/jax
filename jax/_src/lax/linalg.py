@@ -253,6 +253,12 @@ def _check_solve_shapes(a, b):
 def _solve(a, b):
   _check_solve_shapes(a, b)
 
+  # Broadcast leading dimensions of b to the shape of a, as is required by
+  # custom_linear_solve.
+  out_shape = tuple(d_a if d_b == 1 else d_b
+                    for d_a, d_b in zip(a.shape[:-1] + (1,), b.shape))
+  b = jnp.broadcast_to(b, out_shape)
+
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
   lu_, _, permutation = lu(lax.stop_gradient(a))

@@ -706,7 +706,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           ((4, 4), (4,)),
           ((8, 8), (8, 4)),
           ((1, 2, 2), (3, 2)),
-          ((2, 1, 3, 3), (2, 4, 3, 4)),
+          ((2, 1, 3, 3), (1, 4, 3, 4)),
           ((1, 0, 0), (1, 0, 2)),
       ]
       for dtype in float_types + complex_types))
