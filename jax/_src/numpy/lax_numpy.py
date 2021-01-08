@@ -2934,16 +2934,11 @@ empty = zeros
 def eye(N, M=None, k=0, dtype=None):
   lax._check_user_dtype_supported(dtype, "eye")
   dtype = float_ if dtype is None else dtype
-  M = N if M is None else M
-  k = int(k)
+  N = operator.index(N)
+  M = N if M is None else operator.index(M)
   if N < 0 or M < 0:
-    msg = "negative dimensions are not allowed, got {} and {}"
-    raise ValueError(msg.format(N, M))
-  if k is not None:
-    k_dtype = _dtype(k)
-    if not issubdtype(k_dtype, integer):
-      msg = "eye argument `k` must be of integer dtype, got {}"
-      raise TypeError(msg.format(k_dtype))
+    raise ValueError(f"negative dimensions are not allowed, got {N} and {M}")
+  k = operator.index(k)
   return lax._eye(dtype, (N, M), k)
 
 
