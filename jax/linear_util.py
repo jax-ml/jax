@@ -66,7 +66,7 @@ import threading
 from typing import Any, Tuple, Callable
 import weakref
 
-from .util import curry
+from ._src.util import curry
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)

@@ -32,7 +32,7 @@ from jax import api
 from jax import core
 from jax import dtypes
 from jax._src import source_info_util
-from jax import util
+from jax._src import util
 from jax._src.lax import lax
 from jax import linear_util as lu
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
@@ -44,8 +44,8 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-from jax.util import (partial, unzip2, unzip3, safe_map, safe_zip, split_list,
-                      cache, extend_name_stack)
+from jax._src.util import (partial, unzip2, unzip3, unzip4, safe_map, safe_zip,
+                           split_list, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves)
@@ -2606,8 +2606,6 @@ ad.primitive_jvps[cummax_p] = partial(_cumulative_jvp_rule, combine_fn=lax.max)
 def omnistaging_disabler() -> None:
   global _initial_style_open_jaxpr, _initial_style_jaxpr, \
       _initial_style_jaxprs_with_common_consts
-
-  from jax.util import unzip4
 
   @cache()
   def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):

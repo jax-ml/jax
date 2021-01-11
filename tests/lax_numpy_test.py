@@ -44,7 +44,7 @@ from jax import dtypes
 from jax import tree_util
 from jax.interpreters import partial_eval, xla
 from jax.test_util import check_grads
-from jax.util import prod
+from jax._src.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()

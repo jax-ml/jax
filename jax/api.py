@@ -50,8 +50,9 @@ from ._src.traceback_util import api_boundary
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf, Partial)
-from .util import (unzip2, curry, partial, safe_map, safe_zip, prod, split_list,
-                   extend_name_stack, wrap_name, cache, wraps, HashableFunction)
+from ._src.util import (unzip2, curry, partial, safe_map, safe_zip, prod,
+                        split_list, extend_name_stack, wrap_name, cache, wraps,
+                        HashableFunction)
 from .lib import jax_jit
 from .lib import version
 from .lib import xla_bridge as xb

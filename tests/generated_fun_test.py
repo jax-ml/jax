@@ -30,7 +30,7 @@ config.parse_flags_with_absl()
 
 npr.seed(0)
 
-from jax.util import unzip2, safe_zip, safe_map
+from jax._src.util import unzip2, safe_zip, safe_map
 
 map = safe_map
 zip = safe_zip

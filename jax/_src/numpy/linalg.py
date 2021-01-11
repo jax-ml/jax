@@ -27,7 +27,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax import dtypes
 from .util import _wraps
 from . import lax_numpy as jnp
-from jax.util import canonicalize_axis
+from jax._src.util import canonicalize_axis
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 _H = lambda x: jnp.conjugate(jnp.swapaxes(x, -1, -2))

@@ -31,7 +31,7 @@ from jax.abstract_arrays import make_shaped_array
 from jax.api import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
-from jax.util import partial
+from jax._src.util import partial
 from jax.interpreters import partial_eval as pe
 
 

@@ -31,7 +31,7 @@ from jax import tree_util
 from jax.experimental import (sharded_jit, with_sharding_constraint,
                               PartitionSpec as P)
 from jax.interpreters import pxla
-from jax.util import prod
+from jax._src.util import prod
 import jax.numpy as jnp
 
 from jax.config import config

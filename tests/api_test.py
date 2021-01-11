@@ -44,6 +44,7 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
 from jax.lib import version
+import jax._src.util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -2513,7 +2514,7 @@ class RematTest(jtu.JaxTestCase):
     with assertEvals(3):
       vjp(v)
 
-    @jax.util.curry
+    @jax._src.util.curry
     def call(f, *args):
       return jax.core.call(
           jax.linear_util.wrap_init(lambda *args: [f(*args)]),

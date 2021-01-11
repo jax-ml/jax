@@ -20,7 +20,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from .util import safe_map, safe_zip, unzip2, subvals, taggedtuple
+from ._src.util import safe_map, safe_zip, unzip2, subvals, taggedtuple
 from .lib import xla_bridge as xb
 from .lib import xla_client as xc
 

@@ -32,7 +32,7 @@ from jax import vmap
 from jax import lax
 from jax.experimental.maps import Mesh, mesh, xmap
 from jax.lib import xla_bridge
-from jax.util import curry, unzip2
+from jax._src.util import curry, unzip2
 from jax.interpreters import pxla
 
 from jax.config import config

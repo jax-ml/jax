@@ -33,7 +33,7 @@ from jax import tree_util
 from jax import lax_reference
 from jax.test_util import check_grads
 import jax.util
-from jax.util import prod
+from jax._src.util import prod
 from jax import xla
 
 from jax._src.lax.lax import _device_put_raw

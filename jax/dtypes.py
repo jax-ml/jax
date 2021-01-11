@@ -26,7 +26,7 @@ import os
 
 import numpy as np
 
-from . import util
+from ._src import util
 from .config import flags
 from .lib import xla_client
 

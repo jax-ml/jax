@@ -30,7 +30,7 @@ from jax import dtypes
 from jax import numpy as jnp
 from jax import ops
 from jax import test_util as jtu
-from jax import util
+from jax._src import util
 
 from jax.config import config
 config.parse_flags_with_absl()

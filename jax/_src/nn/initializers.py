@@ -26,7 +26,7 @@ import jax.numpy as jnp
 from jax import lax
 from jax import ops
 from jax import random
-from jax.util import prod
+from jax._src.util import prod
 
 def zeros(key, shape, dtype=jnp.float32): return jnp.zeros(shape, dtype)
 def ones(key, shape, dtype=jnp.float32): return jnp.ones(shape, dtype)

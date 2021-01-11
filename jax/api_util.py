@@ -18,7 +18,7 @@ from typing import Any, Tuple, Union
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure)
 from . import linear_util as lu
-from .util import safe_map, WrapHashably, Hashable
+from ._src.util import safe_map, WrapHashably, Hashable
 from .core import unit
 
 from ._src import traceback_util

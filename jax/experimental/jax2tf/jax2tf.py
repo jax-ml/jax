@@ -22,7 +22,8 @@ from jax import ad_util, api, api_util, config
 from jax import core, custom_derivatives, dtypes
 from jax import linear_util as lu
 from jax import numpy as jnp
-from jax import random, tree_util, util
+from jax import random, tree_util
+from jax._src import util
 from jax.api_util import flatten_fun
 from jax.interpreters import ad, batching
 from jax.interpreters import masking

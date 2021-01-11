@@ -38,7 +38,7 @@ from jax.core import ShapedArray
 from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                      linearize, device_put)
 from jax.lib import xla_bridge
-from jax.util import prod, safe_map
+from jax._src.util import prod, safe_map
 from jax.interpreters import pxla
 from jax.interpreters import xla
 

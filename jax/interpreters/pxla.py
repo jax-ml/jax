@@ -46,9 +46,9 @@ from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray, Var, Literal
-from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
-                    extend_name_stack, wrap_name, assert_unreachable,
-                    tuple_insert, tuple_delete, taggedtuple, curry)
+from .._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
+                         extend_name_stack, wrap_name, assert_unreachable,
+                         tuple_insert, tuple_delete, taggedtuple, curry)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_map

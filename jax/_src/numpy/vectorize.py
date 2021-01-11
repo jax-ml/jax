@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Tuple
 from jax import api
 from jax import lax
 from . import lax_numpy as jnp
-from jax.util import safe_map as map, safe_zip as zip
+from jax._src.util import safe_map as map, safe_zip as zip
 
 
 # See http://docs.scipy.org/doc/numpy/reference/c-api.generalized-ufuncs.html

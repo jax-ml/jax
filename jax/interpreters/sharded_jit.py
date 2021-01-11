@@ -29,8 +29,8 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..api_util import flatten_axes, flatten_fun
 from ..tree_util import tree_flatten, tree_unflatten
-from ..util import (extend_name_stack, wrap_name, wraps, safe_zip,
-                    HashableFunction)
+from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
+                         HashableFunction)
 from ..config import config, flags
 
 xops = xc._xla.ops

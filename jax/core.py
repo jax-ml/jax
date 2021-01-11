@@ -33,7 +33,7 @@ from .config import FLAGS, config
 from . import linear_util as lu
 
 from jax._src import source_info_util
-from .util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
+from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
                    tuple_insert, tuple_delete, as_hashable_function,
                    HashableFunction)
 from ._src.pprint_util import pp, vcat, PrettyPrint

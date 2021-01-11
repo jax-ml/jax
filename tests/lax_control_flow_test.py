@@ -33,7 +33,7 @@ from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu
-from jax.util import unzip2
+from jax._src.util import unzip2
 from jax.lib import xla_bridge
 from jax.interpreters import xla
 import jax.numpy as jnp  # scan tests use numpy

@@ -31,7 +31,7 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-from jax.util import partial, unzip2, prod
+from jax._src.util import partial, unzip2, prod
 from jax.lib import xla_client as xc
 from jax.lib import xla_bridge as xb
 from jax.config import config

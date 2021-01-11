@@ -17,7 +17,8 @@
 import collections
 from typing import Any, Callable, Dict, List, Optional
 
-from jax import core, util
+from jax import core
+from jax._src import util
 from jax._src import source_info_util
 
 map, unsafe_map = util.safe_map, map

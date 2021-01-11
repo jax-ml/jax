@@ -47,8 +47,8 @@ from jax.interpreters import ad
 from jax.interpreters import invertible_ad as iad
 from jax.interpreters import batching
 from jax.interpreters import masking
-from jax.util import (cache, safe_zip, partial, prod, safe_map, canonicalize_axis,
-                      split_list)
+from jax._src.util import (cache, safe_zip, partial, prod, safe_map,
+                           canonicalize_axis, split_list)
 from jax.tree_util import tree_map
 from jax.lib import pytree
 from jax.lib import xla_bridge

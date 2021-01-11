@@ -15,7 +15,7 @@
 
 from typing import Sequence, Tuple, Union
 from jax._src.numpy import lax_numpy as jnp
-from jax.util import prod
+from jax._src.util import prod
 from . import lax
 
 

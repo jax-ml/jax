@@ -32,7 +32,7 @@ from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
-from jax.util import prod
+from jax._src.util import prod
 
 
 _UINT_DTYPES = {8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}
