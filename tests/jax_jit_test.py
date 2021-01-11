@@ -91,6 +91,11 @@ class JaxJitTest(parameterized.TestCase):
     self.assertEqual(res.dtype, complex_type)
     self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)
 
+  @unittest.skipIf(jax.lib._xla_extension_version < 2, "jaxlib too old")
+  def test_convert_int_overflow(self):
+    with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
+      jaxlib.jax_jit._ScalarToBuffer(int(1e100), True, xla_bridge.get_backend())
+
   def test_signature_support(self):
     # TODO(jblespiau): remove after version release
     if version < (0, 1, 56):
