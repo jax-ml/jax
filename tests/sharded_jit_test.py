@@ -119,8 +119,7 @@ class ShardedJitTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise SkipTest
 
-    @partial(sharded_jit, in_parts=(P(2, 1),), out_parts=None,
-             static_broadcasted_argnums=1)
+    @partial(sharded_jit, in_parts=(P(2, 1),), out_parts=None, static_argnums=1)
     def f(x, y):
       return x + y()
 

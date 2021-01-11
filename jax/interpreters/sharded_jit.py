@@ -274,7 +274,7 @@ class PartitionSpec(tuple):
 def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
                 local_in_parts=None, local_out_parts=None,
                 local_num_partitions=None,
-                static_broadcasted_argnums: Union[int, Iterable[int]] = (),
+                static_argnums: Union[int, Iterable[int]] = (),
 ):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
@@ -331,13 +331,13 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
     local_num_partitions: Optional. Explicitly specifies the numbers of local
       devices to partitions across in a multi-process setting. This API is
       likely to change in the future.
-    static_broadcasted_argnums: An int or collection of ints specifying which
-      positional arguments to treat as static (compile-time constant).
-      Operations that only depend on static arguments will be constant-folded.
-      Calling the sharded function with different values for these constants
-      will trigger recompilation. If the sharded function is called with fewer
-      positional arguments than indicated by ``static_argnums`` then an error is
-      raised. Each of the static arguments will be broadcasted to all devices.
+    static_argnums: An int or collection of ints specifying which positional
+      arguments to treat as static (compile-time constant). Operations that only
+      depend on static arguments will be constant-folded. Calling the jitted
+      function with different values for these constants will trigger
+      recompilation. If the jitted function is called with fewer positional
+      arguments than indicated by ``static_argnums`` then an error is raised.
+      Each of the static arguments will be broadcasted to all devices.
       Arguments that are not arrays or containers thereof must be marked as
       static. Defaults to ().
 
@@ -354,7 +354,7 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
   else:
     local_nparts = pxla.get_num_partitions(local_in_parts, local_out_parts)
 
-  static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
+  static_argnums = _ensure_index_tuple(static_argnums)
 
   @wraps(fun)
   def wrapped(*args, **kwargs):
@@ -362,15 +362,14 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
       raise NotImplementedError("sharded_jit over kwargs not yet supported")
 
     f = lu.wrap_init(fun)
-    if static_broadcasted_tuple:
-      if max(static_broadcasted_tuple) >= len(args):
+    if static_argnums:
+      if max(static_argnums) >= len(args):
         raise ValueError(
-            f"sharded function has static_broadcasted_argnums={static_broadcasted_tuple}"
+            f"jitted function has static_argnums={static_argnums}"
             f" but was called with only {len(args)} positional "
             f"argument{'s' if len(args) > 1 else ''}. "
             "All static broadcasted arguments must be passed positionally.")
-      dyn_argnums = [i for i in range(len(args))
-                     if i not in static_broadcasted_tuple]
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       f, args = argnums_partial(f, dyn_argnums, args)
 
     args_flat, in_tree = tree_flatten((args, kwargs))
