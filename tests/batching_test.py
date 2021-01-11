@@ -343,7 +343,6 @@ class BatchingTest(jtu.JaxTestCase):
     expected = jnp.array([True, False])
     self.assertAllClose(ans, expected)
 
-  @jtu.skip_on_devices("tpu")
   def testHessian(self):
     # test based on code from sindhwani@google
     def fun(x, t):
