@@ -955,10 +955,10 @@ def value_and_jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   >>> print(jax.value_and_jacfwd(f)(jnp.array([1., 2., 3.]))[0])
   [ 1.        15.        10.         2.5244129]
   >>> print(jax.value_and_jacfwd(f)(jnp.array([1., 2., 3.]))[1])
-  [[ 1.        ,  0.        ,  0.        ],
-   [ 0.        ,  0.        ,  5.        ],
-   [ 0.        , 16.        , -2.        ],
-   [ 1.6209068 ,  0.        ,  0.84147096]]
+  [[ 1.          0.          0.        ]
+   [ 0.          0.          5.        ]
+   [ 0.         16.         -2.        ]
+   [ 1.6209068   0.          0.84147096]]
   """
   return _jacfwd(fun, argnums, holomorphic, return_value=True)
 
@@ -1089,10 +1089,10 @@ def value_and_jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   >>> print(jax.value_and_jacrev(f)(jnp.array([1., 2., 3.]))[0])
   [ 1.        15.        10.         2.5244129]
   >>> print(jax.value_and_jacrev(f)(jnp.array([1., 2., 3.]))[1])
-  [[ 1.        ,  0.        ,  0.        ],
-   [ 0.        ,  0.        ,  5.        ],
-   [ 0.        , 16.        , -2.        ],
-   [ 1.6209068 ,  0.        ,  0.84147096]]
+  [[ 1.          0.          0.        ]
+   [ 0.          0.          5.        ]
+   [ 0.         16.         -2.        ]
+   [ 1.6209068   0.          0.84147096]]
   """
   return _jacrev(fun, argnums, holomorphic, allow_int, return_value=True)
 
