@@ -800,15 +800,13 @@ class TensorFlowTrace(core.Trace):
         raise NotImplementedError(msg.format(p)) from err
 
 def to_tf_dtype(jax_dtype):
-  if jax_dtype == jnp.bfloat16:
-    return tf.bfloat16
-  elif jax_dtype == dtypes.float0:
+  if jax_dtype == dtypes.float0:
     return tf.float32
   else:
     return tf.dtypes.as_dtype(jax_dtype)
 
 def to_jax_dtype(tf_dtype):
-  return jnp.bfloat16 if tf_dtype == tf.bfloat16 else tf_dtype.as_numpy_dtype
+  return tf_dtype.as_numpy_dtype
 
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"

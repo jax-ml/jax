@@ -31,15 +31,12 @@ from jax import numpy as jnp
 DType = Any
 
 def _make_tf_args(args):
-
-  def _convert_if_bfloat16(v):
+  def _convert_to_tensor(v):
     if hasattr(v, "dtype"):
-      return tf.convert_to_tensor(
-          np.array(v, jnp.float32) if v.dtype == jnp.bfloat16 else v,
-          jax2tf.jax2tf.to_tf_dtype(v.dtype))
+      tf.convert_to_tensor(v)
     return v
 
-  return tf.nest.map_structure(_convert_if_bfloat16, args)
+  return tf.nest.map_structure(_convert_to_tensor, args)
 
 
 def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
