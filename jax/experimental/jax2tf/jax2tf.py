@@ -828,7 +828,7 @@ tf_not_yet_impl = [
   lax.after_all_p, lax_parallel.all_to_all_p, lax.create_token_p,
   lax.infeed_p, lax.outfeed_p, lax_parallel.pmax_p,
   lax_parallel.pmin_p, lax_parallel.ppermute_p, lax_parallel.psum_p,
-  lax_parallel.axis_index_p, lax_parallel.pdot_p, lax_parallel.all_gather_p,
+  lax_parallel.axis_index_p, lax_parallel.pdot_p,
 
   pxla.xla_pmap_p,
 
