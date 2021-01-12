@@ -115,6 +115,24 @@ class ShardedJitTest(jtu.JaxTestCase):
     result = sharded_jit(f, in_parts, out_parts)(x)
     self.assertAllClose(result, expected, check_dtypes=False)
 
+  def testStaticArgnums(self):
+    if jax.device_count() < 2:
+      raise SkipTest
+
+    @partial(sharded_jit, in_parts=(P(2, 1),), out_parts=None, static_argnums=1)
+    def f(x, y):
+      return x + y()
+
+    shape = (8, 8)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    actual = f(x, lambda: 3)
+    expected = x + 3
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, pxla.ShardedDeviceArray)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertAllClose(actual.device_buffers[0].to_py(), expected,
+                        check_dtypes=False)
+
   def testAllArgsOutputsReplicated(self):
     @partial(sharded_jit, in_parts=None, out_parts=None)
     def f(x):
