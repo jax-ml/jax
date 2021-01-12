@@ -870,6 +870,8 @@ def _jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
       positional argument(s) to differentiate with respect to (default ``0``).
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
+    return_value: Optional, bool. Switch to return value of ``fun`` at same
+      time as the Jacobian.
 
   Returns:
     The value of the function to be automatically differentiated.
@@ -889,9 +891,9 @@ def _jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     tree_map(partial(_check_output_dtype_jacfwd, holomorphic), y)
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     if return_value:
-        return y, tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
+      return y, tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
     else:
-        return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
+      return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
 
   return jacfun
 
@@ -996,6 +998,8 @@ def _jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
+    return_value: Optional, bool. Switch to return value of ``fun`` at same
+      time as the Jacobian.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the Jacobian of
@@ -1022,8 +1026,8 @@ def _jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
 def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
            holomorphic: bool = False, allow_int: bool = False) -> Callable:
-  """Thin wrapper returning Jacobian of ``fun`` evaluated row-by-row using
-     reverse-mode AD.
+  """Thin wrapper returning evaluated value and Jacobian of ``fun`` evaluated
+     row-by-row using reverse-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
