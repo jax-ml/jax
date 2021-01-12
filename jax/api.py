@@ -920,7 +920,7 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   ...   return jnp.asarray(
   ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jnp.sin(x[0])])
   ...
-  >>> print(jax.value_and_jacfwd(f)(jnp.array([1., 2., 3.])))
+  >>> print(jax.jacfwd(f)(jnp.array([1., 2., 3.])))
   [[ 1.       0.       0.     ]
    [ 0.       0.       5.     ]
    [ 0.      16.      -2.     ]
