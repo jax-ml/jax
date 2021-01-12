@@ -1294,7 +1294,7 @@ def _reshape_method(a, *newshape, **kwargs):
     invalid_kwargs = "'{}'".format("'".join(kwargs))
     msg = "{} are invalid keyword arguments for this function"
     raise TypeError(msg.format(invalid_kwargs))  # different from NumPy error
-  if (len(newshape) == 1 and not isinstance(newshape[0], int) and
+  if (len(newshape) == 1 and not np.isscalar(newshape[0]) and
           type(newshape[0]) is not Poly):
     newshape = newshape[0]
   return _reshape(a, newshape, order=order)
