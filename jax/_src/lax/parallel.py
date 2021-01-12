@@ -670,10 +670,6 @@ def _expand(dim, size, index, x):
   out = lax.full(shape, lax._const(x, 0))
   return lax.dynamic_update_index_in_dim(out, x, index, dim)
 
-def _allgather(x, dim, size, index, axis_name, axis_index_groups=None):
-  outs = tree_util.tree_map(partial(_expand, dim, size, index), x)
-  return psum(outs, axis_name, axis_index_groups=axis_index_groups)
-
 def all_gather(x, axis_name, *, axis_index_groups=None):
   """Gather values of x across all replicas.
 
@@ -726,17 +722,48 @@ def all_gather(x, axis_name, *, axis_index_groups=None):
    [[12. 13. 14. 15.]
     [ 4.  5.  6.  7.]]
   """
+  axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+  # The all_gather primitive doesn't work when omni-staging is disabled.
+  if not config.omnistaging_enabled:
+    return _all_gather_via_psum(x, all_gather_dimension=0, axis_name=axis_name,
+                                axis_index_groups=axis_index_groups, axis_size=axis_size)
+  return all_gather_p.bind(x, all_gather_dimension=0, axis_name=axis_name,
+                           axis_index_groups=axis_index_groups, axis_size=axis_size)
 
+def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
   index = axis_index(axis_name)
   if axis_index_groups is not None:
     indices = np.array(axis_index_groups).flatten()
     axis_index_to_group_index = indices.argsort() % len(axis_index_groups[0])
     index = lax_numpy.array(axis_index_to_group_index)[index]
+  outs = tree_util.tree_map(partial(_expand, all_gather_dimension, axis_size, index), x)
+  return psum(outs, axis_name, axis_index_groups=axis_index_groups)
 
-  axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, axis_env, platform):
+  # TODO(cjfj): Enable this for TPU also?
+  if (platform == 'gpu') and (all_gather_dimension == 0):
+    new_shape = list(c.get_shape(x).dimensions())
+    new_shape.insert(all_gather_dimension, 1)
+    broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
+    x = xops.BroadcastInDim(x, new_shape, broadcast_dimensions)
+    replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
+    return xops.AllGather(x, all_gather_dimension=all_gather_dimension, shard_count=axis_size,
+                          replica_groups=xc.make_replica_groups(replica_groups))
+  else:
+    lowering = xla.lower_fun(_all_gather_via_psum, multiple_results=False, parallel=True)
+    return lowering(c, x, all_gather_dimension=all_gather_dimension, axis_name=axis_name,
+                    axis_index_groups=axis_index_groups, axis_size=axis_size, axis_env=axis_env, platform=platform)
 
-  return _allgather(x, 0, axis_size, index, axis_name, axis_index_groups)
+def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+  x_aval = raise_to_shaped(x)
+  new_shape = list(x_aval.shape)
+  new_shape.insert(all_gather_dimension, axis_size)
+  return ShapedArray(new_shape, x_aval.dtype)
 
+all_gather_p = core.Primitive('all_gather')
+all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
+xla.parallel_translations[all_gather_p] = _all_gather_translation_rule
+pxla.multi_host_supported_collectives.add(all_gather_p)
 
 def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
   axis_pos = list(axis_env.names).index(axis_name)
