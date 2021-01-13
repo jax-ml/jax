@@ -1160,6 +1160,16 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(x_bar, jnp.dot(z_bar, y.T))
     self.assertAllClose(y_bar, jnp.dot(x.T, z_bar))
 
+  def testVmapKwargs(self):
+    # https://github.com/google/jax/issues/912
+
+    def f(a, b):
+      return (2*a, 3*b)
+
+    x = vmap(f)(jnp.array([1]), jnp.array([2]))  # works
+    y = vmap(f)(a=jnp.array([1]), b=jnp.array([2]))  # doesn't work
+    self.assertAllClose(x, y)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
