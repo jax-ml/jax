@@ -29,7 +29,8 @@ import itertools as it
 import operator
 import threading
 import weakref
-from typing import Any, Callable, Iterable, List, NamedTuple, Optional, Sequence, Tuple, TypeVar, Union
+from typing import (Any, Callable, Iterable, List, NamedTuple, Optional,
+                    Sequence, Tuple, TypeVar, Union)
 from warnings import warn
 
 import numpy as np
@@ -49,7 +50,7 @@ from ._src import traceback_util
 from ._src.traceback_util import api_boundary
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
-                        treedef_is_leaf, Partial)
+                        treedef_is_leaf, treedef_children, Partial)
 from ._src.util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                         split_list, extend_name_stack, wrap_name, cache, wraps,
                         HashableFunction)
@@ -1076,13 +1077,13 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
       (tuple/list/dict) thereof specifying which input array axes to map over.
 
       If each positional argument to ``fun`` is an array, then ``in_axes`` can
-      be an integer, a None, or a tuple of integers and Nones with
-      length equal to the number of positional arguments to ``fun``.
-      An integer or ``None`` indicates which array axis to map over for all
-      arguments (with ``None`` indicating not to map any axis), and a tuple
-      indicates which axis to map for each corresponding positional argument.
-      Axis integers must be in the range ``[-ndim, ndim)`` for each array, where
-      ``ndim`` is the number of dimensions of the corresponding input array.
+      be an integer, a None, or a tuple of integers and Nones with length equal
+      to the number of positional arguments to ``fun``. An integer or ``None``
+      indicates which array axis to map over for all arguments (with ``None``
+      indicating not to map any axis), and a tuple indicates which axis to map
+      for each corresponding positional argument. Axis integers must be in the
+      range ``[-ndim, ndim)`` for each array, where ``ndim`` is the number of
+      dimensions (axes) of the corresponding input array.
 
       If the positional arguments to ``fun`` are container types, the
       corresponding element of ``in_axes`` can itself be a matching container,
@@ -1091,17 +1092,22 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
       argument tuple passed to ``fun``.
 
       At least one positional argument must have ``in_axes`` not None. The sizes
-      of the mapped input axes for all mapped positional arguments must all
-      be equal.
+      of the mapped input axes for all mapped positional arguments must all be
+      equal.
+
+      Arguments passed as keywords are always mapped over their leading axis
+      (i.e. axis index 0).
+
+      See below for examples.
 
     out_axes: An integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof indicating where the mapped axis should appear
       in the output. All outputs with a mapped axis must have a non-None
-      ``out_axes`` specification. Axis integers must be
-      in the range ``[-ndim, ndim)`` for each output array, where ``ndim`` is
-      the number of dimensions of the array returned by the :func:`vmap`-ed
-      function, which is one more than the number of dimensions of the
-      corresponding array returned by ``fun``.
+      ``out_axes`` specification. Axis integers must be in the range ``[-ndim,
+      ndim)`` for each output array, where ``ndim`` is the number of dimensions
+      (axes) of the array returned by the :func:`vmap`-ed function, which is one
+      more than the number of dimensions (axes) of the corresponding array
+      returned by ``fun``.
 
   Returns:
     Batched/vectorized version of ``fun`` with arguments that correspond to
@@ -1160,22 +1166,22 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
   >>> print(out)
   [1. 2. 3. 4. 5.]
 
-  The results of a vectorized function can be mapped or unmapped.
-  For example, the function below returns a pair with the first
-  element mapped and the second unmapped. Only for unmapped results
-  we can specify ``out_axes`` to be ``None`` (to keep it unmapped).
+  The results of a vectorized function can be mapped or unmapped. For example,
+  the function below returns a pair with the first element mapped and the second
+  unmapped. Only for unmapped results we can specify ``out_axes`` to be ``None``
+  (to keep it unmapped).
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=(0, None))(jnp.arange(2.), 4.))
   (DeviceArray([4., 5.], dtype=float32), 8.0)
 
-  If the ``out_axes`` is specified for an unmapped result, the result is broadcast
-  across the mapped axis:
+  If the ``out_axes`` is specified for an unmapped result, the result is
+  broadcast across the mapped axis:
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(jnp.arange(2.), 4.))
   (DeviceArray([4., 5.], dtype=float32), DeviceArray([8., 8.], dtype=float32))
 
-  If the ``out_axes`` is specified for a mapped result, the result is
-  transposed accordingly.
+  If the ``out_axes`` is specified for a mapped result, the result is transposed
+  accordingly.
   """
   _check_callable(fun)
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
@@ -1196,21 +1202,21 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
 
   in_axes_, out_axes_ = tree_leaves(in_axes), tree_leaves(out_axes)
   if not all(isinstance(l, (type(None), int)) for l in in_axes_):
-    raise TypeError("vmap in_axes must be an int, None, or (nested) container with "
-                    f"those types as leaves, but got {in_axes}.")
+    raise TypeError("vmap in_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {in_axes}.")
   if not all(isinstance(l, (type(None), int)) for l in out_axes_):
-    raise TypeError("vmap out_axes must be an int, None, or (nested) container with "
-                    f"those types as leaves, but got {out_axes}.")
+    raise TypeError("vmap out_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {out_axes}.")
   del in_axes_, out_axes_
 
   @wraps(fun, docstr=docstr)
   @api_boundary
-  def batched_fun(*args):
-    args_flat, in_tree  = tree_flatten(args)
+  def batched_fun(*args, **kwargs):
+    args_flat, in_tree  = tree_flatten((args, kwargs))
     f = lu.wrap_init(fun)
-    flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    in_axes_flat = flatten_axes("vmap in_axes", in_tree, in_axes)
-    _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap")
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
+    _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap", kws=True)
     out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
                               lambda: flatten_axes("vmap out_axes", out_tree(),
                                                    out_axes),
@@ -1219,14 +1225,14 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
 
   return batched_fun
 
-def _mapped_axis_size(tree, vals, dims, name):
+def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
   def _get_axis_size(name: str, i:int, shape: Tuple[int, ...], axis: int):
     try:
       return shape[axis]
     except (IndexError, TypeError) as e:
       ranks = tree_unflatten(tree, [np.ndim(x) for x, d in zip(vals, dims)])
-      raise ValueError(f"{name} got arg {i} of rank {len(shape)} but axis to be mapped {axis}. "
-                       f"The tree of ranks is:\n{ranks}") from e
+      raise ValueError(f"{name} got arg {i} of rank {len(shape)} but axis to be "
+                       f"mapped {axis}. The tree of ranks is:\n{ranks}") from e
 
   mapped_axis_sizes = {_get_axis_size(name, i, np.shape(x), d)
                        for i, (x, d) in enumerate(zip(vals, dims))
@@ -1241,6 +1247,11 @@ def _mapped_axis_size(tree, vals, dims, name):
     # we switch the error message based on whether args is a tuple of arrays,
     # in which case we can produce an error message based on argument indices,
     # or if it has nested containers.
+    if kws:
+      # if keyword arguments are included in the tree, we make adapt the error
+      # message only to be about the positional arguments
+      tree, leaf = treedef_children(tree)
+      assert treedef_is_leaf(leaf)
     # TODO(mattjj,phawkins): add a way to inspect pytree kind more directly
     if tree == tree_flatten((core.unit,) * tree.num_leaves)[1]:
       lines1 = [f"arg {i} has shape {np.shape(x)} and axis {d} is to be mapped"
@@ -1277,39 +1288,35 @@ def pmap(
 ) -> F:
   """Parallel map with support for collective operations.
 
-  The purpose of :py:func:`pmap` is to express single-program multiple-data (SPMD)
-  programs. Applying :py:func:`pmap` to a function will compile the function with XLA
-  (similarly to :py:func:`jit`), then execute it in parallel on XLA devices, such as
-  multiple GPUs or multiple TPU cores. Semantically it is comparable to
-  :py:func:`vmap` because both transformations map a function over array axes, but
-  where :py:func:`vmap` vectorizes functions by pushing the mapped axis down into
-  primitive operations, :py:func:`pmap` instead replicates the function and executes
-  each replica on its own XLA device in parallel.
-
-  Another key difference with :py:func:`vmap` is that while :py:func:`vmap` can only express
-  pure maps, :py:func:`pmap` enables the use of parallel SPMD collective operations,
-  like all-reduce sum.
+  The purpose of :py:func:`pmap` is to express single-program multiple-data
+  (SPMD) programs. Applying :py:func:`pmap` to a function will compile the
+  function with XLA (similarly to :py:func:`jit`), then execute it in parallel
+  on XLA devices, such as multiple GPUs or multiple TPU cores. Semantically it
+  is comparable to :py:func:`vmap` because both transformations map a function
+  over array axes, but where :py:func:`vmap` vectorizes functions by pushing the
+  mapped axis down into primitive operations, :py:func:`pmap` instead replicates
+  the function and executes each replica on its own XLA device in parallel.
 
   The mapped axis size must be less than or equal to the number of local XLA
   devices available, as returned by :py:func:`jax.local_device_count()` (unless
-  ``devices`` is specified, see below). For nested :py:func:`pmap` calls, the product
-  of the mapped axis sizes must be less than or equal to the number of XLA
-  devices.
+  ``devices`` is specified, see below). For nested :py:func:`pmap` calls, the
+  product of the mapped axis sizes must be less than or equal to the number of
+  XLA devices.
 
   .. note::
     :py:func:`pmap` compiles ``fun``, so while it can be combined with
     :py:func:`jit`, it's usually unnecessary.
 
-  **Multi-host platforms:** On multi-host platforms such as TPU pods, :py:func:`pmap`
-  is designed to be used in SPMD Python programs, where every host is running
-  the same Python code such that all hosts run the same pmapped function in the
-  same order. Each host should still call the pmapped function with mapped axis
-  size equal to the number of *local* devices (unless ``devices`` is specified,
-  see below), and an array of the same leading axis size will be returned as
-  usual. However, any collective operations in ``fun`` will be computed over
-  *all* participating devices, including those on other hosts, via
-  device-to-device communication.  Conceptually, this can be thought of as
-  running a pmap over a single array sharded across hosts, where each host
+  **Multi-host platforms:** On multi-host platforms such as TPU pods,
+  :py:func:`pmap` is designed to be used in SPMD Python programs, where every
+  host is running the same Python code such that all hosts run the same pmapped
+  function in the same order. Each host should still call the pmapped function
+  with mapped axis size equal to the number of *local* devices (unless
+  ``devices`` is specified, see below), and an array of the same leading axis
+  size will be returned as usual. However, any collective operations in ``fun``
+  will be computed over *all* participating devices, including those on other
+  hosts, via device-to-device communication.  Conceptually, this can be thought
+  of as running a pmap over a single array sharded across hosts, where each host
   "sees" only its local shard of the input and output. The SPMD model requires
   that the same multi-host pmaps must be run in the same order on all devices,
   but they can be interspersed with arbitrary operations running on a single
@@ -1324,7 +1331,9 @@ def pmap(
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
     in_axes: A non-negative integer, None, or nested Python container thereof
-      that specifies which axes in the input to map over (see :py:func:`vmap`).
+      that specifies which axes of positional arguments to map over. Arguments
+      passed as keywords are always mapped over their leading axis (i.e. axis
+      index 0). See :py:func:`vmap` for details.
     out_axes: A non-negative integer, None, or nested Python container thereof
       indicating where the mapped axis should appear in the output. All outputs
       with a mapped axis must have a non-None ``out_axes`` specification
@@ -1332,8 +1341,8 @@ def pmap(
     static_broadcasted_argnums: An int or collection of ints specifying which
       positional arguments to treat as static (compile-time constant).
       Operations that only depend on static arguments will be constant-folded.
-      Calling the pmapped function with different values for these constants will
-      trigger recompilation. If the pmapped function is called with fewer
+      Calling the pmapped function with different values for these constants
+      will trigger recompilation. If the pmapped function is called with fewer
       positional arguments than indicated by ``static_argnums`` then an error is
       raised. Each of the static arguments will be broadcasted to all devices.
       Arguments that are not arrays or containers thereof must be marked as
@@ -1342,8 +1351,8 @@ def pmap(
       Optional, a sequence of Devices to map over. (Available devices can be
       retrieved via jax.devices()). If specified, the size of the mapped axis
       must be equal to the number of local devices in the sequence. Nested
-      :py:func:`pmap` s with ``devices`` specified in either the inner or outer :py:func:`pmap`
-      are not yet supported.
+      :py:func:`pmap` s with ``devices`` specified in either the inner or outer
+      :py:func:`pmap` are not yet supported.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend. 'cpu', 'gpu', or 'tpu'.
     axis_size: Optional; the size of the mapped axis.
@@ -1362,12 +1371,11 @@ def pmap(
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
-    ``fun`` but with extra array axes at positions indicated by ``in_axes``
-    and with output that has an additional leading array axis (with the same
-    size).
+    ``fun`` but with extra array axes at positions indicated by ``in_axes`` and
+    with output that has an additional leading array axis (with the same size).
 
-  For example, assuming 8 XLA devices are available, :py:func:`pmap` can be used as a
-  map along a leading array axis:
+  For example, assuming 8 XLA devices are available, :py:func:`pmap` can be used
+  as a map along a leading array axis:
 
   >>> import jax.numpy as jnp
   >>>
@@ -1395,9 +1403,9 @@ def pmap(
   >>> pmap(lambda x: x ** 2)(jnp.arange(9))  # doctest: +SKIP
   ValueError: ... requires 9 replicas, but only 8 XLA devices are available
 
-  As with :py:func:`vmap`, using ``None`` in ``in_axes`` indicates that an argument
-  doesn't have an extra axis and should be broadcasted, rather than mapped,
-  across the replicas:
+  As with :py:func:`vmap`, using ``None`` in ``in_axes`` indicates that an
+  argument doesn't have an extra axis and should be broadcasted, rather than
+  mapped, across the replicas:
 
   >>> x, y = jnp.arange(2.), 4.
   >>> out = pmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None))(x, y)  # doctest: +SKIP
@@ -1529,8 +1537,8 @@ def pmap(
       donated_invars = (False,) * len(args)
     in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
     global_arg_shapes_flat = flatten_axes("pmap global_arg_shapes", in_tree,
-                                          (dyn_global_arg_shapes, None))
-    local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
+                                          (dyn_global_arg_shapes, None), kws=True)
+    local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap", kws=True)
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     if not config.omnistaging_enabled and out_axes != 0:
