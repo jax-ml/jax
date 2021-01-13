@@ -4340,7 +4340,7 @@ def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
 def _int(aval):
   return not aval.shape and issubdtype(aval.dtype, integer)
 
-def _index_to_gather(x_shape, idx):
+def _index_to_gather(x_shape, idx, normalize_indices=True):
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
@@ -4365,8 +4365,9 @@ def _index_to_gather(x_shape, idx):
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
       if isscalar(e) or isinstance(e, (Sequence, ndarray)))
-    advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
-                      for e, i, j in advanced_pairs)
+    if normalize_indices:
+      advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
+                        for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
     advanced_axes_are_contiguous = np.all(np.diff(idx_advanced_axes) == 1)
 
@@ -4437,7 +4438,7 @@ def _index_to_gather(x_shape, idx):
       if x_shape[x_axis] == 0:
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
-      i = _normalize_index(i, x_shape[x_axis])
+      i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
       if type(i) is Poly:
         # dummy index if i is polynomial, doesn't matter for shape inference
         # TODO(mattjj,j-towns,juliuskunze): revise this logic

@@ -7,6 +7,21 @@ Change Log
 
 .. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
+jax 0.2.9 (Unreleased)
+----------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.8...master>`_.
+
+* New features:
+
+* Bug fixes:
+
+* Breaking changes:
+
+  * ``jax.ops.segment_sum` now drops segment IDs that are out of range rather
+    than wrapping them into the segment ID space. This was done for performance
+    reasons.
+
+
 These are the release notes for JAX.
 
 jax 0.2.8 (January 12 2021)
