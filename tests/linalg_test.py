@@ -513,8 +513,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "b": b, "m": m, "n": n, "dtype": dtype, "full_matrices": full_matrices,
        "compute_uv": compute_uv}
       for b in [(), (3,), (2, 3)]
-      for m in [2, 7, 29, 53]
-      for n in [2, 7, 29, 53]
+      for m in [0, 2, 7, 29, 53]
+      for n in [0, 2, 7, 29, 53]
       for dtype in float_types + complex_types
       for full_matrices in [False, True]
       for compute_uv in [False, True]))
@@ -529,7 +529,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Norm, adjusted for dimension and type.
     def norm(x):
       norm = np.linalg.norm(x, axis=(-2, -1))
-      return norm / (max(m, n) * jnp.finfo(dtype).eps)
+      return norm / (max(1, m, n) * jnp.finfo(dtype).eps)
 
     a, = args_maker()
     out = jnp.linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
@@ -773,7 +773,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
-      for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2)]
+      for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2),
+                    (2, 0, 0), (3, 0, 2), (1, 0)]
       for dtype in float_types + complex_types))
   def testPinv(self, shape, dtype):
     if (jnp.issubdtype(dtype, np.complexfloating) and

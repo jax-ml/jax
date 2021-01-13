@@ -303,7 +303,7 @@ def pinv(a, rcond=None):
   u, s, v = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
-  cutoff = rcond[..., jnp.newaxis] * jnp.amax(s, axis=-1, keepdims=True)
+  cutoff = rcond[..., jnp.newaxis] * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
   s = jnp.where(s > cutoff, s, jnp.inf)
   res = jnp.matmul(_T(v), jnp.divide(_T(u), s[..., jnp.newaxis]))
   return lax.convert_element_type(res, a.dtype)

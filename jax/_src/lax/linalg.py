@@ -1128,6 +1128,10 @@ def svd_impl(operand, full_matrices, compute_uv):
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   shape = c.get_shape(operand).dimensions()
   m, n = shape[-2:]
+  if m == 0 or n == 0:
+    return xla.lower_fun(_empty_svd, multiple_results=True)(
+      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
   u, s, v = xops.SVD(operand)
   permutation = list(range(len(shape)))
   permutation[-1], permutation[-2] = permutation[-2], permutation[-1]
@@ -1200,10 +1204,31 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
 
   return (s, U, Vt), (ds, dU, _H(dV))
 
-def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
+def _empty_svd(a, *, full_matrices, compute_uv):
+  batch_shape = a.shape[:-2]
+  m, n = a.shape[-2:]
+  s = jnp.empty(batch_shape + (0,), dtype=lax_internal._complex_basetype(a.dtype))
+  if not compute_uv:
+    return (s,)
+  if full_matrices:
+    size = max(m, n)
+    u = jnp.broadcast_to(jnp.eye(size, dtype=a.dtype), batch_shape + (size, size))
+  else:
+    u = jnp.empty(batch_shape + (m, n), dtype=a.dtype)
+  v = jnp.empty(batch_shape + (0, 0), dtype=a.dtype)
+  if m < n:
+    u, v = v, u
+  return s, u, v
 
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
+def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
+  shape = c.get_shape(operand).dimensions()
+  m, n = shape[-2:]
+  batch_dims = shape[:-2]
+
+  if m == 0 or n == 0:
+    return xla.lower_fun(_empty_svd, multiple_results=True)(
+      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
   s, u, vt, info = gesvd_impl(c, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
