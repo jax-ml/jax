@@ -125,13 +125,13 @@ def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase,
   what = re.sub(r"^\s*\n", "", what, flags=re.MULTILINE)
 
   def repl_func(match_group):
-    matched = match_group.group(0)
+    matched = match_group.group(3)
     if "function _print_consumer" in matched:
-      return "tap_func_=_print"
+      return match_group.group(1) + "=_print"
     else:
-      return "..."
+      return match_group.group(1) + "=..."
 
-  what = re.sub(r"tap_func_=([^\]\n,]*),?", repl_func, what)
+  what = re.sub(r"((tap_func_)|(callback))=([^\]\n,]*),?", repl_func, what)
   tst.assertMultiLineStrippedEqual(expected, what)
 
 
@@ -211,7 +211,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
       xla_bridge.get_backend.cache_clear()
     hcb.barrier_wait("HostCallbackTest.tearDown")
 
-  def test_eval(self):
+  def test_tap_eval(self):
     self.assertAllClose((5. * 2.) ** 2, fun1(5.))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
@@ -221,7 +221,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         30.00""", testing_stream.output)
     testing_stream.reset()
 
-  def test_with_tuple_results(self):
+  def test_tap_with_tuple_results(self):
     def func2(x):
       x1, y1 = hcb.id_print((x * 2., x * 3.), output_stream=testing_stream)
       return x1 + y1
@@ -234,7 +234,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           9.00 )""", testing_stream.output)
     testing_stream.reset()
 
-  def test_with_dict_results(self):
+  def test_tap_with_dict_results(self):
     def func2(x):
       res = hcb.id_print(dict(a=x * 2., b=x * 3.), output_stream=testing_stream)
       return res["a"] + res["b"]
@@ -246,7 +246,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           b=9.00 }""", testing_stream.output)
     testing_stream.reset()
 
-  def test_with_result(self):
+  def test_tap_with_result(self):
     def func2(x):
       x1 = hcb.id_print((x * 2., x * 3.), result=x * 4.,
                         output_stream=testing_stream)
@@ -259,7 +259,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           9.00 )""", testing_stream.output)
     testing_stream.reset()
 
-  def test_print_with_device(self):
+  def test_tap_with_device(self):
     def func2(x):
       x1 = hcb.id_print((x * 2., x * 3.), result=x * 4.,
                         output_stream=testing_stream,
@@ -274,7 +274,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         9.00 )""")
     testing_stream.reset()
 
-  def test_eval_tap_exception(self):
+  def test_tap_eval_exception(self):
     # Simulate a tap error
     def tap_err(*args, **kwargs):
       raise ValueError("Some user message")
@@ -300,7 +300,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         3""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit_simple(self):
+  def test_tap_jit_simple(self):
     jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
         2. * x, what="here", output_stream=testing_stream))
     self.assertAllClose(6. * 5., jit_fun1(5.))
@@ -310,7 +310,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         10.00""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit_no_invars(self):
+  def test_tap_jit_no_invars(self):
     def func():  # jitted function does not take arguments
       return hcb.id_print(42, output_stream=testing_stream)
 
@@ -320,7 +320,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     42""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit_multiple_invars(self):
+  def test_tap_jit_multiple_invars(self):
     def func(x1, x2):
       return hcb.id_print(x1 + x2, output_stream=testing_stream)
 
@@ -330,7 +330,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     42""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit_constant(self):
+  def test_tap_jit_constant(self):
     def func(x):
       return hcb.id_print(42, result=x, output_stream=testing_stream)
 
@@ -340,7 +340,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     42""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit_sequence1(self):
+  def test_tap_jit_sequence1(self):
     def func(x):
       x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
       return hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
@@ -359,7 +359,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         2""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit2(self):
+  def test_tap_jit2(self):
     """A sequence of JIT."""
 
     def func(x):
@@ -383,7 +383,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_jit_result_unused(self):
+  def test_tap_jit_result_unused(self):
     """We can id_print even if we don't use the result."""
 
     def func(x):
@@ -405,7 +405,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         11""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit_nested(self):
+  def test_tap_jit_nested(self):
     def func(x):
       x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
 
@@ -427,7 +427,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         3""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit_devices(self):
+  def test_tap_jit_devices(self):
     """Running on multiple devices."""
     devices = api.local_devices()
     logging.info(f"{self._testMethodName}: has devices {devices}")
@@ -451,7 +451,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
               testcase_name=f"_with_jit_{with_jit}",
               with_jit=with_jit)
           for with_jit in [True, False]))
-  def test_pytree(self, with_jit=False):
+  def test_tap_pytree(self, with_jit=False):
     def func(x, what=""):
       """Returns some pytrees depending on x"""
       if what == "pair_1_x":
@@ -488,7 +488,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
               testcase_name=f"_concurrent_{concurrent}",
               concurrent=concurrent)
           for concurrent in [True, False]))
-  def test_multiple_tap(self, concurrent=False):
+  def test_tap_multiple(self, concurrent=False):
     """Call id_tap multiple times, concurrently or in sequence. """
     if concurrent and jtu.device_under_test() == "gpu":
       # TODO(necula): it seems that on GPU if multiple host threads run
@@ -528,7 +528,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   # TODO(necula): see comment for test_multiple_tap.
   @jtu.skip_on_devices("gpu")
-  def test_multiple_barriers(self):
+  def test_tap_multiple_barriers(self):
     """Call barrier_wait concurrently."""
 
     def pause_tap(*args, **kwargs):
@@ -562,7 +562,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           for with_jit in [True, False]))
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_cond(self, with_jit=False):
+  def test_tap_cond(self, with_jit=False):
     """A conditional"""
 
     def func(x):
@@ -599,7 +599,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           for with_jit in [True, False]))
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_while_cond(self, with_jit=False):
+  def test_tap_while_cond(self, with_jit=False):
     def func(x):
       x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
       x2 = hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
@@ -642,7 +642,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         4""", testing_stream.output)
     testing_stream.reset()
 
-  def test_jit_while_pred_tap(self):
+  def test_tap_jit_while_pred_tap(self):
     """While with printing in the conditional."""
 
     def func(x):
@@ -682,7 +682,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           for with_jit in [True, False]))
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_scan_cond(self, with_jit=True):
+  def test_tap_scan_cond(self, with_jit=True):
     def func(x):
       x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
       x2 = hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
@@ -740,7 +740,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
               nr_args=nr_args) for nr_args in [1, 2]
           for shape in [(), (2,), (2, 3), (2, 3, 4)]
           for dtype in jtu.dtypes.all))
-  def test_jit_types(self, nr_args=2, dtype=jnp.int16, shape=(2,)):
+  def test_tap_jit_types(self, nr_args=2, dtype=jnp.int16, shape=(2,)):
     if dtype in (jnp.complex64, jnp.complex128, jnp.bool_):
       raise SkipTest(f"id_print jit not implemented for {dtype}.")
     args = [jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)]
@@ -754,15 +754,15 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     res = jit_fun1(args)
     self.assertAllClose(args, res)
 
-  def test_jit_large(self):
+  def test_tap_jit_large(self):
     arg = jnp.arange(10000, dtype=jnp.int32).reshape((10, 10, 5, -1))
     api.jit(hcb.id_print)(arg)
 
-  def test_jit_several_together(self):
+  def test_tap_jit_several_together(self):
     arg = jnp.arange(50, dtype=jnp.int32).reshape((10, 5))
     api.jit(lambda x, y: hcb.id_print((x, y, x * 2.)))(arg, jnp.ones(100, dtype=jnp.int32))
 
-  def test_jit_interleaving(self):
+  def test_tap_jit_interleaving(self):
     # Several jit's without data dependencies; they may interfere
     count = 0  # Count tap invocations
     nr_arrays = 5
@@ -786,7 +786,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     hcb.barrier_wait()
     self.assertEqual(100, count)
 
-  def test_jit_tap_exception(self):
+  def test_tap_jit_tap_exception(self):
     # Simulate a tap error
     def tap_err(*args, **kwargs):
       raise NotImplementedError
@@ -812,7 +812,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         3""", testing_stream.output)
     testing_stream.reset()
 
-  def test_while(self):
+  def test_tap_while(self):
     """Executing while, even without JIT uses compiled code"""
     y = jnp.ones(5)  # captured const
 
@@ -833,7 +833,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_jvp(self):
+  def test_tap_jvp(self):
     jvp_fun1 = lambda x, xt: api.jvp(fun1, (x,), (xt,))
     res_primals, res_tangents = jvp_fun1(jnp.float32(5.), jnp.float32(0.1))
     self.assertAllClose(100., res_primals, check_dtypes=False)
@@ -848,7 +848,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           0.60 )""", testing_stream.output)
     testing_stream.reset()
 
-  def test_grad_primal_unused(self):
+  def test_tap_grad_primal_unused(self):
     if not config.omnistaging_enabled:
       raise SkipTest("Test requires omnistaging")
 
@@ -858,27 +858,30 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
                                output_stream=testing_stream)
 
     grad_func = api.grad(func)
-    jaxpr = str(api.make_jaxpr(grad_func)(5.))
+    arg = jnp.float32(5.)
+    jaxpr = str(api.make_jaxpr(grad_func)(arg))
     # making the Jaxpr does not print anything
     hcb.barrier_wait()
 
     assertMultiLineStrippedEqual(self, """
         { lambda  ; a.
           let b = mul a 3.00
-              c = id_tap[ arg_treedef_=*
-                          tap_func_=_print   what='x * 3')
-                          transforms=(  ) ] b
+              c = outside_call[ arg_treedef=*
+                                callback=...
+                                identity=True
+                                transforms=(  ) ] b
               _ = mul c 2.00
               d = mul 1.00 2.00
-              e = id_tap[ arg_treedef_=*
-                          tap_func_=_print   what='x * 3')
-                          transforms=(('jvp',), ('transpose',)) ] d
+              e = outside_call[ arg_treedef=*
+                                callback=...
+                                identity=True
+                                transforms=(('jvp',), ('transpose',)) ] d
               f = mul e 3.00
           in (f,) }""", jaxpr)
     assertMultiLineStrippedEqual(self, "", testing_stream.output)
     testing_stream.reset()
 
-    res_grad = grad_func(jnp.float32(5.))
+    res_grad = grad_func(arg)
     hcb.barrier_wait()
 
     self.assertAllClose(6., res_grad, check_dtypes=False)
@@ -889,7 +892,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         2.00""", testing_stream.output)
     testing_stream.reset()
 
-  def test_grad_simple(self):
+  def test_tap_grad_simple(self):
     def func(x):
       y = hcb.id_print(x * 2., what="x * 2", output_stream=testing_stream)
       return x * hcb.id_print(y * 3., what="y * 3",
@@ -911,7 +914,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         15.00""", testing_stream.output)
     testing_stream.reset()
 
-  def test_grad_grad(self):
+  def test_tap_grad_grad(self):
     if not config.omnistaging_enabled:
       raise SkipTest("Test requires omnistaging")
 
@@ -942,7 +945,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_grad_pytree(self):
+  def test_tap_grad_pytree(self):
     def func(x):
       x4, x5 = hcb.id_print((x * 2., x * 3.), what="pair",
                             result=(x * 4., x * 5.),
@@ -966,7 +969,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_jvp_float0(self):
+  def test_tap_jvp_float0(self):
     def f(x, yint):
       x, yint = hcb.id_tap(lambda arg, _: arg, (x, yint))
       return x * yint
@@ -976,7 +979,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_grad_float0(self):
+  def test_tap_grad_float0(self):
     def func(x, yint):
       x, yint = hcb.id_print((x, yint), what="pair", output_stream=testing_stream)
       return x * yint
@@ -995,7 +998,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           False )""", testing_stream.output)
     testing_stream.reset()
 
-  def test_vmap(self):
+  def test_tap_vmap(self):
     vmap_fun1 = api.vmap(fun1)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
     vmap_fun1(vargs)
@@ -1007,7 +1010,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         [24.00 30.00]""", testing_stream.output)
     testing_stream.reset()
 
-  def test_vmap_not_batched(self):
+  def test_tap_vmap_not_batched(self):
     x = 3.
 
     def func(y):
@@ -1025,7 +1028,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         [4.00 5.00] )""", testing_stream.output)
     testing_stream.reset()
 
-  def test_vmap_vmap(self):
+  def test_tap_vmap_vmap(self):
     # A 2D tensor with x[i, j] = i + j using 2 vmap
     def sum(x, y):
       return hcb.id_print(x + y, output_stream=testing_stream)
@@ -1048,7 +1051,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         [2 3 4 5 6]]""", testing_stream.output)
     testing_stream.reset()
 
-  def test_vmap_while(self):
+  def test_tap_vmap_while(self):
     """Vmap of while."""
 
     def func(x):
@@ -1076,7 +1079,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         [2 2 2 3 4]""", testing_stream.output)
     testing_stream.reset()
 
-  def test_vmap_while_tap_cond(self):
+  def test_tap_vmap_while_tap_cond(self):
     """Vmap of while, with a tap in the conditional."""
 
     def func(x):
@@ -1113,7 +1116,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_composed(self):
+  def test_tap_transforms(self):
     def power(x, n):
       x, n = hcb.id_print((x, n), output_stream=testing_stream)
       return x * x * n * x
@@ -1166,7 +1169,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
 
-  def test_pmap(self):
+  def test_tap_pmap(self):
     xv = jnp.arange(api.device_count(), dtype=jnp.int32)
 
     def fun1(x, do_print=False):  # x: i32
@@ -1185,7 +1188,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         2""")
     testing_stream.reset()
 
-  def test_pmap_vmap(self):
+  def test_tap_pmap_vmap(self):
     # A matrix M[ij] = i * 10 + j
     nr_devices = api.device_count()
     shape = (nr_devices, 3)
@@ -1209,7 +1212,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         [20.00 22.00 24.00]""")
     testing_stream.reset()
 
-  def test_pmap_pmap_vmap(self):
+  def test_tap_pmap_pmap_vmap(self):
     # A matrix M[ijk] = i * 100 + j * 10 + k
     nr_devices = api.local_device_count()
     if nr_devices % 2 != 0:
@@ -1237,7 +1240,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   @ignore_jit_of_pmap_warning()
-  def test_pmap_pmap_extra(self):
+  def test_tap_pmap_pmap_extra(self):
     """pmap of a pmap surrounded by extra code."""
     # A matrix M[ij] = i * 10 + j
     nr_devices = api.local_device_count()
@@ -1276,7 +1279,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_jvp_pmap_vmap(self):
+  def test_tap_jvp_pmap_vmap(self):
     # A matrix M[ijk] = i * 100 + j * 10 * k
     nr_devices = api.local_device_count()
     shape = (nr_devices, 2, 3)
@@ -1307,7 +1310,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
          [0.20 0.20 0.20]] )""")
     testing_stream.reset()
 
-  def test_vmap_pmap(self):
+  def test_tap_vmap_pmap(self):
     # A matrix M[ijk] = i * 100 + j * 10 * k
     nr_devices = api.local_device_count()
     shape = (2, nr_devices, 3)
@@ -1334,7 +1337,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   @ignore_jit_of_pmap_warning()
-  def test_jit_pmap_extra(self):
+  def test_tap_jit_pmap_extra(self):
     """jit of a pmap surrounded by extra code."""
     # A matrix M[ij] = i * 10 + j
     nr_devices = api.local_device_count()
@@ -1383,7 +1386,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
     testing_stream.reset()
 
-  def test_cond_pmap(self):
+  def test_tap_cond_pmap(self):
     raise SkipTest("cond of pmap does not work in JAX. Issue #5178.")
     # A matrix M[ij] = i * 10 + j
     nr_devices = api.local_device_count()
@@ -1405,7 +1408,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         TBD""", testing_stream.output)
     testing_stream.reset()
 
-  def test_scan_custom_jvp(self):
+  def test_tap_tap_scan_custom_jvp(self):
     """custom JVP, inside scan.
     This exercises the custom_jvp_call_jaxpr primitives."""
 
@@ -1449,7 +1452,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         transforms: ['transpose'] what: x_dot
         2.1""", testing_stream.output)
 
-  def test_scan_custom_vjp(self):
+  def test_tap_scan_custom_vjp(self):
     """custom VJP, inside scan.
     This exercises the custom_vjp_call_jaxpr primitives."""
 
@@ -1498,7 +1501,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   @skipIf(not config.omnistaging_enabled,
           "test works only with omnistaging enabled")
-  def test_mask(self):
+  def test_tap_mask(self):
 
     @partial(api.mask, in_shapes=['n'], out_shape='')
     def padded_sum(x):
@@ -1564,7 +1567,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           ( 3 ) ) )""", testing_stream.output)
     testing_stream.reset()
 
-  def test_callback_delay(self):
+  def test_tap_callback_delay(self):
     hcb.callback_extra = lambda dev: time.sleep(1)
 
     def func(x):
@@ -1574,7 +1577,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
     api.jit(func)(np.arange(6, dtype=np.float32).reshape((2, 3)))
 
-  def test_callback_delay_barrier(self):
+  def test_tap_callback_delay_barrier(self):
     hcb.callback_extra = lambda dev: time.sleep(2)
 
     def func(x):
@@ -1602,7 +1605,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     hcb.barrier_wait()
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
-  def test_error_bad_consumer_id(self):
+  def test_tap_error_bad_consumer_id(self):
     """Try to use reserved consumer ID 0.
 
     Check that we get the proper error from the runtime."""
@@ -1615,7 +1618,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           comp, token, 0,
           [xla_bridge.constant(comp, np.zeros((2, 3), dtype=np.float32))])
 
-  def test_error_different_shapes(self):
+  def test_tap_error_different_shapes(self):
     """Try to register different shapes for the same consumer ID."""
     comp = xla_bridge.make_computation_builder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
@@ -1634,14 +1637,14 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           comp, token, 123,
           [xla_bridge.constant(comp, np.zeros((2,), dtype=np.float32))])
 
-  def test_id_tap_removed_kwargs(self):
+  def test_tap_id_tap_removed_kwargs(self):
     def func(x, transforms, y):
       pass
 
     with self.assertRaisesRegex(TypeError, r"Support for \*\*kwargs in ``id_tap``"):
       hcb.id_tap(func, 1, y=2)
 
-  def test_odeint(self):
+  def test_tap_odeint(self):
     # TODO: find a smaller repro for bug #4015
     # Seems to be xla_call(scan(xla_call)), all under grad.
     from jax.experimental.ode import odeint
@@ -1657,7 +1660,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
     api.grad(loss)(1.0)  # should not fail
 
-  def test_remat(self):
+  def test_tap_remat(self):
     def f(i, k):
       x = hcb.id_print(k + i, output_stream=testing_stream)
       return k * x
@@ -1672,7 +1675,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
       10"""
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
-  def test_named_call(self):
+  def test_tap_named_call(self):
     if not config.omnistaging_enabled:
       raise SkipTest("Test requires omnistaging")
 
@@ -1769,7 +1772,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     res_inside = loop(1.2, use_outside=False)
     self.assertAllClose(res_inside, loop(1.2, use_outside=True))
 
-  def test_jit_scan_call(self):
+  def test_call_jit_scan_call(self):
     def f_outside(x):
       return x
 
@@ -1788,7 +1791,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     res_outside = api.jit(partial(loop, use_outside=True))(x)
     self.assertAllClose(res_outside, loop(x, use_outside=False))
 
-  def test_doc_example1(self):
+  def test_call_doc_example1(self):
     """Examples from the documentation: simplest, call a function"""
 
     def host_eig(x):
@@ -1806,7 +1809,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     expected_res = np.linalg.eigvals(m)
     self.assertAllClose(expected_res, fun(m))
 
-  def test_doc_example_hlo(self):
+  def test_call_doc_example_hlo(self):
     """Examples from the documentation: simplest, call a function"""
 
     def fun(m):
@@ -1868,10 +1871,11 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     def fun(x):
       return hcb.call(f_outside, x, result_shape=x)
 
-    with self.assertRaisesRegex(NotImplementedError, "Batching rule for 'outside_call' not implemented"):
+    with self.assertRaisesRegex(NotImplementedError,
+                                "batching rules are implemented only for id_tap, not for call"):
       api.vmap(fun)(np.ones((2, 3)))
 
-  def test_error_bad_result_shape(self):
+  def test_call_error_bad_result_shape(self):
     with self.assertRaisesRegex(
         ValueError,
         "The values must be either numeric scalars, or must have 'shape' and 'dtype' attributes"):
@@ -1910,7 +1914,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
             re.DOTALL)):
       hcb.barrier_wait("Waiting for error")
 
-  def test_error_callback_throws_exception(self):
+  def test_call_error_callback_throws_exception(self):
     def f_outside(x):
       raise ValueError("user exception")
     def fun(x):
@@ -1919,14 +1923,14 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     self.helper_check_callback_errors(lambda: fun(3.),
                                       "ValueError: user exception")
 
-  def test_error_callback_returns_unexpected_shape(self):
+  def test_call_error_callback_returns_unexpected_shape(self):
     def fun(x):
       return hcb.call(lambda x: (x, x), x, result_shape=x)
 
     self.helper_check_callback_errors(lambda: fun(3.),
                                       "Callback func .* should have returned a result with pytree")
 
-  def test_error_then_compute(self):
+  def test_call_error_then_compute(self):
     # Continue computation on device after error
     def f_outside(x):
       raise ValueError("user exception")
@@ -1987,7 +1991,7 @@ class CallJaxTest(jtu.JaxTestCase):
       self.outside_device = api.devices("cpu")[1]
     super().setUp()
 
-  def test_impl(self):
+  def test_jax_impl(self):
     def f_jax(x):
       return jnp.sin(x)
 
@@ -1997,7 +2001,7 @@ class CallJaxTest(jtu.JaxTestCase):
     self.assertAllClose(f_jax(3.), f_outside(3.))
     self.assertAllClose(f_jax(3.), api.jit(f_outside)(3.))
 
-  def test_impl_pytree(self):
+  def test_jax_impl_pytree(self):
     def f_jax(x):
       # x : dict(a=..., b=...) and output is a list of two elements
       return [jnp.sin(x["a"]), jnp.sin(x["b"])]
@@ -2011,7 +2015,7 @@ class CallJaxTest(jtu.JaxTestCase):
     res_outside = f_outside(x)
     self.assertAllClose(res_jax, res_outside)
 
-  def test_grad(self):
+  def test_jax_grad(self):
     def f_jax(x):
       return 2. * jnp.sin(x)
 
@@ -2021,7 +2025,7 @@ class CallJaxTest(jtu.JaxTestCase):
     res_jax = api.grad(f_jax)(3.)
     self.assertAllClose(res_jax, api.grad(f_outside)(3.))
 
-  def test_grad_pytree(self):
+  def test_jax_grad_pytree(self):
     def f_jax(x):
       # x : dict(a=..., b=...) and output is a float
       return 3. * jnp.sin(x["a"]) + jnp.sin(x["b"])
@@ -2033,7 +2037,7 @@ class CallJaxTest(jtu.JaxTestCase):
     res_jax = api.grad(f_jax)(x)
     self.assertAllClose(res_jax, api.grad(f_outside)(x))
 
-  def test_grad_of_grad(self):
+  def test_jax_grad_of_grad(self):
     def f_jax(x):
       return 2. * x * x * x
 
@@ -2082,10 +2086,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
     self.assertRewrite("""
         { lambda  ; a d e.
           let b = add a a
-              c f = id_tap[ arg_treedef_=*
-                            has_token_=True
-                            tap_func_=_print  ] b d
-              g = id e
+              c f g = outside_call[ arg_treedef=*
+                                    callback=...
+                                    has_token=True
+                                    identity=True ] b d e
           in (c, f, g) }""", lambda x: hcb.id_print(x + x), [0])
 
   def test_simple_outfeed_without_input_token(self):
@@ -2094,10 +2098,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
           let e = create_token a b
               f = create_token a b
               c = add a b
-              d g = id_tap[ arg_treedef_=*
-                            has_token_=True
-                            tap_func_=_print  ] c e
-              h = id f
+              d g h = outside_call[ arg_treedef=*
+                                    callback=...
+                                    has_token=True
+                                    identity=True ] c e f
           in (d,) }""", lambda x1, x2: hcb.id_print(x1 + x2), [1, 2],
                        has_input_token=False, has_output_token=False)
 
@@ -2106,10 +2110,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
         { lambda  ; .
           let b = create_token
               c = create_token
-              a d = id_tap[ arg_treedef_=*
-                            has_token_=True
-                            tap_func_=_print  ] 42 b
-              e = id c
+              a d e = outside_call[ arg_treedef=*
+                                    callback=...
+                                    has_token=True
+                                    identity=True ] 42 b c
           in (a,) }""", lambda: hcb.id_print(42), [],
                        has_input_token=False, has_output_token=False)
 
@@ -2121,15 +2125,15 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
 
     self.assertRewrite("""
         { lambda  ; a c d.
-          let _ e = id_tap[ arg_treedef_=*
-                            has_token_=True
-                            tap_func_=_print   what='x') ] a c
-              f = id d
+          let _ e f = outside_call[ arg_treedef=*
+                                    callback=...
+                                    has_token=True
+                                    identity=True ] a c d
               b = add a 1
-              _ g = id_tap[ arg_treedef_=*
-                            has_token_=True
-                            tap_func_=_print   what='x + 1') ] b e
-              h = id f
+              _ g h = outside_call[ arg_treedef=*
+                                    callback=...
+                                    has_token=True
+                                    identity=True ] b e f
           in (2, g, h) }""", f, [1])
 
   def test_cond(self):
@@ -2145,10 +2149,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
               e = convert_element_type[ new_dtype=int32 ] d
               f g j k =
                 cond[ branches=( { lambda  ; a b c d f g.
-                                   let e h = id_tap[ arg_treedef_=*
-                                                     has_token_=True
-                                                     tap_func_=_print  ] d f
-                                       i = id g
+                                   let e h i = outside_call[ arg_treedef=*
+                                                             callback=...
+                                                             has_token=True
+                                                             identity=True ] d f g
                                    in (e, a, h, i) }
                                  { lambda  ; f_ a b c g h.
                                    let d = broadcast_in_dim[ broadcast_dimensions=(  )
@@ -2172,10 +2176,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
         { lambda a b ; c f g.
           let d e h i =
                 while[ body_jaxpr={ lambda  ; a b c f g.
-                                    let d h = id_tap[ arg_treedef_=*
-                                                      has_token_=True
-                                                      tap_func_=_print  ] c f
-                                        i = id g
+                                    let d h i = outside_call[ arg_treedef=*
+                                                              callback=...
+                                                              has_token=True
+                                                              identity=True ] c f g
                                         e = add d 1.00
                                     in (a, e, h, i) }
                        body_nconsts=1
@@ -2200,10 +2204,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
     self.assertRewrite("""
         { lambda a b ; c f g.
           let j k l = xla_call[ call_jaxpr={ lambda  ; a b c g h.
-                                             let d i = id_tap[ arg_treedef_=*
-                                                               has_token_=True
-                                                               tap_func_=_print  ] a g
-                                                 j = id h
+                                             let d i j = outside_call[ arg_treedef=*
+                                                                       callback=...
+                                                                       has_token=True
+                                                                       identity=True ] a g h
                                                  e = id_tap_dep c d
                                                  f = lt e 5
                                              in (f, i, j) }
@@ -2213,20 +2217,20 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                 while[ body_jaxpr={ lambda  ; r s t u v w x.
                                     let y z ba bb =
                                           xla_call[ call_jaxpr={ lambda  ; a b c f g.
-                                                                 let d h = id_tap[ arg_treedef_=*
-                                                                                   has_token_=True
-                                                                                   tap_func_=_print  ] c f
-                                                                     i = id g
+                                                                 let d h i = outside_call[ arg_treedef=*
+                                                                                           callback=...
+                                                                                           has_token=True
+                                                                                           identity=True ] c f g
                                                                      e = add d 1
                                                                  in (a, e, h, i) }
                                                     donated_invars=(False, False, False, False, False)
                                                     name=body ] s u v w x
                                         bc bd be =
                                           xla_call[ call_jaxpr={ lambda  ; a b c g h.
-                                                                 let d i = id_tap[ arg_treedef_=*
-                                                                                   has_token_=True
-                                                                                   tap_func_=_print  ] a g
-                                                                     j = id h
+                                                                 let d i j = outside_call[ arg_treedef=*
+                                                                                           callback=...
+                                                                                           has_token=True
+                                                                                           identity=True ] a g h
                                                                      e = id_tap_dep c d
                                                                      f = lt e 5
                                                                  in (f, i, j) }
@@ -2250,10 +2254,11 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
         { lambda a ; b f g.
           let c d h i e =
                 scan[ jaxpr={ lambda  ; a b c g h d.
-                              let e f i = id_tap[ arg_treedef_=PyTreeDef(tuple, [*,*])
-                                                  has_token_=True
-                                                  tap_func_=_print  ] b c g
-                                  j = id h
+                              let e f i j =
+                                    outside_call[ arg_treedef=PyTreeDef(tuple, [*,*])
+                                                  callback=...
+                                                  has_token=True
+                                                  identity=True ] b c g h
                               in (e, f, i, j, a) }
                       length=5
                       linear=(False, False, False, False, False, False)
@@ -2291,10 +2296,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
           let b e f _ =
                 scan[ jaxpr={ lambda  ; a e f b.
                               let c g h = custom_jvp_call_jaxpr[ fun_jaxpr={ lambda  ; a d e.
-                                                                             let b f = id_tap[ arg_treedef_=*
-                                                                                               has_token_=True
-                                                                                               tap_func_=_print  ] a d
-                                                                                 g = id e
+                                                                             let b f g = outside_call[ arg_treedef=*
+                                                                                                       callback=...
+                                                                                                       has_token=True
+                                                                                                       identity=True ] a d e
                                                                                  c = mul a b
                                                                              in (c, f, g) }
                                                                  num_consts=0 ] b e f
@@ -2312,10 +2317,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
           let _ _ f g _ b =
                 scan[ jaxpr={ lambda  ; a b h i c d.
                               let e j k = custom_jvp_call_jaxpr[ fun_jaxpr={ lambda  ; a d e.
-                                                                             let b f = id_tap[ arg_treedef_=*
-                                                                                               has_token_=True
-                                                                                               tap_func_=_print  ] a d
-                                                                                 g = id e
+                                                                             let b f g = outside_call[ arg_treedef=*
+                                                                                                       callback=...
+                                                                                                       has_token=True
+                                                                                                       identity=True ] a d e
                                                                                  c = mul a b
                                                                              in (c, f, g) }
                                                                  num_consts=0 ] c h i
@@ -2331,11 +2336,11 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
               _ _ h i _ c =
                 scan[ jaxpr={ lambda  ; a b g h c d.
                               let e = mul b d
-                                  f i = id_tap[ arg_treedef_=*
-                                                has_token_=True
-                                                tap_func_=_print
-                                                transforms=(('transpose',),) ] e g
-                                  j = id h
+                                  f i j = outside_call[ arg_treedef=*
+                                                        callback=...
+                                                        has_token=True
+                                                        identity=True
+                                                        transforms=(('transpose',),) ] e g h
                               in (*, b, i, j, *, f) }
                       length=5
                       linear=(True, True, False, False, True, False)
@@ -2376,10 +2381,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                 scan[ jaxpr={ lambda  ; a e f b.
                               let c g h = custom_vjp_call_jaxpr[
                                                                  fun_jaxpr={ lambda  ; a d e.
-                                                                             let b f = id_tap[ arg_treedef_=*
-                                                                                               has_token_=True
-                                                                                               tap_func_=_print  ] a d
-                                                                                 g = id e
+                                                                             let b f g = outside_call[ arg_treedef=*
+                                                                                                       callback=...
+                                                                                                       has_token=True
+                                                                                                       identity=True ] a d e
                                                                                  c = mul a b
                                                                              in (c, f, g) }
                                                                  num_consts=0
@@ -2399,10 +2404,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                 scan[ jaxpr={ lambda  ; a b h i c d.
                               let e j k = custom_vjp_call_jaxpr[
                                                                  fun_jaxpr={ lambda  ; a d e.
-                                                                             let b f = id_tap[ arg_treedef_=*
-                                                                                               has_token_=True
-                                                                                               tap_func_=_print  ] a d
-                                                                                 g = id e
+                                                                             let b f g = outside_call[ arg_treedef=*
+                                                                                                       callback=...
+                                                                                                       has_token=True
+                                                                                                       identity=True ] a d e
                                                                                  c = mul a b
                                                                              in (c, f, g) }
                                                                  num_consts=0
@@ -2418,10 +2423,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                       unroll=1 ] 0.00 * d e a *
               _ _ h i _ c =
                 scan[ jaxpr={ lambda  ; a b g h c d.
-                              let e i = id_tap[ arg_treedef_=*
-                                                has_token_=True
-                                                tap_func_=_print  ] b g
-                                  j = id h
+                              let e i j = outside_call[ arg_treedef=*
+                                                        callback=...
+                                                        has_token=True
+                                                        identity=True ] b g h
                                   f = mul d e
                               in (*, b, i, j, *, f) }
                       length=2
@@ -2447,10 +2452,10 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                     let d = add a 1
                                         e h i = remat_call[ call_jaxpr={ lambda  ; a b g h.
                                                                          let c = add a b
-                                                                             d i = id_tap[ arg_treedef_=*
-                                                                                           has_token_=True
-                                                                                           tap_func_=_print  ] c g
-                                                                             j = id h
+                                                                             d i j = outside_call[ arg_treedef=*
+                                                                                                   callback=...
+                                                                                                   has_token=True
+                                                                                                   identity=True ] c g h
                                                                              e = neg a
                                                                              f = mul e d
                                                                          in (f, i, j) }
@@ -2500,15 +2505,13 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
           let _ d e = xla_pmap[ axis_name=i
                                 axis_size=1
                                 backend=None
-                                call_jaxpr={ lambda  ; a e f.
-                                             let b g = id_tap[ arg_treedef_=*
-                                                               has_token_=True
-                                                               tap_func_=_print
-                                                               tap_with_device_=True ] a e
-                                                 h = id f
-                                                 c = convert_element_type[ new_dtype=float32 ] b
-                                                 d = sin c
-                                             in (d, g, h) }
+                                call_jaxpr={ lambda  ; a d e.
+                                             let b f g = outside_call[ arg_treedef=*
+                                                                       callback=...
+                                                                       has_token=True
+                                                                       identity=True ] a d e
+                                                 c = sin b
+                                             in (c, f, g) }
                                 devices=None
                                 donated_invars=(False, False, False)
                                 global_arg_shapes=(None,)
@@ -2516,7 +2519,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                 in_axes=(0, 0, 0)
                                 name=<lambda>
                                 out_axes=(0, 0, 0) ] a b c
-          in (d, e) }""", f, [np.array([2])])
+          in (d, e) }""", f, [np.array([2.], dtype=np.float32)])
 
 
 if __name__ == "__main__":
