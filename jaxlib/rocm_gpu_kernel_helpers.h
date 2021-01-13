@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_GPU_KERNEL_HELPERS_H_
-#define JAXLIB_GPU_KERNEL_HELPERS_H_
+#ifndef JAXLIB_ROCM_GPU_KERNEL_HELPERS_H_
+#define JAXLIB_ROCM_GPU_KERNEL_HELPERS_H_
 
 #include <memory>
 
@@ -34,4 +34,4 @@ std::unique_ptr<void*[]> MakeBatchPointers(hipStream_t stream, void* buffer,
 
 }  // namespace jax
 
-#endif  // JAXLIB_GPU_KERNEL_HELPERS_H_
+#endif  // JAXLIB_ROCM_GPU_KERNEL_HELPERS_H_
