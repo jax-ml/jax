@@ -1892,13 +1892,12 @@ def _reduction_dims(a, axis):
   if axis is None:
     return tuple(range(ndim(a)))
   elif isinstance(axis, (np.ndarray, tuple, list)):
+    axis = tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
     if len(axis) != len(set(axis)):
       raise ValueError(f"duplicate value in 'axis': {axis}")
-    return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
-  elif isinstance(axis, int):
-    return (_canonicalize_axis(axis, ndim(a)),)
+    return axis
   else:
-    raise TypeError("Unexpected type of axis argument: {}".format(type(axis)))
+    return (_canonicalize_axis(axis, ndim(a)),)
 
 def _reduction_init_val(a, init_val):
   a_dtype = dtypes.canonicalize_dtype(_dtype(a))
