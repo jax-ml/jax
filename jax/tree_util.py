@@ -39,7 +39,7 @@ for examples.
 import functools
 import collections
 import operator as op
-from typing import Optional, Callable, Any
+from typing import Any, Callable, Optional, Sequence, Tuple, Type, TypeVar, Union, overload
 
 from .lib import pytree
 
@@ -48,6 +48,8 @@ from ._src.util import partial, safe_zip, unzip2
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
+T = TypeVar("T")
+U = TypeVar("U")
 
 def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Flattens a pytree.
@@ -121,7 +123,11 @@ def all_leaves(iterable):
   """
   return pytree.all_leaves(iterable)
 
-def register_pytree_node(nodetype, flatten_func, unflatten_func):
+# The auxiliary is hashable, but because mypy has poor support for Hashable, we
+# annotate it as Any.
+def register_pytree_node(nodetype: Type[T],
+                         flatten_func: Callable[[T], Tuple[Sequence[Any], Any]],
+                         unflatten_func: Callable[[Any, Sequence[Any]], T]):
   """Extends the set of types that are considered internal nodes in pytrees.
 
   See `example usage <pytrees.html>`_.
@@ -130,8 +136,9 @@ def register_pytree_node(nodetype, flatten_func, unflatten_func):
     nodetype: a Python type to treat as an internal pytree node.
     flatten_func: a function to be used during flattening, taking a value of
       type ``nodetype`` and returning a pair, with (1) an iterable for the
-      children to be flattened recursively, and (2) some auxiliary data to be
-      stored in the treedef and to be passed to the ``unflatten_func``.
+      children to be flattened recursively, and (2) some hashable auxiliary
+      data to be stored in the treedef and to be passed to the
+      ``unflatten_func``.
     unflatten_func: a function taking two arguments: the auxiliary data that was
       returned by ``flatten_func`` and stored in the treedef, and the
       unflattened children. The function should return an instance of
@@ -160,7 +167,19 @@ def register_pytree_node_class(cls):
   register_pytree_node(cls, op.methodcaller('tree_flatten'), cls.tree_unflatten)
   return cls
 
-def tree_map(f, tree):
+@overload
+def tree_map(f: Callable[[U], U], tree: T) -> T:
+    ...
+
+@overload
+def tree_map(f: Callable[[T], U], tree: T) -> U:
+    ...
+
+@overload
+def tree_map(f: Callable[[Any], Any], tree: Any) -> Any:
+    ...
+
+def tree_map(f: Callable[[Any], Any], tree: Any) -> Any:
   """Maps a function over a pytree to produce a new pytree.
 
   Args:
@@ -175,7 +194,15 @@ def tree_map(f, tree):
   leaves, treedef = pytree.flatten(tree)
   return treedef.unflatten(map(f, leaves))
 
-def tree_multimap(f, tree, *rest):
+@overload
+def tree_multimap(f: Callable[..., U], tree: T, *rest: T) -> Union[T, U]:
+    ...
+
+@overload
+def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any) -> Any:
+    ...
+
+def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any) -> Any:
   """Maps a multi-input function over pytree args to produce a new pytree.
 
   Args:
@@ -247,7 +274,21 @@ def _replace_nones(sentinel, tree):
       return tree
 
 no_initializer = object()
-def tree_reduce(function, tree, initializer=no_initializer):
+
+@overload
+def tree_reduce(function: Callable[[T, Any], T],
+                tree: Any) -> T:
+    ...
+
+@overload
+def tree_reduce(function: Callable[[T, Any], T],
+                tree: Any,
+                initializer: T) -> T:
+    ...
+
+def tree_reduce(function: Callable[[T, Any], T],
+                tree: Any,
+                initializer: Any = no_initializer) -> T:
   if initializer is no_initializer:
     return functools.reduce(function, tree_leaves(tree))
   else:
