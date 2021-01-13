@@ -283,6 +283,26 @@ class XMapTest(jtu.JaxTestCase):
 
     self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
 
+  @ignore_xmap_warning()
+  @with_mesh([('r1', 2)])
+  def testPdotBatchingShardUncontractedDim(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(0)
+    x = rng.randn(2, 3, 8)
+    y = rng.randn(2, 8, 5)
+
+    f_mapped = xmap(f,
+                    in_axes=[{0: 'j', 2: 'i'}, {0: 'j', 1: 'i'}],
+                    out_axes=['j', ...],
+                    axis_resources={'j': 'r1'})
+
+    z = f_mapped(x, y)
+
+    self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
+
+
 class XMapErrorTest(jtu.JaxTestCase):
 
   @ignore_xmap_warning()
