@@ -94,6 +94,7 @@ from . import lax
 from . import nn
 from . import profiler
 from . import random
+from . import util
 
 def _init():
   from . import numpy # side-effecting import sets up operator overloads

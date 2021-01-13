@@ -21,7 +21,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import core
-from jax.util import unzip2
+from jax._src.util import unzip2
 from jax import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
@@ -229,6 +229,7 @@ deflinear(lax.complex_p)
 deflinear(lax.conj_p)
 deflinear(lax.imag_p)
 deflinear(lax.add_p)
+deflinear(ad_util.add_jaxvals_p)
 deflinear(lax.sub_p)
 deflinear(lax.convert_element_type_p)
 deflinear(lax.broadcast_in_dim_p)

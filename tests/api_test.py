@@ -44,6 +44,7 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
 from jax.lib import version
+import jax._src.util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -483,6 +484,45 @@ class CPPJitTest(jtu.JaxTestCase):
     jitted_f(1)
     self.assertIsInstance(jitted_f(2), xla._CppDeviceArray)
 
+  @jtu.skip_on_devices("cpu")
+  def test_explicit_backend(self):
+    f = lambda x: x + 1
+    jitted_f = jit(f, backend=jtu.device_under_test())
+    jitted_f_cpu = jit(f, backend="cpu")
+
+    result = jitted_f(1.)
+    result_cpu = jitted_f_cpu(1.)
+    self.assertEqual(result.device_buffer.platform(), jtu.device_under_test())
+    self.assertEqual(result_cpu.device_buffer.platform(), "cpu")
+
+  @jtu.skip_on_devices("cpu")
+  def test_mismatched_nested_backends(self):
+    @partial(jit, backend=jtu.device_under_test())
+    def f(x):
+      return jit(lambda x: x + 1, backend="cpu")(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        f"Outer-jit backend specification {jtu.device_under_test()} must match "
+        f"explicit inner-jit backend specification cpu."):
+      f(1.)
+
+  def test_omnistaging(self):
+    # See https://github.com/google/jax/issues/5206
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    key_list = [None]
+
+    def init():
+      key, subkey = jax.random.split(key_list[0])
+      key_list[0] = key
+      return jax.random.normal(subkey, ())
+
+    key_list[0] = np.array([2384771982, 3928867769], dtype=np.uint32)
+    init()
+    self.jit(init)()
+    self.assertIsInstance(key_list[0], core.Tracer)
 
 class PythonJitTest(CPPJitTest):
 
@@ -1856,9 +1896,9 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
     subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
-    self.assertLen(inner_jaxpr.eqns, 2 if config.omnistaging_enabled else 3)
-    self.assertEqual(inner_jaxpr.eqns[-2].primitive.name, 'mul')
-    self.assertEqual(inner_jaxpr.eqns[-1].primitive.name, 'add')
+    self.assertLen(inner_jaxpr.eqns, 2)
+    self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
+    self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
 
   def test_primitive_compilation_cache(self):
     with jtu.count_primitive_compiles() as count:
@@ -1959,6 +1999,25 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.UnexpectedTracerError,
                                 "tracer created on line"):
       g()
+
+  def test_escaped_tracer_omnistaging_top_trace(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test is omnistaging-specific")
+
+    count = 1
+
+    def f(_, __):
+      nonlocal count
+      count = jnp.add(count, 1)
+      return None, None
+
+    lax.scan(f, None, None, length=2)  # leaked a tracer! (of level 1!)
+
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "tracer created on line"):
+      # The following call will try and raise the ones array to the count tracer
+      # level, which is no longer live.
+      jax.jit(jnp.add)(jnp.ones(()), count)
 
   def test_pmap_static_kwarg_error_message(self):
     # https://github.com/google/jax/issues/3007
@@ -2455,7 +2514,7 @@ class RematTest(jtu.JaxTestCase):
     with assertEvals(3):
       vjp(v)
 
-    @jax.util.curry
+    @jax._src.util.curry
     def call(f, *args):
       return jax.core.call(
           jax.linear_util.wrap_init(lambda *args: [f(*args)]),
@@ -2528,8 +2587,7 @@ class JaxprTest(jtu.JaxTestCase):
         let b = ge a 0.0
             c = add a 1.0
             d = add a 2.0
-            e = convert_element_type[ new_dtype=int32
-                                      weak_type=False ] b
+            e = convert_element_type[ new_dtype=int32 ] b
             f = cond[ branches=( { lambda  ; e_ a b c.
                                    let d = sub c a
                                    in (d,) }
@@ -2537,29 +2595,24 @@ class JaxprTest(jtu.JaxTestCase):
                                    let d = add b a
                                    in (d,) } )
                       linear=(False, False, False, False) ] e a a c d
-        in (f,) }
-        """
+      in (f,) }
+      """
     else:
       expected = """
       { lambda  ; a.
         let b = ge a 0.0
-            c = convert_element_type[ new_dtype=int32
-                                      weak_type=False ] b
-            d = convert_element_type[ new_dtype=float32
-                                      weak_type=False ] a
-            e = convert_element_type[ new_dtype=float32
-                                      weak_type=False ] a
-            f = add a 1.0
-            g = add a 2.0
-            h = cond[ branches=( { lambda  ; e_ c a b.
+            c = convert_element_type[ new_dtype=int32 ] b
+            d = add a 1.0
+            e = add a 2.0
+            f = cond[ branches=( { lambda  ; e_ c a b.
                                    let d = sub b c
                                    in (d,) }
                                  { lambda  ; c f_ a b.
                                    let d = add a c
                                    in (d,) } )
-                      linear=(False, False, False, False) ] c d e f g
-        in (h,) }
-      """
+                      linear=(False, False, False, False) ] c a a d e
+        in (f,) }
+        """
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -4296,6 +4349,42 @@ class CustomVJPTest(jtu.JaxTestCase):
         api.grad(f)(jnp.arange(3.)),
         api.grad(lambda x: jnp.sum(jnp.sin(x)))(jnp.arange(3.)) * jnp.array([3., 4., 5.]),
         check_dtypes=False)
+
+  def test_closure_convert(self):
+    def minimize(objective_fn, x0):
+      converted_fn, aux_args = api.closure_convert(objective_fn, x0)
+      return _minimize(converted_fn, x0, *aux_args)
+
+    @partial(api.custom_vjp, nondiff_argnums=(0,))
+    def _minimize(objective_fn, x0, *args):
+      _ = objective_fn(x0, *args)
+      return jnp.cos(x0)
+
+    def fwd(objective_fn, x0, *args):
+      y = _minimize(objective_fn, x0, *args)
+      return y, (y, args)
+
+    def rev(objective_fn, res, g):
+      y, args = res
+      x0_bar = 17. * y
+      args_bars = [42. * a for a in args]
+      return (x0_bar, *args_bars)
+
+    _minimize.defvjp(fwd, rev)
+
+    def obj(c, x):
+      return jnp.sum((x - c) ** 2.)
+
+    def solve(c, x):
+      def closure(x):
+        return obj(c, x)
+      return jnp.sum(minimize(closure, x))
+
+    c, x = jnp.ones(2), jnp.zeros(2)
+    self.assertAllClose(solve(c, x), 2.0, check_dtypes=False)
+    g_c, g_x = api.grad(solve, argnums=(0, 1))(c, x)
+    self.assertAllClose(g_c, 42. * jnp.ones(2), check_dtypes=False)
+    self.assertAllClose(g_x, 17. * jnp.ones(2), check_dtypes=False)
 
 
 class InvertibleADTest(jtu.JaxTestCase):

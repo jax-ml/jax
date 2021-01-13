@@ -44,7 +44,7 @@ from jax import dtypes
 from jax import tree_util
 from jax.interpreters import partial_eval, xla
 from jax.test_util import check_grads
-from jax.util import prod
+from jax._src.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -792,8 +792,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in JAX_REDUCER_INITIAL_RECORDS))
   def testReducerInitial(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, initial, inexact):
-    if dtype == np.bool_ and jtu.device_under_test() == "tpu" and jnp_op in [jnp.min, jnp.max]:
-      raise unittest.SkipTest("bool max/min reductions with initial value not supported on TPU")
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,
@@ -1024,7 +1022,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = {np.float16: 1e-2, np.float32: 1e-5, np.float64: 1e-14,
            np.complex128: 1e-14}
     if jtu.device_under_test() == "tpu":
-      tol[np.float32] = tol[np.complex64] = 2e-1
+      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 2e-1
     def np_dot(x, y):
       x = x.astype(np.float32) if lhs_dtype == jnp.bfloat16 else x
       y = y.astype(np.float32) if rhs_dtype == jnp.bfloat16 else y
@@ -1062,7 +1060,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = {np.float16: 1e-2, np.float32: 2e-2, np.float64: 1e-12,
            np.complex128: 1e-12}
     if jtu.device_under_test() == "tpu":
-      tol[np.float32] = tol[np.complex64] = 4e-2
+      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 4e-2
     self._CheckAgainstNumpy(np_fun, jnp.matmul, args_maker, tol=tol)
     self._CompileAndCheck(jnp.matmul, args_maker, atol=tol, rtol=tol)
 
@@ -1095,7 +1093,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = {np.float16: 1e-1, np.float32: 1e-3, np.float64: 1e-12,
            np.complex64: 1e-3, np.complex128: 1e-12}
     if jtu.device_under_test() == "tpu":
-      tol[np.float32] = tol[np.complex64] = 2e-1
+      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 2e-1
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -1476,6 +1474,75 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np.testing.assert_equal(arr, np_res[2:-3, 3:-1])
     np.testing.assert_equal(arr, jnp_res[2:-3, 3:-1])
     np.testing.assert_equal(np_res[2:-3, 3:-1], jnp_res[2:-3, 3:-1])
+
+  def testPadKwargs(self):
+    modes = {
+        'constant': {'constant_values': 0},
+        'edge': {},
+        'linear_ramp': {'end_values': 0},
+        'maximum': {'stat_length': None},
+        'mean': {'stat_length': None},
+        'median': {'stat_length': None},
+        'minimum': {'stat_length': None},
+        'reflect': {'reflect_type': 'even'},
+        'symmetric': {'reflect_type': 'even'},
+        'wrap': {},
+        'empty': {}
+    }
+    arr = [1, 2, 3]
+    pad_width = 1
+
+    for mode in modes.keys():
+      allowed = modes[mode]
+      not_allowed = {}
+      for kwargs in modes.values():
+        if kwargs != allowed:
+          not_allowed.update(kwargs)
+
+      # Test if allowed keyword arguments pass
+      jnp.pad(arr, pad_width, mode, **allowed)
+      # Test if prohibited keyword arguments of other modes raise an error
+      match = "unsupported keyword arguments for mode '{}'".format(mode)
+      for key, value in not_allowed.items():
+        with self.assertRaisesRegex(ValueError, match):
+          jnp.pad(arr, pad_width, mode, **{key: value})
+
+    # Test if unsupported mode raise error.
+    unsupported_modes = [1, None, "foo"]
+    for mode in unsupported_modes:
+      match = "Unimplemented padding mode '{}' for np.pad.".format(mode)
+      with self.assertRaisesRegex(NotImplementedError, match):
+        jnp.pad(arr, pad_width, mode)
+
+  @unittest.skipIf(numpy_version < (1, 17, 0), "function mode is new in numpy 1.17.0")
+  def testPadFunction(self):
+    def np_pad_with(vector, pad_width, iaxis, kwargs):
+      pad_value = kwargs.get('padder', 10)
+      vector[:pad_width[0]] = pad_value
+      vector[-pad_width[1]:] = pad_value
+
+    def jnp_pad_with(vector, pad_width, iaxis, kwargs):
+      pad_value = kwargs.get('padder', 10)
+      vector = jax.ops.index_update(
+          vector, jax.ops.index[:pad_width[0]], pad_value)
+      vector = jax.ops.index_update(
+          vector, jax.ops.index[-pad_width[1]:], pad_value)
+      return vector
+
+    arr = np.arange(6).reshape(2, 3)
+    np_res = np.pad(arr, 2, np_pad_with)
+    jnp_res = jnp.pad(arr, 2, jnp_pad_with)
+    np.testing.assert_equal(np_res, jnp_res)
+
+    arr = np.arange(24).reshape(2, 3, 4)
+    np_res = np.pad(arr, 1, np_pad_with, padder=100)
+    jnp_res = jnp.pad(arr, 1, jnp_pad_with, padder=100)
+    np.testing.assert_equal(np_res, jnp_res)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(arr.shape, arr.dtype)]
+    jnp_fun = partial(jnp.pad, pad_width=1, mode=jnp_pad_with)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testPadWithNumpyPadWidth(self):
     a = [1, 2, 3, 4, 5]
@@ -2530,62 +2597,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, in_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
-
-
-  @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_func={}_inshape={}_weak_type={}_outshape={}_outdtype={}".format(
-          func, jtu.format_shape_dtype_string(shape, in_dtype),
-          weak_type, out_shape, out_dtype),
-       "func": func, "args": args,
-       "shape": shape, "in_dtype": in_dtype, "weak_type": weak_type,
-       "out_shape": out_shape, "out_dtype": out_dtype}
-      for shape in array_shapes
-      for in_dtype in [np.int32, np.float32, np.complex64]
-      for weak_type in [True, False]
-      for out_shape in [None, (), (10,)]
-      for func, args in [("full_like", (-100,)), ("ones_like", ()), ("zeros_like", ())]
-      for out_dtype in [None, float]))
-  def testZerosOnesFullLikeWeakType(self, func, args, shape, in_dtype, weak_type, out_shape, out_dtype):
-    if numpy_version < (1, 19) and out_shape == ():
-      raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
-    rng = jtu.rand_default(self.rng())
-    x = lax.convert_element_type(rng(shape, in_dtype), weak_type=weak_type)
-    fun = lambda x: getattr(jnp, func)(x, *args, dtype=out_dtype, shape=out_shape)
-    expected_weak_type = weak_type and (out_dtype is None)
-    self.assertEqual(dtypes.is_weakly_typed(fun(x)), expected_weak_type)
-    self.assertEqual(dtypes.is_weakly_typed(api.jit(fun)(x)), expected_weak_type)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_funcname={}_input_type={}_val={}_dtype={}".format(
-          funcname, input_type, val, dtype),
-       "funcname": funcname, "input_type": input_type, "val": val, "dtype": dtype}
-      for funcname in ["array", "asarray"]
-      for dtype in [int, float, None]
-      for val in [0, 1]
-      for input_type in [int, float, np.int32, np.float32]))
-  def testArrayWeakType(self, funcname, input_type, val, dtype):
-    func = lambda x: getattr(jnp, funcname)(x, dtype=dtype)
-    fjit = api.jit(func)
-    val = input_type(val)
-    expected_weak_type = dtype is None and input_type in set(dtypes._weak_types)
-    self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
-    self.assertEqual(dtypes.is_weakly_typed(fjit(val)), expected_weak_type)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_weak_type={}_slc={}".format(
-        jtu.format_shape_dtype_string(shape, dtype), weak_type, slc),
-       "shape": shape, "dtype": dtype, "weak_type": weak_type, "slc": slc}
-      for shape in nonempty_nonscalar_array_shapes
-      for dtype in [int, float, complex]
-      for weak_type in [True, False]
-      for slc in [slice(None), slice(0), slice(3), 0, ...]))
-  def testSliceWeakTypes(self, shape, dtype, weak_type, slc):
-    rng = jtu.rand_default(self.rng())
-    x = lax.convert_element_type(rng(shape, dtype), weak_type=weak_type)
-    op = lambda x: x[slc]
-    self.assertEqual(op(x).aval.weak_type, weak_type)
-    self.assertEqual(api.jit(op)(x).aval.weak_type, weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(
@@ -4227,10 +4238,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = jtu.ignore_warning(
       category=RuntimeWarning, message="invalid value encountered.*")(np_fun)
     jnp_fun = partial(jnp.corrcoef, rowvar=rowvar)
+    tol = 1e-2 if jtu.device_under_test() == "tpu" else None
     self._CheckAgainstNumpy(
         np_fun, jnp_fun, args_maker, check_dtypes=False,
-        tol=1e-2 if jtu.device_under_test() == "tpu" else None)
-    self._CompileAndCheck(jnp_fun, args_maker)
+        tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(jtu.format_shape_dtype_string(shape, dtype),
@@ -4801,7 +4813,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogramdd': ['normed'],
       'ones': ['order'],
       'ones_like': ['subok', 'order'],
-      'pad': ['kwargs'],
       'zeros_like': ['subok', 'order']
     }
 
@@ -4809,7 +4820,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'broadcast_to': ['arr'],
       'einsum': ['precision'],
       'einsum_path': ['subscripts'],
-      'pad': ['constant_values'],
     }
 
     mismatches = {}

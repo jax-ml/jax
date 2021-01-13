@@ -19,10 +19,11 @@ import operator as op
 from typing import Callable, Sequence, Tuple, Any
 
 from . import core
+from . import dtypes
 from . import linear_util as lu
 from .tree_util import (tree_flatten, tree_unflatten, tree_map, tree_multimap,
                         register_pytree_node_class)
-from .util import safe_zip, safe_map, split_list
+from ._src.util import cache, safe_zip, safe_map, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .core import raise_to_shaped
 from .ad_util import Zero, zeros_like_aval, stop_gradient_p
@@ -88,7 +89,7 @@ class custom_jvp:
   :py:func:`~jax.custom_jvp.defjvp` for defining a *single* custom JVP rule for
   all the function's inputs, and for convenience
   :py:func:`~jax.custom_jvp.defjvps`, which wraps
-  :py:func:`~jax.custom_jvp.defjvp`, and allows you to provide seperate
+  :py:func:`~jax.custom_jvp.defjvp`, and allows you to provide separate
   definitions for the partial derivatives of the function w.r.t. each of its
   arguments.
 
@@ -837,3 +838,108 @@ class Residuals:
   def tree_unflatten(cls, aux, consts):
     jaxpr, in_tree, out_tree = aux
     return cls(jaxpr, in_tree, out_tree, consts)
+
+
+def closure_convert(fun, *example_args):
+  """Closure conversion utility, for use with higher-order custom derivatives.
+
+  To define custom derivatives such as with ``jax.custom_vjp(f)``, the target
+  function ``f`` must take, as formal arguments, all values involved in
+  differentiation. If ``f`` is a higher-order function, in that it accepts as an
+  argument a Python function ``g``, then values stored away in ``g``'s closure
+  will not be visible to the custom derivative rules, and attempts at AD
+  involving these values will fail. One way around this is to convert the
+  closure by extracting these values, and to pass them as explicit formal
+  arguments across the custom derivative boundary. This utility carries out that
+  conversion. More precisely, it closure-converts the function ``fun``
+  specialized to the types of the arguments given in ``example_args``.
+
+  When we refer here to "values in the closure" of ``fun``, we do not mean the
+  values that are captured by Python directly when ``fun`` is defined (e.g. the
+  Python objects in ``fun.__closure__``, if the attribute exists). Rather, we
+  mean values encountered during the execution of ``fun`` on ``example_args``
+  that determine its output. This may include, for instance, arrays captured
+  transitively in Python closures, i.e. in the Python closure of functions
+  called by ``fun``, the closures of the functions that they call, and so forth.
+
+  The function ``fun`` must be a pure function.
+
+  Example usage::
+
+    def minimize(objective_fn, x0):
+      converted_fn, aux_args = closure_convert(objective_fn, x0)
+      return _minimize(converted_fn, x0, *aux_args)
+
+    @partial(custom_vjp, nondiff_argnums=(0,))
+    def _minimize(objective_fn, x0, *args):
+      z = objective_fn(x0, *args)
+      # ... find minimizer x_opt ...
+      return x_opt
+
+    def fwd(objective_fn, x0, *args):
+      y = _minimize(objective_fn, x0, *args)
+      return y, (y, args)
+
+    def rev(objective_fn, res, g):
+      y, args = res
+      y_bar = g
+      # ... custom reverse-mode AD ...
+      return x0_bar, *args_bars
+
+    _minimize.defvjp(fwd, rev)
+
+  Args:
+    fun: Python callable to be converted. Must be a pure function.
+    example_args: Arrays, scalars, or (nested) standard Python
+      containers (tuples, lists, dicts, namedtuples, i.e., pytrees)
+      thereof, used to determine the types of the formal arguments to
+      ``fun``. This type-specialized form of ``fun`` is the function
+      that will be closure converted.
+
+  """
+  flat_args, in_tree = tree_flatten(example_args)
+  in_avals = tuple(map(abstractify, flat_args))
+  return _closure_convert_for_avals(fun, in_tree, in_avals)
+
+@cache()
+def _closure_convert_for_avals(fun, in_tree, in_avals):
+  if config.omnistaging_enabled:
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  else:
+    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    with core.initial_style_staging():  # type: ignore
+      jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+        wrapped_fun, in_pvals, instantiate=True, stage_out=False)  # type: ignore
+  out_tree = out_tree()
+
+  # We only want to closure convert for constants with respect to which we're
+  # differentiating. As a proxy for that, we hoist consts with float dtype.
+  # TODO(mattjj): revise this approach
+  from .numpy import inexact
+  is_float = lambda c: dtypes.issubdtype(dtypes.dtype(c), inexact)
+  (closure_consts, hoisted_consts), merge = partition_list(is_float, consts)
+  num_consts = len(hoisted_consts)
+
+  def converted_fun(*args_hconsts):
+    num_args = len(args_hconsts) - num_consts
+    args, hoisted_consts = split_list(args_hconsts, [num_args])
+    consts = merge(closure_consts, hoisted_consts)
+    all_args, in_tree2 = tree_flatten(tuple(args))
+    assert in_tree == in_tree2
+    out_flat = core.eval_jaxpr(jaxpr, consts, *all_args)
+    return tree_unflatten(out_tree, out_flat)
+
+  return converted_fun, hoisted_consts
+
+def partition_list(choice, lst):
+  out = [], []
+  which = [out[choice(elt)].append(elt) or choice(elt) for elt in lst]
+  def merge(l1, l2):
+    i1, i2 = iter(l1), iter(l2)
+    return [next(i2 if snd else i1) for snd in which]
+  return out, merge
+
+def abstractify(x):
+  return core.raise_to_shaped(core.get_aval(x))

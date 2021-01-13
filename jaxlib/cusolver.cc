@@ -25,14 +25,15 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/gpus/cuda/include/cusolverDn.h"
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
-#include "jaxlib/gpu_kernel_helpers.h"
+#include "jaxlib/cuda_gpu_kernel_helpers.h"
+#include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "third_party/gpus/cuda/include/cusolverDn.h"
 
 namespace jax {
 namespace {
@@ -70,67 +71,9 @@ void ThrowIfErrorStatus(cusolverStatus_t status) {
   }
 }
 
-// To avoid creating cusolver contexts in the middle of execution, we maintain
-// a pool of them.
-class SolverHandlePool {
- public:
-  SolverHandlePool() = default;
+using SolverHandlePool = HandlePool<cusolverDnHandle_t, cudaStream_t>;
 
-  // RAII class representing a cusolver handle borrowed from the pool. Returns
-  // the handle to the pool on destruction.
-  class Handle {
-   public:
-    Handle() = default;
-    ~Handle() {
-      if (pool_) {
-        pool_->Return(handle_);
-      }
-    }
-
-    Handle(Handle const&) = delete;
-    Handle(Handle&& other) {
-      pool_ = other.pool_;
-      handle_ = other.handle_;
-      other.pool_ = nullptr;
-      other.handle_ = nullptr;
-    }
-    Handle& operator=(Handle const&) = delete;
-    Handle& operator=(Handle&& other) {
-      pool_ = other.pool_;
-      handle_ = other.handle_;
-      other.pool_ = nullptr;
-      other.handle_ = nullptr;
-      return *this;
-    }
-
-    cusolverDnHandle_t get() { return handle_; }
-
-   private:
-    friend class SolverHandlePool;
-    Handle(SolverHandlePool* pool, cusolverDnHandle_t handle)
-        : pool_(pool), handle_(handle) {}
-    SolverHandlePool* pool_ = nullptr;
-    cusolverDnHandle_t handle_ = nullptr;
-  };
-
-  // Borrows a handle from the pool. If 'stream' is non-null, sets the stream
-  // associated with the handle.
-  static Handle Borrow(cudaStream_t stream = nullptr);
-
- private:
-  static SolverHandlePool* Instance();
-
-  void Return(cusolverDnHandle_t handle);
-
-  absl::Mutex mu_;
-  std::vector<cusolverDnHandle_t> handles_ ABSL_GUARDED_BY(mu_);
-};
-
-/*static*/ SolverHandlePool* SolverHandlePool::Instance() {
-  static auto* pool = new SolverHandlePool;
-  return pool;
-}
-
+template <>
 /*static*/ SolverHandlePool::Handle SolverHandlePool::Borrow(
     cudaStream_t stream) {
   SolverHandlePool* pool = Instance();
@@ -146,11 +89,6 @@ class SolverHandlePool {
     ThrowIfErrorStatus(cusolverDnSetStream(handle, stream));
   }
   return Handle(pool, handle);
-}
-
-void SolverHandlePool::Return(cusolverDnHandle_t handle) {
-  absl::MutexLock lock(&mu_);
-  handles_.push_back(handle);
 }
 
 // Set of types known to Cusolver.

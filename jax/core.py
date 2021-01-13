@@ -33,7 +33,7 @@ from .config import FLAGS, config
 from . import linear_util as lu
 
 from jax._src import source_info_util
-from .util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
+from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
                    tuple_insert, tuple_delete, as_hashable_function,
                    HashableFunction)
 from ._src.pprint_util import pp, vcat, PrettyPrint
@@ -779,8 +779,13 @@ def full_lower(val):
     return val
 
 def find_top_trace(xs) -> Trace:
-  top_main = max((x._trace.main for x in xs if isinstance(x, Tracer)),
-                 default=None, key=attrgetter('level'))
+  top_tracer = max((x for x in xs if isinstance(x, Tracer)),
+                    default=None, key=attrgetter('_trace.level'))
+  if top_tracer is not None:
+    top_tracer._assert_live()
+    top_main = top_tracer._trace.main  # type: Optional[MainTrace]
+  else:
+    top_main = None
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
@@ -795,7 +800,7 @@ class AbstractValue:
   _num_buffers: int = 1  # number of buffers used to represent the value.
 
   def at_least_vspace(self):
-    return self
+    raise NotImplementedError("must override")
 
   def __repr__(self):
     try:
@@ -817,6 +822,7 @@ bot = Bot()
 class AbstractUnit(AbstractValue):
   # TODO(jakevdp): make it possible to set zero buffers
   # _num_buffers = 0
+  def at_least_vspace(self): return self
   def join(self, other):
     if not skip_checks:
       assert other is abstract_unit, other

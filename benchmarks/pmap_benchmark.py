@@ -24,7 +24,7 @@ import jax
 from jax import numpy as jnp
 from jax import pmap
 from jax.config import config
-from jax.util import prod
+from jax._src.util import prod
 
 from benchmarks import benchmark
 

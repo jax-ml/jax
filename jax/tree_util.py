@@ -43,7 +43,7 @@ from typing import Optional, Callable, Any
 
 from .lib import pytree
 
-from .util import partial, safe_zip, unzip2
+from ._src.util import partial, safe_zip, unzip2
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)

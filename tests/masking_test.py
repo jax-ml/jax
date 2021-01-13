@@ -24,7 +24,7 @@ from jax import core
 from jax import test_util as jtu
 from jax.config import config
 from jax._src.numpy.lax_numpy import _polymorphic_slice_indices
-from jax.util import safe_map, safe_zip
+from jax._src.util import safe_map, safe_zip
 from jax.tree_util import tree_flatten
 
 import jax.numpy as jnp

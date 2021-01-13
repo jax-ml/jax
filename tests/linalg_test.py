@@ -126,7 +126,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                   [ 45, -81,  81]], dtype=jnp.float32)
     jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
 
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj,pfau): nan on tpu, investigate
   def testDetGradOfSingularMatrixCorank2(self):
     # Rank 1 matrix with zero gradient
     b = jnp.array([[ 36, -42,  18],
@@ -707,7 +706,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           ((4, 4), (4,)),
           ((8, 8), (8, 4)),
           ((1, 2, 2), (3, 2)),
-          ((2, 1, 3, 3), (2, 4, 3, 4)),
+          ((2, 1, 3, 3), (1, 4, 3, 4)),
+          ((1, 0, 0), (1, 0, 2)),
       ]
       for dtype in float_types + complex_types))
   def testSolve(self, lhs_shape, rhs_shape, dtype):
@@ -723,7 +723,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
-      for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (5, 5, 5)]
+      for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (5, 5, 5), (0, 0)]
       for dtype in float_types))
   def testInv(self, shape, dtype):
     rng = jtu.rand_default(self.rng())

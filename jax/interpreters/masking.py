@@ -25,7 +25,7 @@ import numpy as np
 from .. import core, dtypes
 from ..tree_util import tree_unflatten
 from ..core import ShapedArray, Trace, Tracer
-from ..util import safe_map, safe_zip, unzip2, prod, wrap_name
+from .._src.util import safe_map, safe_zip, unzip2, prod, wrap_name
 from .. import linear_util as lu
 
 map = safe_map

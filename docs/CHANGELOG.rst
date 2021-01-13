@@ -9,9 +9,17 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.2.8 (Unreleased)
+jax 0.2.8 (January 12 2021)
 ----------------------
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.7...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.7...jax-v0.2.8>`_.
+
+* New features:
+
+  * Add :func:`jax.closure_convert` for use with higher-order custom
+    derivative functions. (`#5244 <https://github.com/google/jax/pull/5244>`_)
+  * Add :func:`jax.experimental.host_callback.call` to call a custom Python
+    function on the host and return a result to the device computation.
+    (`#5243 <https://github.com/google/jax/pull/5243>`_)
 
 * Bug fixes:
 
@@ -21,8 +29,23 @@ jax 0.2.8 (Unreleased)
     optional parameter for ``id_tap`` and ``id_print`` to request that the
     device from which the value is tapped be passed as a keyword argument
     to the tap function (`#5182 <https://github.com/google/jax/pull/5182>`_).
-  * ``host_callback.outfeed_receiver`` has been removed (it is not necessary,
-    and was deprecated a few months ago).
+
+
+* Breaking changes:
+
+  * ``jax.numpy.pad`` now takes keyword arguments. Positional argument ``constant_values``
+    has been removed. In addition, passing unsupported keyword arguments raises an error.
+  * Changes for :func:`jax.experimental.host_callback.id_tap` (`#5243 <https://github.com/google/jax/pull/5243>`_):
+
+    * Removed support for ``kwargs`` for :func:`jax.experimental.host_callback.id_tap`.
+      (This support has been deprecated for a few months.)
+    * Changed the printing of tuples for :func:`jax.experimental.host_callback.id_print`
+      to use '(' instead of '['.
+    * Changed the :func:`jax.experimental.host_callback.id_print` in presence of JVP
+      to print a pair of primal and tangent. Previously, there were two separate
+      print operations for the primals and the tangent.
+    * ``host_callback.outfeed_receiver`` has been removed (it is not necessary,
+      and was deprecated a few months ago).
 
 jax 0.2.7 (Dec 4 2020)
 ----------------------

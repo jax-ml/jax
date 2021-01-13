@@ -28,11 +28,11 @@ from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
 from jax import core
-from jax.numpy.linalg import cholesky
+from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
-from jax.util import prod
+from jax._src.util import prod
 
 
 _UINT_DTYPES = {8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}
@@ -207,9 +207,9 @@ threefry2x32_p.multiple_results = True
 threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
-xla.translations[threefry2x32_p] = xla.lower_fun(
+xla.translations_with_avals[threefry2x32_p] = xla.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=False),
-    multiple_results=True)
+    multiple_results=True, with_avals=True)
 xla.backend_specific_translations['cpu'][threefry2x32_p] = xla.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=True),
     multiple_results=True)
@@ -609,8 +609,8 @@ def normal(key: jnp.ndarray,
   Returns:
     A random array with the specified shape and dtype.
   """
-  if not dtypes.issubdtype(dtype, np.floating):
-    raise ValueError(f"dtype argument to `normal` must be a float dtype, "
+  if not dtypes.issubdtype(dtype, np.inexact):
+    raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
@@ -618,6 +618,19 @@ def normal(key: jnp.ndarray,
 
 @partial(jit, static_argnums=(1, 2))
 def _normal(key, shape, dtype) -> jnp.ndarray:
+  if dtypes.issubdtype(dtype, np.complexfloating):
+    sqrt2 = np.array(np.sqrt(2), dtype)
+
+    key_re, key_im = split(key)
+    dtype = dtypes.dtype_real(dtype)
+    _re = _normal_real(key_re, shape, dtype)
+    _im = _normal_real(key_im, shape, dtype)
+    return 1 / sqrt2 * (_re + 1j * _im)
+  else:
+    return _normal_real(key, shape, dtype) # type: ignore
+
+@partial(jit, static_argnums=(1, 2))
+def _normal_real(key, shape, dtype) -> jnp.ndarray:
   _check_shape("normal", shape)
   lo = np.nextafter(np.array(-1., dtype), 0., dtype=dtype)
   hi = np.array(1., dtype)
@@ -629,7 +642,8 @@ def multivariate_normal(key: jnp.ndarray,
                         mean: jnp.ndarray,
                         cov: jnp.ndarray,
                         shape: Optional[Sequence[int]] = None,
-                        dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
+                        dtype: np.dtype = dtypes.float_,
+                        method: str = 'cholesky') -> jnp.ndarray:
   """Sample multivariate normal random values with given mean and covariance.
 
   Args:
@@ -644,22 +658,25 @@ def multivariate_normal(key: jnp.ndarray,
       broadcasting together the batch shapes of ``mean`` and ``cov``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
-
+    method: optional, a method to compute the factor of ``cov``.
+      Must be one of 'svd', eigh, and 'cholesky'. Default 'cholesky'.
   Returns:
     A random array with the specified dtype and shape given by
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
+  if method not in {'svd', 'eigh', 'cholesky'}:
+    raise ValueError("method must be one of {'svd', 'eigh', 'cholesky'}")
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype)  # type: ignore
+  return _multivariate_normal(key, mean, cov, shape, dtype, method)  # type: ignore
 
-@partial(jit, static_argnums=(3, 4))
-def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
+@partial(jit, static_argnums=(3, 4, 5))
+def _multivariate_normal(key, mean, cov, shape, dtype, method) -> jnp.ndarray:
   if not np.ndim(mean) >= 1:
     msg = "multivariate_normal requires mean.ndim >= 1, got mean.ndim == {}"
     raise ValueError(msg.format(np.ndim(mean)))
@@ -677,9 +694,16 @@ def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
   else:
     _check_shape("normal", shape, mean.shape[:-1], cov.shape[:-2])
 
-  chol_factor = cholesky(cov)
+  if method == 'svd':
+    (u, s, _) = svd(cov)
+    factor = u * jnp.sqrt(s)
+  elif method == 'eigh':
+    (w, v) = eigh(cov)
+    factor = v * jnp.sqrt(w)
+  else: # 'cholesky'
+    factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
-  return mean + jnp.einsum('...ij,...j->...i', chol_factor, normal_samples)
+  return mean + jnp.einsum('...ij,...j->...i', factor, normal_samples)
 
 
 def truncated_normal(key: jnp.ndarray,
@@ -1014,9 +1038,9 @@ random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
 random_gamma_p.def_abstract_eval(lambda key, a: core.raise_to_shaped(a))
 ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
-xla.translations[random_gamma_p] = xla.lower_fun(
+xla.translations_with_avals[random_gamma_p] = xla.lower_fun(
     partial(_gamma_impl, use_vmap=True),
-    multiple_results=False)
+    multiple_results=False, with_avals=True)
 xla.backend_specific_translations['cpu'][random_gamma_p] = xla.lower_fun(
     partial(_gamma_impl, use_vmap=False),
     multiple_results=False)
@@ -1192,7 +1216,7 @@ def gumbel(key, shape=(), dtype=dtypes.float_):
 def _gumbel(key, shape, dtype):
   _check_shape("gumbel", shape)
   return -jnp.log(-jnp.log(
-      uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)))
+      uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
 
 
 def categorical(key, logits, axis=-1, shape=None):
@@ -1275,21 +1299,9 @@ def logistic(key, shape=(), dtype=dtypes.float_):
 
 @partial(jit, static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
-  # Mathematically, we can compute the distribution by generating uniformly-distributed
-  # numbers x in the open interval (a, b) and computing:
-  #   z = log[ (x - a) / (b - x))
-  # It's important to avoid x=a or x=b, which lead to infinite values for z.
-  # The uniform() function generates pseudorandom floating point numbers x in the
-  # semi-closed interval [0, 1), so if used directly  with (a,b)=(0,1), it will
-  # lead to infinite output in a small number of cases (as many as 1 in 2^23 for float32).
-  #
-  # Instead, we let (a, b) = (-ε, 1) where ε is the smallest step between floating point
-  # values: then numbers in the interval (-ε, 1) are approximated by standard uniformly
-  # drawn numbers in [0, 1).
   _check_shape("logistic", shape)
-  x = uniform(key, shape, dtype)
-  eps = jnp.finfo(dtype).eps
-  return lax.log(lax.div(lax.add(lax._const(x, eps), x), lax.sub(lax._const(x, 1), x)))
+  x = uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)
+  return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
 
 
 def pareto(key, b, shape=None, dtype=dtypes.float_):

@@ -116,7 +116,7 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax import tree_util
 from jax import numpy as jnp
 from jax.interpreters import partial_eval as pe
-from jax.util import safe_map
+from jax._src.util import safe_map
 from jax.config import config
 
 

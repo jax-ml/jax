@@ -15,6 +15,7 @@
 # JAX is Autograd and XLA
 
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "if_not_windows")
 
 licenses(["notice"])  # Apache 2
@@ -39,6 +40,8 @@ py_binary(
         "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",
         "//jaxlib:cuda_prng_kernels",
+    ]) + if_rocm([
+        "//jaxlib:rocblas_kernels",
     ]),
     deps = ["@bazel_tools//tools/python/runfiles"],
 )

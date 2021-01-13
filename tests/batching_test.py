@@ -27,7 +27,7 @@ from jax import lax
 from jax import random
 from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
-from jax.util import partial
+from jax._src.util import partial
 import jax.ops
 
 from jax.config import config
@@ -343,7 +343,6 @@ class BatchingTest(jtu.JaxTestCase):
     expected = jnp.array([True, False])
     self.assertAllClose(ans, expected)
 
-  @jtu.skip_on_devices("tpu")
   def testHessian(self):
     # test based on code from sindhwani@google
     def fun(x, t):
