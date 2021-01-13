@@ -16,7 +16,7 @@
 # checking on import.
 
 __all__ = [
-  'cuda_linalg', 'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
+  'callback', 'cuda_linalg', 'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
   'pocketfft', 'pytree', 'tpu_client', 'version', 'xla_client'
 ]
 
@@ -56,6 +56,12 @@ def _check_jaxlib_version():
 _check_jaxlib_version()
 
 from jaxlib import xla_client
+try:
+  from jaxlib import callback_custom_call  # pytype: disable=import-error
+except ImportError:
+  # TODO(necula): remove the exception handler when we release jaxlib.
+  callback_custom_call = None
+
 from jaxlib import lapack
 from jaxlib import pocketfft
 

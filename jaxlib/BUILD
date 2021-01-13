@@ -115,6 +115,7 @@ py_library(
         "init.py",
         "pocketfft.py",
         "version.py",
+        "callback_custom_call.py",
     ] + if_cuda_is_configured([
         "cuda_linalg.py",
         "cuda_prng.py",
@@ -123,7 +124,10 @@ py_library(
     ]) + if_rocm_is_configured([
         "rocsolver.py",
     ]),
-    deps = [":pocketfft_flatbuffers_py"],
+    deps = [
+        ":callback_custom_call_cpu_py",
+        ":pocketfft_flatbuffers_py",
+    ],
 )
 
 exports_files([
@@ -134,6 +138,7 @@ exports_files([
 py_library(
     name = "gpu_support",
     deps = [
+        ":callback_custom_call_cuda_py",
         ":cublas_kernels",
         ":cuda_lu_pivot_kernels",
         ":cuda_prng_kernels",
@@ -343,6 +348,77 @@ pybind_extension(
         "@com_google_absl//absl/strings",
         "@flatbuffers//:runtime_cc",
         "@pocketfft",
+        "@pybind11",
+    ],
+)
+
+flatbuffer_cc_library(
+    name = "callback_custom_call_flatbuffers_cc",
+    srcs = ["callback_custom_call.fbs"],
+)
+
+cc_library(
+    name = "callback_custom_call_lib",
+    srcs = ["callback_custom_call.cc"],
+    hdrs = ["callback_custom_call.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":callback_custom_call_flatbuffers_cc",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla:literal",
+        "@org_tensorflow//tensorflow/compiler/xla:shape_util",
+        "@org_tensorflow//tensorflow/compiler/xla:status_macros",
+        "@org_tensorflow//tensorflow/compiler/xla:xla_data_proto_cc",
+        "@org_tensorflow//tensorflow/compiler/xla/python:types",
+        "@org_tensorflow//tensorflow/core/platform:logging",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@flatbuffers//:runtime_cc",
+        "@pybind11",
+    ],
+)
+
+pybind_extension(
+    name = "callback_custom_call_cpu_py",
+    srcs = ["callback_custom_call_cpu_py.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "callback_custom_call_cpu_py",
+    deps = [
+        ":callback_custom_call_lib",
+        ":kernel_pybind11_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla:shape_util",
+        "@org_tensorflow//tensorflow/compiler/xla/service:hlo_proto_cc",
+        "@pybind11",
+    ],
+)
+
+pybind_extension(
+    name = "callback_custom_call_cuda_py",
+    srcs = ["callback_custom_call_cuda_py.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "callback_custom_call_cuda_py",
+    deps = [
+        ":callback_custom_call_flatbuffers_cc",
+        ":callback_custom_call_lib",
+        ":cuda_gpu_kernel_helpers",
+        ":kernel_helpers",
+        ":kernel_pybind11_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla:shape_util",
+        "@org_tensorflow//tensorflow/core/platform:logging",
+        "@local_config_cuda//cuda:cuda_headers",
         "@pybind11",
     ],
 )

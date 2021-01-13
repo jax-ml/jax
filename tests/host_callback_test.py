@@ -34,6 +34,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.lib import xla_bridge
+from jax.lib import xla_client
 
 import numpy as np
 
@@ -80,12 +81,13 @@ testing_stream = _TestingOutputStream()
 
 
 def fun1(a):
+  """Function used for several `id_tap` tests."""
   y = hcb.id_print(a * 2., what="a * 2", output_stream=testing_stream)
   y = hcb.id_print(y * 3., what="y * 3", output_stream=testing_stream, result=y)
   return y ** 2  # Some computation to make the gradient interesting
 
 
-def fun1_equiv(a):  # Numerical equivalent of fun`
+def fun1_equiv(a):  # Numerical equivalent of fun1.
   return (a * 2.) ** 2
 
 
@@ -201,7 +203,7 @@ def assertMultiDeviceOutputEqual(tst: jtu.JaxTestCase,
   return assertMultiLineStrippedEqual(tst, expected, what)
 
 
-class HostCallbackIdTapTest(jtu.JaxTestCase):
+class HostCallbackTapTest(jtu.JaxTestCase):
 
   def setUp(self):
     if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
@@ -309,6 +311,8 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_tap_eval_exception(self):
+    if not FLAGS.jax_host_callback_outfeed:
+      raise SkipTest("TODO: implement error handling for customcall")
     # Simulate a tap error
     def tap_err(*args, **kwargs):
       raise ValueError("Some user message")
@@ -774,16 +778,19 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list(
           dict(
-              testcase_name=f"_shape_{shape}_dtype_{dtype}_nr_args={nr_args}",
+              testcase_name=f"_shape_{shape}_dtype_{np.dtype(dtype).name}_nr_args={nr_args}",
               shape=shape,
               dtype=dtype,
               nr_args=nr_args) for nr_args in [1, 2]
           for shape in [(), (2,), (2, 3), (2, 3, 4)]
           for dtype in jtu.dtypes.all))
-  def test_tap_jit_types(self, nr_args=2, dtype=jnp.int16, shape=(2,)):
+  def test_tap_jit_dtypes(self, nr_args=2, dtype=jnp.int16, shape=(2,)):
     if dtype in (jnp.complex64, jnp.complex128, jnp.bool_):
-      raise SkipTest(f"id_print jit not implemented for {dtype}.")
-    args = [jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)]
+      raise SkipTest(f"host_callback not implemented for {dtype}.")
+    if dtype == np.bool_:
+      args = [np.random.choice(a=[True, False], size=shape)]
+    else:
+      args = [jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
       args = args * nr_args
     jit_fun1 = api.jit(lambda xs: hcb.id_print(
@@ -792,7 +799,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
 
     res = jit_fun1(args)
-    self.assertAllClose(args, res)
+    self.assertAllClose(args, res, check_dtypes=True)
 
   def test_tap_jit_large(self):
     arg = jnp.arange(10000, dtype=jnp.int32).reshape((10, 10, 5, -1))
@@ -827,6 +834,8 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     self.assertEqual(100, count)
 
   def test_tap_jit_tap_exception(self):
+    if not FLAGS.jax_host_callback_outfeed:
+      raise SkipTest("TODO: implement error handling for customcall")
     # Simulate a tap error
     def tap_err(*args, **kwargs):
       raise NotImplementedError
@@ -1082,26 +1091,27 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
     def func(x):
       # like max(x, 2)
-      x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
+      x1 = hcb.id_print(x, where="before:x", output_stream=testing_stream)
       x2 = lax.while_loop(lambda x: x < 2,
-                          lambda x: hcb.id_print(x + 1, where="w_b",
+                          lambda x: hcb.id_print(x + 1, where="body:x+1",
                                                  output_stream=testing_stream),
                           x1)
-      res = hcb.id_print(x2, where="3", output_stream=testing_stream)
+      res = hcb.id_print(x2, where="after:x", output_stream=testing_stream)
       return res
 
     inputs = np.arange(5, dtype=np.int32)
-    self.assertAllClose(np.array([2, 2, 2, 3, 4]), api.jit(api.vmap(func))(inputs),
+    self.assertAllClose(np.array([2, 2, 2, 3, 4]),
+                        api.jit(api.vmap(func))(inputs),
                         check_dtypes=False)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-        transforms: [('batch', {'batch_dims': (0,)})] where: 1
+        transforms: [('batch', {'batch_dims': (0,)})] where: before:x
         [0 1 2 3 4]
-        transforms: [('batch', {'batch_dims': (0,)})] where: w_b
+        transforms: [('batch', {'batch_dims': (0,)})] where: body:x+1
         [1 2 3 4 5]
-        transforms: [('batch', {'batch_dims': (0,)})] where: w_b
+        transforms: [('batch', {'batch_dims': (0,)})] where: body:x+1
         [2 3 3 4 5]
-        transforms: [('batch', {'batch_dims': (0,)})] where: 3
+        transforms: [('batch', {'batch_dims': (0,)})] where: after:x
         [2 2 2 3 4]""", testing_stream.output)
     testing_stream.reset()
 
@@ -1750,17 +1760,55 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     return hcb.call(call_log, arg, result_shape=result_shape)
 
   def test_call_simple(self):
+    def f_outside(x):
+      return 2 * x
+
+    def fun(x):
+      y = hcb.call(f_outside, x + 1, result_shape=x)
+      return 3 * (1 + y)
+
+
+    arg = np.arange(24, dtype=np.int32).reshape((2, 3, 4))
+    self.assertAllClose(3 * (1 + 2 * (arg + 1)), fun(arg))
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+          dict(testcase_name=f"_{np.dtype(dtype).name}", dtype=dtype)
+          for dtype in jtu.dtypes.all
+          if dtype != np.bool_))
+  def test_call_types(self, dtype=np.float64):
+    def f_outside(x):
+      # Use x + x to ensure that the result type is the same
+      return x + x
+
+    def fun(x):
+      return hcb.call(f_outside, x + x, result_shape=x)
+
+    arg = np.arange(24, dtype=dtype).reshape((2, 3, 4))
+    self.assertAllClose(arg + arg + arg + arg, fun(arg), check_dtypes=True)
+
+  def test_call_types_bool(self, dtype=np.float64):
+    def f_outside(x):
+      return np.invert(x)
+
+    def fun(x):
+      return hcb.call(f_outside, x, result_shape=x)
+
+    arg = np.random.choice(a=[True, False], size=(2, 3, 4))
+    self.assertAllClose(np.invert(arg), fun(arg))
+
+  def test_call_tuples(self):
     def f_outside(args):
       x, y = args
-      return x * y
+      return y, x  # Swap the tuple
 
-    def fun(x, use_outside=True):
-      return 2 * (hcb.call(f_outside, (x, x + 1),
-                           result_shape=x)
-                  if use_outside else f_outside((x, x + 1)))
+    def fun(x):
+      xy = hcb.call(f_outside, (x, x + 1), result_shape=(x, x))
+      return 2 * xy[0] + 3 * xy[1]
 
-    res_inside = fun(2, use_outside=False)
-    self.assertAllClose(res_inside, fun(2, use_outside=True))
+    arg = np.arange(24, dtype=np.int32).reshape((2, 3, 4))
+    self.assertAllClose(2 * (arg + 1) + 3 * arg, fun(arg))
+
 
   def test_call_empty_arg(self):
     """Call with empty array."""
@@ -1845,7 +1893,9 @@ class HostCallbackCallTest(jtu.JaxTestCase):
       return lax.fori_loop(0, 18, body, x)
 
     res_inside = loop(1.2, use_outside=False)
-    self.assertAllClose(res_inside, loop(1.2, use_outside=True))
+    print(f"XXX {api.make_jaxpr(loop)(1.2)}")
+    print(f"XXX\n{api.xla_computation(loop)(1.2).as_hlo_text()}")
+    self.assertAllClose(res_inside, api.jit(loop)(1.2))
 
   def test_call_jit_scan_call(self):
     def f_outside(x):
@@ -1885,22 +1935,22 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     self.assertAllClose(expected_res, fun(m))
 
   def test_call_doc_example_hlo(self):
-    """Examples from the documentation: simplest, call a function"""
+    """Examples from the documentation: simplest, call a function."""
 
-    def fun(m):
+    def fun1(m):
       return jnp.sin(hcb.call(lambda x: np.cos,
                               jnp.cos(m),
                               result_shape=m))
 
     m = np.ones((2,), np.float32)
-    helper_print_optimized_hlo(fun, m)
+    helper_print_optimized_hlo(fun1, m)
 
-    def fun(m):
+    def fun2(m):
       x = hcb.call(lambda x: None, 2, result_shape=())
       return x
 
     m = np.ones((2,), np.float32)
-    helper_print_optimized_hlo(fun, m)
+    helper_print_optimized_hlo(fun2, m)
 
   def test_call_with_device(self):
     def callback_func(x, device=None):
@@ -1990,6 +2040,9 @@ class HostCallbackCallTest(jtu.JaxTestCase):
       hcb.barrier_wait("Waiting for error")
 
   def test_call_error_callback_throws_exception(self):
+    if jtu.device_under_test() == "gpu" and not FLAGS.jax_host_callback_outfeed:
+      # TODO
+      raise SkipTest("GPU error with custom callback not working")
     def f_outside(x):
       raise ValueError("user exception")
     def fun(x):
@@ -1999,6 +2052,9 @@ class HostCallbackCallTest(jtu.JaxTestCase):
                                       "ValueError: user exception")
 
   def test_call_error_callback_returns_unexpected_shape(self):
+    if jtu.device_under_test() == "gpu" and not FLAGS.jax_host_callback_outfeed:
+      # TODO
+      raise SkipTest("GPU error with custom callback not working")
     def fun(x):
       return hcb.call(lambda x: (x, x), x, result_shape=x)
 
@@ -2006,6 +2062,9 @@ class HostCallbackCallTest(jtu.JaxTestCase):
                                       "Callback func .* should have returned a result with pytree")
 
   def test_call_error_then_compute(self):
+    if jtu.device_under_test() == "gpu" and not FLAGS.jax_host_callback_outfeed:
+      # TODO
+      raise SkipTest("GPU error with custom callback not working")
     # Continue computation on device after error
     def f_outside(x):
       raise ValueError("user exception")
@@ -2076,8 +2135,33 @@ class CallJaxTest(jtu.JaxTestCase):
     def f_outside(x):
       return call_jax_other_device(f_jax, x, device=self.outside_device)
 
+    print(f"XXX {api.make_jaxpr(f_outside)(3.)}")
+    print(f"XXX\n{api.xla_computation(f_outside)(3.).as_hlo_text()}")
     self.assertAllClose(f_jax(3.), f_outside(3.))
     self.assertAllClose(f_jax(3.), api.jit(f_outside)(3.))
+
+  def test_xla_bug(self):
+    from jax.interpreters import xla
+    xops = xla_client._xla.ops
+
+    my_prim = api.core.Primitive("my_prim")
+    my_prim.multiple_results = True
+    my_prim.def_impl(lambda *args: args)
+    my_prim.def_abstract_eval(lambda *args: args)
+    def my_prim_translation(comp, arg_op):
+      tok1 = xops.CreateToken(comp)
+      tok2 = xops.AfterAll(comp, [tok1])
+      tok_tuple = xops.Tuple(comp, [arg_op, tok1, tok2])
+      return xops.Tuple(comp, [xops.GetTupleElement(tok_tuple, 0)])
+
+    xla.translations[my_prim] = my_prim_translation
+    def func(x):
+      return my_prim.bind(x)[0]
+    print(f"XXX {api.make_jaxpr(func)(3.)}")
+    print(f"XXX {api.xla_computation(func)(3.).as_hlo_text()}")
+
+    self.assertAllClose(3., func(3.))
+    self.assertAllClose(3., api.jit(func)(3.))
 
   def test_jax_impl_pytree(self):
     def f_jax(x):

@@ -138,6 +138,7 @@ pytype_library(
     srcs_version = "PY3",
     deps = [
         ":jax",
+        "//third_party/py/jax/jaxlib",
     ],
 )
 
