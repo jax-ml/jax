@@ -1264,41 +1264,25 @@ def _compute_newshape(a, newshape):
   else: iterable = True
   def check(size):
     return size if type(size) is Poly else core.concrete_or_error(
-      int, size, "The error arose in jax.numpy.reshape.")
-  newshape = [check(size) for size in newshape] if iterable else check(newshape)
+      operator.index, size, "The error arose in jax.numpy.reshape.")
+  newshape = [check(size) for size in newshape] if iterable else [check(newshape)]
   if np.any(np.equal(newshape, -1)):
     fix = -a.size // (newshape if type(newshape) is Poly else _prod(newshape))
     return [d if d != -1 else fix for d in newshape]
   else:
     return newshape
 
-def _reshape(a, newshape, order="C"):
-  computed_newshape = _compute_newshape(a, newshape)
+def _reshape(a, *args, order="C"):
+  newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
   if order == "C":
-    return lax.reshape(a, computed_newshape, None)
+    return lax.reshape(a, newshape, None)
   elif order == "F":
     dims = np.arange(ndim(a))[::-1]
-    return lax.reshape(a, computed_newshape[::-1], dims).T
+    return lax.reshape(a, newshape[::-1], dims).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
-
-def _reshape_method(a, *newshape, **kwargs):
-  order = kwargs.pop("order", "C")
-  if len(kwargs) == 1:
-    invalid_kwarg, = kwargs
-    msg = "'{}' is an invalid keyword argument for this function"
-    raise TypeError(msg.format(invalid_kwarg))  # same as NumPy error
-  elif kwargs:
-    invalid_kwargs = "'{}'".format("'".join(kwargs))
-    msg = "{} are invalid keyword arguments for this function"
-    raise TypeError(msg.format(invalid_kwargs))  # different from NumPy error
-  if (len(newshape) == 1 and not np.isscalar(newshape[0]) and
-          type(newshape[0]) is not Poly):
-    newshape = newshape[0]
-  return _reshape(a, newshape, order=order)
-
 
 @_wraps(np.ravel)
 def ravel(a, order="C"):
@@ -5197,7 +5181,7 @@ for operator_name, function in _operators.items():
 # Forward methods and properties using core.aval_method and core.aval_property:
 for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
-setattr(ShapedArray, "reshape", core.aval_method(_reshape_method))
+setattr(ShapedArray, "reshape", core.aval_method(_reshape))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "real", core.aval_property(real))
@@ -5214,7 +5198,7 @@ for device_array in [_DeviceArray, _CppDeviceArray]:
     setattr(device_array, "__{}__".format(operator_name), function)
   for method_name in _nondiff_methods + _diff_methods:
     setattr(device_array, method_name, globals()[method_name])
-  setattr(device_array, "reshape", _reshape_method)
+  setattr(device_array, "reshape", _reshape)
   setattr(device_array, "flatten", ravel)
   setattr(device_array, "T", property(transpose))
   setattr(device_array, "real", property(real))
