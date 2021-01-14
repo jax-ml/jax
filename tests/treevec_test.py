@@ -267,14 +267,12 @@ class FlatTreeTest(jtu.JaxTestCase):
     result = tree_vectorize(jit(lambda x: x))(tree)
     self.assertTreeEqual(result, tree, check_dtypes=True)
 
-  @pytest.mark.xfail
   def test_jit_plus1(self):
     tree = {'x': 0, 'y': 1}
     expected = {'x': 1, 'y': 2}
     result = tree_vectorize(jit(lambda x: x + 1))(tree)
     self.assertTreeEqual(result, expected, check_dtypes=True)
 
-  @pytest.mark.xfail
   def test_norm(self):
     tree = [3.0, jnp.array([[4.0]])]
     self.assertEqual(tree_vectorize(jnp.linalg.norm)(tree), 5.0)

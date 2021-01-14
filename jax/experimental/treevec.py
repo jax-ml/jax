@@ -248,7 +248,10 @@ class TreeTrace(core.Trace):
     else:
       flat_in, tree_tracer_def_in = _flatten_tree_tracers(tracers)
       f_tree, out_structure = tree_subtrace(f, self.main, tree_tracer_def_in)
-      flat_out = call_primitive.bind(f_tree, *flat_in, **params)
+      update_params = call_param_updaters.get(call_primitive)
+      new_params = (update_params(params, len(flat_in))
+                    if update_params else params)
+      flat_out = call_primitive.bind(f_tree, *flat_in, **new_params)
       out_tracers = _unflatten_tree_tracers(self, out_structure(), flat_out)
       return out_tracers
 
@@ -293,6 +296,16 @@ def restore_tree(treedefs: Tuple[TreeDef, ...], leaves: Leaves) -> PyTree:
     treedefs = treedefs[:-1]
     leaves = flattened_leaves
   return leaves[()]
+
+
+call_param_updaters = {}
+
+def _xla_call_param_updater(params, num_inputs):
+  donated_invars = params['donated_invars']
+  if any(donated_invars):
+    raise NotImplementedError("donated_invars not supported with tree_vectorize")
+  return dict(params, donated_invars=(False,) * num_inputs)
+call_param_updaters[xla.xla_call_p] = _xla_call_param_updater
 
 
 ### rule definitions
