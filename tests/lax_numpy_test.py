@@ -264,7 +264,7 @@ JAX_COMPOUND_OP_RECORDS = [
                          np.float64: 1e-12}),
     op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
-              tolerance={np.complex128: 1e-14}),
+              tolerance={np.complex128: 1e-14}, check_dtypes=False),
     op_record("rad2deg", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("ravel", 1, all_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("real", 1, number_dtypes, all_shapes, jtu.rand_some_inf, []),
@@ -1675,6 +1675,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_ptype={}".format(ptype), "ptype": ptype}
+      for ptype in ['int', 'np.int', 'jnp.int']))
+  def testIntegerPower(self, ptype):
+    p = {'int': 2, 'np.int': np.int32(2), 'jnp.int': jnp.int32(2)}[ptype]
+    jaxpr = api.make_jaxpr(partial(jnp.power, x2=p))(1)
+    eqns = jaxpr.jaxpr.eqns
+    self.assertLen(eqns, 1)
+    self.assertEqual(eqns[0].primitive, lax.integer_pow_p)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
