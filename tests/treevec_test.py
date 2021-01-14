@@ -22,7 +22,7 @@ import pytest
 import jax
 from jax import linear_util as lu
 from jax import api
-from jax import disable_jit, jit, make_jaxpr, shapecheck
+from jax import disable_jit, jit, make_jaxpr
 from jax import lax
 from jax.config import config
 from jax.experimental.treevec import (
