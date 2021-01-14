@@ -24,8 +24,17 @@ jax 0.2.9 (Unreleased)
 
 These are the release notes for JAX.
 
+next version
+-------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.8...jax-v0.2.9>`_.
+
+* New features:
+
+  * Extend the `jax.experimental.loops` module with support for pytrees. Improved
+    error checking and error messages.
+
 jax 0.2.8 (January 12 2021)
-----------------------
+---------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.7...jax-v0.2.8>`_.
 
 * New features:
