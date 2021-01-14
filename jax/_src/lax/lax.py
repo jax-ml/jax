@@ -47,8 +47,8 @@ from jax.interpreters import ad
 from jax.interpreters import invertible_ad as iad
 from jax.interpreters import batching
 from jax.interpreters import masking
-from jax.util import (cache, safe_zip, partial, prod, safe_map, canonicalize_axis,
-                      split_list)
+from jax._src.util import (cache, safe_zip, partial, prod, safe_map,
+                           canonicalize_axis, split_list)
 from jax.tree_util import tree_map
 from jax.lib import pytree
 from jax.lib import xla_bridge
@@ -4996,6 +4996,8 @@ def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
   del input_shape  # Unused.
   if len(axes) != len(set(axes)):
     raise ValueError(f"duplicate value in 'axes' of reduction: {axes}")
+  if not all(0 <= a < operand.ndim for a in axes):
+    raise ValueError(f"reduction axes {axes} contains out-of-bounds indices for {operand}.")
   return tuple(np.delete(operand.shape, axes))
 
 def _reduce_prod_translation_rule(c, operand, *, axes):

@@ -29,7 +29,7 @@ from absl import logging
 logging._warn_preinit_stderr = 0
 
 from ..config import flags
-from .. import util
+from jax._src import util
 from .. import dtypes
 import numpy as np
 import threading

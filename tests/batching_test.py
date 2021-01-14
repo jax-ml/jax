@@ -27,7 +27,7 @@ from jax import lax
 from jax import random
 from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
-from jax.util import partial
+from jax._src.util import partial
 import jax.ops
 
 from jax.config import config
@@ -343,7 +343,6 @@ class BatchingTest(jtu.JaxTestCase):
     expected = jnp.array([True, False])
     self.assertAllClose(ans, expected)
 
-  @jtu.skip_on_devices("tpu")
   def testHessian(self):
     # test based on code from sindhwani@google
     def fun(x, t):
@@ -1160,6 +1159,16 @@ class BatchingTest(jtu.JaxTestCase):
                         axis_name='i', in_axes=(1, 0, None), out_axes=(1, 0))(x, y, z_bar)
     self.assertAllClose(x_bar, jnp.dot(z_bar, y.T))
     self.assertAllClose(y_bar, jnp.dot(x.T, z_bar))
+
+  def testVmapKwargs(self):
+    # https://github.com/google/jax/issues/912
+
+    def f(a, b):
+      return (2*a, 3*b)
+
+    x = vmap(f)(jnp.array([1]), jnp.array([2]))  # works
+    y = vmap(f)(a=jnp.array([1]), b=jnp.array([2]))  # doesn't work
+    self.assertAllClose(x, y)
 
 
 if __name__ == '__main__':

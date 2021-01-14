@@ -21,7 +21,7 @@ from jax import scipy as jsp
 from jax import lax, device_put
 from jax.tree_util import (tree_leaves, tree_map, tree_multimap, tree_structure,
                            tree_reduce, Partial)
-from jax.util import safe_map as map
+from jax._src.util import safe_map as map
 
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)

@@ -114,7 +114,7 @@ def verify_mac_libraries_dont_reference_chkstack():
   nm = subprocess.run(
     ["nm", "-g",
      r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so")
-    ], capture_output=True, text=True)
+     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
   if nm.returncode != 0:
     raise RuntimeError(f"nm process failed: {nm.stdout} {nm.stderr}")
   if "____chkstk_darwin" in nm.stdout:

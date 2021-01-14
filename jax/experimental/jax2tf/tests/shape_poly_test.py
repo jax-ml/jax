@@ -26,7 +26,7 @@ from jax.experimental import jax2tf
 from jax import lax
 import jax.numpy as jnp
 from jax import test_util as jtu
-from jax import util
+from jax._src import util
 import numpy as np
 from jax.interpreters import masking
 

@@ -1184,17 +1184,13 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             # I think that this is because TF is running on CPU even for GPU tests?
             "TODO: TF non-stable multiple-array sort",
             devices="gpu",
-            enabled=(len(harness.arg_descriptors) == 4 and not harness.params["is_stable"]),
+            enabled=(harness.params["num_arrays"] > 1 and not harness.params["is_stable"]),
             expect_tf_error=False,
             skip_comparison=True),
-        missing_tf_kernel(dtypes=[np.complex64, np.complex128], devices=("cpu", "gpu")),
-        Jax2TfLimitation(
-            "TODO: XlaSort does not support more than 2 arrays",
-            enabled=harness.params["nb_arrays"] > 2),
-        Jax2TfLimitation(
-            "TODO: XlaSort does not support sorting axis",
-            enabled=harness.params["dimension"] !=
-                    len(np.shape(harness.arg_descriptors[0])) - 1)
+        missing_tf_kernel(dtypes=[np.complex64, np.complex128, np.float64],
+                          devices=("cpu", "gpu"), also_compiled=True),
+        missing_tf_kernel(dtypes=[np.bool_],
+                          also_compiled=True),
     ]
 
   @classmethod

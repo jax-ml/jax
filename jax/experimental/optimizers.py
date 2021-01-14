@@ -87,7 +87,7 @@ from collections import namedtuple
 import functools
 
 import jax.numpy as jnp
-from jax.util import partial, safe_zip, safe_map, unzip2
+from jax._src.util import partial, safe_zip, safe_map, unzip2
 from jax import tree_util
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            register_pytree_node)

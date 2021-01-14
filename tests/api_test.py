@@ -44,6 +44,7 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
 from jax.lib import version
+import jax._src.util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -506,6 +507,22 @@ class CPPJitTest(jtu.JaxTestCase):
         f"explicit inner-jit backend specification cpu."):
       f(1.)
 
+  def test_omnistaging(self):
+    # See https://github.com/google/jax/issues/5206
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    key_list = [None]
+
+    def init():
+      key, subkey = jax.random.split(key_list[0])
+      key_list[0] = key
+      return jax.random.normal(subkey, ())
+
+    key_list[0] = np.array([2384771982, 3928867769], dtype=np.uint32)
+    init()
+    self.jit(init)()
+    self.assertIsInstance(key_list[0], core.Tracer)
 
 class PythonJitTest(CPPJitTest):
 
@@ -2497,7 +2514,7 @@ class RematTest(jtu.JaxTestCase):
     with assertEvals(3):
       vjp(v)
 
-    @jax.util.curry
+    @jax._src.util.curry
     def call(f, *args):
       return jax.core.call(
           jax.linear_util.wrap_init(lambda *args: [f(*args)]),

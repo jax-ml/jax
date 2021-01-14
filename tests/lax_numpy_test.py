@@ -44,7 +44,7 @@ from jax import dtypes
 from jax import tree_util
 from jax.interpreters import partial_eval, xla
 from jax.test_util import check_grads
-from jax.util import prod
+from jax._src.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -792,8 +792,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in JAX_REDUCER_INITIAL_RECORDS))
   def testReducerInitial(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, initial, inexact):
-    if dtype == np.bool_ and jtu.device_under_test() == "tpu" and jnp_op in [jnp.min, jnp.max]:
-      raise unittest.SkipTest("bool max/min reductions with initial value not supported on TPU")
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,

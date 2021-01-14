@@ -59,7 +59,7 @@ else:
   jax_jit = xla_client._xla.jax_jit
 
 try:
-  from jaxlib import cusolver
+  from jaxlib import cusolver  # pytype: disable=import-error
 except ImportError:
   cusolver = None
 
@@ -69,7 +69,7 @@ except ImportError:
   rocsolver = None
 
 try:
-  from jaxlib import cuda_prng
+  from jaxlib import cuda_prng  # pytype: disable=import-error
 except ImportError:
   cuda_prng = None
 

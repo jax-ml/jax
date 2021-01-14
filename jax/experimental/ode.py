@@ -34,7 +34,7 @@ import jax.numpy as jnp
 from jax import core
 from jax import custom_derivatives
 from jax import lax
-from jax.util import safe_map, safe_zip
+from jax._src.util import safe_map, safe_zip
 from jax.flatten_util import ravel_pytree
 from jax.tree_util import tree_map
 from jax import linear_util as lu

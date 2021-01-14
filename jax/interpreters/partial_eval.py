@@ -26,8 +26,8 @@ from .. import core
 from .. import dtypes
 from .. import linear_util as lu
 from ..ad_util import Zero
-from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
-                    cache, as_hashable_function)
+from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,
+                         split_list, cache, as_hashable_function)
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
                     dropvar, ConcreteArray, raise_to_shaped)

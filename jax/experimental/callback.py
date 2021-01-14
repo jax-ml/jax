@@ -19,7 +19,7 @@ import jax.numpy as jnp
 from jax import core
 from jax.core import Trace, Tracer
 from jax import linear_util as lu
-from jax.util import partial, safe_map, wraps
+from jax._src.util import partial, safe_map, wraps
 
 import inspect
 from jax.api_util import flatten_fun_nokwargs

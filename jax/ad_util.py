@@ -18,7 +18,7 @@ from .core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
                    valid_jaxtype, raise_to_shaped, get_aval)
 from .tree_util import register_pytree_node
 from typing import Any, Dict, Type
-from .util import safe_map
+from ._src.util import safe_map
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)

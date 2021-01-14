@@ -23,7 +23,7 @@ import inspect
 import itertools
 import operator
 import os
-from typing import Any, Callable, Sequence, TypeVar
+from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
 
@@ -32,7 +32,7 @@ from jax import api
 from jax import core
 from jax import dtypes
 from jax._src import source_info_util
-from jax import util
+from jax._src import util
 from jax._src.lax import lax
 from jax import linear_util as lu
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
@@ -44,8 +44,8 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-from jax.util import (partial, unzip2, unzip3, safe_map, safe_zip, split_list,
-                      cache, extend_name_stack)
+from jax._src.util import (partial, unzip2, unzip3, unzip4, safe_map, safe_zip,
+                           split_list, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves)
@@ -1120,7 +1120,16 @@ core.custom_typechecks[cond_p] = _cond_typecheck
 
 ### scan
 
-def scan(f, init, xs, length=None, reverse=False, unroll=1):
+Carry = TypeVar('Carry')
+X = TypeVar('X')
+Y = TypeVar('Y')
+
+def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+         init: Carry,
+         xs: X,
+         length: Optional[int] = None,
+         reverse: bool = False,
+         unroll: int = 1) -> Tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
   The type signature in brief is
@@ -1229,8 +1238,8 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
       ys.append(y)
     stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
                             else jax.numpy.stack((y, *ys)))
-    ys = tree_multimap(stack, *maybe_reversed(ys))
-    return carry, ys
+    stacked_y = tree_multimap(stack, *maybe_reversed(ys))
+    return carry, stacked_y
 
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
   x_dtypes = [x.dtype for x in xs_flat]
@@ -2607,8 +2616,6 @@ def omnistaging_disabler() -> None:
   global _initial_style_open_jaxpr, _initial_style_jaxpr, \
       _initial_style_jaxprs_with_common_consts
 
-  from jax.util import unzip4
-
   @cache()
   def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):
     in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
@@ -2625,6 +2632,7 @@ def omnistaging_disabler() -> None:
     closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     return closed_jaxpr, consts, out_tree()
 
+  @cache()
   def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                                               in_tree, in_avals):
     # When staging the branches of a conditional into jaxprs, constants are

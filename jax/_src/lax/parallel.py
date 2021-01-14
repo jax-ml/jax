@@ -31,7 +31,7 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-from jax.util import partial, unzip2, prod
+from jax._src.util import partial, unzip2, prod
 from jax.lib import xla_client as xc
 from jax.lib import xla_bridge as xb
 from jax.config import config
@@ -828,13 +828,15 @@ batching.primitive_batchers[pdot_p] = _pdot_vmap_batching_rule
 
 def _pdot_translation_rule(c, x, y, *, axis_name, pos_contract, pos_batch,
                            axis_env, platform):
-  assert axis_name
   local_out = lax._dot_general_translation_rule(
       c, x, y, dimension_numbers=[pos_contract, pos_batch], precision=None)
-  out_tup = xla.parallel_translations[psum_p](
-      c, local_out, axis_name=axis_name, axis_index_groups=None,
-      axis_env=axis_env, platform=platform)
-  out, = xla.xla_destructure(c, out_tup)
+  if axis_name:
+    out_tup = xla.parallel_translations[psum_p](
+        c, local_out, axis_name=axis_name, axis_index_groups=None,
+        axis_env=axis_env, platform=platform)
+    out, = xla.xla_destructure(c, out_tup)
+  else:
+    out = local_out
   return out
 xla.parallel_translations[pdot_p] = _pdot_translation_rule
 

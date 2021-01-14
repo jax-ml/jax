@@ -33,7 +33,7 @@ from ..interpreters import pxla
 from ..interpreters import xla
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..util import safe_map, safe_zip, HashableFunction
+from .._src.util import safe_map, safe_zip, HashableFunction
 from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
