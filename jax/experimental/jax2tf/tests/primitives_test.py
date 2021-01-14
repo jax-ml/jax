@@ -95,6 +95,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # test will be called "test_prim_xxx_..." and the custom parameters for
   # the test are defined in the class method "jax2tf_limitations.Jax2TfLimitation.xxx".
   # See more details in the comment at top of file and in Jax2TfLimitation class.
+  # If you want to run this test for only one harness, add parameter
+  # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses, include_jax_unimpl=False,
       )

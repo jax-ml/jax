@@ -29,7 +29,6 @@ from absl.testing import absltest
 
 from jax import test_util as jtu
 from jax.config import config
-from jax.experimental.jax2tf.tests import tf_test_util
 
 import numpy as np
 
@@ -40,12 +39,14 @@ FLAGS = config.FLAGS
 from jax.experimental.jax2tf.tests import primitive_harness
 
 
-class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
+class JaxPrimitiveTest(jtu.JaxTestCase):
 
   # This test runs for all primitive harnesses. For each primitive "xxx" the
   # test will be called "test_jax_implemented_xxx_...". The test harnesses,
   # including which dtypes are expected to fail, are defined in the
   # file primitive_harness.py.
+  # If you want to run this test for only one harness, add parameter
+  # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(primitive_harness.all_harnesses,
                                    include_jax_unimpl=True)
   @jtu.ignore_warning(category=UserWarning,
@@ -56,6 +57,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     jax_unimpl = [l for l in harness.jax_unimplemented
                   if l.filter(device=jtu.device_under_test(),
                               dtype=harness.dtype)]
+    if any([lim.skip_run for lim in jax_unimpl]):
+      logging.info(
+          f"Skipping run with expected JAX limitations: "
+          f"{[u.description for u in jax_unimpl]} in harness {harness.fullname}")
+      return
     try:
       harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     except Exception as e:

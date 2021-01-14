@@ -312,11 +312,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         Jax2TfLimitation(
             "jax2tf BUG: batch_group_count > 1 not yet converted",
             enabled=(harness.params["batch_group_count"] > 1)),
-        Jax2TfLimitation(
-            "XLA bug in the HLO -> LLVM IR lowering",
-            dtypes=[np.complex64, np.complex128],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph", "compiled")),
         custom_numeric(devices="gpu", tol=1e-4),
         custom_numeric(devices="tpu", tol=1e-3),
         # TODO(bchetioui): significant discrepancies in some float16 cases.
@@ -326,6 +321,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(dtypes=np.float32, devices="gpu", tol=1e-3),
         custom_numeric(dtypes=np.float32, devices="cpu", tol=1e-4),
         custom_numeric(dtypes=np.complex64, devices="tpu", tol=0.1),
+        custom_numeric(dtypes=[np.complex64, np.complex128], devices=("cpu", "gpu"), tol=5e-4),
         # TODO(bchetioui): slight discrepancy when going through the path using
         # tf.nn.convolution.
         custom_numeric(dtypes=np.float64, devices="cpu", tol=1e-13),
