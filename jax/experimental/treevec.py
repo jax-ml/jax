@@ -29,7 +29,7 @@ from .. import lax
 from .. import linear_util as lu
 from ..api_util import flatten_fun_nokwargs
 from ..interpreters import xla
-from ..util import prod, safe_map as map, split_list, unzip2, unzip3
+from .._src.util import prod, safe_map as map, split_list, unzip2, unzip3
 from ..tree_util import (
     tree_structure, tree_flatten, tree_unflatten,
 )
