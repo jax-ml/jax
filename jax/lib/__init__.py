@@ -16,13 +16,14 @@
 # checking on import.
 
 __all__ = [
-  'cuda_prng', 'cusolver', 'jaxlib', 'lapack',
+  'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
   'pytree', 'tpu_client', 'version', 'xla_client'
 ]
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 48)
+# Must be kept in sync with the jaxlib version in build/test-requirements.txt
+_minimum_jaxlib_version = (0, 1, 55)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
@@ -39,11 +40,11 @@ def _check_jaxlib_version():
     msg = 'jaxlib is version {}, but this version of jax requires version {}.'
 
     if version == (0, 1, 23):
-        msg += ('\n\nA common cause of this error is that you installed jaxlib '
-                'using pip, but your version of pip is too old to support '
-                'manylinux2010 wheels. Try running:\n\n'
-                'pip install --upgrade pip\n'
-                'pip install --upgrade jax jaxlib\n')
+      msg += ('\n\nA common cause of this error is that you installed jaxlib '
+              'using pip, but your version of pip is too old to support '
+              'manylinux2010 wheels. Try running:\n\n'
+              'pip install --upgrade pip\n'
+              'pip install --upgrade jax jaxlib\n')
     raise ValueError(msg.format('.'.join(map(str, version)),
                                 '.'.join(map(str, _minimum_jaxlib_version))))
 
@@ -51,14 +52,41 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-from jaxlib import pytree
-from jaxlib import cusolver
+if version <  (0, 1, 53):
+  from jaxlib import pytree  # pytype: disable=import-error
+else:
+  pytree = xla_client._xla.pytree
+  jax_jit = xla_client._xla.jax_jit
+
+try:
+  from jaxlib import cusolver
+except ImportError:
+  cusolver = None
+
+try:
+  from jaxlib import rocsolver  # pytype: disable=import-error
+except ImportError:
+  rocsolver = None
+
 try:
   from jaxlib import cuda_prng
 except ImportError:
   cuda_prng = None
 
+# Jaxlib code is split between the Jax and the Tensorflow repositories.
+# Only for the internal usage of the JAX developers, we expose a version
+# number that can be used to perform changes without breaking the master
+# branch on the Jax github.
+_xla_extension_version = getattr(xla_client, '_version', 0)
+
 try:
   from jaxlib import tpu_client  # pytype: disable=import-error
 except:
   tpu_client = None
+
+# TODO(phawkins): Make this import unconditional once the minimum jaxlib version
+# is 0.1.57 or greater.
+try:
+  from jaxlib import pocketfft  # pytype: disable=import-error
+except:
+  pocketfft = None

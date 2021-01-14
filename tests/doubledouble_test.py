@@ -17,6 +17,7 @@ import operator
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax import dtypes
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental.doubledouble import doubledouble, _DoubleDouble
@@ -76,7 +77,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
 
     self.assertAllClose(double_op1(*args), op2(*args), check_dtypes=check_dtypes)
 
-    # Sanity check: make sure test fails for regular precision.
+    # Correctness check: make sure test fails for regular precision.
     with self.assertRaisesRegex(AssertionError, "Not equal to tolerance"):
       self.assertAllClose(op1(*args), op2(*args), check_dtypes=check_dtypes)
   def testTypeConversion(self):
@@ -104,7 +105,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
     for val in ["6.0221409e23", "3.14159265358", "0", 123456789]
   ))
   def testClassInstantiation(self, dtype, val):
-    dtype = jnp.dtype(dtype).type
+    dtype = dtypes.canonicalize_dtype(dtype).type
     self.assertEqual(dtype(val), _DoubleDouble(val, dtype).to_array())
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -143,6 +144,5 @@ class DoubleDoubleTest(jtu.JaxTestCase):
       return result
     self.assertAllClose(op(*args), class_op(*args))
 
-
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

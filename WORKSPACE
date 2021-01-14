@@ -10,6 +10,15 @@ http_archive(
     ],
 )
 
+http_archive(
+    name = "tf_toolchains",
+    sha256 = "d60f9637c64829e92dac3f4477a2c45cdddb9946c5da0dd46db97765eb9de08e",
+    strip_prefix = "toolchains-1.1.5",
+    urls = [
+        "http://mirror.tensorflow.org/github.com/tensorflow/toolchains/archive/v1.1.5.tar.gz",
+        "https://github.com/tensorflow/toolchains/archive/v1.1.5.tar.gz",
+    ],
+)
 
 # https://github.com/bazelbuild/bazel-skylib/releases
 http_archive(
@@ -28,10 +37,10 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "962345c0e8cbdc2fe437455cac55876cf2fc950a3827acc6e28a822b342213c7",
-    strip_prefix = "tensorflow-b9b4645ec407b693d73eb29c7dd9cea15610ec45",
+    sha256 = "7018a9552f0cbc6e1095898144f951a0d47dc319c48b3b20d2b64ac36044b2bd",
+    strip_prefix = "tensorflow-ec2403ba4f8943e40fe613f9bd72d9c015397c9d",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/b9b4645ec407b693d73eb29c7dd9cea15610ec45.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/ec2403ba4f8943e40fe613f9bd72d9c015397c9d.tar.gz",
     ],
 )
 
@@ -49,6 +58,9 @@ tf_workspace(
 )
 
 tf_bind()
+
+load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
+pocketfft()
 
 # Required for TensorFlow dependency on @com_github_grpc_grpc
 

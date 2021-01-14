@@ -19,7 +19,6 @@ For an example of its use, see examples/resnet50.py.
 
 
 import functools
-import itertools
 import operator as op
 
 from jax import lax
@@ -74,7 +73,6 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
     output_shape = lax.conv_general_shape_tuple(
         input_shape, kernel_shape, strides, padding, dimension_numbers)
     bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
-    bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
     k1, k2 = random.split(rng)
     W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
     return output_shape, (W, b)
@@ -102,7 +100,6 @@ def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
     output_shape = lax.conv_transpose_shape_tuple(
         input_shape, kernel_shape, strides, padding, dimension_numbers)
     bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
-    bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
     k1, k2 = random.split(rng)
     W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
     return output_shape, (W, b)
@@ -174,8 +171,11 @@ def _pooling_layer(reducer, init_val, rescaler=None):
       strides = strides[:i] + (1,) + strides[i:]
 
     def init_fun(rng, input_shape):
-      out_shape = lax.reduce_window_shape_tuple(input_shape, window_shape,
-                                                strides, padding)
+      padding_vals = lax.padtype_to_pads(input_shape, window_shape,
+                                         strides, padding)
+      ones = (1,) * len(window_shape)
+      out_shape = lax.reduce_window_shape_tuple(
+        input_shape, window_shape, strides, padding_vals, ones, ones)
       return out_shape, ()
     def apply_fun(params, inputs, **kwargs):
       out = lax.reduce_window(inputs, init_val, reducer, window_shape,

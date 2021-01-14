@@ -5,7 +5,7 @@ set -e
 # Builds wheels for multiple Python versions, using pyenv instead of Docker.
 # Usage: run from root of JAX source tree as:
 # build/build_jaxlib_wheels_macos.sh
-# The wheels will end up in build/dist.
+# The wheels will end up in dist/
 #
 # Requires pyenv, pyenv-virtualenv (e.g., from Homebrew). If you have Homebrew
 # installed, you can install these with:
@@ -20,14 +20,11 @@ if ! pyenv --version 2>/dev/null ;then
 fi
 eval "$(pyenv init -)"
 
-PLATFORM_TAG="macosx_10_9_x86_64"
-
 build_jax () {
   PY_VERSION="$1"
-  PY_TAG="$2"
-  NUMPY_VERSION="$3"
-  SCIPY_VERSION="$4"
-  echo -e "\nBuilding JAX for Python ${PY_VERSION}, tag ${PY_TAG}"
+  NUMPY_VERSION="$2"
+  SCIPY_VERSION="$3"
+  echo -e "\nBuilding JAX for Python ${PY_VERSION}"
   echo "NumPy version ${NUMPY_VERSION}, SciPy version ${SCIPY_VERSION}"
   pyenv install -s "${PY_VERSION}"
   VENV="jax-build-${PY_VERSION}"
@@ -41,16 +38,14 @@ build_jax () {
   # earlier Numpy versions.
   pip install numpy==$NUMPY_VERSION scipy==$SCIPY_VERSION wheel future six
   rm -fr build/build
-  python build/build.py
-  cd build
-  python setup.py bdist_wheel --python-tag "${PY_TAG}" --plat-name "${PLATFORM_TAG}"
-  cd ..
+  python build/build.py --output_path=dist/
   pyenv deactivate
   pyenv virtualenv-delete -f "${VENV}"
 }
 
 
-rm -fr build/dist
-build_jax 3.6.8 cp36 1.15.4 1.2.0
-build_jax 3.7.2 cp37 1.15.4 1.2.0
-build_jax 3.8.0 cp38 1.17.3 1.3.2
+rm -fr dist
+build_jax 3.6.8 1.15.4 1.2.0
+build_jax 3.7.2 1.15.4 1.2.0
+build_jax 3.8.0 1.17.3 1.3.2
+build_jax 3.9.0 1.19.4 1.5.4

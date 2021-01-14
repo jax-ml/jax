@@ -36,12 +36,14 @@ def bool_env(varname: str, default: bool) -> bool:
     raise ValueError("invalid truth value %r for environment %r" % (val, varname))
 
 
-class Config(object):
+class Config:
   def __init__(self):
     self.values = {}
     self.meta = {}
     self.FLAGS = NameSpace(self.read)
     self.use_absl = False
+    self.omnistaging_enabled = bool_env('JAX_OMNISTAGING', True)
+    self._omnistaging_disablers = []
 
   def update(self, name, val):
     if self.use_absl:
@@ -112,6 +114,26 @@ class Config(object):
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
+      if not FLAGS.jax_omnistaging:
+        self.disable_omnistaging()
+
+
+  def register_omnistaging_disabler(self, disabler):
+    if self.omnistaging_enabled:
+      self._omnistaging_disablers.append(disabler)
+    else:
+      disabler()
+
+  def enable_omnistaging(self):
+    if not self.omnistaging_enabled:
+      raise Exception("can't re-enable omnistaging after it's been disabled")
+
+  def disable_omnistaging(self):
+    if self.omnistaging_enabled:
+      for disabler in self._omnistaging_disablers:
+        disabler()
+      self.omnistaging_enabled = False
+
 
 class NameSpace(object):
   def __init__(self, getter):
@@ -130,6 +152,11 @@ already_configured_with_absl = False
 flags.DEFINE_bool(
     'jax_enable_checks',
     bool_env('JAX_ENABLE_CHECKS', False),
-    help=
-    'Turn on invariant checking (core.skip_checks = False)'
+    help='Turn on invariant checking (core.skip_checks = False)'
+)
+
+flags.DEFINE_bool(
+    'jax_omnistaging',
+    bool_env('JAX_OMNISTAGING', True),
+    help='Enable staging based on dynamic context rather than data dependence.'
 )

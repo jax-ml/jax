@@ -27,6 +27,7 @@ import numpy as np
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax.api_util import flatten_fun_nokwargs
 from jax import ad_util, core, lax, xla
+from jax._src.lax import lax as lax_internal
 from jax.util import unzip2, wrap_name
 import jax.numpy as jnp
 import jax.linear_util as lu
@@ -75,7 +76,7 @@ class DoublingTrace(core.Trace):
     assert call_primitive.multiple_results
     heads, tails = unzip2((t.head, t.tail) for t in tracers)
     nonzero_tails, in_tree_def = tree_flatten(tails)
-    f_double, out_tree_def = screen_nones(doubling_subtrace(f, self.master),
+    f_double, out_tree_def = screen_nones(doubling_subtrace(f, self.main),
                                           len(heads), in_tree_def)
     name = params.get('name', f.__name__)
     new_params = dict(params, name=wrap_name(name, 'doubledouble'),
@@ -86,8 +87,8 @@ class DoublingTrace(core.Trace):
 
 
 @lu.transformation
-def doubling_subtrace(master, heads, tails):
-  trace = DoublingTrace(master, core.cur_sublevel())
+def doubling_subtrace(main, heads, tails):
+  trace = DoublingTrace(main, core.cur_sublevel())
   in_tracers = [DoublingTracer(trace, h, t) if t is not None else h
                 for h, t in zip(heads, tails)]
   ans = yield in_tracers, {}
@@ -108,8 +109,8 @@ def screen_nones(num_heads, in_tree_def, *heads_and_tails):
 
 @lu.transformation
 def doubling_transform(*args):
-  with core.new_master(DoublingTrace) as master:
-    trace = DoublingTrace(master, core.cur_sublevel())
+  with core.new_main(DoublingTrace) as main:
+    trace = DoublingTrace(main, core.cur_sublevel())
     in_tracers = [DoublingTracer(trace, head, tail) for head, tail in args]
     outputs = yield in_tracers, {}
     if isinstance(outputs, Sequence):
@@ -243,11 +244,11 @@ _def_inequality(lax.le_p, operator.le)
 _def_inequality(lax.eq_p, operator.eq)
 _def_inequality(lax.ne_p, operator.ne)
 
-def _convert_element_type(operand, new_dtype, old_dtype):
+def _convert_element_type(operand, new_dtype):
   head, tail = operand
-  head = lax.convert_element_type_p.bind(head, new_dtype=new_dtype, old_dtype=old_dtype)
+  head = lax.convert_element_type_p.bind(head, new_dtype=new_dtype)
   if tail is not None:
-    tail = lax.convert_element_type_p.bind(tail, new_dtype=new_dtype, old_dtype=old_dtype)
+    tail = lax.convert_element_type_p.bind(tail, new_dtype=new_dtype)
   if jnp.issubdtype(new_dtype, jnp.floating):
     if tail is None:
       tail = jnp.zeros_like(head)
@@ -273,7 +274,10 @@ def _def_passthrough(prim, argnums=(0,)):
 _def_passthrough(lax.select_p, (0, 1, 2))
 _def_passthrough(lax.broadcast_in_dim_p)
 _def_passthrough(xla.device_put_p)
-_def_passthrough(lax.tie_in_p, (0, 1))
+try:
+  _def_passthrough(lax_internal.tie_in_p, (0, 1))
+except AttributeError:
+  pass
 
 
 class _DoubleDouble:

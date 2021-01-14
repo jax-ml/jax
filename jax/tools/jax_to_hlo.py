@@ -94,7 +94,7 @@ def jax_to_hlo(fn, input_shapes, constants=None):
   if not constants:
     constants = {}
 
-  overlapping_args = set(arg_name for arg_name, _ in input_shapes) & set(
+  overlapping_args = {arg_name for arg_name, _ in input_shapes} & set(
       constants.keys())
   if overlapping_args:
     raise ValueError(

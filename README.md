@@ -2,14 +2,21 @@
 <img src="https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
-# JAX: Autograd and XLA ![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)
+# JAX: Autograd and XLA
+
+![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)
+![PyPI version](https://img.shields.io/pypi/v/jax)
 
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
 | [**Install guide**](#installation)
+| [**Neural net libraries**](#neural-network-libraries)
 | [**Change logs**](https://jax.readthedocs.io/en/latest/CHANGELOG.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 | [**Code search**](https://cs.opensource.google/jax/jax)
+
+
+**News:** [JAX tops largest-scale MLPerf Training 0.7 benchmarks!](https://cloud.google.com/blog/products/ai-machine-learning/google-breaks-ai-performance-records-in-mlperf-with-worlds-fastest-training-supercomputer)
 
 ## What is JAX?
 
@@ -52,18 +59,18 @@ bugs](https://github.com/google/jax/issues), and letting us know what you
 think!
 
 ```python
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import grad, jit, vmap
 
 def predict(params, inputs):
   for W, b in params:
-    outputs = np.dot(inputs, W) + b
-    inputs = np.tanh(outputs)
+    outputs = jnp.dot(inputs, W) + b
+    inputs = jnp.tanh(outputs)
   return outputs
 
 def logprob_fun(params, inputs, targets):
   preds = predict(params, inputs)
-  return np.sum((preds - targets)**2)
+  return jnp.sum((preds - targets)**2)
 
 grad_fun = jit(grad(logprob_fun))  # compiled gradient evaluation function
 perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grads
@@ -74,6 +81,7 @@ perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grad
 * [Transformations](#transformations)
 * [Current gotchas](#current-gotchas)
 * [Installation](#installation)
+* [Neural net libraries](#neural-network-libraries)
 * [Citing JAX](#citing-jax)
 * [Reference documentation](#reference-documentation)
 
@@ -114,10 +122,10 @@ for reverse-mode gradients:
 
 ```python
 from jax import grad
-import jax.numpy as np
+import jax.numpy as jnp
 
 def tanh(x):  # Define a function
-  y = np.exp(-2.0 * x)
+  y = jnp.exp(-2.0 * x)
   return (1.0 - y) / (1.0 + y)
 
 grad_tanh = grad(tanh)  # Obtain its gradient function
@@ -176,14 +184,14 @@ You can use XLA to compile your functions end-to-end with
 used either as an `@jit` decorator or as a higher-order function.
 
 ```python
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import jit
 
 def slow_f(x):
   # Element-wise ops see a large benefit from fusion
   return x * x + x * 2.0
 
-x = np.ones((5000, 5000))
+x = jnp.ones((5000, 5000))
 fast_f = jit(slow_f)
 %timeit -n10 -r3 fast_f(x)  # ~ 4.5 ms / loop on Titan X
 %timeit -n10 -r3 slow_f(x)  # ~ 14.5 ms / loop (also on GPU via JAX)
@@ -213,24 +221,24 @@ function:
 def predict(params, input_vec):
   assert input_vec.ndim == 1
   for W, b in params:
-    output_vec = np.dot(W, input_vec) + b  # `input_vec` on the right-hand side!
-    input_vec = np.tanh(output_vec)
+    output_vec = jnp.dot(W, input_vec) + b  # `input_vec` on the right-hand side!
+    input_vec = jnp.tanh(output_vec)
   return output_vec
 ```
 
-We often instead write `np.dot(inputs, W)` to allow for a batch dimension on the
+We often instead write `jnp.dot(inputs, W)` to allow for a batch dimension on the
 left side of `inputs`, but we’ve written this particular prediction function to
 apply only to single input vectors. If we wanted to apply this function to a
 batch of inputs at once, semantically we could just write
 
 ```python
 from functools import partial
-predictions = np.stack(list(map(partial(predict, params), input_batch)))
+predictions = jnp.stack(list(map(partial(predict, params), input_batch)))
 ```
 
 But pushing one example through the network at a time would be slow! It’s better
 to vectorize the computation, so that at every layer we’re doing matrix-matrix
-multiplies rather than matrix-vector multiplies.
+multiplication rather than matrix-vector multiplication.
 
 The `vmap` function does that transformation for us. That is, if we write
 
@@ -273,17 +281,17 @@ Here's an example on an 8-GPU machine:
 
 ```python
 from jax import random, pmap
-import jax.numpy as np
+import jax.numpy as jnp
 
 # Create 8 random 5000 x 6000 matrices, one per GPU
 keys = random.split(random.PRNGKey(0), 8)
 mats = pmap(lambda key: random.normal(key, (5000, 6000)))(keys)
 
 # Run a local matmul on each device in parallel (no data transfer)
-result = pmap(lambda x: np.dot(x, x.T))(mats)  # result.shape is (8, 5000, 5000)
+result = pmap(lambda x: jnp.dot(x, x.T))(mats)  # result.shape is (8, 5000, 5000)
 
 # Compute the mean on each device in parallel and print the result
-print(pmap(np.mean)(result))
+print(pmap(jnp.mean)(result))
 # prints [1.1566595 1.1805978 ... 1.2321935 1.2015157]
 ```
 
@@ -299,7 +307,7 @@ from jax import lax
 def normalize(x):
   return x / lax.psum(x, 'i')
 
-print(normalize(np.arange(4.)))
+print(normalize(jnp.arange(4.)))
 # prints [0.         0.16666667 0.33333334 0.5       ]
 ```
 
@@ -313,11 +321,11 @@ from jax import grad
 
 @pmap
 def f(x):
-  y = np.sin(x)
+  y = jnp.sin(x)
   @pmap
   def g(z):
-    return np.cos(z) * np.tan(y.sum()) * np.tanh(x).sum()
-  return grad(lambda w: np.sum(g(w)))(x)
+    return jnp.cos(z) * jnp.tan(y.sum()) * jnp.tanh(x).sum()
+  return grad(lambda w: jnp.sum(g(w)))(x)
 
 print(f(x))
 # [[ 0.        , -0.7170853 ],
@@ -325,7 +333,7 @@ print(f(x))
 #  [10.366636  , 13.135289  ],
 #  [ 0.22163185, -0.52112055]]
 
-print(grad(lambda x: np.sum(f(x)))(x))
+print(grad(lambda x: jnp.sum(f(x)))(x))
 # [[ -3.2369726,  -1.6356447],
 #  [  4.7572474,  11.606951 ],
 #  [-98.524414 ,  42.76499  ],
@@ -382,10 +390,12 @@ installed as the `jaxlib` package. Use the following instructions to install a
 binary package with `pip`, or to build JAX from source.
 
 We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
-macOS (10.12 or later) platforms. Windows users can use JAX on CPU via the
+macOS (10.12 or later) platforms. Windows users can use JAX on CPU and GPU via
+the
 [Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/about).
-We're not currently working on native Windows support, but contributions are
-welcome (see [#438](https://github.com/google/jax/issues/438)).
+There is some initial native Windows support, but since it is still somewhat
+immature, there are no binary releases and it must be
+[built from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
 
 ### pip installation
 
@@ -405,25 +415,17 @@ and CUDNN7 installations on your machine (for example, preinstalled on your
 cloud VM), you can run
 
 ```bash
-# install jaxlib
-PYTHON_VERSION=cp37  # alternatives: cp36, cp37, cp38
-CUDA_VERSION=cuda100  # alternatives: cuda100, cuda101, cuda102, cuda110
-PLATFORM=manylinux2010_x86_64  # alternatives: manylinux2010_x86_64
-BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.50-$PYTHON_VERSION-none-$PLATFORM.whl
-
-pip install --upgrade jax  # install jax
+pip install --upgrade pip
+pip install --upgrade jax jaxlib==0.1.57+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
-The library package name must correspond to the version of the existing CUDA
+The jaxlib version must correspond to the version of the existing CUDA
 installation you want to use, with `cuda110` for CUDA 11.0, `cuda102` for CUDA
-10.2, `cuda101` for CUDA 10.1, and `cuda100` for CUDA 10.0. To find your CUDA
-and CUDNN versions, you can run commands like these, depending on your CUDNN
-install path:
+10.2, and `cuda101` for CUDA 10.1. You can find your
+CUDA version with: install path:
 
 ```bash
 nvcc --version
-grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different path
 ```
 
 Note that some GPU functionality expects the CUDA installation to be at
@@ -441,16 +443,6 @@ Or set the following environment variable before importing JAX:
 XLA_FLAGS=--xla_gpu_cuda_data_dir=/path/to/cuda
 ```
 
-The Python version must match your Python interpreter. There are prebuilt wheels
-for Python 3.6, 3.7, and 3.8; for anything else, you must build from source. Jax
-requires Python 3.6 or above. Jax does not support Python 2 any more.
-
-To try automatic detection of the correct version for your system, you can run:
-
-```bash
-pip install --upgrade https://storage.googleapis.com/jax-releases/`nvidia-smi | sed -En "s/.* CUDA Version: ([0-9]*)\.([0-9]*).*/cuda\1\2/p"`/jaxlib-0.1.50-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-manylinux2010_x86_64.whl jax
-```
-
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.
 
@@ -458,6 +450,23 @@ if you run into any errors or problems with the prebuilt wheels.
 See [Building JAX from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
+## Neural network libraries
+
+Multiple Google research groups develop and share libraries for training neural
+networks in JAX. If you want a fully featured library for neural network
+training with examples and how-to guides, try
+[Flax](https://github.com/google/flax). Another option is
+[Trax](https://github.com/google/trax), a combinator-based framework focused on
+ease-of-use and end-to-end single-command examples, especially for sequence
+models and reinforcement learning. Finally,
+[Objax](https://github.com/google/objax) is a minimalist object-oriented
+framework with a PyTorch-like interface.
+
+DeepMind has open-sourced an ecosystem of libraries around JAX including
+[Haiku](https://github.com/deepmind/dm-haiku) for neural network modules,
+[Optax](https://github.com/deepmind/optax) for gradient processing and
+optimization, [RLax](https://github.com/deepmind/rlax) for RL algorithms, and
+[chex](https://github.com/deepmind/chex) for reliable code and testing.
 
 ## Citing JAX
 
@@ -465,10 +474,10 @@ To cite this repository:
 
 ```
 @software{jax2018github,
-  author = {James Bradbury and Roy Frostig and Peter Hawkins and Matthew James Johnson and Chris Leary and Dougal Maclaurin and Skye Wanderman-Milne},
+  author = {James Bradbury and Roy Frostig and Peter Hawkins and Matthew James Johnson and Chris Leary and Dougal Maclaurin and George Necula and Adam Paszke and Jake Vander{P}las and Skye Wanderman-{M}ilne and Qiao Zhang},
   title = {{JAX}: composable transformations of {P}ython+{N}um{P}y programs},
   url = {http://github.com/google/jax},
-  version = {0.1.55},
+  version = {0.2.5},
   year = {2018},
 }
 ```

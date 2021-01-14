@@ -31,7 +31,7 @@ The primary purpose of this module is to enable the interoperability between
 user defined data structures and JAX transformations (e.g. `jit`). This is not
 meant to be a general purpose tree-like data structure handling library.
 
-See the `JAX pytrees notebook <https://jax.readthedocs.io/en/latest/notebooks/JAX_pytrees.html>`_
+See the `JAX pytrees note <pytrees.html>`_
 for examples.
 """
 
@@ -39,22 +39,34 @@ for examples.
 import functools
 import collections
 import operator as op
+from typing import Optional, Callable, Any
 
 from .lib import pytree
 
 from .util import partial, safe_zip, unzip2
 
-def tree_flatten(tree):
+from ._src import traceback_util
+traceback_util.register_exclusion(__file__)
+
+
+def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Flattens a pytree.
 
   Args:
     tree: a pytree to flatten.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether
+      the flattening should traverse the current object, or if it should be
+      stopped immediately, with the whole subtree being treated as a leaf.
 
   Returns:
     A pair where the first element is a list of leaf values and the second
     element is a treedef representing the structure of the flattened tree.
   """
-  return pytree.flatten(tree)
+  # We skip the second argument in support of old jaxlibs
+  # TODO: Remove once 0.1.58 becomes the minimum supported jaxlib version
+  return pytree.flatten(tree) if is_leaf is None else pytree.flatten(tree, is_leaf)
+
 
 def tree_unflatten(treedef, leaves):
   """Reconstructs a pytree from the treedef and the leaves.
@@ -112,7 +124,7 @@ def all_leaves(iterable):
 def register_pytree_node(nodetype, flatten_func, unflatten_func):
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  See `example usage <https://jax.readthedocs.io/en/latest/notebooks/JAX_pytrees.html#Pytrees-are-extensible>`_.
+  See `example usage <pytrees.html>`_.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node.
@@ -194,12 +206,11 @@ def build_tree(treedef, xs):
 
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
   flat, treedef = tree_flatten(pytree_to_transpose)
-  expected_treedef = outer_treedef.compose(inner_treedef)
-  if treedef != expected_treedef:
-    raise TypeError("Mismatch\n{}\n != \n{}".format(treedef, expected_treedef))
-
   inner_size = inner_treedef.num_leaves
   outer_size = outer_treedef.num_leaves
+  if treedef.num_leaves != (inner_size * outer_size):
+    expected_treedef = outer_treedef.compose(inner_treedef)
+    raise TypeError(f"Mismatch\n{treedef}\n != \n{expected_treedef}")
   flat = iter(flat)
   lol = [[next(flat) for _ in range(inner_size)] for __ in range(outer_size)]
   transposed_lol = zip(*lol)

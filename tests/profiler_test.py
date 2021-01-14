@@ -13,20 +13,30 @@
 # limitations under the License.
 
 from functools import partial
+import glob
+import os
+import shutil
+import threading
 import unittest
-
 from absl.testing import absltest
 
 import jax
 import jax.numpy as jnp
 import jax.profiler
 from jax.config import config
-import jax.test_util
+import jax.test_util as jtu
 
 try:
   import portpicker
 except ImportError:
   portpicker = None
+
+try:
+  from tensorflow.python.profiler import profiler_client
+  from tensorflow.python.profiler import profiler_v2 as tf_profiler
+except ImportError:
+  profiler_client = None
+  tf_profiler = None
 
 config.parse_flags_with_absl()
 
@@ -34,6 +44,11 @@ config.parse_flags_with_absl()
 class ProfilerTest(unittest.TestCase):
   # These tests simply test that the profiler API does not crash; they do not
   # check functional correctness.
+
+  def setUp(self):
+    super().setUp()
+    self.worker_start = threading.Event()
+    self.profile_done = False
 
   @unittest.skipIf(not portpicker, "Test requires portpicker")
   def testStartServer(self):
@@ -67,5 +82,53 @@ class ProfilerTest(unittest.TestCase):
     self.assertIsInstance(jax.profiler.device_memory_profile(), bytes)
     del x
 
+  def _check_xspace_pb_exist(self, logdir):
+    path = os.path.join(logdir, 'plugins', 'profile', '*', '*.xplane.pb')
+    self.assertEqual(1, len(glob.glob(path)),
+                     'Expected one path match: ' + path)
+
+  @unittest.skipIf(not (portpicker and profiler_client and tf_profiler),
+    "Test requires tensorflow.profiler and portpicker")
+  def testSingleWorkerSamplingMode(self, delay_ms=None):
+    def on_worker(port, worker_start):
+      # Must keep return value `server` around.
+      server = jax.profiler.start_server(port)  # noqa: F841
+      worker_start.set()
+      x = jnp.ones((1000, 1000))
+      while True:
+        with jax.profiler.TraceContext("atracecontext"):
+          jnp.dot(x, x.T).block_until_ready()
+          if self.profile_done:
+            break
+
+    def on_profile(port, logdir, worker_start):
+      worker_start.wait()
+      options = tf_profiler.ProfilerOptions(
+          host_tracer_level=2,
+          python_tracer_level=2,
+          device_tracer_level=1,
+          delay_ms=delay_ms,
+      )
+
+      # Request for 1000 milliseconds of profile.
+      duration_ms = 1000
+      profiler_client.trace('localhost:{}'.format(port), logdir, duration_ms,
+                            '', 1000, options)
+      self.profile_done = True
+
+    logdir = absltest.get_default_test_tmpdir()
+    # Remove any existing log files.
+    shutil.rmtree(logdir, ignore_errors=True)
+    port = portpicker.pick_unused_port()
+    thread_profiler = threading.Thread(
+        target=on_profile, args=(port, logdir, self.worker_start))
+    thread_worker = threading.Thread(
+        target=on_worker, args=(port, self.worker_start))
+    thread_worker.start()
+    thread_profiler.start()
+    thread_profiler.join()
+    thread_worker.join(120)
+    self._check_xspace_pb_exist(logdir)
+
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -11,4 +11,4 @@ core
   :toctree: _autosummary
 
    Jaxpr
-   TypedJaxpr
+   ClosedJaxpr

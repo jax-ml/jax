@@ -21,7 +21,7 @@ not yet fine-tuned the performance of the resulting XLA compilation!
 By default, loops and control-flow in JAX are executed and inlined during tracing.
 For example, in the following code the `for` loop is unrolled during JAX tracing::
 
-  arr = onp.zeros(5)
+  arr = np.zeros(5)
   for i in range(arr.shape[0]):
     arr[i] += 2.
     if i % 2 == 0:
@@ -32,7 +32,7 @@ JAX operations, which require you to express the body of the loops and
 conditionals as functions, and the array updates using a functional style that
 returns an updated array, e.g.::
 
-  arr = onp.zeros(5)
+  arr = np.zeros(5)
   def loop_body(i, acc_arr):
     arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
     return lax.cond(i % 2 == 0,
@@ -111,13 +111,13 @@ import numpy as np
 import traceback
 from typing import Any, List, cast
 
-from jax import abstract_arrays
 from jax import lax, core
-from jax.lax import lax_control_flow
+from jax._src.lax import control_flow as lax_control_flow
 from jax import tree_util
 from jax import numpy as jnp
 from jax.interpreters import partial_eval as pe
-from jax.util import unzip2, safe_map
+from jax.util import safe_map
+from jax.config import config
 
 
 class Scope(object):
@@ -276,16 +276,26 @@ class Scope(object):
 
   def start_subtrace(self):
     """Starts a nested trace, returns the Trace object."""
-    # TODO: This follows the __enter__ part of core.new_master.
-    level = core.trace_state.trace_stack.next_level(False)
-    master = core.MasterTrace(level, pe.JaxprTrace)
-    core.trace_state.trace_stack.push(master, False)
-    self._count_subtraces += 1
-    return pe.JaxprTrace(master, core.cur_sublevel())
+    # TODO: This follows the __enter__ part of core.new_main.
+    if config.omnistaging_enabled:
+      level = core.thread_local_state.trace_state.trace_stack.next_level()
+      main = core.MainTrace(level, pe.JaxprTrace)
+      core.thread_local_state.trace_state.trace_stack.push(main)
+      self._count_subtraces += 1
+      return pe.JaxprTrace(main, core.cur_sublevel())
+    else:
+      level = core.thread_local_state.trace_state.trace_stack.next_level(False)
+      main = core.MainTrace(level, pe.JaxprTrace)
+      core.thread_local_state.trace_state.trace_stack.push(main, False)
+      self._count_subtraces += 1
+      return pe.JaxprTrace(main, core.cur_sublevel())
 
   def end_subtrace(self):
-    # TODO: This follows the __exit__ part of core.new_master
-    core.trace_state.trace_stack.pop(False)
+    # TODO: This follows the __exit__ part of core.new_main
+    if config.omnistaging_enabled:
+      core.thread_local_state.trace_state.trace_stack.pop()
+    else:
+      core.thread_local_state.trace_state.trace_stack.pop(False)
     self._count_subtraces -= 1
 
 
@@ -386,7 +396,7 @@ class _BodyTracer(object):
       # (e.g., cond_range and while_range), then in_tracers will not contain
       # the tracer for the index_var, and trace_to_jaxpr_finalize will throw
       # an assertion error.
-      body_typed_jaxpr, body_const_vals = _BodyTracer.trace_to_jaxpr_finalize(
+      body_closed_jaxpr, body_const_vals = _BodyTracer.trace_to_jaxpr_finalize(
         in_tracers=in_tracers,
         out_tracers=body_out_tracers,
         trace=self.trace)
@@ -404,7 +414,7 @@ class _BodyTracer(object):
 
     carried_out_vals = self.loop_builder.build_output_vals(
       self.scope, self.carried_state_names, carried_tree,
-      carried_init_vals, body_typed_jaxpr, body_const_vals)
+      carried_init_vals, body_closed_jaxpr, body_const_vals)
     carried_mutable_state_unflattened = tree_util.tree_unflatten(carried_tree,
                                                                  carried_out_vals)
 
@@ -414,7 +424,7 @@ class _BodyTracer(object):
 
   @staticmethod
   def abstractify(x):
-    return abstract_arrays.raise_to_shaped(core.get_aval(x))
+    return core.raise_to_shaped(core.get_aval(x))
 
   @staticmethod
   def trace_to_jaxpr_finalize(in_tracers, out_tracers, trace, instantiate=True):
@@ -424,21 +434,9 @@ class _BodyTracer(object):
     out_tracers = safe_map(partial(pe.instantiate_const_at, trace),
                            instantiate, out_tracers)
     jaxpr, consts, env = pe.tracers_to_jaxpr(in_tracers, out_tracers)
-    out_pvals = [t.pval for t in out_tracers]
-    # TODO: this is from partial_eval.trace_to_jaxpr. Share.
-    assert not env
-
-    # TODO: this is from the final part of lax_control_flow._initial_style_jaxpr
-    out_avals = safe_map(abstract_arrays.raise_to_shaped, unzip2(out_pvals)[0])
-    const_avals = tuple(abstract_arrays.raise_to_shaped(core.get_aval(c))
-                        for c in consts)
-
-    in_pvals = [t.pval for t in in_tracers]
-    in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip2(in_pvals)[0]))
-
-    typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
-                                  (), const_avals + in_avals, out_avals)
-    return typed_jaxpr, consts
+    assert not env  # TODO: this is from partial_eval.trace_to_jaxpr. Share.
+    closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    return closed_jaxpr, consts
 
 
 class _LoopBuilder(object):
@@ -449,7 +447,7 @@ class _LoopBuilder(object):
     raise NotImplementedError
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
-                        init_vals, body_typed_jaxpr, body_const_vals):
+                        init_vals, body_closed_jaxpr, body_const_vals):
     """Builds the output values for the loop carried state.
 
     Params:
@@ -458,7 +456,7 @@ class _LoopBuilder(object):
         carried through the body.
       carried_tree: the PyTreeDef for the tuple of carried_state_names.
       init_vals: the initial values on body entry corresponding to the init_tree.
-      body_typed_jaxpr: the Jaxpr for the body returning the new values of
+      body_closed_jaxpr: the Jaxpr for the body returning the new values of
         carried_state_names.
       body_const_vals: the constant values for the body.
 
@@ -484,16 +482,17 @@ class _BoundedLoopBuilder(_LoopBuilder):
     return True
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
-                        init_vals, body_typed_jaxpr, body_const_vals):
+                        init_vals, body_closed_jaxpr, body_const_vals):
     arange_val = jnp.arange(self.start, stop=self.stop, step=self.step)
     return lax_control_flow.scan_p.bind(*itertools.chain(body_const_vals,
                                                          init_vals, [arange_val]),
                                         reverse=False, length=arange_val.shape[0],
-                                        jaxpr=body_typed_jaxpr,
+                                        jaxpr=body_closed_jaxpr,
                                         num_consts=len(body_const_vals),
                                         num_carry=len(init_vals),
                                         linear=(False,) * (len(body_const_vals) +
-                                                           len(init_vals) + 1))
+                                                           len(init_vals) + 1),
+                                        unroll=1)
 
 
 class _CondBuilder(_LoopBuilder):
@@ -506,12 +505,12 @@ class _CondBuilder(_LoopBuilder):
     return False
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
-                        init_vals, body_typed_jaxpr, body_const_vals):
+                        init_vals, body_closed_jaxpr, body_const_vals):
     # Simulate a pass-through false branch
     in_vals, in_tree = tree_util.tree_flatten(
         (body_const_vals, tree_util.tree_unflatten(carried_tree, init_vals)))
     in_avals = safe_map(_BodyTracer.abstractify, in_vals)
-    pass_through_typed_jaxpr, pass_through_const_vals, _ = (
+    pass_through_closed_jaxpr, pass_through_const_vals, _ = (
       lax_control_flow._initial_style_jaxpr(
           lambda *args: args[1],
           in_tree,
@@ -520,7 +519,7 @@ class _CondBuilder(_LoopBuilder):
     args = list(itertools.chain(body_const_vals, init_vals))
     return lax_control_flow.cond_p.bind(
         self.index, *args,
-        branches=(pass_through_typed_jaxpr, body_typed_jaxpr),
+        branches=(pass_through_closed_jaxpr, body_closed_jaxpr),
         linear=(False,) * len(args))
 
 
@@ -534,7 +533,7 @@ class _WhileBuilder(_LoopBuilder):
     return False
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
-                        init_vals, body_typed_jaxpr, body_const_vals):
+                        init_vals, body_closed_jaxpr, body_const_vals):
     # Trace the conditional function. cond_func takes 0 arguments, but
     # for lax.while we need a conditional function that takes the
     # carried_state_names. _initial_style_jaxpr will start its own trace and
@@ -549,8 +548,7 @@ class _WhileBuilder(_LoopBuilder):
       # Conditional function is not allowed to modify the scope state
       for ms, init_ms in zip(carried_state_names, args):
         if not (scope._mutable_state[ms] is init_ms):
-          msg = "Conditional function modifies scope.{} field."
-          raise ValueError(msg.format(ms))
+          raise ValueError(f"Conditional function modifies scope.{ms} field.")
       return res
 
     init_avals = safe_map(_BodyTracer.abstractify, init_vals)
@@ -560,11 +558,10 @@ class _WhileBuilder(_LoopBuilder):
                                             tuple(init_avals)))
     # TODO: share these checks with lax_control_flow.while
     if not tree_util.treedef_is_leaf(cond_tree):
-      msg = "cond_fun must return a boolean scalar, but got pytree {}."
-      raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals != [abstract_arrays.ShapedArray((), np.bool_)]:
-      msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
-      raise TypeError(msg.format(cond_jaxpr.out_avals))
+      raise TypeError(f"cond_fun must return a boolean scalar, but got pytree {cond_tree}.")
+    if not safe_map(core.typecompat, cond_jaxpr.out_avals, [core.ShapedArray((), np.bool_)]):
+      raise TypeError(f"cond_fun must return a boolean scalar, but got output type(s) "
+                      f"{cond_jaxpr.out_avals}.")
 
     return lax_control_flow.while_p.bind(*itertools.chain(cond_consts,
                                                           body_const_vals,
@@ -572,4 +569,4 @@ class _WhileBuilder(_LoopBuilder):
                                          cond_nconsts=len(cond_consts),
                                          cond_jaxpr=cond_jaxpr,
                                          body_nconsts=len(body_const_vals),
-                                         body_jaxpr=body_typed_jaxpr)
+                                         body_jaxpr=body_closed_jaxpr)

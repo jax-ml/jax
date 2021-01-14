@@ -19,6 +19,9 @@ autograd/diff library and the Dormand-Prince method for adaptive integration
 stepsize calculation. Provides improved integration accuracy over fixed
 stepsize integration methods.
 
+For details of the mixed 4th/5th order Runge-Kutta integration method, see
+https://doi.org/10.1090/S0025-5718-1986-0815836-3
+
 Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 """
 
@@ -29,40 +32,16 @@ import operator as op
 import jax
 import jax.numpy as jnp
 from jax import core
+from jax import custom_derivatives
 from jax import lax
-from jax import ops
-from jax.util import safe_map, safe_zip, cache, split_list
-from jax.api_util import flatten_fun_nokwargs
+from jax.util import safe_map, safe_zip
 from jax.flatten_util import ravel_pytree
-from jax.tree_util import tree_map, tree_flatten, tree_unflatten
-from jax.interpreters import partial_eval as pe
+from jax.tree_util import tree_map
 from jax import linear_util as lu
 
 map = safe_map
 zip = safe_zip
 
-
-@cache()
-def closure_convert(fun, in_tree, in_avals):
-  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  with core.initial_style_staging():
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-      wrapped_fun, in_pvals, instantiate=True, stage_out=False)
-  out_tree = out_tree()
-  num_consts = len(consts)
-
-  def converted_fun(y, t, *consts_args):
-    consts, args = split_list(consts_args, [num_consts])
-    all_args, in_tree2 = tree_flatten((y, t, *args))
-    assert in_tree == in_tree2
-    out_flat = core.eval_jaxpr(jaxpr, consts, *all_args)
-    return tree_unflatten(out_tree, out_flat)
-
-  return converted_fun, consts
-
-def abstractify(x):
-  return core.raise_to_shaped(core.get_aval(x))
 
 def ravel_first_arg(f, unravel):
   return ravel_first_arg_(lu.wrap_init(f), unravel).call_wrapped
@@ -81,7 +60,7 @@ def interp_fit_dopri(y0, y1, k, dt):
       -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
       -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
   y_mid = y0 + dt * jnp.dot(dps_c_mid, k)
-  return jnp.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
+  return jnp.asarray(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
 
 def fit_4th_order_polynomial(y0, y1, y_mid, dy0, dy1, dt):
   a = -2.*dt*dy0 + 2.*dt*dy1 -  8.*y0 -  8.*y1 + 16.*y_mid
@@ -131,9 +110,9 @@ def runge_kutta_step(func, y0, f0, t0, dt):
     ti = t0 + dt * alpha[i-1]
     yi = y0 + dt * jnp.dot(beta[i-1, :], k)
     ft = func(yi, ti)
-    return ops.index_update(k, jax.ops.index[i, :], ft)
+    return k.at[i, :].set(ft)
 
-  k = ops.index_update(jnp.zeros((7, f0.shape[0])), ops.index[0, :], f0)
+  k = jnp.zeros((7, f0.shape[0]), f0.dtype).at[0, :].set(f0)
   k = lax.fori_loop(1, 7, body_fun, k)
 
   y1 = dt * jnp.dot(c_sol, k) + y0
@@ -141,10 +120,16 @@ def runge_kutta_step(func, y0, f0, t0, dt):
   f1 = k[-1]
   return y1, f1, y1_error, k
 
+def abs2(x):
+  if jnp.iscomplexobj(x):
+    return x.real ** 2 + x.imag ** 2
+  else:
+    return x ** 2
+
 def error_ratio(error_estimate, rtol, atol, y0, y1):
   err_tol = atol + rtol * jnp.maximum(jnp.abs(y0), jnp.abs(y1))
   err_ratio = error_estimate / err_tol
-  return jnp.mean(jnp.square(err_ratio))
+  return jnp.mean(abs2(err_ratio))
 
 def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       dfactor=0.2, order=5.0):
@@ -184,11 +169,8 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
              "\n{}.")
       raise TypeError(msg.format(arg))
 
-  flat_args, in_tree = tree_flatten((y0, t[0], *args))
-  in_avals = tuple(map(abstractify, flat_args))
-  converted, consts = closure_convert(func, in_tree, in_avals)
-
-  return _odeint_wrapper(converted, rtol, atol, mxstep, y0, t, *consts, *args)
+  converted, consts = custom_derivatives.closure_convert(func, y0, t[0], *args)
+  return _odeint_wrapper(converted, rtol, atol, mxstep, y0, t, *args, *consts)
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3))
 def _odeint_wrapper(func, rtol, atol, mxstep, y0, ts, *args):
@@ -254,7 +236,8 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
   def scan_fun(carry, i):
     y_bar, t0_bar, args_bar = carry
     # Compute effect of moving measurement time
-    t_bar = jnp.dot(func(ys[i], ts[i], *args), g[i])
+    # `t_bar` should not be complex as it represents time
+    t_bar = jnp.dot(func(ys[i], ts[i], *args), g[i]).real
     t0_bar = t0_bar - t_bar
     # Run augmented system backwards to previous observation
     _, y_bar, t0_bar, args_bar = odeint(

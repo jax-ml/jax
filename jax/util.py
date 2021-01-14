@@ -15,9 +15,11 @@
 
 import functools
 import itertools as it
+import operator
 import types
+from typing import Any, Callable
 
-import numpy as onp
+import numpy as np
 
 
 def safe_zip(*args):
@@ -223,9 +225,9 @@ def get_module_functions(module):
   Args:
     module: A Python module.
   Returns:
-    module_fns: A set of functions, builtins or ufuncs in `module`.
+    module_fns: A dict of names mapped to functions, builtins or ufuncs in `module`.
   """
-  module_fns = set()
+  module_fns = {}
   for key in dir(module):
     # Omitting module level __getattr__, __dir__ which was added in Python 3.7
     # https://www.python.org/dev/peps/pep-0562/
@@ -233,8 +235,8 @@ def get_module_functions(module):
       continue
     attr = getattr(module, key)
     if isinstance(
-        attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
-      module_fns.add(attr)
+        attr, (types.BuiltinFunctionType, types.FunctionType, np.ufunc)):
+      module_fns[key] = attr
   return module_fns
 
 def wrap_name(name, transform_name):
@@ -242,3 +244,105 @@ def wrap_name(name, transform_name):
 
 def extend_name_stack(stack, name=''):
   return stack + name + '/'
+
+def canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
+  axis = operator.index(axis)
+  if not -num_dims <= axis < num_dims:
+    raise ValueError(
+        "axis {} is out of bounds for array of dimension {}".format(
+            axis, num_dims))
+  if axis < 0:
+    axis = axis + num_dims
+  return axis
+
+def moveaxis(x, src, dst):
+  if src == dst:
+    return x
+  src = canonicalize_axis(src, x.ndim)
+  dst = canonicalize_axis(dst, x.ndim)
+  perm = [i for i in range(np.ndim(x)) if i != src]
+  perm.insert(dst, src)
+  return x.transpose(perm)
+
+def ceil_of_ratio(x, y):
+  return -(-x // y)
+
+@curry
+def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
+  try:
+    fun.__name__ = namestr.format(fun=get_name(wrapped))
+    fun.__module__ = get_module(wrapped)
+    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+    fun.__wrapped__ = wrapped
+  finally:
+    return fun
+
+def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
+def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
+def get_doc(fun): return getattr(fun, "__doc__", "")
+
+# NOTE: Ideally we would annotate both the argument and return type as NoReturn
+#       but it seems like pytype doesn't support that...
+def assert_unreachable(x):
+  raise AssertionError(f"Unhandled case: {type(x).__name__}")
+
+def tuple_insert(t, idx, val):
+  assert 0 <= idx <= len(t), (idx, len(t))
+  return t[:idx] + (val,) + t[idx:]
+
+def tuple_delete(t, idx):
+  assert 0 <= idx < len(t), (idx, len(t))
+  return t[:idx] + t[idx + 1:]
+
+# TODO(mattjj): replace with dataclass when Python 2 support is removed
+def taggedtuple(name, fields) -> Callable[..., Any]:
+  """Lightweight version of namedtuple where equality depends on the type."""
+  def __new__(cls, *xs):
+    return tuple.__new__(cls, (cls,) + xs)
+  def __repr__(self):
+    return '{}{}'.format(name, tuple.__str__(self[1:]))
+  class_namespace = {'__new__' : __new__, '__repr__': __repr__}
+  for i, f in enumerate(fields):
+    class_namespace[f] = property(operator.itemgetter(i+1))  # type: ignore
+  return type(name, (tuple,), class_namespace)
+
+class HashableFunction:
+  """Decouples function equality and hash from its identity.
+
+  Local lambdas and functiond defs are reallocated on each function call, making
+  the functions created on different calls compare as unequal. This breaks our
+  caching logic, which should really only care about comparing the semantics and
+  not actual identity.
+
+  This class makes it possible to compare different functions based on their
+  semantics. The parts that are taken into account are: the bytecode of
+  the wrapped function (which is cached by the CPython interpreter and is stable
+  across the invocations of the surrounding function), and `closure` which should
+  contain all values in scope that affect the function semantics. In particular
+  `closure` should contain all elements of the function closure, or it should be
+  possible to derive the relevant elements of the true function closure based
+  solely on the contents of the `closure` argument (e.g. in case some closed-over
+  values are not hashable, but are entirely determined by hashable locals).
+  """
+
+  def __init__(self, f, closure):
+    self.f = f
+    self.closure = closure
+
+  def __eq__(self, other):
+    return (type(other) is HashableFunction and
+            self.f.__code__ == other.f.__code__ and
+            self.closure == other.closure)
+
+  def __hash__(self):
+    return hash((self.f.__code__, self.closure))
+
+  def __call__(self, *args, **kwargs):
+    return self.f(*args, **kwargs)
+
+  def __repr__(self):
+    return f'<hashable {self.f.__name__} with closure={self.closure}>'
+
+def as_hashable_function(closure):
+  return lambda f: HashableFunction(f, closure)

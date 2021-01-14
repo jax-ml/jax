@@ -20,6 +20,9 @@ from . import ad_util
 from . import core
 from . import dtypes
 
+from ._src import traceback_util
+traceback_util.register_exclusion(__file__)
+
 _DIMENSION_TYPES = core._DIMENSION_TYPES
 
 UnshapedArray = core.UnshapedArray
@@ -44,7 +47,7 @@ array_types = {np.ndarray, np.bool_,
                np.uint8, np.uint16, np.uint32, np.uint64,
                dtypes.bfloat16, np.float16, np.float32, np.float64,
                np.complex64, np.complex128,
-               np.longlong}
+               np.longlong, np.intc}
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
@@ -53,6 +56,8 @@ for t in array_types:
 
 def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
+  if aval.dtype == dtypes.float0:
+    return np.zeros(aval.shape, dtypes.float0)
   return np.broadcast_to(np.array(0, aval.dtype), aval.shape)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
@@ -67,7 +72,7 @@ def _make_concrete_python_scalar(t, x):
     np.array(x, dtype=dtypes.python_scalar_dtypes[t]),
     weak_type=True)
 
-for t in dtypes.python_scalar_dtypes.keys():
+for t in dtypes.python_scalar_dtypes:
   core.pytype_aval_mappings[t] = partial(_make_concrete_python_scalar, t)
   ad_util.jaxval_zeros_likers[t] = partial(_zeros_like_python_scalar, t)
 
