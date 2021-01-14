@@ -4996,6 +4996,8 @@ def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
   del input_shape  # Unused.
   if len(axes) != len(set(axes)):
     raise ValueError(f"duplicate value in 'axes' of reduction: {axes}")
+  if not all(0 <= a < operand.ndim for a in axes):
+    raise ValueError(f"reduction axes {axes} contains out-of-bounds indices for {operand}.")
   return tuple(np.delete(operand.shape, axes))
 
 def _reduce_prod_translation_rule(c, operand, *, axes):
