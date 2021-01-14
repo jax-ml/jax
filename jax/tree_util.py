@@ -39,7 +39,7 @@ for examples.
 import functools
 import collections
 import operator as op
-from typing import Any, Callable, Optional, Sequence, Tuple, Type, TypeVar, Union, overload
+from typing import Any, Callable, Optional, Sequence, Tuple, Type, TypeVar, overload
 
 from .lib import pytree
 
@@ -167,18 +167,6 @@ def register_pytree_node_class(cls):
   register_pytree_node(cls, op.methodcaller('tree_flatten'), cls.tree_unflatten)
   return cls
 
-@overload
-def tree_map(f: Callable[[U], U], tree: T) -> T:
-    ...
-
-@overload
-def tree_map(f: Callable[[T], U], tree: T) -> U:
-    ...
-
-@overload
-def tree_map(f: Callable[[Any], Any], tree: Any) -> Any:
-    ...
-
 def tree_map(f: Callable[[Any], Any], tree: Any) -> Any:
   """Maps a function over a pytree to produce a new pytree.
 
@@ -193,14 +181,6 @@ def tree_map(f: Callable[[Any], Any], tree: Any) -> Any:
   """
   leaves, treedef = pytree.flatten(tree)
   return treedef.unflatten(map(f, leaves))
-
-@overload
-def tree_multimap(f: Callable[..., U], tree: T, *rest: T) -> Union[T, U]:
-    ...
-
-@overload
-def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any) -> Any:
-    ...
 
 def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any) -> Any:
   """Maps a multi-input function over pytree args to produce a new pytree.
