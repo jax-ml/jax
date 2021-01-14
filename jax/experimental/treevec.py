@@ -58,14 +58,14 @@ def tree_vectorize(fun):
 
 @lu.transformation
 def tree_fun(trees):
-  with core.new_master(TreeTrace) as master:
-    out_trees = yield (master, trees), {}
-    del master
+  with core.new_main(TreeTrace) as main:
+    out_trees = yield (main, trees), {}
+    del main
   yield out_trees
 
 @lu.transformation
-def tree_trace(master, trees):
-  trace = TreeTrace(master, core.cur_sublevel())
+def tree_trace(main, trees):
+  trace = TreeTrace(main, core.cur_sublevel())
   in_tracers = [TreeTracer(trace, *convert_vectorized_tree(t)) for t in trees]
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
@@ -201,8 +201,8 @@ def _flatten_tree_tracers(tracers):
 
 
 @lu.transformation_with_aux
-def tree_subtrace(master, tree_tracer_def_in, *flat_in):
-  trace = TreeTrace(master, core.cur_sublevel())
+def tree_subtrace(main, tree_tracer_def_in, *flat_in):
+  trace = TreeTrace(main, core.cur_sublevel())
   in_tracers = _unflatten_tree_tracers(trace, tree_tracer_def_in, flat_in)
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
@@ -247,16 +247,16 @@ class TreeTrace(core.Trace):
       return map(partial(TreeTracer, self), *parts)
     else:
       flat_in, tree_tracer_def_in = _flatten_tree_tracers(tracers)
-      f_tree, out_structure = tree_subtrace(f, self.master, tree_tracer_def_in)
+      f_tree, out_structure = tree_subtrace(f, self.main, tree_tracer_def_in)
       flat_out = call_primitive.bind(f_tree, *flat_in, **params)
       out_tracers = _unflatten_tree_tracers(self, out_structure(), flat_out)
       return out_tracers
 
   def post_process_call(self, call_primitive, out_tracers, params):
     flat, tree_tracer_def = _flatten_tree_tracers(out_tracers)
-    master = self.master
+    main = self.main
     def todo(flat):
-      trace = TreeTrace(master, core.cur_sublevel())
+      trace = TreeTrace(main, core.cur_sublevel())
       return _unflatten_tree_tracers(trace, tree_tracer_def, flat)
     return flat, todo
 
