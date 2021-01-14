@@ -52,11 +52,9 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-if version <  (0, 1, 53):
-  from jaxlib import pytree  # pytype: disable=import-error
-else:
-  pytree = xla_client._xla.pytree
-  jax_jit = xla_client._xla.jax_jit
+
+pytree = xla_client._xla.pytree
+jax_jit = xla_client._xla.jax_jit
 
 try:
   from jaxlib import cusolver  # pytype: disable=import-error
