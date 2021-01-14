@@ -461,9 +461,11 @@ def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
     # Return the results, but add a dependency on the call, to ensure it
     # is kept in the graph.
     call_flat_results, _ = pytree.flatten(call_res)
-    assert call_flat_results
-    call_flat_results = [id_tap_dep_p.bind(r, call_flat_results[0])
-                         for r in flat_results]
+    if call_flat_results:
+      call_flat_results = [id_tap_dep_p.bind(r, call_flat_results[0])
+                           for r in flat_results]
+    else:
+      call_flat_results = flat_results
     return result_treedef.unflatten(call_flat_results)
   else:
     return call_res

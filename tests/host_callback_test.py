@@ -259,6 +259,33 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           9.00 )""", testing_stream.output)
     testing_stream.reset()
 
+  def test_tap_with_result_no_arg(self):
+    def tap_func(arg, transforms):
+      testing_stream.write(f"called tap_func with {arg}")
+
+    def func2(x):
+      x1 = hcb.id_tap(tap_func, None, result=x)
+      return x1
+
+    self.assertEqual(3., func2(3.))
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, "called tap_func with None",
+                                 testing_stream.output)
+    testing_stream.reset()
+
+  def test_tap_result_unused(self):
+    def tap_func(arg, transforms):
+      testing_stream.write(f"called tap_func with {arg}")
+    def func2(x):
+      hcb.id_tap(tap_func, None)
+      return x
+
+    self.assertEqual(3., func2(3.))
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, "called tap_func with None",
+                                 testing_stream.output)
+    testing_stream.reset()
+
   def test_tap_with_device(self):
     def func2(x):
       x1 = hcb.id_print((x * 2., x * 3.), result=x * 4.,
