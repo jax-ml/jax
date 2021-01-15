@@ -1200,7 +1200,8 @@ def _make_scatter_harness(name,
     ],
     jax_unimplemented=[
       Limitation(
-        "unimplemented", devices="tpu", dtypes=np.complex64)
+        "unimplemented", devices="tpu", dtypes=np.complex64,
+        enabled=(f_lax in [lax.scatter_max, lax.scatter_min]))
     ],
     f_lax=f_lax,
     shape=shape,

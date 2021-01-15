@@ -1,4 +1,4 @@
-# Primitives with limited support
+# Primitives with limited support for jax2tf
 
 *Last generated on (YYYY-MM-DD): {{generation_date}}*
 
@@ -12,6 +12,10 @@ There are several kinds of limitations.
   * There are some cases when the converted program computes different results than
   the JAX program, see [below](#generated-summary-of-primitives-with-known-numerical-discrepancies-in-tensorflow).
 
+Note that automated tests will fail if new limitations appear, but
+they won't when limitations are fixed. If you see a limitation that
+you think it does not exist anymore, please ask for this file to
+be updated.
 
 ## Generated summary of primitives with unimplemented support in Tensorflow
 
