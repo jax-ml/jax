@@ -59,7 +59,7 @@ jobs:
             package-overrides: "none"
             num_generated_cases: 25
           - name-prefix: "with numpy-dispatch"
-            python-version: 3.7
+            python-version: 3.9
             os: ubuntu-latest
             enable-x64: 1
             enable-omnistaging: 1
