@@ -21,17 +21,18 @@ jax 0.2.9 (Unreleased)
     than wrapping them into the segment ID space. This was done for performance
     reasons.
 
-
-These are the release notes for JAX.
-
-next version
--------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.8...jax-v0.2.9>`_.
 
 * New features:
 
   * Extend the `jax.experimental.loops` module with support for pytrees. Improved
     error checking and error messages.
+
+jaxlib 0.1.60 (Unreleased)
+------------------------------
+
+jaxlib 0.1.59 (January 15 2021)
+------------------------------
 
 jax 0.2.8 (January 12 2021)
 ---------------------------
@@ -144,7 +145,7 @@ jax 0.2.6 (Nov 18 2020)
   * DeviceArray now raises ``RuntimeError`` instead of ``ValueError`` when trying
     to access its value while it has been deleted.
 
-jaxlib 0.1.58 (Unreleased)
+jaxlib 0.1.58 (January 12ish 2021)
 ------------------------------
 
 * Fixed a bug that meant JAX sometimes return platform-specific types (e.g.,
