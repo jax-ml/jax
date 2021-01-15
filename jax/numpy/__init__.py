@@ -74,7 +74,7 @@ from jax._src.numpy import lax_numpy
 def _init():
   import numpy as np
   from jax._src.numpy import lax_numpy
-  from jax import util
+  from jax._src import util
   # Builds a set of all unimplemented NumPy functions.
   for name, func in util.get_module_functions(np).items():
     if name not in globals():

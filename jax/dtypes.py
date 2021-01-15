@@ -26,7 +26,7 @@ import os
 
 import numpy as np
 
-from . import util
+from ._src import util
 from .config import flags
 from .lib import xla_client
 
@@ -165,6 +165,17 @@ def issubdtype(a, b):
 can_cast = np.can_cast
 issubsctype = np.issubsctype
 
+# Return the type holding the real part of the input type
+def dtype_real(typ):
+  if np.issubdtype(typ, np.complexfloating):
+    if typ == np.dtype('complex64'):
+      return np.dtype('float32')
+    elif typ == np.dtype('complex128'):
+      return np.dtype('float64')
+    else:
+      raise TypeError("Unknown complex floating type {}".format(typ))
+  else:
+    return typ
 
 # Enumeration of all valid JAX types in order.
 _weak_types = [int, float, complex]
@@ -287,11 +298,10 @@ def dtype(x):
     return python_scalar_dtypes[type(x)]
   return np.result_type(x)
 
-def _result_type_raw(*args):
-  if len(args) < 2:
-    return _jax_type(args[0])
-  return _least_upper_bound(*{_jax_type(arg) for arg in args})
-
 def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
-  return canonicalize_dtype(_result_type_raw(*args))
+   # TODO(jakevdp): propagate weak_type to the result.
+  if len(args) < 2:
+    return canonicalize_dtype(dtype(args[0]))
+  # TODO(jakevdp): propagate weak_type to the result when necessary.
+  return canonicalize_dtype(_least_upper_bound(*{_jax_type(arg) for arg in args}))

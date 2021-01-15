@@ -24,7 +24,7 @@ As an example, we provide the function `convert_and_save_model`
 For serious uses, you will probably want to copy and expand this
 function as needed.
 
-The `convert_and_saved_model` example function allows you to control
+The `convert_and_save_model` example function allows you to control
 which model parameters you want to save separately as variables,
 as opposed to having them embedded as constants in the function.
 This is useful for two reasons:

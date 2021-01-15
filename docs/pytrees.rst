@@ -18,7 +18,7 @@ For each entry in the pytree container registry, a container-like type is
 registered with a pair of functions which specify how to convert an instance of
 the container type to a ``(children, metadata)`` pair and how to convert such a
 pair back to an instance of the container type. Using these functions, JAX can
-canonicalize any tree of reigstered container objects into tuples.
+canonicalize any tree of registered container objects into tuples.
 
 Example pytrees::
 
@@ -135,7 +135,7 @@ Here is a simple example::
   # transformed_flat=[2.0, 4.0, 6.0]
   # transformed_structured=[2.0, (4.0, 6.0)]
 
-By default, Pytrees containers can be lists, tuples, dicts, namedtuple, None,
+By default, pytree containers can be lists, tuples, dicts, namedtuple, None,
 OrderedDict. Other types of values, including numeric and ndarray values, are
 treated as leaves::
 
@@ -260,7 +260,7 @@ recursively::
   #   tree=PyTreeDef(<class '__main__.RegisteredSpecial'>[None], [*,*])
   #   unflattened=RegisteredSpecial(x=1.0, y=2.0)
 
-JAX needs sometimes to compare treedef for equality. Therefore care must be
+JAX needs sometimes to compare ``treedef`` for equality. Therefore, care must be
 taken to ensure that the auxiliary data specified in the flattening recipe
 supports a meaningful equality comparison.
 

@@ -23,7 +23,7 @@ import inspect
 import itertools
 import operator
 import os
-from typing import Any, Callable, Sequence, TypeVar
+from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
 
@@ -32,7 +32,7 @@ from jax import api
 from jax import core
 from jax import dtypes
 from jax._src import source_info_util
-from jax import util
+from jax._src import util
 from jax._src.lax import lax
 from jax import linear_util as lu
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
@@ -44,8 +44,8 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-from jax.util import (partial, unzip2, unzip4, safe_map, safe_zip, split_list,
-                      cache, extend_name_stack)
+from jax._src.util import (partial, unzip2, unzip3, unzip4, safe_map, safe_zip,
+                           split_list, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves)
@@ -64,17 +64,18 @@ Array = Any
 @cache()
 def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
-  return jaxpr, out_avals, consts, out_tree()
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  return jaxpr, consts, out_tree()
 
 @cache()
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
-  jaxpr, out_avals, consts, out_tree = _initial_style_open_jaxpr(fun, in_tree, in_avals)
+  jaxpr, consts, out_tree = _initial_style_open_jaxpr(fun, in_tree, in_avals)
   closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
   return closed_jaxpr, consts, out_tree
 
+@cache()
 def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
-                                            in_tree, in_avals):
+                                             in_tree, in_avals):
   # When staging the branches of a conditional into jaxprs, constants are
   # extracted from each branch and converted to jaxpr arguments. To use the
   # staged jaxprs as the branches to a conditional *primitive*, we need for
@@ -82,18 +83,18 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
   # for each one, it makes another that accepts *all* constants, but only uses
   # those that it needs (dropping the rest).
 
-  jaxprs, all_out_avals, all_consts, all_out_trees = unzip4(
+  jaxprs, all_consts, all_out_trees = unzip3(
       _initial_style_open_jaxpr(fun, in_tree, in_avals) for fun in funs)
 
   newvar = core.gensym(jaxprs, suffix='_')
   all_const_avals = [[raise_to_shaped(core.get_aval(c)) for c in consts]
-                    for consts in all_consts]
+                     for consts in all_consts]
   unused_const_vars = [[newvar(aval) for aval in const_avals]
-                      for const_avals in all_const_avals]
+                       for const_avals in all_const_avals]
 
   def pad_jaxpr_constvars(i, jaxpr):
     prefix = util.concatenate(unused_const_vars[:i])
-    suffix = util.concatenate(unused_const_vars[i+1:])
+    suffix = util.concatenate(unused_const_vars[i + 1:])
     constvars = [*prefix, *jaxpr.constvars, *suffix]
     return core.Jaxpr(constvars=constvars, invars=jaxpr.invars,
                       outvars=jaxpr.outvars, eqns=jaxpr.eqns)
@@ -101,7 +102,7 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
   consts = util.concatenate(all_consts)
   jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
   closed_jaxprs = [core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
-                  for jaxpr, out_avals in zip(jaxprs, all_out_avals)]
+                   for jaxpr in jaxprs]
   return closed_jaxprs, consts, all_out_trees
 
 def _abstractify(x):
@@ -565,7 +566,7 @@ def switch(index, branches: Sequence[Callable], operand):
       index = clamp(0, index, len(branches) - 1)
       return branches[index](operand)
 
-  Arguments:
+  Args:
     index: Integer scalar type, indicating which branch function to apply.
     branches: Sequence of functions (A -> B) to be applied based on `index`.
     operand: Operand (A) input to whichever branch is applied.
@@ -642,7 +643,7 @@ def cond(*args, **kwargs):
         operand=None)
 
 
-  Arguments:
+  Args:
     pred: Boolean scalar type, indicating which branch function to apply.
     true_fun: Function (A -> B), to be applied if ``pred`` is True.
     false_fun: Function (A -> B), to be applied if ``pred`` is False.
@@ -1119,7 +1120,16 @@ core.custom_typechecks[cond_p] = _cond_typecheck
 
 ### scan
 
-def scan(f, init, xs, length=None, reverse=False, unroll=1):
+Carry = TypeVar('Carry')
+X = TypeVar('X')
+Y = TypeVar('Y')
+
+def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+         init: Carry,
+         xs: X,
+         length: Optional[int] = None,
+         reverse: bool = False,
+         unroll: int = 1) -> Tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
   The type signature in brief is
@@ -1228,8 +1238,8 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
       ys.append(y)
     stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
                             else jax.numpy.stack((y, *ys)))
-    ys = tree_multimap(stack, *maybe_reversed(ys))
-    return carry, ys
+    stacked_y = tree_multimap(stack, *maybe_reversed(ys))
+    return carry, stacked_y
 
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
   x_dtypes = [x.dtype for x in xs_flat]
@@ -2521,7 +2531,7 @@ def _cumred_shape_rule(x, *, axis: int, reverse: bool):
         "axis {} is out of bounds for array of shape {}".format(axis, x.shape))
   return x.shape
 
-def _cumsum_transpose_rule(t, *, axis: int, reverse: bool):
+def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
   return [cumsum(t, axis=axis, reverse=not reverse)]
 
 
@@ -2556,7 +2566,7 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
 cumsum_p = lax.standard_primitive(
   _cumred_shape_rule, partial(_cumred_dtype_rule, "cumsum"),
   'cumsum')
-ad.deflinear(cumsum_p, _cumsum_transpose_rule)
+ad.deflinear2(cumsum_p, _cumsum_transpose_rule)
 xla.backend_specific_translations['tpu'][cumsum_p] = xla.lower_fun(
   partial(_cumred_tpu_translation_rule, lax._reduce_window_sum),
   multiple_results=False)
@@ -2622,6 +2632,7 @@ def omnistaging_disabler() -> None:
     closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     return closed_jaxpr, consts, out_tree()
 
+  @cache()
   def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                                               in_tree, in_avals):
     # When staging the branches of a conditional into jaxprs, constants are

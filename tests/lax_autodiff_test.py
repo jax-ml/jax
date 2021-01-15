@@ -30,7 +30,7 @@ from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
 from jax.test_util import check_grads
-from jax.util import prod
+from jax._src.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple, Union
 
 from absl import logging
 import numpy as np
@@ -27,10 +27,10 @@ from . import xla
 from .. import linear_util as lu
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..api_util import flatten_axes, flatten_fun
+from ..api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index_tuple
 from ..tree_util import tree_flatten, tree_unflatten
-from ..util import (extend_name_stack, wrap_name, wraps, safe_zip,
-                    HashableFunction)
+from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
+                         HashableFunction)
 from ..config import config, flags
 
 xops = xc._xla.ops
@@ -273,7 +273,9 @@ class PartitionSpec(tuple):
 
 def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
                 local_in_parts=None, local_out_parts=None,
-                local_num_partitions=None):
+                local_num_partitions=None,
+                static_argnums: Union[int, Iterable[int]] = (),
+):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
   WARNING: this feature is still under active development! It may not work well,
@@ -329,6 +331,15 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
     local_num_partitions: Optional. Explicitly specifies the numbers of local
       devices to partitions across in a multi-process setting. This API is
       likely to change in the future.
+    static_argnums: An int or collection of ints specifying which positional
+      arguments to treat as static (compile-time constant). Operations that only
+      depend on static arguments will be constant-folded. Calling the jitted
+      function with different values for these constants will trigger
+      recompilation. If the jitted function is called with fewer positional
+      arguments than indicated by ``static_argnums`` then an error is raised.
+      Each of the static arguments will be broadcasted to all devices.
+      Arguments that are not arrays or containers thereof must be marked as
+      static. Defaults to ().
 
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
@@ -343,11 +354,24 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
   else:
     local_nparts = pxla.get_num_partitions(local_in_parts, local_out_parts)
 
+  static_argnums = _ensure_index_tuple(static_argnums)
+
   @wraps(fun)
   def wrapped(*args, **kwargs):
     if kwargs:
       raise NotImplementedError("sharded_jit over kwargs not yet supported")
+
     f = lu.wrap_init(fun)
+    if static_argnums:
+      if max(static_argnums) >= len(args):
+        raise ValueError(
+            f"jitted function has static_argnums={static_argnums}"
+            f" but was called with only {len(args)} positional "
+            f"argument{'s' if len(args) > 1 else ''}. "
+            "All static broadcasted arguments must be passed positionally.")
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      f, args = argnums_partial(f, dyn_argnums, args)
+
     args_flat, in_tree = tree_flatten((args, kwargs))
     in_parts_flat = tuple(flatten_axes("sharded_jit in_parts",
                                        in_tree.children()[0], in_parts))
@@ -398,8 +422,8 @@ def _sharding_constraint_translation_rule(c, x_node, partitions):
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
 sharding_constraint_p.def_abstract_eval(lambda x, partitions: x)
-ad.deflinear(sharding_constraint_p,
-             lambda ct, partitions: (with_sharding_constraint(ct, partitions),))
+ad.deflinear2(sharding_constraint_p,
+              lambda ct, _, partitions: (with_sharding_constraint(ct, partitions),))
 xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
 
 def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):

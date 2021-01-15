@@ -34,7 +34,7 @@ from ..abstract_arrays import (make_shaped_array, array_types)
 from ..core import (ConcreteArray, ShapedArray, AbstractToken,
                     Literal, pp_eqn_compact, raise_to_shaped, abstract_token)
 from jax._src.pprint_util import pp
-from ..util import (partial, partialmethod, cache, prod, unzip2,
+from .._src.util import (partial, partialmethod, cache, prod, unzip2,
                     extend_name_stack, wrap_name, safe_zip, safe_map)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
@@ -323,6 +323,9 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
   elif prim in translations:
     rule = translations[prim]
     ans = rule(c, *xla_args, **params)
+  elif prim in translations_with_avals:
+    rule = translations_with_avals[prim]
+    ans = rule(c, avals, xla_args, params)
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
     ans = rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
@@ -435,11 +438,15 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
         source_file=frame.file_name if frame else None,
         source_line=frame.line_num if frame else None))
     in_nodes = _flatmap(read, eqn.invars)
+    # TODO(jakevdp): migrate `translations` table to `translations_with_avals`
     if eqn.primitive in backend_specific_translations[platform]:
       rule = backend_specific_translations[platform][eqn.primitive]
       ans = rule(c, *in_nodes, **eqn.params)
     elif eqn.primitive in translations:
       ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
+    elif eqn.primitive in translations_with_avals:
+      rule = translations_with_avals[eqn.primitive]
+      ans = rule(c, map(aval, eqn.invars), in_nodes, eqn.params)
     elif eqn.primitive in initial_style_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = initial_style_translations[eqn.primitive]
@@ -510,7 +517,7 @@ def axis_groups(axis_env: AxisEnv, name):
 def _axis_groups(mesh_spec, mesh_axes):
   """Computes replica group ids for a collective performed over a subset of the mesh.
 
-  Arguments:
+  Args:
     mesh_spec: A sequence of integers representing the mesh shape.
     mesh_axes: A sequence of integers between 0 and `len(mesh_spec)` (exclusive)
       indicating over which axes the collective is performed.
@@ -902,6 +909,7 @@ ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 ### translation tables
 
 translations: Dict[core.Primitive, Callable] = {}
+translations_with_avals: Dict[core.Primitive, Callable] = {}
 parallel_translations: Dict[core.Primitive, Callable] = {}
 initial_style_translations: Dict[core.Primitive, Callable] = {}
 call_translations: Dict[core.Primitive, Callable] = {}
@@ -930,17 +938,13 @@ def _tuple_output(*args, **kwargs):
   ans = yield args, kwargs
   yield (ans,)
 
-def lower_fun(fun, multiple_results, parallel=False):
-  # This function can only be used to lower functions that take JAX array types
-  # as arguments (and e.g. don't accept unit values), because it assumes it can
-  # map from XLA types to JAX types. In general that mapping is not possible (as
-  # the mapping from JAX types to XLA types is not invertible), but for now at
-  # least we assume that the mapping from JAX *array* types to XLA array types
-  # is invertible. This assumption is unchecked!
-  # TODO(mattjj): remove assumption can map XLA array types to JAX array types
+def lower_fun(fun, multiple_results, parallel=False, with_avals=False):
+  # TODO(jakevdp): migrate dependent code & always use the with_avals=True.
   def f(c, *xla_args, **params):
-    # TODO(mattjj): revise this 'calling convention'
     avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
+    return f_with_avals(c, avals, xla_args, params)
+
+  def f_with_avals(c, avals, xla_args, params):
     if parallel:
       axis_env = params.pop('axis_env')
       del params['platform']
@@ -959,12 +963,13 @@ def lower_fun(fun, multiple_results, parallel=False):
                                           stage_out=True)  # type: ignore
       xla_consts = _xla_consts(c, consts)
       outs = jaxpr_subcomp(c, jaxpr, None, axis_env, xla_consts, '', *xla_args)
-    if multiple_results:
+    if multiple_results or any(v.aval._num_buffers > 1 for v in jaxpr.outvars):
       return xops.Tuple(c, outs)
     else:
       assert len(outs) == 1, outs
       return outs[0]
-  return f
+
+  return f_with_avals if with_avals else f
 
 def _array_aval_from_xla_shape(xla_shape):
   # This function instantiates the assumption that we can map fro XLA array
@@ -1389,7 +1394,7 @@ device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
 device_put_p.def_abstract_eval(lambda x, device=None: x)
 translations[device_put_p] = lambda c, x, device=None: x
-ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
+ad.deflinear2(device_put_p, lambda cotangent, _, **kwargs: [cotangent])
 masking.defvectorized(device_put_p)
 
 

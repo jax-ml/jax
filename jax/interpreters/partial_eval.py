@@ -26,8 +26,8 @@ from .. import core
 from .. import dtypes
 from .. import linear_util as lu
 from ..ad_util import Zero
-from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
-                    cache, as_hashable_function)
+from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,
+                         split_list, cache, as_hashable_function)
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
                     dropvar, ConcreteArray, raise_to_shaped)
@@ -198,16 +198,6 @@ class JaxprTrace(Trace):
                    PartialVal.unknown(unmapped_aval(out_axis, pval[0])) if out_axis is not None else
                    PartialVal.unknown(pval[0])
                    for pval, out_axis in zip(out_pvals, out_axes)]
-
-    # Avoid staging out trivial calls, but maps may involve broadcasting.
-    if not jaxpr.eqns and not primitive.map_primitive:
-      env = {core.unitvar: core.unit}
-      map(env.setdefault, jaxpr.invars, (*env_tracers, *tracers))
-      map(env.setdefault, jaxpr.constvars, consts)
-      return [v.val if type(v) is Literal
-              else pval.get_known() if pval.is_known()
-              else env[v]
-              for v, pval in zip(jaxpr.outvars, out_pvals)]
 
     # Skip known invars and outvars, and lift constants as regular invars
     in_knowns = tuple(t.pval.is_known() for t in it.chain(env_tracers, tracers))

@@ -14,7 +14,7 @@
 
 
 from .tree_util import tree_flatten, tree_unflatten
-from .util import safe_zip
+from ._src.util import safe_zip
 
 import jax.numpy as jnp
 from jax.api import vjp

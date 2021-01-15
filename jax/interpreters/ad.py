@@ -25,8 +25,8 @@ from ..core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                     raise_to_shaped)
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
-from ..util import (unzip2, safe_map, safe_zip, partial, split_list, wrap_name,
-                    as_hashable_function)
+from .._src.util import (unzip2, safe_map, safe_zip, partial, split_list,
+                         wrap_name, as_hashable_function)
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
@@ -510,8 +510,8 @@ def zero_jvp(primitive, primals, tangents, **params):
   return r, Zero.from_value(r)
 
 
-deflinear(zeros_like_p, lambda t: [Zero.from_value(t)])
-deflinear(add_jaxvals_p, lambda t: (t, t))
+deflinear2(zeros_like_p, lambda t, _: [Zero.from_value(t)])
+deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
 
 def instantiate_zeros(tangent):
   if type(tangent) is Zero:
@@ -521,7 +521,7 @@ def instantiate_zeros(tangent):
   else:
     return tangent
 
-# This function seems similar to instantaite_zeros, but it is sometimes used
+# This function seems similar to instantiate_zeros, but it is sometimes used
 # to instantiate zero abstract units with a different aval
 def instantiate_zeros_aval(aval, tangent):
   if type(tangent) is Zero:

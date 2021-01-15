@@ -27,7 +27,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax import dtypes
 from .util import _wraps
 from . import lax_numpy as jnp
-from jax.util import canonicalize_axis
+from jax._src.util import canonicalize_axis
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 _H = lambda x: jnp.conjugate(jnp.swapaxes(x, -1, -2))
@@ -303,7 +303,7 @@ def pinv(a, rcond=None):
   u, s, v = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
-  cutoff = rcond[..., jnp.newaxis] * jnp.amax(s, axis=-1, keepdims=True)
+  cutoff = rcond[..., jnp.newaxis] * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
   s = jnp.where(s > cutoff, s, jnp.inf)
   res = jnp.matmul(_T(v), jnp.divide(_T(u), s[..., jnp.newaxis]))
   return lax.convert_element_type(res, a.dtype)
@@ -330,8 +330,8 @@ def _pinv_jvp(rcond, primals, tangents):
 @_wraps(np.linalg.inv)
 def inv(a):
   if jnp.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
-    raise ValueError("Argument to inv must have shape [..., n, n], got {}."
-      .format(jnp.shape(a)))
+    raise ValueError(
+      f"Argument to inv must have shape [..., n, n], got {a.shape}.")
   return solve(
     a, lax.broadcast(jnp.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
 

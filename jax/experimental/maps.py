@@ -33,7 +33,7 @@ from ..interpreters import pxla
 from ..interpreters import xla
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..util import safe_map, safe_zip, HashableFunction
+from .._src.util import safe_map, safe_zip, HashableFunction
 from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
@@ -304,7 +304,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                     EXPERIMENTAL_SPMD_LOWERING,
                                     *in_avals)
   else:
-    return f.call_wrapped
+    # We have to trace again, because `f` is a linear function, so we can't just return it.
+    final_jaxpr, _, final_consts = pe.trace_to_jaxpr_final(f, in_avals)
+    return core.jaxpr_as_fun(core.ClosedJaxpr(final_jaxpr, final_consts))
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""

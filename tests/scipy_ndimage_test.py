@@ -25,7 +25,7 @@ from jax import grad
 from jax import test_util as jtu
 from jax import dtypes
 from jax.scipy import ndimage as lsp_ndimage
-from jax.util import prod
+from jax._src.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()

@@ -21,8 +21,8 @@ from .. import core
 from ..core import ShapedArray, raise_to_shaped, Trace, Tracer
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
-from ..util import (unzip2, partial, safe_map, wrap_name, split_list,
-                    canonicalize_axis, moveaxis, as_hashable_function)
+from .._src.util import (unzip2, partial, safe_map, wrap_name, split_list,
+                         canonicalize_axis, moveaxis, as_hashable_function)
 from . import xla
 from . import partial_eval as pe
 

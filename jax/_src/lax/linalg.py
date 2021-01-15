@@ -25,7 +25,7 @@ from jax import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.util import partial, prod
+from jax._src.util import partial, prod
 from jax.core import Primitive, ShapedArray
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
@@ -244,13 +244,20 @@ def _matvec_multiply(a, b):
   return lax.dot(a, b, precision=lax.Precision.HIGHEST)
 
 def _check_solve_shapes(a, b):
-  if not (a.ndim >= 2 and a.shape[-1] == a.shape[-2] and b.ndim >= 1):
-    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
-           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
-    raise ValueError(msg.format(a.shape, b.shape))
+  if not (a.ndim >= 2 and b.ndim in [a.ndim, a.ndim - 1] and
+          a.shape[-1] == a.shape[-2] == b.shape[a.ndim - 2]):
+    raise ValueError(
+        "The arguments to solve must have shapes a=[..., m, m] and "
+        f"b=[..., m, k] or b=[..., m]; got a={a.shape} and b={b.shape}")
 
 def _solve(a, b):
   _check_solve_shapes(a, b)
+
+  # Broadcast leading dimensions of b to the shape of a, as is required by
+  # custom_linear_solve.
+  out_shape = tuple(d_a if d_b == 1 else d_b
+                    for d_a, d_b in zip(a.shape[:-1] + (1,), b.shape))
+  b = jnp.broadcast_to(b, out_shape)
 
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
@@ -956,7 +963,7 @@ def lu_pivots_to_permutation(swaps, m):
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
 def _lu_solve_core(lu, permutation, b, trans):
   m = lu.shape[0]
-  x = jnp.reshape(b, (m, -1))
+  x = jnp.reshape(b, (m, np.prod(b.shape[1:])))
   if trans == 0:
     x = x[permutation, :]
     x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
@@ -1121,6 +1128,10 @@ def svd_impl(operand, full_matrices, compute_uv):
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   shape = c.get_shape(operand).dimensions()
   m, n = shape[-2:]
+  if m == 0 or n == 0:
+    return xla.lower_fun(_empty_svd, multiple_results=True)(
+      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
   u, s, v = xops.SVD(operand)
   permutation = list(range(len(shape)))
   permutation[-1], permutation[-2] = permutation[-2], permutation[-1]
@@ -1164,7 +1175,6 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")
 
-  k = s.shape[-1]
   Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
   dS = jnp.matmul(jnp.matmul(Ut, dA), V)
@@ -1173,44 +1183,66 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   if not compute_uv:
     return (s,), (ds,)
 
-  F = 1 / (jnp.square(s_dim) - jnp.square(_T(s_dim)) + jnp.eye(k, dtype=A.dtype))
-  F = F - jnp.eye(k, dtype=A.dtype)
-  dSS = s_dim * dS
-  SdS = _T(s_dim) * dS
-  dU = jnp.matmul(U, F * (dSS + _T(dSS)))
-  dV = jnp.matmul(V, F * (SdS + _T(SdS)))
+  s_diffs = jnp.square(s_dim) - jnp.square(_T(s_dim))
+  s_diffs_zeros = jnp.eye(s.shape[-1], dtype=A.dtype)  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
+  F = 1 / (s_diffs + s_diffs_zeros) - s_diffs_zeros
+  dSS = s_dim * dS  # dS.dot(jnp.diag(s))
+  SdS = _T(s_dim) * dS  # jnp.diag(s).dot(dS)
+
+  s_zeros = jnp.ones((), dtype=A.dtype) * (s == 0.)
+  s_inv = 1 / (s + s_zeros) - s_zeros
+  s_inv_mat = jnp.vectorize(jnp.diag, signature='(k)->(k,k)')(s_inv)
+  dUdV_diag = .5 * (dS - _H(dS)) * s_inv_mat
+  dU = jnp.matmul(U, F * (dSS + _H(dSS)) + dUdV_diag)
+  dV = jnp.matmul(V, F * (SdS + _H(SdS)))
 
   m, n = A.shape[-2:]
   if m > n:
     dU = dU + jnp.matmul(jnp.eye(m, dtype=A.dtype) - jnp.matmul(U, Ut), jnp.matmul(dA, V)) / s_dim
   if n > m:
     dV = dV + jnp.matmul(jnp.eye(n, dtype=A.dtype) - jnp.matmul(V, Vt), jnp.matmul(_H(dA), U)) / s_dim
-  return (s, U, Vt), (ds, dU, _T(dV))
+
+  return (s, U, Vt), (ds, dU, _H(dV))
+
+def _empty_svd(a, *, full_matrices, compute_uv):
+  batch_shape = a.shape[:-2]
+  m, n = a.shape[-2:]
+  s = jnp.empty(batch_shape + (0,), dtype=lax_internal._complex_basetype(a.dtype))
+  if not compute_uv:
+    return (s,)
+  if full_matrices:
+    size = max(m, n)
+    u = jnp.broadcast_to(jnp.eye(size, dtype=a.dtype), batch_shape + (size, size))
+  else:
+    u = jnp.empty(batch_shape + (m, n), dtype=a.dtype)
+  v = jnp.empty(batch_shape + (0, 0), dtype=a.dtype)
+  if m < n:
+    u, v = v, u
+  return s, u, v
 
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
+  shape = c.get_shape(operand).dimensions()
+  m, n = shape[-2:]
+  batch_dims = shape[:-2]
 
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
+  if m == 0 or n == 0:
+    return xla.lower_fun(_empty_svd, multiple_results=True)(
+      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
   s, u, vt, info = gesvd_impl(c, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
-  if info is not None:
-    ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
-    s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
-                             _nan_like(c, s))
-  else:
-    pass # rocsolver does not return info
+  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
+                           _nan_like(c, s))
 
   result = [s]
 
   if compute_uv:
-    if info is not None:
-      u = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), u,
-                               _nan_like(c, u))
-      vt = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vt,
-                                _nan_like(c, vt))
-    else:
-      pass # rocsolver does not return info
+    u = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), u,
+                             _nan_like(c, u))
+    vt = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vt,
+                              _nan_like(c, vt))
     result += [u, vt]
 
   return xops.Tuple(c, result)

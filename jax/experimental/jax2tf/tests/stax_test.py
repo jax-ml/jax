@@ -44,6 +44,9 @@ from jax.config import config
 
 config.parse_flags_with_absl()
 
+# Import after parsing flags
+from jax.experimental.jax2tf.tests import jax2tf_limitations
+
 class StaxTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
@@ -56,7 +59,10 @@ class StaxTest(tf_test_util.JaxToTfTestCase):
     _, params = init_fn(key, shape)
     infer = functools.partial(apply_fn, params)
     images = np.array(jax.random.normal(key, shape))
-    self.ConvertAndCompare(infer, images, rtol=0.5)
+
+    self.ConvertAndCompare(
+        infer, images,
+        limitations=[jax2tf_limitations.custom_numeric(tol=0.5)])
 
 
 if __name__ == "__main__":

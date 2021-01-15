@@ -22,14 +22,14 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial
 import os
-from typing import Callable, Dict, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
 logging._warn_preinit_stderr = 0
 
 from ..config import flags
-from .. import util
+from jax._src import util
 from .. import dtypes
 import numpy as np
 import threading
@@ -63,13 +63,17 @@ flags.DEFINE_bool(
     'optimization is greater than that of running a less-optimized program.')
 
 
-def get_compile_options(num_replicas, num_partitions, device_assignment=None,
-                        use_spmd_partitioning=True):
+def get_compile_options(
+    num_replicas: int,
+    num_partitions: int,
+    device_assignment=None,
+    use_spmd_partitioning: bool = True,
+) -> xla_client.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
   Args:
-    num_replicas: int indicating the number of replicas for which to compile.
-    num_partitions: int indicating the number of partitions for which to compile.
+    num_replicas: Number of replicas for which to compile.
+    num_partitions: Number of partitions for which to compile.
     device_assignment: Optional tuple of integers indicating the assignment of
       logical replicas to physical devices (default inherited from
       xla_client.CompileOptions). Must be consistent with `num_replicas` and
@@ -178,7 +182,7 @@ def get_device_backend(device=None):
   return get_backend(platform)
 
 
-def device_count(backend: str = None):
+def device_count(backend: Optional[str] = None) -> int:
   """Returns the total number of devices.
 
   On most platforms, this is the same as :py:func:`jax.local_device_count`.
@@ -196,12 +200,12 @@ def device_count(backend: str = None):
   return int(get_backend(backend).device_count())
 
 
-def local_device_count(backend: str =None):
+def local_device_count(backend: Optional[str] = None) -> int:
   """Returns the number of devices on this host."""
   return int(get_backend(backend).local_device_count())
 
 
-def devices(backend: str = None):
+def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
   """Returns a list of all devices for a given backend.
 
   Each device is represented by a subclass of :class:`Device` (e.g.
@@ -224,7 +228,8 @@ def devices(backend: str = None):
   return get_backend(backend).devices()
 
 
-def local_devices(host_id: int = None, backend: str = None):
+def local_devices(host_id: Optional[int] = None,
+                  backend: Optional[str] = None) -> List[xla_client.Device]:
   """Like :py:func:`jax.devices`, but only returns devices local to a given host.
 
   If ``host_id`` is ``None``, returns devices local to this host.
@@ -246,7 +251,7 @@ def local_devices(host_id: int = None, backend: str = None):
   return [d for d in devices(backend) if d.host_id == host_id]
 
 
-def host_id(backend: str = None):
+def host_id(backend: Optional[str] = None) -> int:
   """Returns the integer host ID of this host.
 
   On most platforms, this will always be 0. This will vary on multi-host
@@ -263,12 +268,12 @@ def host_id(backend: str = None):
   return get_backend(backend).host_id()
 
 
-def host_ids(backend: str = None):
+def host_ids(backend: Optional[str] = None) -> List[int]:
   """Returns a sorted list of all host IDs."""
   return sorted({d.host_id for d in devices(backend)})
 
 
-def host_count(backend: str = None):
+def host_count(backend: Optional[str] = None) -> int:
   """Returns the number of hosts."""
   return len(host_ids(backend))
 

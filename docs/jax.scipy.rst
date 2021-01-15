@@ -38,6 +38,16 @@ jax.scipy.ndimage
 
    map_coordinates
 
+jax.scipy.optimize
+------------------
+
+.. automodule:: jax.scipy.optimize
+
+.. autosummary::
+  :toctree: _autosummary
+
+   minimize
+
 jax.scipy.signal
 ----------------
 
@@ -100,7 +110,7 @@ jax.scipy.stats
 ---------------
 
 jax.scipy.stats.bernoulli
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.bernoulli
 
 .. autosummary::
@@ -120,7 +130,7 @@ jax.scipy.stats.beta
    pdf
 
 jax.scipy.stats.cauchy
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.cauchy
 
 .. autosummary::
@@ -131,7 +141,7 @@ jax.scipy.stats.cauchy
 
 
 jax.scipy.stats.dirichlet
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.dirichlet
 
 .. autosummary::
@@ -192,7 +202,7 @@ jax.scipy.stats.logistic
    sf
 
 jax.scipy.stats.multivariate_normal
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.multivariate_normal
 .. autosummary::
   :toctree: _autosummary
@@ -213,7 +223,7 @@ jax.scipy.stats.norm
    ppf
 
 jax.scipy.stats.pareto
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.pareto
 .. autosummary::
   :toctree: _autosummary
@@ -231,7 +241,7 @@ jax.scipy.stats.poisson
    pmf
 
 jax.scipy.stats.t
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.t
 .. autosummary::
   :toctree: _autosummary
