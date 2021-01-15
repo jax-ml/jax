@@ -1437,7 +1437,7 @@ def tie_in(x: Array, y: Array) -> Array:
 def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Array:
   """Returns an array of `shape` filled with `fill_value`.
 
-  Arguments:
+  Args:
     shape: sequence of integers, describing the shape of the output array.
     fill_value: the value to fill the new array with.
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`

@@ -566,7 +566,7 @@ def switch(index, branches: Sequence[Callable], operand):
       index = clamp(0, index, len(branches) - 1)
       return branches[index](operand)
 
-  Arguments:
+  Args:
     index: Integer scalar type, indicating which branch function to apply.
     branches: Sequence of functions (A -> B) to be applied based on `index`.
     operand: Operand (A) input to whichever branch is applied.
@@ -643,7 +643,7 @@ def cond(*args, **kwargs):
         operand=None)
 
 
-  Arguments:
+  Args:
     pred: Boolean scalar type, indicating which branch function to apply.
     true_fun: Function (A -> B), to be applied if ``pred`` is True.
     false_fun: Function (A -> B), to be applied if ``pred`` is False.
