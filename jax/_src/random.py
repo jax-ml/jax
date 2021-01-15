@@ -1027,12 +1027,12 @@ def _gamma_impl(key, a, use_vmap=False):
   return jnp.reshape(samples, a_shape)
 
 def _gamma_batching_rule(batched_args, batch_dims):
-    k, a = batched_args
-    bk, ba = batch_dims
-    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
-    k = batching.bdim_at_front(k, bk, size)
-    a = batching.bdim_at_front(a, ba, size)
-    return random_gamma_p.bind(k, a), 0
+  k, a = batched_args
+  bk, ba = batch_dims
+  size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
+  k = batching.bdim_at_front(k, bk, size)
+  a = batching.bdim_at_front(a, ba, size)
+  return random_gamma_p.bind(k, a), 0
 
 random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
@@ -1246,7 +1246,10 @@ def categorical(key, logits, axis=-1, shape=None):
     _check_shape("categorical", shape, batch_shape)
 
   sample_shape = shape[:len(shape)-len(batch_shape)]
-  return jnp.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
+  return jnp.argmax(
+      gumbel(key, sample_shape + logits.shape, logits.dtype) +
+      logits.reshape((1,) * len(sample_shape) + logits.shape),
+      axis=axis)
 
 
 def laplace(key, shape=(), dtype=dtypes.float_):
