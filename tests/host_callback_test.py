@@ -259,6 +259,8 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           9.00 )""", testing_stream.output)
     testing_stream.reset()
 
+  @skipIf(not config.omnistaging_enabled,
+          "test works only with omnistaging enabled")
   def test_tap_with_result_no_arg(self):
     def tap_func(arg, transforms):
       testing_stream.write(f"called tap_func with {arg}")
