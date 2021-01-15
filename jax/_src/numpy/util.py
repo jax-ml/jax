@@ -70,7 +70,7 @@ def _wraps(fun, update_doc=True, lax_description=""):
       # We (a) move the summary to the top, since it is what the Sphinx
       # autosummary extension expects, and (b) add a comment below the summary
       # to the effect that this is a LAX wrapper of a Numpy function.
-      sections = textwrap.dedent(fun.__doc__).split("\n\n")
+      sections = list(map(textwrap.dedent, fun.__doc__.split("\n\n")))
 
       signatures = []
       summary = None
