@@ -182,7 +182,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def add(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(dtypes=[np.uint16, np.uint32], also_compiled=True),
+        missing_tf_kernel(dtypes=[np.uint16], also_compiled=True),
         missing_tf_kernel(
             dtypes=[np.uint64],
             devices=("cpu", "gpu"),

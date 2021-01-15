@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2021-01-07*
+*Last generated on (YYYY-MM-DD): 2021-01-15*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -54,7 +54,7 @@ More detailed information can be found in the
 | acos | TF error: op not defined for dtype | bfloat16, complex64, float16 | cpu, gpu | eager, graph |
 | acosh | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | add | TF error: op not defined for dtype | uint64 | cpu, gpu | compiled, eager, graph |
-| add | TF error: op not defined for dtype | uint16, uint32 | cpu, gpu, tpu | compiled, eager, graph |
+| add | TF error: op not defined for dtype | uint16 | cpu, gpu, tpu | compiled, eager, graph |
 | add_any | TF error: op not defined for dtype | uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | asin | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | asin | TF error: op not defined for dtype | complex | cpu, gpu, tpu | compiled, eager, graph |

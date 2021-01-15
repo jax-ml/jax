@@ -841,7 +841,11 @@ except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
-tf_impl[ad_util.add_jaxvals_p] = tf.math.add
+
+def _add(x: TfVal, y: TfVal) -> TfVal:
+  return tf.raw_ops.AddV2(x=x, y=y)
+
+tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[xla.device_put_p] = lambda x, device=None: x
 
 tf_impl[lax.neg_p] = tf.math.negative
@@ -922,7 +926,7 @@ tf_impl[lax.conj_p] = _conj
 tf_impl[lax.real_p] = tf.math.real
 tf_impl[lax.imag_p] = tf.math.imag
 
-tf_impl[lax.add_p] = tf.math.add
+tf_impl[lax.add_p] = _add
 tf_impl[lax.sub_p] = tf.math.subtract
 tf_impl[lax.mul_p] = tf.math.multiply
 
@@ -1453,7 +1457,7 @@ tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
 tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
 
 
-_add_fn = tf.function(tf.math.add, autograph=False)
+_add_fn = tf.function(_add, autograph=False)
 _ge_fn = tf.function(tf.math.greater_equal, autograph=False)
 
 def _select_and_gather_add(tangents: TfVal,
@@ -1717,7 +1721,7 @@ def _get_min_identity(tf_dtype):
 
 # pylint: disable=protected-access
 tf_impl_with_avals[lax.reduce_window_sum_p] = (
-    functools.partial(_specialized_reduce_window, tf.math.add, lambda x: 0,
+    functools.partial(_specialized_reduce_window, _add, lambda x: 0,
                       name="reduce_window_sum"))
 tf_impl_with_avals[lax.reduce_window_min_p] = (
     functools.partial(_specialized_reduce_window, tf.math.minimum,
@@ -1775,18 +1779,10 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
 tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
-  # We use the random._threefry2x32_lowering, but since add is not implemented
-  # for uint32, we cast to int32 and back.
-  args_cast = tuple([tf.cast(a, tf.int32) for a in args])
-  _in_avals_cast = tuple(core.ShapedArray(in_aval.shape, np.int32)
-                         for in_aval in _in_avals)
-  _out_aval_cast = tuple(core.ShapedArray(out_aval.shape, np.int32)
-                         for out_aval in _out_aval)
   res = _convert_jax_impl(
     functools.partial(jax._src.random._threefry2x32_lowering,
                       use_rolled_loops=False),
-    multiple_results=True)(*args_cast, _in_avals=_in_avals_cast, _out_aval=_out_aval_cast)
-  res = tuple([tf.cast(r, tf.uint32) for r in res])
+    multiple_results=True)(*args, _in_avals=_in_avals, _out_aval=_out_aval)
   return res
 tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 
