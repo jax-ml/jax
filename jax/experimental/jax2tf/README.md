@@ -126,7 +126,7 @@ for CUDA. One must be mindful to install a version of CUDA that is compatible
 with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
 [TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
 
-As of today, the tests are run using `tf_nightly==2.5.0-dev20210107`.
+As of today, the tests are run using `tf_nightly==2.5.0-dev20210114`.
 
 ## Caveats
 
