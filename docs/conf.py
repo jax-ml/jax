@@ -65,6 +65,7 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
+    'matplotlib.sphinxext.plot_directive',
     'nbsphinx',
     'sphinx_autodoc_typehints',
     'myst_parser',
