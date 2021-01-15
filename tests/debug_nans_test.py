@@ -81,7 +81,7 @@ class DebugInfsTest(jtu.JaxTestCase):
 
   def setUp(self):
     self.cfg = config.read("jax_debug_infs")
-    config.update("jax_debug_inf", True)
+    config.update("jax_debug_infs", True)
 
   def tearDown(self):
     config.update("jax_debug_infs", self.cfg)
