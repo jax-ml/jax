@@ -57,6 +57,7 @@ from jaxlib import pocketfft
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
 jax_jit = xla_client._xla.jax_jit
+pmap_lib = xla_client._xla.pmap_lib
 
 try:
   from jaxlib import cusolver  # pytype: disable=import-error

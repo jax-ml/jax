@@ -1237,7 +1237,7 @@ class PmapTest(jtu.JaxTestCase):
     bufs = pxla.device_put(shard, xla_bridge.devices()[:4], replicate=True)
     aval = ShapedArray((6,4), shard.dtype)
     sharding_spec = pxla.ShardingSpec(
-        sharding=map(pxla.Chunked, (2, 2)),
+        sharding=map(pxla.Chunked, ([2], [2])),
         mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
     arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
 
@@ -2211,7 +2211,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testShardsPerAxis(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, (2, 2)),
+    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, ([2], [2])),
                              mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
@@ -2221,7 +2221,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testShardedAxisPermutation(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, (2, 2)),
+    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, ([2], [2])),
                              mesh_mapping=map(pxla.ShardedAxis, (1, 0)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
@@ -2231,7 +2231,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testShardedAxisPermutationAndReplication(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, (2, 2)),
+    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, ([2], [2])),
                              mesh_mapping=(pxla.Replicated(2),
                                            pxla.ShardedAxis(1),
                                            pxla.ShardedAxis(0)))
@@ -2243,7 +2243,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testUnshardedAxis(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(sharding=(pxla.Chunked(2), pxla.NoSharding()),
+    spec = pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.NoSharding()),
                              mesh_mapping=(pxla.ShardedAxis(0),))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(None)),
@@ -2282,7 +2282,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testReplicationPosition2(self):
     shape = (2, 8)
-    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked(2)),
+    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked([2])),
                              mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1), pxla.Replicated(3)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((0, slice(0, 4)), (0, slice(0, 4)), (0, slice(0, 4)),
@@ -2292,7 +2292,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testReplicationPosition1(self):
     shape = (2, 8)
-    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked(2)),
+    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked([2])),
                              mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3), pxla.ShardedAxis(1)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((0, slice(0, 4)), (0, slice(4, 8)),
@@ -2312,7 +2312,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
   def testMultipleReplications(self):
     shape = (2, 7, 4)
     spec = pxla.ShardingSpec(
-        sharding=(pxla.Unstacked(2), pxla.NoSharding(), pxla.Chunked(2)),
+        sharding=(pxla.Unstacked(2), pxla.NoSharding(), pxla.Chunked([2])),
         mesh_mapping=(pxla.Replicated(3), pxla.Replicated(2),
                       pxla.ShardedAxis(0), pxla.Replicated(2),
                       pxla.ShardedAxis(1)))
@@ -2363,16 +2363,16 @@ class ShardArgsTest(jtu.JaxTestCase):
           [(4, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
                                      mesh_mapping=())],
           # partitioned, 1 axis
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked(2), pxla.NoSharding()),
+          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.NoSharding()),
                                      mesh_mapping=(pxla.ShardedAxis(0),))],
           # partitioned, 2 axes
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked(2), pxla.Chunked(2)),
+          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.Chunked([2])),
                                      mesh_mapping=map(pxla.ShardedAxis, (0, 1)))],
           # partitioned, 2 axes, permuted
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked(2), pxla.Chunked(2)),
+          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.Chunked([2])),
                                      mesh_mapping=map(pxla.ShardedAxis, (1, 0)))],
           # partitioned + sharding
-          [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked(2)),
+          [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked([2])),
                                      mesh_mapping=map(pxla.ShardedAxis, (0, 1)))],
           # replication + sharding
           [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
@@ -2381,7 +2381,7 @@ class ShardArgsTest(jtu.JaxTestCase):
           [(2, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
                                      mesh_mapping=(pxla.Replicated(3),))],
           # multiple replicated axes
-          [(1, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(1), pxla.Chunked(2)),
+          [(1, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(1), pxla.Chunked([2])),
                                      mesh_mapping=(pxla.Replicated(2), pxla.ShardedAxis(0),
                                                    pxla.Replicated(2), pxla.ShardedAxis(1)))],
           # replicated scalar
