@@ -1518,7 +1518,8 @@ def _initialize_outfeed_receiver(
       clients = xla_client._get_local_backends().values()  # type: ignore[protected-class]
       # Drop the interpreter clients
       clients = tuple([c for c in clients if c.platform != "interpreter"])  # type: ignore
-    devices = list(itertools.chain(*[backend.devices() for backend in clients]))
+    devices = list(
+        itertools.chain(*[backend.local_devices() for backend in clients]))
     _outfeed_receiver.clients = clients  # type: ignore[assignment]
     _outfeed_receiver.devices = devices  # type: ignore[assignment]
     logging.vlog(
