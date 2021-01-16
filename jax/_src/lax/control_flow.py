@@ -23,7 +23,7 @@ import inspect
 import itertools
 import operator
 import os
-from typing import Any, Callable, Sequence, TypeVar
+from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
 
@@ -566,7 +566,7 @@ def switch(index, branches: Sequence[Callable], operand):
       index = clamp(0, index, len(branches) - 1)
       return branches[index](operand)
 
-  Arguments:
+  Args:
     index: Integer scalar type, indicating which branch function to apply.
     branches: Sequence of functions (A -> B) to be applied based on `index`.
     operand: Operand (A) input to whichever branch is applied.
@@ -643,7 +643,7 @@ def cond(*args, **kwargs):
         operand=None)
 
 
-  Arguments:
+  Args:
     pred: Boolean scalar type, indicating which branch function to apply.
     true_fun: Function (A -> B), to be applied if ``pred`` is True.
     false_fun: Function (A -> B), to be applied if ``pred`` is False.
@@ -1120,7 +1120,16 @@ core.custom_typechecks[cond_p] = _cond_typecheck
 
 ### scan
 
-def scan(f, init, xs, length=None, reverse=False, unroll=1):
+Carry = TypeVar('Carry')
+X = TypeVar('X')
+Y = TypeVar('Y')
+
+def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+         init: Carry,
+         xs: X,
+         length: Optional[int] = None,
+         reverse: bool = False,
+         unroll: int = 1) -> Tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
   The type signature in brief is
@@ -1229,8 +1238,8 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
       ys.append(y)
     stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
                             else jax.numpy.stack((y, *ys)))
-    ys = tree_multimap(stack, *maybe_reversed(ys))
-    return carry, ys
+    stacked_y = tree_multimap(stack, *maybe_reversed(ys))
+    return carry, stacked_y
 
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
   x_dtypes = [x.dtype for x in xs_flat]

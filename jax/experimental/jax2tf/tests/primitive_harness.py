@@ -295,6 +295,7 @@ class Limitation:
       enabled: bool = True,
       devices: Sequence[str] = ("cpu", "gpu", "tpu"),
       dtypes: Sequence[DType] = (),
+      skip_run: bool = False,
   ):
     """Args:
       description: text to augment the harness group name with the description
@@ -310,6 +311,7 @@ class Limitation:
     """
     assert isinstance(description, str), f"{description}"
     self.description = description
+    self.skip_run = skip_run
     if isinstance(devices, str):
       devices = (devices,)
     else:
@@ -324,7 +326,8 @@ class Limitation:
 
   def __str__(self):
     return (f"\"{self.description}\" devices={self.devices} "
-            f"dtypes={[np.dtype(dt).name for dt in self.dtypes]}")
+            f"dtypes={[np.dtype(dt).name for dt in self.dtypes]}" +
+            (" (skip_run) " if self.skip_run else ""))
   __repr__ = __str__
 
   def filter(self,
@@ -1197,7 +1200,8 @@ def _make_scatter_harness(name,
     ],
     jax_unimplemented=[
       Limitation(
-        "unimplemented", devices="tpu", dtypes=np.complex64)
+        "unimplemented", devices="tpu", dtypes=np.complex64,
+        enabled=(f_lax in [lax.scatter_max, lax.scatter_min]))
     ],
     f_lax=f_lax,
     shape=shape,

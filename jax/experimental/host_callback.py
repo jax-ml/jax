@@ -292,8 +292,8 @@ if you later need to use lax.outfeed.
 Since the actual calls to your callback functions are made from the C++
 receiver, it may be hard to debug the calls. In particular, the stack trace
 will not include the calling code. You can use the flag
-``jax_inline_host_callback`` (or the environment variable
-``JAX_INLINE_HOST_CALLBACK``) to ensure that the calls to the callbacks are
+``jax_host_callback_inline`` (or the environment variable
+``JAX_HOST_CALLBACK_INLINE``) to ensure that the calls to the callbacks are
 inlined. This works only if the calls are outside a staging context (``jit``
 or a control-flow primitive).
 
@@ -335,7 +335,7 @@ import functools
 import itertools
 import threading
 import traceback
-from typing import (Any, Callable, Dict, List, Optional, NamedTuple, Sequence,
+from typing import (Any, Callable, Dict, List, Optional, Sequence,
                     Tuple, TypeVar, cast)
 import typing
 from absl import logging
@@ -360,14 +360,14 @@ import numpy as np
 
 FLAGS = config.FLAGS
 config.DEFINE_bool(
-    'jax_inline_host_callback',
-    bool_env('JAX_INLINE_HOST_CALLBACK', False),
+    'jax_host_callback_inline',
+    bool_env('JAX_HOST_CALLBACK_INLINE', False),
     help='Inline the host_callback, if not in a staged context.'
 )
 
 def inline_host_callback() -> bool:
   try:
-    return FLAGS.jax_inline_host_callback
+    return FLAGS.jax_host_callback_inline
   except AttributeError:
     # TODO: I cannot get this flag to be seen for py3.6 tests in Github
     return False
@@ -449,29 +449,26 @@ def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
         "``functools.partial(tap_func, **kwargs)``.")
     raise TypeError(msg)
 
-  _initialize_outfeed_receiver()  # Lazy initialization
-  api._check_callable(tap_func)
-  flat_args, arg_treedef = pytree.flatten(arg)
-  for arg in flat_args:
-    api._check_arg(arg)
-  # See definition of id_tap_p for what parameters it takes
-  params = {}
-  params["tap_func_"] = tap_func
-  params["arg_treedef_"] = arg_treedef
-  if tap_with_device:
-    params["tap_with_device_"] = tap_with_device
   if result is not None:
     flat_results, result_treedef = pytree.flatten(result)
     for result in flat_results:
       api._check_arg(result)
-    flat_outs = id_tap_p.bind(*flat_args, **params)  # Returns all_args
-    assert flat_outs
-    flat_tied_results = [id_tap_dep_p.bind(r, flat_outs[0])
-                         for r in flat_results]
-    return result_treedef.unflatten(flat_tied_results)
+
+  call_res = _call(tap_func, arg, call_with_device=tap_with_device,
+                   result_shape=None, identity=True)
+
+  if result is not None:
+    # Return the results, but add a dependency on the call, to ensure it
+    # is kept in the graph.
+    call_flat_results, _ = pytree.flatten(call_res)
+    if call_flat_results:
+      call_flat_results = [id_tap_dep_p.bind(r, call_flat_results[0])
+                           for r in flat_results]
+    else:
+      call_flat_results = flat_results
+    return result_treedef.unflatten(call_flat_results)
   else:
-    flat_outs = id_tap_p.bind(*flat_args, **params)
-    return arg_treedef.unflatten(flat_outs)
+    return call_res
 
 
 def id_print(arg, *, result=None, tap_with_device=False,
@@ -495,7 +492,7 @@ def id_print(arg, *, result=None, tap_with_device=False,
      ``output_stream.write(s)``.
    * ``threshold`` is passed to ``numpy.array2string``.
   """
-  printer = functools.partial(_print_consumer,
+  printer = functools.partial(_print_tap_func,
                               output_stream=output_stream,
                               threshold=threshold, **kwargs)
   return id_tap(printer, arg, result=result, tap_with_device=tap_with_device)
@@ -538,6 +535,16 @@ def call(callback_func: Callable, arg, *,
   `module documentation
   <jax.experimental.host_callback.html>`_.
   """
+  return _call(callback_func, arg, result_shape=result_shape,
+               call_with_device=call_with_device, identity=False)
+
+
+# Helper function to implement both `call` and `id_tap`. The two cases are
+# differentiated by the `identity` flag.
+def _call(callback_func: Callable, arg, *,
+          result_shape=None,
+          call_with_device=False,
+          identity=False):
   _initialize_outfeed_receiver()  # Lazy initialization
   api._check_callable(callback_func)
   flat_args, arg_treedef = pytree.flatten(arg)
@@ -545,77 +552,42 @@ def call(callback_func: Callable, arg, *,
     api._check_arg(arg)
   # See definition of outside_call_p for what parameters it takes
   params: Dict[str, Any] = {}
-  params["outside_computation"] = callback_func
-  params["call_with_device"] = call_with_device
-  flat_args_aval = [core.raise_to_shaped(core.get_aval(a)) for a in flat_args]
-  params["arg_treedef"] = arg_treedef
-  params["flat_args_aval"] = tuple(flat_args_aval)
-
-  # Turn abstract values into ShapesDtypeStruct
-  flat_results_shape, result_treedef = pytree.flatten(result_shape)
-  try:
-    flat_results_aval = [core.ShapedArray(np.shape(r), dtypes.result_type(r))
-                         for r in flat_results_shape]
-  except Exception:
-    msg = ("result_shape should be a pytree of values with structure "
-           "matching the expected result of the callback function. The "
-           "values must be either numeric scalars, or must have 'shape' and "
-           f"'dtype' attributes. Got {result_shape}")
-    raise ValueError(msg)
-
-  params["result_treedef"] = result_treedef
-  params["flat_results_aval"] = tuple(flat_results_aval)
-  flat_results = outside_call_p.bind(*flat_args, **params)
-  return result_treedef.unflatten(flat_results)
-
-
-# A registry of outfeed consumers, used upon receiving outfeeds
-class _ConsumerCallable(NamedTuple):
-  """Host-side information for an outfeed consumer.
-
-  Must be hashable.
-  """
-  # All fields are private
-  func: Callable
-  transforms: Tuple[tuple, ...]
-  tap_with_device: bool
-  arg_treedef: Any
-
-  def _unpack_transforms(self) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
-    def _unpack_transform(name, *params):
-      if name == "batch":
-        return name, dict(batch_dims=params[0])
-      elif name == "mask":
-        return name, dict(logical_shapes=5)
-      else:
-        assert not params, f"{name}, {params}"
-        return name, dict()
-
-    return tuple(_unpack_transform(*t) for t in self.transforms)
-
-  def invoke(self, arrays, device):
-    arg = api.tree_unflatten(self.arg_treedef, arrays)
-    if self.tap_with_device:
-      return self.func(arg, self._unpack_transforms(), device=device)
+  # TODO: wrap function
+  if identity:
+    # For id_tap, we pass the transforms, for backwards compatibility
+    if call_with_device:
+      callback = lambda arg, device, transforms: callback_func(arg, transforms, device=device)
     else:
-      return self.func(arg, self._unpack_transforms())
+      callback = lambda arg, device, transforms: callback_func(arg, transforms)
+  else:
+    if call_with_device:
+      callback = lambda arg, device, transforms: callback_func(arg, device=device)
+    else:
+      callback = lambda arg, device, transforms: callback_func(arg)
+  params["callback"] = callback
+  params["identity"] = identity
+  params["arg_treedef"] = arg_treedef
+
+  if not identity:
+    # Turn abstract values into ShapesDtypeStruct
+    flat_results_shape, result_treedef = pytree.flatten(result_shape)
+    try:
+      flat_results_aval = [core.ShapedArray(np.shape(r), dtypes.result_type(r))
+                           for r in flat_results_shape]
+    except Exception:
+      msg = ("result_shape should be a pytree of values with structure "
+             "matching the expected result of the callback function. The "
+             "values must be either numeric scalars, or must have 'shape' and "
+             f"'dtype' attributes. Got {result_shape}")
+      raise ValueError(msg)
+
+    params["result_treedef"] = result_treedef
+    params["flat_results_aval"] = tuple(flat_results_aval)
+  flat_results = outside_call_p.bind(*flat_args, **params)
+  return result_treedef.unflatten(flat_results) if not identity else arg_treedef.unflatten(flat_results)
 
 
-def _register_consumer(cons: _ConsumerCallable) -> int:
-  """Registers a tap function, cache by hash of cons."""
-  cons_id = _outfeed_receiver.consumer_registry.get(cons)
-  if cons_id is not None:
-    return cons_id
-  cons_id = hash(cons) & 0xFFFFFFFC  # pybind11 has trouble here with large ints
-  cons_id += 1  # Reserve the consumer ID 0
-  assert cons_id not in _outfeed_receiver.consumer_registry, (
-      "consumer id collision")
-  _outfeed_receiver.consumer_registry[cons] = cons_id
-  _outfeed_receiver.consumer_registry_by_id[cons_id] = cons
-  return cons_id
-
-
-def _print_consumer(
+def _print_tap_func(
     arg, transforms, *, device=None,
     output_stream=None, threshold=1024, **kwargs):
   """The consumer for id_print.
@@ -669,58 +641,8 @@ def _print_consumer(
   emit_str(str(pp_val(arg)))
 
 
-def _outside_call_consumer(call_func, expected_result_treedef,
-                           expected_flat_results_aval, call_with_device,
-                           arg, transforms,
-                           *, device):
-  logging.vlog(2, f"Outside call consumer invoking call_func {call_func} with {arg}")
-  try:
-    if call_with_device:
-      res = call_func(arg, device=device)
-    else:
-      res = call_func(arg)
-
-    flat_results, result_treedef = pytree.flatten(res)
-    canonical_flat_results = util.safe_map(xla.canonicalize_dtype, flat_results)
-    flat_results_aval = [core.raise_to_shaped(core.get_aval(r), weak_type=False)
-                         for r in canonical_flat_results]
-    logging.vlog(2, f"Outside call consumer {call_func} result {res} : {flat_results_aval}. Sending to infeed.")
-
-    if expected_result_treedef != result_treedef:
-      msg = (f"Callback func {call_func} should have returned a result "
-             f"with pytree {expected_result_treedef} but returned "
-             f"{result_treedef}")
-      raise TypeError(msg)
-
-    if not all(ea.strip_weak_type() == ra.strip_weak_type()
-               for ea, ra in util.safe_zip(expected_flat_results_aval,
-                                           flat_results_aval)):
-      msg = (f"Callback func {call_func} should have returned a result "
-             "with abstract values "
-             f"{expected_result_treedef.unflatten(expected_flat_results_aval)} "
-             f"but returned {result_treedef.unflatten(flat_results_aval)}")
-      raise TypeError(msg)
-  except Exception as e:
-    # Prepare some results to send in case of error. We are sending something
-    # with a distinctive shape (int8[12345]), one that is unlikely to be what the device
-    # expects. This should have the effect to abort the device computation,
-    # with an error message that we recognize. On TPU there seem to be no
-    # such check, and if we send anything at all the device computation will
-    # use some garbage data. So, on TPU we prefer to not send anything and let
-    # the computation hang.
-    if device.platform == "tpu":
-      canonical_flat_results = None
-    else:
-      canonical_flat_results = [xla.canonicalize_dtype(np.arange(12345, dtype=np.int8))]
-    logging.vlog(2, f"Outside call consumer {call_func} exception {e}. Sending to infeed the error result.")
-    raise e
-  finally:
-    # No matter what, if the device expects results we must send something,
-    # otherwise the device computation hangs forever.
-    # We must transfer the flattened results, as a tuple
-    if expected_flat_results_aval and canonical_flat_results is not None:
-      device.transfer_to_infeed(tuple(canonical_flat_results))
-
+def _values_to_avals(vals) -> Sequence[core.ShapedArray]:
+  return tuple([core.raise_to_shaped(core.get_aval(v)) for v in vals])
 
 ### The id_tap_dep primitive
 """
@@ -731,7 +653,7 @@ as the identity operator on the first argument.
 
 For example, given `id_tap(f, (a, b), result=(r, s)`, we convert this to
 
-   a1, b1 = id_tap_p(f, a, b)
+   a1, b1 = outside_call_p(f, a, b)
    r1 = id_tap_dep_p(r, a1)
    s1 = id_tap_dep_p(s, a1)
 
@@ -772,93 +694,219 @@ def _id_tap_dep_masking_rule(operands, operands_logical_shapes):
 
 masking.masking_rules[id_tap_dep_p] = _id_tap_dep_masking_rule
 
-### The id_tap_p primitive
-"""The id_tap_p primitive acts like the identity function.
+### The outside_call primitive
+"""
+This primitive is used to implement the `call` and `id_tap` functions.
+It takes several positional arguments that are the flattened
+according to `arg_treedef`.
+The result of the primitive is computed based on the `identity` parameter,
+as follows:
 
-It has a number of positional arguments. The result of the primitive are
-the positional arguments.
+  * if `identity` is True, then the results are the same as the
+  positional arguments of the primitive (except perhaps the last couple of
+  arguments, see `has_token`). In this case, `result_treedef` and
+  `flat_results_aval` are ignored, and `args_treedef` describes the result also.
+  * if `identity` is False, then the results are those from
+  the call to the outside computation:
 
-The primitive has the following parameters:
-  * tap_func_: the actual (Python) function to invoke with the tapped positional
-    arguments (unflatted according to tapped_args_treedef_) and
-    the parameters that were passed to the id_tap function.
-  * arg_treedef_: the treedef of the tapped positional argument.
-  * tap_with_device_: a boolean that specifies whether the tap function
-    takes an additional device keyword argument.
+     flatten(callback(arg_treedef.unflatten(args), device=...))
+
+   In this case, the callback results must match `result_treedef`
+   and `flat_results_aval`.
+
+It takes the following parameters:
+
+  * callback: the function to invoke with the unflattened arguments,
+    the device and the transforms: `callback(arrays, device, transforms)`
+  * arg_treedef: the treedef for the argument.
+  * identity: see description above.
+  * result_treedef, flat_results_aval: describes the expected result of the
+    callback. Only used when not `identity`.
   * transforms: a tuple of the transformations that have been applied. Each
     element of the tuple is itself a tuple with the first element the name
     of the transform. The remaining elements depend on the transform. For
     example, for `batch`, the parameters are the dimensions that have been
     batched, and for `mask` the logical shapes. These are unpacked by
-    _ConsumerCallable before passing to the user function.
-  * has_token_: a boolean, when True it means that the last positional argument
+    _outside_call_run_callback before passing to the user function.
+  * has_token: a boolean, when True it means that the last positional argument
     is the current token. In this case, the result of the primitive is
     going to be the non-token positional arguments, along with the updated
     token. The tokens and this parameter are added after all the JAX
     transformations, just before staging XLA.
 """
-id_tap_p = core.Primitive("id_tap")
-id_tap_p.multiple_results = True
-xla.outfeed_primitives.add(id_tap_p)
+outside_call_p = core.Primitive("outside_call")
+outside_call_p.multiple_results = True
+xla.outfeed_primitives.add(outside_call_p)
 
 
-# We use the jitted-version of the primitive even for eager execution, both
-# so that we do not duplicate logic, but also so that all outfeed is received
-# by the outfeed_listeners, in the same thread from a given device. If we were
-# to process the tap here, it would be coming from the main thread. Also,
-# even in eager execution some primitives, such as while, are compiled.
-# It would be confusing to process a sequence "id_tap; while" in two
-# different threads.
-def _id_tap_impl(*args, tap_func_, arg_treedef_,
-                 transforms=(),
-                 tap_with_device_=False):
-  if inline_host_callback():
-    callable = _ConsumerCallable(tap_func_, transforms, tap_with_device_, arg_treedef_)
-    callable.invoke(args, api.devices()[0])
-    return args
+def _outside_call_abstract_eval(*args_a: pe.AbstractValue,
+                                identity, **params) -> Sequence[pe.AbstractValue]:
+  if identity:
+    # Do some validation here
+    assert "result_treedef" not in params
+    assert "flat_results_aval" not in params
+    return args_a
+
+  assert params["result_treedef"] is not None
+  assert params["flat_results_aval"] is not None
+  flat_results_aval = params["flat_results_aval"]
+  if "has_token" in params and params["has_token"]:
+    assert len(args_a) >= 2 and args_a[-1] is core.abstract_token and args_a[-2] is core.abstract_token
+    return flat_results_aval + (core.abstract_token, core.abstract_token)
   else:
-    return xla.apply_primitive(id_tap_p, *args,
-                               arg_treedef_=arg_treedef_,
-                               tap_func_=tap_func_,
-                               transforms=transforms,
-                               tap_with_device_=tap_with_device_)
+    return flat_results_aval
 
 
-id_tap_p.def_impl(_id_tap_impl)
+outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
 
 
-def _id_tap_abstract_eval(*args_a: pe.AbstractValue, **params) \
-    -> Sequence[pe.AbstractValue]:
-  return args_a
+def _outside_call_impl(*args, **params):
+  assert not "has_token" in params
+  if inline_host_callback():
+    device = api.devices()[0]
+    results = _outside_call_run_callback(args, device, send_infeed=False, **params)
+    return results
+  else:
+    # We use the jitted-version of the primitive even for eager execution, both
+    # so that we do not duplicate logic, but also so that all outfeed is received
+    # by the outfeed_listeners, in the same thread from a given device. If we were
+    # to process the tap here, it would be coming from the main thread. Also,
+    # even in eager execution some primitives, such as while, are compiled.
+    # It would be confusing to process a sequence "id_tap; while" in two
+    # different threads.
+    return xla.apply_primitive(outside_call_p, *args, **params)
 
 
-id_tap_p.def_abstract_eval(_id_tap_abstract_eval)
+outside_call_p.def_impl(_outside_call_impl)
 
 
-def _id_tap_translation_rule(comp: XlaComputationBuilder,
-                             *args_op: XlaOp,
-                             tap_func_=None,
-                             arg_treedef_=None,
-                             has_token_=False,
-                             tap_with_device_=False,
-                             transforms=()):
-  # We expect the current token at the end, inserted by _rewrite_jaxpr.
-  assert has_token_
-  current_token = args_op[-1]
-  args_to_outfeed = args_op[:-1]  # last args_op is the token
+def _outside_call_translation_rule(
+    comp: XlaComputationBuilder, *args_op: XlaOp, **params):
+  # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
+  assert params["has_token"]
+  current_token = args_op[-2]
+  current_itoken = args_op[-1]
+  # TODO: expose shape.is_token
+  assert not comp.get_shape(current_token).is_array() and not comp.get_shape(current_token).is_array(), (
+      "The last two arguments must be tokens")
+  assert not comp.get_shape(current_itoken).is_array() and not comp.get_shape(current_itoken).is_array(), (
+      "The last two arguments must be tokens")
 
-  assert not comp.get_shape(current_token).is_array(), (
-      "The last argument must be a token")
-  consumer_id = _register_consumer(
-      _ConsumerCallable(tap_func_, transforms, tap_with_device_, arg_treedef_))
+  args_to_outfeed = args_op[:-2]
+  send_infeed = not params["identity"] and len(params["flat_results_aval"]) > 0
+  callback_id = _register_callback(
+      functools.partial(_outside_call_run_callback, send_infeed=send_infeed, **params))
   next_token = _outfeed_receiver.receiver.add_outfeed(comp, current_token,
-                                                      consumer_id,
+                                                      callback_id,
                                                       args_to_outfeed)
-  results = (args_op[:-1] + (next_token,))
-  return xops.Tuple(comp, results)
+  expecting_infeed = False
+  if params["identity"]:
+    results = list(args_to_outfeed)
+    next_itoken = current_itoken
+  else:
+    flat_results_aval = params["flat_results_aval"]
+    if flat_results_aval:
+      after_outfeed_itoken = xops.AfterAll(comp, [current_itoken, next_token])
+
+      results_and_token = xla.translations[lax.infeed_p](comp, after_outfeed_itoken,
+                                                         shapes=flat_results_aval, partitions=None)
+      expecting_infeed = True
+      next_itoken = xops.GetTupleElement(results_and_token, len(flat_results_aval))
+      results = [xops.GetTupleElement(results_and_token, i) for i in range(len(flat_results_aval))]
+    else:
+      results = []
+      next_itoken = current_itoken
+
+  assert expecting_infeed == send_infeed
+  return xops.Tuple(comp, results + [next_token, next_itoken])
 
 
-xla.translations[id_tap_p] = _id_tap_translation_rule
+xla.translations[outside_call_p] = _outside_call_translation_rule
+
+
+def _outside_call_run_callback(
+    arrays, device, *,
+    send_infeed=True,
+    # The same parameters as outside_call_p
+    callback, arg_treedef,
+    identity, result_treedef=None, flat_results_aval=None,
+    transforms=(), has_token=False):
+  """Performs the callback:
+       callback(arg, device, transforms)
+
+  Called during the device computation once we have the argument, either from
+  an inlined callback or from an XLA computation outfeed.
+
+  Returns the flat list of result arrays. If `send_infeed` then it will also send
+  the flat list of results to the device.
+  """
+
+  def _unpack_transforms(transforms) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
+    def _unpack_transform(name, *params):
+      if name == "batch":
+        return name, dict(batch_dims=params[0])
+      elif name == "mask":
+        return name, dict(logical_shapes=5)
+      else:
+        assert not params, f"{name}, {params}"
+        return name, dict()
+
+    return tuple(_unpack_transform(*t) for t in transforms)
+
+  try:
+    arg = api.tree_unflatten(arg_treedef, arrays)
+    unpacked_transforms = _unpack_transforms(transforms)
+    logging.vlog(2,
+                 f"Outside call consumer invoking call_func {callback} with {arg}, device={device}, transforms={unpacked_transforms}")
+    res = callback(arg, device, unpacked_transforms)
+
+    if identity:
+      return arrays
+
+    else:  # Check the type of the callback results
+      assert result_treedef is not None
+      assert flat_results_aval is not None
+      actual_flat_results, actual_result_treedef = pytree.flatten(res)
+      if actual_result_treedef != result_treedef:
+        msg = (f"Callback func {callback} should have returned a result "
+               f"with pytree {result_treedef} but returned "
+               f"{actual_result_treedef}")
+        raise TypeError(msg)
+
+      canonical_flat_results = tuple(util.safe_map(xla.canonicalize_dtype, actual_flat_results))
+      actual_flat_results_aval = _values_to_avals(canonical_flat_results)
+      logging.vlog(2, f"Outside call consumer {callback} result {res} : {flat_results_aval}. Sending to infeed.")
+
+      if not all(ea.strip_weak_type() == ra.strip_weak_type()
+                 for ea, ra in util.safe_zip(flat_results_aval,
+                                             actual_flat_results_aval)):
+        msg = (f"Callback func {callback} should have returned a result "
+               "with abstract values "
+               f"{result_treedef.unflatten(flat_results_aval)} "
+               f"but returned {actual_result_treedef.unflatten(actual_flat_results_aval)}")
+        raise TypeError(msg)
+
+      if send_infeed:
+        device.transfer_to_infeed(tuple(canonical_flat_results))
+      return canonical_flat_results
+
+  except Exception as e:
+    if send_infeed:
+      # Prepare some results to send in case of error. We are sending something
+      # with a distinctive shape (int8[12345]), one that is unlikely to be what the device
+      # expects. This should have the effect to abort the device computation,
+      # with an error message that we recognize. On TPU there seem to be no
+      # such check, and if we send anything at all the device computation will
+      # use some garbage data. So, on TPU we prefer to not send anything and let
+      # the computation hang.
+      # TODO: implement a proper error handling for TPU
+      if device.platform != "tpu":
+        canonical_flat_results = [xla.canonicalize_dtype(np.arange(12345, dtype=np.int8))]
+        logging.vlog(2, f"Outside call consumer {callback} exception {e}. Sending to infeed the error result.")
+        device.transfer_to_infeed(tuple(canonical_flat_results))
+      else:
+        logging.vlog(2, f"Outside call consumer {callback} exception {e}. On TPU we do not send infeed.")
+    raise e  # Let the exception propagate
 
 
 def _add_transform(params: Dict, name: str, *transform_params) -> Dict:
@@ -890,39 +938,47 @@ def _instantiate_zeros(arg, tan):
   res = ad.instantiate_zeros_aval(aval, tan)
   return res
 
-def _id_tap_jvp_rule(primals, tangents, **params):
-  tangent_instantiated = tuple(map(_instantiate_zeros, primals, tangents))
-  assert "has_token_" not in params
 
-  arg_treedef = params["arg_treedef_"]
+def _outside_call_jvp_rule(primals, tangents, **params):
+  assert "has_token" not in params
+  if not params["identity"]:
+    raise NotImplementedError("JVP rule is implemented only for id_tap, not for call.")
+  tangent_instantiated = tuple(map(_instantiate_zeros, primals, tangents))
+
+  arg_treedef = params["arg_treedef"]
   # The argument to the jvp tap is a pair of the tapped primals and tangents
-  _, jvp_arg_treedef = api.tree_flatten(
+  jvp_flat_args, jvp_arg_treedef = api.tree_flatten(
       (arg_treedef.unflatten(primals),
        arg_treedef.unflatten(tangent_instantiated)))
-  out_all = id_tap_p.bind(
-      *primals, *tangent_instantiated,
+  out_all = outside_call_p.bind(
+      *jvp_flat_args,
       **dict(_add_transform(params, "jvp"),
-             arg_treedef_=jvp_arg_treedef))
+             arg_treedef=jvp_arg_treedef,
+             ))
   out_primals_tapped, out_tangents_tapped = util.split_list(out_all, [len(primals)])
   return tuple(out_primals_tapped), tuple(out_tangents_tapped)
 
 
-ad.primitive_jvps[id_tap_p] = _id_tap_jvp_rule
+ad.primitive_jvps[outside_call_p] = _outside_call_jvp_rule
 
 
-def _id_tap_partial_eval_rule(trace, *args, **params):
+def _outside_call_partial_eval_rule(trace, *args, **params):
   # The args have been prepared by the id_tap_jvp_rule: primals, tangents
   transforms = params.get("transforms", ())
   if not transforms or transforms[-1] != ("jvp",):
     # We are not in the process of computing VJP
-    return trace.default_process_primitive(id_tap_p, args, params)
+    return trace.default_process_primitive(outside_call_p, args, params)
+
+  assert "has_token" not in params
+  if not params["identity"]:
+    raise NotImplementedError("differentiation rules are implemented only for id_tap, not for call.")
 
   assert len(args) % 2 == 0
   nr_primals = len(args) // 2
 
   consts = [t.pval.get_known() for t in args]
   if all(c is not None for c in consts):
-    return trace.default_process_primitive(id_tap_p, args, params)
+    return trace.default_process_primitive(outside_call_p, args, params)
   # Split into two taps, one for the knowns and one for the unknowns
   # We implement here only the case when primals are known, and we make a tap
   # with just the primals.
@@ -930,16 +986,16 @@ def _id_tap_partial_eval_rule(trace, *args, **params):
   c_primals_tapped, _ = util.split_list(consts, [nr_primals])
   assert all([c is not None for c in c_primals_tapped])
 
-  prims, _ = params["arg_treedef_"].unflatten(args)
+  prims, _ = params["arg_treedef"].unflatten(args)
   _, primals_treedef = api.tree_flatten(prims)
 
   outs_known = trace.default_process_primitive(
-      id_tap_p, primals,
+      outside_call_p, primals,
       dict(params,
-           arg_treedef_=primals_treedef,
+           arg_treedef=primals_treedef,
            transforms=transforms[:-1]))
   # Now compute the unknowns using the whole tap, and merge them with the tapped ones
-  outs_all_unknown = trace.default_process_primitive(id_tap_p, args, params)
+  outs_all_unknown = trace.default_process_primitive(outside_call_p, args, params)
   outs_primals_unknown, outs_tangents_unknown = util.split_list(
       outs_all_unknown, [nr_primals])
   outs_combined = (
@@ -950,10 +1006,13 @@ def _id_tap_partial_eval_rule(trace, *args, **params):
   return tuple(outs_combined)
 
 
-pe.custom_partial_eval_rules[id_tap_p] = _id_tap_partial_eval_rule
+pe.custom_partial_eval_rules[outside_call_p] = _outside_call_partial_eval_rule
 
 
-def _id_tap_transpose_rule(cts, *args, **params):
+def _outside_call_transpose_rule(cts, *args, **params):
+  if not params["identity"]:
+    raise NotImplementedError("differentiation rules are implemented only for id_tap, not for call.")
+  assert "has_token" not in params
   assert len(cts) == len(args)
   cts_instantiated = tuple(map(_instantiate_zeros, args, cts))
 
@@ -962,156 +1021,59 @@ def _id_tap_transpose_rule(cts, *args, **params):
   if not transforms or transforms[-1] != ("jvp",):
     # TODO: I should understand better when can this happen. It seems to arise
     # in scan.
-    return id_tap_p.bind(
+    return outside_call_p.bind(
         *cts_instantiated,
         **_add_transform(params, "transpose"))
 
   assert len(args) % 2 == 0
   nr_primals = len(args) // 2
 
-  args_unflat, tan_unflat = params["arg_treedef_"].unflatten(args)
+  args_unflat, tan_unflat = params["arg_treedef"].unflatten(args)
   _, vjp_arg_treedef = api.tree_flatten(args_unflat)
   # We want to tap the cts_tapped_tangents
   cts_primals, cts_tangents = util.split_list(cts_instantiated, [nr_primals])
-  cts_tangents_through_tap = id_tap_p.bind(
+  cts_tangents_through_tap = outside_call_p.bind(
       *cts_tangents,
       **dict(_add_transform(params, "transpose"),
-             arg_treedef_=vjp_arg_treedef))
+             arg_treedef=vjp_arg_treedef))
   return (cts_primals + cts_tangents_through_tap)
 
 
-ad.primitive_transposes[id_tap_p] = _id_tap_transpose_rule
+ad.primitive_transposes[outside_call_p] = _outside_call_transpose_rule
 
 
-def _id_tap_batching_rule(batched_args, batch_dims, **params):
+def _outside_call_batching_rule(batched_args, batch_dims, **params):
+  if not params["identity"]:
+    raise NotImplementedError("batching rules are implemented only for id_tap, not for call.")
+  assert "has_token" not in params
   new_params = _add_transform(params, "batch", batch_dims)
-  res = id_tap_p.bind(*batched_args, **new_params)
+  res = outside_call_p.bind(*batched_args, **new_params)
   return res, batch_dims
 
 
-batching.primitive_batchers[id_tap_p] = _id_tap_batching_rule
+batching.primitive_batchers[outside_call_p] = _outside_call_batching_rule
 
 
-def _id_tap_masking_rule(operands, operands_logical_shapes, **params):
-  assert "has_token_" not in params
+def _outside_call_masking_rule(operands, operands_logical_shapes, **params):
+  if not params["identity"]:
+    raise NotImplementedError("masking rules are implemented only for id_tap, not for call.")
+  assert "has_token" not in params
 
   assert len(operands) == len(operands_logical_shapes)
-  arg_treedef = params["arg_treedef_"]
+  arg_treedef = params["arg_treedef"]
   # We will send the pair of (arg, arg_logical_shapes)
   packed_operands, packed_arg_tree = api.tree_flatten(
       (api.tree_unflatten(arg_treedef, operands),
        api.tree_unflatten(arg_treedef, operands_logical_shapes)))
 
-  packed_results = id_tap_p.bind(*packed_operands,
-                                 tap_func_=params["tap_func_"],
-                                 arg_treedef_=packed_arg_tree,
-                                 transforms=params.get("transforms", ()) + (("mask",),))
+  packed_results = outside_call_p.bind(
+      *packed_operands,
+      **dict(_add_transform(params, "mask"),
+             arg_treedef=packed_arg_tree))
   return packed_results[:len(operands)] + packed_results[len(packed_operands):]
 
 
-masking.masking_rules[id_tap_p] = _id_tap_masking_rule
-
-### The outside_call primitive
-"""
-This primitive is used to implement the `call` function. It takes several
-positional arguments that are the flattening of the argument to `call`.
-It takes the following parameters:
-
- * outside_computation: the function to invoke with the unflattened arguments.
- * arg_treedef, flat_args_aval: the treedef and flat list of abstract values
-   for the argument.
- * result_treedef, flat_results_aval: the treedef and flag list of abstracct
-   value for the expected result.
- * call_with_device: whether the outside_computation must be invoked with
-   a device keyword argument.
-"""
-outside_call_p = core.Primitive("outside_call")
-outside_call_p.multiple_results = True
-xla.outfeed_primitives.add(outside_call_p)
-
-
-def _outside_call_impl(*args, outside_computation,
-                       arg_treedef,
-                       flat_args_aval,
-                       result_treedef,
-                       flat_results_aval, call_with_device,
-                       **params):
-  if inline_host_callback():
-    arg = arg_treedef.unflatten(args)
-    if call_with_device:
-      res = outside_computation(arg, device=api.devices()[0])
-    else:
-      res = outside_computation(arg)
-    flat_results, result_treedef_actual = api.tree_flatten(res)
-    assert result_treedef_actual == result_treedef, f"expected {result_treedef} but found {result_treedef_actual}"
-    return flat_results
-  else:
-    return xla.apply_primitive(outside_call_p, *args,
-                               outside_computation=outside_computation,
-                               arg_treedef=arg_treedef,
-                               flat_args_aval=flat_args_aval,
-                               result_treedef=result_treedef,
-                               flat_results_aval=flat_results_aval,
-                               call_with_device=call_with_device,
-                               **params)
-
-
-outside_call_p.def_impl(_outside_call_impl)
-
-
-def _outside_call_abstract_eval(*args_a: pe.AbstractValue,
-                                flat_results_aval, **params) -> Sequence[pe.AbstractValue]:
-  if "has_token_" in params and params["has_token_"]:
-    assert len(args_a) >= 2 and args_a[-1] is core.abstract_token and args_a[-2] is core.abstract_token
-    return flat_results_aval + (core.abstract_token, core.abstract_token)
-  else:
-    return flat_results_aval
-
-
-outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
-
-
-def _outside_call_translation_rule(
-    comp: XlaComputationBuilder, *args_op: XlaOp,
-    outside_computation,
-    arg_treedef,
-    flat_args_aval,
-    result_treedef=None,
-    flat_results_aval=None,
-    has_token_=False,
-    call_with_device=False):
-  # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
-  assert has_token_
-  current_token = args_op[-2]
-  current_itoken = args_op[-1]
-  # TODO: expose shape.is_token
-  assert not comp.get_shape(current_token).is_array() and not comp.get_shape(current_token).is_array(), (
-      "The last two arguments must be tokens")
-  assert not comp.get_shape(current_itoken).is_array() and not comp.get_shape(current_itoken).is_array(), (
-      "The last two arguments must be tokens")
-
-  args_to_outfeed = args_op[:-2]
-  consumer_id = _register_consumer(
-      _ConsumerCallable(functools.partial(_outside_call_consumer,
-                                          outside_computation, result_treedef,
-                                          flat_results_aval, call_with_device),
-                        (), True, arg_treedef))
-  next_token = _outfeed_receiver.receiver.add_outfeed(comp, current_token,
-                                                      consumer_id,
-                                                      args_to_outfeed)
-  if flat_results_aval:
-    after_outfeed_itoken = xops.AfterAll(comp, [current_itoken, next_token])
-
-    results_and_token = xla.translations[lax.infeed_p](comp, after_outfeed_itoken,
-                                                       shapes=flat_results_aval, partitions=None)
-    next_itoken = xops.GetTupleElement(results_and_token, len(flat_results_aval))
-    results = [xops.GetTupleElement(results_and_token, i) for i in range(len(flat_results_aval))]
-    return xops.Tuple(comp, results + [next_token, next_itoken])
-  else:
-    return xops.Tuple(comp, [next_token, current_itoken])
-
-
-xla.translations[outside_call_p] = _outside_call_translation_rule
+masking.masking_rules[outside_call_p] = _outside_call_masking_rule
 
 
 ####
@@ -1179,24 +1141,12 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
 
   Append the result of rewriting to `eqns`.
   """
-  if eqn.primitive is id_tap_p:
-    assert "has_token_" not in eqn.params
-    eqns.append(
-        core.new_jaxpr_eqn(eqn.invars + [input_token_var],
-                           eqn.outvars + [output_token_var], eqn.primitive,
-                           dict(eqn.params, has_token_=True),
-                           eqn.source_info))
-    eqns.append(
-        core.new_jaxpr_eqn([input_itoken_var],
-                           [output_itoken_var], id_p,
-                           dict(),
-                           eqn.source_info))
-  elif eqn.primitive is outside_call_p:
-    assert "has_token_" not in eqn.params
+  if eqn.primitive is outside_call_p:
+    assert "has_token" not in eqn.params
     eqns.append(
         core.new_jaxpr_eqn(eqn.invars + [input_token_var, input_itoken_var],
                            eqn.outvars + [output_token_var, output_itoken_var], eqn.primitive,
-                           dict(eqn.params, has_token_=True),
+                           dict(eqn.params, has_token=True),
                            eqn.source_info))
   elif eqn.primitive is lax.while_p:
     cond_jaxpr, _, body_jaxpr, _ = util.split_dict(
@@ -1482,8 +1432,8 @@ class _OutfeedReceiverData:
   last_callback_exception: Optional[Tuple[Exception, str]]
   clients: Tuple[XlaLocalClient, ...]
   devices: Tuple[XlaDevice, ...]
-  consumer_registry: Dict[_ConsumerCallable, int]
-  consumer_registry_by_id: Dict[int, _ConsumerCallable]
+  consumer_registry: Dict[Callable, int]
+  consumer_registry_by_id: Dict[int, Callable]
 
   def __init__(self):
     self.receiver = None  # Initialize lazily, when first needed
@@ -1494,8 +1444,8 @@ class _OutfeedReceiverData:
     # The consumer registries must be live for the lifetime of the program,
     # because we may have cached compilations that embed consumer ids, and we
     # do not want the id reused for other shapes.
-    self.consumer_registry = dict()
-    self.consumer_registry_by_id = dict()
+    self.callback_registry = dict()
+    self.callback_registry_by_id = dict()
 
   def stop(self):
     """Wait for all pending outfeeds and stop the receiver."""
@@ -1513,14 +1463,31 @@ def _outfeed_receiver_callback(device, consumer_id, arrays):
   # logging.vlog(
   #    2, f"Outfeed received on device {device} for consumer {consumer_id} " +
   #    (" ".join([f"({a.dtype}{a.shape})" for a in arrays])))
-  consumer = _outfeed_receiver.consumer_registry_by_id.get(consumer_id)
-  assert consumer is not None, "We should have crashed in the runtime"
+  callback = _outfeed_receiver.callback_registry_by_id.get(consumer_id)
+  assert callback is not None, "We should have crashed in the runtime"
   try:
-    consumer.invoke(arrays, device)
+    callback(arrays, device)
   except Exception as e:
     formatted_e = traceback.format_exc()
     logging.error("Postponing exception raised in callback function: %s", formatted_e)
     _outfeed_receiver.last_callback_exception = (e, formatted_e)
+
+
+def _register_callback(callback: Callable) -> int:
+  """Registers a callback function, cache by hash of callback.
+
+  The callback is a function to be invoked as `callback(arrays, device)`.
+  """
+  callback_id = _outfeed_receiver.callback_registry.get(callback)
+  if callback_id is not None:
+    return callback_id
+  callback_id = hash(callback) & 0xFFFFFFFC  # pybind11 has trouble here with large ints
+  callback_id += 1  # Reserve the consumer ID 0
+  assert callback_id not in _outfeed_receiver.callback_registry, (
+      "callback id collision")
+  _outfeed_receiver.callback_registry[callback] = callback_id
+  _outfeed_receiver.callback_registry_by_id[callback_id] = callback
+  return callback_id
 
 
 def _initialize_outfeed_receiver(

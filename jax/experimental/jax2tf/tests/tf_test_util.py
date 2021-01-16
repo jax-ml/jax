@@ -140,10 +140,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       def log_message(extra):
         return f"[{self._testMethodName}] mode={mode}: {extra}"
 
-      dut = jtu.device_under_test()
-      # For TPU all modes should behave like the compiled one
-      lookup_mode = mode if dut != "tpu" else "compiled"
-      jax2tf_limits = tuple(filter(lambda l: l.filter(mode=lookup_mode), limitations))
+      jax2tf_limits = tuple(filter(lambda l: l.filter(mode=mode), limitations))
 
       skip_tf_run = [l for l in jax2tf_limits if l.skip_tf_run]
       if skip_tf_run:

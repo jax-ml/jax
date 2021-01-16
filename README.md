@@ -411,19 +411,22 @@ pip install --upgrade jax jaxlib  # CPU-only version
 On Linux, it is often necessary to first update `pip` to a version that supports
 `manylinux2010` wheels.
 
-If you want to install JAX with both CPU and GPU support, using existing CUDA
-and CUDNN7 installations on your machine (for example, preinstalled on your
-cloud VM), you can run
+If you want to install JAX with both CPU and NVidia GPU support, you must first
+install [CUDA](https://developer.nvidia.com/cuda-downloads) and
+[CuDNN](https://developer.nvidia.com/CUDNN),
+if they have not already been installed. Unlike some other popular deep
+learning systems, JAX does not bundle CUDA or CuDNN as part of the `pip`
+package. Next, run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax jaxlib==0.1.57+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install --upgrade jax jaxlib==0.1.59+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
-installation you want to use, with `cuda110` for CUDA 11.0, `cuda102` for CUDA
-10.2, and `cuda101` for CUDA 10.1. You can find your
-CUDA version with: install path:
+installation you want to use, with `cuda111` for CUDA 11.1, `cuda110` for CUDA
+11.0, `cuda102` for CUDA 10.2, and `cuda101` for CUDA 10.1. You can find your
+CUDA version with the command:
 
 ```bash
 nvcc --version
@@ -438,7 +441,8 @@ create a symlink:
 sudo ln -s /path/to/cuda /usr/local/cuda-X.X
 ```
 
-Or set the following environment variable before importing JAX:
+Alternatively, you can set the following environment variable before importing
+JAX:
 
 ```bash
 XLA_FLAGS=--xla_gpu_cuda_data_dir=/path/to/cuda

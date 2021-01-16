@@ -579,8 +579,8 @@ def recipe_to_eqn(getvar: Callable[[JaxprTracer], core.Atom],
   return new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
 
 def tracers_to_jaxpr(
-  in_tracers: List[JaxprTracer],
-  out_tracers: List[JaxprTracer]
+  in_tracers: Sequence[JaxprTracer],
+  out_tracers: Sequence[JaxprTracer]
   ) -> Tuple[Jaxpr, Tuple[Any, ...], Tuple[Any, ...]]:
   """Constructs Jaxpr given tracers for inputs and outputs.
 

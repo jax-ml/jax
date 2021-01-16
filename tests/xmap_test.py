@@ -65,6 +65,8 @@ def tearDownModule():
 
 @curry
 def with_mesh(named_shape, f):
+  if not named_shape:
+    return f
   def new_f(*args, **kwargs):
     axis_names, shape = unzip2(named_shape)
     size = np.prod(shape)
@@ -93,6 +95,8 @@ def use_spmd_lowering(f):
 class XMapTest(jtu.JaxTestCase):
 
   def setUp(self):
+    if jax.lib.version < (0, 1, 58):
+      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
     if not config.omnistaging_enabled:
       raise SkipTest("xmap requires omnistaging")
 
@@ -282,6 +286,50 @@ class XMapTest(jtu.JaxTestCase):
     z = f_mapped(x, y)
 
     self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
+
+  @ignore_xmap_warning()
+  @with_mesh([('r1', 2)])
+  def testPdotBatchingShardUncontractedDim(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(0)
+    x = rng.randn(2, 3, 8)
+    y = rng.randn(2, 8, 5)
+
+    f_mapped = xmap(f,
+                    in_axes=[{0: 'j', 2: 'i'}, {0: 'j', 1: 'i'}],
+                    out_axes=['j', ...],
+                    axis_resources={'j': 'r1'})
+
+    z = f_mapped(x, y)
+
+    self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
+
+  @parameterized.named_parameters(
+    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
+    for name, mesh, axis_resources in (
+      ('', (), ()),
+      ('Mesh', (('x', 2),), (('i', 'x'),))
+    ))
+  @ignore_xmap_warning()
+  def testMultipleCalls(self, mesh, axis_resources):
+    def f(x, y):
+      assert x.shape == y.shape == (3, 5)
+      return jnp.tensordot(x, y, axes=([1], [1]))
+
+    @with_mesh(mesh)
+    def run_test():
+      f_mapped = xmap(f,
+                      in_axes=(['i', ...], ['j', ...]),
+                      out_axes=['i', 'j', ...],
+                      axis_resources=dict(axis_resources))
+      x = jnp.arange(30).reshape(2, 3, 5)
+      expected = jnp.einsum('imk,jnk->ijmn', x, x)
+      for i in range(10):
+        self.assertAllClose(f_mapped(x, x), expected)
+    run_test()
+
 
 class XMapErrorTest(jtu.JaxTestCase):
 

@@ -23,7 +23,7 @@ __all__ = [
 import jaxlib
 
 # Must be kept in sync with the jaxlib version in build/test-requirements.txt
-_minimum_jaxlib_version = (0, 1, 58)
+_minimum_jaxlib_version = (0, 1, 59)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
@@ -52,14 +52,12 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-if version <  (0, 1, 53):
-  from jaxlib import pytree  # pytype: disable=import-error
-else:
-  pytree = xla_client._xla.pytree
-  jax_jit = xla_client._xla.jax_jit
+
+pytree = xla_client._xla.pytree
+jax_jit = xla_client._xla.jax_jit
 
 try:
-  from jaxlib import cusolver
+  from jaxlib import cusolver  # pytype: disable=import-error
 except ImportError:
   cusolver = None
 
@@ -69,7 +67,7 @@ except ImportError:
   rocsolver = None
 
 try:
-  from jaxlib import cuda_prng
+  from jaxlib import cuda_prng  # pytype: disable=import-error
 except ImportError:
   cuda_prng = None
 

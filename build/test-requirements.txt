@@ -1,6 +1,6 @@
 flake8
  # Must be kept in sync with the minimum jaxlib version in jax/lib/__init__.py
-jaxlib==0.1.55
+jaxlib==0.1.59
 mypy==0.790
 pillow
 pytest-benchmark

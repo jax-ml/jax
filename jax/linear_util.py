@@ -109,7 +109,7 @@ class Store(object):
 class WrappedFun(object):
   """Represents a function `f` to which `transforms` are to be applied.
 
-  Arguments:
+  Args:
     f: the function to be transformed.
     transforms: a list of `(gen, gen_static_args)` tuples representing
       transformations to apply to `f.` Here `gen` is a generator function

@@ -512,7 +512,7 @@ def axis_groups(axis_env: AxisEnv, name):
 def _axis_groups(mesh_spec, mesh_axes):
   """Computes replica group ids for a collective performed over a subset of the mesh.
 
-  Arguments:
+  Args:
     mesh_spec: A sequence of integers representing the mesh shape.
     mesh_axes: A sequence of integers between 0 and `len(mesh_spec)` (exclusive)
       indicating over which axes the collective is performed.

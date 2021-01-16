@@ -1,10 +1,10 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2020-12-31* (YYYY-MM-DD)
+*Last generated on: 2021-01-15* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2305 test harnesses to test
+We use a set of 2313 test harnesses to test
 the implementation of 122 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
@@ -31,6 +31,11 @@ We use below the following abbreviations for sets of dtypes:
 
 See the comment in `primitive_harness.py` for a description
 of test harnesses and their definitions.
+
+Note that automated tests will fail if new limitations appear, but
+they won't when limitations are fixed. If you see a limitation that
+you think it does not exist anymore, please ask for this file to
+be updated.
 
 
 | Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
@@ -143,7 +148,7 @@ of test harnesses and their definitions.
 | sin | 6 | inexact | bool, integer |
 | sinh | 6 | inexact | bool, integer |
 | slice | 24 | all |  |
-| sort | 21 | all |  |
+| sort | 29 | all |  |
 | sqrt | 6 | inexact | bool, integer |
 | squeeze | 23 | all |  |
 | stop_gradient | 15 | all |  |

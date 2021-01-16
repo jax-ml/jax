@@ -1264,41 +1264,25 @@ def _compute_newshape(a, newshape):
   else: iterable = True
   def check(size):
     return size if type(size) is Poly else core.concrete_or_error(
-      int, size, "The error arose in jax.numpy.reshape.")
-  newshape = [check(size) for size in newshape] if iterable else check(newshape)
+      operator.index, size, "The error arose in jax.numpy.reshape.")
+  newshape = [check(size) for size in newshape] if iterable else [check(newshape)]
   if np.any(np.equal(newshape, -1)):
     fix = -a.size // (newshape if type(newshape) is Poly else _prod(newshape))
     return [d if d != -1 else fix for d in newshape]
   else:
     return newshape
 
-def _reshape(a, newshape, order="C"):
-  computed_newshape = _compute_newshape(a, newshape)
+def _reshape(a, *args, order="C"):
+  newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
   if order == "C":
-    return lax.reshape(a, computed_newshape, None)
+    return lax.reshape(a, newshape, None)
   elif order == "F":
     dims = np.arange(ndim(a))[::-1]
-    return lax.reshape(a, computed_newshape[::-1], dims).T
+    return lax.reshape(a, newshape[::-1], dims).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
-
-def _reshape_method(a, *newshape, **kwargs):
-  order = kwargs.pop("order", "C")
-  if len(kwargs) == 1:
-    invalid_kwarg, = kwargs
-    msg = "'{}' is an invalid keyword argument for this function"
-    raise TypeError(msg.format(invalid_kwarg))  # same as NumPy error
-  elif kwargs:
-    invalid_kwargs = "'{}'".format("'".join(kwargs))
-    msg = "{} are invalid keyword arguments for this function"
-    raise TypeError(msg.format(invalid_kwargs))  # different from NumPy error
-  if (len(newshape) == 1 and not isinstance(newshape[0], int) and
-          type(newshape[0]) is not Poly):
-    newshape = newshape[0]
-  return _reshape(a, newshape, order=order)
-
 
 @_wraps(np.ravel)
 def ravel(a, order="C"):
@@ -1908,13 +1892,12 @@ def _reduction_dims(a, axis):
   if axis is None:
     return tuple(range(ndim(a)))
   elif isinstance(axis, (np.ndarray, tuple, list)):
+    axis = tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
     if len(axis) != len(set(axis)):
       raise ValueError(f"duplicate value in 'axis': {axis}")
-    return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
-  elif isinstance(axis, int):
-    return (_canonicalize_axis(axis, ndim(a)),)
+    return axis
   else:
-    raise TypeError("Unexpected type of axis argument: {}".format(type(axis)))
+    return (_canonicalize_axis(axis, ndim(a)),)
 
 def _reduction_init_val(a, init_val):
   a_dtype = dtypes.canonicalize_dtype(_dtype(a))
@@ -2636,10 +2619,13 @@ def stack(arrays, axis: int =0, out=None):
 @_wraps(np.tile)
 def tile(A, reps):
   _check_arraylike("tile", A)
-  if isinstance(reps, int):
+  try:
+    iter(reps)
+  except TypeError:
     reps = (reps,)
+  reps = tuple(operator.index(rep) for rep in reps)
   A_shape = (1,) * (len(reps) - ndim(A)) + shape(A)
-  reps = (1,) * (len(A_shape) - len(reps)) + tuple(reps)
+  reps = (1,) * (len(A_shape) - len(reps)) + reps
   result = broadcast_to(reshape(A, [j for i in A_shape for j in [1, i]]),
                         [k for pair in zip(reps, A_shape) for k in pair])
   return reshape(result, tuple(np.multiply(A_shape, reps)))
@@ -4340,7 +4326,7 @@ def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
 def _int(aval):
   return not aval.shape and issubdtype(aval.dtype, integer)
 
-def _index_to_gather(x_shape, idx):
+def _index_to_gather(x_shape, idx, normalize_indices=True):
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
@@ -4365,8 +4351,9 @@ def _index_to_gather(x_shape, idx):
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
       if isscalar(e) or isinstance(e, (Sequence, ndarray)))
-    advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
-                      for e, i, j in advanced_pairs)
+    if normalize_indices:
+      advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
+                        for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
     advanced_axes_are_contiguous = np.all(np.diff(idx_advanced_axes) == 1)
 
@@ -4437,7 +4424,7 @@ def _index_to_gather(x_shape, idx):
       if x_shape[x_axis] == 0:
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
-      i = _normalize_index(i, x_shape[x_axis])
+      i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
       if type(i) is Poly:
         # dummy index if i is polynomial, doesn't matter for shape inference
         # TODO(mattjj,j-towns,juliuskunze): revise this logic
@@ -5196,7 +5183,7 @@ for operator_name, function in _operators.items():
 # Forward methods and properties using core.aval_method and core.aval_property:
 for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
-setattr(ShapedArray, "reshape", core.aval_method(_reshape_method))
+setattr(ShapedArray, "reshape", core.aval_method(_reshape))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "real", core.aval_property(real))
@@ -5213,7 +5200,7 @@ for device_array in [_DeviceArray, _CppDeviceArray]:
     setattr(device_array, "__{}__".format(operator_name), function)
   for method_name in _nondiff_methods + _diff_methods:
     setattr(device_array, method_name, globals()[method_name])
-  setattr(device_array, "reshape", _reshape_method)
+  setattr(device_array, "reshape", _reshape)
   setattr(device_array, "flatten", ravel)
   setattr(device_array, "T", property(transpose))
   setattr(device_array, "real", property(real))
