@@ -313,7 +313,7 @@ def _cpp_jit(
         # TODO(mattjj): Add support for lazy-expression.
         # If the input is a DeviceArray, then it should have a trivial LazyExpr.
         all(
-            type(x) is not xla.DeviceArray or xla.lazy.is_trivial(x._lazy_expr)
+            type(x) is not xla.DeviceArray or xla.lazy.is_trivial(x._lazy_expr)de
             for x in args_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
@@ -388,7 +388,7 @@ def _cpp_jit(
         ])
         return device_arrays
       except FloatingPointError:
-        assert FLAGS.jax_debug_nans  # compiled_fun can only raise in this case
+        assert FLAGS.jax_debug_nans or FLAGS.jax_debug_infs  # compiled_fun can only raise in this case
         print("Invalid nan value encountered in the output of a C++-jit "
               "function. Calling the de-optimized version.")
         return cache_miss(context, *args, **kwargs)[0]  # probably won't return
