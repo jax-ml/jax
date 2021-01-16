@@ -3458,16 +3458,8 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
     t_padv = sub(total(t), total(t_operand)) if ad.is_undefined_primal(padding_value) else None
   return [t_operand, t_padv]
 
-def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
-  operand, padding_value = batched_args
-  operand_bdim, padding_value_bdim = batch_dims
-  if padding_value_bdim is None:
-    assert operand_bdim is not None
-    padding_config = list(padding_config)
-    padding_config.insert(operand_bdim, (0, 0, 0))
-    return pad(operand, padding_value, padding_config), operand_bdim
-  else:
-    raise NotImplementedError  # loop and stack
+# The pad_p batch rule requires use of a scan construct and so
+# is defined in lax_control_flow.py
 
 def _pad_translation_rule(c, operand, padding_value, *, padding_config):
   return xops.Pad(operand, padding_value,
@@ -3487,7 +3479,6 @@ def _pad_masking_rule(padded_vals, logical_shapes, padding_config):
 pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad',
                            translation_rule=_pad_translation_rule)
 ad.deflinear2(pad_p, _pad_transpose)
-batching.primitive_batchers[pad_p] = _pad_batch_rule
 masking.masking_rules[pad_p] = _pad_masking_rule
 
 

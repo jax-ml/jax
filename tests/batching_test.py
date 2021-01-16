@@ -309,6 +309,31 @@ class BatchingTest(jtu.JaxTestCase):
     expected_ans = jnp.stack(list(map(fun, x)))
     self.assertAllClose(ans, expected_ans, check_dtypes=False)
 
+    # Batch on non-leading axis
+    fun = lambda x: lax.pad(x, np.float32(0), [(1, 2, 1), (0, 1, 0)])
+    x = R(3, 4, 5).astype(np.float32)
+    ans = vmap(fun, in_axes=1, out_axes=0)(x)
+    expected_ans = jnp.stack([fun(x[:, i, :]) for i in range(x.shape[1])])
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+    # Batch the padding values
+    fun = lambda x, pad_val: lax.pad(x, pad_val, [(1, 1, 0)])
+    x = R(2, 3).astype(np.float32)
+    padding_values = np.array([7., 8., 9.], dtype=np.float32)
+    ans = vmap(fun, in_axes=(1, 0), out_axes=0)(x, padding_values)
+    expected_ans = jnp.stack([fun(x[:, i], padding_values[i])
+                              for i in range(padding_values.shape[0])])
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+    # Batch only the padding values
+    fun = lambda x, pad_val: lax.pad(x, pad_val, [(1, 1, 0), (2, 2, 0)])
+    x = R(2, 3).astype(np.float32)
+    ans = vmap(fun, in_axes=(None, 0), out_axes=0)(x, padding_values)
+    expected_ans = jnp.stack([fun(x, padding_values[i])
+                              for i in range (padding_values.shape[0])])
+    self.assertAllClose(ans, expected_ans, check_dtypes=False)
+
+
   def testConcatenate(self):
     R = lambda *shape: np.random.RandomState(0).randn(*shape).astype(np.float32)
 

@@ -1936,6 +1936,30 @@ def _memcpy(axis, num, src, dst, offset):
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule  # type: ignore
 
 
+def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
+  operand, padding_value = batched_args
+  operand_bdim, padding_value_bdim = batch_dims
+  padding_config = list(padding_config)
+  if padding_value_bdim is None:
+    assert operand_bdim is not None
+    padding_config.insert(operand_bdim, (0, 0, 0))
+    return lax.pad(operand, padding_value, padding_config), operand_bdim
+  else:
+    # Different padding values for each batch element. Loop and stack with scan
+    def scan_body(_, i: int):
+      to_pad = (operand if operand_bdim is None
+                else lax.squeeze(lax.dynamic_index_in_dim(operand, i, axis=operand_bdim),
+                                 (operand_bdim,)))
+      return (None, lax.pad(to_pad,
+                            lax.dynamic_index_in_dim(padding_value, i).reshape(),
+                            padding_config))
+
+    _, res = scan(scan_body, None, lax.iota(np.int32, padding_value.shape[0]))
+    return res, 0
+
+batching.primitive_batchers[lax.pad_p] = _pad_batch_rule
+
+
 def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
 

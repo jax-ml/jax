@@ -13,7 +13,13 @@ jax 0.2.9 (Unreleased)
 
 * New features:
 
+  * Extend the `jax.experimental.loops` module with support for pytrees. Improved
+    error checking and error messages.
+
 * Bug fixes:
+
+  * Extended the batching rule for `lax.pad` to support batching of the padding values.
+    (`#5443 <https://github.com/google/jax/pull/5443>`_)
 
 * Breaking changes:
 
@@ -21,12 +27,6 @@ jax 0.2.9 (Unreleased)
     than wrapping them into the segment ID space. This was done for performance
     reasons.
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.8...jax-v0.2.9>`__.
-
-* New features:
-
-  * Extend the `jax.experimental.loops` module with support for pytrees. Improved
-    error checking and error messages.
 
 jaxlib 0.1.60 (Unreleased)
 --------------------------
