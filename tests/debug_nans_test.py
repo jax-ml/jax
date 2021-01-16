@@ -77,5 +77,55 @@ class DebugNaNsTest(jtu.JaxTestCase):
         f(1)
 
 
+class DebugInfsTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    self.cfg = config.read("jax_debug_infs")
+    config.update("jax_debug_infs", True)
+
+  def tearDown(self):
+    config.update("jax_debug_infs", self.cfg)
+
+  def testSingleResultPrimitiveNoInf(self):
+    A = jnp.array([[1., 2.], [2., 3.]])
+    ans = jnp.tanh(A)
+    ans.block_until_ready()
+
+  def testMultipleResultPrimitiveNoInf(self):
+    A = jnp.array([[1., 2.], [2., 3.]])
+    ans, _ = jnp.linalg.eigh(A)
+    ans.block_until_ready()
+
+  def testJitComputationNoInf(self):
+    A = jnp.array([[1., 2.], [2., 3.]])
+    ans = jax.jit(jnp.tanh)(A)
+    ans.block_until_ready()
+
+  def testSingleResultPrimitiveInf(self):
+    A = jnp.array(0.)
+    with self.assertRaises(FloatingPointError):
+      ans = 1. / A
+      ans.block_until_ready()
+
+  def testCallDeoptimized(self):
+    to_test = [jax.api._python_jit]
+    if version > (0, 1, 56):
+      to_test.append(jax.api._cpp_jit)
+
+    for jit in to_test:
+
+      @jit
+      def f(x):
+        return jax.lax.cond(
+            x == 1, lambda _: np.inf, lambda _: 2., operand=None)
+
+      # This makes sure, when using the C++ jit, that the Python code has been
+      # run to compile, and the next call won't go through `cache_miss`.
+      f(2)
+      # 'cond' not 'xla_call'
+      msg = r"invalid value \(inf\) encountered in cond"
+      with self.assertRaisesRegex(FloatingPointError, msg):
+        f(1)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
