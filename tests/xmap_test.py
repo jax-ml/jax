@@ -379,11 +379,13 @@ class XMapTest(XMapTestCase):
     x = jnp.arange(np.prod(xshape)).reshape(xshape)
     y = f(x)
     self.assertAllClose(y, (jnp.sin(x * 2).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
-    self.assertEqual(y[0].sharding_spec.sharding,
-                      (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
-    self.assertEqual(y[0].sharding_spec.mesh_mapping,
-                    (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
-
+    self.assertEqual(
+        y[0].sharding_spec.sharding,
+        [pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()])
+    self.assertEqual(
+        y[0].sharding_spec.mesh_mapping,
+        [pxla.Replicated(2), pxla.ShardedAxis(0)] + [pxla.Replicated(2)] *
+        (len(mesh) - 2))
   @with_and_without_mesh
   @ignore_xmap_warning()
   def testMultipleCalls(self, mesh, axis_resources):
