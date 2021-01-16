@@ -313,7 +313,7 @@ def _cpp_jit(
         # TODO(mattjj): Add support for lazy-expression.
         # If the input is a DeviceArray, then it should have a trivial LazyExpr.
         all(
-            type(x) is not xla.DeviceArray or xla.lazy.is_trivial(x._lazy_expr)de
+            type(x) is not xla.DeviceArray or xla.lazy.is_trivial(x._lazy_expr)
             for x in args_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
