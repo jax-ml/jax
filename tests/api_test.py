@@ -947,6 +947,12 @@ class APITest(jtu.JaxTestCase):
       TypeError,
       "primal and tangent arguments to jax.jvp do not match.",
       lambda: api.jvp(lambda x: -x, (np.float16(2),), (np.float32(4),)))
+    # If primals and tangents are not of the same shape then raise error
+    self.assertRaisesRegex(
+      ValueError,
+      "jvp called with inconsistent primal and tangent shapes",
+      lambda: api.jvp(lambda x: x+1, (np.random.randn(10,),), (np.random.randn(20,),)) 
+    )
 
   def test_jvp_non_tuple_arguments(self):
     def f(x, y): return x + y
