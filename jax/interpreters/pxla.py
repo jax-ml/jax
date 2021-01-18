@@ -136,15 +136,15 @@ MeshDimAssignment = Union[ShardedAxis, Replicated]
 class ShardingSpec:
   """Describes the sharding of an ndarray.
 
-  `sharding` specifies how the array is supposed to get partitioned into chunks.
-  Its length should match the rank of the array. See the docstring of
-  `AvalDimSharding` for the supported partitioning schemes.
-
-  `mesh_mapping` describes an assignments of the array chunks created by `sharding`
-  to a logical device mesh. The length of the tuple is equal to the rank of the mesh.
-  Each mesh dimension can either get partitions of data varying along one of the
-  sharded dimensions, or the data can be replicated. See the docstring of
-  `MeshDimAssignment` for more information.
+  Attributes:
+    sharding: specifies how the array is supposed to get partitioned into chunks.
+      Its length should match the rank of the array. See the docstring of
+      `AvalDimSharding` for the supported partitioning schemes.
+    mesh_mapping` describes an assignments of the array chunks created by `sharding`
+      to a logical device mesh. The length of the tuple is equal to the rank of the
+      mesh. Each mesh dimension can either get partitions of data varying along one
+      of the sharded dimensions, or the data can be replicated. See the docstring of
+      `MeshDimAssignment` for more information.
   """
   sharding: Tuple[AvalDimSharding, ...]
   mesh_mapping: Tuple[MeshDimAssignment, ...]
