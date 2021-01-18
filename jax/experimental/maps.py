@@ -31,9 +31,10 @@ from ..api_util import flatten_fun_nokwargs, flatten_axes
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
 from ..interpreters import xla
+from ..interpreters import batching
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from .._src.util import safe_map, safe_zip, HashableFunction
+from .._src.util import safe_map, safe_zip, HashableFunction, as_hashable_function, unzip2
 from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
@@ -252,7 +253,7 @@ def xmap(fun: Callable,
     axis_sizes = _get_axis_sizes(args_flat, in_axes_flat)
     out_flat = xmap_p.bind(
       fun_flat, *args_flat,
-      name=fun.__name__,
+      name=getattr(fun, '__name__', '<unnamed function>'),
       in_axes=tuple(in_axes_flat),
       out_axes_thunk=out_axes_thunk,
       axis_sizes=FrozenDict(axis_sizes),
@@ -305,7 +306,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                     *in_avals)
   else:
     # We have to trace again, because `f` is a linear function, so we can't just return it.
-    final_jaxpr, _, final_consts = pe.trace_to_jaxpr_final(f, in_avals)
+    final_jaxpr, out_avals, final_consts = pe.trace_to_jaxpr_final(f, in_avals)
     return core.jaxpr_as_fun(core.ClosedJaxpr(final_jaxpr, final_consts))
 
 class EvaluationPlan(NamedTuple):
@@ -402,6 +403,39 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   self.frame.eqns.append(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore
+
+def _batch_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params):
+  not_mapped = batching.not_mapped
+  vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+  assert primitive is xmap_p
+  if all(dim is not_mapped for dim in dims):
+    return primitive.bind(f, *vals, **params)
+  else:
+    assert len({x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}) == 1
+    def fmap_dims(axes, f):
+      return AxisNamePos((name, f(axis)) for name, axis in axes.items())
+    new_in_axes = tuple(
+      fmap_dims(in_axes, lambda a: a + (d is not not_mapped and d <= a))
+      for d, in_axes in zip(dims, params['in_axes']))
+    new_dims = tuple(
+      d if d is not_mapped else d - sum(a < d for a in in_axis.values())
+      for d, in_axis in zip(dims, params['in_axes']))
+    f, dims_out = batching.batch_subtrace(f, self.main, new_dims)
+    out_axes_thunk = params['out_axes_thunk']
+    # NOTE: This assumes that the choice of the dimensions over which outputs
+    #       are batched is entirely dependent on the function and not e.g. on the
+    #       data or its shapes.
+    @as_hashable_function(closure=out_axes_thunk)
+    def new_out_axes_thunk():
+      return tuple(
+        fmap_dims(out_axes, lambda a: a + (d is not not_mapped and d <= a))
+        for out_axes, d in zip(out_axes_thunk(), dims_out()))
+    new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
+    vals_out = primitive.bind(f, *vals, **new_params)
+    dims_out = tuple(d if d is not_mapped else d + sum(a < d for a in out_axes.values())
+                     for d, out_axes in zip(dims_out(), out_axes_thunk()))
+    return [batching.BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
+batching.BatchTrace.process_xmap = _batch_trace_process_xmap  # type: ignore
 
 
 # -------- nested xmap handling --------
@@ -537,7 +571,7 @@ def _delete_aval_axes(aval, axes: AxisNamePos):
 def _insert_aval_axes(aval, axes: AxisNamePos, axis_sizes):
   assert isinstance(aval, core.ShapedArray)
   shape = list(aval.shape)
-  for name, axis in sorted(axes.items()):
+  for name, axis in sorted(axes.items(), key=lambda x: x[1]):
     shape.insert(axis, axis_sizes[name])
   return core.ShapedArray(tuple(shape), aval.dtype)
 

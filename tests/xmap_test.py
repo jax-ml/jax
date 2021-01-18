@@ -18,6 +18,7 @@ import functools
 import itertools
 import os
 import unittest
+from itertools import product, permutations
 from unittest import SkipTest, skip, skipIf
 
 import numpy as np
@@ -61,7 +62,6 @@ def tearDownModule():
   else:
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
-
 
 @curry
 def with_mesh(named_shape, f):
@@ -180,22 +180,6 @@ class XMapTest(jtu.JaxTestCase):
 
   @skip("Need to implement vmap(xmap)")
   @ignore_xmap_warning()
-  @with_mesh([('x', 2)])
-  def testNestedVectorize(self):
-    @partial(xmap, in_axes=[None, 'a', ...], out_axes=['a', ...], axis_resources={'a': 'x'})
-    def f(x):
-      y = x * 2
-      @partial(xmap, in_axes=['b', ...], out_axes=[None, 'b', ...])
-      def h(y):
-        return jnp.sin(y)
-      return h(y)
-    xshape = (4, 2, 5)
-    x = jnp.arange(np.prod(xshape)).reshape(xshape)
-    self.assertAllClose(f(x),
-                        jnp.sin(x * 2).transpose((1, 2, 0)))
-
-  @skip("Need to implement vmap(xmap)")
-  @ignore_xmap_warning()
   @with_mesh([('x', 2), ('y', 3)])
   def testNestedMesh(self):
     @partial(xmap, in_axes={1: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'y'})
@@ -254,6 +238,89 @@ class XMapTest(jtu.JaxTestCase):
       for i in range(10):
         self.assertAllClose(f_mapped(x, x), expected)
     run_test()
+
+  def VmapOfXmapCases():
+    xmap_in_axes = ([{}] +
+                    [{i: 'x'} for i in range(3)] +
+                    [{i: 'x', j: 'y'} for i in range(4) for j in range(4) if i != j])
+    for xmap_dim_x, xmap_dim_y in product(xmap_in_axes, repeat=2):
+      xmap_axes = sorted(set(xmap_dim_x.values()) | set(xmap_dim_y.values()))
+      num_axes = len(xmap_axes)
+      if xmap_axes is None:
+        continue
+      xmap_out_axes = [dict(zip(dims, xmap_axes))
+                       for dims in permutations(range(2 + num_axes), num_axes)]
+      for xmap_dim_z in xmap_out_axes:
+        for vmap_dim_x in [*range(2 + len(xmap_dim_x)), None]:
+          for vmap_dim_y in [*range(2 + len(xmap_dim_y)), None]:
+            if vmap_dim_x is None and vmap_dim_y is None:
+              continue
+            for vmap_dim_z in range(2 + len(xmap_axes)):
+              for vmap_as_xmap in [False, True]:
+                yield {"testcase_name":
+                          f"_xin={(sorted(xmap_dim_x.items()), sorted(xmap_dim_y.items()))}_"
+                          f"xout={sorted(xmap_dim_z.items())}_vin={(vmap_dim_x, vmap_dim_y)}_"
+                          f"vout={vmap_dim_z}_vmap_as_xmap={vmap_as_xmap}",
+                       "xmap_in_axes": (xmap_dim_x, xmap_dim_y),
+                       "xmap_out_axes": xmap_dim_z,
+                       "vmap_in_axes": (vmap_dim_x, vmap_dim_y),
+                       "vmap_out_axes": vmap_dim_z,
+                       "vmap_as_xmap": vmap_as_xmap}
+
+  @parameterized.named_parameters(jtu.cases_from_list(VmapOfXmapCases()))
+  @ignore_xmap_warning()
+  def testNestedMap(self, xmap_in_axes, xmap_out_axes, vmap_in_axes, vmap_out_axes, vmap_as_xmap):
+    """Test various vmap(xmap) and xmap(xmap) combinations.
+
+    The outer map always introduces a single dimension, the inner map introduces one or two.
+    """
+    (xin_x, xin_y) = xmap_in_axes
+    (vin_x, vin_y) = vmap_in_axes
+    vmap_size = 7
+    xmap_sizes = {'x': 11, 'y': 13}
+
+    xshape = [2, 3]
+    yshape = [3, 5]
+    zshape = [2, 5]
+    xind = ['n', 'k']
+    yind = ['k', 'm']
+    zind = ['n', 'm']
+    f = partial(jnp.einsum, 'nk,km->nm')
+
+    for pos, name in sorted(xin_x.items()):
+      xshape.insert(pos, xmap_sizes[name])
+      xind.insert(pos, name)
+    for pos, name in sorted(xin_y.items()):
+      yshape.insert(pos, xmap_sizes[name])
+      yind.insert(pos, name)
+    for pos, name in sorted(xmap_out_axes.items()):
+      zshape.insert(pos, xmap_sizes[name])
+      zind.insert(pos, name)
+
+    if vin_x is not None:
+      xshape.insert(vin_x, vmap_size)
+      xind.insert(vin_x, 'v')
+    if vin_y is not None:
+      yshape.insert(vin_y, vmap_size)
+      yind.insert(vin_y, 'v')
+    zshape.insert(vmap_out_axes, vmap_size)
+    zind.insert(vmap_out_axes, 'v')
+
+    if vmap_as_xmap:
+      do_vmap = partial(xmap,
+                        in_axes=({vin_x: 'v'} if vin_x is not None else {},
+                                 {vin_y: 'v'} if vin_y is not None else {}),
+                        out_axes={vmap_out_axes: 'v'})
+    else:
+      do_vmap = partial(vmap, in_axes=vmap_in_axes, out_axes=vmap_out_axes)
+
+    fm = do_vmap(xmap(f, in_axes=xmap_in_axes, out_axes=xmap_out_axes))
+    fref = partial(jnp.einsum, f"{''.join(xind)},{''.join(yind)}->{''.join(zind)}")
+
+    rng = np.random.RandomState(0)
+    x = rng.randn(*xshape)
+    y = rng.randn(*yshape)
+    self.assertAllClose(fm(x, y), fref(x, y))
 
 
 class XMapTestSPMD(XMapTest):
