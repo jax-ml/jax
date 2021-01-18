@@ -192,7 +192,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   # Also called add_jaxvals
   def add_any(cls, harness: primitive_harness.Harness):
-    return [missing_tf_kernel(dtypes=[np.uint16, np.uint32, np.uint64])]
+    return [missing_tf_kernel(dtypes=[np.uint16, np.uint64])]
 
   @classmethod
   def asin(cls, harness: primitive_harness.Harness):
@@ -407,7 +407,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
         ),
         missing_tf_kernel(dtypes=[np.complex64], devices="tpu"),
-        missing_tf_kernel(dtypes=[np.uint16, np.uint32]),
+        missing_tf_kernel(dtypes=[np.uint16]),
         custom_numeric(dtypes=np.float16, tol=0.1),
         custom_numeric(dtypes=dtypes.bfloat16, tol=0.5),
     ]
@@ -1012,7 +1012,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def reduce_window_add(cls, harness):
     assert "add" == harness.params["computation"].__name__
     return [
-        missing_tf_kernel(dtypes=[np.uint16, np.uint32]),
+        missing_tf_kernel(dtypes=[np.uint16]),
         missing_tf_kernel(dtypes=[np.complex64], devices="tpu"),
         missing_tf_kernel(dtypes=[np.uint64], devices=("cpu", "gpu"))
     ]
@@ -1108,7 +1108,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def scatter_add(cls, harness):
     return [
-        missing_tf_kernel(dtypes=[np.uint16, np.uint32, np.uint64, np.bool_],),
+        missing_tf_kernel(dtypes=[np.uint16, np.uint64, np.bool_],),
         missing_tf_kernel(
             dtypes=[np.complex64],
             devices="tpu",
@@ -1167,7 +1167,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def select_and_scatter_add(cls, harness):
     return [
-        missing_tf_kernel(dtypes=[np.uint32, np.uint16]),
+        missing_tf_kernel(dtypes=[np.uint16]),
         missing_tf_kernel(
             dtypes=[np.uint64],
             devices=("cpu", "gpu"),
