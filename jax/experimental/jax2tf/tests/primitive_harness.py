@@ -61,7 +61,7 @@ import numpy as np
 FLAGS = config.FLAGS
 
 Rng = Any  # A random number generator
-DType = np.dtype
+DType = Any
 
 class RandArg(NamedTuple):
   """Descriptor for a randomly generated argument.

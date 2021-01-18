@@ -314,17 +314,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def conv_general_dilated(cls, harness: primitive_harness.Harness):
     return [
-        # It is not enough to add an expect_tf_error limitation for this, because
-        # when this test runs with the LLVM debug-mode, it segfaults.
-        #   assert.h assertion failed at third_party/llvm/llvm-project/llvm/lib/IR/Instructions.cpp:2471
-        #      in void llvm::BinaryOperator::AssertOK(): getType()->isFPOrFPVectorTy() &&
-        #      "Tried to create a floating-point operation on a " "non-floating-point type!"
-        Jax2TfLimitation(
-            "TODO: TF/LLVM crash",
-            devices="gpu",
-            dtypes=[np.complex64, np.complex128],
-            skip_tf_run=True,
-        ),
         Jax2TfLimitation(
             "jax2tf BUG: batch_group_count > 1 not yet converted",
             enabled=(harness.params["batch_group_count"] > 1)),
@@ -563,7 +552,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                                  result_tf[1 + compute_left_eigenvectors])
 
     return [
-        Jax2TfLimitation("function not compilable", modes="compiled"),
+        # Eig does not work in JAX on gpu or tpu
+        Jax2TfLimitation("function not compilable", modes="compiled",
+                         devices="cpu"),
         Jax2TfLimitation(
             "TF Conversion of eig is not implemented when both compute_left_eigenvectors and compute_right_eigenvectors are set to True",
             enabled=(compute_left_eigenvectors and compute_right_eigenvectors)),
@@ -701,11 +692,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           rtol=tol)
 
     return [
-        Jax2TfLimitation(
-            "TODO: erf_inv bug on TPU: nan vs non-nan",
-            dtypes=np.float32,
-            devices="tpu",
-            skip_tf_run=True),
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16, np.float16],
             devices=("cpu", "gpu"),

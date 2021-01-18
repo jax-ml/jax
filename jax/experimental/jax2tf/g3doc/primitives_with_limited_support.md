@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-01-15*
+*Last generated on (YYYY-MM-DD): 2021-01-18*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -73,7 +73,6 @@ More detailed information can be found in the
 | cholesky | TF error: function not compilable | complex | cpu, gpu | compiled |
 | cholesky | TF error: op not defined for dtype | complex | tpu | compiled, graph |
 | clamp | TF error: op not defined for dtype | int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
-| conv_general_dilated | TF test skipped: TF error: TODO: TF/LLVM crash | complex | gpu | compiled, eager, graph |
 | conv_general_dilated | TF error: jax2tf BUG: batch_group_count > 1 not yet converted | all | cpu, gpu, tpu | compiled, eager, graph |
 | cosh | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
 | cummax | TF error: op not defined for dtype | complex128, uint64 | cpu, gpu | compiled, eager, graph |
@@ -91,10 +90,9 @@ More detailed information can be found in the
 | dot_general | TF error: op not defined for dtype | int64 | cpu, gpu | compiled |
 | dot_general | TF error: op not defined for dtype | bool, int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | eig | TF error: TF Conversion of eig is not implemented when both compute_left_eigenvectors and compute_right_eigenvectors are set to True | all | cpu, gpu, tpu | compiled, eager, graph |
-| eig | TF error: function not compilable | all | cpu, gpu, tpu | compiled |
+| eig | TF error: function not compilable | all | cpu | compiled |
 | eigh | TF error: function not compilable | complex | cpu, gpu, tpu | compiled |
 | erf | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| erf_inv | TF test skipped: TF error: TODO: erf_inv bug on TPU: nan vs non-nan | float32 | tpu | compiled, eager, graph |
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | erfc | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | fft | TF error: TF function not compileable | complex128, float64 | cpu, gpu | compiled |
