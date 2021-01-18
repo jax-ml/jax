@@ -352,11 +352,11 @@ def axis_index(axis_name):
   return axis_index_p.bind(axis_name=axis_name)
 
 
-def pdot(x, y, axis_name, pos_contract=((), ())):
+def pdot(x, y, axis_name, pos_contract=((), ()), pos_batch=((), ())):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   return pdot_p.bind(x, y, axis_name=axis_name,
-                     pos_contract=pos_contract, pos_batch=[(), ()])
+                     pos_contract=pos_contract, pos_batch=pos_batch)
 
 
 ### parallel primitives
@@ -870,6 +870,7 @@ def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch):
 @pdot_p.def_abstract_eval
 def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch):
   # TODO: avals with names, check inputs are mapped along axis_name, eliminate
+  if not len(set(axis_name)) == len(axis_name): raise ValueError
   return lax.dot_general_p.abstract_eval(
       x, y, dimension_numbers=[pos_contract, pos_batch],
       precision=None, preferred_element_type=None)
