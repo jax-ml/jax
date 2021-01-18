@@ -305,7 +305,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                     EXPERIMENTAL_SPMD_LOWERING,
                                     *in_avals)
   else:
-    # We have to trace again, because `f` is a linear function, so we can't just return it.
+    # We have to trace again, because `f` is an lu.WrappedFun, so we can't just return it.
     final_jaxpr, out_avals, final_consts = pe.trace_to_jaxpr_final(f, in_avals)
     return core.jaxpr_as_fun(core.ClosedJaxpr(final_jaxpr, final_consts))
 
