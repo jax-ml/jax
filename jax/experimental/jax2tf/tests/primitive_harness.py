@@ -694,7 +694,7 @@ for rhs_dtype in jtu.dtypes.all:
      RandArg(rhs_shape, rhs_dtype)],
     jax_unimplemented=[
       Limitation(
-        "requires omnistaging to be disabled",
+        "tie_in exists only pre-omnistaging",
         enabled=config.omnistaging_enabled)
     ],
     dtype=rhs_dtype,
@@ -951,7 +951,7 @@ _make_binary_elementwise_harnesses(
   dtypes=jtu.dtypes.all_floating,
   jax_unimplemented=lambda *_, dtype, **kwargs: [
     Limitation(
-      "XLA internal error", dtypes=[np.float16, dtypes.bfloat16]),
+      "XLA internal error b/177754567", dtypes=[np.float16, dtypes.bfloat16]),
   ])
 
 _make_binary_elementwise_harnesses(
@@ -959,17 +959,12 @@ _make_binary_elementwise_harnesses(
   dtypes=jtu.dtypes.all_floating,
   jax_unimplemented=lambda *_, dtype, **kwargs: [
     Limitation(
-      "XLA internal error", dtypes=[np.float16, dtypes.bfloat16]),
+      "XLA internal error b/177754567", dtypes=[np.float16, dtypes.bfloat16]),
   ])
 
 _make_binary_elementwise_harnesses(
   prim=lax.nextafter_p,
-  dtypes=jtu.dtypes.all_floating,
-  jax_unimplemented=lambda *_, shapes, **params: [
-    Limitation(
-      "XLA internal error, implicit broadcasting not implemented",
-      enabled=(shapes[0] != shapes[1]))
-  ])
+  dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
   prim=lax.and_p,
