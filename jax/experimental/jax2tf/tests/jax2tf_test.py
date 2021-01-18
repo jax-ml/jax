@@ -38,7 +38,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_basics(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
     _, res_tf = self.ConvertAndCompare(f_jax, jnp.float_(0.7))
-    self.assertIsInstance(res_tf, tf.Tensor)
 
   def test_pytrees(self):
     # Take and return pytrees
@@ -342,6 +341,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "grad")
 
+  @jtu.skip_on_flag('jax_omnistaging', False)
   def test_convert_nullary_func(self):
     # Even nullary functions are converted to TF (as opposed to constant-folded
     # in JAX prior to conversion).
@@ -351,6 +351,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf_graph = f_tf.get_concrete_function().graph.as_graph_def()
     self.assertIn('op: "Sin"', str(f_tf_graph))
 
+  @jtu.skip_on_flag('jax_omnistaging', False)
   def test_convert_of_nested_independent_jit(self):
     def func(x):
       def inner1(y):
@@ -401,7 +402,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{transform}", transform=transform)
     for transform in ["jit", "jvp", "grad", "vmap"]))
-  def test_convert_under_transform_error_non_tracer(self, transform="jit"):
+  def test_convert_under_transform_error_non_tracer(self, transform="vmap"):
     def outer(y):
       sin_1 = jax2tf.convert(jnp.sin)(1.)  # Inner convert takes non-tracer arg
       return y + sin_1
@@ -409,6 +410,39 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError, "convert must be used outside all JAX transformations"):
       self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
+
+  @jtu.skip_on_flag('jax_omnistaging', False)
+  def test_name_scope(self):
+    log = []
+
+    @jax.named_call
+    def my_test_function(x):
+      y = tf.Variable(1., name="foo")
+      log.append(y.name)
+      return x * x
+
+    jax2tf.convert(my_test_function)(2)
+    self.assertIn("my_test_function/foo", log[0])
+
+  def test_bfloat16_constant(self):
+    # Re: https://github.com/google/jax/issues/3942
+    def jax_fn_scalar(x):
+      x = x.astype(jnp.bfloat16)
+      x *= 2.
+      return x
+
+    def jax_fn_array(x):
+      x = x.astype(jnp.bfloat16)
+      x *= np.array([1.5, 2.5, 3.5], jnp.bfloat16)
+      return x
+
+    tf_fn_scalar = jax2tf.convert(jax_fn_scalar)
+    self.assertAllClose(tf_fn_scalar(1.375).numpy(), jnp.bfloat16(2.750))
+
+    tf_fn_array = jax2tf.convert(jax_fn_array)
+    self.assertAllClose(
+        tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
+                                                   jnp.bfloat16))
 
 
 if __name__ == "__main__":

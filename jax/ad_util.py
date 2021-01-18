@@ -18,7 +18,7 @@ from .core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
                    valid_jaxtype, raise_to_shaped, get_aval)
 from .tree_util import register_pytree_node
 from typing import Any, Dict, Type
-from .util import safe_map
+from ._src.util import safe_map
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -37,6 +37,7 @@ def add_jaxvals(x, y):
     return add_jaxvals_p.bind(x, y)
 
 add_jaxvals_p = Primitive('add_any')
+add_any_p = add_jaxvals_p
 
 @add_jaxvals_p.def_impl
 def add_impl(xs, ys):

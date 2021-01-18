@@ -19,6 +19,7 @@ from absl.testing import absltest
 import numpy as np
 import unittest
 
+import jax
 from jax import test_util as jtu
 import jax.numpy as jnp
 import jax.scipy.special
@@ -34,6 +35,7 @@ config.parse_flags_with_absl()
 def jvp_taylor(fun, primals, series):
   # Computes the Taylor series the slow way, with nested jvp.
   order, = set(map(len, series))
+  primals = tuple(jnp.asarray(p) for p in primals)
   def composition(eps):
     taylor_terms = [sum([eps ** (i+1) * terms[i] / fact(i + 1)
                          for i in range(len(terms))]) for terms in series]
@@ -377,6 +379,14 @@ class JetTest(jtu.JaxTestCase):
 
     assert g_out_primals == f_out_primals
     assert g_out_series == f_out_series
+
+  def test_add_any(self):
+    # https://github.com/google/jax/issues/5217
+    f = lambda x, eps: x * eps + eps + x
+    def g(eps):
+      x = jnp.array(1.)
+      return jax.grad(f)(x, eps)
+    jet(g, (1.,), ([1.],))  # doesn't crash
 
 
 if __name__ == '__main__':

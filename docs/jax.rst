@@ -18,7 +18,6 @@ Subpackages
     jax.ops
     jax.random
     jax.tree_util
-    jax.flatten_util
     jax.dlpack
     jax.profiler
 
@@ -33,6 +32,7 @@ Just-in-time compilation (:code:`jit`)
     make_jaxpr
     eval_shape
     device_put
+    named_call
 
 Automatic differentiation
 -------------------------
@@ -82,6 +82,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
 .. autofunction:: device_put
+.. autofunction:: named_call
 
 .. autofunction:: grad
 .. autofunction:: value_and_grad
@@ -90,9 +91,17 @@ Parallelization (:code:`pmap`)
 .. autofunction:: hessian
 .. autofunction:: jvp
 .. autofunction:: linearize
+.. autofunction:: linear_transpose
 .. autofunction:: vjp
-.. autofunction:: custom_jvp
-.. autofunction:: custom_vjp
+.. autoclass:: custom_jvp
+
+    .. automethod:: defjvp
+    .. automethod:: defjvps
+
+.. autoclass:: custom_vjp
+
+    .. automethod:: defvjp
+
 .. autofunction:: checkpoint
 
 .. autofunction:: vmap

@@ -16,14 +16,14 @@
 # checking on import.
 
 __all__ = [
-  'cuda_prng', 'cusolver', 'jaxlib', 'lapack',
+  'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
   'pytree', 'tpu_client', 'version', 'xla_client'
 ]
 
 import jaxlib
 
 # Must be kept in sync with the jaxlib version in build/test-requirements.txt
-_minimum_jaxlib_version = (0, 1, 55)
+_minimum_jaxlib_version = (0, 1, 59)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
@@ -52,16 +52,30 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-if version <  (0, 1, 53):
-  from jaxlib import pytree  # pytype: disable=import-error
-else:
-  pytree = xla_client._xla.pytree
-  jax_jit = xla_client._xla.jax_jit
-from jaxlib import cusolver
+
+pytree = xla_client._xla.pytree
+jax_jit = xla_client._xla.jax_jit
+
 try:
-  from jaxlib import cuda_prng
+  from jaxlib import cusolver  # pytype: disable=import-error
+except ImportError:
+  cusolver = None
+
+try:
+  from jaxlib import rocsolver  # pytype: disable=import-error
+except ImportError:
+  rocsolver = None
+
+try:
+  from jaxlib import cuda_prng  # pytype: disable=import-error
 except ImportError:
   cuda_prng = None
+
+# Jaxlib code is split between the Jax and the Tensorflow repositories.
+# Only for the internal usage of the JAX developers, we expose a version
+# number that can be used to perform changes without breaking the master
+# branch on the Jax github.
+_xla_extension_version = getattr(xla_client, '_version', 0)
 
 try:
   from jaxlib import tpu_client  # pytype: disable=import-error

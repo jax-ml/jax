@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Project information -----------------------------------------------------
 
 project = 'JAX'
-copyright = '2019, Google LLC. NumPy and SciPy documentation are copyright the respective authors.'
+copyright = '2020, Google LLC. NumPy and SciPy documentation are copyright the respective authors.'
 author = 'The JAX authors'
 
 # The short X.Y version
@@ -65,6 +65,7 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
+    'matplotlib.sphinxext.plot_directive',
     'nbsphinx',
     'sphinx_autodoc_typehints',
     'myst_parser',
@@ -209,6 +210,8 @@ html_theme_options = {
 # The name of an image file (relative to this directory) to place at the top
 # of the sidebar.
 html_logo = '_static/jax_logo_250px.png'
+
+html_favicon = '_static/favicon.png'
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,

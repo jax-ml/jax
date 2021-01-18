@@ -1,4 +1,4 @@
-name: Continuous integration
+name: CI
 
 on:
   # Trigger the workflow on push or pull request,
@@ -46,31 +46,36 @@ jobs:
         mypy jax
 
   build:
+    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          - python-version: 3.6
+          - name-prefix: "with many tests"
+            python-version: 3.8
             os: ubuntu-latest
             enable-x64: 0
             enable-omnistaging: 1
             package-overrides: "none"
             num_generated_cases: 25
-          - python-version: 3.7
+          - name-prefix: "with numpy-dispatch"
+            python-version: 3.9
             os: ubuntu-latest
             enable-x64: 1
             enable-omnistaging: 1
             # Test experimental NumPy dispatch
             package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 10
-          - python-version: 3.6
+          - name-prefix: "with internal numpy"
+            python-version: 3.6
             os: ubuntu-latest
             enable-x64: 1
             enable-omnistaging: 1
             # Test with numpy version that matches Google-internal version
             package-overrides: "numpy==1.16.4"
             num_generated_cases: 10
-          - python-version: 3.7
+          - name-prefix: "without omnistaging"
+            python-version: 3.7
             os: ubuntu-latest
             enable-x64: 0
             enable-omnistaging: 0

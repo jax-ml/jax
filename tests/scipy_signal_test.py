@@ -29,6 +29,7 @@ config.parse_flags_with_absl()
 
 onedim_shapes = [(1,), (2,), (5,), (10,)]
 twodim_shapes = [(1, 1), (2, 2), (2, 3), (3, 4), (4, 4)]
+threedim_shapes = [(2, 2, 2), (3, 3, 2), (4, 4, 2), (5, 5, 2)]
 
 
 default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer
@@ -49,8 +50,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for mode in ['full', 'same', 'valid']
       for op in ['convolve', 'correlate']
       for dtype in default_dtypes
-      for xshape in onedim_shapes
-      for yshape in onedim_shapes))
+      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
+      for xshape in shapeset
+      for yshape in shapeset))
   def testConvolutions(self, xshape, yshape, dtype, mode, jsp_op, osp_op):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]

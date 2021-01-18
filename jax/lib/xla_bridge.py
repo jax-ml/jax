@@ -22,14 +22,14 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial
 import os
-from typing import Callable, Dict, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
 logging._warn_preinit_stderr = 0
 
 from ..config import flags
-from .. import util
+from jax._src import util
 from .. import dtypes
 import numpy as np
 import threading
@@ -63,13 +63,17 @@ flags.DEFINE_bool(
     'optimization is greater than that of running a less-optimized program.')
 
 
-def get_compile_options(num_replicas, num_partitions, device_assignment=None,
-                        use_spmd_partitioning=True):
+def get_compile_options(
+    num_replicas: int,
+    num_partitions: int,
+    device_assignment=None,
+    use_spmd_partitioning: bool = True,
+) -> xla_client.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
   Args:
-    num_replicas: int indicating the number of replicas for which to compile.
-    num_partitions: int indicating the number of partitions for which to compile.
+    num_replicas: Number of replicas for which to compile.
+    num_partitions: Number of partitions for which to compile.
     device_assignment: Optional tuple of integers indicating the assignment of
       logical replicas to physical devices (default inherited from
       xla_client.CompileOptions). Must be consistent with `num_replicas` and
@@ -178,7 +182,7 @@ def get_device_backend(device=None):
   return get_backend(platform)
 
 
-def device_count(backend: str = None):
+def device_count(backend: Optional[str] = None) -> int:
   """Returns the total number of devices.
 
   On most platforms, this is the same as :py:func:`jax.local_device_count`.
@@ -196,12 +200,12 @@ def device_count(backend: str = None):
   return int(get_backend(backend).device_count())
 
 
-def local_device_count(backend: str =None):
+def local_device_count(backend: Optional[str] = None) -> int:
   """Returns the number of devices on this host."""
   return int(get_backend(backend).local_device_count())
 
 
-def devices(backend: str = None):
+def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
   """Returns a list of all devices for a given backend.
 
   Each device is represented by a subclass of :class:`Device` (e.g.
@@ -224,7 +228,8 @@ def devices(backend: str = None):
   return get_backend(backend).devices()
 
 
-def local_devices(host_id: int = None, backend: str = None):
+def local_devices(host_id: Optional[int] = None,
+                  backend: Optional[str] = None) -> List[xla_client.Device]:
   """Like :py:func:`jax.devices`, but only returns devices local to a given host.
 
   If ``host_id`` is ``None``, returns devices local to this host.
@@ -246,7 +251,7 @@ def local_devices(host_id: int = None, backend: str = None):
   return [d for d in devices(backend) if d.host_id == host_id]
 
 
-def host_id(backend: str = None):
+def host_id(backend: Optional[str] = None) -> int:
   """Returns the integer host ID of this host.
 
   On most platforms, this will always be 0. This will vary on multi-host
@@ -263,12 +268,12 @@ def host_id(backend: str = None):
   return get_backend(backend).host_id()
 
 
-def host_ids(backend: str = None):
+def host_ids(backend: Optional[str] = None) -> List[int]:
   """Returns a sorted list of all host IDs."""
   return sorted({d.host_id for d in devices(backend)})
 
 
-def host_count(backend: str = None):
+def host_count(backend: Optional[str] = None) -> int:
   """Returns the number of hosts."""
   return len(host_ids(backend))
 
@@ -351,11 +356,8 @@ def _sharding_to_proto(sharding: SpatialSharding):
   """
   proto = xla_client.OpSharding()
   if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
-      assert all(s is None or isinstance(s, tuple) for s in sharding)
-      sub_protos = [_sharding_to_proto(s) for s in sharding]  # type: ignore
-      proto.type = xla_client.OpSharding.Type.TUPLE
-      proto.tuple_shardings = sub_protos
-      return proto
+    assert all(s is None or isinstance(s, tuple) for s in sharding)
+    return tuple_sharding_proto(list(map(_sharding_to_proto, sharding)))  # type: ignore
 
   if sharding is None:
     proto.type = xla_client.OpSharding.Type.REPLICATED
@@ -365,20 +367,35 @@ def _sharding_to_proto(sharding: SpatialSharding):
     proto.tile_assignment_devices = list(range(np.product(sharding)))
   return proto
 
-def set_sharding(builder, op, sharding: SpatialSharding):
+def tuple_sharding_proto(elems):
+  proto = xla_client.OpSharding()
+  assert all(isinstance(e, type(proto)) for e in elems)
+  proto.type = xla_client.OpSharding.Type.TUPLE
+  proto.tuple_shardings = elems
+  return proto
+
+def set_sharding_proto(builder, op, sharding_proto):
   """Uses CustomCall to annotate a value as sharded."""
   # "Sharding" is a built-in custom call target that acts like an identity
   # function, and is used to attach an OpSharding to.
-  return with_sharding(builder, sharding, xops.CustomCall,
-                       builder, b"Sharding", [op], builder.get_shape(op))
+  return with_sharding_proto(builder, sharding_proto, xops.CustomCall,
+                             builder, b"Sharding", [op], builder.get_shape(op))
 
-def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
+def with_sharding_proto(builder, sharding_proto, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  builder.set_sharding(_sharding_to_proto(sharding))
+  builder.set_sharding(sharding_proto)
   try:
     return op_fn(*args, **kwargs)
   finally:
     builder.clear_sharding()
+
+def set_sharding(builder, op, sharding: SpatialSharding):
+  """Uses CustomCall to annotate a value as sharded."""
+  return set_sharding_proto(builder, op, _sharding_to_proto(sharding))
+
+def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
+  """Builds op_fn(*args, **kwargs) with sharding annotation."""
+  return with_sharding_proto(builder, _sharding_to_proto(sharding), op_fn, *args, **kwargs)
 
 def make_computation_builder(name):
   return xla_client.XlaBuilder(name)
@@ -430,10 +447,14 @@ def _scalar_constant_handler(c, val, canonicalize_types=True):
 
 for scalar_type in [np.int8, np.int16, np.int32, np.int64,
                     np.uint8, np.uint16, np.uint32, np.uint64,
-                    np.float16, np.float32, np.float64, np.float128,
+                    np.float16, np.float32, np.float64,
                     np.bool_, np.longlong,
                     xla_client.bfloat16]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
+
+# https://github.com/winpython/winpython/issues/613#issuecomment-380121523
+if hasattr(np, "float128"):
+  register_constant_handler(np.float128, _scalar_constant_handler)
 
 def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
   return _numpy_array_constant(c, dtype.type(val))

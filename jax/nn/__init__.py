@@ -16,9 +16,6 @@
 
 # flake8: noqa: F401
 
-# TODO(phawkins): remove this import after fixing callers
-from . import functions
-
 from . import initializers
 from jax._src.nn.functions import (
   celu,

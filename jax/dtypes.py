@@ -26,7 +26,7 @@ import os
 
 import numpy as np
 
-from . import util
+from ._src import util
 from .config import flags
 from .lib import xla_client
 
@@ -165,11 +165,20 @@ def issubdtype(a, b):
 can_cast = np.can_cast
 issubsctype = np.issubsctype
 
+# Return the type holding the real part of the input type
+def dtype_real(typ):
+  if np.issubdtype(typ, np.complexfloating):
+    if typ == np.dtype('complex64'):
+      return np.dtype('float32')
+    elif typ == np.dtype('complex128'):
+      return np.dtype('float64')
+    else:
+      raise TypeError("Unknown complex floating type {}".format(typ))
+  else:
+    return typ
 
-# List of all valid JAX dtypes, in the order they appear in the type promotion
-# table.
+# Enumeration of all valid JAX types in order.
 _weak_types = [int, float, complex]
-
 _jax_types = [
   np.dtype('bool'),
   np.dtype('uint8'),
@@ -190,7 +199,7 @@ _jax_types = [
 
 def _jax_type(value):
   """Return the jax type for a value or type."""
-  # Note: `value in _weak_types` can return false positives due to dtype comparator overloading.
+  # Note: `x in _weak_types` can return false positives due to dtype comparator overloading.
   if any(value is typ for typ in _weak_types):
     return value
   dtype_ = dtype(value)
@@ -200,37 +209,61 @@ def _jax_type(value):
       return pytype
   return dtype_
 
-# Mapping from types to their type numbers.
-_jax_type_nums = {t: i for i, t in enumerate(_jax_types)}
-
-
-def _make_type_promotion_table():
-  # Note: this promotion table is generated via the least upper bounds over a type
-  # promotion lattice. See testPromotionTableLattice for details of this.
+def _type_promotion_lattice():
+  """
+  Return the type promotion lattice in the form of a DAG.
+  This DAG maps each type to its immediately higher type on the lattice.
+  """
   b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_ = _jax_types
-  #  b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, s*, f*, c*
-  return np.array([
-    [b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_],  # b1
-    [u1, u1, u2, u4, u8, i2, i2, i4, i8, bf, f2, f4, f8, c4, c8, u1, f_, c_],  # u1
-    [u2, u2, u2, u4, u8, i4, i4, i4, i8, bf, f2, f4, f8, c4, c8, u2, f_, c_],  # u2
-    [u4, u4, u4, u4, u8, i8, i8, i8, i8, bf, f2, f4, f8, c4, c8, u4, f_, c_],  # u4
-    [u8, u8, u8, u8, u8, f_, f_, f_, f_, bf, f2, f4, f8, c4, c8, u8, f_, c_],  # u8
-    [i1, i2, i4, i8, f_, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i1, f_, c_],  # i1
-    [i2, i2, i4, i8, f_, i2, i2, i4, i8, bf, f2, f4, f8, c4, c8, i2, f_, c_],  # i2
-    [i4, i4, i4, i8, f_, i4, i4, i4, i8, bf, f2, f4, f8, c4, c8, i4, f_, c_],  # i4
-    [i8, i8, i8, i8, f_, i8, i8, i8, i8, bf, f2, f4, f8, c4, c8, i8, f_, c_],  # i8
-    [bf, bf, bf, bf, bf, bf, bf, bf, bf, bf, f4, f4, f8, c4, c8, bf, bf, c4],  # bf
-    [f2, f2, f2, f2, f2, f2, f2, f2, f2, f4, f2, f4, f8, c4, c8, f2, f2, c4],  # f2
-    [f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f8, c4, c8, f4, f4, c4],  # f4
-    [f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, c8, c8, f8, f8, c8],  # f8
-    [c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c8, c4, c8, c4, c4, c4],  # c4
-    [c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8],  # c8
-    [i_, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_],  # s*
-    [f_, f_, f_, f_, f_, f_, f_, f_, f_, bf, f2, f4, f8, c4, c8, f_, f_, c_],  # f*
-    [c_, c_, c_, c_, c_, c_, c_, c_, c_, c4, c4, c4, c8, c4, c8, c_, c_, c_],  # c*
-  ])
+  return {
+    b1: [i_],
+    u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+    i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
+    f_: [bf, f2, c_], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
+    c_: [c4], c4: [c8], c8: [],
+  }
 
-_type_promotion_table = _make_type_promotion_table()
+def _make_lattice_upper_bounds():
+  lattice = _type_promotion_lattice()
+  upper_bounds = {node: {node} for node in lattice}
+  for n in lattice:
+    while True:
+      new_upper_bounds = set().union(*(lattice[b] for b in upper_bounds[n]))
+      if n in new_upper_bounds:
+        raise ValueError(f"cycle detected in type promotion lattice for node {n}")
+      if new_upper_bounds.issubset(upper_bounds[n]):
+        break
+      upper_bounds[n] |= new_upper_bounds
+  return upper_bounds
+_lattice_upper_bounds = _make_lattice_upper_bounds()
+
+@functools.lru_cache(512)
+def _least_upper_bound(*nodes):
+  # This function computes the least upper bound of a set of nodes N within a partially
+  # ordered set defined by the lattice generated above.
+  # Given a partially ordered set S, let the set of upper bounds of n ∈ S be
+  #   UB(n) ≡ {m ∈ S | n ≤ m}
+  # Further, for a set of nodes N ⊆ S, let the set of common upper bounds be given by
+  #   CUB(N) ≡ {a ∈ S | ∀ b ∈ N: a ∈ UB(b)}
+  # Then the least upper bound of N is defined as
+  #   LUB(N) ≡ {c ∈ CUB(N) | ∀ d ∈ CUB(N), c ≤ d}
+  # The definition of an upper bound implies that c ≤ d if and only if d ∈ UB(c),
+  # so the LUB can be expressed:
+  #   LUB(N) = {c ∈ CUB(N) | ∀ d ∈ CUB(N): d ∈ UB(c)}
+  # or, equivalently:
+  #   LUB(N) = {c ∈ CUB(N) | CUB(N) ⊆ UB(c)}
+  # By definition, LUB(N) has a cardinality of 1 for a partially ordered set.
+  # Note a potential algorithmic shortcut: from the definition of CUB(N), we have
+  #   ∀ c ∈ N: CUB(N) ⊆ UB(c)
+  # So if N ∩ CUB(N) is nonempty, if follows that LUB(N) = N ∩ CUB(N).
+  N = set(nodes)
+  UB = _lattice_upper_bounds
+  CUB = set.intersection(*(UB[n] for n in N))
+  LUB = (CUB & N) or {c for c in CUB if CUB.issubset(UB[c])}
+  if len(LUB) == 1:
+    return LUB.pop()
+  else:
+    raise ValueError(f"{nodes} do not have a unique least upper bound.")
 
 def promote_types(a, b):
   """Returns the type to which a binary operation should cast its arguments.
@@ -244,26 +277,21 @@ def promote_types(a, b):
   Returns:
     A :class:`numpy.dtype` object.
   """
-  return np.dtype(_promote_types_raw(np.dtype(a), np.dtype(b)))
-
-def _promote_types_raw(a, b):
-  # Note: `x in _weak_types` can return false positives due to dtype comparator overloading.
   a = a if any(a is t for t in _weak_types) else np.dtype(a)
   b = b if any(b is t for t in _weak_types) else np.dtype(b)
-  try:
-    return _type_promotion_table[_jax_type_nums[a], _jax_type_nums[b]]
-  except KeyError:
-    pass
-  raise TypeError("Invalid type promotion of {} and {}".format(a, b))
+  return np.dtype(_least_upper_bound(a, b))
 
 def is_weakly_typed(x):
   try:
     return x.aval.weak_type
   except AttributeError:
-    return type(x) in python_scalar_dtypes
+    return type(x) in _weak_types
 
 def is_python_scalar(x):
-  return is_weakly_typed(x) and np.ndim(x) == 0
+  try:
+    return x.aval.weak_type and np.ndim(x) == 0
+  except AttributeError:
+    return type(x) in python_scalar_dtypes
 
 def dtype(x):
   if type(x) in python_scalar_dtypes:
@@ -272,9 +300,8 @@ def dtype(x):
 
 def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
-  # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
+   # TODO(jakevdp): propagate weak_type to the result.
   if len(args) < 2:
     return canonicalize_dtype(dtype(args[0]))
-  result_type = functools.reduce(_promote_types_raw, (_jax_type(arg) for arg in args))
   # TODO(jakevdp): propagate weak_type to the result when necessary.
-  return canonicalize_dtype(result_type)
+  return canonicalize_dtype(_least_upper_bound(*{_jax_type(arg) for arg in args}))

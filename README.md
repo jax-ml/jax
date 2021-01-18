@@ -2,7 +2,10 @@
 <img src="https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
-# JAX: Autograd and XLA ![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)
+# JAX: Autograd and XLA
+
+![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)
+![PyPI version](https://img.shields.io/pypi/v/jax)
 
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
@@ -78,7 +81,7 @@ perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grad
 * [Transformations](#transformations)
 * [Current gotchas](#current-gotchas)
 * [Installation](#installation)
-* [Neural net libraries](#neural-net-libraries)
+* [Neural net libraries](#neural-network-libraries)
 * [Citing JAX](#citing-jax)
 * [Reference documentation](#reference-documentation)
 
@@ -217,10 +220,11 @@ function:
 ```python
 def predict(params, input_vec):
   assert input_vec.ndim == 1
+  activations = inputs
   for W, b in params:
-    output_vec = jnp.dot(W, input_vec) + b  # `input_vec` on the right-hand side!
-    input_vec = jnp.tanh(output_vec)
-  return output_vec
+    outputs = jnp.dot(W, activations) + b  # `input_vec` on the right-hand side!
+    activations = jnp.tanh(outputs)
+  return outputs
 ```
 
 We often instead write `jnp.dot(inputs, W)` to allow for a batch dimension on the
@@ -235,7 +239,7 @@ predictions = jnp.stack(list(map(partial(predict, params), input_batch)))
 
 But pushing one example through the network at a time would be slow! It’s better
 to vectorize the computation, so that at every layer we’re doing matrix-matrix
-multiplies rather than matrix-vector multiplies.
+multiplication rather than matrix-vector multiplication.
 
 The `vmap` function does that transformation for us. That is, if we write
 
@@ -387,10 +391,12 @@ installed as the `jaxlib` package. Use the following instructions to install a
 binary package with `pip`, or to build JAX from source.
 
 We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
-macOS (10.12 or later) platforms. Windows users can use JAX on CPU via the
+macOS (10.12 or later) platforms. Windows users can use JAX on CPU and GPU via
+the
 [Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/about).
-We're not currently working on native Windows support, but contributions are
-welcome (see [#438](https://github.com/google/jax/issues/438)).
+There is some initial native Windows support, but since it is still somewhat
+immature, there are no binary releases and it must be
+[built from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
 
 ### pip installation
 
@@ -405,19 +411,22 @@ pip install --upgrade jax jaxlib  # CPU-only version
 On Linux, it is often necessary to first update `pip` to a version that supports
 `manylinux2010` wheels.
 
-If you want to install JAX with both CPU and GPU support, using existing CUDA
-and CUDNN7 installations on your machine (for example, preinstalled on your
-cloud VM), you can run
+If you want to install JAX with both CPU and NVidia GPU support, you must first
+install [CUDA](https://developer.nvidia.com/cuda-downloads) and
+[CuDNN](https://developer.nvidia.com/CUDNN),
+if they have not already been installed. Unlike some other popular deep
+learning systems, JAX does not bundle CUDA or CuDNN as part of the `pip`
+package. Next, run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax jaxlib==0.1.56+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install --upgrade jax jaxlib==0.1.59+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
-installation you want to use, with `cuda110` for CUDA 11.0, `cuda102` for CUDA
-10.2, `cuda101` for CUDA 10.1, and `cuda100` for CUDA 10.0. You can find your
-CUDA version with: install path:
+installation you want to use, with `cuda111` for CUDA 11.1, `cuda110` for CUDA
+11.0, `cuda102` for CUDA 10.2, and `cuda101` for CUDA 10.1. You can find your
+CUDA version with the command:
 
 ```bash
 nvcc --version
@@ -432,7 +441,8 @@ create a symlink:
 sudo ln -s /path/to/cuda /usr/local/cuda-X.X
 ```
 
-Or set the following environment variable before importing JAX:
+Alternatively, you can set the following environment variable before importing
+JAX:
 
 ```bash
 XLA_FLAGS=--xla_gpu_cuda_data_dir=/path/to/cuda
@@ -469,7 +479,7 @@ To cite this repository:
 
 ```
 @software{jax2018github,
-  author = {James Bradbury and Roy Frostig and Peter Hawkins and Matthew James Johnson and Chris Leary and Dougal Maclaurin and Skye Wanderman-Milne},
+  author = {James Bradbury and Roy Frostig and Peter Hawkins and Matthew James Johnson and Chris Leary and Dougal Maclaurin and George Necula and Adam Paszke and Jake Vander{P}las and Skye Wanderman-{M}ilne and Qiao Zhang},
   title = {{JAX}: composable transformations of {P}ython+{N}um{P}y programs},
   url = {http://github.com/google/jax},
   version = {0.2.5},

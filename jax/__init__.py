@@ -36,6 +36,8 @@ from .api import (
   device_count,
   device_get,
   device_put,
+  device_put_sharded,
+  device_put_replicated,
   devices,
   disable_jit,
   eval_shape,
@@ -58,6 +60,7 @@ from .api import (
   linear_transpose,
   make_jaxpr,
   mask,
+  named_call,
   partial,  # TODO(phawkins): update callers to use functools.partial.
   pmap,
   pxla,  # TODO(phawkins): update users to avoid this.
@@ -91,6 +94,7 @@ from . import lax
 from . import nn
 from . import profiler
 from . import random
+from . import util
 
 def _init():
   from . import numpy # side-effecting import sets up operator overloads

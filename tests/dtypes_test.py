@@ -35,7 +35,7 @@ FLAGS = config.FLAGS
 bool_dtypes = [np.dtype('bool')]
 
 signed_dtypes = [np.dtype('int8'), np.dtype('int16'), np.dtype('int32'),
-                 np.dtype('int64')]
+                 np.dtype('int64'), np.dtype('longlong'), np.dtype('intc')]
 
 unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
                    np.dtype('uint64')]
@@ -56,7 +56,25 @@ scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                 jnp.complex64, jnp.complex128]
 
+_EXPECTED_CANONICALIZE_X64 = {value: value for value in scalar_types}
+
+_EXPECTED_CANONICALIZE_X32 = {value: value for value in scalar_types}
+_EXPECTED_CANONICALIZE_X32[np.int64] = np.int32
+_EXPECTED_CANONICALIZE_X32[np.uint64] = np.uint32
+_EXPECTED_CANONICALIZE_X32[np.float64] = np.float32
+_EXPECTED_CANONICALIZE_X32[np.complex128] = np.complex64
+_EXPECTED_CANONICALIZE_X32[np.longlong] = np.int32
+
+
 class DtypesTest(jtu.JaxTestCase):
+
+  def test_canonicalize_type(self):
+    expected = {
+        True: _EXPECTED_CANONICALIZE_X64,
+        False: _EXPECTED_CANONICALIZE_X32,
+    }
+    for in_dtype, expected_dtype in expected[FLAGS.jax_enable_x64].items():
+      self.assertEqual(dtypes.canonicalize_dtype(in_dtype), expected_dtype)
 
   @parameterized.named_parameters(
     {"testcase_name": "_type={}".format(type.__name__), "type": type,
@@ -77,12 +95,16 @@ class DtypesTest(jtu.JaxTestCase):
     {"testcase_name": "_swap={}_jit={}".format(swap, jit),
      "swap": swap, "jit": jit}
     for swap in [False, True] for jit in [False, True])
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
   def testBinaryPromotion(self, swap, jit):
     testcases = [
       (jnp.array(1.), 0., jnp.float_),
       (jnp.array(1.), jnp.array(0.), jnp.float_),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float_),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float_),
+      # (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float16),
+      # (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float32),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float64), jnp.float64),
       (jnp.array(1., dtype=jnp.float16), 0., jnp.float16),
       (jnp.array(1., dtype=jnp.float32), 0., jnp.float32),
@@ -135,8 +157,8 @@ class DtypesTest(jtu.JaxTestCase):
     for groups in [bool_dtypes + signed_dtypes + unsigned_dtypes,
                    np_float_dtypes + complex_dtypes]:
       for t1, t2 in itertools.combinations(groups, 2):
-          self.assertEqual(np.promote_types(t1, t2),
-                           dtypes.promote_types(t1, t2))
+        self.assertEqual(np.promote_types(t1, t2),
+                         dtypes.promote_types(t1, t2))
 
   def testScalarInstantiation(self):
     for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:
@@ -200,6 +222,8 @@ class TestPromotionTables(jtu.JaxTestCase):
       val = jaxtype.type(0)
     self.assertIs(dtypes._jax_type(val), jaxtype)
 
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype.*")
   def testObservedPromotionTable(self):
     """Test that the weak & strong dtype promotion table does not change over time."""
     # Note: * here refers to weakly-typed values
@@ -287,48 +311,21 @@ class TestPromotionTables(jtu.JaxTestCase):
 
     self.assertEqual(table, expected, show_differences(expected, table))
 
-  def testPromotionTableLattice(self):
-    """
-    Test that the promotion table can be generated from the least upper bound
-    of a type promotion lattice.
-    """
-    nodes = dtypes._jax_types
-    b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_ = nodes
-
-    # Specify the generating lattice for the promotion table.
-    lattice = {
-      b1: [i_],
-      u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
-      i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
-      f_: [bf, f2, c_], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
-      c_: [c4], c4: [c8], c8: [],
-    }
-
-    # Compute all upper bounds of each node.
-    upper_bounds = {node: {node} for node in nodes}
-    for n in nodes:
-      while True:
-        new_upper_bounds = set().union(*(lattice[b] for b in upper_bounds[n]))
-        if n in new_upper_bounds:
-          raise ValueError(f"cycle detected for {n}")
-        if not new_upper_bounds.difference(upper_bounds[n]):
-          break
-        upper_bounds[n] |= new_upper_bounds
-
-    # Function to find the least upper bound of a set of nodes.
-    def least_upper_bound(nodes):
-      common_upper_bounds = set.intersection(*(upper_bounds[n] for n in nodes))
-      least_upper_bounds = common_upper_bounds - set.union(*(upper_bounds[n] - {n}
-                                                             for n in common_upper_bounds))
-      if len(least_upper_bounds) == 1:
-        return least_upper_bounds.pop()
-      else:
-        raise ValueError(f"{nodes} do not have a unique least upper bound.")
-
-    # Table of least upper bounds should equal the type promotion table.
-    lub_table = np.array([[least_upper_bound({n, m}) for n in nodes] for m in nodes])
-    self.assertArraysEqual(lub_table, dtypes._type_promotion_table)
-
+# TODO(jakevdp): re-apply #4850 after rollback
+#   @parameterized.named_parameters(
+#     {"testcase_name": "_xtype={}_ytype={}_xfun={}_yfun={}".format(
+#       xtype.__name__, ytype.__name__, xfun.__name__, yfun.__name__),
+#      "xtype": xtype, "ytype": ytype, "xfun": xfun, "yfun": yfun}
+#     for xtype, ytype in itertools.product(
+#       [int, float, jnp.int16, jnp.int32, jnp.float16, jnp.float32], repeat=2)
+#     for xfun, yfun in itertools.product(
+#       [identity, abs, jnp.array], repeat=2)
+#     )
+#   def testBinaryPromotionJitInvariance(self, xtype, ytype, xfun, yfun):
+#     """Test jit invariance of simple binary promotion rules with and without weak types."""
+#     f = lambda x, y: xfun(x) + yfun(y)
+#     args_maker = lambda: [xtype(1), ytype(1)]
+#     self._CompileAndCheck(f, args_maker, check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -16,6 +16,7 @@
 
 
 import numpy as np
+from typing import Any, Optional, Tuple, Union
 
 from jax import custom_jvp
 from jax import dtypes
@@ -25,10 +26,12 @@ from jax.scipy.special import expit
 from jax.scipy.special import logsumexp as _logsumexp
 import jax.numpy as jnp
 
+Array = Any
+
 # activations
 
 @custom_jvp
-def relu(x):
+def relu(x: Array) -> Array:
   r"""Rectified linear unit activation function.
 
   Computes the element-wise function:
@@ -39,7 +42,7 @@ def relu(x):
   return jnp.maximum(x, 0)
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
 
-def softplus(x):
+def softplus(x: Array) -> Array:
   r"""Softplus activation function.
 
   Computes the element-wise function
@@ -49,7 +52,7 @@ def softplus(x):
   """
   return jnp.logaddexp(x, 0)
 
-def soft_sign(x):
+def soft_sign(x: Array) -> Array:
   r"""Soft-sign activation function.
 
   Computes the element-wise function
@@ -59,7 +62,7 @@ def soft_sign(x):
   """
   return x / (jnp.abs(x) + 1)
 
-def sigmoid(x):
+def sigmoid(x: Array) -> Array:
   r"""Sigmoid activation function.
 
   Computes the element-wise function:
@@ -69,7 +72,7 @@ def sigmoid(x):
   """
   return expit(x)
 
-def silu(x):
+def silu(x: Array) -> Array:
   r"""SiLU activation function.
 
   Computes the element-wise function:
@@ -81,7 +84,7 @@ def silu(x):
 
 swish = silu
 
-def log_sigmoid(x):
+def log_sigmoid(x: Array) -> Array:
   r"""Log-sigmoid activation function.
 
   Computes the element-wise function:
@@ -91,7 +94,7 @@ def log_sigmoid(x):
   """
   return -softplus(-x)
 
-def elu(x, alpha=1.0):
+def elu(x: Array, alpha: Array = 1.0) -> Array:
   r"""Exponential linear unit activation function.
 
   Computes the element-wise function:
@@ -105,7 +108,7 @@ def elu(x, alpha=1.0):
   safe_x = jnp.where(x > 0, 0., x)
   return jnp.where(x > 0, x, alpha * jnp.expm1(safe_x))
 
-def leaky_relu(x, negative_slope=1e-2):
+def leaky_relu(x: Array, negative_slope: Array = 1e-2) -> Array:
   r"""Leaky rectified linear unit activation function.
 
   Computes the element-wise function:
@@ -120,7 +123,7 @@ def leaky_relu(x, negative_slope=1e-2):
   """
   return jnp.where(x >= 0, x, negative_slope * x)
 
-def hard_tanh(x):
+def hard_tanh(x: Array) -> Array:
   r"""Hard :math:`\mathrm{tanh}` activation function.
 
   Computes the element-wise function:
@@ -134,7 +137,7 @@ def hard_tanh(x):
   """
   return jnp.where(x > 1, 1, jnp.where(x < -1, -1, x))
 
-def celu(x, alpha=1.0):
+def celu(x: Array, alpha: Array = 1.0) -> Array:
   r"""Continuously-differentiable exponential linear unit activation.
 
   Computes the element-wise function:
@@ -150,7 +153,7 @@ def celu(x, alpha=1.0):
   <https://arxiv.org/pdf/1704.07483.pdf>`_."""
   return jnp.where(x > 0, x, alpha * jnp.expm1(x / alpha))
 
-def selu(x):
+def selu(x: Array) -> Array:
   r"""Scaled exponential linear unit activation.
 
   Computes the element-wise function:
@@ -172,7 +175,7 @@ def selu(x):
   scale = 1.0507009873554804934193349852946
   return scale * elu(x, alpha)
 
-def gelu(x, approximate: bool = True):
+def gelu(x: Array, approximate: bool = True) -> Array:
   r"""Gaussian error linear unit activation function.
 
   If ``approximate=False``, computes the element-wise function:
@@ -200,7 +203,7 @@ def gelu(x, approximate: bool = True):
   else:
     return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
 
-def glu(x, axis=-1):
+def glu(x: Array, axis: int = -1) -> Array:
   """Gated linear unit activation function."""
   size = x.shape[axis]
   assert size % 2 == 0, "axis size must be divisible by 2"
@@ -212,7 +215,7 @@ def glu(x, axis=-1):
 logsumexp = _logsumexp
 
 
-def log_softmax(x, axis=-1):
+def log_softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> Array:
   r"""Log-Softmax function.
 
   Computes the logarithm of the :code:`softmax` function, which rescales
@@ -229,7 +232,7 @@ def log_softmax(x, axis=-1):
   shifted = x - lax.stop_gradient(x.max(axis, keepdims=True))
   return shifted - jnp.log(jnp.sum(jnp.exp(shifted), axis, keepdims=True))
 
-def softmax(x, axis=-1):
+def softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> Array:
   r"""Softmax function.
 
   Computes the function which rescales elements to the range :math:`[0, 1]`
@@ -246,7 +249,11 @@ def softmax(x, axis=-1):
   unnormalized = jnp.exp(x - lax.stop_gradient(x.max(axis, keepdims=True)))
   return unnormalized / unnormalized.sum(axis, keepdims=True)
 
-def normalize(x, axis=-1, mean=None, variance=None, epsilon=1e-5):
+def normalize(x: Array,
+              axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+              mean: Optional[Array] = None,
+              variance: Optional[Array] = None,
+              epsilon: Array = 1e-5) -> Array:
   """Normalizes an array by subtracting mean and dividing by sqrt(var)."""
   if mean is None:
     mean = jnp.mean(x, axis, keepdims=True)
@@ -258,7 +265,7 @@ def normalize(x, axis=-1, mean=None, variance=None, epsilon=1e-5):
     variance = jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
-def one_hot(x, num_classes, *, dtype=jnp.float64):
+def one_hot(x: Array, num_classes: int, *, dtype: Any = jnp.float64) -> Array:
   """One-hot encodes the given indicies.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -288,9 +295,9 @@ def one_hot(x, num_classes, *, dtype=jnp.float64):
   x = jnp.asarray(x)
   lhs = x[..., jnp.newaxis]
   rhs = lax.broadcast_to_rank(jnp.arange(num_classes, dtype=x.dtype), lhs.ndim)
-  return jnp.array(lhs == rhs, dtype=dtype)
+  return jnp.asarray(lhs == rhs, dtype=dtype)
 
-def relu6(x):
+def relu6(x: Array) -> Array:
   r"""Rectified Linear Unit 6 activation function.
 
   Computes the element-wise function
@@ -300,7 +307,7 @@ def relu6(x):
   """
   return jnp.minimum(jnp.maximum(x, 0), 6.)
 
-def hard_sigmoid(x):
+def hard_sigmoid(x: Array) -> Array:
   r"""Hard Sigmoid activation function.
 
   Computes the element-wise function
@@ -310,7 +317,7 @@ def hard_sigmoid(x):
   """
   return relu6(x + 3.) / 6.
 
-def hard_silu(x):
+def hard_silu(x: Array) -> Array:
   r"""Hard SiLU activation function
 
   Computes the element-wise function

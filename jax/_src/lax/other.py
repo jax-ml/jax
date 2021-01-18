@@ -14,8 +14,8 @@
 
 
 from typing import Sequence, Tuple, Union
-import numpy as np
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.util import prod
 from . import lax
 
 
@@ -84,7 +84,7 @@ def conv_general_dilated_patches(
 
   lhs_spec, rhs_spec, out_spec = dimension_numbers
 
-  spatial_size = np.prod(filter_shape)
+  spatial_size = prod(filter_shape)
   n_channels = lhs.shape[lhs_spec[1]]
 
   # Move separate `lhs` spatial locations into separate `rhs` channels.

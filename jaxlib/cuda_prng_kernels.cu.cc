@@ -17,7 +17,7 @@ limitations under the License.
 #include <cstddef>
 
 #include "jaxlib/cuda_prng_kernels.h"
-#include "jaxlib/gpu_kernel_helpers.h"
+#include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
 
 namespace jax {

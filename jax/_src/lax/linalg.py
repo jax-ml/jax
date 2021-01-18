@@ -25,15 +25,16 @@ from jax import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.util import partial, prod
-from jax.abstract_arrays import ShapedArray
-from jax.core import Primitive
+from jax._src.util import partial, prod
+from jax.core import Primitive, ShapedArray
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype, _broadcasting_select)
 from jax._src.lax import lax as lax_internal
 from jax.lib import lapack
+
 from jax.lib import cusolver
+from jax.lib import rocsolver
 
 from jax.lib import xla_client
 from jax.lib import xla_bridge as xb
@@ -43,26 +44,133 @@ xops = xla_client.ops
 
 # traceables
 
-def cholesky(x, symmetrize_input=True):
+def cholesky(x, symmetrize_input: bool = True):
+  """Cholesky decomposition.
+
+  Computes the Cholesky decomposition
+
+  .. math::
+    A = L . L^H
+
+  of square matrices, :math:`A`, such that :math:`L`
+  is lower triangular. The matrices of :math:`A` must be positive-definite and
+  either Hermitian, if complex, or symmetric, if real.
+
+  Args:
+    x: A batch of square Hermitian (symmetric if real) positive-definite
+      matrices with shape ``[..., n, n]``.
+    symmetrize_input: If ``True``, the matrix is symmetrized before Cholesky
+      decomposition by computing :math:`\\frac{1}{2}(x + x^H)`. If ``False``,
+      only the lower triangle of ``x`` is used; the upper triangle is ignored
+      and not accessed.
+
+  Returns:
+    The Cholesky decomposition as a matrix with the same dtype as ``x`` and
+    shape ``[..., n, n]``. If Cholesky decomposition fails, returns a matrix
+    full of NaNs. The behavior on failure may change in the future.
+  """
   if symmetrize_input:
     x = symmetrize(x)
   return jnp.tril(cholesky_p.bind(x))
 
 def eig(x, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
+  """Eigendecomposition of a general matrix.
+
+  Nonsymmetric eigendecomposition is at present only implemented on CPU.
+  """
   return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
                     compute_right_eigenvectors=compute_right_eigenvectors)
 
-def eigh(x, lower=True, symmetrize_input=True):
+def eigh(x, lower: bool = True, symmetrize_input: bool = True):
+  """Eigendecomposition of a Hermitian matrix.
+
+  Computes the eigenvalues and eigenvectors of a complex Hermitian or real
+  symmetric square matrix.
+
+  Args:
+    x: A batch of square complex Hermitian or real symmetric matrices with shape
+      ``[..., n, n]``.
+    lower: If ``symmetrize_input`` is ``False``, describes which triangle of the
+      input matrix to use. If ``symmetrize_input`` is ``False``, only the
+      triangle given by ``lower`` is accessed; the other triangle is ignored and
+      not accessed.
+    symmetrize_input: If ``True``, the matrix is symmetrized before the
+      eigendecomposition by computing :math:`\\frac{1}{2}(x + x^H)`.
+
+  Returns:
+    A tuple ``(v, w)``.
+
+    ``v`` is an array with the same dtype as ``x`` (or its real counterpart if
+    complex) with shape ``[..., n]`` containing the eigenvalues of ``x``.
+
+    ``w`` is an array with the same dtype as ``x`` such that ``w[..., :, i]`` is
+    the eigenvector corresponding to ``v[..., i]``.
+  """
   if symmetrize_input:
     x = symmetrize(x)
   v, w = eigh_p.bind(x, lower=lower)
   return v, w
 
 def lu(x):
+  """LU decomposition with partial pivoting.
+
+  Computes the matrix decomposition:
+
+  .. math::
+    P.A = L.U
+
+  where :math:`P` is a permutation of the rows of :math:`A`, :math:`L` is a
+  lower-triangular matrix with unit-diagonal elements, and :math:`U` is an
+  upper-triangular matrix.
+
+  Args:
+    x: A batch of matrices with shape ``[..., m, n]``.
+
+  Returns:
+    A tuple ``(lu, pivots, permutation)``.
+
+    ``lu`` is a batch of matrices with the same shape and dtype as ``x``
+    containing the :math:`L` matrix in its lower triangle and the :math:`U`
+    matrix in its upper triangle. The (unit) diagonal elements of :math:`L` are
+    not represented explicitly.
+
+    ``pivots`` is an int32 array with shape ``[..., min(m, n)]`` representing a
+    sequence of row swaps that should be performed on :math:`A`.
+
+    ``permutation`` is an alternative representation of the sequence of row
+    swaps as a permutation, represented as an int32 array with shape
+    ``[..., m]``.
+  """
   lu, pivots, permutation = lu_p.bind(x)
   return lu, pivots, permutation
 
-def qr(x, full_matrices=True):
+def qr(x, full_matrices: bool = True):
+  """QR decomposition.
+
+  Computes the QR decomposition
+
+  .. math::
+    A = Q . R
+
+  of matrices :math:`A`, such that :math:`Q` is a unitary (orthogonal) matrix,
+  and :math:`R` is an upper-triangular matrix.
+
+  Args:
+    x: A batch of matrices with shape ``[..., m, n]``.
+    full_matrices: Determines if full or reduced matrices are returned; see
+      below.
+
+  Returns:
+    A pair of arrays ``(q, r)``.
+
+    Array ``q`` is a unitary (orthogonal) matrix,
+    with shape ``[..., m, m]`` if ``full_matrices=True``, or
+    ``[..., m, min(m, n)]`` if ``full_matrices=False``.
+
+    Array ``r`` is an upper-triangular matrix with shape ``[..., m, n]`` if
+    ``full_matrices=True``, or ``[..., min(m, n), n]`` if
+    ``full_matrices=False``.
+  """
   q, r = qr_p.bind(x, full_matrices=full_matrices)
   return q, r
 
@@ -81,8 +189,43 @@ def svd(x, full_matrices=True, compute_uv=True):
     s, = result
     return s
 
-def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
-                     conjugate_a=False, unit_diagonal=False):
+def triangular_solve(a, b, left_side: bool = False, lower: bool = False,
+                     transpose_a: bool = False, conjugate_a: bool = False,
+                     unit_diagonal: bool = False):
+  r"""Triangular solve.
+
+  Solves either the matrix equation
+
+  .. math::
+    \mathit{op}(A) . X = B
+
+  if ``left_side`` is ``True`` or
+
+  .. math::
+    X . \mathit{op}(A) = B
+
+  if ``left_side`` is ``False``.
+
+  ``A`` must be a lower or upper triangular square matrix, and where
+  :math:`\mathit{op}(A)` may either transpose :math:`A` if ``transpose_a``
+  is ``True`` and/or take its complex conjugate if ``conjugate_a`` is ``True``.
+
+  Args:
+    a: A batch of matrices with shape ``[..., m, m]``.
+    b: A batch of matrices with shape ``[..., m, n]`` if ``left_side`` is
+      ``True`` or shape ``[..., n, m]`` otherwise.
+    left_side: describes which of the two matrix equations to solve; see above.
+    lower: describes which triangle of ``a`` should be used. The other triangle
+      is ignored.
+    transpose_a: if ``True``, the value of ``a`` is transposed.
+    conjugate_a: if ``True``, the complex conjugate of ``a`` is used in the
+      solve. Has no effect if ``a`` is real.
+    unit_diagonal: if ``True``, the diagonal of ``a`` is assumed to be unit
+      (all 1s) and not accessed.
+
+  Returns:
+    A batch of matrices the same shape and dtype as ``b``.
+  """
   conjugate_a = conjugate_a and jnp.issubdtype(lax.dtype(a), jnp.complexfloating)
   singleton = jnp.ndim(b) == jnp.ndim(a) - 1
   if singleton:
@@ -96,6 +239,40 @@ def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
 
 
 # utilities
+@partial(vectorize, signature='(n,m),(m)->(n)')
+def _matvec_multiply(a, b):
+  return lax.dot(a, b, precision=lax.Precision.HIGHEST)
+
+def _check_solve_shapes(a, b):
+  if not (a.ndim >= 2 and b.ndim in [a.ndim, a.ndim - 1] and
+          a.shape[-1] == a.shape[-2] == b.shape[a.ndim - 2]):
+    raise ValueError(
+        "The arguments to solve must have shapes a=[..., m, m] and "
+        f"b=[..., m, k] or b=[..., m]; got a={a.shape} and b={b.shape}")
+
+def _solve(a, b):
+  _check_solve_shapes(a, b)
+
+  # Broadcast leading dimensions of b to the shape of a, as is required by
+  # custom_linear_solve.
+  out_shape = tuple(d_a if d_b == 1 else d_b
+                    for d_a, d_b in zip(a.shape[:-1] + (1,), b.shape))
+  b = jnp.broadcast_to(b, out_shape)
+
+  # With custom_linear_solve, we can reuse the same factorization when
+  # computing sensitivities. This is considerably faster.
+  lu_, _, permutation = lu(lax.stop_gradient(a))
+  custom_solve = partial(
+      lax.custom_linear_solve,
+      lambda x: _matvec_multiply(a, x),
+      solve=lambda _, x: lu_solve(lu_, permutation, x, trans=0),
+      transpose_solve=lambda _, x: lu_solve(lu_, permutation, x, trans=1))
+  if a.ndim == b.ndim + 1:
+    # b.shape == [..., m]
+    return custom_solve(b)
+  else:
+    # b.shape == [..., m, k]
+    return api.vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 def _T(x): return jnp.swapaxes(x, -1, -2)
 def _H(x): return jnp.conj(_T(x))
@@ -162,8 +339,13 @@ def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
 xla.backend_specific_translations['cpu'][cholesky_p] = partial(
   _cholesky_cpu_gpu_translation_rule, lapack.potrf)
 
-xla.backend_specific_translations['gpu'][cholesky_p] = partial(
-  _cholesky_cpu_gpu_translation_rule, cusolver.potrf)
+if cusolver is not None:
+  xla.backend_specific_translations['gpu'][cholesky_p] = partial(
+    _cholesky_cpu_gpu_translation_rule, cusolver.potrf)
+
+if rocsolver is not None:
+  xla.backend_specific_translations['gpu'][cholesky_p] = partial(
+    _cholesky_cpu_gpu_translation_rule, rocsolver.potrf)
 
 # Asymmetric eigendecomposition
 
@@ -239,6 +421,20 @@ def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
                      compute_right_eigenvectors=compute_right_eigenvectors),
           (0,) * (1 + compute_left_eigenvectors + compute_right_eigenvectors))
 
+def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
+                 compute_right_eigenvectors):
+  if compute_left_eigenvectors or compute_right_eigenvectors:
+    raise NotImplementedError(
+        'The derivatives of eigenvectors are not implemented, only '
+        'eigenvalues. See '
+        'https://github.com/google/jax/issues/2748 for discussion.')
+  # Formula for derivative of eigenvalues w.r.t. a is eqn 4.60 in
+  # https://arxiv.org/abs/1701.00392
+  a, = primals
+  da, = tangents
+  l, v = eig(a, compute_left_eigenvectors=False)
+  return [l], [jnp.sum(_solve(v, da.astype(v.dtype)) * _T(v), -1)]
+
 eig_p = Primitive('eig')
 eig_p.multiple_results = True
 eig_p.def_impl(eig_impl)
@@ -246,6 +442,7 @@ eig_p.def_abstract_eval(eig_abstract_eval)
 xla.translations[eig_p] = eig_translation_rule
 xla.backend_specific_translations['cpu'][eig_p] = eig_cpu_translation_rule
 batching.primitive_batchers[eig_p] = eig_batching_rule
+ad.primitive_jvps[eig_p] = eig_jvp_rule
 
 
 # Symmetric/Hermitian eigendecomposition
@@ -337,10 +534,13 @@ _cpu_syevd = lapack.syevd
 xla.backend_specific_translations['cpu'][eigh_p] = partial(
   _eigh_cpu_gpu_translation_rule, _cpu_syevd)
 
-xla.backend_specific_translations['gpu'][eigh_p] = partial(
-  _eigh_cpu_gpu_translation_rule, cusolver.syevd)
+if cusolver is not None:
+  xla.backend_specific_translations['gpu'][eigh_p] = partial(
+    _eigh_cpu_gpu_translation_rule, cusolver.syevd)
 
-
+if rocsolver is not None:
+  xla.backend_specific_translations['gpu'][eigh_p] = partial(
+    _eigh_cpu_gpu_translation_rule, rocsolver.syevd)
 
 
 triangular_solve_dtype_rule = partial(
@@ -488,7 +688,7 @@ def _triangular_solve_cpu_translation_rule(
 xla.backend_specific_translations['cpu'][triangular_solve_p] = \
   _triangular_solve_cpu_translation_rule
 
-def _triangular_solve_gpu_translation_rule(
+def _triangular_solve_gpu_translation_rule(trsm_impl,
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.get_shape(a)
   dims = shape.dimensions()
@@ -498,7 +698,7 @@ def _triangular_solve_gpu_translation_rule(
     a = xops.Conj(a)
     conjugate_a = False
   if batch > 1 and m <= 32 and n <= 32:
-    return cusolver.trsm(
+    return trsm_impl(
       c, a, b, left_side, lower, transpose_a,
       conjugate_a, unit_diagonal)
   else:
@@ -511,8 +711,13 @@ def _triangular_solve_gpu_translation_rule(
     return xops.TriangularSolve(a, b, left_side, lower, unit_diagonal,
                                 transpose)
 
-xla.backend_specific_translations['gpu'][triangular_solve_p] = \
-    _triangular_solve_gpu_translation_rule
+if cusolver is not None:
+  xla.backend_specific_translations['gpu'][triangular_solve_p] = \
+      partial(_triangular_solve_gpu_translation_rule, cusolver.trsm)
+
+if rocsolver is not None:
+  xla.backend_specific_translations['gpu'][triangular_solve_p] = \
+      partial(_triangular_solve_gpu_translation_rule, rocsolver.trsm)
 
 # LU decomposition
 
@@ -706,8 +911,13 @@ batching.primitive_batchers[lu_p] = _lu_batching_rule
 xla.backend_specific_translations['cpu'][lu_p] = partial(
   _lu_cpu_gpu_translation_rule, lapack.getrf)
 
-xla.backend_specific_translations['gpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, cusolver.getrf)
+if cusolver is not None:
+  xla.backend_specific_translations['gpu'][lu_p] = partial(
+    _lu_cpu_gpu_translation_rule, cusolver.getrf)
+
+if rocsolver is not None:
+  xla.backend_specific_translations['gpu'][lu_p] = partial(
+    _lu_cpu_gpu_translation_rule, rocsolver.getrf)
 
 xla.backend_specific_translations['tpu'][lu_p] = _lu_tpu_translation_rule
 
@@ -753,7 +963,7 @@ def lu_pivots_to_permutation(swaps, m):
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
 def _lu_solve_core(lu, permutation, b, trans):
   m = lu.shape[0]
-  x = jnp.reshape(b, (m, -1))
+  x = jnp.reshape(b, (m, np.prod(b.shape[1:])))
   if trans == 0:
     x = x[permutation, :]
     x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
@@ -875,14 +1085,17 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
     q = xops.Pad(r, xops.Constant(c, np.array(0, dtype=shape.element_type())),
                  xla_client.make_padding_config(padding_config))
     q, info_orgqr = orgqr_impl(c, q, tau)
+  if info_geqrf is not None:
+    ok = xops.And(
+      xops.Eq(info_geqrf, xops.ConstantLiteral(c, np.array(0, np.int32))),
+      xops.Eq(info_orgqr, xops.ConstantLiteral(c, np.array(0, np.int32))))
+    q = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), q,
+                             _nan_like(c, q))
+    r = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), r,
+                             _nan_like(c, r))
+  else:
+    pass # rocsolver does not return info
 
-  ok = xops.And(
-    xops.Eq(info_geqrf, xops.ConstantLiteral(c, np.array(0, np.int32))),
-    xops.Eq(info_orgqr, xops.ConstantLiteral(c, np.array(0, np.int32))))
-  q = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), q,
-                           _nan_like(c, q))
-  r = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), r,
-                           _nan_like(c, r))
   r = xla.lower_fun(jnp.triu, multiple_results=False)(c, r)
   return xops.Tuple(c, [q, r])
 
@@ -897,8 +1110,13 @@ batching.primitive_batchers[qr_p] = qr_batching_rule
 xla.backend_specific_translations['cpu'][qr_p] = partial(
   _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
 
-xla.backend_specific_translations['gpu'][qr_p] = partial(
-  _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
+if cusolver is not None:
+  xla.backend_specific_translations['gpu'][qr_p] = partial(
+    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
+
+if rocsolver is not None:
+  xla.backend_specific_translations['gpu'][qr_p] = partial(
+    _qr_cpu_gpu_translation_rule, rocsolver.geqrf, rocsolver.orgqr)
 
 
 # Singular value decomposition
@@ -910,6 +1128,10 @@ def svd_impl(operand, full_matrices, compute_uv):
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   shape = c.get_shape(operand).dimensions()
   m, n = shape[-2:]
+  if m == 0 or n == 0:
+    return xla.lower_fun(_empty_svd, multiple_results=True)(
+      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
   u, s, v = xops.SVD(operand)
   permutation = list(range(len(shape)))
   permutation[-1], permutation[-2] = permutation[-2], permutation[-1]
@@ -953,7 +1175,6 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")
 
-  k = s.shape[-1]
   Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
   dS = jnp.matmul(jnp.matmul(Ut, dA), V)
@@ -962,24 +1183,52 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   if not compute_uv:
     return (s,), (ds,)
 
-  F = 1 / (jnp.square(s_dim) - jnp.square(_T(s_dim)) + jnp.eye(k, dtype=A.dtype))
-  F = F - jnp.eye(k, dtype=A.dtype)
-  dSS = s_dim * dS
-  SdS = _T(s_dim) * dS
-  dU = jnp.matmul(U, F * (dSS + _T(dSS)))
-  dV = jnp.matmul(V, F * (SdS + _T(SdS)))
+  s_diffs = jnp.square(s_dim) - jnp.square(_T(s_dim))
+  s_diffs_zeros = jnp.eye(s.shape[-1], dtype=A.dtype)  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
+  F = 1 / (s_diffs + s_diffs_zeros) - s_diffs_zeros
+  dSS = s_dim * dS  # dS.dot(jnp.diag(s))
+  SdS = _T(s_dim) * dS  # jnp.diag(s).dot(dS)
+
+  s_zeros = jnp.ones((), dtype=A.dtype) * (s == 0.)
+  s_inv = 1 / (s + s_zeros) - s_zeros
+  s_inv_mat = jnp.vectorize(jnp.diag, signature='(k)->(k,k)')(s_inv)
+  dUdV_diag = .5 * (dS - _H(dS)) * s_inv_mat
+  dU = jnp.matmul(U, F * (dSS + _H(dSS)) + dUdV_diag)
+  dV = jnp.matmul(V, F * (SdS + _H(SdS)))
 
   m, n = A.shape[-2:]
   if m > n:
     dU = dU + jnp.matmul(jnp.eye(m, dtype=A.dtype) - jnp.matmul(U, Ut), jnp.matmul(dA, V)) / s_dim
   if n > m:
     dV = dV + jnp.matmul(jnp.eye(n, dtype=A.dtype) - jnp.matmul(V, Vt), jnp.matmul(_H(dA), U)) / s_dim
-  return (s, U, Vt), (ds, dU, _T(dV))
+
+  return (s, U, Vt), (ds, dU, _H(dV))
+
+def _empty_svd(a, *, full_matrices, compute_uv):
+  batch_shape = a.shape[:-2]
+  m, n = a.shape[-2:]
+  s = jnp.empty(batch_shape + (0,), dtype=lax_internal._complex_basetype(a.dtype))
+  if not compute_uv:
+    return (s,)
+  if full_matrices:
+    size = max(m, n)
+    u = jnp.broadcast_to(jnp.eye(size, dtype=a.dtype), batch_shape + (size, size))
+  else:
+    u = jnp.empty(batch_shape + (m, n), dtype=a.dtype)
+  v = jnp.empty(batch_shape + (0, 0), dtype=a.dtype)
+  if m < n:
+    u, v = v, u
+  return s, u, v
 
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
+  shape = c.get_shape(operand).dimensions()
+  m, n = shape[-2:]
+  batch_dims = shape[:-2]
 
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
+  if m == 0 or n == 0:
+    return xla.lower_fun(_empty_svd, multiple_results=True)(
+      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
   s, u, vt, info = gesvd_impl(c, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
@@ -1020,5 +1269,10 @@ xla.translations[svd_p] = svd_translation_rule
 xla.backend_specific_translations['cpu'][svd_p] = partial(
   _svd_cpu_gpu_translation_rule, lapack.gesdd)
 
-xla.backend_specific_translations['gpu'][svd_p] = partial(
-  _svd_cpu_gpu_translation_rule, cusolver.gesvd)
+if cusolver is not None:
+  xla.backend_specific_translations['gpu'][svd_p] = partial(
+    _svd_cpu_gpu_translation_rule, cusolver.gesvd)
+
+if rocsolver is not None:
+  xla.backend_specific_translations['gpu'][svd_p] = partial(
+    _svd_cpu_gpu_translation_rule, rocsolver.gesvd)

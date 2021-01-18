@@ -33,7 +33,7 @@ from . import core
 from . import dtypes as _dtypes
 from . import lax
 from .config import flags, bool_env
-from .util import partial, prod
+from ._src.util import partial, prod
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla
@@ -344,6 +344,13 @@ def count_jit_and_pmap_compiles():
   finally:
     xla.jaxpr_subcomp = jaxpr_subcomp
 
+@contextmanager
+def assert_num_jit_and_pmap_compilations(times):
+  with count_jit_and_pmap_compiles() as count:
+    yield
+  if count[0] != times:
+    raise AssertionError(f"Expected exactly {times} XLA compilations, "
+                         f"but executed {count[0]}")
 
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
@@ -390,6 +397,23 @@ def skip_on_devices(*disabled_devices):
     return test_method_wrapper
   return skip
 
+def set_host_platform_device_count(nr_devices: int):
+  """Returns a closure that undoes the operation."""
+  prev_xla_flags = os.getenv("XLA_FLAGS")
+  flags_str = prev_xla_flags or ""
+  # Don't override user-specified device count, or other XLA flags.
+  if "xla_force_host_platform_device_count" not in flags_str:
+    os.environ["XLA_FLAGS"] = (flags_str +
+                               f" --xla_force_host_platform_device_count={nr_devices}")
+  # Clear any cached backends so new CPU backend will pick up the env var.
+  xla_bridge.get_backend.cache_clear()
+  def undo():
+    if prev_xla_flags is None:
+      del os.environ["XLA_FLAGS"]
+    else:
+      os.environ["XLA_FLAGS"] = prev_xla_flags
+    xla_bridge.get_backend.cache_clear()
+  return undo
 
 def skip_on_flag(flag_name, skip_value):
   """A decorator for test methods to skip the test when flags are set."""

@@ -17,11 +17,11 @@
 
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
-from jax import util
+from jax._src import util
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
-                    unique_indices):
+                    unique_indices, normalize_indices=True):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -49,19 +49,20 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx)
   return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                       indices_are_sorted, unique_indices)
+                       indices_are_sorted, unique_indices, normalize_indices)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
 def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                  indices_are_sorted, unique_indices):
+                  indices_are_sorted, unique_indices, normalize_indices):
   dtype = lax.dtype(x)
   x, y = jnp._promote_dtypes(x, y)
 
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = jnp._index_to_gather(jnp.shape(x), idx)
+  indexer = jnp._index_to_gather(jnp.shape(x), idx,
+                                 normalize_indices=normalize_indices)
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
@@ -207,8 +208,8 @@ def index_min(x, idx, y, indices_are_sorted=False, unique_indices=False):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An array.
@@ -246,8 +247,8 @@ def index_max(x, idx, y, indices_are_sorted=False, unique_indices=False):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An array.
@@ -286,8 +287,8 @@ def index_update(x, idx, y, indices_are_sorted=False, unique_indices=False):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An array.
@@ -319,34 +320,35 @@ def segment_sum(data,
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be summed. Values can be repeated and
       need not be sorted. Values outside of the range [0, num_segments) are
-      wrapped into that range by applying jnp.mod.
-    num_segments: optional, an int with positive value indicating the number of
-      segments. The default is set to be the minimum number of segments that
-      would support all positive and negative indices in `segment_ids`
-      calculated as ``max(max(segment_ids) + 1, max(-segment_ids))``.
+      dropped and do not contribute to the sum.
+    num_segments: optional, an int with nonnegative value indicating the number
+      of segments. The default is set to be the minimum number of segments that
+      would support all indices in ``segment_ids``, calculated as
+      ``max(segment_ids) + 1``.
       Since `num_segments` determines the size of the output, a static value
-      must be provided to use `segment_sum` in a `jit`-compiled function.
-    indices_are_sorted: whether `segment_ids` is known to be sorted.
+      must be provided to use ``segment_sum`` in a ``jit``-compiled function.
+    indices_are_sorted: whether ``segment_ids`` is known to be sorted.
     unique_indices: whether `segment_ids` is known to be free of duplicates.
-    bucket_size: size of bucket to group indices into. segment_sum is performed
-      on each bucket separately to improve numerical stability of addition.
-      Default `None` means no bucketing.
+    bucket_size: size of bucket to group indices into. ``segment_sum`` is
+      performed on each bucket separately to improve numerical stability of
+      addition. Default ``None`` means no bucketing.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
     segment sums.
   """
   if num_segments is None:
-    num_segments = max(jnp.max(segment_ids) + 1, jnp.max(-segment_ids))
+    num_segments = jnp.max(segment_ids) + 1
   num_segments = int(num_segments)
 
   out = jnp.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
-  segment_ids = jnp.mod(segment_ids, num_segments)
 
   num_buckets = 1 if bucket_size is None \
                   else util.ceil_of_ratio(segment_ids.size, bucket_size)
   if num_buckets == 1:
-    return index_add(out, segment_ids, data, indices_are_sorted, unique_indices)
+    return _scatter_update(
+      out, segment_ids, data, lax.scatter_add, indices_are_sorted,
+      unique_indices, normalize_indices=False)
 
   # Bucketize indices and perform segment_sum on each bucket to improve
   # numerical stability.

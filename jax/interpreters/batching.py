@@ -18,12 +18,11 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 import jax
 from ..config import config
 from .. import core
-from ..core import Trace, Tracer
-from ..abstract_arrays import ShapedArray, raise_to_shaped
+from ..core import ShapedArray, raise_to_shaped, Trace, Tracer
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
-from ..util import (unzip2, partial, safe_map, wrap_name, split_list,
-                    canonicalize_axis)
+from .._src.util import (unzip2, partial, safe_map, wrap_name, split_list,
+                         canonicalize_axis, moveaxis, as_hashable_function)
 from . import xla
 from . import partial_eval as pe
 
@@ -59,9 +58,9 @@ def _batch_fun(axis_name, sum_match, in_dims, out_dims_thunk, out_dim_dests,
   in_dims = [
     canonicalize_axis(dim, np.ndim(val)) if isinstance(dim, int) else dim
     for val, dim in zip(in_vals, in_dims)]
-  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+  axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   with core.new_main(BatchTrace, axis_name=axis_name) as main:
-    with core.extend_axis_env(axis_name, size, main):
+    with core.extend_axis_env(axis_name, axis_size, main):
       out_vals = yield (main, in_dims,) + in_vals, params
     del main
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
@@ -70,7 +69,8 @@ def _batch_fun(axis_name, sum_match, in_dims, out_dims_thunk, out_dim_dests,
     if od is not None and not isinstance(od_dest, int) and not sum_match:
       msg = f"vmap has mapped output but out_axes is {od_dest}"
       raise ValueError(msg)
-  out_vals = map(partial(matchaxis, size, sum_match=sum_match), out_dims, out_dim_dests, out_vals)
+  out_vals = map(partial(matchaxis, axis_size, sum_match=sum_match),
+                 out_dims, out_dim_dests, out_vals)
   yield out_vals
 
 def batch_fun2(fun : lu.WrappedFun, in_dims):
@@ -140,25 +140,13 @@ class BatchTrace(Trace):
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
-    elif config.omnistaging_enabled and primitive in collective_rules:
-      axis_names = params['axis_name']
-      if not isinstance(axis_names, (tuple, list)):
-        axis_names = (axis_names,)
-      for i, axis_name in enumerate(axis_names):
-        frame = core.axis_frame(axis_name)
-        if frame.main_trace is not self.main:
-          continue
-        # We run the split_axis rule with tracers, which is supposed to never
-        # mix this axis name with another one. We will handle any invocations
-        # of collectives over the vmapped axis in a recursive call from a tracer.
-        if len(axis_names) > 1:
-          return split_axis(primitive, axis_name, tracers, params)
-        vals_out, dims_out = collective_rules[primitive](vals_in, dims_in, frame.size, **params)
-        results = map(partial(BatchTracer, self), vals_out, dims_out)
-        return results if primitive.multiple_results else results[0]
-    # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
-    batched_primitive = get_primitive_batcher(primitive, self.axis_name)
-    val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
+    if (primitive in collective_rules and
+          _main_trace_for_axis_names(self.main, params['axis_name'])):
+      frame = core.axis_frame(self.axis_name)
+      val_out, dim_out = collective_rules[primitive](frame, vals_in, dims_in, **params)
+    else:
+      batched_primitive = get_primitive_batcher(primitive, self.axis_name)
+      val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
     if primitive.multiple_results:
       return map(partial(BatchTracer, self), val_out, dim_out)
     else:
@@ -188,24 +176,55 @@ class BatchTrace(Trace):
     if all(dim is not_mapped for dim in dims):
       return map_primitive.bind(f, *vals, **params)
     else:
-      mapped_invars = params['mapped_invars']
-      size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
-      vals = [moveaxis(x, d, 1) if d == 0 and mapped_invar else x
-              for x, d, mapped_invar in zip(vals, dims, mapped_invars)]
-      dims = tuple(not_mapped if d is not_mapped else max(0, d - mapped_invar)
-                   for d, mapped_invar in zip(dims, mapped_invars))
-      f, dims_out = batch_subtrace(f, self.main, dims)
-      vals_out = map_primitive.bind(f, *vals, **params)
-      dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
+      assert len({x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}) == 1
+      # The logic for the dimension math below is as follows:
+      # ╔═════════════╦════════════════════════════════════════╦═══════════╗
+      # ║ d / in_axis ║ None                                   ║ int       ║
+      # ╠═════════════╬════════════════════════════════════════╩═══════════╣
+      # ║ None        ║ No extra axis, so in_axis unaffected               ║
+      # ╠═════════════╬════════════════════════════════════════╦═══════════╣
+      # ║ int         ║ Not mapped, so batching dim unaffected ║ See below ║
+      # ╚═════════════╩════════════════════════════════════════╩═══════════╝
+      # When both d and in_axis are defined then:
+      # - If `d <= in_axis`, we have to move the `in_axis` one dimension further;
+      # - If `d >  in_axis`, we have to decrement `d` (as `in_axis` will get removed).
+      def both_mapped(in_out_axis, d):
+        return in_out_axis is not None and d is not not_mapped
+      new_in_axes = tuple(
+        in_axis + 1 if both_mapped(in_axis, d) and d <= in_axis else in_axis
+        for d, in_axis in zip(dims, params['in_axes']))
+      new_dims = tuple(
+        d - 1 if both_mapped(in_axis, d) and in_axis < d else d
+        for d, in_axis in zip(dims, params['in_axes']))
+      f, dims_out = batch_subtrace(f, self.main, new_dims)
+      out_axes_thunk = params['out_axes_thunk']
+      # NOTE: This assumes that the choice of the dimensions over which outputs
+      #       are batched is entirely dependent on the function and not e.g. on the
+      #       data or its shapes.
+      @as_hashable_function(closure=out_axes_thunk)
+      def new_out_axes_thunk():
+        return tuple(out_axis + 1 if both_mapped(out_axis, d) and d < out_axis else out_axis
+                     for out_axis, d in zip(out_axes_thunk(), dims_out()))
+      new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
+      vals_out = map_primitive.bind(f, *vals, **new_params)
+      dims_out = (d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
+                  for d, out_axis in zip(dims_out(), out_axes_thunk()))
       return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 
   def post_process_map(self, call_primitive, out_tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
     main = self.main
+    def both_mapped(in_out_axis, d):
+      return in_out_axis is not None and d is not not_mapped
     def todo(vals):
       trace = main.with_cur_sublevel()
-      return [BatchTracer(trace, v, d + 1 if d is not not_mapped else d)
-              for v, d in zip(vals, dims)]
+      return [BatchTracer(trace, v, d + 1 if both_mapped(out_axis, d) and out_axis <= d else d)
+              for v, d, out_axis in zip(vals, dims, params['out_axes_thunk']())]
+    if call_primitive.map_primitive:
+      def out_axes_transform(out_axes):
+        return tuple(out_axis + 1 if both_mapped(out_axis, d) and d < out_axis else out_axis
+                     for out_axis, d in zip(out_axes, dims))
+      todo = (todo, out_axes_transform)
     return vals, todo
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
@@ -239,6 +258,16 @@ class BatchTrace(Trace):
     if not fst:
       out_dims = out_dims[-len(out_vals) % len(out_dims):]
     return [BatchTracer(self, v, d) for v, d in zip(out_vals, out_dims)]
+
+def _main_trace_for_axis_names(main_trace: core.MainTrace,
+                               axis_name: Union[core.AxisName, Tuple[core.AxisName, ...]]
+                               ) -> bool:
+  # This function exists to identify whether a main trace corresponds to any of
+  # the axis names used by a primitive. Axis names alone aren't enough because
+  # axis names can shadow, so we use the main trace as a tag.
+  if not isinstance(axis_name, (list, tuple)):
+    axis_name = (axis_name,)
+  return any(main_trace is core.axis_frame(n).main_trace for n in axis_name)
 
 
 ### primitives
@@ -344,17 +373,6 @@ def broadcast(x, sz, axis):
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
   return jax.lax.broadcast_in_dim(x, shape, broadcast_dims)
 
-def moveaxis(x, src, dst):
-  if core.get_aval(x) is core.abstract_unit:
-    return core.unit
-  if src == dst:
-    return x
-  src = canonicalize_axis(src, x.ndim)
-  dst = canonicalize_axis(dst, x.ndim)
-  perm = [i for i in range(np.ndim(x)) if i != src]
-  perm.insert(dst, src)
-  return x.transpose(perm)
-
 def matchaxis(sz, src, dst, x, sum_match=False):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
@@ -455,10 +473,4 @@ def omnistaging_disabler() -> None:
     return core.ClosedJaxpr(jaxpr_out, consts_out), batched_out()
 
 
-# collective_rules can assume that the collective is only carried out throughout
-# the vmapped axis (i.e. no tuples in axis_name).
 collective_rules: Dict[core.Primitive, Callable] = {}
-split_axis_rules: Dict[core.Primitive, Callable] = {}
-
-def split_axis(primitive, split_name, args, params):
-  return split_axis_rules[primitive](split_name, args, params)

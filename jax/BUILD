@@ -51,6 +51,13 @@ pytype_library(
 )
 
 pytype_library(
+    name = "experimental",
+    srcs = ["experimental/__init__.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
     name = "stax",
     srcs = ["experimental/stax.py"],
     srcs_version = "PY3",
@@ -65,22 +72,8 @@ pytype_library(
 )
 
 pytype_library(
-    name = "optix",
-    srcs = ["experimental/optix.py"],
-    srcs_version = "PY3",
-    deps = [":jax"],
-)
-
-pytype_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
-    srcs_version = "PY3",
-    deps = [":jax"],
-)
-
-pytype_library(
-    name = "vectorize",
-    srcs = ["experimental/vectorize.py"],
     srcs_version = "PY3",
     deps = [":jax"],
 )
@@ -100,8 +93,8 @@ pytype_library(
 )
 
 pytype_library(
-    name = "general_map",
-    srcs = ["experimental/general_map.py"],
+    name = "maps",
+    srcs = ["experimental/maps.py"],
     srcs_version = "PY3",
     deps = [":jax"],
 )

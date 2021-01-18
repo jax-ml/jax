@@ -180,3 +180,30 @@ Parallelism support is experimental.
     pshuffle
     pswapaxes
     axis_index
+
+Linear algebra operators (jax.lax.linalg)
+-----------------------------------------
+
+.. automodule:: jax.lax.linalg
+
+.. autosummary::
+  :toctree: _autosummary
+
+    cholesky
+    eig
+    eigh
+    lu
+    qr
+    svd
+    triangular_solve
+
+Argument classes
+----------------
+
+.. automodule:: jax.lax
+
+.. autoclass:: ConvDimensionNumbers
+.. autoclass:: GatherDimensionNumbers
+.. autoclass:: Precision
+.. autoclass:: RoundingMethod
+.. autoclass:: ScatterDimensionNumbers

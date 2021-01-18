@@ -28,10 +28,10 @@ from jax import jit, pmap, vjp
 from jax import lax
 from jax import test_util as jtu
 from jax import tree_util
+from jax.experimental import (sharded_jit, with_sharding_constraint,
+                              PartitionSpec as P)
 from jax.interpreters import pxla
-from jax.interpreters.sharded_jit import sharded_jit, with_sharding_constraint
-from jax.interpreters.sharded_jit import PartitionSpec as P
-from jax.util import prod
+from jax._src.util import prod
 import jax.numpy as jnp
 
 from jax.config import config
@@ -114,6 +114,24 @@ class ShardedJitTest(jtu.JaxTestCase):
     out_parts = None
     result = sharded_jit(f, in_parts, out_parts)(x)
     self.assertAllClose(result, expected, check_dtypes=False)
+
+  def testStaticArgnums(self):
+    if jax.device_count() < 2:
+      raise SkipTest
+
+    @partial(sharded_jit, in_parts=(P(2, 1),), out_parts=None, static_argnums=1)
+    def f(x, y):
+      return x + y()
+
+    shape = (8, 8)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    actual = f(x, lambda: 3)
+    expected = x + 3
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, pxla.ShardedDeviceArray)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertAllClose(actual.device_buffers[0].to_py(), expected,
+                        check_dtypes=False)
 
   def testAllArgsOutputsReplicated(self):
     @partial(sharded_jit, in_parts=None, out_parts=None)
@@ -242,6 +260,16 @@ class ShardedJitTest(jtu.JaxTestCase):
 
     expected = x @ y.T + z
     self.assertAllClose(result, expected, check_dtypes=False)
+
+  def testCompilationCache(self):
+    f = lambda x: x + 1
+    sharded_f = sharded_jit(f, in_parts=P(2), out_parts=P(2))
+    shape = (2,)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+
+    with jtu.assert_num_jit_and_pmap_compilations(1):
+      sharded_f(x)
+      sharded_f(x)
 
 
 # TODO(skye): add more error tests

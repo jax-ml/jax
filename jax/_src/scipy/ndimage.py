@@ -24,7 +24,7 @@ from jax import api
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
-from jax.util import safe_zip as zip
+from jax._src.util import safe_zip as zip
 
 
 _nonempty_prod = functools.partial(functools.reduce, operator.mul)

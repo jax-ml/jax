@@ -33,12 +33,14 @@ from jax import random
 from jax import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
+import jax._src.random
 
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 float_dtypes = jtu.dtypes.all_floating
+complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
 uint_dtypes = jtu.dtypes.all_unsigned
 
@@ -76,11 +78,8 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testNumpyAndXLAAgreeOnFloatEndianness(self, dtype):
-    if not FLAGS.jax_enable_x64 and jnp.issubdtype(dtype, np.float64):
-      raise SkipTest("can't test float64 agreement")
-
     bits_dtype = np.uint32 if jnp.finfo(dtype).bits == 32 else np.uint64
     numpy_bits = np.array(1., dtype).view(bits_dtype)
     xla_bits = api.jit(
@@ -134,7 +133,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     N = 10
     key = random.PRNGKey(1701)
     nbits = [8, 16, 32]
-    rand_bits = [random._random_bits(key, n, (N * 64 // n,)) for n in nbits]
+    rand_bits = [jax._src.random._random_bits(key, n, (N * 64 // n,))
+                 for n in nbits]
     rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
     assert np.all(rand_bits_32 == rand_bits_32[0])
 
@@ -142,19 +142,20 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Test specific outputs to ensure consistent random values between JAX versions.
     key = random.PRNGKey(1701)
 
-    bits8 = random._random_bits(key, 8, (3,))
+    bits8 = jax._src.random._random_bits(key, 8, (3,))
     expected8 = np.array([216, 115,  43], dtype=np.uint8)
     self.assertArraysEqual(bits8, expected8)
 
-    bits16 = random._random_bits(key, 16, (3,))
+    bits16 = jax._src.random._random_bits(key, 16, (3,))
     expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
     self.assertArraysEqual(bits16, expected16)
 
-    bits32 = random._random_bits(key, 32, (3,))
+    bits32 = jax._src.random._random_bits(key, 32, (3,))
     expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits32, expected32)
 
-    bits64 = random._random_bits(key, 64, (3,))
+    with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
+      bits64 = jax._src.random._random_bits(key, 64, (3,))
     if FLAGS.jax_enable_x64:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
@@ -197,7 +198,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float16, np.float32, np.float64]))
+      for dtype in float_dtypes))
   def testNormal(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
@@ -210,8 +211,23 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
+      for dtype in complex_dtypes))
+  def testNormalComplex(self, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key: random.normal(key, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(jnp.real(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
+      self._CheckKolmogorovSmirnovCDF(jnp.imag(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float16, np.float32, np.float64]))
+      for dtype in float_dtypes))
   def testTruncatedNormal(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
@@ -229,7 +245,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float32, np.float64, np.int32, np.int64]))
+      for dtype in jtu.dtypes.floating + jtu.dtypes.integer))
   def testShuffle(self, dtype):
     key = random.PRNGKey(0)
     x = np.arange(100).astype(dtype)
@@ -250,7 +266,7 @@ class LaxRandomTest(jtu.JaxTestCase):
           np.dtype(dtype).name, shape, replace, weighted, array_input),
         "dtype": dtype, "shape": shape, "replace": replace,
         "weighted": weighted, "array_input": array_input}
-      for dtype in [np.float32, np.float64, np.int32, np.int64]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.integer
       for shape in [(), (5,), (4, 5)]
       for replace in [True, False]
       for weighted in [True, False]
@@ -278,7 +294,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "dtype": dtype, "shape": shape}
-      for dtype in [np.float32, np.float64, np.int32, np.int64]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.integer
       for shape in [100, (10, 10), (10, 5, 2)]))
   def testPermutationArray(self, dtype, shape):
     key = random.PRNGKey(0)
@@ -320,7 +336,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_p={}_dtype={}".format(p, np.dtype(dtype).name),
        "p": p, "dtype": dtype}
       for p in [0.1, 0.5, 0.9]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testBernoulli(self, p, dtype):
     key = random.PRNGKey(0)
     p = np.array(p, dtype=dtype)
@@ -343,7 +359,7 @@ class LaxRandomTest(jtu.JaxTestCase):
         ([[.5, .1], [.5, .9]], 0),
     ]
     for sample_shape in [(10000,), (5000, 2)]
-    for dtype in [np.float32, np.float64]))
+    for dtype in jtu.dtypes.floating))
   def testCategorical(self, p, axis, dtype, sample_shape):
     key = random.PRNGKey(0)
     p = np.array(p, dtype=dtype)
@@ -395,7 +411,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float16, np.float32, np.float64]))
+      for dtype in float_dtypes))
   def testCauchy(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
@@ -413,7 +429,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for alpha in [
           np.array([0.2, 1., 5.]),
       ]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
     key = random.PRNGKey(0)
@@ -447,7 +463,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_a={}_dtype={}".format(a, np.dtype(dtype).name),
        "a": a, "dtype": dtype}
       for a in [0.1, 1., 10.]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testGamma(self, a, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
@@ -525,7 +541,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testGumbel(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.gumbel(key, (10000,), dtype)
@@ -569,7 +585,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_b={}_dtype={}".format(b, np.dtype(dtype).name),
        "b": b, "dtype": dtype}
       for b in [0.1, 1., 10.]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testPareto(self, b, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, b: random.pareto(key, b, (10000,), dtype)
@@ -590,7 +606,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_df={}_dtype={}".format(df, np.dtype(dtype).name),
        "df": df, "dtype": dtype}
       for df in [0.1, 1., 10.]
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
     key = random.PRNGKey(0)
@@ -604,11 +620,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dim={}_dtype={}".format(dim, np.dtype(dtype)),
-       "dim": dim, "dtype": dtype}
+      {"testcase_name": "_dim={}_dtype={}_method={}".format(
+          dim, np.dtype(dtype), method),
+       "dim": dim, "dtype": dtype, "method": method}
       for dim in [1, 3, 5]
-      for dtype in float_dtypes))
-  def testMultivariateNormal(self, dim, dtype):
+      for dtype in float_dtypes
+      for method in ['svd', 'eigh', 'cholesky']))
+  def testMultivariateNormal(self, dim, dtype, method):
     r = np.random.RandomState(dim)
     mean = r.randn(dim)
     cov_factor = r.randn(dim, dim)
@@ -616,7 +634,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     key = random.PRNGKey(0)
     rand = partial(random.multivariate_normal, mean=mean, cov=cov,
-                   shape=(10000,))
+                   shape=(10000,), method=method)
     crand = api.jit(rand)
 
     uncompiled_samples = np.asarray(rand(key), np.float64)
@@ -888,6 +906,59 @@ class LaxRandomTest(jtu.JaxTestCase):
       return random.normal(random.PRNGKey(x), (int(1e12),))
     with core.skipping_checks():  # check_jaxpr will materialize array
       api.eval_shape(f, 0)  # doesn't error
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "seed={seed}_type={type}_jit={jit}".format(**dct), **dct} for dct in [
+      {"seed": 0, "type": int, "jit": True, "key": [0, 0]},
+      {"seed": 0, "type": int, "jit": False, "key": [0, 0]},
+      {"seed": 1, "type": np.int32, "jit": True, "key": [0, 1]},
+      {"seed": 1, "type": np.int32, "jit": False, "key": [0, 1]},
+      {"seed": 2, "type": np.uint32, "jit": True, "key": [0, 2]},
+      {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
+      {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
+      {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
+      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
+      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
+      {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
+      {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
+      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
+      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
+      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
+    ]
+  ))
+  def test_prng_seeds_and_keys(self, seed, type, jit, key):
+    seed = type(seed)
+    if jit:
+      actual = api.jit(random.PRNGKey)(seed)
+    else:
+      actual = random.PRNGKey(seed)
+    expected = jnp.array(key, dtype=jnp.uint32)
+    self.assertArraysEqual(actual, expected)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_seed={seed}_type={type}", "seed": seed, "type": type}
+      for type in ["int", "np.array", "jnp.array"]
+      for seed in [-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)]))
+  def test_prng_jit_invariance(self, seed, type):
+    if type == "int" and seed == (1 << 64) - 1:
+      self.skipTest("Expected failure: Python int too large.")
+    type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
+    args_maker = lambda: [type(seed)]
+    self._CompileAndCheck(random.PRNGKey, args_maker)
+
+  def test_prng_errors(self):
+    seed = np.iinfo(np.uint64).max
+    with self.assertRaises(OverflowError):
+      random.PRNGKey(seed)
+    with self.assertRaises(OverflowError):
+      api.jit(random.PRNGKey)(seed)
 
 
 if __name__ == "__main__":

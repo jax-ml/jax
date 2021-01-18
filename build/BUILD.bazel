@@ -15,25 +15,33 @@
 # JAX is Autograd and XLA
 
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@org_tensorflow//tensorflow:tensorflow.bzl", "if_not_windows")
 
 licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
 
-sh_binary(
-    name = "install_xla_in_source_tree",
-    srcs = ["install_xla_in_source_tree.sh"],
+py_binary(
+    name = "build_wheel",
+    srcs = ["build_wheel.py"],
     data = [
+        "LICENSE.txt",
         "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
-        "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
         "//jaxlib",
+        "//jaxlib:setup.py",
+        "//jaxlib:setup.cfg",
         "//jaxlib:lapack.so",
         "//jaxlib:_pocketfft.so",
         "//jaxlib:pocketfft_flatbuffers_py",
-    ] + if_cuda([
+    ] + if_not_windows([
+        "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
+    ]) + if_cuda([
         "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",
         "//jaxlib:cuda_prng_kernels",
+    ]) + if_rocm([
+        "//jaxlib:rocblas_kernels",
     ]),
-    deps = ["@bazel_tools//tools/bash/runfiles"],
+    deps = ["@bazel_tools//tools/python/runfiles"],
 )

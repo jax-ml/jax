@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import re
+import textwrap
 
 
 def update_numpydoc(docstr, fun, op):
@@ -69,7 +70,7 @@ def _wraps(fun, update_doc=True, lax_description=""):
       # We (a) move the summary to the top, since it is what the Sphinx
       # autosummary extension expects, and (b) add a comment below the summary
       # to the effect that this is a LAX wrapper of a Numpy function.
-      sections = fun.__doc__.split("\n\n")
+      sections = list(map(textwrap.dedent, fun.__doc__.split("\n\n")))
 
       signatures = []
       summary = None
@@ -84,10 +85,11 @@ def _wraps(fun, update_doc=True, lax_description=""):
         body = update_numpydoc(body, fun, op)
       desc = lax_description + "\n" if lax_description else ""
       docstr = (
-          "{summary}\n\nLAX-backend implementation of :func:`{fun}`.\n"
-          "{lax_description}Original docstring below.\n\n{body}"
-          .format(summary=summary, lax_description=desc,
-                  fun=fun.__name__, body=body))
+          f"{summary}\n\n"
+          f"LAX-backend implementation of :func:`{fun.__name__}`.\n"
+          f"{desc}"
+          f"Original docstring below.\n\n"
+          f"{body}")
 
       op.__name__ = fun.__name__
       op.__doc__ = docstr

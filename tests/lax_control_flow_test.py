@@ -27,12 +27,13 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
+import jax
 from jax import api
 from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu
-from jax.util import unzip2
+from jax._src.util import unzip2
 from jax.lib import xla_bridge
 from jax.interpreters import xla
 import jax.numpy as jnp  # scan tests use numpy
@@ -94,6 +95,12 @@ def posify(matrix):
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    jax._src.lax.control_flow._initial_style_open_jaxpr.cache_clear()
+    jax._src.lax.control_flow._initial_style_jaxpr.cache_clear()
+    jax._src.lax.control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
 
   def testWhileWithTuple(self):
     limit = 10
@@ -999,6 +1006,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertAllClose(ans, expected, check_dtypes=False)
       jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
+  def testSwitchGradWithWeakTypeMismatch(self):  # issue #4696, PR #4896
+    dtype = jnp.ones(1).dtype
+    dtype = jnp.float32 if dtype == jnp.float32 else jnp.float64
+
+    branches = [
+        lambda x: x,             # This preserves the weak type of x.
+        lambda x: x + dtype(1),  # This strips the weak type of x.
+    ]
+
+    def f_ref(x):
+      i = x.astype(jnp.int32)
+      return branches[i](x)
+
+    def f(x):
+      return lax.switch(x.astype(jnp.int32), branches, x)
+
+    for x in [0., 1.]:
+      ans = api.grad(f)(x)
+      expected = api.grad(f_ref)(x)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{name}", "cond": cond}
       for cond, name in COND_IMPLS)
@@ -1612,7 +1640,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.vmap(lambda c, as_:                scan(f, c, as_), in_axes)(c, as_)
     expected = api.vmap(lambda c, as_: scan_reference(f, c, as_), in_axes)(c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol=1e-5, atol=1e-5)
 
   def testScanVmapTuples(self):
     def f(c, a):
@@ -1933,12 +1962,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_custom_root_with_custom_linear_solve(self):
 
-    # TODO(shoyer): Figure out why this fails and re-enable it.
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
-
     def linear_solve(a, b):
-      f = lambda x: jnp.dot(a, x) - b
+      f = lambda x: high_precision_dot(a, x) - b
       factors = jsp.linalg.cho_factor(a)
       cho_solve = lambda f, b: jsp.linalg.cho_solve(factors, b)
       def pos_def_solve(g, b):
@@ -1949,15 +1974,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    actual = linear_solve(jnp.dot(a, a.T), b)
-    expected = jnp.linalg.solve(jnp.dot(a, a.T), b)
+    actual = linear_solve(high_precision_dot(a, a.T), b)
+    expected = jnp.linalg.solve(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual)
 
-    actual = api.jit(linear_solve)(jnp.dot(a, a.T), b)
-    expected = jnp.linalg.solve(jnp.dot(a, a.T), b)
+    actual = api.jit(linear_solve)(high_precision_dot(a, a.T), b)
+    expected = jnp.linalg.solve(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual)
 
-    jtu.check_grads(lambda x, y: linear_solve(jnp.dot(x, x.T), y),
+    jtu.check_grads(lambda x, y: linear_solve(high_precision_dot(x, x.T), y),
                     (a, b), order=2, rtol={jnp.float32: 1e-2})
 
   def test_custom_root_errors(self):
@@ -2108,10 +2133,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
-
-    # TODO(b/143528110): re-enable when underlying XLA TPU issue is fixed
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
 
     def linear_solve(a, b):
       a_factors = jsp.linalg.lu_factor(a)
