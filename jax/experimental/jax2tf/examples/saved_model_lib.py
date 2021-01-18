@@ -89,7 +89,7 @@ def convert_and_save_model(
     enable_xla: whether the jax2tf converter is allowed to use TFXLA ops. If
       False, the conversion tries harder to use purely TF ops and raises an
       exception if it is not possible. (default: True)
-    compile_model: use TensorFlow experimental_compiler on the SavedModel. This
+    compile_model: use TensorFlow jit_compiler on the SavedModel. This
       is needed if the SavedModel will be used for TensorFlow serving.
     save_model_options: options to pass to savedmodel.save.
   """
@@ -116,7 +116,7 @@ def convert_and_save_model(
     params)
   tf_graph = tf.function(lambda inputs: tf_fn(param_vars, inputs),
                          autograph=False,
-                         experimental_compile=compile_model)
+                         jit_compile=compile_model)
 
   signatures = {}
   # This signature is needed for TensorFlow Serving use.

@@ -61,7 +61,7 @@ def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
     return tf.function(
         func_tf,
         autograph=False,
-        experimental_compile=True,
+        jit_compile=True,
         input_signature=_make_tf_input_signature(*tf_args))(
             *tf_args)  # COMPILED
   else:
@@ -114,7 +114,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     It compares the result of JAX, TF ("eager" mode),
     TF with tf.function ("graph" mode), and TF with
-    tf.function(experimental_compile=True) ("compiled" mode). In each mode,
+    tf.function(jit_compile=True) ("compiled" mode). In each mode,
     either we expect to encounter a known limitation, or the value should
     match the value from the JAX execution.
 
