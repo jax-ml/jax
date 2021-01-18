@@ -951,7 +951,7 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       ValueError,
       "jvp called with inconsistent primal and tangent shapes",
-      lambda: api.jvp(lambda x: x+1, (np.random.randn(10,),), (np.random.randn(20,),)) 
+      lambda: api.jvp(lambda x: x+1, (np.random.randn(10,),), (np.random.randn(20,),))
     )
 
   def test_jvp_non_tuple_arguments(self):
