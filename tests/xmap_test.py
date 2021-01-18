@@ -78,22 +78,8 @@ def with_mesh(named_shape, f):
       return f(*args, **kwargs)
   return new_f
 
-def use_spmd_lowering(f):
-  def new_f(*args, **kwargs):
-    if jtu.device_under_test() != "tpu":
-      raise SkipTest
-    jax.experimental.maps.make_xmap_callable.cache_clear()
-    old = jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING
-    jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = True
-    try:
-      return f(*args, **kwargs)
-    finally:
-      jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = old
-  return new_f
-
 
 class XMapTest(jtu.JaxTestCase):
-
   def setUp(self):
     if jax.lib.version < (0, 1, 58):
       raise SkipTest("xmap requires jaxlib version >= 0.1.58")
@@ -121,8 +107,6 @@ class XMapTest(jtu.JaxTestCase):
       self.assertAllClose(c, a * 2)
       self.assertAllClose(d, b * 4)
 
-  testBasicSPMD = use_spmd_lowering(testBasic)
-
   @ignore_xmap_warning()
   def testBasicCollective(self):
     local_devices = list(jax.local_devices())
@@ -143,8 +127,6 @@ class XMapTest(jtu.JaxTestCase):
       c, d = fm(a, b)
       self.assertAllClose(c, (a * 2).sum(0))
       self.assertAllClose(d, b * 4)
-
-  testBasicCollectiveSPMD = use_spmd_lowering(testBasicCollective)
 
   @ignore_xmap_warning()
   @with_mesh([('x', 2), ('y', 2)])
@@ -249,6 +231,53 @@ class XMapTest(jtu.JaxTestCase):
                                 "Changing the resource environment.*"):
       f(x)
 
+  @parameterized.named_parameters(
+    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
+    for name, mesh, axis_resources in (
+      ('', (), ()),
+      ('Mesh', (('x', 2),), (('i', 'x'),))
+    ))
+  @ignore_xmap_warning()
+  def testMultipleCalls(self, mesh, axis_resources):
+    def f(x, y):
+      assert x.shape == y.shape == (3, 5)
+      return jnp.tensordot(x, y, axes=([1], [1]))
+
+    @with_mesh(mesh)
+    def run_test():
+      f_mapped = xmap(f,
+                      in_axes=(['i', ...], ['j', ...]),
+                      out_axes=['i', 'j', ...],
+                      axis_resources=dict(axis_resources))
+      x = jnp.arange(30).reshape(2, 3, 5)
+      expected = jnp.einsum('imk,jnk->ijmn', x, x)
+      for i in range(10):
+        self.assertAllClose(f_mapped(x, x), expected)
+    run_test()
+
+
+class XMapTestSPMD(XMapTest):
+  """Re-executes all tests with the SPMD partitioner enabled"""
+
+  def setUp(self):
+    super().setUp()
+    if jtu.device_under_test() != "tpu":
+      raise SkipTest
+    jax.experimental.maps.make_xmap_callable.cache_clear()
+    self.old_lowering_flag = jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING
+    jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = True
+
+  def tearDown(self):
+    jax.experimental.maps.make_xmap_callable.cache_clear()
+    jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = self.old_lowering_flag
+
+
+class PDotTests(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("xmap requires omnistaging")
+
   @ignore_xmap_warning()
   @with_mesh([('r1', 2)])
   def testPdotBasic(self):
@@ -305,30 +334,6 @@ class XMapTest(jtu.JaxTestCase):
     z = f_mapped(x, y)
 
     self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
-
-  @parameterized.named_parameters(
-    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
-    for name, mesh, axis_resources in (
-      ('', (), ()),
-      ('Mesh', (('x', 2),), (('i', 'x'),))
-    ))
-  @ignore_xmap_warning()
-  def testMultipleCalls(self, mesh, axis_resources):
-    def f(x, y):
-      assert x.shape == y.shape == (3, 5)
-      return jnp.tensordot(x, y, axes=([1], [1]))
-
-    @with_mesh(mesh)
-    def run_test():
-      f_mapped = xmap(f,
-                      in_axes=(['i', ...], ['j', ...]),
-                      out_axes=['i', 'j', ...],
-                      axis_resources=dict(axis_resources))
-      x = jnp.arange(30).reshape(2, 3, 5)
-      expected = jnp.einsum('imk,jnk->ijmn', x, x)
-      for i in range(10):
-        self.assertAllClose(f_mapped(x, x), expected)
-    run_test()
 
 
 class XMapErrorTest(jtu.JaxTestCase):
