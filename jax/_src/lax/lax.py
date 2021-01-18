@@ -2152,7 +2152,7 @@ ad.defjvp_zero(sign_p)
 
 nextafter_p = standard_naryop(
   [_float, _float], 'nextafter',
-  translation_rule=lambda c, x1, x2: xops.NextAfter(x1, x2))
+  translation_rule=_broadcast_translate(partial(standard_translate, 'next_after')))
 
 floor_p = standard_unop(_float, 'floor')
 ad.defjvp_zero(floor_p)

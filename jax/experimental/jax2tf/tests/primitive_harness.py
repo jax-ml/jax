@@ -964,12 +964,7 @@ _make_binary_elementwise_harnesses(
 
 _make_binary_elementwise_harnesses(
   prim=lax.nextafter_p,
-  dtypes=jtu.dtypes.all_floating,
-  jax_unimplemented=lambda *_, shapes, **params: [
-    Limitation(
-      "XLA internal error, implicit broadcasting not implemented",
-      enabled=(shapes[0] != shapes[1]))
-  ])
+  dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
   prim=lax.and_p,

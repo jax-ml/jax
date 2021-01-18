@@ -1,6 +1,6 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-01-15* (YYYY-MM-DD)
+*Last generated on: 2021-01-18* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
@@ -197,7 +197,6 @@ and search for "limitation".
 |igamma|XLA internal error|bfloat16, float16|cpu, gpu, tpu|
 |igammac|XLA internal error|bfloat16, float16|cpu, gpu, tpu|
 |lu|unimplemented|bfloat16, float16|cpu, gpu, tpu|
-|nextafter|XLA internal error, implicit broadcasting not implemented|all|cpu, gpu, tpu|
 |qr|unimplemented|bfloat16, float16|cpu, gpu|
 |reduce_window_max|unimplemented in XLA|complex64|tpu|
 |reduce_window_min|unimplemented in XLA|complex64|tpu|
