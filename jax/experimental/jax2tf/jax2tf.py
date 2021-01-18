@@ -1826,7 +1826,7 @@ def _dynamic_slice(operand, *start_indices, slice_sizes):
   # Here we could use tf.slice. Similarly, for lax.gather we can sometimes use
   # tf.gather. But those have different semantics for index-out-of-bounds than
   # JAX (and XLA). We have tried to force compilation, by wrapping into
-  # tf.xla.experimental.compile, or tf.function(experimental_compile=True), but
+  # tf.xla.experimental.compile, or tf.function(jit_compile=True), but
   # those solutions are brittle because they do not work when nested into an
   # outer compilation (see b/162814494 and b/163006262). They also do not
   # survive well being put in a SavedModel. Hence, we now use TFXLA slicing

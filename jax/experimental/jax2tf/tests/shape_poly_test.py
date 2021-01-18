@@ -476,7 +476,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     # If we get_concrete_function we trace once
     f_tf = tf.function(jax2tf.convert(f_jax, in_shapes=["(2 * batch, d)"]),
                        autograph=False,
-                       experimental_compile=True).get_concrete_function(tf.TensorSpec([None, None], tf.float32))
+                       jit_compile=True).get_concrete_function(tf.TensorSpec([None, None], tf.float32))
     self.assertTrue(traced)
     traced = False
     self.assertAllClose(res_jax, f_tf(x))
