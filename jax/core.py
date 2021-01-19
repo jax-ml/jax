@@ -385,18 +385,18 @@ class Trace:
         return self.sublift(val)
       else:
         raise escaped_tracer_error(
-            val, f"Can't lift sublevels {val._trace.sublevel} to {sublevel}.")
+            val, f"Can't lift sublevels {val._trace.sublevel} to {sublevel}")
     elif val._trace.level < level:
       if val._trace.sublevel > sublevel:
         raise escaped_tracer_error(
-            val, f"Incompatible sublevel: {val._trace}, {(level, sublevel)}.")
+            val, f"Incompatible sublevel: {val._trace}, {(level, sublevel)}")
       return self.lift(val)
     elif val._trace.level > level:
       raise escaped_tracer_error(
-          val, f"Can't lift level {val} to {self}.")
+          val, f"Can't lift level {val} to {self}")
     else:  # val._trace.level == self.level:
       raise escaped_tracer_error(
-          val, f"Different traces at same level: {val}, {self}.")
+          val, f"Different traces at same level: {val}, {self}")
 
   def pure(self, val):
     raise NotImplementedError("must override")
