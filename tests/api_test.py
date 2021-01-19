@@ -954,10 +954,10 @@ class APITest(jtu.JaxTestCase):
       api.jvp(fun, (jnp.array([1.,2.,3.]),), (jnp.array([1.,2.,3.,4.]),))
     with self.assertRaisesRegex(
       ValueError, "jvp called with different primal and tangent shapes"):
-      api.jvp(fun, (jnp.float32(10.),), (jnp.array([1.,2.,3.]),))
+      api.jvp(fun, (jnp.float32(10.),), (jnp.array([1.,2.,3.], dtype=jnp.float32),))
     with self.assertRaisesRegex(
       ValueError, "jvp called with different primal and tangent shapes"):
-      api.jvp(fun, (jnp.array([1.,2.,3.]),), (jnp.float32(20.),))
+      api.jvp(fun, (jnp.array([1.,2.,3.], dtype=jnp.float32),), (jnp.float32(20.),))
 
   def test_jvp_non_tuple_arguments(self):
     def f(x, y): return x + y
