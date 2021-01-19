@@ -22,7 +22,6 @@ import jax.version
 from jax.lib import xla_client
 
 from jax._src import traceback_util
-from jax._src.traceback_util import path_starts_with
 traceback_util.register_exclusion(__file__)
 
 
@@ -37,8 +36,11 @@ def register_exclusion(path):
 def user_frames(source_info: Optional[Traceback]) -> Iterator[Frame]:
   """Heuristic that guesses the identity of the user's code in a stack trace."""
   # Guess the user's frame is the innermost frame not in the jax source tree
+  # We don't use traceback_util.path_starts_with because that incurs filesystem
+  # access, which may be slow; we call this function when e.g. adding source
+  # provenance annotations to XLA lowerings, so we don't want to incur the cost.
   return (x for x in (source_info.frames if source_info else [])
-          if not any(path_starts_with(x.file_name, p) for p in _exclude_paths))
+          if not any(x.file_name.startswith(p) for p in _exclude_paths))
 
 def user_frame(source_info: Optional[Traceback]) -> Optional[Frame]:
   return next(user_frames(source_info), None)
