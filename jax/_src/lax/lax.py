@@ -2433,7 +2433,8 @@ def _integer_pow_dtype_rule(x, *, y):
 def _integer_pow_translation_rule(c, x, *, y):
   if y == 0:
     shape = c.get_shape(x)
-    return xb.constant(c, np.array(1, dtype=shape.numpy_dtype()))
+    one = xb.constant(c, np.array(1, dtype=shape.numpy_dtype()))
+    return xops.Broadcast(one, shape.dimensions())
   is_reciprocal = y < 0
   if is_reciprocal:
     y = -y
