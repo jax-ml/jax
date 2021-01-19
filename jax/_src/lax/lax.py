@@ -2448,7 +2448,7 @@ def _integer_pow_translation_rule(c, x, *, y):
   return xops.Reciprocal(acc) if is_reciprocal else acc
 
 def _integer_pow_jvp(g, x, *, y):
-  return g if y == 0 else mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
+  return _zeros(g) if y == 0 else mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
 
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
