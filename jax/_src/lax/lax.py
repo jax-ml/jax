@@ -305,12 +305,7 @@ def pow(x: Array, y: Array) -> Array:
 
 def integer_pow(x: Array, y: int) -> Array:
   r"""Elementwise power: :math:`x^y`, where :math:`y` is a fixed integer."""
-  if y == 0:
-    return _ones(x)
-  elif y == 1:
-    return x
-  else:
-    return integer_pow_p.bind(x, y=y)
+  return integer_pow_p.bind(x, y=y)
 
 def sqrt(x: Array) -> Array:
   r"""Elementwise square root: :math:`\sqrt{x}`."""
