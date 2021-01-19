@@ -182,42 +182,35 @@ class XMapTest(jtu.JaxTestCase):
     python_should_be_executing = False
     fm(x)
 
-  @skip("Need to implement vmap(xmap)")
+  @parameterized.named_parameters(
+    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
+    for name, mesh, axis_resources in (
+      ('OneToOne', (('x', 2), ('y', 2)), (('a', 'y'), ('b', 'x'))),
+      ('Multiple', (('x', 2), ('y', 2), ('z', 2)), (('a', 'y'), ('b', ('x', 'z')))),
+    ))
   @ignore_xmap_warning()
-  @with_mesh([('x', 2), ('y', 3)])
-  def testNestedMesh(self):
-    @partial(xmap, in_axes={1: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'y'})
-    def f(x):
-      y = x * 2
-      @partial(xmap, in_axes={0: 'b'}, out_axes={1: 'b'}, axis_resources={'b': 'x'})
-      def h(y):
-        return jnp.sin(y)
-      return h(y)
-    xshape = (2, 3, 5)
-    x = jnp.arange(np.prod(xshape)).reshape(xshape)
-    y = f(x)
-    self.assertAllClose(y, jnp.sin(x * 2).transpose((1, 2, 0)))
-    # Make sure the op really ran accros a 2D mesh.
-    self.assertEqual(y.sharding_spec.sharding,
-                     (pxla.Chunked(3), None, None))
-    self.assertEqual(y.sharding_spec.mesh_mapping,
-                     (pxla.Replicated(2), pxla.ShardedAxis(0)))
+  def testNestedMesh(self, mesh, axis_resources):
+    @with_mesh(mesh)
+    def run_test():
+      @partial(xmap, in_axes={1: 'a'}, out_axes=({0: 'a'}, {}),
+               axis_resources=dict([axis_resources[0]]))
+      def f(x):
+        y = x * 2
+        @partial(xmap, in_axes={0: 'b'}, out_axes=({1: 'b'}, {}),
+                 axis_resources=dict([axis_resources[1]]))
+        def h(y):
+          return jnp.sin(y), lax.psum(y, ('a', 'b'))
+        return h(y)
 
-  @ignore_xmap_warning()
-  @with_mesh([('x', 2)])
-  def testNestedDifferentResources(self):
-    @partial(xmap, in_axes={0: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'x'})
-    def f(x):
-      with mesh(np.empty((), dtype=np.object), ()):
-        @partial(xmap, in_axes={0: 'b'}, out_axes={0: 'b'})
-        def h(x):
-          return x
-        return h(x)
-    xshape = (2, 5, 6)
-    x = jnp.arange(np.prod(xshape)).reshape(xshape)
-    with self.assertRaisesRegex(RuntimeError,
-                                "Changing the resource environment.*"):
-      f(x)
+      xshape = (4, 2, 5)
+      x = jnp.arange(np.prod(xshape)).reshape(xshape)
+      y = f(x)
+      self.assertAllClose(y, (jnp.sin(x * 2).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
+      self.assertEqual(y[0].sharding_spec.sharding,
+                       (pxla.Chunked(2), pxla.NoSharding(), pxla.NoSharding()))
+      self.assertEqual(y[0].sharding_spec.mesh_mapping,
+                      (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
+    run_test()
 
   @parameterized.named_parameters(
     {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
@@ -333,6 +326,9 @@ class XMapTestSPMD(XMapTest):
   def setUp(self):
     super().setUp()
     if jtu.device_under_test() != "tpu":
+      raise SkipTest
+    # Nesting xmap calls is not supported in the SPMD lowering yet
+    if "NestedMesh" in self._testMethodName:
       raise SkipTest
     jax.experimental.maps.make_xmap_callable.cache_clear()
     self.old_lowering_flag = jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING
@@ -666,6 +662,22 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r"distinct resources.*specified \('x', 'x'\) for axis a"):
       fxy = xmap(f, in_axes=['a', ...], out_axes=['a', ...],
                  axis_resources={'a': ('x', 'x')})
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testNestedDifferentResources(self):
+    @partial(xmap, in_axes={0: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'x'})
+    def f(x):
+      with mesh(np.empty((), dtype=np.object), ()):
+        @partial(xmap, in_axes={0: 'b'}, out_axes={0: 'b'})
+        def h(x):
+          return x
+        return h(x)
+    xshape = (2, 5, 6)
+    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    with self.assertRaisesRegex(RuntimeError,
+                                "Changing the resource environment.*"):
+      f(x)
 
 
 if __name__ == '__main__':
