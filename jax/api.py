@@ -1721,7 +1721,7 @@ def _jvp(fun: lu.WrappedFun, primals, tangents):
                       f"{core.primal_dtype_to_tangent_dtype(_dtype(p))}, but got "
                       f"tangent dtype {_dtype(t)} instead.")
     if np.shape(p) != np.shape(t):
-      raise ValueError("jvp called with inconsistent primal and tangent shapes;"
+      raise ValueError("jvp called with different primal and tangent shapes;"
                        f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
 
   flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
