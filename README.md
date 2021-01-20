@@ -416,7 +416,11 @@ install [CUDA](https://developer.nvidia.com/cuda-downloads) and
 [CuDNN](https://developer.nvidia.com/CUDNN),
 if they have not already been installed. Unlike some other popular deep
 learning systems, JAX does not bundle CUDA or CuDNN as part of the `pip`
-package. Next, run
+package. The CUDA 10 JAX wheels require CuDNN 7, whereas the CUDA 11 wheels of
+JAX require CuDNN 8. Other combinations of CUDA and CuDNN are possible but
+require building from source.
+
+Next, run
 
 ```bash
 pip install --upgrade pip
