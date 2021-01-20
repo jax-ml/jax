@@ -751,19 +751,13 @@ def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, a
   return lax.broadcast_in_dim(x, out_shape, broadcast_dims)
 
 def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, axis_env, platform):
-  # TODO(cjfj): Enable this for TPU also?
-  if (platform == 'gpu') and (all_gather_dimension == 0):
-    new_shape = list(c.get_shape(x).dimensions())
-    new_shape.insert(all_gather_dimension, 1)
-    broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
-    x = xops.BroadcastInDim(x, new_shape, broadcast_dimensions)
-    replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
-    return xops.AllGather(x, all_gather_dimension=all_gather_dimension, shard_count=axis_size,
-                          replica_groups=xc.make_replica_groups(replica_groups))
-  else:
-    lowering = xla.lower_fun(_all_gather_via_psum, multiple_results=False, parallel=True)
-    return lowering(c, x, all_gather_dimension=all_gather_dimension, axis_name=axis_name,
-                    axis_index_groups=axis_index_groups, axis_size=axis_size, axis_env=axis_env, platform=platform)
+  new_shape = list(c.get_shape(x).dimensions())
+  new_shape.insert(all_gather_dimension, 1)
+  broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
+  x = xops.BroadcastInDim(x, new_shape, broadcast_dimensions)
+  replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
+  return xops.AllGather(x, all_gather_dimension=all_gather_dimension, shard_count=axis_size,
+                        replica_groups=xc.make_replica_groups(replica_groups))
 
 def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
   x_aval = raise_to_shaped(x)
