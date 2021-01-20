@@ -244,6 +244,8 @@ pybind_extension(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocblas",
+        "@local_config_rocm//rocm:rocsolver",
         "@pybind11",
     ],
 )
