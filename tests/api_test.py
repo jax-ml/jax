@@ -3866,6 +3866,47 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = jnp.cos(3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_closed_over_tracer2(self):
+    def outer(x):
+      @api.custom_vjp
+      def f(y):
+        return x * y
+      def f_fwd(y):
+        return f(y), jnp.cos(y)
+      def f_rev(cos_y, g):
+        return (cos_y * g,)
+      f.defvjp(f_fwd, f_rev)
+      return f
+
+    @api.vmap
+    def g(x):
+      return outer(x)(3.)
+
+    ans = g(np.arange(3.))
+    expected = np.arange(3.) * 3
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_closed_over_tracer3(self):
+    def outer(x):
+      @api.custom_vjp
+      def f(y):
+        return x * y
+      def f_fwd(y):
+        return f(y), (x, jnp.cos(y))
+      def f_rev(res, g):
+        x, cos_y = res
+        return (cos_y * g * x,)
+      f.defvjp(f_fwd, f_rev)
+      return api.grad(f)
+
+    @api.vmap
+    def g(x):
+      return outer(x)(3.)
+
+    ans = g(np.arange(3.))
+    expected = np.cos(3.) * np.arange(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_nondiff_arg_tracer_error(self):
     # This is similar to the old (now skipped) test_nondiff_arg_tracer, except
     # we're testing for the error message that that usage pattern now raises.
