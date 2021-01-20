@@ -259,6 +259,8 @@ class BatchTrace(Trace):
       out_dims = out_dims[-len(out_vals) % len(out_dims):]
     return [BatchTracer(self, v, d) for v, d in zip(out_vals, out_dims)]
 
+  post_process_custom_vjp_call = post_process_custom_jvp_call
+
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
                                axis_name: Union[core.AxisName, Tuple[core.AxisName, ...]]
                                ) -> bool:
