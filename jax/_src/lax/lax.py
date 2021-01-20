@@ -305,12 +305,7 @@ def pow(x: Array, y: Array) -> Array:
 
 def integer_pow(x: Array, y: int) -> Array:
   r"""Elementwise power: :math:`x^y`, where :math:`y` is a fixed integer."""
-  if y == 0:
-    return _ones(x)
-  elif y == 1:
-    return x
-  else:
-    return integer_pow_p.bind(x, y=y)
+  return integer_pow_p.bind(x, y=y)
 
 def sqrt(x: Array) -> Array:
   r"""Elementwise square root: :math:`\sqrt{x}`."""
@@ -2438,7 +2433,8 @@ def _integer_pow_dtype_rule(x, *, y):
 def _integer_pow_translation_rule(c, x, *, y):
   if y == 0:
     shape = c.get_shape(x)
-    return xb.constant(c, np.array(1, dtype=shape.numpy_dtype()))
+    one = xb.constant(c, np.array(1, dtype=shape.numpy_dtype()))
+    return xops.Broadcast(one, shape.dimensions())
   is_reciprocal = y < 0
   if is_reciprocal:
     y = -y
@@ -2452,7 +2448,7 @@ def _integer_pow_translation_rule(c, x, *, y):
   return xops.Reciprocal(acc) if is_reciprocal else acc
 
 def _integer_pow_jvp(g, x, *, y):
-  return g if y == 0 else mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
+  return _zeros(g) if y == 0 else mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
 
 integer_pow_p = standard_primitive(
   _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
