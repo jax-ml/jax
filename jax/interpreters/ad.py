@@ -487,7 +487,7 @@ def defbilinear_broadcasting(bcast, prim, lhs_rule, rhs_rule):
   rhs_jvp = lambda g, x, y, **kwargs: prim.bind(x, bcast(g, x), **kwargs)
   defjvp(prim, lhs_jvp, rhs_jvp)
   primitive_transposes[prim] = partial(bilinear_transpose, lhs_rule, rhs_rule)
-defbilinear = partial(defbilinear_broadcasting, lambda g, x: g)
+defbilinear: Callable = partial(defbilinear_broadcasting, lambda g, x: g)
 
 def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
   assert is_undefined_primal(x) ^ is_undefined_primal(y)

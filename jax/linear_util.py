@@ -63,10 +63,13 @@ data must be immutable, because it will be stored in function memoization tables
 """
 
 import threading
+from functools import partial
 from typing import Any, Tuple, Callable
 import weakref
 
+from . import core
 from ._src.util import curry
+from .tree_util import tree_map
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -154,7 +157,7 @@ class WrappedFun(object):
       gen = gen(*(gen_static_args + tuple(args)), **kwargs)
       args, kwargs = next(gen)
       stack.append((gen, out_store))
-    gen = None
+    gen = gen_static_args = out_store = None
 
     try:
       ans = self.f(*args, **dict(self.params, **kwargs))
@@ -167,7 +170,7 @@ class WrappedFun(object):
         stack.pop()[0].close()
       raise
 
-    del args
+    args = kwargs = None
     while stack:
       gen, out_store = stack.pop()
       ans = gen.send(ans)
@@ -242,7 +245,10 @@ def cache(call: Callable):
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
-    key = (fun.transforms, fun.params, args)
+    if core.debug_state.check_leaks:
+      key = (_copy_main_traces(fun.transforms), fun.params, args)
+    else:
+      key = (fun.transforms, fun.params, args)
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result
@@ -265,6 +271,13 @@ def cache(call: Callable):
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
 
   return memoized_fun
+
+@partial(partial, tree_map)
+def _copy_main_traces(x):
+  if isinstance(x, core.MainTrace):
+    return core.MainTrace(x.level, x.trace_type, **x.payload)
+  else:
+    return x
 
 
 @transformation

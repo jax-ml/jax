@@ -18,6 +18,7 @@ from operator import attrgetter
 from contextlib import contextmanager, suppress
 from collections import namedtuple
 from functools import total_ordering
+import gc
 import itertools as it
 from weakref import ref
 import threading
@@ -41,21 +42,32 @@ from ._src.pprint_util import pp, vcat, PrettyPrint
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
-# TODO(dougalm): compilation cache breaks the leak detector. Consisder solving.
-check_leaks = False
-
-# Disables internal invariant checks
-skip_checks = not FLAGS.jax_enable_checks  # not __debug__  # google doesn't use -O
+# TODO(mattjj): move this into debug_state
+skip_checks = not FLAGS.jax_enable_checks
 
 @contextmanager
 def skipping_checks():
-  """Context manager for temporarily disabling checks."""
+  """Context manager for temporarily disabling internal checks."""
   global skip_checks
   old_value, skip_checks = skip_checks, True
   try:
     yield
   finally:
     skip_checks = old_value
+
+@contextmanager
+def checking_leaks():
+  """Context manager for temporarily enabling tracer leak checks."""
+  old_value, debug_state.check_leaks = debug_state.check_leaks, True
+  try:
+    yield
+  finally:
+    debug_state.check_leaks = old_value
+
+class DebugState(threading.local):
+  def __init__(self):
+    self.check_leaks = FLAGS.jax_check_tracer_leaks
+debug_state = DebugState()
 
 zip = safe_zip
 map = safe_map
@@ -742,16 +754,22 @@ def new_main(trace_type: Type[Trace],
   try:
     yield main
   finally:
-    thread_local_state.trace_state.trace_stack.pop()
+    stack.pop()
     if dynamic:
       stack.dynamic = prev_dynamic
 
-  if check_leaks:
+  if debug_state.check_leaks:
     t = ref(main)
     del main
     if t() is not None:
-      print(thread_local_state.trace_state.trace_stack)
-      raise Exception('Leaked trace {}'.format(t()))
+      # handle case where gc doesn't see the leak (Python internal error?)
+      # TODO(mattjj): investigate this issue
+      refs = gc.get_referrers
+      if not (len(refs(t())) == 1 and                          # Trace
+              len(refs(refs(t())[0])) == 1 and                 # Tracer
+              len(refs(refs(refs(t())[0])[0])) == 1 and        # Tracers arglist
+              len(refs(refs(refs(refs(t())[0])[0])[0])) == 0): # nothing...
+        raise Exception(f'Leaked trace {t()}')
 
 @contextmanager
 def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
@@ -765,6 +783,12 @@ def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
   finally:
     stack.dynamic = prev_dynamic
     stack.stack[0] = prev_base
+
+  if debug_state.check_leaks:
+    t = ref(main)
+    del main
+    if t() is not None:
+      raise Exception('Leaked trace {}'.format(t()))
 
 @contextmanager
 def eval_context():
@@ -780,11 +804,12 @@ def new_sublevel() -> Generator[None, None, None]:
   finally:
     thread_local_state.trace_state.substack.pop()
 
-  if check_leaks:
-    t = ref(sublevel)
-    del sublevel
-    if t() is not None:
-      raise Exception('Leaked sublevel {}'.format(t()))
+  # TODO(mattjj): to check sublevel leaks, we need to make Sublevel weakref-able
+  # if debug_state.check_leaks:
+  #   t = ref(sublevel)
+  #   del sublevel
+  #   if t() is not None:
+  #     raise Exception('Leaked sublevel {}'.format(t()))
 
 def maybe_new_sublevel(trace):
   # dynamic traces run the WrappedFun, so we raise the sublevel for them
@@ -1136,7 +1161,7 @@ class AbstractToken(AbstractValue):
   def str_short(self): return 'Tok'
   def at_least_vspace(self): return self
 
-abstract_token = AbstractToken()
+abstract_token: AbstractToken = AbstractToken()
 
 
 def raise_to_shaped(aval: AbstractValue, weak_type=None):
@@ -1678,7 +1703,7 @@ def omnistaging_disabler() -> None:
     finally:
       thread_local_state.trace_state.trace_stack.pop(bottom)
 
-    if check_leaks:
+    if debug_state.check_leaks:
       t = ref(main)
       del main
       if t() is not None:

@@ -1438,7 +1438,7 @@ def _remat_translation_rule(c, axis_env, in_nodes,
   dummy_subc = dummy_subc.build(xops.Tuple(dummy_subc, out_nodes))
 
   return xops.Conditional(pred, true_op, remat_subc, false_op, dummy_subc)
-call_translations[pe.remat_call_p] = _remat_translation_rule
+call_translations[pe.remat_call_p] = _remat_translation_rule  # type: ignore
 
 
 ad.primitive_transposes[core.named_call_p] = partial(ad.call_transpose,

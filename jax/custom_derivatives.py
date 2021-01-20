@@ -899,7 +899,10 @@ def closure_convert(fun, *example_args):
   """
   flat_args, in_tree = tree_flatten(example_args)
   in_avals = tuple(map(abstractify, flat_args))
-  return _closure_convert_for_avals(fun, in_tree, in_avals)
+  if core.debug_state.check_leaks:
+    return _closure_convert_for_avals.__wrapped__(fun, in_tree, in_avals)
+  else:
+    return _closure_convert_for_avals(fun, in_tree, in_avals)
 
 @cache()
 def _closure_convert_for_avals(fun, in_tree, in_avals):

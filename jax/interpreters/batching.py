@@ -62,7 +62,7 @@ def _batch_fun(axis_name, sum_match, in_dims, out_dims_thunk, out_dim_dests,
   with core.new_main(BatchTrace, axis_name=axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
       out_vals = yield (main, in_dims,) + in_vals, params
-    del main
+      del main
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_dims = out_dims_thunk()
   for od, od_dest in zip(out_dims, out_dim_dests):
@@ -419,10 +419,11 @@ def batched_traceable(size, batched, instantiate, axis_name, *vals):
   with core.new_main(BatchTrace, axis_name=axis_name) as main:
     with core.extend_axis_env(axis_name, size, main):
       trace = main.with_cur_sublevel()
-      ans = yield map(partial(BatchTracer, trace), vals, in_dims), {}
+      in_tracers = map(partial(BatchTracer, trace), vals, in_dims)
+      ans = yield in_tracers, {}
       out_tracers = map(trace.full_raise, ans)
       out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
-      del main, out_tracers
+      del main, trace, ans, in_tracers, out_tracers
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_vals)
   out_vals = [moveaxis(x, d, 0) if d is not not_mapped and d != 0
@@ -431,7 +432,6 @@ def batched_traceable(size, batched, instantiate, axis_name, *vals):
   out_batched = [d is not not_mapped or inst
                  for d, inst in zip(out_dims, instantiate)]
   yield out_vals, out_batched
-
 
 @lu.transformation_with_aux
 def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
