@@ -54,7 +54,7 @@ from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow
 from jax.interpreters import xla
 
-from jaxlib import xla_client
+from jax.lib import xla_client
 
 import numpy as np
 

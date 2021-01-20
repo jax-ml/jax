@@ -14,8 +14,8 @@
 
 from typing import List
 
-from jaxlib import _pocketfft
-from jaxlib import pocketfft_flatbuffers_py_generated as pd
+from . import _pocketfft
+from . import pocketfft_flatbuffers_py_generated as pd
 import numpy as np
 
 import flatbuffers

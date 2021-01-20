@@ -53,6 +53,7 @@ _check_jaxlib_version()
 from jaxlib import xla_client
 from jaxlib import lapack
 
+xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
 jax_jit = xla_client._xla.jax_jit
 

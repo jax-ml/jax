@@ -30,7 +30,7 @@ from jax import jit, grad, lax, random
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import Dense, FanOut, Relu, Softplus
-from examples import datasets
+from . import datasets
 
 
 def gaussian_kl(mu, sigmasq):

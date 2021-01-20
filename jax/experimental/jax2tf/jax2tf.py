@@ -46,7 +46,7 @@ import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
-from jaxlib import xla_client
+from jax.lib import xla_client
 
 
 # The scope name need to be a valid TensorFlow name. See

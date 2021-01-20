@@ -20,7 +20,7 @@ licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
-# top-level EF placeholder
+exports_files(["LICENSE"])
 
 pytype_library(
     name = "jax",

@@ -26,7 +26,7 @@ from jax import pmap
 from jax.config import config
 from jax._src.util import prod
 
-from benchmarks import benchmark
+from . import benchmark
 
 import numpy as np
 

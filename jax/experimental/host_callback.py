@@ -347,13 +347,13 @@ from jax import custom_derivatives
 from jax import dtypes
 from jax import lax
 from jax.lib import pytree
+from jax.lib import xla_client
+from jax.lib import xla_extension
 from jax.interpreters import ad, xla, batching, masking, pxla
 from jax.interpreters import partial_eval as pe
 from jax._src import pprint_util as ppu
 from jax._src import source_info_util
 from jax._src import util
-from jaxlib import xla_client
-from jaxlib import xla_extension
 
 import numpy as np
 

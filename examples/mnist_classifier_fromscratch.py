@@ -25,7 +25,7 @@ import numpy.random as npr
 from jax.api import jit, grad
 from jax.scipy.special import logsumexp
 import jax.numpy as jnp
-from examples import datasets
+from . import datasets
 
 
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
