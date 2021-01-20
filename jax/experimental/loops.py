@@ -84,7 +84,7 @@ Notes:
 Restrictions:
   * The tracing of the loop body should not exit prematurely with `return`,
     `exception`, `break`. This would be detected and reported as errors when we
-     encounter unnested scopes.
+    encounter unnested scopes.
   * The loop index variable should not be used after the loop. Similarly, one
     should not use outside the loop data computed in the loop body, except data
     stored in fields of the scope object.
