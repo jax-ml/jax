@@ -1059,6 +1059,31 @@ def _safe_div(x, y):
 class ResultToPopulate: pass
 result_to_populate = ResultToPopulate()
 
+class ResultsHandler:
+  __slots__ = ("nrep", "npart", "nouts", "out_specs", "out_indices", "handlers",
+               "unmapped_local_out_avals")
+
+  def __init__(self, nrep, npart, nouts, out_specs, out_indices, handlers,
+               unmapped_local_out_avals):
+    self.nrep = nrep
+    self.npart = npart
+    self.nouts = nouts
+    self.out_specs = out_specs
+    self.out_indices = out_indices
+    self.handlers = handlers
+    self.unmapped_local_out_avals = unmapped_local_out_avals
+
+  def __call__(self, out_bufs):
+    assert self.nrep * self.npart == len(out_bufs)
+    buffers = [[result_to_populate] * (self.nrep * self.npart)
+               for _ in range(self.nouts)]
+    for r, tuple_buf in enumerate(out_bufs):
+      for i, buf in enumerate(tuple_buf):
+        buffers[i][r] = buf
+    assert not any(
+        buf is result_to_populate for bufs in buffers for buf in bufs)
+    return [h(bufs) for h, bufs in safe_zip(self.handlers, buffers)]
+
 def avals_to_results_handler(nrep, npart, out_specs, unmapped_local_out_avals):
   nouts = len(unmapped_local_out_avals)
   out_indices = [spec_to_indices(aval.shape, spec)
@@ -1067,16 +1092,8 @@ def avals_to_results_handler(nrep, npart, out_specs, unmapped_local_out_avals):
   handlers = [aval_to_result_handler(spec, idcs, aval)
               for spec, idcs, aval in safe_zip(out_specs, out_indices, unmapped_local_out_avals)]
 
-  def handler(out_bufs):
-    assert nrep * npart == len(out_bufs)
-    buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
-    for r, tuple_buf in enumerate(out_bufs):
-      for i, buf in enumerate(tuple_buf):
-        buffers[i][r] = buf
-    assert not any(buf is result_to_populate for bufs in buffers
-                  for buf in bufs)
-    return [h(bufs) for h, bufs in safe_zip(handlers, buffers)]
-  return handler
+  return ResultsHandler(nrep, npart, nouts, out_specs, out_indices, handlers,
+                        unmapped_local_out_avals)
 
 def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   """Replicates ``val`` across multiple devices.
