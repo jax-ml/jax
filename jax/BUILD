@@ -14,7 +14,7 @@
 
 # JAX is Autograd and XLA
 
-pytype_library = py_library
+load("//jax:jax.bzl", "pytype_library")
 
 licenses(["notice"])
 

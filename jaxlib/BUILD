@@ -14,12 +14,16 @@
 
 # JAX is Autograd and XLA
 
-load("@org_tensorflow//tensorflow/core/platform/default:build_config.bzl", "pyx_library")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
-load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda_is_configured")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
-load("@flatbuffers//:build_defs.bzl", "flatbuffer_cc_library", "flatbuffer_py_library")
+load(
+    "//jax:jax.bzl",
+    "cuda_library",
+    "flatbuffer_cc_library",
+    "flatbuffer_py_library",
+    "if_cuda_is_configured",
+    "if_rocm_is_configured",
+    "pybind_extension",
+    "pyx_library",
+)
 
 licenses(["notice"])
 
