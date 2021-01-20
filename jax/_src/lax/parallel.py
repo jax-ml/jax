@@ -872,7 +872,7 @@ def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch):
   # TODO: avals with names, check inputs are mapped along axis_name, eliminate
   return lax.dot_general_p.abstract_eval(
       x, y, dimension_numbers=[pos_contract, pos_batch],
-      precision=None)
+      precision=None, preferred_element_type=None)
 
 def _pdot_vmap_collective_rule(frame, vals_in, dims_in, *, axis_name,
                                pos_contract, pos_batch):
@@ -904,7 +904,8 @@ batching.primitive_batchers[pdot_p] = _pdot_vmap_batching_rule
 def _pdot_translation_rule(c, x, y, *, axis_name, pos_contract, pos_batch,
                            axis_env, platform):
   local_out = lax._dot_general_translation_rule(
-      c, x, y, dimension_numbers=[pos_contract, pos_batch], precision=None)
+      c, x, y, dimension_numbers=[pos_contract, pos_batch], precision=None,
+      preferred_element_type=None)
   if axis_name:
     out_tup = xla.parallel_translations[psum_p](
         c, local_out, axis_name=axis_name, axis_index_groups=None,
@@ -918,11 +919,13 @@ xla.parallel_translations[pdot_p] = _pdot_translation_rule
 def _pdot_transpose_lhs(g, y, *, axis_name, pos_contract, pos_batch):
   # TODO: avals with names, call pbroadcast with axis_name
   return lax._dot_general_transpose_lhs(
-      g, y, dimension_numbers=[pos_contract, pos_batch], precision=None)
+      g, y, dimension_numbers=[pos_contract, pos_batch], precision=None,
+      preferred_element_type=None)
 def _pdot_transpose_rhs(g, x, *, axis_name, pos_contract, pos_batch):
   # TODO: avals with names, call pbroadcast with axis_name
   return lax._dot_general_transpose_rhs(
-      g, x, dimension_numbers=[pos_contract, pos_batch], precision=None)
+      g, x, dimension_numbers=[pos_contract, pos_batch], precision=None,
+      preferred_element_type=None)
 ad.defbilinear(pdot_p, _pdot_transpose_lhs, _pdot_transpose_rhs)
 
 pxla.multi_host_supported_collectives.add(pdot_p)

@@ -1287,9 +1287,10 @@ def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
 tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
-def _dot_general(lhs, rhs, dimension_numbers, precision):
+def _dot_general(lhs, rhs, dimension_numbers, precision, preferred_element_type):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
   del precision
+  del preferred_element_type
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_dim, rhs_dim = len(lhs.shape), len(rhs.shape)
   # This condition ensures that:
