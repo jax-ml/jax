@@ -1,5 +1,5 @@
 jax.lax package
-================
+===============
 
 .. automodule:: jax.lax
 

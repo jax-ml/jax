@@ -151,7 +151,7 @@ def register_pytree_node_class(cls):
   """Extends the set of types that are considered internal nodes in pytrees.
 
   This function is a thin wrapper around ``register_pytree_node``, and provides
-  a class-oriented interface:
+  a class-oriented interface::
 
     @register_pytree_node_class
     class Special:
