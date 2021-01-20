@@ -610,6 +610,17 @@ class PmapTest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testGradOfGather(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.all_gather(x, axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
+
   def testNestedPmapReplicaGroups(self):
     replicas = xla_bridge.device_count()
     if replicas % 4 != 0:
@@ -1826,6 +1837,21 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     x = jnp.arange(np.prod(shape)).reshape(shape)
     self.assertAllClose(pmap(pmap(f, axis_name='j'), axis_name='i')(x),
                         vmap(vmap(f, axis_name='j'), axis_name='i')(x))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+      "vmap collectives only supported when omnistaging is enabled")
+  def testAllGatherWithVmap(self):
+    def f(map2):
+      @partial(jax.pmap, axis_name='i')
+      @partial(map2)
+      def f(x):
+        return jax.lax.all_gather(x, 'i')
+      return f
+
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    x = jnp.ones((2, 2, 64, 64))
+    self.assertAllClose(f(jax.pmap)(x), f(jax.vmap)(x))
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
