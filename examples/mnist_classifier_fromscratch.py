@@ -22,10 +22,10 @@ import time
 
 import numpy.random as npr
 
-from jax.api import jit, grad
+from jax import jit, grad
 from jax.scipy.special import logsumexp
 import jax.numpy as jnp
-from . import datasets
+from examples import datasets
 
 
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
