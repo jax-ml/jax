@@ -20,7 +20,8 @@ load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", 
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured")
 load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library", _flatbuffer_py_library = "flatbuffer_py_library")
 
-# Explicitly re-export names to avoid "unused variable" warnings from .bzl lint tools.
+# Explicitly re-exports names to avoid "unused variable" warnings from .bzl
+# lint tools.
 cuda_library = _cuda_library
 pytype_library = native.py_library
 pyx_library = _pyx_library
