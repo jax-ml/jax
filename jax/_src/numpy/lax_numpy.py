@@ -579,11 +579,15 @@ def _float_divmod(x1, x2):
 
 @_wraps(np.power)
 def power(x1, x2):
-  # Special case for small positive integer scalars: use binary exponentiation.
+  # Special case for concrete integer scalars: use binary exponentiation.
   # Using lax.pow may be imprecise for floating-point values; the goal of this
   # code path is to make sure we end up with a precise output for the common
   # pattern ``x ** 2`` or similar.
-  if isinstance(x2, int):
+  try:
+    x2 = core.concrete_or_error(operator.index, x2)
+  except (core.ConcretizationTypeError, TypeError):
+    pass
+  else:
     return lax.integer_pow(x1, x2)
 
   x1, x2 = _promote_args("power", x1, x2)
