@@ -1720,6 +1720,10 @@ def _jvp(fun: lu.WrappedFun, primals, tangents):
                       f"Got primal dtype {_dtype(p)} and so expected tangent dtype "
                       f"{core.primal_dtype_to_tangent_dtype(_dtype(p))}, but got "
                       f"tangent dtype {_dtype(t)} instead.")
+    if np.shape(p) != np.shape(t):
+      raise ValueError("jvp called with different primal and tangent shapes;"
+                       f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
+
   flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
   out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
   return (tree_unflatten(out_tree(), out_primals),
