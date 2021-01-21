@@ -654,6 +654,68 @@ class PDotTests(jtu.JaxTestCase):
     tol = 1e-1 if jtu.device_under_test() == "tpu" else None
     self.assertAllClose(result, expected, check_dtypes=False,
                         atol=tol, rtol=tol)
+  @ignore_xmap_warning()
+  def test_xeinsum_vector_dot(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3)
+    y = rng.randn(3)
+    out = xmap(partial(jnp.einsum, '{i},{i}->'),
+               in_axes=(['i', ...], ['i', ...]), out_axes=[...])(x, y)
+    expected = np.einsum('i,i->', x, y)
+    self.assertAllClose(out, expected, check_dtypes=False)
+
+  @ignore_xmap_warning()
+  def test_xeinsum_outer_product(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3)
+    y = rng.randn(3)
+    out = xmap(partial(jnp.einsum, '{i},{j}->{i,j}'),
+               in_axes=(['i', ...], ['j', ...]), out_axes=['i', 'j', ...])(x, y)
+    expected = np.einsum('i,j->ij', x, y)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+  @ignore_xmap_warning()
+  def test_xeinsum_matmul(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3, 4)
+    y = rng.randn(4, 5)
+
+    out = xmap(partial(jnp.einsum, '{i,j},{j,k}->{i,k}'),
+               in_axes=(['i', 'j', ...], ['j', 'k', ...]),
+               out_axes=['i', 'k', ...])(x, y)
+    expected = np.einsum('ij,jk->ik', x, y)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+    # order of named axes in the spec doesn't matter!
+    out = xmap(partial(jnp.einsum, '{i,j},{k,j}->{k,i}'),
+               in_axes=(['i', 'j', ...], ['j', 'k', ...]),
+               out_axes=['i', 'k', ...])(x, y)
+    expected = np.einsum('ij,jk->ik', x, y)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+  def test_xeinsum_no_named_axes_vector_dot(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3)
+    y = rng.randn(3)
+    out = jnp.einsum('i,i->', x, y, _use_xeinsum=True)
+    expected = np.einsum('i,i->', x, y)
+    self.assertAllClose(out, expected, check_dtypes=False)
+
+  def test_xeinsum_no_named_axes_batch_vector_dot(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3, 2)
+    y = rng.randn(3, 2)
+    out = jnp.einsum('ij,ij->i', x, y, _use_xeinsum=True)
+    expected = np.einsum('ij,ij->i', x, y)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+  def test_xeinsum_no_named_axes_reduce_sum(self):
+    rng = np.random.RandomState(0)
+    x = rng.randn(3)
+    y = rng.randn()
+    out = jnp.einsum('i,->', x, y, _use_xeinsum=True)
+    expected = np.einsum('i,->', x, y)
+    self.assertAllClose(out, expected, check_dtypes=True)
 
 
 class XMapErrorTest(jtu.JaxTestCase):

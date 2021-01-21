@@ -16,6 +16,7 @@ Parallelization primitives.
 """
 
 import collections
+import string
 import warnings
 
 import numpy as np
@@ -357,6 +358,128 @@ def pdot(x, y, axis_name, pos_contract=((), ()), pos_batch=((), ())):
     axis_name = (axis_name,)
   return pdot_p.bind(x, y, axis_name=axis_name,
                      pos_contract=pos_contract, pos_batch=pos_batch)
+
+
+def xeinsum(spec: str, x, y):
+  in_spec, out_spec = spec.split('->')
+  (lhs_subs, lhs_named), (rhs_subs, rhs_named) = XeinsumSpecParser(in_spec).parse_args()
+  (out_subs, out_named), = XeinsumSpecParser(out_spec).parse_args()
+  all_named = {*lhs_named, *rhs_named, *out_named}
+  all_subs = {*lhs_subs, *rhs_subs, *out_subs}
+  lhs_uniques = set(lhs_subs) - set(rhs_subs)
+  rhs_uniques = set(rhs_subs) - set(lhs_subs)
+  if all_subs & all_named:
+    raise NotImplementedError
+  if not set(out_named).issubset({*lhs_named, *rhs_named}):
+    raise ValueError
+
+  # if a named axis appears in both inputs and not the output, contract!
+  named_contract = list(all_named - set(out_named))
+
+  # if a subscript appears in both inputs and not the outputs, contract!
+  subs_contract = all_subs - set(out_subs)
+
+  lhs_reduce_axes = [lhs_subs.index(n) for n in lhs_uniques & subs_contract]
+  if lhs_reduce_axes:
+    x = lax._reduce_sum(x, lhs_reduce_axes)
+    for i in sorted(lhs_reduce_axes, reverse=True):
+      del lhs_subs[i]
+
+  rhs_reduce_axes = [rhs_subs.index(n) for n in rhs_uniques & subs_contract]
+  if rhs_reduce_axes:
+    y = lax._reduce_sum(y, rhs_reduce_axes)
+    for i in sorted(rhs_reduce_axes, reverse=True):
+      del rhs_subs[i]
+
+  pos_contract = unzip2((lhs_subs.index(n), rhs_subs.index(n))
+                        for n in subs_contract - (lhs_uniques | rhs_uniques))
+
+  # if a subscript apperas in both inputs _and_ the outputs, batch!
+  subs_batch = all_subs - subs_contract
+  if subs_batch & (lhs_uniques | rhs_uniques):
+    raise NotImplementedError
+
+  pos_batch = unzip2((lhs_subs.index(n), rhs_subs.index(n))
+                        for n in subs_batch)
+
+  return pdot(x, y, axis_name=named_contract,
+              pos_contract=pos_contract, pos_batch=pos_batch)
+
+class XeinsumSpecParser:
+  spec: str
+  pos: int
+
+  def __init__(self, spec: str):
+    self.spec = spec
+    self.pos = 0
+
+  @property
+  def eof(self):
+    return self.pos == len(self.spec)
+
+  @property
+  def cur(self):
+    return self.spec[self.pos]
+
+  def parse_subscript(self):
+    if self.cur in string.ascii_lowercase:
+      out = self.cur
+      self.pos += 1
+      return out, True
+    else:
+      return None, False
+
+  def parse_axis_name(self):
+    try:
+      end = self.spec.index('}', self.pos)
+    except ValueError:
+      assert False
+
+    try:
+      end = self.spec.index(',', self.pos, end)
+    except ValueError:
+      pass
+
+    axis_name = self.spec[self.pos:end]
+    assert axis_name
+    self.pos = end + 1
+    return axis_name, self.spec[end] == ','
+
+  def maybe_take(self, char: str, on_eof: bool = False):
+    if self.eof:
+      return on_eof
+    if self.cur == char:
+      self.pos += 1
+      return True
+
+  def parse_arg(self):
+    subscripts = []
+    names = []
+    while not self.eof:
+      subscript, cont = self.parse_subscript()
+      if not cont: break
+      subscripts.append(subscript)
+    if self.eof:
+      return False, (subscripts, names)
+    if self.maybe_take(','):
+      return True, (subscripts, names)
+    else:
+      assert self.maybe_take('{')
+      while True:
+        axis_name, cont = self.parse_axis_name()
+        names.append(axis_name)
+        if not cont: break
+      return self.maybe_take(',', False), (subscripts, names)
+
+  def parse_args(self):
+    arg_specs = []
+    cont = True
+    while not self.eof:
+      cont, result = self.parse_arg()
+      arg_specs.append(result)
+    if cont:
+      arg_specs.append(([], []))
+    return arg_specs
 
 
 ### parallel primitives
