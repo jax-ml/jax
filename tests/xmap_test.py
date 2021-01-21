@@ -155,12 +155,12 @@ class XMapTest(jtu.JaxTestCase):
     zxy = fxy(v)
     self.assertEqual(
         zxy.sharding_spec,
-        pxla.ShardingSpec((None, pxla.Chunked((2, 2))),
+        pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
                           (pxla.ShardedAxis(0), pxla.ShardedAxis(1))))
     zyx = fyx(v)
     self.assertEqual(
         zyx.sharding_spec,
-        pxla.ShardingSpec((None, pxla.Chunked((2, 2))),
+        pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
                           (pxla.ShardedAxis(1), pxla.ShardedAxis(0))))
 
   @ignore_xmap_warning()

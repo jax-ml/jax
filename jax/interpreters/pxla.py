@@ -72,6 +72,17 @@ unsafe_map, map = map, safe_map  # type: ignore
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
 
+class NoSharding:
+
+  def __eq__(self, other):
+    return isinstance(other, NoSharding)
+
+  def __repr__(self):
+    return "NoSharding()"
+
+
+_UNSHARDED_INSTANCE = NoSharding()
+
 # mypy is very unhappy about taggedtuple
 if TYPE_CHECKING:
   class Unstacked(NamedTuple):
@@ -110,7 +121,7 @@ Represents all the ways we can shard a dimension.
 - `Unstacked` means that the dimension is split into chunks of size 1, and doesn't
   appear inside the map.
 """
-AvalDimSharding = Union[Unstacked, Chunked, None]
+AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
 
 # mypy is very unhappy about taggedtuple
 if TYPE_CHECKING:
@@ -153,13 +164,14 @@ class ShardingSpec:
                sharding: Iterable[AvalDimSharding],
                mesh_mapping: Iterable[MeshDimAssignment]):
     self.sharding = tuple(sharding)
+    assert all(x is not None for x in self.sharding)
     self.mesh_mapping = tuple(mesh_mapping)
 
   @property
   def mesh_shape(self):
     sharded_axis_sizes = []
     for sharding in self.sharding:
-      if sharding is None:
+      if isinstance(sharding, NoSharding):
         continue
       elif isinstance(sharding, Unstacked):
         sharded_axis_sizes.append(sharding.size)
@@ -203,7 +215,7 @@ class ShardingSpec:
     new_mesh_shape = []
     next_sharded_axis = 0
     for axis, sharding in enumerate(self.sharding):
-      if sharding is None:
+      if isinstance(sharding, NoSharding):
         new_mesh_shape.append(1)  # Add a dummy mesh axis we won't be sharding over
       elif isinstance(sharding, Chunked):
         for nchunks in sharding.chunks:
@@ -246,7 +258,7 @@ class ShardingSpec:
     shard_indices_shape = []
     for dim, sharding in enumerate(self.sharding):
       axis_size = shape[dim]
-      if sharding is None:
+      if isinstance(sharding, NoSharding):
         axis_indices.append([slice(None)])
         # NOTE: We don't append unsharded dimensions to shard_indices_shape here,
         #       because they do not appear in the mesh mapping.
@@ -1139,7 +1151,7 @@ def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, map_axis: O
   pspec = partitioned_sharding_spec(npart, parts, sharded_aval)
   maybe_replicate = () if replication_factor == 1 else (Replicated(replication_factor),)
   if map_axis is not None:
-    sharded_in_axis = sum(s is not None for s in pspec.sharding[:map_axis])
+    sharded_in_axis = sum(not isinstance(s, NoSharding) for s in pspec.sharding[:map_axis])
     def shift_sharded_axis(a: MeshDimAssignment):
       if isinstance(a, ShardedAxis) and a.axis >= sharded_in_axis:
         return ShardedAxis(a.axis + 1)
@@ -1161,8 +1173,9 @@ def partitioned_sharding_spec(num_partitions: int,
                               aval) -> ShardingSpec:
   if partitions is None:
     maybe_replicate = () if num_partitions == 1 else (Replicated(num_partitions),)
-    return ShardingSpec(sharding=[None] * len(aval.shape),
-                        mesh_mapping=maybe_replicate)
+    return ShardingSpec(
+        sharding=[_UNSHARDED_INSTANCE] * len(aval.shape),
+        mesh_mapping=maybe_replicate)
   else:
     assert len(partitions) == len(aval.shape)
     return ShardingSpec(sharding=map(Chunked, partitions),
@@ -1551,7 +1564,7 @@ def mesh_sharding_specs(axis_sizes, axis_names):
   mesh_axis_pos = {name: i for i, name in enumerate(axis_names)}
   # NOTE: This takes in the non-sharded avals!
   def mk_sharding_spec(aval, aval_axes):
-    sharding = [None] * len(aval.shape)
+    sharding = [_UNSHARDED_INSTANCE] * len(aval.shape)
     mesh_mapping = [Replicated(axis_size) for axis_size in axis_sizes.values()]
     next_sharded_axis = 0
     aval_shape = list(aval.shape)
@@ -1560,7 +1573,7 @@ def mesh_sharding_specs(axis_sizes, axis_names):
     for name, axis in sorted(aval_axes.items(), key=lambda x: x[1]):
       assert aval_shape[axis] % axis_sizes[name] == 0, (axis_sizes[name], aval.shape[axis])
       aval_shape[axis] //= axis_sizes[name]
-      if sharding[axis] is None:
+      if isinstance(sharding[axis], NoSharding):
         sharding[axis] = Chunked(())
       sharding[axis] = Chunked(sharding[axis].chunks + (axis_sizes[name],))
       assert isinstance(mesh_mapping[mesh_axis_pos[name]], Replicated), \
@@ -1619,14 +1632,15 @@ def _soft_pmap_callable(fun, axis_name, axis_size, in_axes, out_axes_thunk, *ava
   compiled = xla.backend_compile(backend, built, compile_options)
 
   input_specs = [
-      ShardingSpec(sharding=tuple_insert((None,) * (aval.ndim - 1),
-                                         in_axis,
-                                         Chunked(num_devices)),
-                   mesh_mapping=[ShardedAxis(0)])
-      if in_axis is not None else
-      ShardingSpec(sharding=[None] * aval.ndim,
-                   mesh_mapping=[Replicated(num_devices)])
-      for aval, in_axis in safe_zip(avals, in_axes)]
+      ShardingSpec(
+          sharding=tuple_insert((_UNSHARDED_INSTANCE,) *
+                                (aval.ndim - 1), in_axis, Chunked(num_devices)),
+          mesh_mapping=[ShardedAxis(0)])
+      if in_axis is not None else ShardingSpec(
+          sharding=[_UNSHARDED_INSTANCE] * aval.ndim,
+          mesh_mapping=[Replicated(num_devices)])
+      for aval, in_axis in safe_zip(avals, in_axes)
+  ]
   input_indices = [spec and spec_to_indices(aval.shape, spec)
                    for aval, spec in safe_zip(avals, input_specs)]
   handle_args = partial(shard_args, compiled.local_devices(), input_indices)
@@ -1716,8 +1730,9 @@ def soft_pmap_aval_to_result_handler(chunk_size, num_devices, aval):
     return lambda _: core.unit
   elif isinstance(aval, core.ShapedArray):
     new_aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
-    spec = ShardingSpec(sharding=(Chunked(num_devices),) + (None,) * aval.ndim,
-                        mesh_mapping=(ShardedAxis(0),))
+    spec = ShardingSpec(
+        sharding=(Chunked(num_devices),) + (_UNSHARDED_INSTANCE,) * aval.ndim,
+        mesh_mapping=(ShardedAxis(0),))
     return lambda bufs: ShardedDeviceArray(new_aval, spec, bufs)
   else:
     raise TypeError(aval)
