@@ -187,6 +187,7 @@ character = np.character
 object_ = np.object_
 
 iinfo = dtypes.iinfo
+finfo = dtypes.finfo
 
 dtype = np.dtype
 can_cast = dtypes.can_cast
@@ -342,10 +343,6 @@ def fmin(x1, x2):
 @_wraps(np.fmax)
 def fmax(x1, x2):
   return where((x1 > x2) | isnan(x2), x1, x2)
-
-@_wraps(np.finfo)
-def finfo(dtype):
-  return dtypes.finfo(dtype)
 
 @_wraps(np.issubdtype)
 def issubdtype(arg1, arg2):
