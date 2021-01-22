@@ -2160,6 +2160,20 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "tangent values inconsistent"):
       f_jvp(np.ones(2, np.int32))
 
+  def test_grad_of_token_consuming_primitive(self):
+    # https://github.com/google/jax/issues/5463
+    tokentest_p = core.Primitive("tokentest")
+    tokentest_p.def_impl(partial(xla.apply_primitive, tokentest_p))
+    tokentest_p.def_abstract_eval(lambda x, y: x)
+    xla.translations[tokentest_p] = lambda c, x, y:  x
+    ad.defjvp(tokentest_p, (lambda g, x, token: x), None)
+
+    token = jax.lax.create_token(123)
+    arr = jnp.ones((3, 2))
+    res, vjp_fun = jax.vjp(lambda x: tokentest_p.bind(x, token), arr)
+    # Should not crash.
+    vjp_fun(arr)
+
 
 class RematTest(jtu.JaxTestCase):
 

@@ -1134,6 +1134,7 @@ class AbstractToken(AbstractValue):
     else:
       assert False, f"Cannot join {self} with {other}"
   def str_short(self): return 'Tok'
+  def at_least_vspace(self): return self
 
 abstract_token = AbstractToken()
 
