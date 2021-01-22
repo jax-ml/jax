@@ -2276,7 +2276,6 @@ class APITest(jtu.JaxTestCase):
 
       @api.vmap
       def f(x):
-        print(x)
         lax.scan(to_scan, x, None, length=1)
       f(np.arange(5.))  # doesn't crash
 
@@ -2284,14 +2283,11 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    # This test covers an edge case which fails without the extra check in
-    # core.py, with the comment "gc doesn't see the leak".
     with core.checking_leaks():
       to_scan = lambda c, _: (c, None)
 
       @api.vmap
       def f(x):
-        print(x)
         lax.scan(to_scan, x, None, length=1)
       f(np.arange(5.))  # doesn't crash
 

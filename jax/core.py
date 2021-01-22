@@ -18,7 +18,6 @@ from operator import attrgetter
 from contextlib import contextmanager, suppress
 from collections import namedtuple
 from functools import total_ordering
-import gc
 import itertools as it
 from weakref import ref
 import threading
@@ -472,6 +471,9 @@ def escaped_tracer_error(tracer, detail=None):
   else:
     msg += ('\nThe function being traced when the tracer leaked was '
             f'{fun_source_info}.')
+  msg += ('\nTo catch the leak earlier, try setting the environment variable '
+          'JAX_CHECK_TRACER_LEAKS or using the `jax.checking_leaks` context '
+          'manager.')
   return UnexpectedTracerError(msg)
 
 class UnexpectedTracerError(Exception): pass
@@ -762,14 +764,7 @@ def new_main(trace_type: Type[Trace],
     t = ref(main)
     del main
     if t() is not None:
-      # handle case where gc doesn't see the leak (Python internal error?)
-      # TODO(mattjj): investigate this issue
-      refs = gc.get_referrers
-      if not (len(refs(t())) == 1 and                          # Trace
-              len(refs(refs(t())[0])) == 1 and                 # Tracer
-              len(refs(refs(refs(t())[0])[0])) == 1 and        # Tracers arglist
-              len(refs(refs(refs(refs(t())[0])[0])[0])) == 0): # nothing...
-        raise Exception(f'Leaked trace {t()}')
+      raise Exception(f'Leaked trace {t()}')
 
 @contextmanager
 def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:

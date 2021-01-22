@@ -1542,10 +1542,7 @@ def vtile(f_flat,
     yield map(untile_axis, outputs_flat, out_axes_flat)
 
   return _map_to_tile(
-    batching.batch_fun(f_flat,
-                       in_axes_flat,
-                       out_axes_flat,
-                       axis_name=axis_name))
+      batching.batch(f_flat, axis_name, tile_size, in_axes_flat, out_axes_flat))
 
 _forbidden_primitives = {
   'xla_pmap': 'pmap',
