@@ -367,10 +367,9 @@ def _execute_replicated_primitive(prim, compiled, result_handler, *args):
 
 
 def check_special(prim, bufs):
-  for buf in bufs:
-    # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
-    # the default.
-    _check_special(prim.name, getattr(buf, "xla_shape", buf.shape)(), buf)
+  if FLAGS.jax_debug_infs or FLAGS.jax_debug_nans:
+    for buf in bufs:
+      _check_special(prim.name, buf.xla_shape(), buf)
 
 def _check_special(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
