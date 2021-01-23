@@ -174,5 +174,7 @@ flags.DEFINE_integer(
 flags.DEFINE_bool(
     'jax_check_tracer_leaks',
     bool_env('JAX_CHECK_TRACER_LEAKS', False),
-    help='Turn on checking for leaked tracers as soon as a trace completes.'
+    help=('Turn on checking for leaked tracers as soon as a trace completes. '
+          'Enabling leak checking may have performance impacts: some caching '
+          'is disabled, and other overheads may be added.'),
 )
