@@ -627,13 +627,14 @@ def _custom_vjp_call_jaxpr_vmap(
     args, in_dims, axis_name, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
-  size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
+  axis_size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
 
   in_batched = [d is not not_mapped for d in in_dims]
   _, args_batched = split_list(in_batched, [num_consts])
-  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False, axis_name)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
+      fun_jaxpr, axis_size, in_batched, False, axis_name)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
@@ -641,15 +642,14 @@ def _custom_vjp_call_jaxpr_vmap(
   def batched_fwd_jaxpr_thunk():
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk())  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
-        fwd_jaxpr, size, args_batched, False, axis_name)
+        fwd_jaxpr, axis_size, args_batched, False, axis_name)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     return batched_fwd_jaxpr.jaxpr, batched_fwd_jaxpr.consts
 
   fwd_args_batched = [0 if b else not_mapped for b in args_batched]
   fwd_out_dims = lambda: out_dims2[0]
-  # TODO(mattjj,apaszke): Support collectives in custom_vjp?
-  batched_bwd = batching.batch_fun(bwd, fwd_out_dims, fwd_args_batched,
-                                   axis_name='__unused_axis_name', sum_match=True)
+  batched_bwd = batching.batch(bwd, axis_name, axis_size, fwd_out_dims,
+                               fwd_args_batched)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
@@ -899,7 +899,10 @@ def closure_convert(fun, *example_args):
   """
   flat_args, in_tree = tree_flatten(example_args)
   in_avals = tuple(map(abstractify, flat_args))
-  return _closure_convert_for_avals(fun, in_tree, in_avals)
+  if core.debug_state.check_leaks:
+    return _closure_convert_for_avals.__wrapped__(fun, in_tree, in_avals)
+  else:
+    return _closure_convert_for_avals(fun, in_tree, in_avals)
 
 @cache()
 def _closure_convert_for_avals(fun, in_tree, in_avals):

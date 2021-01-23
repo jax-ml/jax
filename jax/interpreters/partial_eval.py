@@ -505,7 +505,7 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
     fun = trace_to_subjaxpr(fun, main, instantiate)
     jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
     assert not env
-    del main
+    del main, fun, env
 
   return jaxpr, out_pvals, consts
 
@@ -1184,7 +1184,7 @@ def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]
     main.source_info = fun_sourceinfo(fun.f)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
-    del main
+    del main, fun
   return jaxpr, out_avals, consts
 
 def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
@@ -1195,7 +1195,8 @@ def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
     in_tracers = map(trace.new_arg, in_avals)
     ans = fun.call_wrapped(*in_tracers)
     out_tracers = map(trace.full_raise, ans)
-  jaxpr, out_avals, consts = frame.to_jaxpr(in_tracers, out_tracers)
+    jaxpr, out_avals, consts = frame.to_jaxpr(in_tracers, out_tracers)
+    del fun, main, trace, frame, in_tracers, out_tracers, ans
   return jaxpr, out_avals, consts
 
 @contextlib.contextmanager
@@ -1213,7 +1214,7 @@ def trace_to_jaxpr_final(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
     main.source_info = fun_sourceinfo(fun.f)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
-    del main
+    del fun, main
   return jaxpr, out_avals, consts
 
 def partial_eval_to_jaxpr_dynamic(fun: lu.WrappedFun, in_pvals: Sequence[PartialVal]):

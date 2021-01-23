@@ -170,3 +170,11 @@ flags.DEFINE_integer(
     int_env('JAX_TRACER_ERROR_NUM_TRACEBACK_FRAMES', 5),
     help='Set the number of stack frames in JAX tracer error messages.'
 )
+
+flags.DEFINE_bool(
+    'jax_check_tracer_leaks',
+    bool_env('JAX_CHECK_TRACER_LEAKS', False),
+    help=('Turn on checking for leaked tracers as soon as a trace completes. '
+          'Enabling leak checking may have performance impacts: some caching '
+          'is disabled, and other overheads may be added.'),
+)

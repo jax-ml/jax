@@ -108,12 +108,6 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
 def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
-def _disable_jit_impl(prim, interp, *args, **kwargs):
-  if jax.api._jit_is_disabled():
-    return interp(*args, **kwargs)
-  else:
-    return xla.apply_primitive(prim, *args, **kwargs)
-
 def _typecheck_param(prim, param, name, msg_required, pred):
   msg = (f'invalid {prim} param {name} of type {type(param).__name__}, '
          f'{msg_required} required:')

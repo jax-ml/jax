@@ -41,7 +41,7 @@ from . import lib
 from . import linear_util as lu
 from . import ad_util
 from . import dtypes
-from .core import eval_jaxpr
+from .core import eval_jaxpr, checking_leaks
 from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial,
                        argnums_partial_except, flatten_axes, donation_vector,
@@ -1218,11 +1218,11 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
-    _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap", kws=True)
-    out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
-                              lambda: flatten_axes("vmap out_axes", out_tree(),
-                                                   out_axes),
-                              axis_name=axis_name)
+    axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap", kws=True)
+    out_flat = batching.batch(
+        flat_fun, axis_name, axis_size, in_axes_flat,
+        lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
+    ).call_wrapped(*args_flat)
     return tree_unflatten(out_tree(), out_flat)
 
   return batched_fun

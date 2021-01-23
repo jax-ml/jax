@@ -2174,6 +2174,123 @@ class APITest(jtu.JaxTestCase):
     # Should not crash.
     vjp_fun(arr)
 
+  def test_leak_checker_catches_a_jit_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      lst = []
+
+      @jit
+      def f(x):
+        lst.append(x)
+        return x
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+        f(3)
+
+  def test_leak_checker_catches_a_pmap_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      lst = []
+
+      @api.pmap
+      def f(x):
+        lst.append(x)
+        return x
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+        f(np.ones(1))
+
+  def test_leak_checker_catches_a_grad_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      lst = []
+
+      def f(x):
+        lst.append(x)
+        return x
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+        api.grad(f)(3.)
+
+  def test_leak_checker_avoids_false_positives(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      @jit
+      def f(x):
+        return x
+      f(3)  # doesn't crash
+      api.vmap(f)(np.arange(3))  # doesn't crash
+      api.grad(f)(3.)  # doesn't crash
+
+      @api.pmap
+      def f(x):
+        return x
+      f(np.ones(1))  # doesn't crash
+      api.vmap(f)(np.ones((1, 1)))  # doesn't crash
+
+  def test_leak_checker_catches_a_scan_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      lst = []
+
+      to_scan = lambda c, x: (lst.append(c) or jnp.sin(c), None)
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+        lax.scan(to_scan, 1., np.arange(3.))
+
+  def test_leak_checker_avoids_false_positives_scan(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      to_scan = lambda c, x: (jnp.sin(c), None)
+      lax.scan(to_scan, 1., np.arange(3.))  # doesn't crash
+
+  def test_leak_checker_avoids_false_positives_scan_jvp(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      to_scan = lambda c, x: (c, None)
+
+      def f(x):
+        lax.scan(to_scan, x, None, length=1)
+      api.jvp(f, (3.,), (1.,))  # doesn't crash
+
+  def test_leak_checker_avoids_false_positives_scan_vmap(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      to_scan = lambda c, _: (1., None)
+
+      @api.vmap
+      def f(x):
+        lax.scan(to_scan, x, None, length=1)
+      f(np.arange(5.))  # doesn't crash
+
+  def test_leak_checker_avoids_false_positives_scan_vmap_2(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      to_scan = lambda c, _: (c, None)
+
+      @api.vmap
+      def f(x):
+        lax.scan(to_scan, x, None, length=1)
+      f(np.arange(5.))  # doesn't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
