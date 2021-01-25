@@ -82,7 +82,7 @@ to set up a CUDA environment.
 You can either install Python using its
 `Windows installer <https://www.python.org/downloads/>`_, or if you prefer, you
 can use `Anaconda <https://docs.anaconda.com/anaconda/install/windows/>`_
-or `Miniconda <https://docs.conda.io/en/latest/miniconda.html#windows-installers>`_
+or `Miniconda <https://docs.conda.io/en/latest/miniconda.html#windows-installers>`__
 to setup a Python environment.
 
 Some targets of Bazel use bash utilities to do scripting, so `MSYS2 <https://www.msys2.org>`_
@@ -186,7 +186,7 @@ To rebuild the documentation, install several packages::
 
 You must also install ``pandoc`` in order to regenerate the notebooks.
 See `Install Pandoc <https://pandoc.org/installing.html>`_,
-or using `Miniconda <https://docs.conda.io/en/latest/miniconda.html>`_ which
+or using `Miniconda <https://docs.conda.io/en/latest/miniconda.html>`__ which
 I have used successfully on the Mac: ``conda install -c conda-forge pandoc``.
 If you do not want to install ``pandoc`` then you should regenerate the documentation
 without the notebooks.

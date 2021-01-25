@@ -17,7 +17,7 @@ jax 0.2.9 (Unreleased)
 
 * Breaking changes:
 
-  * ``jax.ops.segment_sum` now drops segment IDs that are out of range rather
+  * :func:`jax.ops.segment_sum` now drops segment IDs that are out of range rather
     than wrapping them into the segment ID space. This was done for performance
     reasons.
 
@@ -25,7 +25,7 @@ jax 0.2.9 (Unreleased)
 
 * New features:
 
-  * Extend the `jax.experimental.loops` module with support for pytrees. Improved
+  * Extend the :mod:`jax.experimental.loops` module with support for pytrees. Improved
     error checking and error messages.
 
   * Add :func:`jax.experimental.enable_x64` and :func:`jax.experimental.disable_x64`.
@@ -78,7 +78,7 @@ jax 0.2.8 (January 12 2021)
 
 * New features:
 
-  * New flag for debugging ``inf``s, analagous to that for ``NaN``s (`#5224 <https://github.com/google/jax/pull/5224>`_).
+  * New flag for debugging ``inf``, analagous to that for ``NaN`` (`#5224 <https://github.com/google/jax/pull/5224>`_).
 
 jax 0.2.7 (Dec 4 2020)
 ----------------------
@@ -437,7 +437,7 @@ jax 0.1.67 (May 12, 2020)
 
 * Notable changes:
 
-  * The visibility of names exported from :py:module:`jax.numpy` has been
+  * The visibility of names exported from :mod:`jax.numpy` has been
     tightened. This may break code that was making use of names that were
     previously exported accidentally.
 
@@ -585,7 +585,7 @@ jax 0.1.60 (March 17, 2020)
     ``static_argnums`` in :py:func:`jax.jit`.
   * Improved error messages for when tracers are mistakenly saved in global state.
   * Added :py:func:`jax.nn.one_hot` utility function.
-  * Added :py:module:`jax.experimental.jet` for exponentially faster
+  * Added :mod:`jax.experimental.jet` for exponentially faster
     higher-order automatic differentiation.
   * Added more correctness checking to arguments of :py:func:`jax.lax.broadcast_in_dim`.
 

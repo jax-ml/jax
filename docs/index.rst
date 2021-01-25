@@ -42,6 +42,7 @@ For an introduction to JAX, start at the
    pytrees
    rank_promotion_warning
    type_promotion
+   custom_vjp_update
 
 .. toctree::
    :maxdepth: 2

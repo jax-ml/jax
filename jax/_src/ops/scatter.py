@@ -107,6 +107,7 @@ def index_add(x, idx, y, indices_are_sorted=False, unique_indices=False):
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
+
     x[idx] += y
 
   Note the `index_add` operator is pure; `x` itself is
@@ -149,6 +150,7 @@ def index_mul(x, idx, y, indices_are_sorted=False, unique_indices=False):
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
+
     x[idx] *= y
 
   Note the `index_mul` operator is pure; `x` itself is
@@ -191,6 +193,7 @@ def index_min(x, idx, y, indices_are_sorted=False, unique_indices=False):
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
+
     x[idx] = minimum(x[idx], y)
 
   Note the `index_min` operator is pure; `x` itself is
@@ -230,6 +233,7 @@ def index_max(x, idx, y, indices_are_sorted=False, unique_indices=False):
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
+
     x[idx] = maximum(x[idx], y)
 
   Note the `index_max` operator is pure; `x` itself is
@@ -269,6 +273,7 @@ def index_update(x, idx, y, indices_are_sorted=False, unique_indices=False):
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
+
     x[idx] = y
 
   Note the `index_update` operator is pure; `x` itself is

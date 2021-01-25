@@ -109,6 +109,8 @@ exclude_patterns = [
     'notebooks/XLA_in_Python.ipynb',
     # Sometimes sphinx reads its own outputs as inputs!
     'build/html',
+    'notebooks/README.md',
+    'README.md',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
