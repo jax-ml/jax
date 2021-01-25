@@ -28,6 +28,10 @@ jax 0.2.9 (Unreleased)
   * Extend the `jax.experimental.loops` module with support for pytrees. Improved
     error checking and error messages.
 
+  * Add :func:`jax.experimental.enable_x64` and :func:`jax.experimental.disable_x64`.
+    These are context managers which allow X64 mode to be temporarily enabled/disabled
+    within a session.
+
 jaxlib 0.1.60 (Unreleased)
 --------------------------
 

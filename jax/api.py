@@ -375,8 +375,8 @@ def _cpp_jit(
   @wraps(fun)
   @api_boundary
   def f_jitted(*args, **kwargs):
-    context = getattr(core.thread_local_state.trace_state.trace_stack,
-                      'dynamic', None)
+    context = (getattr(core.thread_local_state.trace_state.trace_stack,
+                       'dynamic', None), bool(FLAGS.jax_enable_x64))
     # TODO(jblespiau): Move this to C++.
     if (FLAGS.jax_debug_nans or FLAGS.jax_debug_infs) and not _jit_is_disabled():
       device_arrays = cpp_jitted_f(context, *args, **kwargs)

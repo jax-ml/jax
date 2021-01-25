@@ -72,6 +72,9 @@ from ._src.util import curry
 from .tree_util import tree_map
 
 from ._src import traceback_util
+
+from .config import FLAGS
+
 traceback_util.register_exclusion(__file__)
 
 
@@ -246,9 +249,9 @@ def cache(call: Callable):
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
     if core.debug_state.check_leaks:
-      key = (_copy_main_traces(fun.transforms), fun.params, args)
+      key = (_copy_main_traces(fun.transforms), fun.params, args, bool(FLAGS.jax_enable_x64))
     else:
-      key = (fun.transforms, fun.params, args)
+      key = (fun.transforms, fun.params, args, bool(FLAGS.jax_enable_x64))
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result

@@ -52,7 +52,10 @@ pytype_library(
 
 pytype_library(
     name = "experimental",
-    srcs = ["experimental/__init__.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/x64_context.py",
+    ],
     srcs_version = "PY3",
     deps = [":jax"],
 )
