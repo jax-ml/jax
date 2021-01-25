@@ -796,14 +796,7 @@ def _all_gather_batched_collective(frame, vals_in, dims_in, all_gather_dimension
   assert axis_name == frame.name, "batcher called with wrong axis name"
   (x,), (d,) = vals_in, dims_in
   assert d is not batching.not_mapped
-  if d <= all_gather_dimension:
-    all_gather_dimension += 1
-  else:
-    d += 1
-  out_shape = list(x.shape)
-  out_shape.insert(all_gather_dimension, axis_size)
-  broadcast_dims = [i for i in range(len(out_shape)) if i != all_gather_dimension]
-  return lax.broadcast_in_dim(x, out_shape, broadcast_dims), d
+  return _moveaxis(d, all_gather_dimension, x), batching.not_mapped
 
 all_gather_p = core.Primitive('all_gather')
 all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
