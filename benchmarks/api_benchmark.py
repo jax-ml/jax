@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from absl.testing import absltest
 import google_benchmark as benchmark
 
 
@@ -179,5 +180,15 @@ def swap(a, b):
   return b, a
 
 
-if __name__ == "__main__":
-  benchmark.main()
+class ApiBenchmark(absltest.TestCase):
+
+  def testMain(self):
+    try:
+      benchmark.main()
+    except SystemExit:
+      # benchmark.main calls sys.exit
+      pass
+
+
+if __name__ == '__main__':
+  absltest.main()
