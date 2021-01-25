@@ -1210,12 +1210,14 @@ class BatchingTest(jtu.JaxTestCase):
           "vmap collectives only supported when omnistaging is enabled")
   def testAllGatherOfConst(self):
     def f(x):
-      return lax.all_gather(jnp.ones_like(x), axis_name='i')
+      a = lax.all_gather(jnp.ones_like(x), axis_name='i')
+      b = lax.all_gather(1, axis_name='i')
+      return a, b
 
     x = jnp.arange(15).reshape((3, 5))
-    self.assertAllClose(
-      vmap(f, axis_name='i', in_axes=1, out_axes=None)(x),
-      jnp.ones(shape=(5, 3), dtype=x.dtype))
+    a, b = vmap(f, axis_name='i', in_axes=1, out_axes=None)(x)
+    self.assertAllClose(a, jnp.ones(shape=(5, 3), dtype=x.dtype))
+    self.assertAllClose(b, jnp.ones(shape=(5,), dtype=b.dtype))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

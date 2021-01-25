@@ -745,7 +745,7 @@ def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_group
 
 def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
   # Only called when the argument is not mapped.
-  out_shape = list(x.shape)
+  out_shape = list(np.shape(x))
   out_shape.insert(all_gather_dimension, axis_size)
   broadcast_dims = [i for i in range(len(out_shape)) if i != all_gather_dimension]
   return lax.broadcast_in_dim(x, out_shape, broadcast_dims)
