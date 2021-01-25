@@ -18,7 +18,7 @@ import numpy as np
 import itertools as it
 from collections import OrderedDict
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
-                    NamedTuple, Union)
+                    NamedTuple, Union, Sequence)
 from warnings import warn
 from functools import wraps, partial
 
@@ -115,9 +115,32 @@ thread_resources = threading.local()
 thread_resources.env = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
 @contextlib.contextmanager
-def mesh(*args, **kwargs):
+def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
+  """Declare the hardware resources available in scope of this manager.
+
+  In particular, all ``axis_names`` become valid resource names inside the
+  managed block and can be used e.g. in the ``axis_resources`` argument of
+  :py:func:`xmap`.
+
+  Args:
+    devices: A NumPy ndarray object containing JAX device objects (as
+      obtained e.g. from :py:func:`jax.devices`).
+    axis_names: A sequence of resource axis names to be assigned to the
+      dimensions of the ``devices`` argument. Its length should match the
+      rank of ``devices``.
+
+  Example::
+
+    devices = np.array(jax.devices())[:4].reshape((2, 2))
+    with mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
+      distributed_out = xmap(
+        jnp.vdot,
+        in_axes=({0: 'left', 1: 'right'}),
+        out_axes=['left', 'right', ...],
+        axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
+  """
   old_env = thread_resources.env
-  thread_resources.env = ResourceEnv(Mesh(*args, **kwargs))
+  thread_resources.env = ResourceEnv(Mesh(devices, axis_names))
   try:
     yield
   finally:
@@ -188,9 +211,157 @@ def xmap(fun: Callable,
          out_axes,
          axis_resources: Dict[AxisName, Union[ResourceAxisName, Tuple[ResourceAxisName, ...]]] = {},
          backend: Optional[str] = None):
+  """Assign a positional signature to a program that uses named array axes.
+
+  .. warning::
+    This is an experimental feature and the details can change at
+    any time. Use at your own risk!
+
+  .. warning::
+    This docstring is aspirational. Not all features of the named axis
+    programming model have been implemented just yet.
+
+  The usual programming model of JAX (or really NumPy) associates each array
+  with two pieces of metadata describing its type: the element type (``dtype``)
+  and the ``shape``. :py:func:`xmap` extends this model by adding support for
+  *named axes*.  In particular, each array used in a function wrapped by
+  :py:func:`xmap` can additionally have a non-empty ``named_shape`` attribute,
+  which can be used to query the set of named axes (introduced by
+  :py:func:`xmap`) appearing in that value along with their shapes.
+  Furthermore, in most places where positional axis indices are allowed (for
+  example the `axes` arguments in :py:func:`sum`), bound axis names are also
+  accepted. The :py:func:`einsum` language is extended inside :py:func:`xmap`
+  to additionally allow contractions that involve named axes.  Broadcasting of
+  named axes happens *by name*, i.e. all axes with equal names are expected to
+  have equal shapes in all arguments of a broadcasting operation, while the
+  result has a (set) union of all named axes.  The positional semantics of the
+  program remain unchanged, and broadcasting still implicitly right-aligns
+  positional axes for unification. For an extended description of the
+  :py:func:`xmap` programming model, please refer to ... (a link to a
+  non-existent detailed tutorial!).
+
+  Note that since all top-level JAX expressions are interpreted in the NumPy
+  programming model, :py:func:`xmap` can also be seen as an adapter that
+  converts a function that uses named axes (including in arguments and returned
+  values) into one that takes and returns values that only have positional
+  axes.
+
+  The default lowering strategy of :py:func:`xmap` converts all named axes into
+  positional axes, working similarly to multiple applications of
+  :py:func:`vmap`. However, this behavior can be further customized by the
+  ``axis_resources`` argument.  When specified, each axis introduced by
+  :py:func:`xmap` can be assigned to one or more *resource axes*. Those include
+  the axes of the hardware mesh, as defined by the :py:func:`mesh` context
+  manager. Each value that has a named axis in its ``named_shape`` will be
+  partitioned over all mesh axes that axis is assigned to. Hence,
+  :py:func:`xmap` can be seen as an alternative to :py:func:`pmap` that also
+  exposes a way to automatically partition the computation over multiple
+  devices.
+
+  .. warning::
+    While it is possible to assign multiple axis names to a single resource axis,
+    care has to be taken to ensure that none of those named axes co-occur in a
+    ``named_shape`` of any value in the named program. At the moment this is
+    **completely unchecked** and will result in **undefined behavior**. Final
+    release of :py:func:`xmap` will enforce this invariant, but it is work
+    in progress.
+
+    Note that you do not have to worry about any of this for as long as no
+    resource axis is repeated in ``axis_resources.values()``.
+
+  Note that any assignment of ``axis_resources`` doesn't ever change the
+  results of the computation, but only how it is carried out (e.g. how many
+  devices are used).  This makes it easy to try out various ways of
+  partitioning a single program in many distributed scenarions (both small- and
+  large-scale), to maximize the performance.  As such, :py:func:`xmap` can be
+  seen as a way to seamlessly interpolate between :py:func:`vmap` and
+  :py:func:`pmap`-style execution.
+
+  Args:
+    fun: Function that uses named axes. Its arguments and return
+      value should be arrays, scalars, or (nested) standard Python containers
+      (tuple/list/dict) thereof (in general: valid pytrees).
+    in_axes: A Python object with the same container (pytree) structure as the
+      signature of arguments to ``fun``, but with a positional-to-named axis
+      mapping in place of every array argument. The valid positional-to-named
+      mappings are: (1) a ``Dict[int, AxisName]`` specifying that a positional
+      dimensions given by dictionary keys are to be converted to named axes
+      of given names (2) a list of axis names that ends with the Ellipsis object
+      (``...``) in which case a number of leading positional axes of the argument
+      will be converted into named axes inside the function. Note that ``in_axes``
+      can also be a prefix of the argument container structure, in which case the
+      mapping is repeated for all arrays in the collapsed subtree.
+    out_axes: A Python object with the same container (pytree) structure as the
+      returns of ``fun``, but with a positional-to-named axis mapping in place
+      of every returned array. The valid positional-to-named mappings are the same
+      as in ``in_axes``. Note that ``out_axes`` can also be a prefix of the return
+      container structure, in which case the mapping is repeated for all arrays
+      in the collapsed subtree.
+    axis_resources: A dictionary mapping the axes introduced in this
+      :py:func:`xmap` to one or more resource axes. Any array that has in its
+      shape an axis with some resources assigned will be partitioned over the
+      resources associated with the respective resource axes.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the XLA backend. 'cpu', 'gpu', or 'tpu'.
+
+  Returns:
+    A version of ``fun`` that takes in arrays with positional axes in place of
+    named axes bound in this :py:func:`xmap` call, and results with all named
+    axes converted to positional axes. If ``axis_resources`` is specified,
+    ``fun`` can additionally execute in parallel on multiple devices.
+
+  For example, :py:func:`xmap` makes it very easy to convert a function that
+  computes the vector inner product (such as :py:func:`jax.numpy.vdot`) into
+  one that computes a matrix multiplication:
+
+  >>> import jax.numpy as jnp
+  >>> x = jnp.arange(10).reshape((2, 5))
+  >>> xmap(jnp.vdot,
+  ...      in_axes=({0: 'left'}, {1: 'right'}),
+  ...      out_axes=['left', 'right', ...])(x, x.T)
+  [[ 2,  3],
+   [ 6, 11]]
+
+  Note that the contraction in the program is performed over the positional axes,
+  while named axes are just a convenient way to achieve batching. While this
+  might seem like a silly example at first, it might turn out to be useful in
+  practice, since with conjuction with ``axis_resources`` this makes it possible
+  to implement a distributed matrix-multiplication in just a few lines of code:
+
+  >>> devices = np.array(jax.devices())[:4].reshape((2, 2))
+  >>> with mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
+  ...   distributed_out = xmap(
+  ...     jnp.vdot,
+  ...     in_axes=({0: 'left', 1: 'right'}),
+  ...     out_axes=['left', 'right', ...],
+  ...     axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
+
+  Still, the above examples are quite simple. After all, the :py:func:`xmap`ped
+  computation was a simple NumPy function that didn't use the axis names at all!
+  So, let's explore a slightly larger example which is linear regression::
+
+    def regression_loss(x, y, w, b):
+      # Contract over in_features. Batch and out_features are present in
+      # both inputs and output, so they don't need to be mentioned
+      y_pred = jnp.einsum('{in_features},{in_features}->{}') + b
+      return jnp.mean((y - y_pred) ** 2, axis='batch')
+
+    xmap(regression_loss,
+         in_axes=(['batch', 'in_features', ...],
+                  ['batch', 'out_features', ...],
+                  ['in_features', 'out_features', ...],
+                  ['out_features', ...]),
+         out_axes={})  # Loss is reduced over all axes, including batch!
+
+  .. note::
+    When using ``axis_resources`` along with a mesh that is controled by
+    multiple JAX hosts, keep in mind that in any given process :py:func:`xmap`
+    only expects the data slice that corresponds to its local devices to be
+    specified. This is in line with the current multi-host :py:func:`pmap`
+    programming model.
+  """
   warn("xmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
-
 
   # To be a tree prefix of the positional args tuple, in_axes can never be a
   # list: if in_axes is not a leaf, it must be a tuple of trees. However,
