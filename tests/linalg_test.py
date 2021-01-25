@@ -501,10 +501,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     args_maker = lambda: [rng(shape, dtype)]
     np_fn = partial(np.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
-    np_fn = partial(jnp.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
-    self._CheckAgainstNumpy(np_fn, np_fn, args_maker, check_dtypes=False,
+    jnp_fn = partial(jnp.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-3)
-    self._CompileAndCheck(np_fn, args_maker)
+    self._CompileAndCheck(jnp_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_full_matrices={}_compute_uv={}".format(
