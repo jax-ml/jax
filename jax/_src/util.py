@@ -22,6 +22,7 @@ from typing import Any, Callable
 import numpy as np
 
 import jax
+from jax.config import FLAGS
 
 partial = functools.partial
 
@@ -185,22 +186,34 @@ def split_merge(predicate, xs):
 
 def cache(max_size=4096):
   def wrap(f):
-    cached = functools.lru_cache(maxsize=max_size)(f)
+    @functools.lru_cache(max_size)
+    def cached(_, *args, **kwargs):
+      return f(*args, **kwargs)
 
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
       if jax.core.debug_state.check_leaks:
         return f(*args, **kwargs)
       else:
-        return cached(*args, **kwargs)
+        return cached(bool(FLAGS.jax_enable_x64), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
     return wrapper
   return wrap
 
+def memoize(f):
+  @functools.lru_cache(None)
+  def memoized(_, *args, **kwargs):
+    return f(*args, **kwargs)
 
-memoize: Callable[[Callable], Any] = functools.lru_cache(maxsize=None)
+  @functools.wraps(f)
+  def wrapper(*args, **kwargs):
+    return memoized(bool(FLAGS.jax_enable_x64), *args, **kwargs)
+
+  wrapper.cache_clear = memoized.cache_clear
+  wrapper.cache_info = memoized.cache_info
+  return wrapper
 
 def prod(xs):
   out = 1

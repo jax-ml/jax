@@ -20,7 +20,7 @@ XLA. There are also a handful of related casting utilities.
 """
 
 
-from functools import partial
+from functools import partial, lru_cache
 import os
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -161,7 +161,7 @@ if tpu_client:
 
 _backend_lock = threading.Lock()
 
-@util.memoize
+@lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
 def get_backend(platform=None):
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled

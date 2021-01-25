@@ -260,7 +260,7 @@ def _make_lattice_upper_bounds():
   return upper_bounds
 _lattice_upper_bounds = _make_lattice_upper_bounds()
 
-@functools.lru_cache(512)
+@functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
 def _least_upper_bound(*nodes):
   # This function computes the least upper bound of a set of nodes N within a partially
   # ordered set defined by the lattice generated above.
