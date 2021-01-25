@@ -17,4 +17,5 @@
 from jax._src.scipy.stats.poisson import (
   logpmf,
   pmf,
+  cdf
 )
