@@ -23,6 +23,7 @@ from .api import (
   ad,  # TODO(phawkins): update users to avoid this.
   argnums_partial,  # TODO(phawkins): update Haiku to not use this.
   checkpoint,
+  closure_convert,
   curry,  # TODO(phawkins): update users to avoid this.
   custom_ivjp,
   custom_gradient,
