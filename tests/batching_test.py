@@ -1170,6 +1170,54 @@ class BatchingTest(jtu.JaxTestCase):
     y = vmap(f)(a=jnp.array([1]), b=jnp.array([2]))  # doesn't work
     self.assertAllClose(x, y)
 
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllGatherToUnmapped(self):
+    def f(x):
+      return lax.all_gather(x, axis_name='i')
+
+    x = jnp.arange(15).reshape((3, 5))
+    # Original mapped axis becomes first axis of unmapped return value.
+    self.assertAllClose(vmap(f, axis_name='i', in_axes=1, out_axes=None)(x), x.T)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testBatchedAllGather(self):
+    def f(x):
+      return lax.all_gather(x, axis_name='i')
+
+    x = jnp.arange(15).reshape((3, 5))
+    res = vmap(vmap(f, axis_name='i', out_axes=None), axis_name='j')(x)
+    self.assertAllClose(res, x)
+
+    res = vmap(vmap(f, axis_name='j'), axis_name='i', out_axes=None)(x)
+    self.assertAllClose(res, x.T)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllGatherVjp(self):
+    def f(x):
+      return lax.all_gather(x, axis_name='i')
+
+    rng = np.random.RandomState(1)
+    x = rng.randn(3, 4)
+    y_bar = rng.randn(3, 3, 4)
+
+    x_bar, = vmap(lambda x, y_bar: vjp(f, x)[1](y_bar), axis_name='i')(x, y_bar)
+    self.assertAllClose(x_bar, np.sum(y_bar, axis=0))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllGatherOfConst(self):
+    def f(x):
+      a = lax.all_gather(jnp.ones_like(x), axis_name='i')
+      b = lax.all_gather(1, axis_name='i')
+      return a, b
+
+    x = jnp.arange(15).reshape((3, 5))
+    a, b = vmap(f, axis_name='i', in_axes=1, out_axes=None)(x)
+    self.assertAllClose(a, jnp.ones(shape=(5, 3), dtype=x.dtype))
+    self.assertAllClose(b, jnp.ones(shape=(5,), dtype=b.dtype))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

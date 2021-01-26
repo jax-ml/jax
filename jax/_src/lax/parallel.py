@@ -743,6 +743,13 @@ def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_group
   outs = tree_util.tree_map(partial(_expand, all_gather_dimension, axis_size, index), x)
   return psum(outs, axis_name, axis_index_groups=axis_index_groups)
 
+def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+  # Only called when the argument is not mapped.
+  out_shape = list(np.shape(x))
+  out_shape.insert(all_gather_dimension, axis_size)
+  broadcast_dims = [i for i in range(len(out_shape)) if i != all_gather_dimension]
+  return lax.broadcast_in_dim(x, out_shape, broadcast_dims)
+
 def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, axis_env, platform):
   # TODO(cjfj): Enable this for TPU also?
   if (platform == 'gpu') and (all_gather_dimension == 0):
@@ -796,17 +803,11 @@ def _all_gather_batched_collective(frame, vals_in, dims_in, all_gather_dimension
   assert axis_name == frame.name, "batcher called with wrong axis name"
   (x,), (d,) = vals_in, dims_in
   assert d is not batching.not_mapped
-  if d <= all_gather_dimension:
-    all_gather_dimension += 1
-  else:
-    d += 1
-  out_shape = list(x.shape)
-  out_shape.insert(all_gather_dimension, axis_size)
-  broadcast_dims = [i for i in range(len(out_shape)) if i != all_gather_dimension]
-  return lax.broadcast_in_dim(x, out_shape, broadcast_dims), d
+  return _moveaxis(d, all_gather_dimension, x), batching.not_mapped
 
 all_gather_p = core.Primitive('all_gather')
 all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
+all_gather_p.def_impl(_all_gather_impl)
 xla.parallel_translations[all_gather_p] = _all_gather_translation_rule
 ad.deflinear2(all_gather_p, _all_gather_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_gather_p)
