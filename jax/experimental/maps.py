@@ -457,7 +457,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
   with core.extend_axis_env_nd(axis_sizes.items()):
     jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
   out_axes = out_axes_thunk()
-  jaxpr = subst_axis_names(jaxpr, plan.axis_subst)
+  jaxpr = subst_jaxpr_axis_names(jaxpr, plan.axis_subst)
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
@@ -638,7 +638,7 @@ def _xmap_translation_rule_replica(c, axis_env,
                  in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
   # We have to substitute before tracing, because we want the vectorized
   # axes to be used in the jaxpr.
-  resource_call_jaxpr = subst_axis_names(call_jaxpr, plan.axis_subst)
+  resource_call_jaxpr = subst_jaxpr_axis_names(call_jaxpr, plan.axis_subst)
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
   f = plan.vectorize(f, in_axes, out_axes)
@@ -808,7 +808,7 @@ def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
       used_resources |= update
   return used_resources
 
-def subst_axis_names(jaxpr, axis_subst: Dict[AxisName, Tuple[AxisName]]):
+def subst_jaxpr_axis_names(jaxpr, axis_subst: Dict[AxisName, Tuple[AxisName]]):
   eqns = [subst_eqn_axis_names(eqn, axis_subst) for eqn in jaxpr.eqns]
   return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, eqns)
 
@@ -822,7 +822,7 @@ def subst_eqn_axis_names(eqn, axis_subst: Dict[AxisName, Tuple[AxisName]]):
         del shadowed_subst[saxis]
     else:
       shadowed_subst = axis_subst
-    new_call_jaxpr = subst_axis_names(eqn.params['call_jaxpr'], shadowed_subst)
+    new_call_jaxpr = subst_jaxpr_axis_names(eqn.params['call_jaxpr'], shadowed_subst)
     return eqn._replace(params=dict(eqn.params, call_jaxpr=new_call_jaxpr))
   if isinstance(eqn.primitive, (core.CallPrimitive, core.MapPrimitive)):
     bound_name = eqn.params.get('axis_name', None)
@@ -831,15 +831,11 @@ def subst_eqn_axis_names(eqn, axis_subst: Dict[AxisName, Tuple[AxisName]]):
       del sub_subst[bound_name]
     else:
       sub_subst = axis_subst
-    new_call_jaxpr = subst_axis_names(eqn.params['call_jaxpr'], sub_subst)
+    new_call_jaxpr = subst_jaxpr_axis_names(eqn.params['call_jaxpr'], sub_subst)
     return eqn._replace(params=dict(eqn.params, call_jaxpr=new_call_jaxpr))
-  if 'axis_name' not in eqn.params:
-    return eqn
-  axis_names = eqn.params['axis_name']
-  if not isinstance(axis_names, (tuple, list)):
-    axis_names = (axis_names,)
-  new_axis_names = sum((axis_subst.get(name, (name,)) for name in axis_names), ())
-  return eqn._replace(params=dict(eqn.params, axis_name=new_axis_names))
+  new_params = core.subst_axis_names(eqn.primitive, eqn.params,
+                                     lambda name: axis_subst.get(name, (name,)))
+  return eqn if new_params is eqn.params else eqn._replace(params=new_params)
 
 
 # -------- soft_pmap --------

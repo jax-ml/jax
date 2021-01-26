@@ -484,6 +484,12 @@ class XeinsumSpecParser:
 
 ### parallel primitives
 
+def _subst_all_names_in_axis_name(params: core.ParamDict, subst: core.AxisSubst) -> core.ParamDict:
+  axis_name = params['axis_name']
+  if not isinstance(axis_name, (tuple, list)):
+    axis_name = (axis_name,)
+  return dict(params, axis_name=sum((subst(name) for name in axis_name), ()))
+
 # This is only used for collectives that do not include the vmapped axis name,
 # which is why the rule is so simple.
 def _collective_batcher(prim, args, dims, **params):
@@ -593,6 +599,7 @@ batching.collective_rules[psum_p] = \
           psum_p,
           lambda v, d: v.sum(d),
           lambda v, axis_size: axis_size * v)
+core.axis_substitution_rules[psum_p] = _subst_all_names_in_axis_name
 
 # We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
 # tracing time.
@@ -619,6 +626,7 @@ batching.primitive_batchers[pmax_p] = partial(_collective_batcher, pmax_p)
 batching.collective_rules[pmax_p] = \
   partial(_batched_reduction_collective, pmax_p,
           lambda v, d: v.max(d), lambda v, axis_size: v)
+core.axis_substitution_rules[pmax_p] = _subst_all_names_in_axis_name
 
 
 pmin_p = core.Primitive('pmin')
@@ -630,6 +638,7 @@ batching.primitive_batchers[pmin_p] = partial(_collective_batcher, pmin_p)
 batching.collective_rules[pmin_p] = \
   partial(_batched_reduction_collective, pmin_p,
           lambda v, d: v.min(d), lambda v, axis_size: v)
+core.axis_substitution_rules[pmin_p] = _subst_all_names_in_axis_name
 
 
 def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
@@ -668,6 +677,7 @@ xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
 batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
 batching.collective_rules[ppermute_p] = _ppermute_batcher
+core.axis_substitution_rules[ppermute_p] = _subst_all_names_in_axis_name
 
 
 def _moveaxis(src, dst, x):
@@ -785,6 +795,7 @@ ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
 batching.collective_rules[all_to_all_p] = _all_to_all_batched_collective
+core.axis_substitution_rules[all_to_all_p] = _subst_all_names_in_axis_name
 
 
 def _expand(dim, size, index, x):
@@ -936,6 +947,7 @@ ad.deflinear2(all_gather_p, _all_gather_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_gather_p)
 batching.primitive_batchers[all_gather_p] = _all_gather_batcher
 batching.collective_rules[all_gather_p] = _all_gather_batched_collective
+core.axis_substitution_rules[all_gather_p] = _subst_all_names_in_axis_name
 
 def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
   axis_pos = list(axis_env.names).index(axis_name)
@@ -951,6 +963,7 @@ xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
 axis_index_p.def_abstract_eval(
     lambda *args, **params: ShapedArray((), np.int32))
 pxla.multi_host_supported_collectives.add(axis_index_p)
+core.axis_substitution_rules[axis_index_p] = _subst_all_names_in_axis_name
 
 # Axis index doesn't get any arguments, so that the default bind would have no
 # way to call into a data-dependency based trace such as vmap. Each trace that
@@ -980,6 +993,7 @@ batching.BatchTrace.process_axis_index = _process_axis_index  # type: ignore
 
 
 pdot_p = core.Primitive('pdot')
+core.axis_substitution_rules[pdot_p] = _subst_all_names_in_axis_name
 
 @pdot_p.def_impl
 def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch):
