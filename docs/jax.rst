@@ -50,6 +50,7 @@ Automatic differentiation
     vjp
     custom_jvp
     custom_vjp
+    closure_convert
     checkpoint
 
 
@@ -101,6 +102,8 @@ Parallelization (:code:`pmap`)
 .. autoclass:: custom_vjp
 
     .. automethod:: defvjp
+
+.. autofunction:: closure_convert
 
 .. autofunction:: checkpoint
 
