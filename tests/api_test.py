@@ -4536,6 +4536,15 @@ class CustomVJPTest(jtu.JaxTestCase):
         api.grad(lambda x: jnp.sum(jnp.sin(x)))(jnp.arange(3.)) * jnp.array([3., 4., 5.]),
         check_dtypes=False)
 
+  def test_custom_gradient_can_return_singleton_value_in_vjp(self):
+    @api.custom_gradient
+    def f(x):
+      return x ** 2, lambda g: g * x
+
+    self.assertAllClose(f(3.), 9., check_dtypes=False)
+    self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
+    self.assertAllClose(api.grad(api.grad(f))(3.), 1., check_dtypes=False)
+
   def test_closure_convert(self):
     def minimize(objective_fn, x0):
       converted_fn, aux_args = api.closure_convert(objective_fn, x0)
