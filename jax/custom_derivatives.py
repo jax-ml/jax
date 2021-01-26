@@ -22,7 +22,7 @@ from . import core
 from . import dtypes
 from . import linear_util as lu
 from .tree_util import (tree_flatten, tree_unflatten, tree_map, tree_multimap,
-                        register_pytree_node_class)
+                        treedef_is_leaf, register_pytree_node_class)
 from ._src.util import cache, safe_zip, safe_map, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .core import raise_to_shaped
@@ -818,7 +818,10 @@ def custom_gradient(fun):
     cts_flat, out_tree_ = tree_flatten((cts,))
     if out_tree != out_tree_: raise TypeError(f'{out_tree}\n!=\n{out_tree_}')
     cts_out = core.eval_jaxpr(jaxpr, consts, *cts_flat)
-    return tree_unflatten(in_tree, cts_out)
+    cts_out = tree_unflatten(in_tree, cts_out)
+    if treedef_is_leaf(in_tree):
+      cts_out = (cts_out,)
+    return cts_out
 
   wrapped_fun.defvjp(fwd, bwd)
   return wrapped_fun
