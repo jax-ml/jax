@@ -45,6 +45,8 @@ import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
+from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # type: ignore[import]
+# pylint: enable=g-direct-tensorflow-import
 
 from jax.lib import xla_client
 
@@ -744,6 +746,8 @@ class TensorFlowTrace(core.Trace):
       with tf.name_scope(_sanitize_scope_name(params["name"])):
         vals_out: Sequence[Tuple[TfVal,
                                  core.AbstractValue]] = f.call_wrapped(*vals)
+    elif call_primitive == sharded_jit.sharded_call_p:
+      vals_out = _sharded_call(f, vals, **params)
     else:
       vals_out = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
@@ -829,8 +833,6 @@ tf_not_yet_impl = [
   lax_parallel.axis_index_p, lax_parallel.pdot_p, lax_parallel.all_gather_p,
 
   pxla.xla_pmap_p,
-
-  sharded_jit.sharding_constraint_p
 ]
 
 try:
@@ -2184,6 +2186,60 @@ def _custom_lin(*args: TfVal, **_) -> Sequence[TfVal]:
                   "function.")
 
 tf_impl[ad.custom_lin_p] = _custom_lin
+
+
+def split_to_logical_devices(
+    tensor: TfVal,
+    partition_dimensions: pxla.PartitionsOrReplicated):
+  """Like TPUMPStrategy.experimental_split_to_logical_devices.
+
+  For jax2tf purposes we want to avoid needing to thread the `strategy` object
+  through the generated computation. It seems that the original function needs
+  the strategy object only for error checking, which we assume is done upstream
+  by JAX.
+
+  Args:
+    tensor: Input tensor to annotate.
+    partition_dimensions: A list of integers, with one integer per tensor
+      dimension, specifying in how many parts the dimension should be split. The
+      product of integers must equal the number of devices per replica.
+    use_sharding_op: whether to use a sharding op, or not.
+
+  Returns:
+    an annotated tensor.
+  """
+  # This corresponds to the sharding annotations in
+  # xla_bridge._sharding_to_proto.
+  if partition_dimensions is None:
+    return xla_sharding.replicate(tensor, use_sharding_op=True)
+  num_partition_splits = np.prod(partition_dimensions)
+  tile_assignment = np.arange(num_partition_splits).reshape(
+      partition_dimensions)
+  return xla_sharding.tile(tensor, tile_assignment, use_sharding_op=True)
+
+
+def _sharded_call(f: lu.WrappedFun, vals: Sequence[TfVal],
+                  in_parts: Sequence[pxla.PartitionsOrReplicated],
+                  out_parts_thunk,
+                  **_) -> Sequence[Tuple[TfVal, core.AbstractValue]]:
+  sharded_vals = util.safe_map(split_to_logical_devices, vals, in_parts)
+  vals_out = f.call_wrapped(*sharded_vals)
+  out_parts_flat = out_parts_thunk()
+  assert len(out_parts_flat) == len(vals_out), f"expected {len(out_parts_flat)} == {len(vals_out)}"
+  sharded_vals_out = [
+      (split_to_logical_devices(val, val_part), val_aval)
+      for (val, val_aval), val_part in util.safe_zip(vals_out, out_parts_flat)
+  ]
+  return sharded_vals_out
+
+
+def _sharding_constraint(arg: TfVal, *,
+                         partitions: pxla.PartitionsOrReplicated):
+  return split_to_logical_devices(arg, partitions)
+
+
+tf_impl[sharded_jit.sharding_constraint_p] = _sharding_constraint
+
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""

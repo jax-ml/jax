@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from .jax2tf import convert, shape_as_value
+from .jax2tf import convert, shape_as_value, split_to_logical_devices
