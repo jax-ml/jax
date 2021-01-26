@@ -684,14 +684,18 @@ class PDotTests(jtu.JaxTestCase):
                in_axes=(['i', 'j', ...], ['j', 'k', ...]),
                out_axes=['i', 'k', ...])(x, y)
     expected = np.einsum('ij,jk->ik', x, y)
-    self.assertAllClose(out, expected, check_dtypes=True)
+    tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+    self.assertAllClose(out, expected, check_dtypes=True,
+                        atol=tol, rtol=tol)
 
     # order of named axes in the spec doesn't matter!
     out = xmap(partial(jnp.einsum, '{i,j},{k,j}->{k,i}'),
                in_axes=(['i', 'j', ...], ['j', 'k', ...]),
                out_axes=['i', 'k', ...])(x, y)
     expected = np.einsum('ij,jk->ik', x, y)
-    self.assertAllClose(out, expected, check_dtypes=True)
+    tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+    self.assertAllClose(out, expected, check_dtypes=True,
+                        atol=tol, rtol=tol)
 
   def test_xeinsum_no_named_axes_vector_dot(self):
     rng = np.random.RandomState(0)
