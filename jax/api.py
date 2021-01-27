@@ -1577,37 +1577,6 @@ def pmap(
   return f_pmapped
 
 
-def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
-              ) -> Callable:
-  if not config.omnistaging_enabled:
-    raise NotImplementedError("soft_pmap requires omnistaging.")
-  warn("soft_pmap is an experimental feature and probably has bugs!")
-  _check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
-
-  if any(axis != 0 for axis in tree_leaves(in_axes)):
-    raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")
-
-  @wraps(fun)
-  @api_boundary
-  def f_pmapped(*args, **kwargs):
-    f = lu.wrap_init(fun)
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    in_axes_flat = flatten_axes("soft_pmap in_axes", in_tree, (in_axes, 0))
-    axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
-    for arg in args_flat: _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    # See note about out_axes_thunk in pmap for the explanation of why we choose this key
-    out_axes_thunk = HashableFunction(
-      lambda: tuple(flatten_axes("soft_pmap out_axes", out_tree(), 0)),
-      closure=())
-    outs = pxla.soft_pmap(flat_fun, *args_flat, axis_name=axis_name,
-                          axis_size=axis_size, in_axes=tuple(in_axes_flat),
-                          out_axes_thunk=out_axes_thunk)
-    return tree_unflatten(out_tree(), outs)
-  return f_pmapped
-
-
 def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
   _check_callable(fun)
   unique_ids = masking.UniqueIds()

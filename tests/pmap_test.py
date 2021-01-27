@@ -35,8 +35,8 @@ from jax import tree_util
 from jax import lax
 from jax import random
 from jax.core import ShapedArray
-from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
-                     linearize, device_put)
+from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
+                 linearize, device_put)
 from jax.lib import xla_bridge
 from jax._src.util import prod, safe_map
 from jax.interpreters import pxla
@@ -99,9 +99,6 @@ def tearDownModule():
   else:
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
-
-ignore_soft_pmap_warning = partial(
-  jtu.ignore_warning, message="soft_pmap is an experimental.*")
 
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
@@ -1239,7 +1236,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(r, arr + 1)
     self.assertEqual(len(r.device_buffers), 6)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapBatchMatmul(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1249,7 +1246,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.einsum('nij,njk->nik', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapBatchMatmulJit(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1259,7 +1256,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.einsum('nij,njk->nik', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapPsumConstant(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1269,7 +1266,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = n * np.ones(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapPsum(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1279,7 +1276,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.ones(n) / n
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapAxisIndex(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1289,7 +1286,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = 2 * np.arange(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapOfJit(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1299,7 +1296,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = 3 * np.arange(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapNested(self):
     raise SkipTest("not implemented")  # TODO(mattjj): re-implement
     n = 4 * xla_bridge.device_count()
@@ -1314,7 +1311,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.arange(n ** 2).reshape(n, n).T
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testGradOfSoftPmap(self):
     raise SkipTest("not implemented")  # TODO(mattjj): re-implement
     n = 4 * xla_bridge.device_count()
@@ -1327,7 +1324,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.repeat(np.arange(n)[:, None], n, axis=1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapDevicePersistence(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     device_count = xla_bridge.device_count()

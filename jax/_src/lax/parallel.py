@@ -484,15 +484,6 @@ class XeinsumSpecParser:
 
 ### parallel primitives
 
-def _allreduce_soft_pmap_rule(prim, reducer, vals, mapped, chunk_size,
-                              *, axis_name, axis_index_groups):
-  if axis_index_groups is not None:
-    raise NotImplementedError("soft_pmap does not yet support axis_index_groups")
-  reduced_vals = [reducer(x, [0]) if m else x for x, m in zip(vals, mapped)]
-  outs = prim.bind(*reduced_vals, axis_name=axis_name,
-                   axis_index_groups=axis_index_groups)
-  return outs, (False,) * len(vals)
-
 # This is only used for collectives that do not include the vmapped axis name,
 # which is why the rule is so simple.
 def _collective_batcher(prim, args, dims, **params):
@@ -593,8 +584,6 @@ def _psum_transpose_rule(cts, *args, axis_name, axis_index_groups):
 psum_p = core.Primitive('psum')
 psum_p.multiple_results = True
 psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
-pxla.soft_pmap_rules[psum_p] = \
-    partial(_allreduce_soft_pmap_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = partial(_allreduce_translation_rule, lax.add_p)  # type: ignore
 ad.deflinear2(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
@@ -957,14 +946,8 @@ def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
   return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
-def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
-  assert not vals and not mapped
-  idx = axis_index(axis_name)  # type: ignore
-  return idx * chunk_size + np.arange(chunk_size, dtype=np.int32), True
-
 axis_index_p = core.Primitive('axis_index')
 xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
-pxla.soft_pmap_rules[axis_index_p] = _axis_index_soft_pmap_rule  # type: ignore
 axis_index_p.def_abstract_eval(
     lambda *args, **params: ShapedArray((), np.int32))
 pxla.multi_host_supported_collectives.add(axis_index_p)
@@ -991,6 +974,7 @@ def _axis_index_bind(*, axis_name):
 axis_index_p.def_custom_bind(_axis_index_bind)
 
 def _process_axis_index(self, frame):
+  assert frame.size is not None
   return batching.BatchTracer(self, lax_numpy.arange(frame.size, dtype=np.int32), 0)
 batching.BatchTrace.process_axis_index = _process_axis_index  # type: ignore
 
