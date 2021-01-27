@@ -1022,8 +1022,6 @@ else:
 
 _CppDeviceArray: DeviceArrayProtocol = xc.Buffer
 
-_EXPERIMENTAL_CPP_DEVICE_ARRAY = False
-
 
 def make_device_array(
     aval: core.ShapedArray,
@@ -1036,11 +1034,10 @@ def make_device_array(
   This is to be used only within JAX. It will return either a PythonDeviceArray
   or a C++ equivalent implementation.
   """
-  if (_EXPERIMENTAL_CPP_DEVICE_ARRAY and lazy.is_trivial(lazy_expr) and
-      not isinstance(device_buffer, DeviceConstant)):
-    assert isinstance(device_buffer, _CppDeviceArray)
+  if (lazy.is_trivial(lazy_expr) and
+      isinstance(device_buffer, _CppDeviceArray)):
     device_buffer._device = device    # pylint: disable=protected-access
-    device_buffer.aval = aval
+    device_buffer.aval = aval  # pytype: disable=not-writable
     return device_buffer
 
   return _DeviceArray(aval, device, lazy_expr, device_buffer)
