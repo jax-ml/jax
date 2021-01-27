@@ -75,10 +75,10 @@ traceback_util.register_exclusion(__file__)
 class StoreException(Exception): pass
 
 
-class EmptyStoreValue(object): pass
+class EmptyStoreValue: pass
 _EMPTY_STORE_VALUE = EmptyStoreValue()
 
-class Store(object):
+class Store:
   """Storage for a value, with checks for overwriting or reading empty store."""
   __slots__ = ("_val",)
 
@@ -104,6 +104,10 @@ class Store(object):
     return self._val is not _EMPTY_STORE_VALUE
 
   __bool__ = __nonzero__
+
+  def __repr__(self):
+    value = 'val=' + repr(self._val) if self else 'EMPTY'
+    return f'<jax.linear_util.Store {value}>'
 
 
 class WrappedFun(object):

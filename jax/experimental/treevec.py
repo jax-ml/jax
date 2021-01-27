@@ -14,6 +14,7 @@
 
 from functools import partial, reduce, wraps
 import itertools
+from jax._src.numpy.lax_numpy import isin
 import operator
 from typing import (
     Any, Callable, Dict, Iterable, Iterator, List, Sequence, Tuple, TypeVar,
@@ -33,6 +34,7 @@ from .._src.util import prod, safe_map as map, split_list, unzip2, unzip3
 from ..tree_util import (
     tree_structure, tree_flatten, tree_unflatten,
 )
+from jax import api_util
 
 
 TRIVIAL_TREEDEF = tree_structure(1)
@@ -236,24 +238,14 @@ class TreeTrace(core.Trace):
       return TreeTracer(self, *result)
 
   def process_call(self, call_primitive, f, tracers, params):
-    if call_primitive is tree_call_p:
-      treedefs_in, leaves_in = unzip2((t.treedefs, t.leaves) for t in tracers)
-      args = tuple(map(restore_tree, treedefs_in, leaves_in))
-      flat_args, in_tree = tree_flatten(args)
-      f, out_tree = flatten_fun_nokwargs(f, in_tree)
-      flat_result = call_primitive.bind(f, *flat_args, **params)
-      result = tree_unflatten(out_tree(), flat_result)
-      parts = unzip3(map(convert_vectorized_tree, result))
-      return map(partial(TreeTracer, self), *parts)
-    else:
-      flat_in, tree_tracer_def_in = _flatten_tree_tracers(tracers)
-      f_tree, out_structure = tree_subtrace(f, self.main, tree_tracer_def_in)
-      update_params = call_param_updaters.get(call_primitive)
-      new_params = (update_params(params, len(flat_in))
-                    if update_params else params)
-      flat_out = call_primitive.bind(f_tree, *flat_in, **new_params)
-      out_tracers = _unflatten_tree_tracers(self, out_structure(), flat_out)
-      return out_tracers
+    flat_in, tree_tracer_def_in = _flatten_tree_tracers(tracers)
+    f_tree, out_structure = tree_subtrace(f, self.main, tree_tracer_def_in)
+    update_params = call_param_updaters.get(call_primitive)
+    new_params = (update_params(params, len(flat_in))
+                  if update_params else params)
+    flat_out = call_primitive.bind(f_tree, *flat_in, **new_params)
+    out_tracers = _unflatten_tree_tracers(self, out_structure(), flat_out)
+    return out_tracers
 
   def post_process_call(self, call_primitive, out_tracers, params):
     flat, tree_tracer_def = _flatten_tree_tracers(out_tracers)
@@ -262,6 +254,51 @@ class TreeTrace(core.Trace):
       trace = TreeTrace(main, core.cur_sublevel())
       return _unflatten_tree_tracers(trace, tree_tracer_def, flat)
     return flat, todo
+
+  def process_tree_call(self, tree_call_primitive, f, tracers, params):
+    args = _tree_tracers_to_trees(tracers)
+    result = f.call_wrapped(*args)
+    return _trees_to_tree_tracers(self, result)
+
+
+class TreeCall(core.Primitive):
+  multiple_results = True
+
+  def bind(self, f, *args, **params):
+    top_trace = core.find_top_trace(args)
+    tracers = map(top_trace.full_raise, args)
+    if isinstance(top_trace, TreeTrace):
+      out = top_trace.process_tree_call(self, f, tracers, params)
+    else:
+      out = top_trace.process_call(self, f, tracers, params)
+    return map(core.full_lower, out)
+
+
+def _tree_call_impl(fun: lu.WrappedFun, *args, **params):
+  return fun.call_wrapped(*args)
+
+
+tree_call_p = TreeCall('tree_call')
+tree_call_p.def_impl(_tree_call_impl)
+
+
+@lu.transformation
+def _fun_one_output(*args):
+  ans = yield args, {}
+  yield [ans]
+
+
+def tree_call(f, *args, **params):
+  # TODO(shoyer): handle trees of TreeTracer args
+  return tree_call_p.bind(f, *args, **params)
+
+
+def tree_callable(fun):
+  def wrapper(*args):
+    f = _fun_one_output(lu.wrap_init(fun))
+    y, = tree_call(f, *args, name=fun.__name__)
+    return y
+  return wrapper
 
 
 TreeState = Tuple[Sequence[TreeDef], LeafShapes, Leaves]
@@ -298,6 +335,18 @@ def restore_tree(treedefs: Tuple[TreeDef, ...], leaves: Leaves) -> PyTree:
   return leaves[()]
 
 
+def _tree_tracers_to_trees(tracers: Sequence[TreeTracer]) -> Tuple[PyTree, ...]:
+  treedefs_in, leaves_in = unzip2((t.treedefs, t.leaves) for t in tracers)
+  return tuple(map(restore_tree, treedefs_in, leaves_in))
+
+
+def _trees_to_tree_tracers(
+    tree_trace: TreeTrace, trees: Sequence[PyTree],
+) -> Tuple[TreeTracer, ...]:
+  parts = unzip3(map(convert_vectorized_tree, trees))
+  return tuple(map(partial(TreeTracer, tree_trace), *parts))
+
+
 call_param_updaters = {}
 
 def _xla_call_param_updater(params, num_inputs):
@@ -311,26 +360,6 @@ call_param_updaters[xla.xla_call_p] = _xla_call_param_updater
 ### rule definitions
 
 tree_rules: Dict[core.Primitive, Callable] = {}
-
-
-def tree_callable(fun):
-  def wrapper(*args):
-    f = _flatten_fun_one_output(lu.wrap_init(fun))
-    y, = tree_call(f, *args, name=fun.__name__)
-    return y
-  return wrapper
-
-@lu.transformation
-def _flatten_fun_one_output(*args):
-  ans = yield args, {}
-  yield [ans]
-
-def _tree_call_impl(fun: lu.WrappedFun, *args, **params):
-  return fun.call_wrapped(*args)
-
-tree_call_p = core.CallPrimitive('tree_call')
-tree_call = tree_call_p.bind
-tree_call_p.def_impl(_tree_call_impl)
 
 
 def tie_in_tree_rule(treedefs_in, leafshapes_in, leaves_in) -> TreeState:

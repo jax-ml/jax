@@ -285,6 +285,8 @@ class FlatTreeTest(jtu.JaxTestCase):
 
     @tree_vectorize
     def g(f, x):
+      # return tree_call(f, x, signature)
+      # jvp(tree_call(f.original, signature=signature), (x,), (dx,))
       return f(x)
 
     actual = g(f, tree)
@@ -422,10 +424,11 @@ class FlatTreeTest(jtu.JaxTestCase):
     expected = ({'x': 0.5, 'y': 2.0}, {'x': 3.0, 'y': 8.0})
     self.assertAllClose(actual, expected, check_dtypes=True)
 
-  @pytest.mark.xfail
+  # @pytest.mark.xfail
   def test_jvp_tree_call(self):
 
     def g(x):
+      print("g(x) called with", x)
       return {'b': 0.5 * x['a'] ** 2}
 
     @tree_vectorize
