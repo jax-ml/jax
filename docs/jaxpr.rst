@@ -104,9 +104,9 @@ inline.
 The ``reduce_sum`` primitive has named parameters ``axes`` and ``input_shape``, in
 addition to the operand ``e``.
 
-Note that even though execution of a program that calls into JAX builds a jaxpr, 
+Note that even though execution of a program that calls into JAX builds a jaxpr,
 Python-level control-flow and Python-level functions execute normally.
-This means that just because a Python program contains functions and control-flow, 
+This means that just because a Python program contains functions and control-flow,
 the resulting jaxpr does not have to contain control-flow or higher-order features.
 
 For example, when tracing the function ``func3`` JAX will inline the call to
@@ -445,8 +445,8 @@ captured using the ``xla_pmap`` primitive. Consider this example
                                      d = broadcast_in_dim[ broadcast_dimensions=(  )
                                                            shape=(1,) ] 1.0
                                      e = add c d
-                                     f = psum[ axis_index_groups=None
-                                               axis_name=('rows',) ] b
+                                     f = psum[ axes=('rows',)
+                                               axis_index_groups=None ] b
                                      g = div e f
                                  in (g,) }
                     devices=None

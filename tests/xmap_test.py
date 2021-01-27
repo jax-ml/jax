@@ -338,6 +338,38 @@ class XMapTestSPMD(XMapTest):
     jax.experimental.maps.make_xmap_callable.cache_clear()
     jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = self.old_lowering_flag
 
+
+class NamedNumPyTest(jtu.JaxTestCase):
+  def setUp(self):
+    if jax.lib.version < (0, 1, 58):
+      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
+    if not config.omnistaging_enabled:
+      raise SkipTest("xmap requires omnistaging")
+
+  @parameterized.named_parameters(
+    {"testcase_name": f"{reduction.__name__}_axes={axes}_i={mapped_axis}",
+      "reduction": reduction, "axes": axes, "mapped_axis": mapped_axis}
+    for reduction in (jnp.sum, jnp.max, jnp.min)
+    for axes in (0, 'i', (1,), ('i',), (0, 1), (0, 'i'), ('i', 0))
+    for mapped_axis in range(2))
+  @ignore_xmap_warning()
+  def testReductions(self, reduction, axes, mapped_axis):
+    axes_t = axes if isinstance(axes, tuple) else (axes,)
+    reduces_i = 'i' in axes_t
+    ref_red = partial(reduction,
+                      axis=tuple(mapped_axis if a == 'i' else a + (a >= mapped_axis)
+                                 for a in axes_t))
+    mapped_axis_after_red = mapped_axis - sum(axis < mapped_axis if axis != 'i' else 0
+                                              for axis in axes_t)
+    xmap_red = xmap(lambda x: reduction(x, axes),
+                    in_axes={mapped_axis: 'i'},
+                    out_axes=({} if 'i' in axes_t else {mapped_axis_after_red: 'i'}))
+
+    rng = np.random.RandomState(0)
+    x = rng.randn(2, 5, 6)
+    self.assertAllClose(ref_red(x), xmap_red(x))
+
+
 AxisIndices = Tuple[int, ...]
 MatchedAxisIndices = Tuple[AxisIndices, AxisIndices]
 AxisNames = Tuple[str, ...]

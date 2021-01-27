@@ -1852,7 +1852,8 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 
 def _reduction(a, name, np_fun, op, init_val, has_identity=True,
                preproc=None, bool_op=None, upcast_f16_for_computation=False,
-               axis=None, dtype=None, out=None, keepdims=False, initial=None, where_=None):
+               axis=None, dtype=None, out=None, keepdims=False, initial=None,
+               where_=None, parallel_reduce=None):
   bool_op = bool_op or op
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
@@ -1869,7 +1870,7 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
 
   a = a if isinstance(a, ndarray) else asarray(a)
   a = preproc(a) if preproc else a
-  dims = _reduction_dims(a, axis)
+  pos_dims, dims = _reduction_dims(a, axis)
   result_dtype = dtypes.canonicalize_dtype(dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a)))))
   if upcast_f16_for_computation and issubdtype(result_dtype, inexact):
     computation_dtype = promote_types(result_dtype, float32)
@@ -1882,23 +1883,38 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   init_val = _reduction_init_val(a, init_val)
   if where_ is not None:
     a = where(where_, a, init_val)
-  result = lax.reduce(a, init_val, op, dims)
+  if pos_dims is not dims:
+    if parallel_reduce is None:
+      raise NotImplementedError(f"Named reductions not implemented for jnp.{name}()")
+    result = parallel_reduce(a, dims)
+  else:
+    result = lax.reduce(a, init_val, op, dims)
   if initial is not None:
     result = op(_reduction_init_val(a, initial), result)
   if keepdims:
-    result = expand_dims(result, dims)
+    result = expand_dims(result, pos_dims)
   return lax.convert_element_type(result, dtype or result_dtype)
+
+def _canonicalize_axis_allow_named(x, rank):
+  try:
+    return _canonicalize_axis(x, rank)
+  except TypeError:
+    return x
 
 def _reduction_dims(a, axis):
   if axis is None:
-    return tuple(range(ndim(a)))
-  elif isinstance(axis, (np.ndarray, tuple, list)):
-    axis = tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
-    if len(axis) != len(set(axis)):
-      raise ValueError(f"duplicate value in 'axis': {axis}")
-    return axis
+    return (tuple(range(ndim(a))),) * 2
+  elif not isinstance(axis, (np.ndarray, tuple, list)):
+    axis = (axis,)
+  canon_axis = tuple(_canonicalize_axis_allow_named(x, ndim(a))
+                     for x in axis)
+  if len(canon_axis) != len(set(canon_axis)):
+    raise ValueError(f"duplicate value in 'axis': {axis}")
+  canon_pos_axis = tuple(x for x in canon_axis if isinstance(x, int))
+  if len(canon_pos_axis) != len(canon_axis):
+    return canon_pos_axis, canon_axis
   else:
-    return (_canonicalize_axis(axis, ndim(a)),)
+    return canon_axis, canon_axis
 
 def _reduction_init_val(a, init_val):
   a_dtype = dtypes.canonicalize_dtype(_dtype(a))
@@ -1918,7 +1934,8 @@ def sum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
         out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "sum", np.sum, lax.add, 0,
                     bool_op=lax.bitwise_or, upcast_f16_for_computation=True,
-                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where_=where)
+                    axis=axis, dtype=dtype, out=out, keepdims=keepdims,
+                    initial=initial, where_=where, parallel_reduce=lax.psum)
 
 @_wraps(np.prod)
 def prod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
@@ -1931,13 +1948,15 @@ def prod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 def max(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
         keepdims=None, initial=None, where=None):
   return _reduction(a, "max", np.max, lax.max, -np.inf, has_identity=False,
-                    axis=axis, out=out, keepdims=keepdims, initial=initial, where_=where)
+                    axis=axis, out=out, keepdims=keepdims,
+                    initial=initial, where_=where, parallel_reduce=lax.pmax)
 
 @_wraps(np.min)
 def min(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
         keepdims=None, initial=None, where=None):
   return _reduction(a, "min", np.min, lax.min, np.inf, has_identity=False,
-                    axis=axis, out=out, keepdims=keepdims, initial=initial, where_=where)
+                    axis=axis, out=out, keepdims=keepdims,
+                    initial=initial, where_=where, parallel_reduce=lax.pmin)
 
 @_wraps(np.all)
 def all(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
