@@ -7,20 +7,22 @@ Change Log
 
 .. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
-jax 0.2.9 (Unreleased)
+jax 0.2.10 (Unreleased)
 ----------------------
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.8...master>`__.
-
+----------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.9...master>`__.
 * New features:
 
 * Bug fixes:
 
 * Breaking changes:
 
-  * :func:`jax.ops.segment_sum` now drops segment IDs that are out of range rather
-    than wrapping them into the segment ID space. This was done for performance
-    reasons.
 
+jaxlib 0.1.60 (Unreleased)
+--------------------------
+
+jax 0.2.9 (January 26 2021)
+----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.8...jax-v0.2.9>`__.
 
 * New features:
@@ -32,8 +34,11 @@ jax 0.2.9 (Unreleased)
     These are context managers which allow X64 mode to be temporarily enabled/disabled
     within a session.
 
-jaxlib 0.1.60 (Unreleased)
---------------------------
+* Breaking changes:
+
+  * :func:`jax.ops.segment_sum` now drops segment IDs that are out of range rather
+    than wrapping them into the segment ID space. This was done for performance
+    reasons.
 
 jaxlib 0.1.59 (January 15 2021)
 -------------------------------
