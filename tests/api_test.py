@@ -2775,6 +2775,15 @@ class JaxprTest(jtu.JaxTestCase):
                 api.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32))
     self.assertEqual(shape_tree, expected)
 
+  def test_make_jaxpr_axis_env(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    def f(x):
+      return x - lax.psum(x, 'i')
+    jaxpr = api.make_jaxpr(f, axis_env=[('i', 4)])(2)
+    self.assertIn('psum', str(jaxpr))
+
 
 class LazyTest(jtu.JaxTestCase):
 
