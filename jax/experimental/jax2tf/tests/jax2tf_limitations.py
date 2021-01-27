@@ -831,7 +831,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                          skip_comparison=True),
         Jax2TfLimitation(
             "Different overflow behavior for large exponents. ",
-            dtypes=[np.int32, np.int64, np.float32],
+            dtypes=[np.int8, np.int16, np.int32, np.int64, np.float32],
             enabled=(y > 10),
             expect_tf_error=False,
             skip_comparison=True)
