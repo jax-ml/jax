@@ -744,14 +744,14 @@ def _delete_aval_axes(aval, axes: AxisNamePos):
   shape = list(aval.shape)
   for i in sorted(axes.values(), reverse=True):
     del shape[i]
-  return core.ShapedArray(tuple(shape), aval.dtype)
+  return aval.update(shape=tuple(shape))
 
 def _insert_aval_axes(aval, axes: AxisNamePos, axis_sizes):
   assert isinstance(aval, core.ShapedArray)
   shape = list(aval.shape)
   for name, axis in sorted(axes.items(), key=lambda x: x[1]):
     shape.insert(axis, axis_sizes[name])
-  return core.ShapedArray(tuple(shape), aval.dtype)
+  return aval.update(shape=tuple(shape))
 
 
 # TODO: pmap has some very fancy error messages for this function!

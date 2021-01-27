@@ -114,7 +114,7 @@ class BatchTracer(Tracer):
       elif type(aval) is ShapedArray:
         assert 0 <= self.batch_dim < aval.ndim
         new_shape = tuple(np.delete(aval.shape, self.batch_dim))
-        return ShapedArray(new_shape, aval.dtype)
+        return aval.update(shape=new_shape)
       else:
         raise TypeError(aval)
 

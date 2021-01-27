@@ -433,7 +433,7 @@ def _shard_abstract_array(size, axis: int, x):
                        f"shape {x.shape}")
   except IndexError:
     raise ValueError("Cannot split a {x.dim}D value along axis {axis}") from None
-  return ShapedArray(tuple_delete(x.shape, axis), x.dtype)
+  return x.update(shape=tuple_delete(x.shape, axis))
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
 # TODO(skye): expose PyLocalBuffers in xla_client
@@ -513,7 +513,7 @@ class ShardedDeviceArray(xla._DeviceArray):
     # creating pmap-style ShardedDeviceArrays over the first dimension.
     if device_buffers is None:
       device_buffers = sharding_spec
-      sharded_aval = ShapedArray(aval.shape[1:], aval.dtype)
+      sharded_aval = aval.update(shape=aval.shape[1:])
       sharding_spec = _pmap_sharding_spec(aval.shape[0], aval.shape[0],
                                           1, None, sharded_aval, 0)
 
@@ -707,7 +707,7 @@ def parallel_callable(fun: lu.WrappedFun,
       # TODO(skye): we could take this branch unconditionally if we handled
       # grad of global_arg_shapes correctly.
       global_sharded_avals = [
-          ShapedArray(shape, aval.dtype) if shape is not None else aval
+          aval.update(shape=shape) if shape is not None else aval
           for shape, aval in safe_zip(global_arg_shapes, sharded_avals)]
     else:
       global_sharded_avals = sharded_avals  # type: ignore
@@ -1046,7 +1046,7 @@ def get_global_aval(local_aval, global_parts: PartitionsOrReplicated,
   global_shape = [dim * _safe_div(ngparts, nlparts)
                   for dim, ngparts, nlparts
                   in safe_zip(local_aval.shape, global_parts, local_parts)]
-  return ShapedArray(global_shape, local_aval.dtype)
+  return local_aval.update(shape=global_shape)
 
 
 def get_local_aval(global_aval, global_parts: PartitionsOrReplicated,
@@ -1059,7 +1059,7 @@ def get_local_aval(global_aval, global_parts: PartitionsOrReplicated,
   local_shape = [_safe_div(dim, _safe_div(ngparts, nlparts))
                  for dim, ngparts, nlparts
                  in safe_zip(global_aval.shape, global_parts, local_parts)]
-  return ShapedArray(local_shape, global_aval.dtype)
+  return global_aval.update(shape=local_shape)
 
 
 def _safe_div(x, y):
@@ -1142,7 +1142,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   assert nrep == len(devices)
 
   aval = xla.abstractify(val)  # type: ShapedArray
-  replicated_aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
+  replicated_aval = aval.update(shape=(axis_size,) + aval.shape)
   # TODO(skye): figure out how partitioning should work here
   sharding_spec = _pmap_sharding_spec(nrep, axis_size, 1, None, aval, in_axis)
   device_buffers = device_put(val, devices, replicate=True)
@@ -1389,7 +1389,7 @@ def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   for name, axis in in_axes.items():
     assert shape[axis] % axis_sizes[name] == 0
     shape[axis] //= axis_sizes[name]
-  return ShapedArray(tuple(shape), aval.dtype)
+  return aval.update(shape=tuple(shape))
 
 def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
   if aval is core.abstract_unit:
@@ -1398,7 +1398,7 @@ def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
   shape = list(aval.shape)
   for name, axis in out_axes.items():
     shape[axis] *= axis_sizes[name]
-  return ShapedArray(tuple(shape), aval.dtype)
+  return aval.update(shape=tuple(shape))
 
 def mesh_tiled_callable(fun: lu.WrappedFun,
                         transformed_name: str,
@@ -1743,7 +1743,7 @@ def soft_pmap_aval_to_result_handler(chunk_size, num_devices, aval):
   if aval is core.abstract_unit:
     return lambda _: core.unit
   elif isinstance(aval, core.ShapedArray):
-    new_aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
+    new_aval = aval.update(shape=(axis_size,) + aval.shape)
     spec = ShardingSpec(
         sharding=(Chunked(num_devices),) + (_UNSHARDED_INSTANCE,) * aval.ndim,
         mesh_mapping=(ShardedAxis(0),))
@@ -1801,8 +1801,8 @@ def omnistaging_disabler() -> None:
   def _pval_to_result_handler(axis_size, nrep, npart, parts, pval, devices, backend):
     if devices:
       assert all(d.host_id == xb.host_id(backend) for d in devices)
-    pv, const = pval
-    if pv is None:
+    aval, const = pval
+    if aval is None:
       if nrep is None:
         nrep = axis_size
         # If 'const' is a ShardedDeviceArray, it must have come from a pmap nested
@@ -1819,13 +1819,13 @@ def omnistaging_disabler() -> None:
                     else replicate(const, axis_size, nrep, devices, backend))  # type: ignore
       return lambda _: bcast_const  # type: ignore
     else:
-      if pv is not core.abstract_unit:
-        unsharded_aval = ShapedArray((axis_size,) + pv.shape, pv.dtype)
-        sharding_spec = _pmap_sharding_spec(nrep, axis_size, npart, parts, pv, 0)
+      if aval is not core.abstract_unit:
+        unsharded_aval = aval.update(shape=(axis_size,) + aval.shape)
+        sharding_spec = _pmap_sharding_spec(nrep, axis_size, npart, parts, aval, 0)
         indices = spec_to_indices(unsharded_aval.shape, sharding_spec)
       else:
         sharding_spec = indices = None
-        unsharded_aval = pv
+        unsharded_aval = aval
       return aval_to_result_handler(sharding_spec, indices, unsharded_aval)
 
   @contextmanager

@@ -1459,15 +1459,14 @@ def _prepend_dim_to_aval(sz, aval):
   if aval is core.abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
-    return ShapedArray((sz, *aval.shape), aval.dtype)
+    return aval.update(shape=(sz, *aval.shape), weak_type=False)
   else:
     raise TypeError(f'Prepending dim {sz} to aval {aval}')
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll):
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_avals = [ShapedArray((length,) + aval.shape, aval.dtype)
-              if aval is not core.abstract_unit else aval for aval in y_avals]
+  ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   return carry_avals + ys_avals
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
@@ -1628,7 +1627,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   new_tracers = [trace.instantiate_const(t) if uk else trace.new_instantiated_literal(core.unit)
                  for uk, t in zip(unknowns, tracers)]
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_avals = _map(partial(_promote_aval_rank, length), y_avals)
+  ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   out_avals = carry_avals + ys_avals
   out_pvs = [aval if uk else None for aval, uk in zip(out_avals, out_uk)]
 
@@ -1656,12 +1655,6 @@ def _maybe_device_put(x):
   else:
     return x
 
-def _promote_aval_rank(sz, aval):
-  if aval is core.abstract_unit:
-    return core.abstract_unit
-  else:
-    return ShapedArray((sz,) + aval.shape, aval.dtype)
-
 def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
                     linear, unroll):
   # we've only implemented transposing scans with specific lin/nonlin patterns
@@ -1682,7 +1675,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
   assert not any(ad.is_undefined_primal(r) for r in eres)
 
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_avals = _map(partial(_promote_aval_rank, length), y_avals)
+  ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   ct_carry, ct_ys = split_list(cts, [num_carry])
   ct_carry = _map(ad.instantiate_zeros_aval, carry_avals, ct_carry)
   ct_ys = _map(ad.instantiate_zeros_aval, ys_avals, ct_ys)

@@ -26,7 +26,7 @@ from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax._src.util import partial, prod
-from jax.core import Primitive, ShapedArray
+from jax.core import Primitive, ShapedArray, raise_to_shaped
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype, _broadcasting_select)
@@ -371,8 +371,8 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
     n = operand.shape[-1]
     dtype = np.complex64 if dtypes.finfo(operand.dtype).bits == 32 else np.complex128
     dtype = dtypes.canonicalize_dtype(dtype)
-    vl = vr = ShapedArray(batch_dims + (n, n), dtype)
-    w = ShapedArray(batch_dims + (n,), dtype)
+    vl = vr = operand.update(shape=batch_dims + (n, n), dtype=dtype)
+    w = operand.update(shape=batch_dims + (n,), dtype=dtype)
   else:
     raise NotImplementedError
 
@@ -470,9 +470,9 @@ def eigh_abstract_eval(operand, lower):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    v = ShapedArray(batch_dims + (n, n), operand.dtype)
-    w = ShapedArray(batch_dims + (n,),
-                    lax_internal._complex_basetype(operand.dtype))
+    v = operand.update(shape=batch_dims + (n, n))
+    w = operand.update(shape=batch_dims + (n,),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
   return v, w
@@ -809,6 +809,7 @@ def _lu_impl(operand):
   return lu, pivot, perm
 
 def _lu_abstract_eval(operand):
+  operand = raise_to_shaped(operand)
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to LU decomposition must have ndims >= 2")
@@ -816,8 +817,8 @@ def _lu_abstract_eval(operand):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    pivot = ShapedArray(batch_dims + (min(m, n),), jnp.int32)
-    perm = ShapedArray(batch_dims + (m,), jnp.int32)
+    pivot = operand.update(shape=batch_dims + (min(m, n),), dtype=jnp.int32)
+    perm = operand.update(shape=batch_dims + (m,), dtype=jnp.int32)
   else:
     pivot = operand
     perm = operand
@@ -1032,8 +1033,8 @@ def qr_abstract_eval(operand, full_matrices):
     m = operand.shape[-2]
     n = operand.shape[-1]
     k = m if full_matrices else min(m, n)
-    q = ShapedArray(batch_dims + (m, k), operand.dtype)
-    r = ShapedArray(batch_dims + (k, n), operand.dtype)
+    q = operand.update(shape=batch_dims + (m, k))
+    r = operand.update(shape=batch_dims + (k, n))
   else:
     q = operand
     r = operand
@@ -1154,11 +1155,11 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    s = ShapedArray(batch_dims + (min(m, n),),
-                    lax_internal._complex_basetype(operand.dtype))
+    s = operand.update(shape=batch_dims + (min(m, n),),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
     if compute_uv:
-      u = ShapedArray(batch_dims + (m, m if full_matrices else min(m, n)), operand.dtype)
-      vt = ShapedArray(batch_dims + (n if full_matrices else min(m, n), n), operand.dtype)
+      u = operand.update(shape=batch_dims + (m, m if full_matrices else min(m, n)))
+      vt = operand.update(shape=batch_dims + (n if full_matrices else min(m, n), n))
       return s, u, vt
     else:
       return s,

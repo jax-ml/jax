@@ -2625,13 +2625,13 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype):
   if type(ct) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)]
   elif core.primal_dtype_to_tangent_dtype(old_dtype) is dtypes.float0:
-    return [ad_util.Zero(ShapedArray(operand.aval.shape, dtype=dtypes.float0))]
+    return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
     return [convert_element_type_p.bind(ct, new_dtype=old_dtype)]
 
 def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype):
   if core.primal_dtype_to_tangent_dtype(new_dtype) is dtypes.float0:
-    return ad_util.Zero(ShapedArray(tangent.shape, dtype=dtypes.float0))
+    return ad_util.Zero(tangent.aval.update(dtype=dtypes.float0, weak_type=False))
   else:
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype)
 
@@ -5803,8 +5803,8 @@ def _top_k_abstract_eval(operand, *, k):
     msg = "k argument to top_k must be no larger than minor dimension; {} vs {}"
     raise ValueError(msg.format(k, shape))
   shape[-1] = k
-  return (ShapedArray(shape, operand.dtype),
-          ShapedArray(shape, np.dtype(np.int32)))
+  return (operand.update(shape=shape),
+          operand.update(shape=shape, dtype=np.dtype(np.int32)))
 
 def _top_k_jvp(primals, tangents, *, k):
   operand, = primals
@@ -6004,7 +6004,7 @@ def _rng_uniform_abstract_eval(a, b, *, shape):
     raise ValueError(
       "Arguments to rng_uniform must be scalars; got shapes {} and {}."
       .format(a.shape, b.shape))
-  return ShapedArray(shape, a.dtype)
+  return a.update(shape=shape)
 
 def _rng_uniform_translation_rule(c, a, b, *, shape):
   xla_shape = xc.Shape.array_shape(c.get_shape(a).xla_element_type(), shape)

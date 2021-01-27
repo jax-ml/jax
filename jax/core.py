@@ -854,6 +854,9 @@ class AbstractValue:
   def join(self, other):
     raise NotImplementedError("must override")
 
+  def update(self, **kwargs):
+    raise NotImplementedError("must override")
+
 class Bot(AbstractValue): pass
 
 bot = Bot()
@@ -976,6 +979,13 @@ class UnshapedArray(AbstractValue):
     self.dtype = np.dtype(dtypes.canonicalize_dtype(dtype))
     self.weak_type = weak_type
 
+  def update(self, dtype=None, weak_type=None):
+    if dtype is None:
+      dtype = self.dtype
+    if weak_type is None:
+      weak_type = self.weak_type
+    return UnshapedArray(dtype, weak_type)
+
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype and
             self.weak_type == other.weak_type)
@@ -1016,9 +1026,9 @@ class UnshapedArray(AbstractValue):
   def str_short(self) -> str:
     return self.dtype.name
 
-  def strip_weak_type(self) -> 'UnshapedArray':
+  def strip_weak_type(self):
     """Returns a copy of the aval with weak_type=False."""
-    return UnshapedArray(self.dtype) if self.weak_type else self
+    return self.update(weak_type=False)
 
   @property
   def shape(self):
@@ -1034,6 +1044,15 @@ class ShapedArray(UnshapedArray):
   def __init__(self, shape, dtype, weak_type=False):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
+
+  def update(self, shape=None, dtype=None, weak_type=None):
+    if shape is None:
+      shape = self.shape
+    if dtype is None:
+      dtype = self.dtype
+    if weak_type is None:
+      weak_type = self.weak_type
+    return ShapedArray(shape, dtype, weak_type)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
@@ -1060,10 +1079,7 @@ class ShapedArray(UnshapedArray):
 
   def join(self, other):
     if self.shape == other.shape and self.dtype == other.dtype:
-      if self.weak_type == other.weak_type:
-        return self
-      else:
-        return ShapedArray(self.shape, self.dtype, weak_type=False)
+      return self.update(weak_type=self.weak_type and other.weak_type)
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype)
     else:
@@ -1082,9 +1098,6 @@ class ShapedArray(UnshapedArray):
   def _len(self, ignored_tracer):
     return len(self)
 
-  def strip_weak_type(self):
-    return ShapedArray(self.shape, self.dtype) if self.weak_type else self
-
 
 def _forward_to_value(self, fun, ignored_tracer, *args):
   return fun(self.val, *args)
@@ -1100,6 +1113,13 @@ class ConcreteArray(ShapedArray):
     self.val = val
     assert self.dtype != np.dtype('O'), val
 
+  def update(self, val=None, weak_type=None):
+    if val is None:
+      val = self.val
+    if weak_type is None:
+      weak_type = self.weak_type
+    return ConcreteArray(val, weak_type)
+
   def __eq__(self, other):
     if (type(self) is type(other) and self.dtype == other.dtype
         and self.shape == other.shape and self.weak_type == other.weak_type):
@@ -1110,10 +1130,6 @@ class ConcreteArray(ShapedArray):
 
   def __hash__(self):
     return id(self.val)
-
-  def at_least_vspace(self):
-    return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       weak_type=self.weak_type)
 
   def join(self, other) -> UnshapedArray:
     if self == other:
@@ -1129,9 +1145,6 @@ class ConcreteArray(ShapedArray):
 
   def str_short(self) -> str:
     return str(self.val)
-
-  def strip_weak_type(self) -> 'ConcreteArray':
-    return ConcreteArray(self.val) if self.weak_type else self
 
   _bool = _nonzero = partialmethod(_forward_to_value, bool)
   _int             = partialmethod(_forward_to_value, int)

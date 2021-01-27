@@ -2180,7 +2180,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
                     if a1 != a2)
       raise ValueError("the shards passed to device_put_sharded must have "
                        f"consistent shape and dtype, but got {a1} and {a2}.")
-    stacked_aval = ShapedArray((len(devices),) + avals[0].shape, avals[0].dtype)
+    stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
     buffers = [buf for x, d in zip(xs, devices) for buf in xla.device_put(x, d)]
     return pxla.ShardedDeviceArray(stacked_aval, buffers)
 

@@ -59,12 +59,29 @@ class AbstractSparseArray(core.ShapedArray):
   __slots__ = ['index_dtype', 'nnz', 'data_aval', 'indices_aval']
   _num_buffers = 2
 
-  def __init__(self, shape, dtype, index_dtype, nnz):
+  def __init__(self, shape, dtype, index_dtype, nnz, weak_type=False):
     super(AbstractSparseArray, self).__init__(shape, dtype)
     self.index_dtype = index_dtype
     self.nnz = nnz
-    self.data_aval = core.ShapedArray((nnz,), dtype)
+    self.data_aval = core.ShapedArray((nnz,), dtype, weak_type)
     self.indices_aval = core.ShapedArray((nnz, len(shape)), index_dtype)
+
+  def update(self, shape=None, dtype=None, index_dtype=None, nnz=None,
+             weak_type=None):
+    if shape is None:
+      shape = self.shape
+    if dtype is None:
+      dtype = self.dtype
+    if index_dtype is None:
+      index_dtype = self.dtype
+    if nnz is None:
+      nnz = self.nnz
+    if weak_type is None:
+      weak_type = self.weak_type
+    return AbstractSparseArray(shape, dtype, index_dtype, nnz, weak_type)
+
+  def strip_weak_type(self):
+    return self
 
   @core.aval_property
   def data(self):

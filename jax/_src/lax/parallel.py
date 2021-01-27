@@ -787,7 +787,7 @@ def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_
   shape = list(input_aval.shape)
   size = shape.pop(split_axis)
   shape.insert(concat_axis, size)
-  return ShapedArray(tuple(shape), input_aval.dtype, weak_type=False)
+  return input_aval.update(shape=tuple(shape), weak_type=False)
 
 all_to_all_p = core.Primitive('all_to_all')
 all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
@@ -903,7 +903,7 @@ def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_
   x_aval = raise_to_shaped(x)
   new_shape = list(x_aval.shape)
   new_shape.insert(all_gather_dimension, axis_size)
-  return ShapedArray(new_shape, x_aval.dtype)
+  return x_aval.update(shape=new_shape)
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
   # TODO(cjfj): Add reduce-scatter op to XLA?
