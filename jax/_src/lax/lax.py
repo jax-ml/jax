@@ -426,7 +426,7 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
   # cast to the default type as part of the calling convention.
   if type(operand) in dtypes.python_scalar_dtypes:
     operand = np.asarray(operand, new_dtype)
-  old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
+  old_dtype = _dtype(operand)
   if old_dtype == new_dtype:
     if isinstance(operand, (core.Tracer, xla.DeviceArray)):
       return operand
