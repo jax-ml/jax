@@ -700,15 +700,8 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
   replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
   if len(replica_groups[0]) == 1:
     return x
-  elif platform != 'tpu':
-    warnings.warn("all_to_all (and pswapaxes) are only implemented properly for TPUs. All other "
-                  "backends emulate it using a very slow and memory intensive algorithm, so expect "
-                  "significant slowdowns.")
-    lowering = xla.lower_fun(_all_to_all_via_all_gather, multiple_results=False, parallel=True)
-    return lowering(c, x,
-                    split_axis=split_axis, concat_axis=concat_axis, axis_name=axis_name,
-                    axis_index_groups=axis_index_groups, axis_env=axis_env, platform=platform)
-  else:
+  elif (platform == "tpu") or ((platform == "gpu") and (split_axis == 0) and
+                               (concat_axis == 0)):
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
@@ -725,6 +718,24 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
       x = xops.AllToAll(x, split_axis, concat_axis, split_count, replica_groups_protos)
       x = xla.lower_fun(partial(lax.squeeze, dimensions=(split_axis,)), multiple_results=False)(c, x)
       return x
+  else:
+    warnings.warn(
+        "all_to_all (and pswapaxes) are only implemented properly for TPUs and GPUs (if "
+        "split_axis and concat_axis are both 0). All other backends emulate it using a "
+        "very slow and memory intensive algorithm, so expect significant slowdowns."
+    )
+    lowering = xla.lower_fun(
+        _all_to_all_via_all_gather, multiple_results=False, parallel=True)
+    return lowering(
+        c,
+        x,
+        split_axis=split_axis,
+        concat_axis=concat_axis,
+        axis_name=axis_name,
+        axis_index_groups=axis_index_groups,
+        axis_env=axis_env,
+        platform=platform)
+
 
 def _all_to_all_transpose_rule(cts, x, axis_name, split_axis, concat_axis, axis_index_groups):
   return (all_to_all(
