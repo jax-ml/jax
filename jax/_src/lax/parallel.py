@@ -652,9 +652,16 @@ def _ppermute_transpose_rule(t, x, perm, axis_name):
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
 def _ppermute_batcher(frame, vals_in, dims_in, axis_name, perm):
-  assert len(perm) == frame.size, "Permutation doesn't match the axis size!"
-  assert axis_name == frame.name, "ppermute batcher called with wrong axis name"
   (v,), (d,) = vals_in, dims_in
+  if not isinstance(axis_name, (tuple, list)):
+    axis_name = (axis_name,)
+  remaining_axes = tuple(axis for axis in axis_name if axis != frame.name)
+  if frame.size == 1 and remaining_axes:
+    return ppermute_p.bind(v, perm=perm, axis_name=remaining_axes), d
+  if remaining_axes:
+    raise NotImplementedError("ppermute batcher only supports a single axis")
+  assert axis_name[0] == frame.name, "ppermute batcher called with a wrong axis!"
+  assert len(perm) == frame.size, "Permutation doesn't match the axis size!"
   assert d is not batching.not_mapped
   perm_indices = [None] * frame.size
   for src, dst in perm:
