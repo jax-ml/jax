@@ -9,6 +9,7 @@ jax.experimental package
 
     jax.experimental.host_callback
     jax.experimental.loops
+    jax.experimental.maps
     jax.experimental.optimizers
     jax.experimental.stax
 
