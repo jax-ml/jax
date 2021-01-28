@@ -26,7 +26,8 @@ from .. import numpy as jnp
 from .. import core
 from .. import linear_util as lu
 from ..api import _check_callable, _check_arg
-from ..tree_util import tree_flatten, tree_unflatten, all_leaves
+from ..tree_util import (tree_flatten, tree_unflatten, all_leaves,
+                         _replace_nones, tree_map, tree_leaves)
 from ..api_util import flatten_fun_nokwargs, flatten_axes
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
@@ -839,3 +840,27 @@ def subst_eqn_axis_names(eqn, axis_subst: Dict[AxisName, Tuple[AxisName]]):
     axis_names = (axis_names,)
   new_axis_names = sum((axis_subst.get(name, (name,)) for name in axis_names), ())
   return eqn._replace(params=dict(eqn.params, axis_name=new_axis_names))
+
+
+# -------- soft_pmap --------
+
+def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
+              ) -> Callable:
+  warn("soft_pmap is an experimental feature and probably has bugs!")
+  _check_callable(fun)
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
+
+  if any(axis != 0 for axis in tree_leaves(in_axes)):
+    raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")
+  proxy = object()
+  in_axes = _replace_nones(proxy, in_axes)
+  in_axes = tree_map(lambda i: {i: axis_name} if i is not proxy else {}, in_axes)
+
+
+  @wraps(fun)
+  def f_pmapped(*args, **kwargs):
+    mesh_devices = np.array(xb.local_devices())
+    with mesh(mesh_devices, ['devices']):
+      return xmap(fun, in_axes=in_axes, out_axes={0: axis_name},
+                  axis_resources={axis_name: 'devices'})(*args, **kwargs)
+  return f_pmapped

@@ -42,7 +42,7 @@ pytype_library(
             "*_test.py",
             "**/*_test.py",
         ],
-    ),
+    ) + ["experimental/maps.py"],  # until xmap is moved out of experimental
     srcs_version = "PY3",
     deps = [
         "//third_party/py/jax/jaxlib:_pocketfft",

@@ -45,14 +45,13 @@ from .. import core
 from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import array_types
-from ..core import ConcreteArray, ShapedArray, Var, Literal
+from ..core import ConcreteArray, ShapedArray
 from .._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
                          extend_name_stack, wrap_name, assert_unreachable,
                          tuple_insert, tuple_delete, taggedtuple, curry)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_map
-from .batching import broadcast, not_mapped, moveaxis
 from . import batching
 from . import partial_eval as pe
 from . import xla
@@ -1563,7 +1562,6 @@ def vtile(f_flat,
 
 _forbidden_primitives = {
   'xla_pmap': 'pmap',
-  'soft_pmap': 'soft_pmap',
   'sharded_call': 'sharded_jit',
 }
 def _sanitize_mesh_jaxpr(jaxpr):
@@ -1596,166 +1594,6 @@ def mesh_sharding_specs(axis_sizes, axis_names):
       next_sharded_axis += 1
     return ShardingSpec(sharding, mesh_mapping)
   return mk_sharding_spec
-
-
-# ------------------- soft_pmap -------------------
-
-def soft_pmap_impl(fun: lu.WrappedFun, *args, axis_name, axis_size, in_axes, out_axes_thunk):
-  abstract_args = unsafe_map(xla.abstractify, args)
-  compiled_fun = _soft_pmap_callable(fun, axis_name, axis_size, in_axes, out_axes_thunk,
-                                     *abstract_args)
-  return compiled_fun(*args)
-
-@lu.cache
-def _soft_pmap_callable(fun, axis_name, axis_size, in_axes, out_axes_thunk, *avals):
-  mapped_avals = [core.mapped_aval(axis_size, in_axis, aval) if in_axis is not None else aval
-                  for in_axis, aval in safe_zip(in_axes, avals)]
-  with core.extend_axis_env(axis_name, axis_size, None):  # type: ignore
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_avals)
-  out_axes = out_axes_thunk()
-  assert all(out_axis == 0 for out_axis in out_axes)
-  jaxpr = xla.apply_outfeed_rewriter(jaxpr)
-
-  num_devices = xb.local_device_count()
-  chunk_size, ragged = divmod(axis_size, num_devices)
-  if ragged:
-    msg = f"number of devices {num_devices} must divide axis size {axis_size}"
-    raise NotImplementedError(msg)
-
-  jaxpr, _, consts = _soft_pmap_jaxpr(jaxpr, consts, in_axes,
-                                      axis_name, axis_size, chunk_size)
-  jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
-  if jaxpr_replicas != 1: raise NotImplementedError
-
-  tuple_args = len(avals) > 100  # pass long arg lists as tuple for TPU
-
-  c = xb.make_computation_builder("soft_pmap_{}".format(fun.__name__))
-  xla_consts = map(partial(xb.constant, c), consts)
-  chunked_avals = [core.unmapped_aval(chunk_size, in_axis, aval) if in_axis is not None else aval
-                   for in_axis, aval in safe_zip(in_axes, mapped_avals)]
-  xla_args, _ = xla._xla_callable_args(c, chunked_avals, tuple_args)
-  axis_env = xla.AxisEnv(num_devices, (axis_name,), (num_devices,))
-  out_nodes = xla.jaxpr_subcomp(c, jaxpr, None, axis_env, xla_consts,
-                                'soft_pmap', *xla_args)
-  built = c.Build(xops.Tuple(c, out_nodes))
-
-  compile_options = xb.get_compile_options(
-          num_replicas=num_devices, num_partitions=1, device_assignment=None)
-  compile_options.tuple_arguments = tuple_args
-  backend = xb.get_backend(None)
-  compiled = xla.backend_compile(backend, built, compile_options)
-
-  input_specs = [
-      ShardingSpec(
-          sharding=tuple_insert((_UNSHARDED_INSTANCE,) *
-                                (aval.ndim - 1), in_axis, Chunked(num_devices)),
-          mesh_mapping=[ShardedAxis(0)])
-      if in_axis is not None else ShardingSpec(
-          sharding=[_UNSHARDED_INSTANCE] * aval.ndim,
-          mesh_mapping=[Replicated(num_devices)])
-      for aval, in_axis in safe_zip(avals, in_axes)
-  ]
-  input_indices = [spec and spec_to_indices(aval.shape, spec)
-                   for aval, spec in safe_zip(avals, input_specs)]
-  handle_args = partial(shard_args, compiled.local_devices(), input_indices)
-  handle_outs = soft_pmap_avals_to_results_handler(num_devices, chunk_size, out_avals)
-
-  return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
-
-def _soft_pmap_jaxpr(jaxpr, consts, in_axes, axis_name, axis_size, chunk_size):
-  assert all(in_axis is None or in_axis == 0 for in_axis in in_axes), in_axes
-  mapped_invars = [in_axis is not None for in_axis in in_axes]
-  fun = partial(_soft_pmap_interp, chunk_size, jaxpr, consts, mapped_invars)
-  in_avals = [core.unmapped_aval(chunk_size, in_axis, v.aval) if in_axis is not None else v.aval
-              for v, in_axis in safe_zip(jaxpr.invars, in_axes)]
-  with core.extend_axis_env(axis_name, axis_size, None):
-    return pe.trace_to_jaxpr_dynamic(lu.wrap_init(fun), in_avals)
-
-def _soft_pmap_interp(chunk_size, jaxpr, consts, mapped_invars, *args):
-
-  env: Dict[Var, Tuple[Any, bool]] = {}
-
-  def read(atom: Union[Var, Literal]) -> Tuple[Any, bool]:
-    if isinstance(atom, Literal):
-      return (atom.val, False)
-    else:
-      return env[atom]
-
-  def write(v: Var, val: Any, mapped: bool) -> None:
-    env[v] = (val, mapped)
-
-  write(core.unitvar, core.unit, False)
-  map(write, jaxpr.constvars, consts, (False,) * len(consts))
-  map(write, jaxpr.invars, args, mapped_invars)
-  for eqn in jaxpr.eqns:
-    in_vals, in_mapped = unzip2(map(read, eqn.invars))
-    if eqn.primitive in xla.parallel_translations:
-      rule = soft_pmap_rules[eqn.primitive]
-      out_vals, out_mapped = rule(in_vals, in_mapped, chunk_size, **eqn.params)
-      if not eqn.primitive.multiple_results:
-        out_vals, out_mapped = [out_vals], [out_mapped]
-    elif isinstance(eqn.primitive, core.CallPrimitive):
-      # we just inline here for convenience
-      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
-      out_vals = _soft_pmap_interp(chunk_size, call_jaxpr, (), in_mapped, *in_vals)
-      out_mapped = [True] * len(out_vals)
-    elif isinstance(eqn.primitive, core.MapPrimitive):
-      raise NotImplementedError  # TODO
-    else:
-      if any(in_mapped):
-        rule = batching.get_primitive_batcher(eqn.primitive, None)
-        in_axes = [0 if m else batching.not_mapped for m in in_mapped]
-        out_vals, out_axes = rule(in_vals, in_axes, **eqn.params)
-        if not eqn.primitive.multiple_results:
-          out_vals, out_axes = [out_vals], [out_axes]
-        out_vals = [moveaxis(x, d, 0) if d is not not_mapped and d != 0 else x
-                    for x, d in safe_zip(out_vals, out_axes)]
-        out_mapped = [d is not not_mapped for d in out_axes]
-      else:
-        out_vals = eqn.primitive.bind(*in_vals, **eqn.params)
-        if not eqn.primitive.multiple_results:
-          out_vals = [out_vals]
-        out_mapped = [False for _ in out_vals]
-    map(write, eqn.outvars, out_vals, out_mapped)
-
-  out_vals, out_mapped = unzip2(map(read, jaxpr.outvars))
-  out_vals = [out if mapped else broadcast(out, chunk_size, 0)
-              for out, mapped in safe_zip(out_vals, out_mapped)]
-  return out_vals
-
-# TODO(mattjj): dedup w/ with other aval_to_result_handler via ShardingSpec
-def soft_pmap_avals_to_results_handler(num_devices, chunk_size, out_avals):
-  nouts = len(out_avals)
-  handlers = [soft_pmap_aval_to_result_handler(chunk_size, num_devices, aval)
-              for aval in out_avals]
-  def handler(out_bufs):
-    buffers = [[result_to_populate] * num_devices for _ in range(nouts)]
-    for r, tuple_buf in enumerate(out_bufs):
-      for i, buf in enumerate(tuple_buf):
-        buffers[i][r] = buf
-    assert not any(buf is result_to_populate for bufs in buffers
-                   for buf in bufs)
-    return [h(bufs) for h, bufs in safe_zip(handlers, buffers)]
-  return handler
-
-def soft_pmap_aval_to_result_handler(chunk_size, num_devices, aval):
-  axis_size = chunk_size * num_devices
-  if aval is core.abstract_unit:
-    return lambda _: core.unit
-  elif isinstance(aval, core.ShapedArray):
-    new_aval = aval.update(shape=(axis_size,) + aval.shape)
-    spec = ShardingSpec(
-        sharding=(Chunked(num_devices),) + (_UNSHARDED_INSTANCE,) * aval.ndim,
-        mesh_mapping=(ShardedAxis(0),))
-    return lambda bufs: ShardedDeviceArray(new_aval, spec, bufs)
-  else:
-    raise TypeError(aval)
-
-soft_pmap_p = core.MapPrimitive('soft_pmap')
-soft_pmap = soft_pmap_p.bind
-soft_pmap_p.def_impl(soft_pmap_impl)
-
-soft_pmap_rules: Dict[core.Primitive, Callable] = {}
 
 @contextmanager
 def maybe_extend_axis_env(*args, **kwargs):

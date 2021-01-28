@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import numpy as np
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union, Sequence
 
 import jax
 from ..config import config
@@ -28,16 +28,24 @@ from . import partial_eval as pe
 
 map = safe_map
 
-def batch(fun: lu.WrappedFun, axis_name, axis_size, in_dims, out_dim_dests,
+BatchDim = Optional[int]
+BatchDims = Sequence[BatchDim]
+AxesSpec = Union[Callable[[], BatchDims], BatchDims]
+
+def batch(fun: lu.WrappedFun, axis_name: core.AxisName,
+          axis_size: Optional[int], in_dims: AxesSpec, out_dim_dests: AxesSpec,
           ) -> lu.WrappedFun:
   # anlogue of `jvp` in ad.py
+  # TODO(mattjj,apaszke): change type of axis_size to be int, not Optional[int]
   fun, out_dims_thunk = batch_subtrace(fun)
   return _match_axes(batchfun(fun, axis_name, axis_size, in_dims),
-                     axis_size, out_dims_thunk, out_dim_dests)
+                     axis_size, in_dims, out_dims_thunk, out_dim_dests)
 
 @lu.transformation
 def batchfun(axis_name, axis_size, in_dims, *in_vals):
   # analogue of `jvpfun` in ad.py
+  if axis_size is None:
+    axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              and not isinstance(core.get_aval(x), core.AbstractUnit)  # non-omnistaging
@@ -60,7 +68,9 @@ def batch_subtrace(main, in_dims, *in_vals):
   yield out_vals, out_dims
 
 @lu.transformation
-def _match_axes(axis_size, out_dims_thunk, out_dim_dests, *in_vals):
+def _match_axes(axis_size, in_dims, out_dims_thunk, out_dim_dests, *in_vals):
+  if axis_size is None:
+    axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   out_vals = yield in_vals, {}
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_dims = out_dims_thunk()

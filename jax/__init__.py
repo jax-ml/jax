@@ -69,7 +69,6 @@ from .api import (
   shapecheck,
   ShapedArray,
   ShapeDtypeStruct,
-  soft_pmap,
   # TODO(phawkins): hide tree* functions from jax, update callers to use
   # jax.tree_util.
   treedef_is_leaf,
@@ -86,6 +85,7 @@ from .api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation,
 )
+from .experimental.maps import soft_pmap
 from .version import __version__
 
 # These submodules are separate because they are in an import cycle with
