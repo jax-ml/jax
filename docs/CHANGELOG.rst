@@ -8,8 +8,7 @@ Change Log
 .. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 jax 0.2.10 (Unreleased)
-----------------------
-----------------------
+-----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.9...master>`__.
 * New features:
 
@@ -22,7 +21,7 @@ jaxlib 0.1.60 (Unreleased)
 --------------------------
 
 jax 0.2.9 (January 26 2021)
-----------------------
+---------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.8...jax-v0.2.9>`__.
 
 * New features:
