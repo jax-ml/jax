@@ -1,5 +1,7 @@
+.. _pytrees:
+
 Pytrees
-========
+=======
 
 What is a pytree?
 ^^^^^^^^^^^^^^^^^

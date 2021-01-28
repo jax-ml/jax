@@ -142,7 +142,7 @@ In jaxpr there are no tuple types; instead primitives take multiple inputs
 and produce multiple outputs. When processing a function that has structured
 inputs or outputs, JAX will flatten those and in jaxpr they will appear as lists
 of inputs and outputs. For more details, please see the documentation for
-PyTrees (:doc:`notebooks/JAX_pytrees`).
+PyTrees (:ref:`pytrees`).
 
 For example, the following code produces an identical jaxpr to what we saw
 before (with two input vars, one for each element of the input tuple)

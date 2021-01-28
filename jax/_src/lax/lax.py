@@ -136,6 +136,7 @@ def nextafter(x1: Array, x2: Array) -> Array:
   Note that in some environments flush-denormal-to-zero semantics is used.
   This means that, around zero, this function returns strictly non-zero
   values which appear as zero in any operations. Consider this example::
+
     >>> jnp.nextafter(0, 1)  # denormal numbers are representable
     DeviceArray(1.e-45, dtype=float32)
     >>> jnp.nextafter(0, 1) * 1  # but are flushed to zero
