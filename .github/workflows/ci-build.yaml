@@ -57,7 +57,7 @@ jobs:
             enable-x64: 0
             enable-omnistaging: 1
             package-overrides: "none"
-            num_generated_cases: 25
+            num_generated_cases: 30
           - name-prefix: "with numpy-dispatch"
             python-version: 3.9
             os: ubuntu-latest
