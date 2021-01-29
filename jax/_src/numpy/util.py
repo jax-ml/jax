@@ -80,23 +80,26 @@ def _wraps(fun, update_doc=True, lax_description=""):
         doc = firstline + '\n' + textwrap.dedent(rest)
       sections = doc.split("\n\n")
 
-      signatures = []
-      summary = None
-      for i in range(len(sections)):
-        if _numpy_signature_re.match(sections[i]):
-          signatures.append(sections[i])
-        else:
-          summary = sections[i].strip()
+      # We remove signatures from the docstrings, because they redundant at best and
+      # misleading at worst: JAX wrappers don't implement all ufunc keyword arguments.
+      for i, section in enumerate(sections):
+        if not _numpy_signature_re.match(section):
+          sections = sections[i:]
           break
-      body = "\n\n".join(signatures + sections[i + 1:])
+      summary = sections[0].strip() if sections else ""
+      body = "\n\n".join(sections[1:])
+
       if update_doc:
         body = update_numpydoc(body, fun, op)
-      desc = lax_description + "\n" if lax_description else ""
+      desc = lax_description.strip()
+
+      desc = desc + "\n\n" if desc else ""
+      summary = summary + "\n\n" if summary else ""
       docstr = (
-          f"{summary}\n\n"
-          f"LAX-backend implementation of :func:`{fun.__name__}`.\n"
+          f"{summary}"
+          f"LAX-backend implementation of :func:`{fun.__name__}`.\n\n"
           f"{desc}"
-          f"Original docstring below.\n\n"
+          f"*Original docstring below.*\n\n"
           f"{body}")
 
       op.__name__ = fun.__name__
