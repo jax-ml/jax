@@ -194,6 +194,14 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(out, (((1, [3]), (2, None)),
                            ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
+  def testTreeMultimapWithIsLeafArgument(self):
+    x = ((1, 2), [3, 4, 5])
+    y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
+    out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y,
+                                  is_leaf=lambda n: isinstance(n, list))
+    self.assertEqual(out, (((1, [3]), (2, None)),
+                           (([3, 4, 5], ({"foo": "bar"}, 7, [5, 6])))))
+
   @skipIf(jax.lib.version < (0, 1, 58), "test requires Jaxlib >= 0.1.58")
   def testFlattenIsLeaf(self):
     x = [(1, 2), (3, 4), (5, 6)]
