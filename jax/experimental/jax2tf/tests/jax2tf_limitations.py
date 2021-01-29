@@ -139,7 +139,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   }
 
 
-
   @classmethod
   def helper_get_trig_custom_limitation(cls, np_inverse):
 
@@ -184,15 +183,12 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def add(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(dtypes=[np.uint16]),
-        missing_tf_kernel(dtypes=[np.uint64], devices=("cpu", "gpu"))
-    ]
+    return []
 
   @classmethod
   # Also called add_jaxvals
   def add_any(cls, harness: primitive_harness.Harness):
-    return [missing_tf_kernel(dtypes=[np.uint16, np.uint64])]
+    return []
 
   @classmethod
   def asin(cls, harness: primitive_harness.Harness):
@@ -332,26 +328,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(dtypes=np.float64, devices="cpu", tol=1e-13),
     ]
 
-    # TODO(bchetioui): unidentified bug in compiled mode. The test that fails is
-    #
-    # test_conv_general_dilated_tf_conversion_path_3d_lhs=float32[1,4,28,28,1]_rhs=float32[2,3,3,1,16]_windowstrides=(1,1,1)_padding=VALID_lhsdilation=(1,1,1)_rhsdilation=(1,1,2)_dimensionnumbers=('NDHWC','DHWIO','NDHWC')_featuregroupcount=1_batchgroupcount=1_precision=None_enablexla=False
-    #
-    # with the following assertion error in TensorFlowTrace.process_primitive:
-    #
-    # AssertionError: conv_general_dilated: out.aval = ShapedArray(float32[1,3,24,26,16]); expected ShapedArray(float32[1,3,26,24,16])
-    #
-    # Deactivating this assertion is enough to pass the test, which suggests
-    # that the end shape is indeed the correct one (i.e. (1,3,26,24,16)).
-    # Further investigation is required to really understand this behavior,
-    # which we have not managed to reproduce as a pure TF test.
-    #
-    # This bug is low priority since it only occurs when using a non-TFXLA
-    # conversion path in compiled mode, i.e. in a context where using the
-    # TFXLA path is possible.
-    # if harness.name == "_tf_conversion_path_3d_lhs=float32[1,4,28,28,1]_rhs=float32[2,3,3,1,16]_windowstrides=(1,1,1)_padding=VALID_lhsdilation=(1,1,1)_rhsdilation=(1,1,2)_dimensionnumbers=('NDHWC','DHWIO','NDHWC')_featuregroupcount=1_batchgroupcount=1_precision=None_enablexla=False":
-    #  raise unittest.SkipTest("TODO: known but unidentified bug in compiled "
-    #                          "mode")
-
   @classmethod
   def cosh(cls, harness: primitive_harness.Harness):
     return [
@@ -365,11 +341,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def cummax(cls, harness):
     return [
         missing_tf_kernel(
-            dtypes=[np.uint64, np.complex128],
+            dtypes=[np.complex128],
             devices=("cpu", "gpu"),
         ),
-        missing_tf_kernel(
-            dtypes=[np.uint16, np.uint32, np.int8, np.complex64],),
+        missing_tf_kernel(dtypes=[np.complex64]),
         custom_numeric(dtypes=np.float16, tol=0.1),
         custom_numeric(dtypes=dtypes.bfloat16, tol=0.5)
     ]
@@ -390,11 +365,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def cumprod(cls, harness):
     return [
-        missing_tf_kernel(
-            dtypes=[np.uint64],
-            devices=("cpu", "gpu"),
-        ),
-        missing_tf_kernel(dtypes=[np.uint32]),
         custom_numeric(dtypes=np.float16, tol=0.1),
         custom_numeric(dtypes=dtypes.bfloat16, tol=0.5),
     ]
@@ -402,12 +372,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def cumsum(cls, harness):
     return [
-        missing_tf_kernel(
-            dtypes=[np.uint64],
-            devices=("cpu", "gpu"),
-        ),
         missing_tf_kernel(dtypes=[np.complex64], devices="tpu"),
-        missing_tf_kernel(dtypes=[np.uint16]),
         custom_numeric(dtypes=np.float16, tol=0.1),
         custom_numeric(dtypes=dtypes.bfloat16, tol=0.5),
     ]
@@ -642,17 +607,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def ge(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(dtypes=[np.bool_]),
-        missing_tf_kernel(
-            dtypes=[np.uint16, np.uint32],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
-        missing_tf_kernel(
-            dtypes=[np.uint64],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
-    ]
+    return [missing_tf_kernel(dtypes=[np.bool_])]
 
   @classmethod
   def gt(cls, harness: primitive_harness.Harness):
@@ -768,6 +723,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       tst.assertAllClose(result_jax[~special_cases], result_tf[~special_cases])
 
     return [
+        missing_tf_kernel(
+            dtypes=[dtypes.bfloat16, np.float16]),
         custom_numeric(
             custom_assert=custom_assert,
             description=(
@@ -801,6 +758,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           rtol=tol)
 
     return [
+        missing_tf_kernel(
+            dtypes=[dtypes.bfloat16, np.float16]),
         custom_numeric(dtypes=np.float64, tol=1e-9),
         custom_numeric(devices="gpu", tol=1e-3),
         custom_numeric(
@@ -819,20 +778,12 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return [
         missing_tf_kernel(
             dtypes=[
-                np.uint8, np.uint16, np.int8, np.int16, np.uint32, np.uint64
+                np.uint8, np.uint16, np.uint32, np.uint64
             ],),
-        # hitting rtol = nan
-        Jax2TfLimitation(("Different overflow behavior for large exponents. It "
-                          "and `+inf`/`-inf` differently in JAX and TF."),
-                         devices="tpu",
-                         dtypes=np.complex64,
-                         enabled=(y in [1000, -1000]),
-                         expect_tf_error=False,
-                         skip_comparison=True),
         Jax2TfLimitation(
             "Different overflow behavior for large exponents. ",
-            dtypes=[np.int8, np.int16, np.int32, np.int64, np.float32],
-            enabled=(y > 10),
+            dtypes=[np.int8, np.int16, np.int32, np.int64, np.float32, np.complex64],
+            enabled=(abs(y) > 10),
             expect_tf_error=False,
             skip_comparison=True)
     ] + list(cls._pow_test_util(harness))
@@ -843,17 +794,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def le(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(dtypes=[np.bool_]),
-        missing_tf_kernel(
-            dtypes=[np.uint16, np.uint32],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
-        missing_tf_kernel(
-            dtypes=[np.uint64],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
-    ]
+    return cls.ge(harness)
 
   @classmethod
   def lt(cls, harness: primitive_harness.Harness):
@@ -919,7 +860,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def _min_max_test_util(cls, harness: primitive_harness.Harness):
+  def max(cls, harness: primitive_harness.Harness):
     # TODO(bchetioui): discrepancies between TF & JAX when comparing with NaN;
     # JAX always returns NaN, while TF returns the value NaN is compared with.
     def custom_assert(tst, result_jax, result_tf, **_):
@@ -928,9 +869,12 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
     return [
         missing_tf_kernel(
-            dtypes=[
-                np.bool_, np.int8, np.complex64, np.uint16, np.uint32, np.uint64
-            ],),
+            dtypes=[np.int8, np.uint16, np.uint32, np.uint64],
+            devices=("cpu", "gpu"),
+            modes=("eager", "graph"),
+        ),
+        missing_tf_kernel(
+            dtypes=[np.bool_, np.complex64]),
         missing_tf_kernel(
             dtypes=[np.complex128],
             devices=("cpu", "gpu"),
@@ -944,16 +888,32 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def max(cls, harness: primitive_harness.Harness):
-    return cls._min_max_test_util(harness)
-
-  @classmethod
   def min(cls, harness: primitive_harness.Harness):
-    return cls._min_max_test_util(harness)
+    # TODO(bchetioui): discrepancies between TF & JAX when comparing with NaN;
+    # JAX always returns NaN, while TF returns the value NaN is compared with.
+    def custom_assert(tst, result_jax, result_tf, **_):
+      mask = np.isnan(result_jax)
+      tst.assertAllClose(result_jax[~mask], result_tf[~mask])
+
+    return [
+        missing_tf_kernel(
+            dtypes=[np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
+                    np.complex64]),
+        missing_tf_kernel(
+            dtypes=[np.complex128],
+            devices=("cpu", "gpu"),
+        ),
+        custom_numeric(
+            custom_assert=custom_assert,
+            description=(
+                "May return different values when one of the values is NaN. "
+                "JAX always returns NaN, while TF returns the value NaN is compared with."
+            ))
+    ]
 
   @classmethod
   def mul(cls, harness: primitive_harness.Harness):
-    return [missing_tf_kernel(dtypes=[np.uint32, np.uint64])]
+    return []
 
   @classmethod
   def neg(cls, harness: primitive_harness.Harness):
@@ -1012,17 +972,18 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def reduce_window_add(cls, harness):
     assert "add" == harness.params["computation"].__name__
     return [
-        missing_tf_kernel(dtypes=[np.uint16]),
         missing_tf_kernel(dtypes=[np.complex64], devices="tpu"),
-        missing_tf_kernel(dtypes=[np.uint64], devices=("cpu", "gpu"))
     ]
 
   @classmethod
-  def reduce_window_mul(cls, harness):
-    assert "mul" == harness.params["computation"].__name__
+  def reduce_window_max(cls, harness):
+    assert "max" == harness.params["computation"].__name__
     return [
-        missing_tf_kernel(dtypes=[np.uint32]),
-        missing_tf_kernel(dtypes=[np.uint64], devices=("cpu", "gpu"))
+        missing_tf_kernel(dtypes=[np.bool_, np.complex64]),
+        missing_tf_kernel(
+            dtypes=[np.complex128],
+            devices=("cpu", "gpu"),
+        )
     ]
 
   @classmethod
@@ -1030,30 +991,15 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     assert "min" == harness.params["computation"].__name__
     return [
         missing_tf_kernel(
-            dtypes=[np.uint32, np.uint16, np.bool_, np.complex64, np.int8],),
-        missing_tf_kernel(
-            dtypes=[np.uint64, np.complex128],
-            devices=("cpu", "gpu"),
+            dtypes=[np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
+                    np.complex64, np.complex128],
         )
     ]
 
   @classmethod
-  def reduce_window_max(cls, harness):
-    assert "max" == harness.params["computation"].__name__
-    dtype = harness.dtype
-    init_value = harness.params["init_value"]
-    return [
-        missing_tf_kernel(dtypes=[np.uint32, np.bool_, np.complex64]),
-        missing_tf_kernel(
-            dtypes=[np.uint64, np.complex128],
-            devices=("cpu", "gpu"),
-        ),
-        Jax2TfLimitation(
-            "TF kernel missing, except when the initial_value is the minimum for the dtype",
-            dtypes=[np.uint16, np.int8],
-            enabled=((dtype == np.uint16 and init_value != 0) or
-                     (dtype == np.int8 and init_value != -128)))
-    ]
+  def reduce_window_mul(cls, harness):
+    assert "mul" == harness.params["computation"].__name__
+    return []
 
   @classmethod
   def regularized_incomplete_beta(cls, harness: primitive_harness.Harness):
@@ -1108,7 +1054,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def scatter_add(cls, harness):
     return [
-        missing_tf_kernel(dtypes=[np.uint16, np.uint64, np.bool_],),
+        missing_tf_kernel(dtypes=[np.bool_],),
         missing_tf_kernel(
             dtypes=[np.complex64],
             devices="tpu",
@@ -1119,10 +1065,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def scatter_max(cls, harness):
     return [
         missing_tf_kernel(
-            dtypes=[
-                np.int8, np.uint16, np.uint32, np.uint64, np.complex64,
-                np.complex128, np.bool_
-            ],)
+            dtypes=[np.bool_, np.complex64, np.complex128])
     ]
 
   @classmethod
@@ -1138,7 +1081,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def scatter_mul(cls, harness):
     return [
-        missing_tf_kernel(dtypes=[np.uint32, np.uint64, np.bool_],),
+        missing_tf_kernel(dtypes=[np.bool_],),
         missing_tf_kernel(
             dtypes=[np.complex64],
             devices="tpu",
@@ -1166,13 +1109,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def select_and_scatter_add(cls, harness):
-    return [
-        missing_tf_kernel(dtypes=[np.uint16]),
-        missing_tf_kernel(
-            dtypes=[np.uint64],
-            devices=("cpu", "gpu"),
-        )
-    ]
+    return []
 
   @classmethod
   def sign(cls, harness: primitive_harness.Harness):
@@ -1203,14 +1140,12 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                      not harness.params["is_stable"]),
             expect_tf_error=False,
             skip_comparison=True),
-        missing_tf_kernel(
-            dtypes=[np.complex128, np.float64], devices=("cpu", "gpu")),
         missing_tf_kernel(dtypes=[np.bool_],),
     ]
 
   @classmethod
   def sub(cls, harness):
-    return [missing_tf_kernel(dtypes=[np.uint64])]
+    return []
 
   @classmethod
   def svd(cls, harness: primitive_harness.Harness):

@@ -508,12 +508,12 @@ def _make_integer_pow_harness(name, *, shape=(20, 30), dtype=np.int32, y=3):
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
   # Validate dtypes and y values
   _make_integer_pow_harness("dtypes", dtype=dtype)
-  # Validate overflow behavior by dtype
-  _make_integer_pow_harness("overflow", y=1000, dtype=dtype)
+  # Validate overflow behavior by dtype. 127
+  _make_integer_pow_harness("overflow", y=127, dtype=dtype)
 
 for dtype in jtu.dtypes.all_inexact:
   # Validate negative y by dtype
-  _make_integer_pow_harness("negative_exp", y=-1000, dtype=dtype)
+  _make_integer_pow_harness("negative_exp", y=-127, dtype=dtype)
 
 
 def _make_pow_harness(name,
@@ -948,19 +948,11 @@ _make_binary_elementwise_harnesses(
 
 _make_binary_elementwise_harnesses(
   prim=lax.igamma_p,
-  dtypes=jtu.dtypes.all_floating,
-  jax_unimplemented=lambda *_, dtype, **kwargs: [
-    Limitation(
-      "XLA internal error", dtypes=[np.float16, dtypes.bfloat16]),
-  ])
+  dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
   prim=lax.igammac_p,
-  dtypes=jtu.dtypes.all_floating,
-  jax_unimplemented=lambda *_, dtype, **kwargs: [
-    Limitation(
-      "XLA internal error", dtypes=[np.float16, dtypes.bfloat16]),
-  ])
+  dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
   prim=lax.nextafter_p,
