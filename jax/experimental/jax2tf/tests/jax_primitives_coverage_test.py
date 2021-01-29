@@ -99,7 +99,8 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
     for h in harnesses:
       harness_groups[h.group_name].append(h)
       for l in h.jax_unimplemented:
-        unique_limitations[hash(unique_hash(h, l))] = (h, l)
+        if l.enabled:
+          unique_limitations[hash(unique_hash(h, l))] = (h, l)
 
     primitive_coverage_table = ["""
 | Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |

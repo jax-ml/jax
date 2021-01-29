@@ -344,7 +344,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.complex128],
             devices=("cpu", "gpu"),
         ),
-        missing_tf_kernel(dtypes=[np.complex64]),
+        missing_tf_kernel(dtypes=[np.complex64], devices=("cpu", "gpu")),
         custom_numeric(dtypes=np.float16, tol=0.1),
         custom_numeric(dtypes=dtypes.bfloat16, tol=0.5)
     ]
@@ -1054,12 +1054,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def scatter_add(cls, harness):
     return [
-        missing_tf_kernel(dtypes=[np.bool_],),
+        missing_tf_kernel(dtypes=[np.bool_]),
         missing_tf_kernel(
             dtypes=[np.complex64],
             devices="tpu",
-        ),
-    ]
+        )]
 
   @classmethod
   def scatter_max(cls, harness):

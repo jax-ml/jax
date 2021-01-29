@@ -145,7 +145,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     harnesses = [
         h for h in primitive_harness.all_harnesses
-        if h.filter(h, include_jax_unimpl=False)
+        if h.filter(h, include_jax_unimpl=True)
     ]
     print(f"Found {len(harnesses)} test harnesses that work in JAX")
 
@@ -154,6 +154,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
               tuple([np.dtype(d).name for d in l.dtypes]), l.modes)
 
     unique_limitations: Dict[Any, Tuple[primitive_harness.Harness, Jax2TfLimitation]] = {}
+    for h in harnesses:
+      for l in h.jax_unimplemented:
+        if l.enabled:
+          # Fake a Jax2TFLimitation from the Limitation
+          tfl = Jax2TfLimitation(description="Not implemented in JAX: " + l.description,
+                                 devices = l.devices,
+                                 dtypes = l.dtypes,
+                                 expect_tf_error = False,
+                                 skip_tf_run = True)
+          unique_limitations[hash(unique_hash(h, tfl))] = (h, tfl)
     for h in harnesses:
       for l in Jax2TfLimitation.limitations_for_harness(h):
         unique_limitations[hash(unique_hash(h, l))] = (h, l)
