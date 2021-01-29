@@ -203,7 +203,7 @@ def convert(fun: Callable, *,
 
     # Name input tensors
     args = tuple(
-        tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"), a)
+        tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"), a)  # type: ignore
         for i, a in enumerate(args))
 
     # This function may take pytrees of TfVals. We can only set
