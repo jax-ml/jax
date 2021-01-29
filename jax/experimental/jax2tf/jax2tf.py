@@ -195,7 +195,7 @@ def convert(fun: Callable, *,
                          + f"Trace state: {core.thread_local_state.trace_state}")
 
     def check_arg(a):
-      if not _is_tfvalorunit(a):
+      if not _is_tfval(a):
         msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
                "be NumPy array, scalar, tf.Variable, or tf.Tensor")
         raise TypeError(msg)
