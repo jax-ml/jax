@@ -29,7 +29,7 @@ import collections
 import operator
 import os
 import types
-from typing import Sequence, FrozenSet, Optional, Tuple, Union, Iterable, cast
+from typing import Sequence, FrozenSet, Optional, Tuple, Union, cast
 from textwrap import dedent as _dedent
 import warnings
 
@@ -51,7 +51,7 @@ from jax._src.lax.lax import _device_put_raw
 from jax import ops
 from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip,
                            canonicalize_axis as _canonicalize_axis)
-from jax.tree_util import tree_leaves, tree_flatten
+from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -2488,28 +2488,30 @@ def _pad_func(array, pad_width, func, **kwargs):
 
 
 def _broadcast_to_pairs(nvals, nd, name):
-  nvals_shape = np.shape(nvals)
-  if nvals_shape == (nd, 2):
+  nvals = np.asarray(tree_map(
+    lambda x: core.concrete_or_error(np.array, x, context=f"{name} argument of jnp.pad"),
+    nvals))
+  if nvals.dtype.kind == 'O':
+    raise TypeError(f'`{name}` entries must be the same shape.')
+
+  if nvals.shape == (nd, 2):
     # ((before_1, after_1), ..., (before_N, after_N))
-    pass
-  elif nvals_shape == (1, 2):
+    return tuple(tuple(nval) for nval in nvals)
+  elif nvals.shape == (1, 2):
     # ((before, after),)
-    nvals = nvals * nd
-  elif nvals_shape == (2,):
+    return tuple(tuple(nvals[0]) for i in range(nd))
+  elif nvals.shape == (2,):
     # (before, after)  (not in the numpy docstring but works anyway)
-    before, after = nvals
-    nvals = (nvals,) * nd
-  elif nvals_shape == (1,):
+    return tuple(tuple(nvals) for i in range(nd))
+  elif nvals.shape == (1,):
     # (pad,)
-    nvals, = nvals
-    nvals = ((nvals, nvals),) * nd
-  elif nvals_shape == ():
+    return tuple((nvals[0], nvals[0]) for i in range(nd))
+  elif nvals.shape == ():
     # pad
-    nvals = ((nvals, nvals),) * nd
+    return tuple((nvals.flat[0], nvals.flat[0]) for i in range(nd))
   else:
     raise ValueError(f"{name} given unexpected structure: {nvals}. "
                      "See docstring for valid {name} formats.")
-  return nvals
 
 
 @partial(jit, static_argnums=(1, 2, 4, 5, 6))
@@ -2565,10 +2567,9 @@ the modified array. This is because Jax arrays are immutable.
 (In numpy, "function" mode's argument should modify a rank 1 array in-place.)
 """)
 def pad(array, pad_width, mode="constant", **kwargs):
-  if isinstance(pad_width, Iterable):
-    pad_width = tuple(
-        tuple(int(i) for i in x) if isinstance(x, Iterable) else x
-        for x in pad_width)
+  pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
+  if pad_width and np.array(pad_width).dtype.kind != 'i':
+    raise TypeError('`pad_width` must be of integral type.')
 
   if callable(mode):
     return _pad_func(array, pad_width, mode, **kwargs)
