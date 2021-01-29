@@ -1571,6 +1571,15 @@ class LaxTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(TypeError, "must have every element be"):
         failure_fun()
 
+    with self.assertRaisesRegex(
+        ValueError,
+        "Invalid return type from reduction function: <class 'list'>\n"
+        "Reduction functions should only return an array.\n"
+        "Full return value: .*"):
+      return lax.reduce_window(
+          np.ones((1,)), 0., lambda x, y: [x + y],
+          padding='VALID', window_dimensions=(1,), window_strides=(1,))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": (f"_shape={shape}_windowdimensions={window_dimensions}"
                          f"_basedilation={base_dilation}_windowdilation="

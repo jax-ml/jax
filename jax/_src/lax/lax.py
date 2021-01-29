@@ -1148,7 +1148,15 @@ def reduce(operands: Array, init_values: Array, computation: Callable,
 @cache()
 def _reduction_jaxpr(computation, aval):
   pval = pe.PartialVal.unknown(aval)
-  comp = lu.wrap_init(lambda x, y: (computation(x, y),))
+  @lu.wrap_init
+  def comp(x, y):
+    result = computation(x, y)
+    if not (isinstance(result, core.Tracer) or core.valid_jaxtype(result)):
+      raise ValueError(
+          f"Invalid return type from reduction function: {type(result)}\n"
+          f"Reduction functions should only return an array.\n"
+          f"Full return value: {result}")
+    return (result,)
   jaxpr, _, consts = pe.trace_to_jaxpr(comp, (pval, pval), instantiate=False)
   return jaxpr, consts
 
