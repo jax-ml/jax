@@ -1141,7 +1141,10 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   assert nrep == len(devices)
 
   aval = xla.abstractify(val)  # type: ShapedArray
-  replicated_aval = aval.update(shape=(axis_size,) + aval.shape)
+  if in_axis is not None:
+    replicated_aval = aval.update(shape=(axis_size,) + aval.shape)
+  else:
+    replicated_aval = aval
   # TODO(skye): figure out how partitioning should work here
   sharding_spec = _pmap_sharding_spec(nrep, axis_size, 1, None, aval, in_axis)
   device_buffers = device_put(val, devices, replicate=True)

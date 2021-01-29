@@ -328,6 +328,14 @@ class PmapTest(jtu.JaxTestCase):
     self.assertEmpty([a for a in g_ans.sharding_spec.mesh_mapping
                       if isinstance(a, pxla.Replicated)])
 
+  def testReplicate(self):
+    base = np.array([3.,4.], dtype=np.float32)
+    num_devices = xla_bridge.device_count()
+    replicated = pxla.replicate(base, num_devices, num_devices, in_axis=None)
+    self.assertAllClose(base, replicated)
+    self.assertEmpty([a for a in replicated.sharding_spec.mesh_mapping
+                      if not isinstance(a, pxla.Replicated)])
+
   @parameterized.named_parameters(
       {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
        "device_mesh_shape": device_mesh_shape}
