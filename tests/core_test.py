@@ -22,6 +22,7 @@ import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax import core
 from jax import lax
 from jax import numpy as jnp
@@ -30,7 +31,7 @@ from jax.abstract_arrays import make_shaped_array
 from jax.api import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
-from jax.util import partial
+from jax._src.util import partial
 from jax.interpreters import partial_eval as pe
 
 
@@ -309,8 +310,20 @@ class CoreTest(jtu.JaxTestCase):
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
 
+  def test_device_put_unit(self):
+    def f(x, y):
+      return x, 2 * y
+    args_maker = lambda: (core.unit, 1)
+    self._CompileAndCheck(f, args_maker)
+
 
 class JaxprTypeChecks(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    jax._src.lax.control_flow._initial_style_open_jaxpr.cache_clear()
+    jax._src.lax.control_flow._initial_style_jaxpr.cache_clear()
+    jax._src.lax.control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
 
   def test_check_jaxpr_correct(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
@@ -323,7 +336,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
   def test_check_jaxpr_cond_invalid(self):
     jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].in_avals = ()
     cond.params['branches'][0].jaxpr.invars = ()
     self.assertRaisesRegex(
         core.JaxprTypeError,
@@ -358,7 +370,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         lambda x: lax.switch(0, [jnp.sin, jnp.cos], x), 100))(1.).jaxpr
 
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].in_avals = ()
     cond.params['branches'][0].jaxpr.invars = ()
     msg = ''
     try:
@@ -439,6 +450,25 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     jaxpr = make_jaxpr(f)(1.).jaxpr
     assert jaxpr.eqns[-1].outvars[0] is core.dropvar
     core.check_jaxpr(jaxpr)
+
+  def test_jaxpr_undefined_eqn_invar(self):
+    jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
+    cos = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cos')
+    cos.invars[0] = core.gensym([jaxpr], suffix='_test')(cos.invars[0].aval)
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r"Variable '.+_test' not defined\n\nin equation:",
+        lambda: core.check_jaxpr(jaxpr))
+
+  @parameterized.parameters(
+    {'value': 0, 'weak_type': True},
+    {'value': np.int32(0), 'weak_type': False},
+    {'value': np.array([0]), 'weak_type': False}
+  )
+  def test_raise_to_shaped_weak_type(self, value, weak_type):
+    aval = core.raise_to_shaped(core.get_aval(value))
+    self.assertEqual(aval.weak_type, weak_type)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

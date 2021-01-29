@@ -20,16 +20,18 @@ from typing import Any, Callable, Dict, Set, List
 from . import partial_eval as pe
 from ..config import config
 from .. import core
-from ..core import Trace, Tracer, get_aval, call_p, Primitive, Literal
+from ..dtypes import dtype, float0
+from ..core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
+                    raise_to_shaped)
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
-from ..abstract_arrays import raise_to_shaped
-from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name
+from .._src.util import (unzip2, safe_map, safe_zip, partial, split_list,
+                         wrap_name, as_hashable_function)
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten, Partial
-from .. import source_info_util
+from jax._src import source_info_util
 
 zip = safe_zip
 map = safe_map
@@ -46,6 +48,8 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True) -> Any:
 
 @lu.transformation
 def jvpfun(instantiate, primals, tangents):
+  tangents = [Zero.from_value(t) if not isinstance(t, Zero)
+              and dtype(t) is float0 else t for t in tangents]
   with core.new_main(JVPTrace) as main:
     out_primals, out_tangents = yield (main, primals, tangents), {}
     del main
@@ -90,7 +94,7 @@ def linearize(traceable, *primals, **kwargs):
     jvpfun, aux = jvp(traceable, has_aux=True)
 
   in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
-            + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
+              + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
                     for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
@@ -143,19 +147,37 @@ def unpair_pval(pval):
     aval_1, aval_2 = aval
     return (aval_1, const_1), (aval_2, const_2)
 
+def replace_float0s(primal, tangent):
+  if dtype(tangent) is float0:
+    return core.zeros_like_float0(tangent, dtype(primal))
+  else:
+    return tangent
+
+def recast_to_float0(primal, tangent):
+  if core.primal_dtype_to_tangent_dtype(dtype(primal)) == float0:
+    return Zero(get_aval(primal).at_least_vspace())
+  else:
+    return tangent
+
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type errors if you will)
 def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
   if all(type(ct) is Zero for ct in cotangents_in):
     return map(lambda v: Zero(v.aval), jaxpr.invars)
 
-  def write_cotangent(v, ct):
+  def write_cotangent(prim, v, ct):
     # assert v not in primal_env
-    if (ct is not None and type(v) is not Literal and
-        type(ct) is not Zero and ct is not Zero):
-      ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
-      if not core.skip_checks:
-        ct_aval = core.get_aval(ct_env[v])
-        assert v.aval == core.lattice_join(v.aval, ct_aval), (v.aval, ct_aval)
+    assert ct is not Zero, (prim, v.aval)  # check for an old harmless type error
+    if ct is None or type(v) is Literal:
+      return
+    if type(ct) is Zero:
+      # FIXME: This triggers a lot of failures!
+      # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
+      return
+    ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
+    if not core.skip_checks:
+      ct_aval = core.get_aval(ct_env[v])
+      joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type()
+      assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.get(v, Zero(v.aval))
@@ -187,7 +209,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
     seen_vars |= read_set
 
   ct_env: Dict[Any, Any] = {}
-  map(write_cotangent, jaxpr.outvars, cotangents_in)
+  map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
   for eqn, to_drop in zip(jaxpr.eqns[::-1], drop_cts[::-1]):
     # FIXME: Some invars correspond to tangents
     invals = map(read_primal, eqn.invars)
@@ -206,7 +228,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
                                                          **eqn.params)
     cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
     # FIXME: Some invars correspond to primals!
-    map(write_cotangent, eqn.invars, cts_out)
+    map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
     for var in to_drop:
       ct_env.pop(var, None)  # NB: Constant cotangents might be missing
 
@@ -235,13 +257,21 @@ def get_primitive_transpose(p):
         "Transpose rule (for reverse-mode differentiation) for '{}' "
         "not implemented".format(p)) from err
 
+@lu.transformation_with_aux
+def nonzero_tangent_outputs(*args, **kwargs):
+  results = (_, tangents_out) = yield args, kwargs
+  yield results, [type(r) is not Zero for r in tangents_out]
+
+
 class JVPTrace(Trace):
 
   def pure(self, val):
-    return JVPTracer(self, val, Zero.from_value(val))
+    tangent_zero = Zero(get_aval(val).at_least_vspace())
+    return JVPTracer(self, val, tangent_zero)
 
   def lift(self, val):
-    return JVPTracer(self, val, Zero.from_value(val))
+    tangent_zero = Zero(get_aval(val).at_least_vspace())
+    return JVPTracer(self, val, tangent_zero)
 
   def sublift(self, val):
     return JVPTracer(self, val.primal, val.tangent)
@@ -262,14 +292,27 @@ class JVPTrace(Trace):
     assert call_primitive.multiple_results
     primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
     nonzero_tangents, tangent_tree_def = tree_flatten(tangents)
-    f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.main),
-                                    len(primals), tangent_tree_def)
     nz_tangents = [type(t) is not Zero for t in tangents]
     params = dict(params, name=wrap_name(params['name'], 'jvp'))
+    f_jvp = jvp_subtrace(f, self.main)
     if isinstance(call_primitive, core.MapPrimitive):
-      mapped_invars = params['mapped_invars']
-      mapped_tangents = [m for m, nz in zip(mapped_invars, nz_tangents) if nz]
-      params = dict(params, mapped_invars=(*mapped_invars, *mapped_tangents))
+      in_axes = params['in_axes']
+      tangent_in_axes = [ax for ax, nz in zip(in_axes, nz_tangents) if nz]
+      out_axes_thunk = params['out_axes_thunk']
+      f_jvp, nz_tangents_out = nonzero_tangent_outputs(f_jvp)
+      # The new thunk depends deterministically on the old thunk and the wrapped function.
+      # Any caching already has to include the wrapped function as part of the key, so we
+      # only use the previous thunk for equality checks.
+      # NOTE: This assumes that the output tangents being zero is a deterministic
+      #       function of which input tangents were zero.
+      @as_hashable_function(closure=(tuple(nz_tangents), out_axes_thunk))
+      def new_out_axes_thunk():
+        out_axes = out_axes_thunk()
+        return (*out_axes, *(ax for ax, nz in zip(out_axes, nz_tangents_out()) if nz))
+      params = dict(params,
+                    in_axes=(*in_axes, *tangent_in_axes),
+                    out_axes_thunk=new_out_axes_thunk)
+    f_jvp, out_tree_def = traceable(f_jvp, len(primals), tangent_tree_def)
     update_params = call_param_updaters.get(call_primitive)
     new_params = update_params(params, nz_tangents) if update_params else params
     result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
@@ -279,16 +322,22 @@ class JVPTrace(Trace):
   def post_process_call(self, call_primitive, out_tracers, params):
     primals, tangents = unzip2((t.primal, t.tangent) for t in out_tracers)
     out, treedef = tree_flatten((primals, tangents))
+    tangents_nz = [type(t) is not Zero for t in tangents]
     del primals, tangents
     main = self.main
     def todo(x):
       primals, tangents = tree_unflatten(treedef, x)
       trace = JVPTrace(main, core.cur_sublevel())
       return map(partial(JVPTracer, trace), primals, tangents)
+    if call_primitive.map_primitive:
+      def out_axes_transform(out_axes):
+        return (*out_axes, *(ax for ax, nz in zip(out_axes, tangents_nz) if nz))
+      todo = (todo, out_axes_transform)
     return out, todo
 
   # The only difference between process_map and process_call is that
-  # the `mapped_invars` param must be updated; that's handled in process_call.
+  # the `in_axes` and `out_axes_thunk` params must be updated;
+  # that's handled in process_call.
   process_map = process_call
   post_process_map = post_process_call
 
@@ -296,9 +345,16 @@ class JVPTrace(Trace):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     primals_in = map(core.full_lower, primals_in)
     tangents_in = map(instantiate_zeros, tangents_in)
+    # Cast float0 to zeros with the primal dtype because custom jvp rules don't
+    # currently handle float0s
+    tangents_in = map(replace_float0s, primals_in, tangents_in)
     outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
+    tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
+
+  def post_process_custom_jvp_call(self, out_tracers, params):
+    raise CustomJVPException()
 
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
@@ -310,7 +366,11 @@ class JVPTrace(Trace):
     tangents_out = custom_lin_p.bind(
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         avals_out=avals_out)
+    tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
+
+  def post_process_custom_vjp_call(self, out_tracers, params):
+    raise CustomVJPException()
 
   def join(self, xt, yt):
     xz, yz = type(xt) is Zero, type(yt) is Zero
@@ -347,9 +407,11 @@ class JVPTracer(Tracer):
 
 def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
-    primal_aval = raise_to_shaped(get_aval(primal))
-    tangent_aval = raise_to_shaped(get_aval(tangent))
-    assert primal_aval == tangent_aval, (primal_aval, tangent_aval)
+    primal_aval = raise_to_shaped(get_aval(primal), weak_type=False)
+    tangent_aval = raise_to_shaped(get_aval(tangent), weak_type=False)
+    assert primal_aval.shape == tangent_aval.shape, (primal_aval.shape, tangent_aval.shape)
+    expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
+    assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
 
 call_param_updaters: Dict[core.Primitive, Callable] = {}
 call_transpose_param_updaters: Dict[core.Primitive, Callable] = {}
@@ -425,7 +487,7 @@ def defbilinear_broadcasting(bcast, prim, lhs_rule, rhs_rule):
   rhs_jvp = lambda g, x, y, **kwargs: prim.bind(x, bcast(g, x), **kwargs)
   defjvp(prim, lhs_jvp, rhs_jvp)
   primitive_transposes[prim] = partial(bilinear_transpose, lhs_rule, rhs_rule)
-defbilinear = partial(defbilinear_broadcasting, lambda g, x: g)
+defbilinear: Callable = partial(defbilinear_broadcasting, lambda g, x: g)
 
 def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
   assert is_undefined_primal(x) ^ is_undefined_primal(y)
@@ -448,16 +510,18 @@ def zero_jvp(primitive, primals, tangents, **params):
   return r, Zero.from_value(r)
 
 
-deflinear(zeros_like_p, lambda t: [Zero.from_value(t)])
-deflinear(add_jaxvals_p, lambda t: (t, t))
+deflinear2(zeros_like_p, lambda t, _: [Zero.from_value(t)])
+deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
 
 def instantiate_zeros(tangent):
   if type(tangent) is Zero:
+    if isinstance(tangent.aval, Tracer):
+      return tangent.aval
     return zeros_like_aval(tangent.aval)
   else:
     return tangent
 
-# This function seems similar to instantaite_zeros, but it is sometimes used
+# This function seems similar to instantiate_zeros, but it is sometimes used
 # to instantiate zero abstract units with a different aval
 def instantiate_zeros_aval(aval, tangent):
   if type(tangent) is Zero:
@@ -494,9 +558,7 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   # backward_pass can only transpose linear computations, but the call_jaxpr embedded in
   # remat contains primal (non-linear) equations too. Hence, we have to eliminate those
   # (in this case via partial_eval) before we call into backward_pass again.
-  in_avals = [raise_to_shaped(p.aval if is_undefined_primal(p) else get_aval(p))
-              for p in primals_in]
-  typed_call_jaxpr = core.TypedJaxpr(call_jaxpr, [], in_avals, cotangent_in_avals)
+  typed_call_jaxpr = core.ClosedJaxpr(call_jaxpr, [])
   unknowns = map(is_undefined_primal, primals_in)
   if config.omnistaging_enabled:
     primal_jaxpr, tangent_jaxpr, out_unknowns = \
@@ -504,7 +566,7 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   else:
     primal_jaxpr, tangent_jaxpr, out_unknowns = \
       pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True,
-                            trace_type=None)
+                            trace_type=None)  # type: ignore
 
   def do_transpose(primals_in, cotangents_in):
     # NOTE: This is passing in undefined primals in place of tangent arguments, but it
@@ -522,16 +584,34 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   return tree_unflatten(out_tree(), flat_cotangents_out)
 primitive_transposes[pe.remat_call_p] = remat_transpose
 
+@lu.transformation_with_aux
+def nonzero_outputs(*args, **kwargs):
+  results = yield args, kwargs
+  yield results, [type(r) is not Zero for r in results]
+
 
 def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
+  fun, nz_arg_cts = nonzero_outputs(fun)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-  new_mapped_invars = (*[m for m, x in zip(params['mapped_invars'], args)
-                         if not is_undefined_primal(x)],
-                       *[True for x in ct if type(x) is not Zero])
+  # Preserve axis for primal arguments, skip tangents (represented as undefined primals).
+  in_axes, out_axes = params['in_axes'], params['out_axes']
+  new_in_axes = (*[axis for axis, x in zip(in_axes, args)
+                   if not is_undefined_primal(x)],
+                 *[axis for axis, x in zip(out_axes, ct)
+                   if type(x) is not Zero])
+  # The interim strategy we use below (until avals-with-names) only works
+  # when all outputs are mapped.
+  assert all(out_axis is not None for out_axis in out_axes), out_axes
+  # NOTE: This assumes that the output cotangents being zero is a deterministic
+  #       function of which input cotangents were zero.
+  @as_hashable_function(closure=(in_axes, tuple(type(c) is Zero for c in ct)))
+  def out_axes_thunk():
+    return tuple(axis or 0 for axis, nz in zip(in_axes, nz_arg_cts()) if nz)
   new_params = dict(params, name=wrap_name(params['name'], 'transpose'),
-                    mapped_invars=new_mapped_invars)
+                    in_axes=new_in_axes, out_axes_thunk=out_axes_thunk)
+  del new_params['out_axes']
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
     new_params = update_params(new_params, map(is_undefined_primal, args),
@@ -539,14 +619,17 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   out_flat = primitive.bind(fun, *all_args, **new_params)
   arg_cts = tree_unflatten(out_tree(), out_flat)
 
-  mapped_invars = params['mapped_invars']  # True for each mapped invar
   # The freevars are being fanned out (not mapped). During transpose the
   # dual of fan-out is fan-in-sum. We apply it to the unmapped invars.
-  assert len(mapped_invars) == len(arg_cts)
-  arg_cts = (arg_ct if arg_mapped or type(arg_ct) is Zero else arg_ct.sum(0)
-             for arg_ct, arg_mapped in zip(arg_cts, mapped_invars))
-
-  return arg_cts
+  assert len(in_axes) == len(arg_cts)
+  def unmap_zero(zero, in_axis):
+    return (zero if in_axis is None else
+            Zero(core.unmapped_aval(params['axis_size'], in_axis, zero.aval)))
+  arg_cts = (unmap_zero(arg_ct, in_axis) if type(arg_ct) is Zero else
+             arg_ct if in_axis is not None else
+             arg_ct.sum(0)
+             for arg_ct, in_axis in zip(arg_cts, in_axes))
+  return tuple(arg_cts)
 
 
 def jvp_jaxpr(jaxpr, nonzeros, instantiate):
@@ -555,11 +638,8 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
   tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
-  pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
-  jaxpr_out, pvals_out, literals_out = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
-  avals_out, _ = unzip2(pvals_out)
-  jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
-  return jaxpr_out, out_nonzeros()
+  jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
+  return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()
 
 @lu.transformation_with_aux
 def f_jvp_traceable(nonzeros, *primals_and_nztangents):
@@ -573,16 +653,12 @@ def f_jvp_traceable(nonzeros, *primals_and_nztangents):
   nonzero_tangents_out = [t for t in tangents_out if type(t) is not Zero]
   yield list(primals_out) + nonzero_tangents_out, out_nonzeros
 
-def rearrange_binders(jaxpr: core.TypedJaxpr, primals_in, tangents_in, primals_out, tangents_out):
+def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_out, tangents_out):
   new_invars = _perm(primals_in, tangents_in, jaxpr.jaxpr.invars)
   new_outvars = _perm(primals_out, tangents_out, jaxpr.jaxpr.outvars)
   new_jaxpr = core.Jaxpr(jaxpr.jaxpr.constvars,
                          new_invars, new_outvars, jaxpr.jaxpr.eqns)
-  new_in_avals = _perm(primals_in, tangents_in, jaxpr.in_avals)
-  new_out_avals = _perm(primals_out, tangents_out, jaxpr.out_avals)
-  new_typed_jaxpr = core.TypedJaxpr(new_jaxpr, jaxpr.literals, new_in_avals,
-                                    new_out_avals)
-  return new_typed_jaxpr
+  return core.ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
 def _perm(primal_counts, tangent_counts, lst):
   n = sum(primal_counts)
@@ -609,8 +685,7 @@ def _custom_lin_transpose(cts_out, *invals, num_res, bwd, avals_out):
   res, _ = split_list(invals, [num_res])
   cts_out = map(instantiate_zeros_aval, avals_out, cts_out)
   cts_in = bwd.call_wrapped(*res, *cts_out)
-  cts_in_flat, _ = tree_flatten(cts_in)  # already checked tree structure
-  return [None] * num_res + cts_in_flat
+  return [None] * num_res + list(cts_in)
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
 
 
@@ -644,7 +719,7 @@ def defvjp_all(prim, custom_vjp):
     if config.omnistaging_enabled:
       jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals, instantiate=True)
     else:
-      with core.initial_style_staging():
+      with core.initial_style_staging():  # type: ignore
         jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals,
                                           instantiate=True)
     tangents_out = fun_lin_p.bind(*it.chain(res, tangents), trans_jaxpr=jaxpr,
@@ -680,9 +755,30 @@ def defvjp2(prim, *vjps):
   defvjp_all(prim, vjpmaker)
 
 
-# TODO(mattjj): remove when omnistaging fully lands
-@config.register_omnistaging_enabler
-def omnistaging_enabler() -> None:
+class CustomJVPException(Exception):
+  def __init__(self):
+    # TODO(mattjj): track source provenance on AD tracers, improve error
+    msg = ("Detected differentiation of a custom_jvp function with respect to "
+           "a closed-over value. That isn't supported because the custom JVP "
+           "rule only specifies how to differentiate the custom_jvp function "
+           "with respect to explicit input parameters. Try passing the "
+           "closed-over value into the custom_jvp function as an argument, and "
+           "adapting the custom_jvp rule.")
+    super().__init__(msg)
+
+class CustomVJPException(Exception):
+  def __init__(self):
+    # TODO(mattjj): track source provenance on AD tracers, improve error
+    msg = ("Detected differentiation of a custom_vjp function with respect to "
+           "a closed-over value. That isn't supported because the custom VJP "
+           "rule only specifies how to differentiate the custom_vjp function "
+           "with respect to explicit input parameters. Try passing the "
+           "closed-over value into the custom_vjp function as an argument, and "
+           "adapting the custom_vjp fwd and bwd rules.")
+    super().__init__(msg)
+
+@config.register_omnistaging_disabler
+def omnistaging_disabler() -> None:
   global jvp_jaxpr
 
   def jvp_jaxpr(jaxpr, nonzeros, instantiate):
@@ -691,6 +787,6 @@ def omnistaging_enabler() -> None:
     f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
     tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
     avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
-    jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
-    jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
-    return jaxpr_out, out_nonzeros()
+    pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
+    jaxpr_out, _, consts = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
+    return core.ClosedJaxpr(jaxpr_out, consts), out_nonzeros()

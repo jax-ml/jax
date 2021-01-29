@@ -17,6 +17,7 @@ import collections
 import functools
 from functools import partial
 import itertools
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -51,6 +52,11 @@ def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), t
   nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
   return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
 
+# TODO(phawkins): we should probably separate out the function domains used for
+# autodiff tests from the function domains used for equivalence testing. For
+# example, logit should closely match its scipy equivalent everywhere, but we
+# don't expect numerical gradient tests to pass for inputs very close to 0.
+
 JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
     op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
@@ -67,7 +73,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("i0e", 1, float_dtypes, jtu.rand_default, True),
     op_record("i1", 1, float_dtypes, jtu.rand_default, True),
     op_record("i1e", 1, float_dtypes, jtu.rand_default, True),
-    op_record("logit", 1, float_dtypes, jtu.rand_uniform, True),
+    op_record("logit", 1, float_dtypes, partial(jtu.rand_uniform, low=0.05,
+                                                high=0.95), True),
     op_record("log_ndtr", 1, float_dtypes, jtu.rand_default, True),
     op_record("ndtri", 1, float_dtypes, partial(jtu.rand_uniform, low=0.05,
                                                 high=0.95),
@@ -154,6 +161,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for rec in JAX_SPECIAL_FUNCTION_RECORDS))
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
                           test_autodiff, nondiff_argnums):
+    if (jtu.device_under_test() == "cpu" and
+        (lax_op is lsp_special.gammainc or lax_op is lsp_special.gammaincc)):
+      # TODO(b/173608403): re-enable test when LLVM bug is fixed.
+      raise unittest.SkipTest("Skipping test due to LLVM lowering bug")
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
@@ -177,19 +188,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_d={}".format(
           jtu.format_shape_dtype_string(shape, dtype), d),
-       "rng_factory": jtu.rand_positive, "shape": shape, "dtype": dtype,
-       "d": d}
+       "shape": shape, "dtype": dtype, "d": d}
       for shape in all_shapes
       for dtype in float_dtypes
       for d in [1, 2, 5]))
-  def testMultigammaln(self, rng_factory, shape, dtype, d):
+  def testMultigammaln(self, shape, dtype, d):
     def scipy_fun(a):
       return osp_special.multigammaln(a, d)
 
     def lax_fun(a):
       return lsp_special.multigammaln(a, d)
 
-    rng = rng_factory(self.rng())
+    rng = jtu.rand_positive(self.rng())
     args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
                             tol={np.float32: 1e-3, np.float64: 1e-14})

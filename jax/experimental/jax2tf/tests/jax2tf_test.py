@@ -21,6 +21,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+from jax import dtypes
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
@@ -36,8 +37,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_basics(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
-    _, res_tf = self.ConvertAndCompare(f_jax, 0.7)
-    self.assertIsInstance(res_tf, tf.Tensor)
+    _, res_tf = self.ConvertAndCompare(f_jax, jnp.float_(0.7))
 
   def test_input_output_naming(self):
     @jax2tf.convert
@@ -81,19 +81,19 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       x_a, x_dict = x
       return x_a * 2., {k : v * 3. for k, v in x_dict.items()}
 
-    x = (.7, {"a": .8, "b": .9})
+    x = (jnp.float_(.7), {"a": jnp.float_(.8), "b": jnp.float_(.9)})
     self.ConvertAndCompare(f_jax, x)
 
   def test_variable_input(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
     f_tf = jax2tf.convert(f_jax)
-    v = tf.Variable(0.7)
+    v = tf.Variable(0.7, dtype=dtypes.canonicalize_dtype(jnp.float_))
     self.assertIsInstance(f_tf(v), tf.Tensor)
     self.assertAllClose(f_jax(0.7), f_tf(v))
 
   def test_jit(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
-    self.ConvertAndCompare(f_jax, 0.7)
+    self.ConvertAndCompare(f_jax, jnp.float_(0.7))
 
   def test_nested_jit(self):
     f_jax = jax.jit(lambda x: jnp.sin(jax.jit(jnp.cos)(x)))
@@ -149,7 +149,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_function(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
-    self.ConvertAndCompare(f_jax, 0.7)
+    self.ConvertAndCompare(f_jax, jnp.float_(0.7))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"function={with_function}",
@@ -180,8 +180,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
-    x = tf.Variable(4.)
-    y = tf.Variable(5.)
+    default_float_type = dtypes.canonicalize_dtype(jnp.float_)
+    x = tf.Variable(4., dtype=default_float_type)
+    y = tf.Variable(5., dtype=default_float_type)
     with tf.GradientTape(persistent=True) as tape:
       u, v = f_tf(x, y)
 
@@ -202,8 +203,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
-    x = tf.Variable(4.)
-    y = tf.Variable(5.)
+    default_float_dtype = dtypes.canonicalize_dtype(jnp.float_)
+    x = tf.Variable(4., dtype=default_float_dtype)
+    y = tf.Variable(5., dtype=default_float_dtype)
     with tf.GradientTape(persistent=True) as tape:
       uv = f_tf((x, y))
 
@@ -237,8 +239,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
-    self.assertAllClose(4. * 4., f_tf(4.))
-    x = tf.Variable(4.)
+    self.assertAllClose(4. * 4., f_tf(jnp.float_(4.)))
+    x = tf.Variable(4., dtype=dtypes.canonicalize_dtype(jnp.float_))
     with tf.GradientTape() as tape:
       tape.watch(x)
       y = f_tf(x)
@@ -271,8 +273,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
-    self.assertAllClose(4. * 4., f_tf(4.))
-    x = tf.Variable(4.)
+    self.assertAllClose(4. * 4., f_tf(jnp.float_(4.)))
+    x = tf.Variable(4., dtype=dtypes.canonicalize_dtype(jnp.float_))
     with tf.GradientTape() as tape:
       tape.watch(x)
       y = f_tf(x)
@@ -319,7 +321,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       tangent_out = 3. * x * x_dot
       return primal_out, tangent_out
 
-    arg = 0.7
+    arg = jnp.float_(0.7)
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "jvp")
     self.TransformConvertAndCompare(f, arg, "vmap")
@@ -341,7 +343,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return residual * ct_b,
 
     f.defvjp(f_fwd, f_bwd)
-    arg = 0.7
+    arg = jnp.float_(0.7)
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "vmap")
     self.TransformConvertAndCompare(f, arg, "grad")
@@ -371,9 +373,112 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         return y
 
       return g()
-    arg = 3.
+    arg = jnp.float_(3.)
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "grad")
+
+  @jtu.skip_on_flag('jax_omnistaging', False)
+  def test_convert_nullary_func(self):
+    # Even nullary functions are converted to TF (as opposed to constant-folded
+    # in JAX prior to conversion).
+    def f_jax():
+      return jnp.sin(1.)
+    f_tf = tf.function(jax2tf.convert(f_jax), autograph=False)
+    f_tf_graph = f_tf.get_concrete_function().graph.as_graph_def()
+    self.assertIn('op: "Sin"', str(f_tf_graph))
+
+  @jtu.skip_on_flag('jax_omnistaging', False)
+  def test_convert_of_nested_independent_jit(self):
+    def func(x):
+      def inner1(y):
+        return x + y
+      # The JIT does not have data dependency
+      return jax.jit(inner1)(1.)
+
+    jax2tf.convert(func)(2.)
+
+  def test_convert_of_nested_dependent_jit(self):
+    def func(x):
+      def inner1(y):
+        return x + y
+      # The JIT does have data dependency
+      return jax.jit(inner1)(x)
+
+    jax2tf.convert(func)(2.)  # No error
+
+  def test_nested_convert_error(self):
+    def outer(y):
+      return jax2tf.convert(jnp.sin)(y)  # Inner convert takes tracer args
+    with self.assertRaisesRegex(
+        ValueError, "convert must be used outside all JAX transformations"):
+      jax2tf.convert(outer)(np.ones((4, )))
+
+  def test_nested_convert_error_non_tracer(self):
+    """The inner convert takes non-tracer arguments"""
+    def outer(y):
+      sin_1 = jax2tf.convert(jnp.sin)(1.)  # Inner convert takes non-tracer arg
+      return y + sin_1
+
+    with self.assertRaisesRegex(
+        ValueError, "convert must be used outside all JAX transformations"):
+      jax2tf.convert(outer)(2.)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_{transform}", transform=transform)
+    for transform in ["jit", "jvp", "grad", "vmap"]))
+  def test_convert_under_transform_error(self, transform="vmap"):
+    def outer(y):
+      return jax2tf.convert(jnp.sin)(y)  # Inner convert takes tracer args
+
+    with self.assertRaisesRegex(
+        ValueError, "convert must be used outside all JAX transformations"):
+      self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_{transform}", transform=transform)
+    for transform in ["jit", "jvp", "grad", "vmap"]))
+  def test_convert_under_transform_error_non_tracer(self, transform="vmap"):
+    def outer(y):
+      sin_1 = jax2tf.convert(jnp.sin)(1.)  # Inner convert takes non-tracer arg
+      return y + sin_1
+
+    with self.assertRaisesRegex(
+        ValueError, "convert must be used outside all JAX transformations"):
+      self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
+
+  @jtu.skip_on_flag('jax_omnistaging', False)
+  def test_name_scope(self):
+    log = []
+
+    @jax.named_call
+    def my_test_function(x):
+      y = tf.Variable(1., name="foo")
+      log.append(y.name)
+      return x * x
+
+    jax2tf.convert(my_test_function)(2)
+    self.assertIn("my_test_function/foo", log[0])
+
+  def test_bfloat16_constant(self):
+    # Re: https://github.com/google/jax/issues/3942
+    def jax_fn_scalar(x):
+      x = x.astype(jnp.bfloat16)
+      x *= 2.
+      return x
+
+    def jax_fn_array(x):
+      x = x.astype(jnp.bfloat16)
+      x *= np.array([1.5, 2.5, 3.5], jnp.bfloat16)
+      return x
+
+    tf_fn_scalar = jax2tf.convert(jax_fn_scalar)
+    self.assertAllClose(tf_fn_scalar(1.375).numpy(), jnp.bfloat16(2.750))
+
+    tf_fn_array = jax2tf.convert(jax_fn_array)
+    self.assertAllClose(
+        tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
+                                                   jnp.bfloat16))
 
 
 if __name__ == "__main__":

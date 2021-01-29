@@ -66,12 +66,15 @@ the JAX transforms defined in api.py) and it has to be consumable by update_fun
 and get_params.
 
 Example Usage:
-  opt = optimizers.sgd(learning_rate)
-  opt_state = opt.init(params)
+
+.. code-block:: python
+
+  opt_init, opt_update, get_params = optimizers.sgd(learning_rate)
+  opt_state = opt_init(params)
 
   def step(step, opt_state):
-    value, grads = jax.value_and_grad(loss_fn)(opt.get_params(state))
-    opt_state = opt.update(step, grads, opt_state)
+    value, grads = jax.value_and_grad(loss_fn)(get_params(opt_state))
+    opt_state = opt_update(step, grads, opt_state)
     return value, opt_state
 
   for step in range(num_steps):
@@ -84,7 +87,7 @@ from collections import namedtuple
 import functools
 
 import jax.numpy as jnp
-from jax.util import partial, safe_zip, safe_map, unzip2
+from jax._src.util import partial, safe_zip, safe_map, unzip2
 from jax import tree_util
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            register_pytree_node)
@@ -403,8 +406,8 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     x, m, v = state
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
     v = (1 - b2) * jnp.square(g) + b2 * v  # Second moment estimate.
-    mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
-    vhat = v / (1 - b2 ** (i + 1))
+    mhat = m / (1 - jnp.asarray(b1, m.dtype) ** (i + 1))  # Bias correction.
+    vhat = v / (1 - jnp.asarray(b2, m.dtype) ** (i + 1))
     x = x - step_size(i) * mhat / (jnp.sqrt(vhat) + eps)
     return x, m, v
   def get_params(state):
@@ -439,7 +442,8 @@ def adamax(step_size, b1=0.9, b2=0.999, eps=1e-8):
     x, m, u = state
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
     u = jnp.maximum(b2 * u, jnp.abs(g))  # Update exponentially weighted infinity norm.
-    x = x - (step_size(i) / (1 - b1 ** (i + 1))) * m / (u + eps)
+    x = (x - (step_size(i) / (1 - jnp.asarray(b1, m.dtype) ** (i + 1))) * m
+         / (u + eps))
     return x, m, u
   def get_params(state):
     x, _, _ = state

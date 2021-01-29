@@ -22,9 +22,9 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from jaxlib import cuda_prng_kernels
+  from . import cuda_prng_kernels
   for _name, _value in cuda_prng_kernels.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="gpu")
+    xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   pass
 

@@ -51,6 +51,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     angle
     any
     append
+    apply_along_axis
+    apply_over_axes
     arange
     arccos
     arccosh
@@ -66,6 +68,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     around
     array
     array_equal
+    array_equiv
     array_repr
     array_split
     array_str
@@ -90,6 +93,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     cdouble
     ceil
     character
+    choose
     clip
     column_stack
     complex_
@@ -174,6 +178,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     heaviside
     histogram
     histogram_bin_edges
+    histogram2d
+    histogramdd
     hsplit
     hstack
     hypot
@@ -290,6 +296,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     rad2deg
     radians
     ravel
+    ravel_multi_index
     real
     reciprocal
     remainder
@@ -309,6 +316,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     searchsorted
     select
     set_printoptions
+    setdiff1d
     shape
     sign
     signbit

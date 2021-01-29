@@ -23,7 +23,7 @@ from absl import flags
 import numpy as np
 from tabulate import tabulate
 
-from jax.util import safe_zip
+from jax._src.util import safe_zip
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(

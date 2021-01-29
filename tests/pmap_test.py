@@ -34,11 +34,11 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import lax
 from jax import random
-from jax.abstract_arrays import ShapedArray
-from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
-                     linearize, device_put)
+from jax.core import ShapedArray
+from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
+                 linearize, device_put)
 from jax.lib import xla_bridge
-from jax.util import prod, safe_map
+from jax._src.util import prod, safe_map
 from jax.interpreters import pxla
 from jax.interpreters import xla
 
@@ -47,13 +47,22 @@ config.parse_flags_with_absl()
 
 prev_xla_flags = None
 
-# TODO(jakevdp): move the following to test_util.py
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
-def all_bdims(*shapes):
-  bdims = (it.chain([cast(Optional[int], None)],
-                     range(len(shape) + 1)) for shape in shapes)
+def all_bdims(*shapes, pmap):
+  if pmap and not config.omnistaging_enabled:
+    bdims = ((None, 0) for shape in shapes)
+  else:
+    bdims = (it.chain([cast(Optional[int], None)],
+                       range(len(shape) + 1))
+             for shape in shapes)
   return (t for t in it.product(*bdims) if not all(e is None for e in t))
+
+def out_bdims(shape, pmap):
+  if pmap and not config.omnistaging_enabled:
+    return (0,)
+  return (d[0] for d in all_bdims(shape, pmap=pmap) if d[0] is not None)
+
 
 def add_bdim(bdim_size, bdim, shape):
   shape = list(shape)
@@ -91,12 +100,14 @@ def tearDownModule():
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
 
-ignore_soft_pmap_warning = partial(
-  jtu.ignore_warning, message="soft_pmap is an experimental.*")
-
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
 
+ignore_slow_all_to_all_warning = partial(
+  jtu.ignore_warning, message="all_to_all.*expect significant slowdowns.*")
+
+ignore_xmap_warning = partial(
+  jtu.ignore_warning, message=".*is an experimental.*")
 
 class PmapTest(jtu.JaxTestCase):
   def _getMeshShape(self, device_mesh_shape):
@@ -143,7 +154,11 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_slow_all_to_all_warning()
   def testTrees(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
       n = lax.psum(1, axis_name)
@@ -166,10 +181,8 @@ class PmapTest(jtu.JaxTestCase):
     assert_allclose(jax_f(lax.pmin)(x), np_f(np.min)(x))
     assert_allclose(jax_f(lax.psum)(x), np_f(np.sum)(x))
     assert_allclose(jax_f(lax.pmean)(x), np_f(np.mean)(x))
-    if jtu.device_under_test() not in ("cpu", "gpu"):
-      # NOTE: all-to-all and ppermute only supported on TPU.
-      assert_allclose(jax_f(ptranspose)(x), np_transpose(x))
-      assert_allclose(jax_f(protate)(x), np_rotate(x))
+    assert_allclose(jax_f(ptranspose)(x), np_transpose(x))
+    assert_allclose(jax_f(protate)(x), np_rotate(x))
 
   def testCollectivesWithTreesOfDifferentDtypes(self):
     n = len(jax.devices())
@@ -197,6 +210,57 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+      "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(2), range(2)))
+  def testAllToAll(self, split_axis, concat_axis):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+
+    pmap_in_axis = 0
+    shape = (xla_bridge.device_count(),) * 3
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis, concat_axis)
+    y = f(x)
+    if pmap_in_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(2), range(2)))
+  def testAllToAllSplitAxis(self, split_axis, concat_axis):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    pmap_in_axis = 0
+    shape = (4, 4, 4)
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(pmap, axis_name='i')
+    @partial(pmap, axis_name='j')
+    def f(x):
+      return lax.all_to_all(x, ('i', 'j'), split_axis, concat_axis)
+
+    unroll_shape = (2, 2, *shape[1:])
+    x_unroll = x.reshape(unroll_shape)
+    y_unroll = f(x_unroll)
+    y = y_unroll.reshape(shape)
+
+    if pmap_in_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
 
   def testNestedBasic(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
@@ -254,13 +318,15 @@ class PmapTest(jtu.JaxTestCase):
     # the output is actually replicated (has the same values in each device buffer)
     # but out_axes is implicitly 0, so we shouldn't have replication in the
     # sharding spec.
-    self.assertEmpty(f_ans.sharding_spec.replication_factors)
+    self.assertEmpty([a for a in f_ans.sharding_spec.mesh_mapping
+                      if isinstance(a, pxla.Replicated)])
 
     g_expected = np.broadcast_to(x - np.sum(y, 0, keepdims=True), shape)
     g_ans = g(x, y)
     self.assertAllClose(g_ans, g_expected)
     self.assertIsInstance(g_ans, pxla.ShardedDeviceArray)
-    self.assertEmpty(g_ans.sharding_spec.replication_factors)
+    self.assertEmpty([a for a in g_ans.sharding_spec.mesh_mapping
+                      if isinstance(a, pxla.Replicated)])
 
   @parameterized.named_parameters(
       {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
@@ -541,6 +607,17 @@ class PmapTest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testGradOfGather(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.all_gather(x, axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
+
   def testNestedPmapReplicaGroups(self):
     replicas = xla_bridge.device_count()
     if replicas % 4 != 0:
@@ -581,7 +658,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testAxisGroups(self):
-    axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2), None)
+    axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2))
     groups = xla.axis_groups(axis_env, 'i')
     self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
 
@@ -596,7 +673,6 @@ class PmapTest(jtu.JaxTestCase):
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testCollectivePermute(self):
     device_count = xla_bridge.device_count()
     rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
@@ -608,7 +684,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.roll(x, shift=1, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
+  @jtu.skip_on_devices("cpu")
   def testCollectivePermuteGrad(self):
     device_count = xla_bridge.device_count()
     shift_right = [(i, (i + 1)) for i in range(device_count - 1)]
@@ -621,7 +697,6 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.concatenate([np.pi + np.arange(1, device_count), [0]])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testCollectivePermuteCyclicGrad(self):
     device_count = xla_bridge.device_count()
     shift_right = [(i, (i + 1) % device_count) for i in range(device_count)]
@@ -637,7 +712,6 @@ class PmapTest(jtu.JaxTestCase):
 
     jtu.check_grads(g, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2)
 
-  @jtu.skip_on_devices("cpu")
   def testCollectivePermuteCyclicWithPShuffle(self):
     device_count = xla_bridge.device_count()
     values = np.arange(device_count)
@@ -647,7 +721,6 @@ class PmapTest(jtu.JaxTestCase):
     ans = np.asarray(pmap(f, "i")(values))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu")
   def testPShuffleWithBadPerm(self):
     device_count = xla_bridge.device_count()
     bad_perm = list(range(device_count))
@@ -658,7 +731,6 @@ class PmapTest(jtu.JaxTestCase):
       ValueError,
       "`perm` does not represent a permutation: \\[1.*\\]", g)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testPpermuteWithZipObject(self):
     # https://github.com/google/jax/issues/1703
     num_devices = xla_bridge.device_count()
@@ -668,7 +740,6 @@ class PmapTest(jtu.JaxTestCase):
     expected = jnp.asarray(perm, dtype=jnp.float32)
     self.assertAllClose(result, expected)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):
     # This is a test of collective_permute implementing a simple halo exchange
     # to run a rule 30 simulation: https://en.wikipedia.org/wiki/Rule_30
@@ -738,7 +809,6 @@ class PmapTest(jtu.JaxTestCase):
     print(ans)
     self.assertEqual(ans, expected)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testReduceMax(self):
     f = pmap(lambda x: x - lax.pmax(x, 'i'), axis_name='i')
 
@@ -749,7 +819,6 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "gpu")
   def testReduceMin(self):
     f = pmap(lambda x: x - lax.pmin(x, 'i'), axis_name='i')
 
@@ -779,7 +848,7 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     f = pmap(lambda x: 3)
     x = jnp.arange(device_count)
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       ans = f(x)
     # self.assertEqual(count[0], 0)  # TODO(mattjj): fix this
     expected = np.repeat(3, device_count)
@@ -787,9 +856,8 @@ class PmapTest(jtu.JaxTestCase):
 
     f = pmap(lambda x: (x, 3))
     x = np.arange(device_count)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.assert_num_jit_and_pmap_compilations(1):
       _, ans = f(x)
-    self.assertEqual(count[0], 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPmapConstantDevices(self):
@@ -958,6 +1026,39 @@ class PmapTest(jtu.JaxTestCase):
     expected = 1 + np.arange(device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testAxisIndexNestedPmap(self):
+    device_count = xla_bridge.device_count()
+    if device_count < 4:
+      raise SkipTest("test requires at least four devices")
+    f = lambda axis: pmap(pmap(lambda x: x + lax.axis_index(axis), 'j'), 'i')
+    x = jnp.ones((2, 2))
+    expected_j = np.broadcast_to(1 + np.arange(2), (2, 2))
+    self.assertAllClose(f('j')(x), expected_j, check_dtypes=False)
+    self.assertAllClose(f('i')(x), expected_j.T, check_dtypes=False)
+
+  def testAxisIndexNd(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("axis_index doesn't work without omnistaging")
+    device_count = xla_bridge.device_count()
+    if device_count < 4:
+      raise SkipTest("test requires at least four devices")
+    f = lambda axes: pmap(pmap(lambda x: x + lax.axis_index(axes), 'j'), 'i')
+    x = jnp.ones((2, 2))
+    expected = 1 + np.arange(4).reshape((2, 2))
+    self.assertAllClose(f(('i', 'j'))(x), expected, check_dtypes=False)
+    self.assertAllClose(f(('j', 'i'))(x), expected.T, check_dtypes=False)
+
+  def testAxisIndexInInitialStyle(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      def body(carry, i):
+        return carry + i + lax.axis_index('i'), None
+      return lax.scan(body, 0, x)[0]
+    device_count = xla_bridge.device_count()
+    shape = (device_count, 10)
+    self.assertAllClose(f(jnp.ones(shape, dtype=int)),
+                        (np.arange(device_count) + 1) * 10)
+
   def testVmapOfPmap(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
@@ -1034,12 +1135,10 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
     self.assertAllClose(bz2, bz2, check_dtypes=False)
 
-  @jtu.skip_on_devices("gpu")
   def testPswapaxes(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
-    # TODO: AllToAll not yet implemented on XLA:CPU
-    if jtu.device_under_test() == "cpu":
-      device_count = 1
     shape = (device_count, 3, device_count, 5)
     x = np.arange(prod(shape)).reshape(shape)
 
@@ -1047,12 +1146,10 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("gpu")
   def testGradOfPswapaxes(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
-    # TODO: AllToAll not yet implemented on XLA:CPU
-    if jtu.device_under_test() == "cpu":
-      device_count = 1
     shape = (device_count, 1, device_count)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     w = np.arange(device_count, dtype=np.float32)
@@ -1066,6 +1163,61 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.tile(w, reps=device_count).reshape(shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testAllToAllReplicaGroups(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+    # If num_devices = 4, these would be the inputs/outputs:
+    # input = [[0, 1], [2, 3], [4, 5], [6, 7]]
+    # axis_index_groups = [[0, 1], [2, 3]]
+    # output = [[0, 2], [1, 3], [4, 6], [5, 7]]
+    #
+    # This is essentially like spliting the number of rows in the input in two
+    # groups of rows, and swaping the two inner axes (axis=1 and axis=2), which
+    # is exactly what the test case checks.
+    device_count = xla_bridge.device_count()
+    if device_count % 2 != 0:
+      raise SkipTest('test requires an even number of devices')
+    shape = (device_count, device_count // 2)
+    x = np.arange(prod(shape)).reshape(shape)
+
+    axis_index_groups = np.arange(device_count, dtype=np.int32)
+    axis_index_groups = axis_index_groups.reshape((2, device_count // 2))
+    axis_index_groups = axis_index_groups.tolist()
+
+    @partial(pmap, axis_name='i')
+    def fn(x):
+      return lax.all_to_all(x, 'i', 0, 0, axis_index_groups=axis_index_groups)
+
+    expected = np.swapaxes(
+        x.reshape((2, device_count // 2, device_count // 2)),
+        1, 2).reshape(shape)
+    self.assertAllClose(fn(x), expected, check_dtypes=False)
+
+  def testGradOfAllToAllReplicaGroups(self):
+    if not config.omnistaging_enabled:
+      self.skipTest("all_to_all doesn't work without omnistaging")
+    device_count = xla_bridge.device_count()
+    if device_count % 2 != 0:
+      raise SkipTest('test requires an even number of devices')
+    shape = (device_count, device_count // 2, 1)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    w = np.arange(device_count, dtype=np.float32)
+
+    axis_index_groups = np.arange(device_count, dtype=np.int32)
+    axis_index_groups = axis_index_groups.reshape((2, device_count // 2))
+    axis_index_groups = axis_index_groups.tolist()
+
+    @partial(pmap, axis_name='i')
+    def fn(x, w):
+      g = lambda x: jnp.sum(lax.all_to_all(x, 'i', 0, 1, axis_index_groups=axis_index_groups) * w)
+      return grad(g)(x)
+
+    expected = np.ones_like(x) * w[:, np.newaxis, np.newaxis]
+    expected = np.swapaxes(
+        expected.reshape((2, device_count // 2, device_count // 2)),
+        1, 2).reshape(shape)
+    self.assertAllClose(fn(x, w), expected, check_dtypes=False)
+
   def testReshardInput(self):
     if xla_bridge.device_count() < 6:
       raise SkipTest("testReshardInput requires 6 devices")
@@ -1073,19 +1225,18 @@ class PmapTest(jtu.JaxTestCase):
     # subsequent pmap
     shard_shape = (3,2)
     shard = jnp.arange(prod(shard_shape)).reshape(shard_shape)
-    bufs = [xla.device_put(shard, d) for d in xla_bridge.devices()[:4]]
+    bufs = pxla.device_put(shard, xla_bridge.devices()[:4], replicate=True)
     aval = ShapedArray((6,4), shard.dtype)
     sharding_spec = pxla.ShardingSpec(
-        shards_per_axis=(2, 2),
-        is_axis_materialized=(True, True),
-        replication_factors=[])
+        sharding=map(pxla.Chunked, (2, 2)),
+        mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
     arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
 
     r = pmap(lambda x: x + 1)(arr)
     self.assertAllClose(r, arr + 1)
     self.assertEqual(len(r.device_buffers), 6)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapBatchMatmul(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1095,7 +1246,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.einsum('nij,njk->nik', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapBatchMatmulJit(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1105,7 +1256,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.einsum('nij,njk->nik', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapPsumConstant(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1115,7 +1266,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = n * np.ones(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapPsum(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1125,7 +1276,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.ones(n) / n
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapAxisIndex(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1135,7 +1286,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = 2 * np.arange(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapOfJit(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
@@ -1145,7 +1296,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = 3 * np.arange(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapNested(self):
     raise SkipTest("not implemented")  # TODO(mattjj): re-implement
     n = 4 * xla_bridge.device_count()
@@ -1160,7 +1311,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.arange(n ** 2).reshape(n, n).T
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testGradOfSoftPmap(self):
     raise SkipTest("not implemented")  # TODO(mattjj): re-implement
     n = 4 * xla_bridge.device_count()
@@ -1173,7 +1324,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.repeat(np.arange(n)[:, None], n, axis=1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_soft_pmap_warning()
+  @ignore_xmap_warning()
   def testSoftPmapDevicePersistence(self):
     if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     device_count = xla_bridge.device_count()
@@ -1470,21 +1621,47 @@ class PmapTest(jtu.JaxTestCase):
     u = np.ones((device_count, 100))
     multi_step_pmap(u)  # doesn't crash
 
+  @jtu.skip_on_devices("cpu")
+  def test_replicate_backend(self):
+    # https://github.com/google/jax/issues/4223
+    def fn(indices):
+      return jnp.equal(indices, jnp.arange(3)).astype(jnp.float32)
+    mapped_fn = jax.pmap(fn, axis_name='i', backend='cpu')
+    mapped_fn = jax.pmap(mapped_fn, axis_name='j', backend='cpu')
+    indices = np.array([[[2], [1]], [[0], [0]]])
+    mapped_fn(indices)  # doesn't crash
+
+  @ignore_xmap_warning()
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPdotBasic(self):
+    num_devices = jax.device_count()
+
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    x = jnp.arange(num_devices * 3).reshape(num_devices, 3)
+    y = jnp.arange(num_devices * 5).reshape(num_devices, 5)
+    z = pmap(f, axis_name='i', out_axes=None)(x, y)
+    self.assertAllClose(z, jnp.dot(x.T, y))
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"{shapes}_{vmap_bdims}_{pmap_bdims}",
-       "shapes": shapes, "vmap_bdims": vmap_bdims, "pmap_bdims": pmap_bdims}
-      for shape_group in compatible_shapes
+      {"testcase_name": f"{shapes}_{vmap_in_axes}_{vmap_out_axes}_{pmap_in_axes}_{pmap_out_axes}",
+       "shapes": shapes,
+       "vmap_in_axes": vmap_in_axes, "vmap_out_axes": vmap_out_axes,
+       "pmap_in_axes": pmap_in_axes, "pmap_out_axes": pmap_out_axes}
+      for arg_shapes in compatible_shapes
       for num_args in range(1, 4)
-      for shapes in it.combinations_with_replacement(shape_group, num_args)
-      for vmap_bdims in all_bdims(*shapes)
-      for pmap_bdims in it.product([0, None], repeat=num_args)
-      if not all(bd is None for bd in pmap_bdims)
+      for shapes in list(it.combinations_with_replacement(arg_shapes, num_args))
+      for vmap_in_axes in all_bdims(*shapes, pmap=False)
+      for pmap_in_axes in all_bdims(*shapes, pmap=True)
+      for vmap_out_axes in out_bdims(shapes[0], False)
+      for pmap_out_axes in out_bdims(shapes[0], True)
   ))
-  def testVmapOfPmap(self, shapes, vmap_bdims, pmap_bdims):
+  def testVmapOfPmap(self, shapes, vmap_in_axes, pmap_in_axes, vmap_out_axes, pmap_out_axes):
     vmapped_size = 3
     pmapped_size = xla_bridge.device_count()
 
@@ -1493,23 +1670,36 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     def fun(*args):
       return sum(args)
 
-    final_shapes = map(partial(add_bdim, vmapped_size), vmap_bdims,
-                       map(partial(add_bdim, pmapped_size), pmap_bdims, shapes))
+    final_shapes = map(partial(add_bdim, vmapped_size), vmap_in_axes,
+                       map(partial(add_bdim, pmapped_size), pmap_in_axes, shapes))
+
+    def args_slice(vi, pi):
+      return args_slicer(args_slicer(args, vmap_in_axes)(vi), pmap_in_axes)(pi)
 
     args = [rng(shape, jnp.float32) for shape in final_shapes]
-    args_slice = args_slicer(args, vmap_bdims)
-    ans = vmap(pmap(fun, in_axes=pmap_bdims), vmap_bdims)(*args)
-    expected = np.stack([fun(*args_slice(i)) for i in range(vmapped_size)])
+    ans = vmap(pmap(fun, in_axes=pmap_in_axes, out_axes=pmap_out_axes),
+               in_axes=vmap_in_axes,
+               out_axes=vmap_out_axes)(*args)
+    expected = np.stack(
+      [np.stack([fun(*args_slice(vi, pi)) for pi in range(pmapped_size)], axis=pmap_out_axes)
+       for vi in range(vmapped_size)],
+      axis=vmap_out_axes)
     self.assertAllClose(ans, expected)
 
+class VmapPmapCollectivesTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
+       "collective": collective}
+      for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
-  def testCollectivesWithVmap(self):
+  def testCollectivesWithVmap(self, collective):
     def f(map1, map2):
       @partial(map1, axis_name='i')
       @partial(map2, axis_name='j')
       def f(x, y):
-        return x + jax.lax.psum(x.dot(y), ('i', 'j'))
+        return x + collective(x.dot(y), ('i', 'j'))
       return f
 
     if xla_bridge.device_count() < 4:
@@ -1519,6 +1709,146 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPPermuteWithVmap(self):
+    perm = [(0, 1), (1, 0)]
+
+    def f(map2):
+      @partial(jax.pmap, axis_name='i')
+      @partial(map2)
+      def f(x, y):
+        return x + jax.lax.ppermute(x.dot(y), 'i', perm)
+      return f
+
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    x = jnp.ones((2, 2, 64, 64))
+    self.assertAllClose(f(jax.pmap)(x, x), f(jax.vmap)(x, x))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  @ignore_slow_all_to_all_warning()
+  def testAllToAllInVmap(self, split_axis, concat_axis, vmap_axis):
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
+
+    def adj(axis, hidden_axes):
+      for hax in sorted(hidden_axes):
+        if hax <= axis:
+          axis += 1
+      return axis
+
+    def reference(x, split_axis, concat_axis, vmap_axis):
+      pmap_axis = 0
+      vmap_axis = adj(vmap_axis, [pmap_axis])
+      ref = x
+
+      # Step 1.
+      # Adjust the split axis to the real tensor layout and move it to
+      # position 1. Since pmap_axis is always 0 we don't have to adjust it,
+      # but we do have to adjust vmap_axis.
+      split_axis = adj(split_axis, [pmap_axis, vmap_axis])
+      ref = jnp.moveaxis(ref, split_axis, pmap_axis + 1)
+      vmap_axis = vmap_axis + (0 if split_axis < vmap_axis else 1)
+      split_axis = pmap_axis + 1  # split_axes == 1
+
+      # Step 2.
+      # Now, we move pmap_axis to the position indicated by concat_axis.
+      concat_axis = adj(concat_axis, [pmap_axis, split_axis, vmap_axis]) - 1
+      ref = jnp.moveaxis(ref, pmap_axis, concat_axis)
+      pmap_axis = 0
+      vmap_axis = vmap_axis - (1 if concat_axis >= vmap_axis else 0)
+      del split_axis, concat_axis
+
+      # Step 3. vmap_axis always ends in position 1, since out_axes=0.
+      ref = jnp.moveaxis(ref, vmap_axis, 1)
+      return ref
+
+    def verify_ref():
+      # Both the reference and the real implementation of all_to_all batching involve
+      # some pretty complicated axis arithmetic, so it would be good to verify that it's
+      # not the case that the test passes because they're both incorrect. Fortunately, it
+      # is quite easy to write out the shape function for this code, and we know
+      # that it should be equivalent to a bunch of transposes, so the code below verifies
+      # that the reference puts the right dimensions in the right places. Note that we
+      # can't do the same comparison on f, since all_to_all wouldn't allow us to swap axes of
+      # different sizes.
+      start_shape = [2, 3, 4, 5, 6]
+      instance_shape = start_shape.copy()
+      pmap_dim_id = instance_shape.pop(0)
+      vmap_dim_id = instance_shape.pop(vmap_axis)
+      split_axis_id = instance_shape.pop(split_axis)
+      instance_shape.insert(concat_axis, pmap_dim_id)
+      expected_shape = (split_axis_id, vmap_dim_id, *instance_shape)
+
+      x = np.empty(start_shape)
+      self.assertEqual(reference(x, split_axis, concat_axis, vmap_axis).shape,
+                       expected_shape)
+
+    verify_ref()
+
+    shape = (jax.device_count(),) * 5
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    self.assertAllClose(pmap(vmap(f, in_axes=vmap_axis), axis_name='i')(x),
+                        reference(x, split_axis, concat_axis, vmap_axis))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(3), range(3)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  @ignore_slow_all_to_all_warning()
+  def testAllToAllVsVmap(self, split_axis, concat_axis):
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
+
+    shape = (jax.device_count(),) * 4
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    self.assertAllClose(pmap(f, axis_name='i')(x),
+                        vmap(f, axis_name='i')(x))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_axes={''.join(axes)}",
+       "axes": axes, "split_axis": split_axis, "concat_axis": concat_axis}
+      for axes, split_axis, concat_axis
+      in it.product([('i', 'j'), ('j', 'i')], range(3), range(3)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  @ignore_slow_all_to_all_warning()
+  def testAllToAllMultipleAxesVsVmap(self, axes, split_axis, concat_axis):
+    raise SkipTest("multi-axis all_to_all broken after #4835")  # TODO(mattjj,apaszke)
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+
+    def f(x):
+      return lax.all_to_all(x, axes, split_axis=split_axis, concat_axis=concat_axis)
+
+    shape = (2, 2, 4, 4, 4)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    self.assertAllClose(pmap(pmap(f, axis_name='j'), axis_name='i')(x),
+                        vmap(vmap(f, axis_name='j'), axis_name='i')(x))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+      "vmap collectives only supported when omnistaging is enabled")
+  def testAllGatherWithVmap(self):
+    def f(map2):
+      @partial(jax.pmap, axis_name='i')
+      @partial(map2)
+      def f(x):
+        return jax.lax.all_gather(x, 'i')
+      return f
+
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    x = jnp.ones((2, 2, 64, 64))
+    self.assertAllClose(f(jax.pmap)(x), f(jax.vmap)(x))
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
@@ -1647,14 +1977,98 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testPmapStaticArgnums(self):
     @partial(pmap, axis_name='i', static_broadcasted_argnums=1)
     def f(x, y):
-      return jnp.sin(x + y)
+      return jnp.sin(x + y())
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
-    y = np.arange(4, dtype=np.float32)
+    y = lambda: 3.
 
     ans = f(x, y)
-    expected = np.sin(x + y[None])
+    expected = np.sin(x + 3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  def testPmapInAxesBasic(self):
+    @partial(pmap, in_axes=(1, 2))
+    def f(x, y):
+      return jnp.sin(x + y)
+    xshape = (2, xla_bridge.device_count(), 4)
+    x = np.arange(prod(xshape)).reshape(xshape)
+    yshape = (2, 4, xla_bridge.device_count())
+    y = np.arange(prod(yshape)).reshape(yshape)
+
+    self.assertAllClose(f(x, y),
+                        jnp.sin(x.transpose((1, 0, 2)) + y.transpose((2, 0, 1))))
+
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  def testPmapInAxesGrad(self):
+    def f(x, y, z):
+      return jnp.sin(x + y + z)
+    fp = pmap(f, in_axes=(1, 2, None))
+    fv = vmap(f, in_axes=(1, 2, None))
+    xshape = (5, xla_bridge.device_count(), 7)
+    x = np.arange(prod(xshape), dtype=np.float32).reshape(xshape)
+    yshape = (5, 7, xla_bridge.device_count())
+    y = np.arange(prod(yshape), dtype=np.float32).reshape(yshape)
+    zshape = (5, 7)
+    z = np.arange(prod(zshape), dtype=np.float32).reshape(zshape)
+
+    dx, dy, dz = jax.grad(lambda args: fp(*args).sum())((x, y, z))
+    assert dx.shape == xshape
+    assert dy.shape == yshape
+    assert dz.shape == zshape
+
+    self.assertAllClose(jax.grad(lambda args: fp(*args).sum())((x, y, z)),
+                        jax.grad(lambda args: fv(*args).sum())((x, y, z)))
+
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  def testPmapOutAxesBasic(self):
+    @partial(pmap, in_axes=(1, None), out_axes=(2, None))
+    def f(x, y):
+      return jnp.sin(x + y), y * 2
+    xshape = (2, xla_bridge.device_count(), 4)
+    x = np.arange(prod(xshape)).reshape(xshape)
+    yshape = (2, 4)
+    y = np.arange(prod(yshape)).reshape(yshape)
+
+    self.assertAllClose(f(x, y),
+                        (jnp.sin(x.transpose((1, 0, 2)) + y).transpose((1, 2, 0)), y * 2))
+
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{in_axes}_{out_axes}",
+       "in_axes": in_axes, "out_axes": out_axes}
+      for in_axes in all_bdims((3, 4), (3, 1), (1, 4), pmap=True)
+      for out_axes in out_bdims((3, 4), True)
+  ))
+  def testPmapAllAxesGrad(self, in_axes, out_axes):
+    def f(x, y, z):
+      return jnp.sin(x + y) * z
+
+    pmapped_size = xla_bridge.device_count()
+    mapped_shapes = [(3, 4), (3, 1), (1, 4)]
+    arg_shapes = map(partial(add_bdim, pmapped_size), in_axes, mapped_shapes)
+    rng = jtu.rand_default(self.rng())
+    args = [rng(shape, jnp.float64) for shape in arg_shapes]
+    jtu.check_grads(pmap(f, in_axes=in_axes, out_axes=out_axes), args,
+                    order=2, atol=2e-2, rtol=2e-2, eps=1e-3)
+
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  def testPmapPostProcess(self):
+    def mk_case(map_fun):
+      def f(x, y):
+        # NOTE: Map doesn't have any arguments we differentiate wrt
+        @partial(map_fun, in_axes=1, out_axes=2)
+        def h(y):
+          return jnp.sin(x + y)
+        return h(y).sum()
+      return f
+
+    xshape = (5, 7)
+    x = np.arange(prod(xshape), dtype=np.float32).reshape(xshape)
+    yshape = (5, xla_bridge.device_count(), 7)
+    y = np.arange(prod(yshape), dtype=np.float32).reshape(yshape)
+    self.assertAllClose(jax.grad(mk_case(pmap))(x, y),
+                        jax.grad(mk_case(vmap))(x, y))
 
 
 class ShardedDeviceArrayTest(jtu.JaxTestCase):
@@ -1687,65 +2101,149 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
       actual = [f.result() for f in futures]
     self.assertAllClose(actual, expected, check_dtypes=False)
 
+  def testNoCopyIndexing1D(self):
+    shape = (8, 4)
+
+    if jax.device_count() < shape[0]:
+      raise SkipTest(f"requires {shape[0]} devices")
+
+    x = jnp.arange(prod(shape)).reshape(shape)
+    sharded_x = pmap(lambda x: x)(x)
+    self.assertIsNone(sharded_x._npy_value)
+    for i in range(8):
+      self.assertIsInstance(sharded_x[i], jax.interpreters.xla.DeviceArray)
+    self.assertIsNone(sharded_x._npy_value)
+
+  def test_device_put_sharded_array(self):
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    x = [np.arange(i, i + 4) for i in range(n_devices)]
+    y = jax.device_put_sharded(x, devices)
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
+    self.assertEqual(len(y.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
+    self.assertArraysEqual(y, jnp.stack(x))
+
+  def test_device_put_sharded_pytree(self):
+    devices = jax.local_devices()
+    n_devices = len(devices)
+    x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
+    y1, y2 = jax.device_put_sharded(x, devices)
+    self.assertIsInstance(y1, pxla.ShardedDeviceArray)
+    self.assertArraysEqual(y1, jnp.array([a for a, _ in x]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
+    self.assertIsInstance(y2, pxla.ShardedDeviceArray)
+    self.assertArraysEqual(y2, jnp.vstack([b for _, b in x]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
+
+  def test_device_put_replicated_array(self):
+    devices = jax.local_devices()
+    x = np.arange(1, 5)
+    y = jax.device_put_replicated(x, devices)
+    self.assertIsInstance(y, pxla.ShardedDeviceArray)
+    self.assertEqual(len(y.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
+    self.assertArraysEqual(y, np.stack([x for _ in devices]))
+
+  def test_device_put_replicated_pytree(self):
+    devices = jax.local_devices()
+    xs = {'a': np.arange(1, 5), 'b': np.arange(3)}
+    ys = jax.device_put_replicated(xs, devices)
+    self.assertIsInstance(ys, dict)
+    y1, y2 = ys['a'], ys['b']
+
+    self.assertIsInstance(y1, pxla.ShardedDeviceArray)
+    self.assertEqual(len(y1.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
+    self.assertArraysEqual(y1, np.stack([xs['a'] for _ in devices]))
+
+    self.assertIsInstance(y2, pxla.ShardedDeviceArray)
+    self.assertEqual(len(y2.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
+    self.assertArraysEqual(y2, np.stack([xs['b'] for _ in devices]))
+
+  def test_repr(self):
+    x = jax.device_put_replicated(1, jax.devices())
+    self.assertStartsWith(repr(x), 'ShardedDeviceArray')
+
 
 class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testShardsPerAxis(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(shards_per_axis=(2, 2),
-                             is_axis_materialized=(True, True),
-                             replication_factors=[])
+    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, (2, 2)),
+                             mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
                       (slice(0,2), slice(4,8)),
                       (slice(2,4), slice(0,4)),
                       (slice(2,4), slice(4,8))))
 
+  def testShardedAxisPermutation(self):
+    shape = (4, 8)
+    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, (2, 2)),
+                             mesh_mapping=map(pxla.ShardedAxis, (1, 0)))
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     ((slice(0,2), slice(0,4)),
+                      (slice(2,4), slice(0,4)),
+                      (slice(0,2), slice(4,8)),
+                      (slice(2,4), slice(4,8))))
+
+  def testShardedAxisPermutationAndReplication(self):
+    shape = (4, 8)
+    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, (2, 2)),
+                             mesh_mapping=(pxla.Replicated(2),
+                                           pxla.ShardedAxis(1),
+                                           pxla.ShardedAxis(0)))
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     ((slice(0,2), slice(0,4)),
+                      (slice(2,4), slice(0,4)),
+                      (slice(0,2), slice(4,8)),
+                      (slice(2,4), slice(4,8))) * 2)
+
   def testUnshardedAxis(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(shards_per_axis=(2, 1),
-                             is_axis_materialized=(True, True),
-                             replication_factors=[])
+    spec = pxla.ShardingSpec(sharding=(pxla.Chunked(2), pxla.NoSharding()),
+                             mesh_mapping=(pxla.ShardedAxis(0),))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
-                     (slice(0,2), (slice(2,4))))
+                     ((slice(0,2), slice(None)),
+                      (slice(2,4), slice(None))))
 
   def testNoSharding(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(shards_per_axis=(1, 1),
-                             is_axis_materialized=(True, True),
-                             replication_factors=[])
+    spec = pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
+                             mesh_mapping=())
     self.assertEqual(pxla.spec_to_indices(shape, spec),
-                     (slice(None),))
+                     ((slice(None), slice(None)),))
 
   def testUnmaterializedAxis(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(shards_per_axis=(4, 1),
-                             is_axis_materialized=(False, True),
-                             replication_factors=[])
+    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(4), pxla.NoSharding()),
+                             mesh_mapping=(pxla.ShardedAxis(0),))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
-                     (0, 1, 2, 3))
+                     ((0, slice(None)),
+                      (1, slice(None)),
+                      (2, slice(None)),
+                      (3, slice(None))))
 
     shape = (2, 2)
-    spec = pxla.ShardingSpec(shards_per_axis=(1, 2),
-                             is_axis_materialized=(True, False),
-                             replication_factors=[])
+    spec = pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.Unstacked(2)),
+                             mesh_mapping=(pxla.ShardedAxis(0),))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(None), 0),
                       (slice(None), 1)))
 
   def testReplicationAfterUnsharded(self):
     shape = (2, 8)
-    spec = pxla.ShardingSpec(shards_per_axis=(2, 1),
-                             is_axis_materialized=(False, True),
-                             replication_factors=[(3, 2)])
+    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
+                             mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
-                     (0, 0, 0, 1, 1, 1))
+                     tuple([(0, slice(None))] * 3 + [(1, slice(None))] * 3))
 
   def testReplicationPosition2(self):
     shape = (2, 8)
-    spec = pxla.ShardingSpec(shards_per_axis=(2, 2),
-                             is_axis_materialized=(False, True),
-                             replication_factors=[(3, 2)])
+    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked(2)),
+                             mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1), pxla.Replicated(3)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((0, slice(0, 4)), (0, slice(0, 4)), (0, slice(0, 4)),
                       (0, slice(4, 8)), (0, slice(4, 8)), (0, slice(4, 8)),
@@ -1754,9 +2252,8 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testReplicationPosition1(self):
     shape = (2, 8)
-    spec = pxla.ShardingSpec(shards_per_axis=(2, 2),
-                             is_axis_materialized=(False, True),
-                             replication_factors=[(3, 1)])
+    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked(2)),
+                             mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3), pxla.ShardedAxis(1)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((0, slice(0, 4)), (0, slice(4, 8)),
                       (0, slice(0, 4)), (0, slice(4, 8)),
@@ -1767,17 +2264,18 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testReplicationPosition0(self):
     shape = (2, 8)
-    spec = pxla.ShardingSpec(shards_per_axis=(2, 1),
-                             is_axis_materialized=(False, True),
-                             replication_factors=[(3, 0)])
+    spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
+                             mesh_mapping=(pxla.Replicated(3), pxla.ShardedAxis(0)))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
-                     (0, 1, 0, 1, 0, 1))
+                     tuple([(0, slice(None)), (1, slice(None))] * 3))
 
   def testMultipleReplications(self):
     shape = (2, 7, 4)
-    spec = pxla.ShardingSpec(shards_per_axis=(2, 1, 2),
-                             is_axis_materialized=(False, True, True),
-                             replication_factors=[(3, 0), (2, 0), (2, 2)])
+    spec = pxla.ShardingSpec(
+        sharding=(pxla.Unstacked(2), pxla.NoSharding(), pxla.Chunked(2)),
+        mesh_mapping=(pxla.Replicated(3), pxla.Replicated(2),
+                      pxla.ShardedAxis(0), pxla.Replicated(2),
+                      pxla.ShardedAxis(1)))
     self.assertEqual(
         pxla.spec_to_indices(shape, spec),
         ((0, slice(None), slice(0, 2)), (0, slice(None), slice(2, 4)),
@@ -1787,17 +2285,15 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testReplicatedScalar(self):
     shape = ()
-    spec = pxla.ShardingSpec(shards_per_axis=(),
-                             is_axis_materialized=(),
-                             replication_factors=[(3, 0)])
+    spec = pxla.ShardingSpec(sharding=(),
+                             mesh_mapping=(pxla.Replicated(3),))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((), (), ()))
 
 
 def _spec_str(spec):
-  return (f"({spec.shards_per_axis},"
-          f"{spec.is_axis_materialized},"
-          f"{spec.replication_factors})")
+  return (f"({spec.sharding},"
+          f"{spec.mesh_mapping},)")
 
 
 class ShardArgsTest(jtu.JaxTestCase):
@@ -1818,45 +2314,39 @@ class ShardArgsTest(jtu.JaxTestCase):
       for make_arg in [numpy_array, device_array]
       for shape, spec in [
           # pmap(in_axes=0)
-          [(4, 8), pxla.ShardingSpec(shards_per_axis=(4, 1),
-                                     is_axis_materialized=(False, True),
-                                     replication_factors=[])],
+          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(4), pxla.NoSharding()),
+                                     mesh_mapping=(pxla.ShardedAxis(0),))],
           # pmap(in_axes=1)
-          [(2, 2), pxla.ShardingSpec(shards_per_axis=(1, 2),
-                                     is_axis_materialized=(True, False),
-                                     replication_factors=[])],
+          [(2, 2), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.Unstacked(2)),
+                                     mesh_mapping=(pxla.ShardedAxis(0),))],
           # unsharded
-          [(4, 8), pxla.ShardingSpec(shards_per_axis=(1, 1),
-                                     is_axis_materialized=(True, True),
-                                     replication_factors=[])],
+          [(4, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
+                                     mesh_mapping=())],
           # partitioned, 1 axis
-          [(4, 8), pxla.ShardingSpec(shards_per_axis=(2, 1),
-                                     is_axis_materialized=(True, True),
-                                     replication_factors=[])],
+          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked(2), pxla.NoSharding()),
+                                     mesh_mapping=(pxla.ShardedAxis(0),))],
           # partitioned, 2 axes
-          [(4, 8), pxla.ShardingSpec(shards_per_axis=(2, 2),
-                                     is_axis_materialized=(True, True),
-                                     replication_factors=[])],
+          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked(2), pxla.Chunked(2)),
+                                     mesh_mapping=map(pxla.ShardedAxis, (0, 1)))],
+          # partitioned, 2 axes, permuted
+          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked(2), pxla.Chunked(2)),
+                                     mesh_mapping=map(pxla.ShardedAxis, (1, 0)))],
           # partitioned + sharding
-          [(2, 8), pxla.ShardingSpec(shards_per_axis=(2, 2),
-                                     is_axis_materialized=(False, True),
-                                     replication_factors=[])],
+          [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked(2)),
+                                     mesh_mapping=map(pxla.ShardedAxis, (0, 1)))],
           # replication + sharding
-          [(2, 8), pxla.ShardingSpec(shards_per_axis=(2, 1),
-                                     is_axis_materialized=(False, True),
-                                     replication_factors=[(3, 2)])],
+          [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
+                                     mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3)))],
           # replication, no sharding
-          [(2, 8), pxla.ShardingSpec(shards_per_axis=(1, 1),
-                                     is_axis_materialized=(True, True),
-                                     replication_factors=[(3, 2)])],
+          [(2, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
+                                     mesh_mapping=(pxla.Replicated(3),))],
           # multiple replicated axes
-          [(1, 8), pxla.ShardingSpec(shards_per_axis=(1, 2),
-                                     is_axis_materialized=(False, True),
-                                     replication_factors=[(2, 0), (2, 1)])],
+          [(1, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(1), pxla.Chunked(2)),
+                                     mesh_mapping=(pxla.Replicated(2), pxla.ShardedAxis(0),
+                                                   pxla.Replicated(2), pxla.ShardedAxis(1)))],
           # replicated scalar
-          [(), pxla.ShardingSpec(shards_per_axis=(),
-                                 is_axis_materialized=(),
-                                 replication_factors=[(2, 0), (3, 0)])]
+          [(), pxla.ShardingSpec(sharding=(),
+                                 mesh_mapping=(pxla.Replicated(2), pxla.Replicated(3)))],
       ])
   def testShardArgs(self, shape, spec, make_arg):
     indices = pxla.spec_to_indices(shape, spec)

@@ -18,7 +18,6 @@
 from absl.testing import absltest
 import numpy as np
 import re
-import unittest
 
 from jax import api, lax, ops
 from jax import numpy as jnp
@@ -61,9 +60,8 @@ class LoopsTest(jtu.JaxTestCase):
     self.assertAllClose(f_expected(2.), api.jit(f_op)(2.))
     self.assertAllClose(5., api.grad(f_op)(2.))
     self.assertAllClose(5., api.grad(f_op)(2.))
-    inc_batch = np.arange(5, dtype=jnp.float_)
-    self.assertAllClose(jnp.array([f_expected(inc) for inc in inc_batch],
-                                  dtype=jnp.float_),
+    inc_batch = np.arange(5.0)
+    self.assertAllClose(jnp.array([f_expected(inc) for inc in inc_batch]),
                         api.vmap(f_op)(inc_batch))
 
 
@@ -111,6 +109,33 @@ class LoopsTest(jtu.JaxTestCase):
     x = jnp.array([[1., 2., 3.]], dtype=jnp.float32)  # 1x3
     y = jnp.array([[4.], [5.], [6.]], dtype=jnp.float32)  # 3x1
     self.assertAllClose(jnp.matmul(x, y), matmul(x, y))
+
+  def test_loop_pytree(self):
+    # The state elements can be pytrees
+    def accum_even_odd(n):
+      with loops.Scope() as s:
+        s.state = dict(even=0., odd=0.)  # accumulate even and odd incremenents
+        s.incr = (1., 10.)  # even and odd increment
+        for i in s.range(n):
+          for _ in s.cond_range(i % 2 == 0):  # Conditionals are also sugared as loops with 0 or 1 iterations
+            s.state["even"] += s.incr[0]
+          for _ in s.cond_range(i % 2 != 0):  # Conditionals are also sugared as loops with 0 or 1 iterations
+            s.state["odd"] += s.incr[1]
+        return s.state
+
+    res = accum_even_odd(20)
+    self.assertAllClose(dict(even=10., odd=100.), res)
+
+  def test_loop_mutable(self):
+    # The state elements can be in nested mutable state
+    def add_up_to(n):
+      with loops.Scope() as s:
+        s.state = [0.]
+        for i in s.range(n):
+          s.state[0] += i
+        return s.state[0]
+
+    self.assertAllClose(190., add_up_to(20))
 
   def test_reuse_range(self):
     """Ranges can be reused, as long as not nested in each other."""
@@ -274,8 +299,62 @@ class LoopsTest(jtu.JaxTestCase):
                                            "New mutable state 'other_state' cannot be created inside a loop."):
       f_op(2.)
 
+  def test_error_update_wrong_aval(self):
+    """Cannot update state in the loop with wrong aval."""
+    def f_op():
+      with loops.Scope() as s:
+        r1 = s.range(5)
+        s.out = np.int32(0)
+        for _ in r1:
+          s.out += np.float32(1.)  # Update with wrong type
+        return s.out
+
+    with self.assertRaisesRegex(TypeError,
+        "Mutable state 'out' is updated with new abstract value"):
+      f_op()
+
+  def test_error_update_wrong_aval_in_mutable(self):
+    """Cannot update state in the loop with wrong aval."""
+    def f_op():
+      with loops.Scope() as s:
+        r1 = s.range(5)
+        s.out = [np.int32(0)]
+        for _ in r1:
+          s.out[0] = np.float32(1.)  # Update with wrong type, inside mutable state
+        return s.out
+
+    with self.assertRaisesRegex(TypeError,
+        "Mutable state 'out' had at the end of the loop body new abstract value"):
+      f_op()
+
+  def test_update_aval_before_loop(self):
+    """It is Ok to change the aval before the loopl."""
+    def f_op():
+      with loops.Scope() as s:
+        r1 = s.range(5)
+        s.out = np.int32(0)
+        s.out = np.float32(0)
+        for _ in r1:
+          s.out += np.float32(1.)
+        return s.out
+
+    self.assertAllClose(np.float32(5.), f_op())
+
+  def test_error_update_wrong_pytree(self):
+    """Cannot update state in the loop with wrong aval."""
+    def f_op():
+      with loops.Scope() as s:
+        r1 = s.range(1)
+        s.out = 0
+        for _ in r1:
+          s.out = (s.out, 1)  # Update with wrong pytree
+        return s.out
+
+    with self.assertRaisesRegex(TypeError,
+        "Mutable state 'out' is updated with new abstract value"):
+      f_op()
+
   def test_error_range_ends_static(self):
-    raise unittest.SkipTest("broken by omnistaging")  # TODO(mattjj,gnecula): update
     def f_op(start, end, inc):
       with loops.Scope() as s:
         s.out = 0.

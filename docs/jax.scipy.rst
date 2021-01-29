@@ -38,6 +38,16 @@ jax.scipy.ndimage
 
    map_coordinates
 
+jax.scipy.optimize
+------------------
+
+.. automodule:: jax.scipy.optimize
+
+.. autosummary::
+  :toctree: _autosummary
+
+   minimize
+
 jax.scipy.signal
 ----------------
 
@@ -60,6 +70,7 @@ jax.scipy.sparse.linalg
   :toctree: _autosummary
 
    cg
+   gmres
 
 jax.scipy.special
 -----------------
@@ -98,9 +109,40 @@ jax.scipy.special
 jax.scipy.stats
 ---------------
 
+jax.scipy.stats.bernoulli
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.bernoulli
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
 jax.scipy.stats.beta
 ~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.beta
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+jax.scipy.stats.cauchy
+~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.cauchy
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+
+jax.scipy.stats.dirichlet
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.dirichlet
 
 .. autosummary::
   :toctree: _autosummary
@@ -126,6 +168,16 @@ jax.scipy.stats.gamma
    logpdf
    pdf
 
+jax.scipy.stats.geom
+~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.geom
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
 jax.scipy.stats.laplace
 ~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.laplace
@@ -149,6 +201,15 @@ jax.scipy.stats.logistic
    ppf
    sf
 
+jax.scipy.stats.multivariate_normal
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.multivariate_normal
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
 jax.scipy.stats.norm
 ~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.norm
@@ -160,6 +221,33 @@ jax.scipy.stats.norm
    logpdf
    pdf
    ppf
+
+jax.scipy.stats.pareto
+~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.pareto
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+jax.scipy.stats.poisson
+~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.poisson
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
+jax.scipy.stats.t
+~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.t
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
 
 jax.scipy.stats.uniform
 ~~~~~~~~~~~~~~~~~~~~~~~

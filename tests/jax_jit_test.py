@@ -13,45 +13,124 @@
 # limitations under the License.
 
 import inspect
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax import dtypes
 from jax import lib as jaxlib
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import flags
 from jax.lib import version
-from jax.lib import xla_bridge
 import numpy as np
 
-
 FLAGS = flags.FLAGS
+
+# It covers all JAX numpy types types except bfloat16 and numpy array.
+# TODO(jblespiau): Add support for float0 and bfloat16 in the C++ path.
+_SCALAR_NUMPY_TYPES = [
+    x for x in jax.abstract_arrays.array_types
+    if x not in [np.ndarray, jax.dtypes.bfloat16]
+]
+
+
+def _cpp_device_put(value, device):
+  return jaxlib.jax_jit.device_put(value, FLAGS.jax_enable_x64, device)
 
 
 class JaxJitTest(parameterized.TestCase):
 
-  def test_convert_scalars(self):
-    # TODO(jblespiau): Remove when the version is out.
-    if jaxlib.version < (0, 1, 53):
-      return
+  @unittest.skipIf(version <= (0, 1, 56), "old jaxlib version")
+  def test_is_float_0(self):
+    self.assertTrue(
+        jaxlib.jax_jit._is_float0(np.zeros((5, 5), dtype=jax.float0)))
+    self.assertFalse(jaxlib.jax_jit._is_float0(np.zeros((5, 5))))
 
-    jax_jit = jaxlib.jax_jit
+  @unittest.skipIf(version <= (0, 1, 56), "old jaxlib version")
+  def test_DtypeTo32BitDtype(self):
+    self.assertEqual(np.float32, jaxlib.jax_jit._DtypeTo32BitDtype(np.float64))
 
-    jax_enable_x64 = FLAGS.jax_enable_x64
+  # TODO(jblespiau): Remove after minimal jaxlib version is 0.1.59 or newer.
+  @unittest.skipIf(not hasattr(jaxlib.jax_jit, "_device_put"),
+                   "old jaxlib version")
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_numpy_scalars(self, device_put_function):
 
-    if jax_enable_x64:
-      int_type = np.int64
-      float_type = np.float64
-      complex_type = np.complex128
-    else:
-      int_type = np.int32
-      float_type = np.float32
-      complex_type = np.complex64
+    device = jax.devices()[0]
+    for dtype in _SCALAR_NUMPY_TYPES:
+      value = dtype(0)
+
+      output_buffer = device_put_function(value, device=device)
+
+      self.assertFalse(output_buffer.aval.weak_type)
+      self.assertEqual(output_buffer.aval, jax.core.ShapedArray((), dtype))
+      self.assertEqual(output_buffer.dtype, dtypes.canonicalize_dtype(dtype))
+
+  # TODO(jblespiau): Remove after minimal jaxlib version is 0.1.59 or newer.
+  @unittest.skipIf(not hasattr(jaxlib.jax_jit, "_device_put"),
+                   "old jaxlib version")
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_numpy_arrays(self, device_put_function):
+
+    device = jax.devices()[0]
+    for dtype in _SCALAR_NUMPY_TYPES:
+      value = np.zeros((3, 4), dtype=dtype)
+      output_buffer = device_put_function(value, device=device)
+
+      self.assertFalse(output_buffer.aval.weak_type)
+      self.assertEqual(output_buffer.aval, jax.core.ShapedArray((3, 4), dtype))
+      self.assertEqual(output_buffer.dtype, dtypes.canonicalize_dtype(dtype))
+      np.testing.assert_array_equal(output_buffer, np.zeros((3, 4),
+                                                            dtype=dtype))
+
+  # TODO(jblespiau): Remove after minimal jaxlib version is 0.1.59 or newer.
+  @unittest.skipIf(not hasattr(jaxlib.jax_jit, "_device_put"),
+                   "old jaxlib version")
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_buffers(self, device_put_function):
+    device = jax.devices()[0]
+    jitted_f = jax.jit(lambda x: x + 1)
+
+    # We run it twice, to cover `_DeviceArray` and the C++ `Buffer`.
+    for value in range(2):
+      buffer = jitted_f(value)
+      output_buffer = device_put_function(buffer, device=device)
+
+      self.assertEqual(output_buffer.dtype, buffer.dtype)
+      self.assertEqual(output_buffer.aval, buffer.aval)
+      np.testing.assert_array_equal(output_buffer, np.array(value + 1))
+
+  # TODO(jblespiau): Remove after minimal jaxlib version is 0.1.59 or newer.
+  @unittest.skipIf(not hasattr(jaxlib.jax_jit, "_device_put"),
+                   "old jaxlib version")
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_sharded_device_array(self, device_put_function):
+    device = jax.devices()[0]
+
+    pmaped_f = jax.pmap(lambda x: x + 1)
+    for _ in range(2):
+      sda = pmaped_f(np.asarray([[1]]))
+      output_buffer = device_put_function(sda, device=device)
+
+      self.assertNotIsInstance(output_buffer,
+                               jax.interpreters.pxla.ShardedDeviceArray)
+      self.assertEqual(output_buffer.dtype, sda.dtype)
+      self.assertEqual(output_buffer.aval, sda.aval)
+      np.testing.assert_array_equal(output_buffer, np.asarray(sda))
+
+  # TODO(jblespiau): Remove after minimal jaxlib version is 0.1.59 or newer.
+  @unittest.skipIf(not hasattr(jaxlib.jax_jit, "_device_put"),
+                   "old jaxlib version")
+  def test_device_put_on_python_scalars(self):
+    device = jax.devices()[0]
+    int_type = dtypes.canonicalize_dtype(np.int64)
+    float_type = dtypes.canonicalize_dtype(np.float64)
+    complex_type = dtypes.canonicalize_dtype(np.complex128)
 
     # int
-    res = jax_jit._ScalarToBuffer(1, jax_enable_x64,
-                                  xla_bridge.get_backend()).to_py()
+    res = _cpp_device_put(1, device).to_py()
     self.assertEqual(res, 1)
     self.assertEqual(res.dtype, int_type)
     # We also compare to the Python Jax API, to make sure we have the exact
@@ -60,30 +139,89 @@ class JaxJitTest(parameterized.TestCase):
     self.assertEqual(jnp.asarray(1).dtype, res.dtype)
 
     # float
-    res = jax_jit._ScalarToBuffer(1.0, jax_enable_x64,
-                                  xla_bridge.get_backend()).to_py()
+    res = _cpp_device_put(1.0, device).to_py()
     self.assertEqual(res, 1.0)
     self.assertEqual(res.dtype, float_type)
     self.assertEqual(jnp.asarray(1.0).dtype, res.dtype)
 
     # bool
     for bool_value in [True, False]:
-      res = jax_jit._ScalarToBuffer(bool_value, jax_enable_x64,
-                                    xla_bridge.get_backend()).to_py()
+      res = _cpp_device_put(bool_value, device).to_py()
       self.assertEqual(res, np.asarray(bool_value))
       self.assertEqual(res.dtype, np.bool)
       self.assertEqual(jnp.asarray(bool_value).dtype, res.dtype)
 
     # Complex
-    res = jax_jit._ScalarToBuffer(1 + 1j, jax_enable_x64,
-                                  xla_bridge.get_backend()).to_py()
+    res = _cpp_device_put(1 + 1j, device).to_py()
     self.assertEqual(res, 1 + 1j)
     self.assertEqual(res.dtype, complex_type)
     self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)
 
+  @unittest.skipIf(jax.lib._xla_extension_version < 3, "jaxlib too old")
+  def test_convert_int_overflow(self):
+    with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
+      jaxlib.jax_jit.device_put(int(1e100), True, jax.devices()[0])
+
+  # TODO(jblespiau): Remove after minimal jaxlib version is 0.1.59 or newer.
+  @unittest.skipIf(not hasattr(jaxlib.jax_jit, "_ArgSignatureOfValue"),
+                   "old jaxlib version")
+  def test_arg_signature_of_value(self):
+    """Tests the C++ code-path."""
+    jax_enable_x64 = FLAGS.jax_enable_x64
+
+    # 1. Numpy scalar types
+    for dtype in _SCALAR_NUMPY_TYPES:
+      value = dtype(0)
+
+      signature = jaxlib.jax_jit._ArgSignatureOfValue(value, jax_enable_x64)
+      self.assertEqual(signature.dtype, jax.device_put(value).dtype)
+      self.assertEqual(signature.shape, ())
+      self.assertFalse(signature.weak_type)
+
+    # 2. Numpy arrays
+    for dtype in _SCALAR_NUMPY_TYPES:
+      value = np.zeros((3, 4), dtype=dtype)
+
+      signature = jaxlib.jax_jit._ArgSignatureOfValue(value, jax_enable_x64)
+      self.assertEqual(signature.dtype, jax.device_put(value).dtype)
+      self.assertEqual(signature.shape, (3, 4))
+      self.assertFalse(signature.weak_type)
+
+    int_type = dtypes.canonicalize_dtype(np.int64)
+    float_type = dtypes.canonicalize_dtype(np.float64)
+    complex_type = dtypes.canonicalize_dtype(np.complex128)
+
+    # 3. Python scalar types
+    # int
+    signature = jaxlib.jax_jit._ArgSignatureOfValue(1, jax_enable_x64)
+    self.assertEqual(signature.dtype, jax.device_put(1).dtype)
+    self.assertEqual(signature.dtype, int_type)
+    self.assertEqual(signature.shape, ())
+    self.assertTrue(signature.weak_type)
+    # float
+    signature = jaxlib.jax_jit._ArgSignatureOfValue(1.0, jax_enable_x64)
+    self.assertEqual(signature.dtype, jax.device_put(1.0).dtype)
+    self.assertEqual(signature.dtype, float_type)
+    self.assertEqual(signature.shape, ())
+    self.assertTrue(signature.weak_type)
+    # bool
+    for bool_value in [True, False]:
+      signature = jaxlib.jax_jit._ArgSignatureOfValue(bool_value,
+                                                      jax_enable_x64)
+      self.assertEqual(signature.dtype, jax.device_put(bool_value).dtype)
+      self.assertEqual(signature.dtype, np.bool)
+      self.assertEqual(signature.shape, ())
+      self.assertTrue(signature.weak_type)
+    # Complex
+    signature = jaxlib.jax_jit._ArgSignatureOfValue(1 + 1j, jax_enable_x64)
+    self.assertEqual(signature.dtype, jax.device_put(1 + 1j).dtype)
+    self.assertEqual(signature.dtype, complex_type)
+    self.assertEqual(signature.shape, ())
+    self.assertTrue(signature.weak_type)
+
   def test_signature_support(self):
-    if version < (0, 1, 54):
-      return
+    if version < (0, 1, 56):
+      raise unittest.SkipTest("old jaxlib version")
 
     def f(a, b, c):
       return a + b + c
@@ -92,6 +230,6 @@ class JaxJitTest(parameterized.TestCase):
     self.assertEqual(inspect.signature(f), inspect.signature(jitted_f))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
   jax.config.config_with_absl()
   absltest.main(testLoader=jtu.JaxTestLoader())

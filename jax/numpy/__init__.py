@@ -16,16 +16,17 @@
 from . import fft
 from . import linalg
 
-from ..interpreters.xla import DeviceArray
+from jax.interpreters.xla import DeviceArray
 
-from .lax_numpy import (
+from jax._src.numpy.lax_numpy import (
     ComplexWarning, NINF, NZERO, PZERO, abs, absolute, add, all, allclose,
-    alltrue, amax, amin, angle, any, append, arange, arccos, arccosh, arcsin,
+    alltrue, amax, amin, angle, any, append,
+    apply_along_axis, apply_over_axes, arange, arccos, arccosh, arcsin,
     arcsinh, arctan, arctan2, arctanh, argmax, argmin, argsort, argwhere, around,
-    array, array_equal, array_repr, array_split, array_str, asarray, atleast_1d, atleast_2d,
+    array, array_equal, array_equiv, array_repr, array_split, array_str, asarray, atleast_1d, atleast_2d,
     atleast_3d, average, bartlett, bfloat16, bincount, bitwise_and, bitwise_not,
     bitwise_or, bitwise_xor, blackman, block, bool_, broadcast_arrays,
-    broadcast_to, can_cast, cbrt, cdouble, ceil, character, clip, column_stack,
+    broadcast_to, can_cast, cbrt, cdouble, ceil, character, choose, clip, column_stack,
     complex128, complex64, complex_, complexfloating, compress, concatenate,
     conj, conjugate, convolve, copysign, corrcoef, correlate, cos, cosh,
     count_nonzero, cov, cross, csingle, cumprod, cumproduct, cumsum, deg2rad,
@@ -35,7 +36,7 @@ from .lax_numpy import (
     fabs, finfo, fix, flatnonzero, flexible, flip, fliplr, flipud, float16, float32,
     float64, float_, float_power, floating, floor, floor_divide, fmax, fmin,
     fmod, frexp, full, full_like, function, gcd, geomspace, gradient, greater,
-    greater_equal, hamming, hanning, heaviside, histogram, histogram_bin_edges,
+    greater_equal, hamming, hanning, heaviside, histogram, histogram_bin_edges, histogram2d, histogramdd,
     hsplit, hstack, hypot, i0, identity, iinfo, imag,
     indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer, 
     interp, intersect1d, invert,
@@ -52,9 +53,9 @@ from .lax_numpy import (
     object_, ones, ones_like, operator_name, outer, packbits, pad, percentile,
     pi, piecewise, polyadd, polyder, polymul, polysub, polyval, positive, power,
     prod, product, promote_types, ptp, quantile,
-    rad2deg, radians, ravel, real, reciprocal, remainder, repeat, reshape,
+    rad2deg, radians, ravel, ravel_multi_index, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
-    save, savez, searchsorted, select, set_printoptions, shape, sign, signbit,
+    save, savez, searchsorted, select, set_printoptions, setdiff1d, shape, sign, signbit,
     signedinteger, sin, sinc, single, sinh, size, sometrue, sort, sort_complex, split, sqrt,
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,
@@ -62,16 +63,18 @@ from .lax_numpy import (
     unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
     vstack, where, zeros, zeros_like, _NOT_IMPLEMENTED)
 
-from .polynomial import roots
-from .vectorize import vectorize
+from jax._src.numpy.polynomial import roots
+from jax._src.numpy.vectorize import vectorize
 
+# TODO(phawkins): remove this import after fixing users.
+from jax._src.numpy import lax_numpy
 
 # Module initialization is encapsulated in a function to avoid accidental
 # namespace pollution.
 def _init():
   import numpy as np
-  from . import lax_numpy
-  from .. import util
+  from jax._src.numpy import lax_numpy
+  from jax._src import util
   # Builds a set of all unimplemented NumPy functions.
   for name, func in util.get_module_functions(np).items():
     if name not in globals():

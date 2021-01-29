@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from contextlib import contextmanager
 import functools
 import re
 import os
+import textwrap
 from typing import Dict, Sequence, Union
 import unittest
 import warnings
@@ -33,7 +33,7 @@ from . import core
 from . import dtypes as _dtypes
 from . import lax
 from .config import flags, bool_env
-from .util import partial, prod
+from ._src.util import partial, prod
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla
@@ -62,6 +62,11 @@ flags.DEFINE_string(
   'test_targets', '',
   'Regular expression specifying which tests to run, called via re.match on '
   'the test name. If empty or unspecified, run all tests.'
+)
+flags.DEFINE_string(
+  'exclude_test_targets', '',
+  'Regular expression specifying which tests NOT to run, called via re.match '
+  'on the test name. If empty or unspecified, run all tests.'
 )
 
 EPS = 1e-4
@@ -140,7 +145,7 @@ def _normalize_tolerance(tol):
   if isinstance(tol, dict):
     return {np.dtype(k): v for k, v in tol.items()}
   else:
-    return {k: tol for k in _default_tolerance.keys()}
+    return {k: tol for k in _default_tolerance}
 
 def join_tolerance(tol1, tol2):
   tol1 = _normalize_tolerance(tol1)
@@ -339,6 +344,13 @@ def count_jit_and_pmap_compiles():
   finally:
     xla.jaxpr_subcomp = jaxpr_subcomp
 
+@contextmanager
+def assert_num_jit_and_pmap_compilations(times):
+  with count_jit_and_pmap_compiles() as count:
+    yield
+  if count[0] != times:
+    raise AssertionError(f"Expected exactly {times} XLA compilations, "
+                         f"but executed {count[0]}")
 
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
@@ -385,6 +397,23 @@ def skip_on_devices(*disabled_devices):
     return test_method_wrapper
   return skip
 
+def set_host_platform_device_count(nr_devices: int):
+  """Returns a closure that undoes the operation."""
+  prev_xla_flags = os.getenv("XLA_FLAGS")
+  flags_str = prev_xla_flags or ""
+  # Don't override user-specified device count, or other XLA flags.
+  if "xla_force_host_platform_device_count" not in flags_str:
+    os.environ["XLA_FLAGS"] = (flags_str +
+                               f" --xla_force_host_platform_device_count={nr_devices}")
+  # Clear any cached backends so new CPU backend will pick up the env var.
+  xla_bridge.get_backend.cache_clear()
+  def undo():
+    if prev_xla_flags is None:
+      del os.environ["XLA_FLAGS"]
+    else:
+      os.environ["XLA_FLAGS"] = prev_xla_flags
+    xla_bridge.get_backend.cache_clear()
+  return undo
 
 def skip_on_flag(flag_name, skip_value):
   """A decorator for test methods to skip the test when flags are set."""
@@ -743,6 +772,10 @@ class JaxTestLoader(absltest.TestLoader):
       pattern = re.compile(FLAGS.test_targets)
       names = [name for name in names
                if pattern.search(f"{testCaseClass.__name__}.{name}")]
+    if FLAGS.exclude_test_targets:
+      pattern = re.compile(FLAGS.exclude_test_targets)
+      names = [name for name in names
+               if not pattern.search(f"{testCaseClass.__name__}.{name}")]
     return names
 
 
@@ -769,7 +802,7 @@ class JaxTestCase(parameterized.TestCase):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
       self.assertDtypesMatch(x, y)
-    np.testing.assert_equal(x, y)
+    np.testing.assert_array_equal(x, y)
 
   def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
                            rtol=None):
@@ -818,7 +851,9 @@ class JaxTestCase(parameterized.TestCase):
       raise TypeError((type(x), type(y)))
 
   def assertMultiLineStrippedEqual(self, expected, what):
-    """Asserts two strings are equal, after stripping each line."""
+    """Asserts two strings are equal, after dedenting and stripping each line."""
+    expected = textwrap.dedent(expected)
+    what = textwrap.dedent(what)
     ignore_space_re = re.compile(r'\s*\n\s*')
     expected_clean = re.sub(ignore_space_re, '\n', expected.strip())
     what_clean = re.sub(ignore_space_re, '\n', what.strip())

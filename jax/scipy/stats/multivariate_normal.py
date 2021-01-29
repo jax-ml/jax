@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,37 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# flake8: noqa: F401
 
-import numpy as np
-import scipy.stats as osp_stats
-
-from ... import lax
-from ...lax_linalg import cholesky, triangular_solve
-from ... import numpy as jnp
-from ...numpy._util import _wraps
-from ...numpy.lax_numpy import _promote_dtypes_inexact
-
-
-@_wraps(osp_stats.multivariate_normal.logpdf, update_doc=False)
-def logpdf(x, mean, cov):
-  x, mean, cov = _promote_dtypes_inexact(x, mean, cov)
-  if not mean.shape:
-    return (-1/2 * jnp.square(x - mean) / cov
-            - 1/2 * (np.log(2*np.pi) + jnp.log(cov)))
-  else:
-    n = mean.shape[-1]
-    if not np.shape(cov):
-      y = x - mean
-      return (-1/2 * jnp.einsum('...i,...i->...', y, y) / cov
-              - n/2 * (np.log(2*np.pi) + jnp.log(cov)))
-    else:
-      if cov.ndim < 2 or cov.shape[-2:] != (n, n):
-        raise ValueError("multivariate_normal.logpdf got incompatible shapes")
-      L = cholesky(cov)
-      y = triangular_solve(L, x - mean, lower=True, transpose_a=True)
-      return (-1/2 * jnp.einsum('...i,...i->...', y, y) - n/2*np.log(2*np.pi)
-              - jnp.log(L.diagonal()).sum())
-
-@_wraps(osp_stats.multivariate_normal.pdf, update_doc=False)
-def pdf(x, mean, cov):
-  return lax.exp(logpdf(x, mean, cov))
+from jax._src.scipy.stats.multivariate_normal import (
+  logpdf,
+  pdf,
+)

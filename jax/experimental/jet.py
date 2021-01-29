@@ -21,15 +21,16 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import core
-from jax.util import unzip2
+from jax._src.util import unzip2
 from jax import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
 import jax.linear_util as lu
 from jax.interpreters import xla
 from jax.custom_derivatives import custom_jvp_call_jaxpr_p
-from jax.lax import lax
-from jax.lax import lax_fft
+from jax._src.lax import lax
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import fft as lax_fft
 
 def jet(fun, primals, series):
   try:
@@ -152,8 +153,14 @@ class JetTrace(core.Trace):
       return map(partial(JetTracer, trace), primals, series)
     return out, todo
 
-  def join(self, xt, yt):
-    assert False  # TODO?
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+    # TODO(mattjj): don't just ignore custom jvp rules?
+    del primitive, jvp  # Unused.
+    return fun.call_wrapped(*tracers)
+
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
+    del primitive, fwd, bwd, out_trees  # Unused.
+    return fun.call_wrapped(*tracers)
 
 
 class ZeroTerm(object): pass
@@ -222,9 +229,9 @@ deflinear(lax.complex_p)
 deflinear(lax.conj_p)
 deflinear(lax.imag_p)
 deflinear(lax.add_p)
+deflinear(ad_util.add_jaxvals_p)
 deflinear(lax.sub_p)
 deflinear(lax.convert_element_type_p)
-deflinear(lax.broadcast_p)
 deflinear(lax.broadcast_in_dim_p)
 deflinear(lax.concatenate_p)
 deflinear(lax.pad_p)
@@ -237,24 +244,22 @@ deflinear(lax.reduce_window_sum_p)
 deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
 
-# TODO(mattjj): remove when omnistaging fully lands
-try: deflinear(lax.tie_in_p)
-except AttributeError: pass
-
-def _cumulative_jet_rule(primals_in, series_in, *, axis: int,
-                         prefix_scan: Callable):
+def _cumulative_jet_rule(primals_in, series_in, *, axis: int, reverse: bool,
+                         combine_fn: Callable):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return jet(partial(prefix_scan, axis=axis), primals_in, series_in)
+  return jet(partial(lax_control_flow.associative_scan, combine_fn, axis=axis,
+                     reverse=reverse),
+             primals_in, series_in)
 
-deflinear(lax.cumsum_p)
-jet_rules[lax.cumprod_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cumprod_prefix_scan)
-jet_rules[lax.cummax_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cummax_prefix_scan)
-jet_rules[lax.cummin_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cummin_prefix_scan)
+deflinear(lax_control_flow.cumsum_p)
+jet_rules[lax_control_flow.cumprod_p] = partial(_cumulative_jet_rule,
+                                                combine_fn=lax.mul)
+jet_rules[lax_control_flow.cummax_p] = partial(_cumulative_jet_rule,
+                                               combine_fn=lax.max)
+jet_rules[lax_control_flow.cummin_p] = partial(_cumulative_jet_rule,
+                                               combine_fn=lax.min)
 
 
 def def_deriv(prim, deriv):
@@ -523,8 +528,8 @@ def _gen_reduce_choose_taylor_rule(chooser_fun):
     series_out = [_reduce_chooser_taylor_rule(g) for g in gs]
     return primal_out, series_out
   return chooser_taylor_rule
-jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(lax.reduce_max_p.bind)
-jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(lax.reduce_min_p.bind)
+jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(lax._reduce_max)
+jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(lax._reduce_min)
 
 def _abs_taylor_rule(x, series_in, **params):
   x, = x
@@ -584,3 +589,6 @@ def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
   del jvp_jaxpr_thunk
   return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
 jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
+
+
+deflinear(lax.tie_in_p)

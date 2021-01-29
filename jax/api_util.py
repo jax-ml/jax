@@ -12,31 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import operator
+from typing import Any, Tuple, Union
 
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
-                        tree_structure)
+                        tree_structure, treedef_children, treedef_is_leaf)
 from . import linear_util as lu
-from .util import safe_map, curry, WrapHashably, Hashable
+from ._src.util import safe_map, WrapHashably, Hashable
 from .core import unit
 
-from typing import Tuple
+from ._src import traceback_util
+traceback_util.register_exclusion(__file__)
 
 map = safe_map
 
-
-@curry
-def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
+def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
+  """Ensure x is either an index or a tuple of indices."""
   try:
-    fun.__name__ = namestr.format(fun=get_name(wrapped))
-    fun.__module__ = get_module(wrapped)
-    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
-    fun.__wrapped__ = wrapped
-  finally:
-    return fun
+    return operator.index(x)
+  except TypeError:
+    return tuple(map(operator.index, x))
 
-def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
-def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
-def get_doc(fun): return getattr(fun, "__doc__", "")
+def _ensure_index_tuple(x: Any) -> Tuple[int, ...]:
+  """Convert x to a tuple of indices."""
+  try:
+    return (operator.index(x),)
+  except TypeError:
+    return tuple(map(operator.index, x))
 
 @lu.transformation_with_aux
 def flatten_fun(in_tree, *args_flat):
@@ -48,7 +50,7 @@ def apply_flat_fun(fun, io_tree, *py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten((py_args, {}))
   if in_tree != in_tree_expected:
-      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -62,7 +64,7 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
   if in_tree != in_tree_expected:
-      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -74,15 +76,44 @@ def flatten_fun_nokwargs2(in_tree, *args_flat):
   aux_flat, aux_tree = tree_flatten(aux)
   yield (ans_flat, aux_flat), (ans_tree, aux_tree)
 
+
 def argnums_partial(f, dyn_argnums, args):
-  if isinstance(dyn_argnums, int):
-    dyn_argnums = (dyn_argnums,)
-  else:
-    dyn_argnums = tuple(dyn_argnums)
+  dyn_argnums = _ensure_index_tuple(dyn_argnums)
   fixed_args = tuple([unit if i in dyn_argnums else wrap_hashably(arg)
                       for i, arg in enumerate(args)])
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, fixed_args), dyn_args
+
+
+def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
+                           args: Tuple[Any]):
+  """Version of ``argnums_partial`` that checks hashability of static_argnums."""
+  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
+  dyn_args = tuple(args[i] for i in dyn_argnums)
+
+  fixed_args = [unit] * len(args)  # type: ignore
+  for i in static_argnums:
+    static_arg = args[i]
+    try:
+      hash(static_arg)
+    except TypeError:
+      raise ValueError(
+          "Non-hashable static arguments are not supported, as this can lead "
+          f"to unexpected cache-misses. Static argument (index {i}) of type "
+          f"{type(static_arg)} for function {f.__name__} is non-hashable.")
+    else:
+      fixed_args[i] = Hashable(static_arg)  # type: ignore
+
+  return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
+
+
+@lu.transformation
+def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
+  args = [None if arg is unit else arg.val for arg in fixed_args]
+  for i, arg in zip(dyn_argnums, dyn_args):
+    args[i] = arg
+  ans = yield args, kwargs
+  yield ans
 
 def donation_vector(donate_argnums, args, kwargs) -> Tuple[bool, ...]:
   """Returns a tuple with a boolean value for each leaf in args."""
@@ -135,15 +166,7 @@ def wrap_hashably(arg):
   else:
     return Hashable(arg)
 
-@lu.transformation
-def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
-  args = [None if arg is unit else arg.val for arg in fixed_args]
-  for i, arg in zip(dyn_argnums, dyn_args):
-    args[i] = arg
-  ans = yield args, kwargs
-  yield ans
-
-def flatten_axes(name, treedef, axis_tree):
+def flatten_axes(name, treedef, axis_tree, *, kws=False):
   # given an axis spec tree axis_tree (a pytree with integers and Nones at the
   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
   # the given treedef, build a complete axis spec tree with the same structure
@@ -156,6 +179,12 @@ def flatten_axes(name, treedef, axis_tree):
   try:
     tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
   except ValueError:
+    if kws:
+      # if keyword arguments are included in the tree, we make adapt the error
+      # message only to be about the positional arguments
+      treedef, leaf = treedef_children(treedef)
+      assert treedef_is_leaf(leaf)
+      axis_tree, _ = axis_tree
     raise ValueError(f"{name} specification must be a tree prefix of the "
                      f"corresponding value, got specification {axis_tree} "
                      f"for value tree {treedef}.") from None

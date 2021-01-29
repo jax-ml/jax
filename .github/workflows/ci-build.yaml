@@ -1,4 +1,4 @@
-name: Continuous integration
+name: CI
 
 on:
   # Trigger the workflow on push or pull request,
@@ -46,34 +46,39 @@ jobs:
         mypy jax
 
   build:
+    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          - python-version: 3.6
-            os: ubuntu-latest
-            enable-x64: 0
-            enable-omnistaging: 0
-            package-overrides: "none"
-            num_generated_cases: 25
-          - python-version: 3.7
-            os: ubuntu-latest
-            enable-x64: 1
-            enable-omnistaging: 0
-            # Test experimental NumPy dispatch
-            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
-            num_generated_cases: 25
-          - python-version: 3.6
-            os: ubuntu-latest
-            enable-x64: 1
-            enable-omnistaging: 0
-            # Test with numpy version that matches Google-internal version
-            package-overrides: "numpy==1.16.4"
-            num_generated_cases: 10
-          - python-version: 3.7
+          - name-prefix: "with many tests"
+            python-version: 3.8
             os: ubuntu-latest
             enable-x64: 0
             enable-omnistaging: 1
+            package-overrides: "none"
+            num_generated_cases: 25
+          - name-prefix: "with numpy-dispatch"
+            python-version: 3.9
+            os: ubuntu-latest
+            enable-x64: 1
+            enable-omnistaging: 1
+            # Test experimental NumPy dispatch
+            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
+            num_generated_cases: 10
+          - name-prefix: "with internal numpy"
+            python-version: 3.6
+            os: ubuntu-latest
+            enable-x64: 1
+            enable-omnistaging: 1
+            # Test with numpy version that matches Google-internal version
+            package-overrides: "numpy==1.16.4"
+            num_generated_cases: 10
+          - name-prefix: "without omnistaging"
+            python-version: 3.7
+            os: ubuntu-latest
+            enable-x64: 0
+            enable-omnistaging: 0
             package-overrides: "none"
             num_generated_cases: 8
     steps:
@@ -111,7 +116,7 @@ jobs:
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_OMNISTAGING=$JAX_OMNISTAGING"
-        pytest -n auto tests examples
+        pytest -n auto -v tests examples
 
 
   documentation:
@@ -143,5 +148,5 @@ jobs:
         pip install -r docs/requirements.txt
     - name: Test documentation
       run: |
-        pytest -n 1 docs
-        pytest -n 1 --doctest-modules jax/api.py
+        pytest -n 1 -v docs
+        pytest -n 1 -v --doctest-modules jax/api.py

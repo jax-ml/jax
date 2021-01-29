@@ -22,6 +22,8 @@ import jax.dlpack
 import jax.numpy as jnp
 from jax import test_util as jtu
 
+import numpy as np
+
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -36,10 +38,17 @@ try:
 except ImportError:
   cupy = None
 
+try:
+  import tensorflow as tf
+  tf_version = tuple(
+    int(x) for x in tf.version.VERSION.split("-")[0].split("."))
+except:
+  tf = None
+
 
 dlpack_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-                   jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
-                   jnp.float16, jnp.float32, jnp.float64]
+                 jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+                 jnp.float16, jnp.float32, jnp.float64]
 torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
 
@@ -58,22 +67,76 @@ class DLPackTest(jtu.JaxTestCase):
       self.skipTest("DLPack not supported on TPU")
 
   @parameterized.named_parameters(jtu.cases_from_list(
-     {"testcase_name": "_{}".format(
-        jtu.format_shape_dtype_string(shape, dtype)),
-     "shape": shape, "dtype": dtype}
+     {"testcase_name": "_{}_take_ownership={}".format(
+        jtu.format_shape_dtype_string(shape, dtype),
+        take_ownership),
+     "shape": shape, "dtype": dtype, "take_ownership": take_ownership}
      for shape in all_shapes
-     for dtype in dlpack_dtypes))
-  def testJaxRoundTrip(self, shape, dtype):
+     for dtype in dlpack_dtypes
+     for take_ownership in [False, True]))
+  def testJaxRoundTrip(self, shape, dtype, take_ownership):
+    if jax.lib.version < (0, 1, 57) and not take_ownership:
+      raise unittest.SkipTest("Requires jaxlib >= 0.1.57");
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     x = jnp.array(np)
-    dlpack = jax.dlpack.to_dlpack(x)
+    dlpack = jax.dlpack.to_dlpack(x, take_ownership=take_ownership)
+    self.assertEqual(take_ownership, x.device_buffer.is_deleted())
     y = jax.dlpack.from_dlpack(dlpack)
     self.assertAllClose(np.astype(x.dtype), y)
 
     self.assertRaisesRegex(RuntimeError,
                            "DLPack tensor may be consumed at most once",
                            lambda: jax.dlpack.from_dlpack(dlpack))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name": "_{}".format(
+        jtu.format_shape_dtype_string(shape, dtype)),
+     "shape": shape, "dtype": dtype}
+     for shape in all_shapes
+     for dtype in dlpack_dtypes))
+  @unittest.skipIf(not tf, "Test requires TensorFlow")
+  def testTensorFlowToJax(self, shape, dtype):
+    if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.uint64,
+                                              jnp.float64]:
+      raise self.skipTest("x64 types are disabled by jax_enable_x64")
+    if (jtu.device_under_test() == "gpu" and
+        not tf.config.list_physical_devices("GPU")):
+      raise self.skipTest("TensorFlow not configured with GPU support")
+
+    rng = jtu.rand_default(self.rng())
+    np = rng(shape, dtype)
+    with tf.device("/GPU:0" if jtu.device_under_test() == "gpu" else "/CPU:0"):
+      x = tf.constant(np)
+    dlpack = tf.experimental.dlpack.to_dlpack(x)
+    y = jax.dlpack.from_dlpack(dlpack)
+    self.assertAllClose(np, y)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name": "_{}".format(
+        jtu.format_shape_dtype_string(shape, dtype)),
+     "shape": shape, "dtype": dtype}
+     for shape in all_shapes
+     for dtype in dlpack_dtypes))
+  @unittest.skipIf(not tf, "Test requires TensorFlow")
+  def testJaxToTensorFlow(self, shape, dtype):
+    if jax.lib.version < (0, 1, 57):
+      raise unittest.SkipTest("Requires jaxlib >= 0.1.57");
+    if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.uint64,
+                                              jnp.float64]:
+      self.skipTest("x64 types are disabled by jax_enable_x64")
+    if (jtu.device_under_test() == "gpu" and
+        not tf.config.list_physical_devices("GPU")):
+      raise self.skipTest("TensorFlow not configured with GPU support")
+    rng = jtu.rand_default(self.rng())
+    np = rng(shape, dtype)
+    x = jnp.array(np)
+    # TODO(b/171320191): this line works around a missing context initialization
+    # bug in TensorFlow.
+    _ = tf.add(1, 1)
+    dlpack = jax.dlpack.to_dlpack(x)
+    y = tf.experimental.dlpack.from_dlpack(dlpack)
+    self.assertAllClose(np, y.numpy())
 
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name": "_{}".format(
@@ -101,12 +164,16 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
   def testJaxToTorch(self, shape, dtype):
+    if jax.lib.version < (0, 1, 57):
+      raise unittest.SkipTest("Requires jaxlib >= 0.1.57");
+    if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.float64]:
+      self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
     y = torch.utils.dlpack.from_dlpack(dlpack)
-    self.assertAllClose(np, y.numpy())
+    self.assertAllClose(np, y.cpu().numpy())
 
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
@@ -131,6 +198,17 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     self.assertEqual(y.__cuda_array_interface__["data"][0],
                      z.__cuda_array_interface__["data"][0])
     self.assertAllClose(x, cupy.asnumpy(z))
+
+
+class Bfloat16Test(jtu.JaxTestCase):
+
+  @unittest.skipIf((not tf or tf_version < (2, 5, 0) or
+                    jax.lib.version < (0, 1, 58)),
+                   "Test requires TensorFlow 2.5.0 or newer and jaxlib 0.1.58 "
+                   "or newer")
+  def testJaxAndTfHaveTheSameBfloat16Type(self):
+    self.assertEqual(np.dtype(jnp.bfloat16).num,
+                     np.dtype(tf.dtypes.bfloat16.as_numpy_dtype).num)
 
 
 if __name__ == "__main__":

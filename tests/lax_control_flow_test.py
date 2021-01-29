@@ -18,7 +18,7 @@ from functools import partial
 import itertools
 import operator
 import re
-from unittest import SkipTest
+from unittest import SkipTest, skipIf
 import textwrap
 
 from absl.testing import absltest
@@ -27,13 +27,15 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
+import jax
 from jax import api
 from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu
-from jax.util import unzip2
+from jax._src.util import unzip2
 from jax.lib import xla_bridge
+from jax.interpreters import xla
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 
@@ -93,6 +95,12 @@ def posify(matrix):
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    jax._src.lax.control_flow._initial_style_open_jaxpr.cache_clear()
+    jax._src.lax.control_flow._initial_style_jaxpr.cache_clear()
+    jax._src.lax.control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
 
   def testWhileWithTuple(self):
     limit = 10
@@ -238,17 +246,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
-    if config.omnistaging_enabled:
-      expected = ("body_fun output and input must have identical types, got\n"
-                  "ShapedArray(bool[], weak_type=True)\n"
-                  "and\n"
-                  "ShapedArray(float32[]).")
-    else:
-      expected = ("body_fun output and input must have identical types, got\n"
-                  "ShapedArray(bool[])\n"
-                  "and\n"
-                  "ShapedArray(float32[]).")
-    with self.assertRaisesWithLiteralMatch(TypeError, expected):
+    with self.assertRaisesWithLiteralMatch(TypeError,
+        ("body_fun output and input must have identical types, got\n"
+         "ShapedArray(bool[], weak_type=True)\n"
+         "and\n"
+         "ShapedArray(float32[]).")):
       lax.while_loop(lambda c: True, lambda c: True, np.float32(0.))
 
   def testNestedWhileWithDynamicUpdateSlice(self):
@@ -1004,6 +1006,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertAllClose(ans, expected, check_dtypes=False)
       jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
+  def testSwitchGradWithWeakTypeMismatch(self):  # issue #4696, PR #4896
+    dtype = jnp.ones(1).dtype
+    dtype = jnp.float32 if dtype == jnp.float32 else jnp.float64
+
+    branches = [
+        lambda x: x,             # This preserves the weak type of x.
+        lambda x: x + dtype(1),  # This strips the weak type of x.
+    ]
+
+    def f_ref(x):
+      i = x.astype(jnp.int32)
+      return branches[i](x)
+
+    def f(x):
+      return lax.switch(x.astype(jnp.int32), branches, x)
+
+    for x in [0., 1.]:
+      ans = api.grad(f)(x)
+      expected = api.grad(f_ref)(x)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{name}", "cond": cond}
       for cond, name in COND_IMPLS)
@@ -1617,7 +1640,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans = api.vmap(lambda c, as_:                scan(f, c, as_), in_axes)(c, as_)
     expected = api.vmap(lambda c, as_: scan_reference(f, c, as_), in_axes)(c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol=1e-5, atol=1e-5)
 
   def testScanVmapTuples(self):
     def f(c, a):
@@ -1727,7 +1751,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # To get a cache hit on the second line we'd need to form a jaxpr and
     # compare them for equality (including the literals on identity). We could
     # implement that by adding a __hash__/__eq__ to core.Jaxpr and
-    # core.TypedJaxpr (see #1221).
+    # core.ClosedJaxpr (see #1221).
     raise SkipTest("not implemented")
 
     def cond(x):
@@ -1938,12 +1962,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_custom_root_with_custom_linear_solve(self):
 
-    # TODO(shoyer): Figure out why this fails and re-enable it.
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
-
     def linear_solve(a, b):
-      f = lambda x: jnp.dot(a, x) - b
+      f = lambda x: high_precision_dot(a, x) - b
       factors = jsp.linalg.cho_factor(a)
       cho_solve = lambda f, b: jsp.linalg.cho_solve(factors, b)
       def pos_def_solve(g, b):
@@ -1954,15 +1974,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    actual = linear_solve(jnp.dot(a, a.T), b)
-    expected = jnp.linalg.solve(jnp.dot(a, a.T), b)
+    actual = linear_solve(high_precision_dot(a, a.T), b)
+    expected = jnp.linalg.solve(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual)
 
-    actual = api.jit(linear_solve)(jnp.dot(a, a.T), b)
-    expected = jnp.linalg.solve(jnp.dot(a, a.T), b)
+    actual = api.jit(linear_solve)(high_precision_dot(a, a.T), b)
+    expected = jnp.linalg.solve(high_precision_dot(a, a.T), b)
     self.assertAllClose(expected, actual)
 
-    jtu.check_grads(lambda x, y: linear_solve(jnp.dot(x, x.T), y),
+    jtu.check_grads(lambda x, y: linear_solve(high_precision_dot(x, x.T), y),
                     (a, b), order=2, rtol={jnp.float32: 1e-2})
 
   def test_custom_root_errors(self):
@@ -2113,10 +2133,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
-
-    # TODO(b/143528110): re-enable when underlying XLA TPU issue is fixed
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
 
     def linear_solve(a, b):
       a_factors = jsp.linalg.lu_factor(a)
@@ -2380,14 +2396,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x, n = jnp.arange(3), jnp.arange(4)
     api.vmap(api.vmap(f, (None, 0)), (0, None))(x, n)  # doesn't crash
 
-  def testAssociativeScanUnstructured1000(self):
-    data = np.arange(1000)
-    expected = np.cumsum(data)
-    result = lax.associative_scan(operator.add, data)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{shape}_axis={axis}",
+       "shape": shape, "axis": axis}
+      for shape in [
+        [0], [1], [2], [3], [5], [10], [1000],
+        [2, 3], [7, 5], [5, 6, 7]
+      ]
+      for axis in range(-len(shape), len(shape) - 1))
+  def testAssociativeScanUnstructured(self, shape, axis):
+    data = np.arange(np.prod(shape)).reshape(shape) + 7
+    expected = np.cumsum(data, axis=axis)
+    result = lax.associative_scan(operator.add, data, axis=axis)
     self.assertAllClose(result, expected, check_dtypes=False)
 
   def testAssociativeScanUnstructured1000Reverse(self):
-    data = np.arange(1000)
+    data = np.arange(1000) + 32
     expected = np.cumsum(data[::-1])[::-1]
     result = lax.associative_scan(operator.add, data, reverse=True)
     self.assertAllClose(result, expected, check_dtypes=False)
@@ -2450,7 +2475,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         core.JaxprTypeError,
         re.escape('invalid cond param branches of type tuple, '
-                  'tuple of TypedJaxpr required: (4, 2)'),
+                  'tuple of ClosedJaxpr required: (4, 2)'),
         lambda: core.check_jaxpr(jaxpr))
 
     jaxpr, eqn = new_jaxpr()
@@ -2468,6 +2493,68 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         r'invalid cond param linear of type str, '
         r'tuple of bool required:\nmulti\nline',
         lambda: core.check_jaxpr(jaxpr))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
+      for dtype in jtu.dtypes.all_integer)
+  def test_scan_init_weak_type(self, dtype):
+    def func(carry, x):
+      return carry + x, x
+    init_weak = 0  # Python scalars are weakly-typed.
+    x = jnp.ones(5, dtype=dtype)
+    carry, result = lax.scan(func, init_weak, x)
+    self.assertEqual(carry, x.sum())
+    self.assertArraysEqual(result, x)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
+      for dtype in jtu.dtypes.all_integer)
+  def test_while_loop_init_weak_type(self, dtype):
+    # This tests whether lax.while_loop can properly handle weakly-typed
+    # initial values.
+    def cond_fun(val):
+      return val < 2
+    def body_fun(val):
+      return val + increment
+    increment = jnp.array(1, dtype=dtype)
+    init_weak = 0  # Python scalars are weakly-typed.
+    result = lax.while_loop(cond_fun, body_fun, init_weak)
+    self.assertArraysEqual(result, jnp.full_like(increment, 2))
+
+  def test_scan_vjp_forwards_extensive_residuals(self):
+    # https://github.com/google/jax/issues/4510
+    def cumprod(x):
+      s = jnp.ones((2, 32), jnp.float32)
+      return lax.scan(lambda s, x: (x*s, s), s, x)
+
+    rng = np.random.RandomState(1234)
+    x = jnp.asarray(rng.randn(32, 2, 32).astype('float32'))
+    _, vjp_fun = api.vjp(cumprod, x)
+
+    # Need to spelunk into vjp_fun. This is fragile, and if it causes problems
+    # just skip this test.
+    *_, ext_res = vjp_fun.args[0].args[0]
+    self.assertIs(ext_res, x)
+
+    x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not DeviceArray
+    _, vjp_fun = api.vjp(cumprod, x)
+    *_, ext_res = vjp_fun.args[0].args[0]
+    self.assertIsInstance(ext_res, xla.DeviceArray)
+
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def test_scan_vmap_collectives(self):
+    def scan_f(state, x):
+      s = lax.psum(state, 'i') * x
+      return state, s
+
+    def scan(state, xs):
+      return lax.scan(scan_f, state, xs)
+
+    scan_v = api.vmap(scan, in_axes=0, out_axes=0, axis_name='i')
+    self.assertAllClose(
+      scan_v(jnp.ones([1]), jnp.arange(5).reshape((1, 5))),
+      (jnp.array([1.]), jnp.array([[0., 1., 2., 3., 4.]])))
 
 
 if __name__ == '__main__':

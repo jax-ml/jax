@@ -18,6 +18,7 @@ import jax
 from jax import test_util as jtu
 import numpy as np
 import os
+import unittest
 import sys
 
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -43,18 +44,25 @@ from jax.config import config
 
 config.parse_flags_with_absl()
 
+# Import after parsing flags
+from jax.experimental.jax2tf.tests import jax2tf_limitations
 
 class StaxTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_res_net(self):
+    if config.FLAGS.jax_enable_x64:
+      raise unittest.SkipTest("ResNet test fails on JAX when X64 is enabled")
     key = jax.random.PRNGKey(0)
     shape = (224, 224, 3, 1)
     init_fn, apply_fn = resnet50.ResNet50(1000)
     _, params = init_fn(key, shape)
     infer = functools.partial(apply_fn, params)
     images = np.array(jax.random.normal(key, shape))
-    self.ConvertAndCompare(infer, images, rtol=0.5)
+
+    self.ConvertAndCompare(
+        infer, images,
+        limitations=[jax2tf_limitations.custom_numeric(tol=0.5)])
 
 
 if __name__ == "__main__":

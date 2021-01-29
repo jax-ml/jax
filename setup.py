@@ -14,7 +14,6 @@
 
 from setuptools import setup, find_packages
 
-global __version__
 __version__ = None
 
 with open('jax/version.py') as f:
@@ -27,10 +26,18 @@ setup(
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
+    package_data={'jax': ['py.typed']},
     python_requires='>=3.6',
     install_requires=[
-        'numpy >=1.12', 'absl-py', 'opt_einsum'
+        'numpy >=1.12',
+        'absl-py',
+        'opt_einsum',
     ],
     url='https://github.com/google/jax',
     license='Apache-2.0',
+    classifiers=[
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
+    ]
 )

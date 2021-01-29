@@ -17,8 +17,11 @@ from jax import core
 from .core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
                    valid_jaxtype, raise_to_shaped, get_aval)
 from .tree_util import register_pytree_node
-from typing import Any, Dict
-from .util import safe_map
+from typing import Any, Dict, Type
+from ._src.util import safe_map
+
+from ._src import traceback_util
+traceback_util.register_exclusion(__file__)
 
 Array = Any
 
@@ -34,6 +37,7 @@ def add_jaxvals(x, y):
     return add_jaxvals_p.bind(x, y)
 
 add_jaxvals_p = Primitive('add_any')
+add_any_p = add_jaxvals_p
 
 @add_jaxvals_p.def_impl
 def add_impl(xs, ys):
@@ -48,7 +52,7 @@ jaxval_zeros_likers: Dict[type, Array] = {}
 def zeros_like_aval(aval):
   return aval_zeros_likers[type(aval)](aval)
 
-aval_zeros_likers: Dict[type, Array] = {}
+aval_zeros_likers: Dict[Type[core.AbstractValue], Array] = {}
 aval_zeros_likers[AbstractUnit] = lambda _: unit
 
 def zeros_like_jaxval(val):

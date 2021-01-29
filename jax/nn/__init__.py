@@ -15,8 +15,9 @@
 """Common functions for neural network libraries."""
 
 # flake8: noqa: F401
+
 from . import initializers
-from .functions import (
+from jax._src.nn.functions import (
   celu,
   elu,
   gelu,
@@ -28,6 +29,7 @@ from .functions import (
   leaky_relu,
   log_sigmoid,
   log_softmax,
+  logsumexp,
   normalize,
   one_hot,
   relu,

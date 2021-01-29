@@ -13,15 +13,18 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from .lax import (
+from jax._src.lax.lax import (
   ConvDimensionNumbers,
+  ConvGeneralDilatedDimensionNumbers,
   DotDimensionNumbers,
   GatherDimensionNumbers,
   Precision,
+  RoundingMethod,
   ScatterDimensionNumbers,
   abs,
   abs_p,
   acos,
+  acos_p,
   acosh,
   acosh_p,
   abs,
@@ -39,9 +42,11 @@ from .lax import (
   argmin,
   argmin_p,
   asin,
+  asin_p,
   asinh,
   asinh_p,
   atan,
+  atan_p,
   atan2,
   atan2_p,
   atanh,
@@ -59,9 +64,9 @@ from .lax import (
   bitwise_or,
   bitwise_xor,
   broadcast,
+  broadcast_p,
   broadcast_in_dim,
   broadcast_in_dim_p,
-  broadcast_p,
   broadcast_shapes,
   broadcast_to_rank,
   broadcasted_iota,
@@ -94,14 +99,6 @@ from .lax import (
   cosh_p,
   create_token,
   create_token_p,
-  cummax,
-  cummax_p,
-  cummin,
-  cummin_p,
-  cumprod,
-  cumprod_p,
-  cumsum,
-  cumsum_p,
   digamma,
   digamma_p,
   div,
@@ -157,6 +154,7 @@ from .lax import (
   integer_pow,
   integer_pow_p,
   iota,
+  iota_p,
   is_finite,
   is_finite_p,
   itertools,
@@ -170,7 +168,6 @@ from .lax import (
   log_p,
   lt,
   lt_p,
-  lu,
   max,
   max_p,
   min,
@@ -277,9 +274,11 @@ from .lax import (
   sub,
   sub_p,
   tan,
+  tan_p,
   tanh,
   tanh_p,
   tie_in,
+  tie_in_p,
   top_k,
   top_k_p,
   transpose,
@@ -289,17 +288,27 @@ from .lax import (
   xor_p,
   zeros_like_array,
 )
-from .lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
+from jax._src.lax.lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
                   _reduce_and, _reduce_window_sum, _reduce_window_max,
                   _reduce_window_min, _reduce_window_prod,
-                  _select_and_gather_add, _float, _complex, _input_dtype,
+                  _select_and_gather_add,
+                  _select_and_scatter_add, _float, _complex, _input_dtype,
                   _const, _eq_meet, _broadcasting_select,
                   _check_user_dtype_supported, _one, _zero, _const,
                   _upcast_fp16_for_computation, _broadcasting_shape_rule,
-                  _eye, _tri, _delta, _ones, _zeros)
-from .lax_control_flow import (
+                  _eye, _tri, _delta, _ones, _zeros, _dilate_shape)
+from jax._src.lax.control_flow import (
+  associative_scan,
   cond,
   cond_p,
+  cummax,
+  cummax_p,
+  cummin,
+  cummin_p,
+  cumprod,
+  cumprod_p,
+  cumsum,
+  cumsum_p,
   custom_linear_solve,
   custom_root,
   fori_loop,
@@ -311,13 +320,12 @@ from .lax_control_flow import (
   switch,
   while_loop,
   while_p,
-  associative_scan,
 )
-from .lax_fft import (
+from jax._src.lax.fft import (
   fft,
   fft_p,
 )
-from .lax_parallel import (
+from jax._src.lax.parallel import (
   all_gather,
   all_to_all,
   all_to_all_p,
@@ -334,4 +342,10 @@ from .lax_parallel import (
   psum,
   psum_p,
   pswapaxes,
+  pdot,
+  xeinsum,
 )
+from jax._src.lax.other import (
+  conv_general_dilated_patches
+)
+from . import linalg

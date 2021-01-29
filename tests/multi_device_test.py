@@ -142,7 +142,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
   def test_primitive_compilation_cache(self):
     devices = self.get_devices()
 
-    x = jax.device_put(1, devices[1])
+    x = jax.device_put(jnp.int32(1), devices[1])
 
     with jtu.count_primitive_compiles() as count:
       y = lax.add(x, x)

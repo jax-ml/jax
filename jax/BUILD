@@ -14,19 +14,20 @@
 
 # JAX is Autograd and XLA
 
-pytype_library = py_library
+load("//jax:jax.bzl", "pytype_library")
 
 licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
-# top-level EF placeholder
+exports_files(["LICENSE"])
 
 pytype_library(
     name = "jax",
     srcs = glob(
         [
             "*.py",
+            "_src/**/*.py",
             "image/**/*.py",
             "lib/**/*.py",
             "interpreters/**/*.py",
@@ -41,9 +42,22 @@ pytype_library(
             "*_test.py",
             "**/*_test.py",
         ],
-    ),
+    ) + ["experimental/maps.py"],  # until xmap is moved out of experimental
     srcs_version = "PY3",
-    deps = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
+    deps = [
+        "//third_party/py/jax/jaxlib:_pocketfft",
+        "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
+    ],
+)
+
+pytype_library(
+    name = "experimental",
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/x64_context.py",
+    ],
+    srcs_version = "PY3",
+    deps = [":jax"],
 )
 
 pytype_library(
@@ -61,22 +75,8 @@ pytype_library(
 )
 
 pytype_library(
-    name = "optix",
-    srcs = ["experimental/optix.py"],
-    srcs_version = "PY3",
-    deps = [":jax"],
-)
-
-pytype_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
-    srcs_version = "PY3",
-    deps = [":jax"],
-)
-
-pytype_library(
-    name = "vectorize",
-    srcs = ["experimental/vectorize.py"],
     srcs_version = "PY3",
     deps = [":jax"],
 )
@@ -96,8 +96,22 @@ pytype_library(
 )
 
 pytype_library(
+    name = "maps",
+    srcs = ["experimental/maps.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
     name = "jet",
     srcs = ["experimental/jet.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
+    name = "experimental_doubledouble",
+    srcs = ["experimental/doubledouble.py"],
     srcs_version = "PY3",
     deps = [":jax"],
 )

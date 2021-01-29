@@ -12,22 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import scipy.stats as osp_stats
+# flake8: noqa: F401
 
-from ... import lax
-from ...numpy import lax_numpy as jnp
-from ...numpy._util import _wraps
-from ..special import xlog1py
-
-@_wraps(osp_stats.geom.logpmf, update_doc=False)
-def logpmf(k, p, loc=0):
-    k, p, loc = jnp._promote_args_inexact("geom.logpmf", k, p, loc)
-    zero = jnp._constant_like(k, 0)
-    one = jnp._constant_like(k, 1)
-    x = lax.sub(k, loc)
-    log_probs = xlog1py(lax.sub(x, one), -p) + lax.log(p)
-    return jnp.where(lax.le(x, zero), -jnp.inf, log_probs)
-
-@_wraps(osp_stats.geom.pmf, update_doc=False)
-def pmf(k, p, loc=0):
-  return jnp.exp(logpmf(k, p, loc))
+from jax._src.scipy.stats.geom import (
+  logpmf,
+  pmf,
+)

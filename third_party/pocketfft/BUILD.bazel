@@ -1,0 +1,11 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "pocketfft",
+    hdrs = ["pocketfft_hdronly.h"],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    include_prefix = "pocketfft",
+)

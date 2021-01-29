@@ -15,12 +15,13 @@
 """Tests for nn module."""
 
 import collections
+from functools import partial
 import itertools
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as np
+import scipy.stats
 
 from jax import core
 from jax import test_util as jtu
@@ -65,8 +66,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.softplus, (float('nan'),), order=1,
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
 
-  @parameterized.parameters([
-      int, jnp.int32, float, jnp.float64, jnp.float32, jnp.float64,])
+  @parameterized.parameters([int, float] + jtu.dtypes.floating + jtu.dtypes.integer)
   def testSoftplusZero(self, dtype):
     self.assertEqual(jnp.log(dtype(2)), nn.softplus(dtype(0)))
 
@@ -93,9 +93,21 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.glu(jnp.array([1.0, 0.0]))
     self.assertAllClose(val, jnp.array([0.5]))
 
+  @parameterized.parameters(False, True)
+  def testGelu(self, approximate):
+    def gelu_reference(x):
+      return x * scipy.stats.norm.cdf(x)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((4, 5, 6), jnp.float32)]
+    self._CheckAgainstNumpy(
+      gelu_reference, partial(nn.gelu, approximate=approximate), args_maker,
+      check_dtypes=False, tol=1e-3 if approximate else None)
+
   @parameterized.parameters(*itertools.product(
       (jnp.float32, jnp.bfloat16, jnp.float16),
-      (nn.gelu, nn.relu, nn.softplus, nn.sigmoid)))
+      (partial(nn.gelu, approximate=False),
+       partial(nn.gelu, approximate=True),
+       nn.relu, nn.softplus, nn.sigmoid)))
   def testDtypeMatchesInput(self, dtype, fn):
     if dtype is jnp.float16 and jtu.device_under_test() == "tpu":
       self.skipTest("float16 not supported on TPU")
@@ -150,7 +162,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testOneHotConcretizationError(self):
     # https://github.com/google/jax/issues/3654
-    msg = r"Abstract tracer.*\(in jax.nn.one_hot argument `num_classes`\).*"
+    msg = r"in jax.nn.one_hot argument `num_classes`"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       jax.jit(nn.one_hot)(3, 5)
 
@@ -198,7 +210,7 @@ class NNInitializersTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testInitializer(self, initializer, shape, dtype):
     rng = random.PRNGKey(0)
     val = initializer(rng, shape, dtype)
@@ -214,7 +226,7 @@ class NNInitializersTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
-      for dtype in [np.float32, np.float64]))
+      for dtype in jtu.dtypes.floating))
   def testInitializerProvider(self, initializer_provider, shape, dtype):
     rng = random.PRNGKey(0)
     initializer = initializer_provider(dtype=dtype)

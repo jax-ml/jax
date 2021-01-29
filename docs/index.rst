@@ -12,6 +12,7 @@ For an introduction to JAX, start at the
    :caption: Tutorials
 
    notebooks/quickstart
+   notebooks/thinking_in_jax
    notebooks/autodiff_cookbook
    notebooks/vmapped_log_probs
    Training a Simple Neural Network, with Tensorflow Datasets Data Loading <https://github.com/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb>
@@ -42,6 +43,7 @@ For an introduction to JAX, start at the
    pytrees
    rank_promotion_warning
    type_promotion
+   custom_vjp_update
 
 .. toctree::
    :maxdepth: 2

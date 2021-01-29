@@ -13,20 +13,21 @@
 # limitations under the License.
 
 
+import itertools as it
 import numpy as np
-from unittest import skipIf
+from unittest import skipIf, SkipTest
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
+from jax.interpreters import batching
 from jax import test_util as jtu
 from jax import lax
-from jax import lax_linalg
 from jax import random
 from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
-from jax.util import partial
+from jax._src.util import partial
 import jax.ops
 
 from jax.config import config
@@ -329,7 +330,7 @@ class BatchingTest(jtu.JaxTestCase):
     # test modeling the code in https://github.com/google/jax/issues/54
 
     def func(xs):
-      return jnp.array([x for x in xs])
+      return jnp.array(list(xs))
 
     xs = jnp.ones((5, 1))
     jacrev(func)(xs)  # don't crash
@@ -342,7 +343,6 @@ class BatchingTest(jtu.JaxTestCase):
     expected = jnp.array([True, False])
     self.assertAllClose(ans, expected)
 
-  @jtu.skip_on_devices("tpu")
   def testHessian(self):
     # test based on code from sindhwani@google
     def fun(x, t):
@@ -475,7 +475,7 @@ class BatchingTest(jtu.JaxTestCase):
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct,
-                        rtol=2e-2)
+                        rtol=2e-2, atol=2e-3)
 
   def testConvGeneralDilatedBatchNotMajor(self):
     W = jnp.array(np.random.randn(3, 3, 1, 4), dtype=np.float32)
@@ -557,12 +557,12 @@ class BatchingTest(jtu.JaxTestCase):
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct,
-                        rtol=3e-2)
+                        rtol=3e-2, atol=1e-3)
 
   def testCumProd(self):
    x = jnp.arange(9).reshape(3, 3) + 1
    y = vmap(lambda x: jnp.cumprod(x, axis=-1))(x)
-   self.assertAllClose(np.cumprod(x, axis=1, dtype=jnp.int_), y)
+   self.assertAllClose(np.cumprod(x, axis=1, dtype=int), y)
 
   def testSelect(self):
     pred = np.array([True, False])
@@ -605,7 +605,7 @@ class BatchingTest(jtu.JaxTestCase):
     a = np.random.RandomState(0).randn(10, 5, 5).astype(np.float32)
     a = np.matmul(a, np.conj(np.swapaxes(a, -1, -2)))
 
-    ans = vmap(lax_linalg.cholesky)(a)
+    ans = vmap(lax.linalg.cholesky)(a)
     expected = np.linalg.cholesky(a)
     self.assertAllClose(ans, expected, check_dtypes=False, rtol=1e-4)
 
@@ -613,7 +613,7 @@ class BatchingTest(jtu.JaxTestCase):
     b = np.matmul(b, np.conj(np.swapaxes(b, -1, -2)))
     b_trans = np.swapaxes(b, 0, 1)  # shape is (5, 10, 5)
 
-    ans = vmap(lax_linalg.cholesky, in_axes=1, out_axes=0)(b_trans)
+    ans = vmap(lax.linalg.cholesky, in_axes=1, out_axes=0)(b_trans)
     expected = np.linalg.cholesky(b)
     self.assertAllClose(ans, expected, check_dtypes=False, rtol=1e-4)
 
@@ -622,19 +622,19 @@ class BatchingTest(jtu.JaxTestCase):
     a += np.eye(4, dtype=jnp.float32)[:, None, :]
     b = np.random.RandomState(0).randn(5, 4, 10).astype(np.float32)
 
-    ans = vmap(lax_linalg.triangular_solve, in_axes=(1, 2))(a, b)
+    ans = vmap(lax.linalg.triangular_solve, in_axes=(1, 2))(a, b)
     expected = np.stack(
-      [lax_linalg.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
+      [lax.linalg.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
     self.assertAllClose(ans, expected)
 
-    ans = vmap(lax_linalg.triangular_solve, in_axes=(None, 2))(a[:, 0], b)
+    ans = vmap(lax.linalg.triangular_solve, in_axes=(None, 2))(a[:, 0], b)
     expected = np.stack(
-      [lax_linalg.triangular_solve(a[:, 0], b[..., i]) for i in range(10)])
+      [lax.linalg.triangular_solve(a[:, 0], b[..., i]) for i in range(10)])
     self.assertAllClose(ans, expected)
 
-    ans = vmap(lax_linalg.triangular_solve, in_axes=(1, None))(a, b[..., 0])
+    ans = vmap(lax.linalg.triangular_solve, in_axes=(1, None))(a, b[..., 0])
     expected = np.stack(
-      [lax_linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
+      [lax.linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
     self.assertAllClose(ans, expected)
 
   @parameterized.named_parameters(
@@ -642,7 +642,7 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
           slice_sizes),
        "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng_factory": rng_factory}
+       "slice_sizes": slice_sizes}
       for dtype in [np.float32, np.int32]
       for axis, shape, idxs, dnums, slice_sizes in [
           (0, (3, 5), np.array([[0], [2]]), lax.GatherDimensionNumbers(
@@ -659,11 +659,9 @@ class BatchingTest(jtu.JaxTestCase):
              offset_dims=(1,), collapsed_slice_dims=(0,),
              start_index_map=(0, 1)),
             (1, 3)),
-      ]
-      for rng_factory in [jtu.rand_default])
-  def testGatherBatchedOperand(self, axis, shape, dtype, idxs, dnums,
-                               slice_sizes, rng_factory):
-    rng = rng_factory(self.rng())
+      ])
+  def testGatherBatchedOperand(self, axis, shape, dtype, idxs, dnums, slice_sizes):
+    rng = jtu.rand_default(self.rng())
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     ans = vmap(fun, (axis, None))(operand, idxs)
@@ -676,7 +674,7 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
           slice_sizes),
        "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng_factory": rng_factory}
+       "slice_sizes": slice_sizes}
       for dtype in [np.float32, np.float64]
       for axis, shape, idxs, dnums, slice_sizes in [
           (0, (3, 5), np.array([[0], [2]]), lax.GatherDimensionNumbers(
@@ -692,11 +690,10 @@ class BatchingTest(jtu.JaxTestCase):
            lax.GatherDimensionNumbers(
              offset_dims=(1,), collapsed_slice_dims=(0,),
              start_index_map=(0, 1)),
-            (1, 3)),      ]
-      for rng_factory in [jtu.rand_default])
-  def testGatherGradBatchedOperand(self, axis, shape, dtype, idxs, dnums,
-                                   slice_sizes, rng_factory):
-    rng = rng_factory(self.rng())
+            (1, 3))
+      ])
+  def testGatherGradBatchedOperand(self, axis, shape, dtype, idxs, dnums, slice_sizes):
+    rng = jtu.rand_default(self.rng())
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: jnp.sum(jnp.sin(fun(x, idx))))
     operand = rng(shape, dtype)
@@ -710,7 +707,7 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
           slice_sizes),
        "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng_factory": rng_factory}
+       "slice_sizes": slice_sizes}
       for dtype in [np.float32, np.int32]
       for axis, shape, idxs, dnums, slice_sizes in [
           (0, (5,), np.array([[[0], [2]], [[1], [3]]]), lax.GatherDimensionNumbers(
@@ -724,11 +721,9 @@ class BatchingTest(jtu.JaxTestCase):
           (0, (10, 5), np.array([[[0, 1], [2, 0]],
                                   [[1, 0], [2, 3]]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
-      ]
-      for rng_factory in [jtu.rand_default])
-  def testGatherBatchedIndices(self, axis, shape, dtype, idxs, dnums,
-                               slice_sizes, rng_factory):
-    rng = rng_factory(self.rng())
+      ])
+  def testGatherBatchedIndices(self, axis, shape, dtype, idxs, dnums, slice_sizes):
+    rng = jtu.rand_default(self.rng())
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     ans = vmap(fun, (None, axis))(operand, idxs)
@@ -741,7 +736,7 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, idxs, dnums,
           slice_sizes),
        "axis": axis, "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng_factory": rng_factory}
+       "slice_sizes": slice_sizes}
       for dtype in [np.float32, np.float64]
       for axis, shape, idxs, dnums, slice_sizes in [
           (0, (5,), np.array([[[0], [2]], [[1], [3]]]), lax.GatherDimensionNumbers(
@@ -755,11 +750,9 @@ class BatchingTest(jtu.JaxTestCase):
           (0, (10, 5), np.array([[[0, 1], [2, 0]],
                                   [[1, 0], [2, 3]]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)), (1, 3)),
-      ]
-      for rng_factory in [jtu.rand_default])
-  def testGatherGradBatchedIndices(self, axis, shape, dtype, idxs, dnums,
-                                   slice_sizes, rng_factory):
-    rng = rng_factory(self.rng())
+      ])
+  def testGatherGradBatchedIndices(self, axis, shape, dtype, idxs, dnums, slice_sizes):
+    rng = jtu.rand_default(self.rng())
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: jnp.sum(jnp.sin(fun(x, idx))))
     operand = rng(shape, dtype)
@@ -773,8 +766,7 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), op_axis, idxs_axis, idxs,
           dnums, slice_sizes),
        "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
-       dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
-       "rng_factory": rng_factory}
+       dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes}
       for dtype in [np.float32, np.int32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), np.array([[[0], [2]], [[1], [3]]]),
@@ -794,11 +786,9 @@ class BatchingTest(jtu.JaxTestCase):
           lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
            (1, 3)),
-      ]
-      for rng_factory in [jtu.rand_default])
-  def testGatherBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums,
-                            slice_sizes, rng_factory):
-    rng = rng_factory(self.rng())
+      ])
+  def testGatherBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums, slice_sizes):
+    rng = jtu.rand_default(self.rng())
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     operand = rng(shape, dtype)
     assert operand.shape[op_axis] == idxs.shape[idxs_axis]
@@ -813,8 +803,7 @@ class BatchingTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), op_axis, idxs_axis, idxs,
           dnums, slice_sizes),
        "op_axis": op_axis, "idxs_axis": idxs_axis, "shape": shape, "dtype":
-       dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes,
-       "rng_factory": rng_factory}
+       dtype, "idxs": idxs, "dnums": dnums, "slice_sizes": slice_sizes}
       for dtype in [np.float32]
       for op_axis, idxs_axis, shape, idxs, dnums, slice_sizes in [
           (0, 0, (2, 5), np.array([[[0], [2]], [[1], [3]]]),
@@ -834,11 +823,10 @@ class BatchingTest(jtu.JaxTestCase):
           lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
            (1, 3)),
-      ]
-      for rng_factory in [jtu.rand_default])
+      ])
   def testGatherGradBatchedBoth(self, op_axis, idxs_axis, shape, dtype, idxs, dnums,
-                                slice_sizes, rng_factory):
-    rng = rng_factory(self.rng())
+                                slice_sizes):
+    rng = jtu.rand_default(self.rng())
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     gfun = grad(lambda x, idx: jnp.sum(jnp.sin(fun(x, idx))))
     operand = rng(shape, dtype)
@@ -929,12 +917,11 @@ class BatchingTest(jtu.JaxTestCase):
     def f(key):
       def body_fn(uk):
         key = uk[1]
-        u = random.uniform(key, (), dtype=jnp.float64)
+        u = random.uniform(key, ())
         key, _ = random.split(key)
         return u, key
 
-      u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn,
-                            (jnp.float64(1.), key))
+      u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn, (1., key))
       return u
 
     print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash
@@ -979,28 +966,28 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_collective={}".format(seq.__name__).replace(" ", ""),
-       "collective": collective,
-       "seq": seq}
-      for collective, seq in [(lax.psum, jnp.sum),
-                              (lax.pmean, jnp.mean),
-                              (lambda x, n: lax.pmax(x, n), jnp.max),
-                              (lambda x, n: lax.pmin(x, n), jnp.min)])
+      {"testcase_name": "_{}_vmap_names={}_collective_names={}".format(
+          collective.__name__.replace(" ", ""), vmap_names, collective_names),
+       "collective": collective, "bulk_op": bulk_op, "vmap_names": vmap_names,
+       "collective_names": collective_names}
+      for collective, bulk_op in [(lax.psum, jnp.sum),
+                                  (lax.pmax, jnp.max),
+                                  (lax.pmin, jnp.min)]
+      for vmap_names in [('i',), ('i', 'j'), ('j', 'i')]
+      for collective_names in it.permutations(vmap_names))
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
-  def testCollective(self, collective, seq):
-    x = jnp.arange(64).reshape((4, 4, 4))
-    self.assertAllClose(
-      vmap(lambda x: x - collective(x, 'i'), axis_name='i')(x),
-      x - seq(x, axis=0))
+  def testCommAssocCollective(self, collective, bulk_op, vmap_names, collective_names):
+    x = jnp.arange(3 * 4 * 5).reshape((3, 4, 5))
 
-    self.assertAllClose(
-      vmap(vmap(lambda x: x - collective(x, ('j', 'i')), axis_name='i'), axis_name='j')(x),
-      x - seq(x, axis=(0, 1)))
-
-    self.assertAllClose(
-      vmap(vmap(lambda x: x - collective(x, ('i', 'j')), axis_name='i'), axis_name='j')(x),
-      x - seq(x, axis=(1, 0)))
+    # To test relative permutations of the order in which the axis names appear
+    # in the primitive call versus the order the vmaps are applied, we always
+    # apply vmaps in the order of the `vmap_names` argument, and apply the
+    # collective with names according to the `collective_names` argument.
+    f = lambda x: x - collective(x, collective_names)
+    for axis_name in vmap_names:
+      f = vmap(f, axis_name=axis_name)
+    self.assertAllClose(f(x), x - bulk_op(x, axis=tuple(range(len(vmap_names)))))
 
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
@@ -1017,6 +1004,59 @@ class BatchingTest(jtu.JaxTestCase):
       self.assertAllClose(
         vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs), axis_name='i')(x),
         x - x[perm])
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllToAllShape(self, vmap_axis, split_axis, concat_axis):
+    d = vmap_axis
+
+    def shape_fun(x, out_d):
+      shape = list(x.shape)
+      vmap_dim_id = shape.pop(d)
+      split_dim_id = shape.pop(split_axis)
+      shape.insert(concat_axis, vmap_dim_id)
+      shape.insert(out_d, split_dim_id)
+      return tuple(shape)
+
+    shape = (2, 3, 4, 5)
+    x = np.arange(np.prod(shape)).reshape(shape)
+    rule = batching.collective_rules[lax.all_to_all_p]
+    y, out_d = rule(None, (x,), (d,), None, split_axis, concat_axis, None)
+    exp_shape = shape_fun(x, out_d)
+    self.assertEqual(y.shape, exp_shape)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(2), range(2), range(3)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllToAllSplitAxis(self, vmap_axis, split_axis, concat_axis):
+    raise SkipTest("all_to_all split axis broken after #4835")  # TODO(mattjj,apaszke)
+    shape = (4, 4, 4)
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(vmap, in_axes=vmap_axis, axis_name='i')
+    @partial(vmap, in_axes=vmap_axis, axis_name='j')
+    def f(x):
+      return lax.all_to_all(x, ('i', 'j'), split_axis, concat_axis)
+
+    unroll_shape = (2, 2, *shape[1:])
+    unroll_shape = list(shape)
+    unroll_shape[vmap_axis:vmap_axis+1] = (2, 2)
+    x_unroll = x.reshape(unroll_shape)
+    y_unrolled = f(x_unroll)
+    y = y_unrolled.reshape(shape)
+
+    if vmap_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (vmap_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
 
   def testNegativeAxes(self):
     x = np.arange(3*4*5).reshape(3, 4, 5)
@@ -1057,6 +1097,127 @@ class BatchingTest(jtu.JaxTestCase):
       vmap(lambda x: x - lax.axis_index('i'), axis_name='i')(x),
       x - np.arange(x.shape[0]))
 
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testCollectivePdot(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(0)
+
+    x = rng.randn(3, 4)
+    y = rng.randn(4, 5)
+    z = vmap(f, axis_name='i', in_axes=(1, 0), out_axes=None)(x, y)
+    self.assertAllClose(z, jnp.dot(x, y))
+
+    x = rng.randn(4, 3)
+    y = rng.randn(4, 5)
+    z = vmap(f, axis_name='i', in_axes=(0, 0), out_axes=None)(x, y)
+    self.assertAllClose(z, jnp.dot(x.T, y))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testCollectivePdotBatching(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(1)
+    xs = rng.randn(2, 8, 3)
+    ys = rng.randn(2, 3, 5)
+    zs = vmap(vmap(f, axis_name='i', in_axes=(1, 0), out_axes=None))(xs, ys)
+    self.assertAllClose(zs, jnp.einsum('nij,njk->nik', xs, ys))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPdotJvp(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(1)
+    x = rng.randn(3, 4)
+    x_dot = rng.randn(*x.shape)
+    y = rng.randn(4, 5)
+    y_dot = rng.randn(*y.shape)
+
+    z, z_dot = vmap(lambda x, y, x_dot, y_dot: jvp(f, (x, y), (x_dot, y_dot)),
+                    axis_name='i', in_axes=(1, 0, 1, 0), out_axes=None)(x, y, x_dot, y_dot)
+    self.assertAllClose(z, jnp.dot(x, y))
+    self.assertAllClose(z_dot, jnp.dot(x_dot, y) + jnp.dot(x, y_dot))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPdotVjp(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i')
+
+    rng = np.random.RandomState(1)
+    x = rng.randn(3, 4)
+    y = rng.randn(4, 5)
+    z_bar = rng.randn(3, 5)
+
+    x_bar, y_bar = vmap(lambda x, y, z_bar: vjp(f, x, y)[1](z_bar),
+                        axis_name='i', in_axes=(1, 0, None), out_axes=(1, 0))(x, y, z_bar)
+    self.assertAllClose(x_bar, jnp.dot(z_bar, y.T))
+    self.assertAllClose(y_bar, jnp.dot(x.T, z_bar))
+
+  def testVmapKwargs(self):
+    # https://github.com/google/jax/issues/912
+
+    def f(a, b):
+      return (2*a, 3*b)
+
+    x = vmap(f)(jnp.array([1]), jnp.array([2]))  # works
+    y = vmap(f)(a=jnp.array([1]), b=jnp.array([2]))  # doesn't work
+    self.assertAllClose(x, y)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllGatherToUnmapped(self):
+    def f(x):
+      return lax.all_gather(x, axis_name='i')
+
+    x = jnp.arange(15).reshape((3, 5))
+    # Original mapped axis becomes first axis of unmapped return value.
+    self.assertAllClose(vmap(f, axis_name='i', in_axes=1, out_axes=None)(x), x.T)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testBatchedAllGather(self):
+    def f(x):
+      return lax.all_gather(x, axis_name='i')
+
+    x = jnp.arange(15).reshape((3, 5))
+    res = vmap(vmap(f, axis_name='i', out_axes=None), axis_name='j')(x)
+    self.assertAllClose(res, x)
+
+    res = vmap(vmap(f, axis_name='j'), axis_name='i', out_axes=None)(x)
+    self.assertAllClose(res, x.T)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllGatherVjp(self):
+    def f(x):
+      return lax.all_gather(x, axis_name='i')
+
+    rng = np.random.RandomState(1)
+    x = rng.randn(3, 4)
+    y_bar = rng.randn(3, 3, 4)
+
+    x_bar, = vmap(lambda x, y_bar: vjp(f, x)[1](y_bar), axis_name='i')(x, y_bar)
+    self.assertAllClose(x_bar, np.sum(y_bar, axis=0))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllGatherOfConst(self):
+    def f(x):
+      a = lax.all_gather(jnp.ones_like(x), axis_name='i')
+      b = lax.all_gather(1, axis_name='i')
+      return a, b
+
+    x = jnp.arange(15).reshape((3, 5))
+    a, b = vmap(f, axis_name='i', in_axes=1, out_axes=None)(x)
+    self.assertAllClose(a, jnp.ones(shape=(5, 3), dtype=x.dtype))
+    self.assertAllClose(b, jnp.ones(shape=(5,), dtype=b.dtype))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
