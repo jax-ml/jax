@@ -14,19 +14,21 @@
 
 import contextlib
 import logging
-import numpy as np
+
 from typing import Any, Callable, List, Optional, Sequence
-import tensorflow as tf  # type: ignore[import]
+
 
 import jax
-from jax.config import config
 from jax import dtypes
-from jax.experimental import jax2tf
-from jax.interpreters import masking
+from jax import numpy as jnp
 from jax import test_util as jtu
 from jax import tree_util
-from jax import numpy as jnp
 
+from jax.config import config
+from jax.experimental import jax2tf
+from jax.interpreters import masking
+import numpy as np
+import tensorflow as tf  # type: ignore[import]
 
 DType = Any
 
@@ -201,7 +203,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
              "successful modes:\n" + "\n".join(unexpected_successes))
       logging.warning(msg)
       # Uncomment the below if you want to see warnings as failures
-      #self.assertEmpty(msg)
+      # self.assertEmpty(msg)
     return result_jax, result_tf
 
   def TransformConvertAndCompare(self, func: Callable, arg,
