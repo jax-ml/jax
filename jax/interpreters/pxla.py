@@ -348,28 +348,25 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
       to `indices` and placed on `devices`.
 
   Returns:
-    A list of device buffers with the same length as `devices` indexed by
-    replica number, so that the nth element is the argument to be passed to the
-    nth replica.
+    A list of length matching args, containing lists of per-device buffers
+    for each argument.
   """
-  nargs, nrep = len(args), len(devices)
-  buffers = [[None] * nargs for _ in range(nrep)]
-  for a, arg in enumerate(args):
+
+  def shard_arg(a, arg):
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
     # inline handling for ShardedDeviceArray as a special case for performance
     # NOTE: we compare indices instead of sharding_spec because
     # pmap_benchmark.pmap_shard_args_benchmark indicates this is faster.
     if type(arg) is ShardedDeviceArray and indices[a] == arg.indices:
-      for r, buf in enumerate(arg.device_buffers):
-        buffers[r][a] = (buf if buf.device() == devices[r]
-                         else buf.copy_to_device(devices[r]))
+      return [
+          buf if buf.device() == d else buf.copy_to_device(d)
+          for d, buf in zip(devices, arg.device_buffers)
+      ]
     else:
       arg = xla.canonicalize_dtype(arg)
-      bufs = shard_arg_handlers[type(arg)](arg, devices, indices[a])
-      for r, buf in enumerate(bufs):
-        buffers[r][a] = buf
+      return shard_arg_handlers[type(arg)](arg, devices, indices[a])
 
-  return buffers
+  return [shard_arg(a, arg) for a, arg in enumerate(args)]
 
 
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
@@ -1067,44 +1064,26 @@ def _safe_div(x, y):
   return result
 
 
-class ResultToPopulate: pass
-result_to_populate = ResultToPopulate()
-
 class ResultsHandler:
-  __slots__ = ("nrep", "npart", "nouts", "out_specs", "out_indices", "handlers",
-               "unmapped_local_out_avals")
+  __slots__ = ("handlers", "out_specs", "out_indices", "unmapped_local_out_avals")
 
-  def __init__(self, nrep, npart, nouts, out_specs, out_indices, handlers,
-               unmapped_local_out_avals):
-    self.nrep = nrep
-    self.npart = npart
-    self.nouts = nouts
+  def __init__(self, handlers, out_specs, out_indices, unmapped_local_out_avals):
     self.out_specs = out_specs
     self.out_indices = out_indices
     self.handlers = handlers
     self.unmapped_local_out_avals = unmapped_local_out_avals
 
   def __call__(self, out_bufs):
-    assert self.nrep * self.npart == len(out_bufs)
-    buffers = [[result_to_populate] * (self.nrep * self.npart)
-               for _ in range(self.nouts)]
-    for r, tuple_buf in enumerate(out_bufs):
-      for i, buf in enumerate(tuple_buf):
-        buffers[i][r] = buf
-    assert not any(
-        buf is result_to_populate for bufs in buffers for buf in bufs)
-    return [h(bufs) for h, bufs in safe_zip(self.handlers, buffers)]
+    return [h(bufs) for h, bufs in safe_zip(self.handlers, out_bufs)]
 
 def avals_to_results_handler(nrep, npart, out_specs, unmapped_local_out_avals):
-  nouts = len(unmapped_local_out_avals)
   out_indices = [spec_to_indices(aval.shape, spec)
                  if aval is not core.abstract_unit else None
                  for aval, spec in safe_zip(unmapped_local_out_avals, out_specs)]  # pytype: disable=attribute-error
   handlers = [aval_to_result_handler(spec, idcs, aval)
               for spec, idcs, aval in safe_zip(out_specs, out_indices, unmapped_local_out_avals)]
 
-  return ResultsHandler(nrep, npart, nouts, out_specs, out_indices, handlers,
-                        unmapped_local_out_avals)
+  return ResultsHandler(handlers, out_specs, out_indices, unmapped_local_out_avals)
 
 def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   """Replicates ``val`` across multiple devices.
@@ -1200,7 +1179,7 @@ def partitioned_sharding_spec(num_partitions: int,
 
 def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.execute_on_local_devices(list(input_bufs))
+  out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
   return out_handler(out_bufs)
 
 
@@ -1617,7 +1596,6 @@ def omnistaging_disabler() -> None:
       size, nrep, npart,
       out_parts: Optional[Tuple[PartitionsOrReplicated, ...]],
       out_pvals, devices, backend):
-    nouts = len(out_pvals)
     if out_parts is None:
       out_parts = (None,) * len(out_pvals)
     handlers = [
@@ -1626,14 +1604,8 @@ def omnistaging_disabler() -> None:
     ]
 
     def handler(out_bufs):
-      assert nrep * npart == len(out_bufs)
-      buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
-      for r, tuple_buf in enumerate(out_bufs):
-        for i, buf in enumerate(tuple_buf):
-          buffers[i][r] = buf
-      assert not any(buf is result_to_populate for bufs in buffers
-                    for buf in bufs)
-      return [h(bufs) for h, bufs in safe_zip(handlers, buffers)]
+      return [h(bufs) for h, bufs in safe_zip(handlers, out_bufs)]
+
     return handler
 
   def _pval_to_result_handler(axis_size, nrep, npart, parts, pval, devices, backend):

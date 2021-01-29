@@ -2357,10 +2357,10 @@ class ShardArgsTest(jtu.JaxTestCase):
     arg = make_arg(x)
     bufs = pxla.shard_args(jax.devices()[:nshards],
                            [indices], [arg])
-    self.assertEqual(len(bufs), nshards)
-    for buf, idx in zip(bufs, indices):
-      self.assertEqual(len(buf), 1)
-      self.assertAllClose(buf[0].to_py(), x[idx], check_dtypes=False)
+    self.assertEqual(len(bufs), 1)
+    self.assertEqual(len(bufs[0]), nshards)
+    for buf, idx in zip(bufs[0], indices):
+      self.assertAllClose(buf.to_py(), x[idx], check_dtypes=False)
 
 
 if __name__ == '__main__':
