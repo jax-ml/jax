@@ -199,10 +199,8 @@ and search for "limitation".
 |reduce_window_max|unimplemented in XLA|complex64|tpu|
 |reduce_window_min|unimplemented in XLA|complex64|tpu|
 |reduce_window_mul|unimplemented in XLA|complex64|tpu|
-|scatter_add|unimplemented|complex64|tpu|
 |scatter_max|unimplemented|complex64|tpu|
 |scatter_min|unimplemented|complex64|tpu|
-|scatter_mul|unimplemented|complex64|tpu|
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|
 |svd|complex not implemented. Works in JAX for CPU and GPU with custom kernels|complex|tpu|
 |svd|unimplemented|bfloat16, float16|cpu, gpu|
