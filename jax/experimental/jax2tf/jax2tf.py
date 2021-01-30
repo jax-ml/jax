@@ -194,14 +194,22 @@ def convert(fun: Callable, *,
         raise ValueError("convert must be used outside all JAX transformations."
                          + f"Trace state: {core.thread_local_state.trace_state}")
 
-    # This function may take pytrees of TfVals. We can only set
-    # tf.custom_gradient on functions that take a flat argument list.
-    args_flat, in_tree = tree_util.tree_flatten((args, {}))
-    for a in args_flat:
+    def check_arg(a):
       if not _is_tfval(a):
         msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
                "be NumPy array, scalar, tf.Variable, or tf.Tensor")
         raise TypeError(msg)
+    tree_util.tree_map(check_arg, args)
+
+    # Name input tensors
+    args = tuple(
+        tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"), a)  # type: ignore
+        for i, a in enumerate(args))
+
+    # This function may take pytrees of TfVals. We can only set
+    # tf.custom_gradient on functions that take a flat argument list.
+    args_flat, in_tree = tree_util.tree_flatten((args, {}))
+
     if in_shapes is None:
       in_shapes_ = (None,) * len(args)
     else:
@@ -251,8 +259,9 @@ def convert(fun: Callable, *,
         vjp_in_shapes = [args_in_shapes, out_cts_in_shapes]
       out_cts = tree_util.tree_unflatten(out_tree_thunk(), out_cts_flat)
       # TODO: enable higher-order gradients
-      in_cts = convert(fun_vjp_jax, with_gradient=False,
-                       in_shapes=vjp_in_shapes)(args, out_cts)
+      with tf.name_scope("jax2tf_vjp"):
+        in_cts = convert(fun_vjp_jax, with_gradient=False,
+                         in_shapes=vjp_in_shapes)(args, out_cts)
       return in_cts
 
     try:
@@ -279,6 +288,7 @@ def convert(fun: Callable, *,
     finally:
       _shape_env = {}
 
+    out_flat = [tf.identity(x, "jax2tf_out") for x in out_flat]
     out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
     return out
 
