@@ -337,7 +337,7 @@ def xmap(fun: Callable,
   ...     out_axes=['left', 'right', ...],
   ...     axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
 
-  Still, the above examples are quite simple. After all, the :py:func:`xmap`ped
+  Still, the above examples are quite simple. After all, the xmapped
   computation was a simple NumPy function that didn't use the axis names at all!
   So, let's explore a slightly larger example which is linear regression::
 
