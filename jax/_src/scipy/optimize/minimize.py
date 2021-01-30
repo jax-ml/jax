@@ -56,6 +56,7 @@ def minimize(
   """Minimization of scalar function of one or more variables.
 
   This API for this function matches SciPy with some minor deviations:
+
   - Gradients of ``fun`` are calculated automatically using JAX's autodiff
     support when required.
   - The ``method`` argument is required. You must specify a solver.
@@ -65,8 +66,8 @@ def minimize(
     search implementation.
 
   ``minimize`` supports ``jit`` compilation. It does not yet support
-   differentiation or arguments in the form of multi-dimensional arrays, but
-   support for both is planned.
+  differentiation or arguments in the form of multi-dimensional arrays, but
+  support for both is planned.
 
   Args:
     fun: the objective function to be minimized, ``fun(x, *args) -> float``,
