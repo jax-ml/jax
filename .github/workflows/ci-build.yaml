@@ -58,14 +58,6 @@ jobs:
             enable-omnistaging: 1
             package-overrides: "none"
             num_generated_cases: 25
-          - name-prefix: "with numpy-dispatch"
-            python-version: 3.9
-            os: ubuntu-latest
-            enable-x64: 1
-            enable-omnistaging: 1
-            # Test experimental NumPy dispatch
-            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
-            num_generated_cases: 10
           - name-prefix: "with internal numpy"
             python-version: 3.6
             os: ubuntu-latest
