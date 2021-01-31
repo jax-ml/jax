@@ -4130,6 +4130,21 @@ class CustomVJPTest(jtu.JaxTestCase):
         ),
         lambda: api.grad(f)(2.))
 
+  def test_vjp_bwd_returns_non_tuple_error(self):
+    @api.custom_vjp
+    def f(x):
+      return x
+
+    def foo_fwd(x):
+      return x, None
+
+    def foo_bwd(_, g):
+      return 2. * g  # Should be a tuple
+
+    f.defvjp(foo_fwd, foo_bwd)
+    with self.assertRaisesRegex(TypeError, "Custom VJP rule .* must produce a tuple"):
+      api.grad(f)(3.)
+
   def test_issue2511(self):
     arr = jnp.ones((5, 2, 2))
     foo = lambda x: api.vmap(jnp.linalg.det, (0,))(x)
