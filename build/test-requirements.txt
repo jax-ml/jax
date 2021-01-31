@@ -1,4 +1,6 @@
 flake8
+# For now, we pin the numpy version here, because jaxlib 0.1.59 was built with >=1.12
+numpy>=1.12,<1.20
  # Must be kept in sync with the minimum jaxlib version in jax/lib/__init__.py
 jaxlib==0.1.59
 mypy==0.790
