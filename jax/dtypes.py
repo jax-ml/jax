@@ -46,8 +46,8 @@ _bfloat16_dtype = np.dtype(bfloat16)
 # Default types.
 
 bool_ = np.bool_
-int_ = np.int64
-float_ = np.float64
+int_: np.dtype = np.int64  # type: ignore
+float_: np.dtype = np.float64  # type: ignore
 complex_ = np.complex128
 
 # TODO(phawkins): change the above defaults to:
@@ -218,7 +218,7 @@ _jax_types = [
   np.dtype('float64'),
   np.dtype('complex64'),
   np.dtype('complex128'),
-] + _weak_types
+] + _weak_types  # type: ignore[operator]
 
 def _jax_type(value):
   """Return the jax type for a value or type."""

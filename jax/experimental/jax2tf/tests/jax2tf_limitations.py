@@ -15,7 +15,7 @@
 
 import itertools
 import numpy as np
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence, Union
 
 from jax import dtypes
 from jax import lax
@@ -35,8 +35,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       self,
       description: str,
       *,
-      devices: Sequence[str] = ("cpu", "gpu", "tpu"),
-      dtypes: Sequence[DType] = (),
+      devices: Union[str, Sequence[str]] = ("cpu", "gpu", "tpu"),
+      dtypes: Union[DType, Sequence[DType]] = (),
       enabled: bool = True,
       # jax2tf specific
       modes=("eager", "graph", "compiled"),

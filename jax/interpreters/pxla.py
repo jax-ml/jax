@@ -326,7 +326,7 @@ def spec_to_indices(shape: Tuple[int, ...],
     int, a slice object with step=1, or a tuple thereof, to be treated as an
     index into the full logical array.
   """
-  return tuple(spec.indices(shape).flat)
+  return tuple(spec.indices(shape).flat)  # type: ignore
 
 
 ### util

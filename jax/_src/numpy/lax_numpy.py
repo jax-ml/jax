@@ -1993,7 +1993,7 @@ def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   if axis is None:
     normalizer = size(a)
   else:
-    normalizer = np.prod(np.take(shape(a), axis))
+    normalizer = np.prod(np.take(shape(a), axis))  # type: ignore
   if dtype is None:
     if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
       dtype = float_
@@ -2074,7 +2074,7 @@ def var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   if axis is None:
     normalizer = size(a)
   else:
-    normalizer = np.prod(np.take(shape(a), axis))
+    normalizer = np.prod(np.take(shape(a), axis))  # type: ignore
   normalizer = normalizer - ddof
 
   result = sum(centered, axis, keepdims=keepdims)
