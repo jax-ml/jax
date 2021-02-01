@@ -16,6 +16,12 @@ jax 0.2.10 (Unreleased)
 
 * Breaking changes:
 
+  * :func:`jax.numpy.linspace` now computes the floor of integer values, i.e.,
+    rounding towards -inf rather than 0. This change was made to match NumPy
+    1.20.0.
+  * :func:`jax.numpy.i0` no longer accepts complex numbers. Previously the
+    function computed the absolute value of complex arguments. This change was
+    made to match the semantics of NumPy 1.20.0.
 
 jaxlib 0.1.60 (Unreleased)
 --------------------------
