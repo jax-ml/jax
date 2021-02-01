@@ -144,44 +144,49 @@ def download_and_verify_bazel():
   return os.path.join(".", package.file)
 
 
-def get_bazel_path(bazel_path_flag):
-  """Returns the path to a Bazel binary, downloading Bazel if not found."""
-  if bazel_path_flag:
-    return bazel_path_flag
+def get_bazel_paths(bazel_path_flag):
+  """Yields a sequence of a guess about bazel path. Some of sequence elements
+  can be None. The resulting iterator is lazy and potentially has a side
+  effects."""
+  yield bazel_path_flag
+  yield which("bazel")
+  yield download_and_verify_bazel()
 
-  bazel = download_and_verify_bazel()
-  if bazel:
-    return bazel
 
-  bazel = which("bazel")
-  if bazel:
-    return bazel
+def get_bazel_path(bazel_path_flag, min_version, max_version):
+  """Returns the path to a Bazel binary, downloading Bazel if not found. Also,
+  it checks Bazel's version is in the range [`min_version`, `max_version`).
+
+  NOTE Manual version check is reasonably only for bazel < 2.0.0. Newer bazel
+  releases performs version check against .bazelversion (see for details
+  https://blog.bazel.build/2019/12/19/bazel-2.0.html#other-important-changes).
+  """
+  for path in filter(None, get_bazel_paths(bazel_path_flag)):
+    if check_bazel_version(path, min_version, max_version):
+      return path
 
   print("Cannot find or download bazel. Please install bazel.")
   sys.exit(-1)
 
 
 def check_bazel_version(bazel_path, min_version, max_version):
-  """Checks Bazel's version is in the range [`min_version`, `max_version`)."""
-  version_output = shell([bazel_path, "--bazelrc=/dev/null", "version"])
+  try:
+    version_output = shell([bazel_path, "--bazelrc=/dev/null", "version"])
+  except subprocess.CalledProcessError:
+    return False
   match = re.search("Build label: *([0-9\\.]+)[^0-9\\.]", version_output)
   if match is None:
-    print("Warning: bazel installation is not a release version. Make sure "
-          "bazel is at least {}".format(min_version))
-    return
+    return False
   version = match.group(1)
   min_ints = [int(x) for x in min_version.split(".")]
   actual_ints = [int(x) for x in match.group(1).split(".")]
   if min_ints > actual_ints:
-    print("Outdated bazel revision (>= {} required, found {})".format(
-        min_version, version))
-    sys.exit(-1)
+    return False
   if max_version is not None:
     max_ints = [int(x) for x in max_version.split(".")]
     if actual_ints >= max_ints:
-      print("Please downgrade your bazel revision to build JAX (>= {} and < {}"
-            " required, found {})".format(min_version, max_version, version))
-      sys.exit(-1)
+      return False
+  return True
 
 
 BAZELRC_TEMPLATE = """
@@ -432,8 +437,7 @@ def main():
   os.chdir(os.path.dirname(__file__ or args.prog) or '.')
 
   # Find a working Bazel.
-  bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, min_version="2.0.0", max_version=None)
+  bazel_path = get_bazel_path(args.bazel_path, min_version="2.0.0", max_version=None)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
