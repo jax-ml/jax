@@ -102,26 +102,26 @@ expit.defjvps(lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None:
     a, b = jnp.broadcast_arrays(a, b)
-  _, dims = _reduction_dims(a, axis)
-  dimadd = lambda x: lax.expand_dims(x, dims)
-  amax = lax.reduce(a, _constant_like(a, -np.inf), lax.max, dims)
+  pos_dims, dims = _reduction_dims(a, axis)
+  amax = jnp.max(a, axis=dims, keepdims=keepdims)
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
-  amax_singletons = dimadd(amax)
+  amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
   if b is None:
-    out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
-                                     _constant_like(a, 0), lax.add, dims)), amax)
+    out = lax.add(lax.log(jnp.sum(lax.exp(lax.sub(a, amax_with_dims)),
+                                  axis=dims, keepdims=keepdims)),
+                  amax)
     sign = jnp.where(jnp.isnan(out), np.nan, 1.0).astype(out.dtype)
     sign = jnp.where(out == -np.inf, 0.0, sign)
   else:
-    sumexp = lax.reduce(lax.mul(lax.exp(lax.sub(a, amax_singletons)), b),
-                        _constant_like(a, 0), lax.add, dims)
+    sumexp = jnp.sum(lax.mul(lax.exp(lax.sub(a, amax_with_dims)), b),
+                     axis=dims, keepdims=keepdims)
     sign = lax.stop_gradient(lax.sign(sumexp))
     out = lax.add(lax.log(lax.abs(sumexp)), amax)
   if return_sign:
-    return (dimadd(out), dimadd(sign)) if keepdims else (out, sign)
+    return (out, sign)
   if b is not None:
     out = jnp.where(sign < 0, np.nan, out)
-  return dimadd(out) if keepdims else out
+  return out
 
 
 @_wraps(osp_special.xlogy)
