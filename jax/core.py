@@ -1373,6 +1373,24 @@ def axis_frame(axis_name):
       f'by pmap) are available to collective operations: {named_axes}')
 
 
+ParamDict = Dict[str, Any]
+AxisSubst = Callable[[AxisName], Tuple[AxisName, ...]]
+
+def used_axis_names(primitive: Primitive, params: ParamDict) -> Set[AxisName]:
+  axis_names = set()
+  def register_name(axis_name):
+    axis_names.add(axis_name)
+    return (axis_name,)
+  subst_axis_names(primitive, params, register_name)
+  return axis_names
+
+def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst) -> ParamDict:
+  if primitive in axis_substitution_rules:
+    return axis_substitution_rules[primitive](params, subst)
+  return params
+
+axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst], ParamDict]] = {}
+
 # ------------------- Jaxpr checking -------------------
 
 def mapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:

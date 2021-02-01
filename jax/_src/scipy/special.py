@@ -102,7 +102,7 @@ expit.defjvps(lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None:
     a, b = jnp.broadcast_arrays(a, b)
-  dims = _reduction_dims(a, axis)
+  _, dims = _reduction_dims(a, axis)
   dimadd = lambda x: lax.expand_dims(x, dims)
   amax = lax.reduce(a, _constant_like(a, -np.inf), lax.max, dims)
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))

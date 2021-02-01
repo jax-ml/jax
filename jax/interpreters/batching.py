@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import numpy as np
-from typing import Any, Callable, Dict, Optional, Tuple, Union, Sequence
+from typing import Any, Callable, Dict, Optional, Tuple, Union, Sequence, Iterable
 
 import jax
 from ..config import config
@@ -153,7 +153,7 @@ class BatchTrace(Trace):
     if all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
     if (primitive in collective_rules and
-          _main_trace_for_axis_names(self.main, params['axis_name'])):
+          _main_trace_for_axis_names(self.main, core.used_axis_names(primitive, params))):
       frame = core.axis_frame(self.axis_name)
       val_out, dim_out = collective_rules[primitive](frame, vals_in, dims_in, **params)
     else:
@@ -275,13 +275,11 @@ class BatchTrace(Trace):
   post_process_custom_vjp_call = post_process_custom_jvp_call
 
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
-                               axis_name: Union[core.AxisName, Tuple[core.AxisName, ...]]
+                               axis_name: Iterable[core.AxisName],
                                ) -> bool:
   # This function exists to identify whether a main trace corresponds to any of
   # the axis names used by a primitive. Axis names alone aren't enough because
   # axis names can shadow, so we use the main trace as a tag.
-  if not isinstance(axis_name, (list, tuple)):
-    axis_name = (axis_name,)
   return any(main_trace is core.axis_frame(n).main_trace for n in axis_name)
 
 def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests):

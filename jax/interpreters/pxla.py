@@ -1688,7 +1688,7 @@ def omnistaging_disabler() -> None:
     # particular, this code gets hit when we write `axis_size = psum(1, 'i')`. We
     # look up information in the dynamic axis env.
     dynamic_axis_env = _thread_local_state.dynamic_axis_env
-    axis_name = params.pop('axis_name')
+    axis_name = params.pop('axes')
     axis_index_groups = params.pop('axis_index_groups')
     if axis_index_groups is not None:
       shape = (len(axis_index_groups[0]),)
