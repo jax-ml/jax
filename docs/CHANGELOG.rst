@@ -20,6 +20,11 @@ jax 0.2.10 (Unreleased)
 jaxlib 0.1.60 (Unreleased)
 --------------------------
 
+* Bug fixes:
+
+  * ``bool``, ``int8``, and ``uint8`` are now considered safe to cast to
+    ``bfloat16`` NumPy extension type.
+
 jax 0.2.9 (January 26 2021)
 ---------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.8...jax-v0.2.9>`__.
