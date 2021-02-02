@@ -83,6 +83,8 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   with mesh(mesh_devices, axis_names):
     yield
 
+def with_mesh_from_kwargs(f):
+  return lambda *args, **kwargs: with_mesh(kwargs['mesh'])(f)(*args, **kwargs)
 
 class XMapTest(jtu.JaxTestCase):
   def setUp(self):
@@ -203,29 +205,27 @@ class XMapTest(jtu.JaxTestCase):
       ('OneToOne', (('x', 2), ('y', 2)), (('a', 'y'), ('b', 'x'))),
       ('Multiple', (('x', 2), ('y', 2), ('z', 2)), (('a', 'y'), ('b', ('x', 'z')))),
     ))
+  @with_mesh_from_kwargs
   @ignore_xmap_warning()
   def testNestedMesh(self, mesh, axis_resources):
-    @with_mesh(mesh)
-    def run_test():
-      @partial(xmap, in_axes={1: 'a'}, out_axes=({0: 'a'}, {}),
-               axis_resources=dict([axis_resources[0]]))
-      def f(x):
-        y = x * 2
-        @partial(xmap, in_axes={0: 'b'}, out_axes=({1: 'b'}, {}),
-                 axis_resources=dict([axis_resources[1]]))
-        def h(y):
-          return jnp.sin(y), lax.psum(y, ('a', 'b'))
-        return h(y)
+    @partial(xmap, in_axes={1: 'a'}, out_axes=({0: 'a'}, {}),
+              axis_resources=dict([axis_resources[0]]))
+    def f(x):
+      y = x * 2
+      @partial(xmap, in_axes={0: 'b'}, out_axes=({1: 'b'}, {}),
+                axis_resources=dict([axis_resources[1]]))
+      def h(y):
+        return jnp.sin(y), lax.psum(y, ('a', 'b'))
+      return h(y)
 
-      xshape = (4, 2, 5)
-      x = jnp.arange(np.prod(xshape)).reshape(xshape)
-      y = f(x)
-      self.assertAllClose(y, (jnp.sin(x * 2).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
-      self.assertEqual(y[0].sharding_spec.sharding,
-                       (pxla.Chunked(2), pxla.NoSharding(), pxla.NoSharding()))
-      self.assertEqual(y[0].sharding_spec.mesh_mapping,
-                      (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
-    run_test()
+    xshape = (4, 2, 5)
+    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    y = f(x)
+    self.assertAllClose(y, (jnp.sin(x * 2).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
+    self.assertEqual(y[0].sharding_spec.sharding,
+                      (pxla.Chunked(2), pxla.NoSharding(), pxla.NoSharding()))
+    self.assertEqual(y[0].sharding_spec.mesh_mapping,
+                    (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
 
   @parameterized.named_parameters(
     {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
@@ -233,23 +233,36 @@ class XMapTest(jtu.JaxTestCase):
       ('', (), ()),
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))
+  @with_mesh_from_kwargs
   @ignore_xmap_warning()
   def testMultipleCalls(self, mesh, axis_resources):
     def f(x, y):
       assert x.shape == y.shape == (3, 5)
       return jnp.tensordot(x, y, axes=([1], [1]))
 
-    @with_mesh(mesh)
-    def run_test():
-      f_mapped = xmap(f,
-                      in_axes=(['i', ...], ['j', ...]),
-                      out_axes=['i', 'j', ...],
-                      axis_resources=dict(axis_resources))
-      x = jnp.arange(30).reshape(2, 3, 5)
-      expected = jnp.einsum('imk,jnk->ijmn', x, x)
-      for i in range(10):
-        self.assertAllClose(f_mapped(x, x), expected)
-    run_test()
+    f_mapped = xmap(f,
+                    in_axes=(['i', ...], ['j', ...]),
+                    out_axes=['i', 'j', ...],
+                    axis_resources=dict(axis_resources))
+    x = jnp.arange(30).reshape(2, 3, 5)
+    expected = jnp.einsum('imk,jnk->ijmn', x, x)
+    for i in range(10):
+      self.assertAllClose(f_mapped(x, x), expected)
+
+  @parameterized.named_parameters(
+    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
+    for name, mesh, axis_resources in (
+      ('', (), ()),
+      ('Mesh', (('x', 2),), (('i', 'x'),))
+    ))
+  @with_mesh_from_kwargs
+  @ignore_xmap_warning()
+  def testAxisSizes(self, mesh, axis_resources):
+    result = xmap(lambda: lax.axis_index('i'),
+                  in_axes=(), out_axes=['i', ...],
+                  axis_sizes={'i': 6},
+                  axis_resources=dict(axis_resources))()
+    self.assertAllClose(result, jnp.arange(6, dtype=result.dtype))
 
   def VmapOfXmapCases():
     xmap_in_axes = ([{}] +
