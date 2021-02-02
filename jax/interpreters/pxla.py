@@ -1534,9 +1534,6 @@ def vtile(f_flat,
           in_axes_flat: Tuple[Optional[int], ...],
           out_axes_flat: Tuple[Optional[int], ...],
           tile_size: Optional[int], axis_name):
-  if tile_size == 1:
-    return f_flat
-
   @curry
   def tile_axis(arg, axis: Optional[int], tile_size):
     if axis is None:
