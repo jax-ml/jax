@@ -1125,6 +1125,8 @@ def angle(z):
 @_wraps(np.diff)
 def diff(a, n=1, axis: int = -1, prepend=None, append=None):
   _check_arraylike("diff", a)
+  n = core.concrete_or_error(operator.index, n, "'n' argument of jnp.diff")
+  axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.diff")
   if n == 0:
     return a
   if n < 0:
@@ -1133,6 +1135,7 @@ def diff(a, n=1, axis: int = -1, prepend=None, append=None):
     raise ValueError(f"diff requires input that is at least one dimensional; got {a}")
 
   nd = a.ndim
+  axis = _canonicalize_axis(axis, nd)
 
   combined = []
   if prepend is not None:
@@ -1738,6 +1741,7 @@ def clip(a, a_min=None, a_max=None, out=None):
 @_wraps(np.round, update_doc=False)
 def round(a, decimals=0, out=None):
   _check_arraylike("round", a)
+  decimals = core.concrete_or_error(operator.index, decimals, "'decimals' argument of jnp.round")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.round is not supported.")
   dtype = _dtype(a)
@@ -2941,8 +2945,9 @@ empty = zeros
 def eye(N, M=None, k=0, dtype=None):
   lax._check_user_dtype_supported(dtype, "eye")
   dtype = float_ if dtype is None else dtype
-  N = operator.index(N)
-  M = N if M is None else operator.index(M)
+  N = core.concrete_or_error(operator.index, N, "'N' argument of jnp.eye()")
+  M = N if M is None else core.concrete_or_error(
+    operator.index, M, "'M' argument of jnp.eye()")
   if N < 0 or M < 0:
     raise ValueError(f"negative dimensions are not allowed, got {N} and {M}")
   k = operator.index(k)
@@ -2989,8 +2994,10 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
              axis: int = 0):
   """Implementation of linspace differentiable in start and stop args."""
   lax._check_user_dtype_supported(dtype, "linspace")
+  num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.linspace")
+  axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
   if num < 0:
-    raise ValueError("Number of samples, %s, must be non-negative." % num)
+    raise ValueError(f"Number of samples, {num}, must be non-negative.")
 
   dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
   computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
@@ -3174,6 +3181,9 @@ def repeat(a, repeats, axis: Optional[int] = None, *, total_repeat_length=None):
     a = ravel(a)
     axis = 0
 
+  axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.repeat()")
+  assert isinstance(axis, int)  # to appease mypy
+
   # If total_repeat_length is not given, can't compile, use a default.
   if total_repeat_length is None:
     repeats = core.concrete_or_error(np.array, repeats,
@@ -3317,6 +3327,8 @@ def tril_indices_from(arr, k=0):
 
 @_wraps(np.diag_indices)
 def diag_indices(n, ndim=2):
+  n = core.concrete_or_error(operator.index, n, "'n' argument of jnp.diag_indices()")
+  ndim = core.concrete_or_error(operator.index, ndim, "'ndim' argument of jnp.diag_indices()")
   if n < 0:
     raise ValueError("n argument to diag_indices must be nonnegative, got {}"
                      .format(n))
@@ -3341,6 +3353,7 @@ def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
   _check_arraylike("diagonal", a)
   a_shape = shape(a)
   a_ndims = len(a_shape)
+  offset = core.concrete_or_error(operator.index, offset, "'offset' argument of jnp.diagonal()")
 
   # Move the two dimensions to the end.
   axis1 = _canonicalize_axis(axis1, a_ndims)
@@ -3423,13 +3436,12 @@ def polyadd(a1, a2):
 
 @_wraps(np.polyder)
 def polyder(p, m=1):
+  m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyder")
   p = asarray(p)
   if m < 0:
     raise ValueError("Order of derivative must be positive")
   if m == 0:
     return p
-  if m % 1:
-    raise ValueError("m must be an integer")
   coeff = (arange(len(p), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
   return p[:-m] * coeff
 
@@ -3851,7 +3863,8 @@ def vander(x, N=None, increasing=False):
   if ndim(x) != 1:
     raise ValueError("x must be a one-dimensional array")
   x_shape = shape(x)
-  N = N or x_shape[0]
+  N = x_shape[0] if N is None else core.concrete_or_error(
+    operator.index, N, "'N' argument of jnp.vander()")
   if N < 0:
     raise ValueError("N must be nonnegative")
 
@@ -4013,6 +4026,7 @@ def roll(a, shift, axis: Optional[Union[int, Sequence[int]]] = None):
 @_wraps(np.rollaxis)
 def rollaxis(a, axis: int, start=0):
   _check_arraylike("rollaxis", a)
+  start = core.concrete_or_error(operator.index, start, "'start' argument of jnp.rollaxis()")
   a_ndim = ndim(a)
   axis = _canonicalize_axis(axis, a_ndim)
   if not (-a_ndim <= start <= a_ndim):
