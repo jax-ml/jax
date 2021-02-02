@@ -108,7 +108,7 @@ jobs:
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_OMNISTAGING=$JAX_OMNISTAGING"
-        pytest -n auto -v tests examples
+        pytest -n auto tests examples
 
 
   documentation:
@@ -140,5 +140,5 @@ jobs:
         pip install -r docs/requirements.txt
     - name: Test documentation
       run: |
-        pytest -n 1 -v docs
-        pytest -n 1 -v --doctest-modules jax/api.py
+        pytest -n 1 docs
+        pytest -n 1 --doctest-modules jax/api.py
