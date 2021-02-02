@@ -388,6 +388,28 @@ class NamedNumPyTest(jtu.JaxTestCase):
     x = rng.randn(2, 5, 6)
     self.assertAllClose(ref_red(x), xmap_red(x))
 
+  @ignore_xmap_warning()
+  def testOneHot(self):
+    f = xmap(lambda x: jax.nn.one_hot([1, 2, 0], 3, axis='i'),
+             in_axes=['i', ...], out_axes=['i', ...])
+    expected = jnp.array([[0., 1., 0.],
+                         [0., 0., 1.],
+                         [1., 0., 0.]]).T
+    self.assertAllClose(f(jnp.ones((3,))), expected)
+
+  @ignore_xmap_warning()
+  def testOneHotOutOfBound(self):
+    f = xmap(lambda x: jax.nn.one_hot([-1, 3], 3, axis='i'),
+             in_axes=['i', ...], out_axes=['i', ...])
+    self.assertAllClose(f(jnp.ones((3,))), jnp.zeros((3, 2)))
+
+  @ignore_xmap_warning()
+  def testOneHotAxisSizeMismatch(self):
+    f = xmap(lambda x: jax.nn.one_hot([-1, 3], 3, axis='i'),
+             in_axes=['i', ...], out_axes=['i', ...])
+    with self.assertRaisesRegex(ValueError, "to match the size of axis i, but 3 != 5"):
+      f(jnp.ones((5,)))
+
 
 AxisIndices = Tuple[int, ...]
 MatchedAxisIndices = Tuple[AxisIndices, AxisIndices]

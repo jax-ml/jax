@@ -166,6 +166,16 @@ class NNFunctionsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       jax.jit(nn.one_hot)(3, 5)
 
+  def testOneHotAxis(self):
+    expected = jnp.array([[0., 1., 0.],
+                         [0., 0., 1.],
+                         [1., 0., 0.]]).T
+
+    actual = nn.one_hot(jnp.array([1, 2, 0]), 3, axis=0)
+    self.assertAllClose(actual, expected)
+
+    actual = nn.one_hot(jnp.array([1, 2, 0]), 3, axis=-2)
+    self.assertAllClose(actual, expected)
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
