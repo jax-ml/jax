@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-01-29*
+*Last generated on (YYYY-MM-DD): 2021-02-02*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -91,8 +91,7 @@ More detailed information can be found in the
 | eig | TF error: TF Conversion of eig is not implemented when both compute_left_eigenvectors and compute_right_eigenvectors are set to True | all | cpu, gpu, tpu | compiled, eager, graph |
 | eig | TF error: function not compilable | all | cpu | compiled |
 | eigh | TF test skipped: Not implemented in JAX: complex eigh not supported  | complex | tpu | compiled, eager, graph |
-| eigh | TF test skipped: Not implemented in JAX: unimplemented | float16 | cpu | compiled, eager, graph |
-| eigh | TF test skipped: Not implemented in JAX: unimplemented | float16 | gpu | compiled, eager, graph |
+| eigh | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | eigh | TF error: function not compilable | complex | cpu, gpu, tpu | compiled |
 | erf | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |

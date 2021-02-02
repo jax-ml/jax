@@ -1,6 +1,6 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-01-29* (YYYY-MM-DD)
+*Last generated on: 2021-02-02* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
@@ -191,8 +191,7 @@ and search for "limitation".
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|
 |eigh|complex eigh not supported |complex|tpu|
-|eigh|unimplemented|float16|cpu|
-|eigh|unimplemented|float16|gpu|
+|eigh|unimplemented|bfloat16, float16|cpu, gpu, tpu|
 |fft|only 1D FFT is currently supported b/140351181.|all|tpu|
 |lu|unimplemented|bfloat16, float16|cpu, gpu, tpu|
 |qr|unimplemented|bfloat16, float16|cpu, gpu|
