@@ -1659,9 +1659,14 @@ for dtype in jtu.dtypes.all_inexact:
             devices="tpu",
             dtypes=[np.complex64, np.complex128]),
           Limitation(
-            "unimplemented", devices="cpu", dtypes=[np.float16]),
+            "unimplemented", devices="cpu",
+            dtypes=[np.float16, dtypes.bfloat16]),
           Limitation(
-            "unimplemented", devices="gpu", dtypes=[np.float16]),
+            "unimplemented", devices="gpu",
+            dtypes=[np.float16, dtypes.bfloat16]),
+          Limitation(
+            "unimplemented", devices="tpu",
+            dtypes=[np.float16, dtypes.bfloat16]),
         ],
         shape=shape,
         dtype=dtype,
