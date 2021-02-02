@@ -548,18 +548,22 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           tol = 1e-6
         elif dtype == np.float32:
           tol = 1e-2
-        elif dtype in [dtypes.bfloat16, np.complex64]:
+        elif dtype == np.complex64:
           tol = 1e-3
         elif dtype == np.complex128:
           tol = 1e-13
+        elif dtype == dtypes.bfloat16:
+          tol = 1e-1
         tst.assertAllClose(
-            np.matmul(a, vr) - w[..., None, :] * vr,
+            np.matmul(a, vr).astype(vr.dtype) - w[..., None, :] * vr,
             np.zeros(a.shape, dtype=vr.dtype),
             atol=tol)
 
       def check_eigenvalue_is_in_array(eigenvalue, eigenvalues_array):
         tol = None
-        if dtype in [dtypes.bfloat16, np.float32, np.complex64]:
+        if dtype == dtypes.bfloat16:
+          tol = 2e-1
+        if dtype in [np.float32, np.complex64]:
           tol = 1e-3
         elif dtype in [np.float64, np.complex128]:
           tol = 1e-11

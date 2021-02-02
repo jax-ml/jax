@@ -475,10 +475,17 @@ def eigh_abstract_eval(operand, lower):
                        dtype=lax_internal._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
+
+  if not jnp.issubdtype(operand.dtype, np.inexact):
+    msg = "Argument to eigh must have complex or floating-point type, got {}"
+    raise ValueError(msg.format(operand.dtype))
   return v, w
 
 def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   shape = c.get_shape(operand)
+  need_upcast = shape.element_type() in [np.float16, jnp.bfloat16]
+  if need_upcast:
+    operand = xops.ConvertElementType(operand, xla_client.PrimitiveType.F32)
   batch_dims = shape.dimensions()[:-2]
   v, w, info = syevd_impl(c, operand, lower=lower)
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
@@ -486,6 +493,10 @@ def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
                            _nan_like(c, v))
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
+  if need_upcast:
+    v = xops.ConvertElementType(v, shape.xla_element_type())
+    w = xops.ConvertElementType(w, shape.xla_element_type())
+
   return xops.Tuple(c, [v, w])
 
 def eigh_jvp_rule(primals, tangents, lower):
