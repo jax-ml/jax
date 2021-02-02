@@ -131,6 +131,20 @@ ndim = _ndim = np.ndim
 size = np.size
 _dtype = dtypes.result_type
 
+def _ndim_sequence(xs):
+  """A version of np.ndim that works on sequences that may include Tracers.
+
+  Prior to version 1.20, np.ndim worked on sequences."""
+  if isinstance(xs, Sequence):
+    if not xs:
+      return 1
+    ndims = set(_ndim_sequence(x) for x in xs)
+    if len(ndims) > 1:
+      raise ValueError(f"ndim called on a ragged sequence with ndims {ndims}")
+    return 1 + ndims.pop()
+  else:
+    return ndim(xs)
+
 # At present JAX doesn't have a reason to distinguish between scalars and arrays
 # in its object system. Further, we want JAX scalars to have the same type
 # promotion behaviors as JAX arrays. Rather than introducing a new type of JAX
@@ -2586,7 +2600,7 @@ the modified array. This is because Jax arrays are immutable.
 (In numpy, "function" mode's argument should modify a rank 1 array in-place.)
 """)
 def pad(array, pad_width, mode="constant", **kwargs):
-  pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
+  pad_width = _broadcast_to_pairs(pad_width, _ndim_sequence(array), "pad_width")
   if pad_width and np.array(pad_width).dtype.kind != 'i':
     raise TypeError('`pad_width` must be of integral type.')
 
@@ -4587,8 +4601,7 @@ def _expand_bool_indices(idx):
     except TypeError:
       abstract_i = None
     if (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_)
-          or isinstance(i, list) and _all(not _shape(e) and issubdtype(_dtype(e), bool_)
-                                          for e in i)):
+        or isinstance(i, list) and _all(_is_bool_scalar_like(e) for e in i)):
       if isinstance(i, list):
         i = array(i)
         abstract_i = core.get_aval(i)
@@ -4613,7 +4626,8 @@ def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
-  if _all(np.ndim(elt) == 0 for elt in idx):
+  if _all(e is None or e is Ellipsis or isinstance(e, slice)
+          or _is_int_scalar_like(e) for e in idx):
     return False
   return _all(e is None or e is Ellipsis or isinstance(e, slice)
               or _is_int_arraylike(e) for e in idx)
@@ -4624,6 +4638,15 @@ def _is_int_arraylike(x):
           or issubdtype(getattr(x, "dtype", None), np.integer)
           or isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
 
+def _is_int_scalar_like(x):
+  """Returns True if x is a scalar integer, False otherwise."""
+  return (isinstance(x, int) and not isinstance(x, bool)
+          or issubdtype(getattr(x, "dtype", None), np.integer) and np.ndim(x) == 0)
+
+def _is_bool_scalar_like(x):
+  """Returns True if x is a scalar boolean, False otherwise."""
+  return (isinstance(x, bool)
+          or issubdtype(getattr(x, "dtype", None), np.bool_) and np.ndim(x) == 0)
 
 def _canonicalize_tuple_index(arr_ndim, idx):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""

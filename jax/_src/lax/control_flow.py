@@ -662,7 +662,7 @@ def cond(*args, **kwargs):
   return _cond(*args, **kwargs)
 
 def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
-  if len(np.shape(pred)) != 0:
+  if not isinstance(pred, Sequence) and len(np.shape(pred)) != 0:
     raise TypeError(
         f"Pred must be a scalar, got {pred} of shape {np.shape(pred)}.")
 
