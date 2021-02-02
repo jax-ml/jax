@@ -426,7 +426,7 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
   """
   # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
   if dtypes.result_type(val) == dtypes.float0:
-    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool))
+    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool_))
   elif np.any(np.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))

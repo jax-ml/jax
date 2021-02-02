@@ -191,8 +191,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
 # Skip np.i0() tests on older numpy: https://github.com/numpy/numpy/issues/11205
 if numpy_version >= (1, 17, 0):
   JAX_ONE_TO_ONE_OP_RECORDS.append(
-      op_record("i0", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
-                tolerance={np.complex64: 1E-5, np.complex128: 1E-14}),
+      op_record("i0", 1, float_dtypes, all_shapes, jtu.rand_default, [],
+                check_dtypes=False),
   )
 
 JAX_COMPOUND_OP_RECORDS = [
@@ -833,7 +833,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     # Do not pass where via args_maker as that is incompatible with _promote_like_jnp.
-    where = jtu.rand_bool(self.rng())(whereshape, np.bool)
+    where = jtu.rand_bool(self.rng())(whereshape, np.bool_)
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
     def np_fun(x):
@@ -1416,7 +1416,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             tol={np.float32: 1e-3, np.complex64: 1e-3})
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @unittest.skipIf(numpy_version < (1, 16, 6), "numpy <= 1.16.5 has a bug in linear_rmap")
+  @unittest.skipIf(numpy_version < (1, 16, 6),
+                   "numpy <= 1.16.5 has a bug in linear_ramp")
   # https://github.com/numpy/numpy/commit/1c45e0df150b1f49982aaa3fc1a328407b5eff7e
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_mode={}_pad_width={}_end_values={}".format(
@@ -1425,38 +1426,42 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "end_values": end_values}
       for shape, dtype in _shape_and_dtypes(nonempty_shapes, all_dtypes)
       for pad_width in [
-          # ((before_1, after_1), ..., (before_N, after_N))
-          tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
-          # ((before, after),)
-          ((1, 2),), ((2, 0),),
-          # (before, after)  (not in the docstring but works in numpy)
-          (2, 0), (0, 0),
-          # (pad,)
-          (1,), (2,),
-          # pad
-          0, 1,
+        # ((before_1, after_1), ..., (before_N, after_N))
+        tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
+        # ((before, after),)
+        ((1, 2),), ((2, 0),),
+        # (before, after)  (not in the docstring but works in numpy)
+        (2, 0), (0, 0),
+        # (pad,)
+        (1,), (2,),
+        # pad
+        0, 1,
       ]
       for end_values in [
-          # ((before_1, after_1), ..., (before_N, after_N))
-          tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
-          # ((before, after),)
-          ((1, 2),), ((2.0, 3.14),),
-          # (before, after)  (not in the docstring but works in numpy)
-          (0, 0), (-8.0, 2.0),
-          # (end_values,)
-          (1,), (2,),
-          # end_values
-          0, 1, 100, 10.0, 3.5, 4.2, -5, -3
+        # ((before_1, after_1), ..., (before_N, after_N))
+        tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
+        # ((before, after),)
+        ((1, 2),), ((2.0, 3.14),),
+        # (before, after)  (not in the docstring but works in numpy)
+        (0, 0), (-8.0, 2.0),
+        # (end_values,)
+        (1,), (2,),
+        # end_values
+        0, 1, 100, 10.0, 3.5, 4.2, -5, -3
       ]
       if (pad_width != () and end_values != () and
           # following types lack precision
           dtype not in [np.int8, np.int16, np.float16, jnp.bfloat16])))
   def testPadLinearRamp(self, shape, dtype, pad_width, end_values):
+    if numpy_version < (1, 20) and np.issubdtype(dtype, np.integer):
+      raise unittest.SkipTest("NumPy 1.20 changed the semantics of np.linspace")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
-    np_fun = partial(np.pad, pad_width=pad_width, mode="linear_ramp", end_values=end_values)
-    jnp_fun = partial(jnp.pad, pad_width=pad_width, mode="linear_ramp", end_values=end_values)
+    np_fun = partial(np.pad, pad_width=pad_width, mode="linear_ramp",
+                     end_values=end_values)
+    jnp_fun = partial(jnp.pad, pad_width=pad_width, mode="linear_ramp",
+                      end_values=end_values)
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
@@ -4315,7 +4320,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jtu.cases_from_list(
         {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
                            "_retstep={}_dtype={}").format(
-            start_shape, stop_shape, num, endpoint, retstep, dtype),
+            start_shape, stop_shape, num, endpoint, retstep,
+            dtype.__name__ if dtype else "None"),
          "start_shape": start_shape, "stop_shape": stop_shape,
          "num": num, "endpoint": endpoint, "retstep": retstep,
          "dtype": dtype}
@@ -4340,9 +4346,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp_op = lambda start, stop: jnp.linspace(
         start, stop, num,
         endpoint=endpoint, retstep=retstep, dtype=dtype, axis=axis)
-      np_op = lambda start, stop: np.linspace(
-        start, stop, num,
-        endpoint=endpoint, retstep=retstep, dtype=dtype, axis=axis)
+      # NumPy 1.20.0 changed the semantics of linspace to floor for integer
+      # dtypes.
+      if numpy_version >= (1, 20) or not np.issubdtype(dtype, np.integer):
+        np_op = lambda start, stop: np.linspace(
+          start, stop, num,
+          endpoint=endpoint, retstep=retstep, dtype=dtype, axis=axis)
+      else:
+        def np_op(start, stop):
+          out = np.linspace(start, stop, num, endpoint=endpoint,
+                            retstep=retstep, axis=axis)
+          if retstep:
+            return np.floor(out[0]).astype(dtype), out[1]
+          else:
+            return np.floor(out).astype(dtype)
+
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
                               check_dtypes=False, tol=tol)
       # floating-point compute between jitted platforms and non-jit + rounding

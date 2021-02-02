@@ -3013,6 +3013,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
       out = (reshape(broadcast_start, bounds_shape) +
         reshape(lax.iota(dtype, num), iota_shape) *
         reshape(delta, bounds_shape))
+      out = lax.floor(out)
     else:
       # This approach recovers the endpoints with float32 arithmetic,
       # but can lead to rounding errors for integer outputs.
@@ -3107,7 +3108,11 @@ def meshgrid(*args, **kwargs):
 
 @_wraps(np.i0)
 def i0(x):
-  x = lax.abs(*_promote_args_inexact("i0", x))
+  x_orig = x
+  x, = _promote_args_inexact("i0", x)
+  if not issubdtype(x.dtype, np.floating):
+    raise ValueError(f"Unsupported input type to jax.numpy.i0: {_dtype(x_orig)}")
+  x = lax.abs(x)
   return lax.mul(lax.exp(x), lax.bessel_i0e(x))
 
 

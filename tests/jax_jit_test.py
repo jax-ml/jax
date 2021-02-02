@@ -148,7 +148,7 @@ class JaxJitTest(parameterized.TestCase):
     for bool_value in [True, False]:
       res = _cpp_device_put(bool_value, device).to_py()
       self.assertEqual(res, np.asarray(bool_value))
-      self.assertEqual(res.dtype, np.bool)
+      self.assertEqual(res.dtype, np.bool_)
       self.assertEqual(jnp.asarray(bool_value).dtype, res.dtype)
 
     # Complex
@@ -209,7 +209,7 @@ class JaxJitTest(parameterized.TestCase):
       signature = jaxlib.jax_jit._ArgSignatureOfValue(bool_value,
                                                       jax_enable_x64)
       self.assertEqual(signature.dtype, jax.device_put(bool_value).dtype)
-      self.assertEqual(signature.dtype, np.bool)
+      self.assertEqual(signature.dtype, np.bool_)
       self.assertEqual(signature.shape, ())
       self.assertTrue(signature.weak_type)
     # Complex

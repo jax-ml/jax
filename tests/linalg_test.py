@@ -915,7 +915,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       return jnp.real(jnp.sum(val))
 
     grad_test_jc = jit(grad(jit(test)))
-    xc = np.eye(3, dtype=np.complex)
+    xc = np.eye(3, dtype=np.complex64)
     self.assertAllClose(xc, grad_test_jc(xc))
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
