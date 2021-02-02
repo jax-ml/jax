@@ -15,6 +15,7 @@
 """Shared neural network activations and other functions."""
 
 
+import operator
 import numpy as np
 from typing import Any, Optional, Tuple, Union
 
@@ -22,6 +23,8 @@ from jax import custom_jvp
 from jax import dtypes
 from jax import lax
 from jax import core
+from jax.core import AxisName
+from .. import util
 from jax.scipy.special import expit
 from jax.scipy.special import logsumexp as _logsumexp
 import jax.numpy as jnp
@@ -265,7 +268,8 @@ def normalize(x: Array,
     variance = jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
-def one_hot(x: Array, num_classes: int, *, dtype: Any = jnp.float64) -> Array:
+def one_hot(x: Array, num_classes: int, *,
+            dtype: Any = jnp.float64, axis: Union[int, AxisName] = -1) -> Array:
   """One-hot encodes the given indicies.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
@@ -293,8 +297,21 @@ def one_hot(x: Array, num_classes: int, *, dtype: Any = jnp.float64) -> Array:
       "The error arose in jax.nn.one_hot argument `num_classes`.")
   dtype = dtypes.canonicalize_dtype(dtype)
   x = jnp.asarray(x)
-  lhs = x[..., jnp.newaxis]
-  rhs = lax.broadcast_to_rank(jnp.arange(num_classes, dtype=x.dtype), lhs.ndim)
+  try:
+    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)
+  except TypeError:
+    axis_size = lax.psum(1, axis)
+    if num_classes != axis_size:
+      raise ValueError(f"Expected num_classes to match the size of axis {axis}, "
+                       f"but {num_classes} != {axis_size}") from None
+    axis_idx = lax.axis_index(axis)
+    return jnp.asarray(x == axis_idx, dtype=dtype)
+  axis = operator.index(axis)
+  lhs = lax.expand_dims(x, (axis,))
+  rhs_shape = [1] * x.ndim
+  rhs_shape.insert(output_pos_axis, num_classes)
+  rhs = lax.broadcast_in_dim(jnp.arange(num_classes, dtype=x.dtype),
+                             rhs_shape, (output_pos_axis,))
   return jnp.asarray(lhs == rhs, dtype=dtype)
 
 def relu6(x: Array) -> Array:
