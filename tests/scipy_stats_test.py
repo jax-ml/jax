@@ -20,6 +20,7 @@ from absl.testing import absltest, parameterized
 import numpy as np
 import scipy.stats as osp_stats
 
+from jax import api
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
@@ -469,6 +470,24 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             args_maker, tol=1e-3)
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_ndim={}_nbatch={}_dtype={}".format(ndim, nbatch, dtype.__name__),
+       "ndim": ndim, "nbatch": nbatch, "dtype": dtype}
+      for ndim in [2, 3]
+      for nbatch in [1, 3, 5]
+      for dtype in jtu.dtypes.floating))
+  def testMultivariateNormalLogpdfBatch(self, ndim, nbatch, dtype):
+    # Regression test for #5570
+    rng = jtu.rand_default(self.rng())
+    x = rng((nbatch, ndim), dtype)
+    mean = 5 * rng((nbatch, ndim), dtype)
+    factor = rng((nbatch, ndim, 2 * ndim), dtype)
+    cov = factor @ factor.transpose(0, 2, 1)
+
+    result1 = lsp_stats.multivariate_normal.logpdf(x, mean, cov)
+    result2 = api.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
+    self.assertArraysEqual(result1, result2)
 
 
 if __name__ == "__main__":
