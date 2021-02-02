@@ -31,6 +31,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jscipy
 from jax import test_util as jtu
 from jax import vmap
 from jax import lax
@@ -365,12 +366,12 @@ class NamedNumPyTest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise SkipTest("xmap requires omnistaging")
 
-  @parameterized.named_parameters(
-    {"testcase_name": f"{reduction.__name__}_axes={axes}_i={mapped_axis}",
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": f"_{reduction.__name__}_axes={axes}_i={mapped_axis}",
       "reduction": reduction, "axes": axes, "mapped_axis": mapped_axis}
-    for reduction in (jnp.sum, jnp.max, jnp.min)
+    for reduction in (jnp.sum, jnp.max, jnp.min, jscipy.special.logsumexp)
     for axes in (0, 'i', (1,), ('i',), (0, 1), (0, 'i'), ('i', 0))
-    for mapped_axis in range(2))
+    for mapped_axis in range(3)))
   @ignore_xmap_warning()
   def testReductions(self, reduction, axes, mapped_axis):
     axes_t = axes if isinstance(axes, tuple) else (axes,)
