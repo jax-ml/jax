@@ -124,6 +124,19 @@ TREES = (
     (FlatCache({"a": [1, 2]}),),
 )
 
+try:
+  from dataclasses import dataclass  # pylint: disable=g-import-not-at-top
+except ModuleNotFoundError:
+  pass
+else:
+  @dataclass
+  class ADataClass:
+    foo: object
+    bar: object
+
+  TREES += (ADataClass(foo="hello", bar=3.5),),
+  TREES += (ADataClass(foo="hello", bar=(ADataClass(foo=3.5, bar="quux"))),),
+
 LEAVES = (
     ("foo",),
     (0.1,),
