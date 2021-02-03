@@ -139,6 +139,17 @@ jax.scipy.stats.cauchy
    logpdf
    pdf
 
+jax.scipy.stats.chi2
+~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.chi2
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+
 
 jax.scipy.stats.dirichlet
 ~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2021 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,19 +13,8 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from . import bernoulli
-from . import beta
-from . import cauchy
-from . import dirichlet
-from . import expon
-from . import gamma
-from . import geom
-from . import laplace
-from . import logistic
-from . import multivariate_normal
-from . import norm
-from . import pareto
-from . import poisson
-from . import t
-from . import uniform
-from . import chi2
+
+from jax._src.scipy.stats.chi2 import (
+  logpdf,
+  pdf,
+)
