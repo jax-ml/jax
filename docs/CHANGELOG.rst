@@ -23,10 +23,13 @@ jax 0.2.10 (Unreleased)
     function computed the absolute value of complex arguments. This change was
     made to match the semantics of NumPy 1.20.0.
 
-jaxlib 0.1.60 (Unreleased)
+jaxlib 0.1.60 (Febuary 3 2021)
 --------------------------
 
 * Bug fixes:
+
+  * Fixed a memory leak when converting CPU DeviceArrays to NumPy arrays. The
+    memory leak was present in jaxlib releases 0.1.58 and 0.1.59.
 
   * ``bool``, ``int8``, and ``uint8`` are now considered safe to cast to
     ``bfloat16`` NumPy extension type.
