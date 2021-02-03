@@ -131,20 +131,6 @@ ndim = _ndim = np.ndim
 size = np.size
 _dtype = dtypes.result_type
 
-def _ndim_sequence(xs):
-  """A version of np.ndim that works on sequences that may include Tracers.
-
-  Prior to version 1.20, np.ndim worked on sequences."""
-  if isinstance(xs, Sequence):
-    if not xs:
-      return 1
-    ndims = set(_ndim_sequence(x) for x in xs)
-    if len(ndims) > 1:
-      raise ValueError(f"ndim called on a ragged sequence with ndims {ndims}")
-    return 1 + ndims.pop()
-  else:
-    return ndim(xs)
-
 # At present JAX doesn't have a reason to distinguish between scalars and arrays
 # in its object system. Further, we want JAX scalars to have the same type
 # promotion behaviors as JAX arrays. Rather than introducing a new type of JAX
@@ -1266,6 +1252,7 @@ def isrealobj(x):
 
 @_wraps(np.reshape)
 def reshape(a, newshape, order="C"):
+  _check_arraylike("reshape", a)
   try:
     return a.reshape(newshape, order=order)  # forward to method for ndarrays
   except AttributeError:
@@ -1301,6 +1288,7 @@ def _reshape(a, *args, order="C"):
 
 @_wraps(np.ravel)
 def ravel(a, order="C"):
+  _check_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
   return reshape(a, (size(a),), order)
@@ -1349,7 +1337,7 @@ and out-of-bounds indices are clipped.
 @_wraps(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(indices, shape):
   indices = asarray(indices)
-  sizes = pad(shape, (0, 1), constant_values=1)
+  sizes = array(tuple(shape) + (1,))
   cumulative_sizes = cumprod(sizes[::-1])[::-1]
   total_size = cumulative_sizes[0]
   # Clip so raveling and unraveling an oob index will not change the behavior
@@ -2600,7 +2588,8 @@ the modified array. This is because Jax arrays are immutable.
 (In numpy, "function" mode's argument should modify a rank 1 array in-place.)
 """)
 def pad(array, pad_width, mode="constant", **kwargs):
-  pad_width = _broadcast_to_pairs(pad_width, _ndim_sequence(array), "pad_width")
+  _check_arraylike("pad", array)
+  pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
   if pad_width and np.array(pad_width).dtype.kind != 'i':
     raise TypeError('`pad_width` must be of integral type.')
 
@@ -3183,6 +3172,7 @@ will be repeated.
 @_wraps(np.repeat, lax_description=_TOTAL_REPEAT_LENGTH_DOC)
 def repeat(a, repeats, axis: Optional[int] = None, *, total_repeat_length=None):
   _check_arraylike("repeat", a)
+  _check_arraylike("repeat", repeats)
 
   if axis is None:
     a = ravel(a)
@@ -4601,7 +4591,7 @@ def _expand_bool_indices(idx):
     except TypeError:
       abstract_i = None
     if (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_)
-        or isinstance(i, list) and _all(_is_bool_scalar_like(e) for e in i)):
+        or isinstance(i, list) and _all(_is_scalar(e) and issubdtype(_dtype(e), np.bool_) for e in i)):
       if isinstance(i, list):
         i = array(i)
         abstract_i = core.get_aval(i)
@@ -4627,7 +4617,7 @@ def _is_advanced_int_indexer(idx):
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
   if _all(e is None or e is Ellipsis or isinstance(e, slice)
-          or _is_int_scalar_like(e) for e in idx):
+          or _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
     return False
   return _all(e is None or e is Ellipsis or isinstance(e, slice)
               or _is_int_arraylike(e) for e in idx)
@@ -4638,15 +4628,9 @@ def _is_int_arraylike(x):
           or issubdtype(getattr(x, "dtype", None), np.integer)
           or isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
 
-def _is_int_scalar_like(x):
-  """Returns True if x is a scalar integer, False otherwise."""
-  return (isinstance(x, int) and not isinstance(x, bool)
-          or issubdtype(getattr(x, "dtype", None), np.integer) and np.ndim(x) == 0)
-
-def _is_bool_scalar_like(x):
-  """Returns True if x is a scalar boolean, False otherwise."""
-  return (isinstance(x, bool)
-          or issubdtype(getattr(x, "dtype", None), np.bool_) and np.ndim(x) == 0)
+def _is_scalar(x):
+  """Checks if a Python or NumPy scalar."""
+  return  np.isscalar(x) or (isinstance(x, ndarray) and np.ndim(x) == 0)
 
 def _canonicalize_tuple_index(arr_ndim, idx):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""

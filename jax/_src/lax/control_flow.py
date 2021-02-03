@@ -662,9 +662,11 @@ def cond(*args, **kwargs):
   return _cond(*args, **kwargs)
 
 def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
-  if not isinstance(pred, Sequence) and len(np.shape(pred)) != 0:
+  if isinstance(pred, Sequence) or np.ndim(pred) != 0:
     raise TypeError(
-        f"Pred must be a scalar, got {pred} of shape {np.shape(pred)}.")
+        f"Pred must be a scalar, got {pred} of " +
+        (f"type {type(pred)}" if isinstance(pred, Sequence)
+         else f"shape {np.shape(pred)}."))
 
   try:
     pred_dtype = dtypes.result_type(pred)
