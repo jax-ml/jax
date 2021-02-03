@@ -855,6 +855,11 @@ class PDotTests(jtu.JaxTestCase):
 
 class XMapErrorTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("xmap requires omnistaging")
+    super().setUp()
+
   @ignore_xmap_warning()
   @with_mesh([('x', 2)])
   def testRepeatedAxisResource(self):
@@ -879,6 +884,53 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError,
                                 "Changing the resource environment.*"):
       f(x)
+
+  @ignore_xmap_warning()
+  def testEmptyArgumentTrees(self):
+    with self.assertRaisesRegex(ValueError, "Failed to infer size of axes: i."):
+      xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...])({})
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2), ('y', 2)])
+  def testAxesNotDivisibleByResources(self):
+    with self.assertRaisesRegex(ValueError, r"Size of axis i \(5\) is not divisible.*"
+                                            r"\(\('x', 'y'\), 4 in total\)"):
+      xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...],
+           axis_sizes={'i': 5}, axis_resources={'i': ('x', 'y')})({})
+
+  @ignore_xmap_warning()
+  def testInconsistentAxisSizes(self):
+    x5 = jnp.arange(5)
+    x6 = jnp.arange(6)
+    error = (r"The size of axis i was previously inferred to be 5, but found an "
+             r"argument of shape \(6,\) with in_axes specification \['i', ...\]. "
+             r"Shape mismatch occurs in dimension 0: 6 != 5")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x, y: x, in_axes=(['i', ...], ['i', ...]), out_axes=['i', ...])(x5, x6)
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...], axis_sizes={'i': 5})(x6)
+
+  @ignore_xmap_warning()
+  def testInAxesRankError(self):
+    error = (r"One of xmap arguments has an in_axes specification of \['i', 'j', ...\], "
+             r"which implies that it has at least 2 dimensions, but the argument has rank 1")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x: x, in_axes=['i', 'j', ...], out_axes=['j', 'i', ...])(jnp.ones((5,)))
+
+  @ignore_xmap_warning()
+  def testOutAxesRankError(self):
+    error = (r"One of xmap outputs has an out_axes specification of {1: 'i'}, "
+             r"which requires the result of the xmapped function to have at least "
+             r"1 positional dimensions, but it only has 0")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x: x, in_axes=['i', ...], out_axes={1: 'i'})(jnp.ones((5,)))
+
+  @ignore_xmap_warning()
+  def testNegativeAxes(self):
+    with self.assertRaisesRegex(ValueError, "xmap doesn't support negative axes in in_axes"):
+      xmap(lambda x: x, in_axes={-1: 'i'}, out_axes={0: 'i'})(jnp.ones((5,)))
+    with self.assertRaisesRegex(ValueError, "xmap doesn't support negative axes in out_axes"):
+      xmap(lambda x: x, in_axes={0: 'i'}, out_axes={-1: 'i'})(jnp.ones((5,)))
 
 
 if __name__ == '__main__':
