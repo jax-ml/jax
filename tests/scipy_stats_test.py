@@ -406,6 +406,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker)
 
+  @genNamedParametersNArgs(4)
+  def testChi2LogPdf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.chi2.logpdf
+    lax_fun = lsp_stats.chi2.logpdf
+
+    def args_maker():
+      x, df, loc, scale = map(rng, shapes, dtypes)
+      return [x, df, loc, scale]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=5e-4)
+    self._CompileAndCheck(lax_fun, args_maker)
+
   def testIssue972(self):
     self.assertAllClose(
       np.ones((4,), np.float32),

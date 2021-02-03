@@ -11,6 +11,7 @@ jax 0.2.10 (Unreleased)
 -----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.9...master>`__.
 * New features:
+  * :func:`jax.scipy.stats.chi2` is now available as a distribution with logpdf and pdf methods.
 
 * Bug fixes:
 
