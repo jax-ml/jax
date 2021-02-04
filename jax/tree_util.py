@@ -306,6 +306,36 @@ class Partial(functools.partial):
 
   (You need to explicitly opt-in to this behavior because we didn't want to give
   functools.partial different semantics than normal function closures.)
+
+  For example, here is a basic usage of ``Partial`` in a manner similar to
+  ``functools.partial``:
+
+  >>> import jax.numpy as jnp
+  >>> add_one = Partial(jnp.add, 1)
+  >>> add_one(2)
+  DeviceArray(3, dtype=int32)
+
+  Pytree compatibility means that the resulting partial function can be passed
+  as an argument within transformed JAX functions, which is not possible with a
+  standard ``functools.partial`` function:
+
+  >>> from jax import jit
+  >>> @jit
+  ... def call_func(f, *args):
+  ...   return f(*args)
+  ...
+  >>> call_func(add_one, 2)
+  DeviceArray(3, dtype=int32)
+
+  Note that if the result of ``Partial`` is used in the context where the
+  value is traced, it results in all bound arguments being traced when passed
+  to the partially-evaluated function:
+
+  >>> print_zero = Partial(print, 0)
+  >>> print_zero()
+  0
+  >>> call_func(print_zero)
+  Traced<ShapedArray(int32[], weak_type=True)>with<DynamicJaxprTrace(level=0/1)>
   """
 
 register_pytree_node(
