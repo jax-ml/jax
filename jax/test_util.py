@@ -32,7 +32,7 @@ from . import api
 from . import core
 from . import dtypes as _dtypes
 from . import lax
-from .config import flags, bool_env
+from .config import flags, bool_env, config
 from ._src.util import partial, prod
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
@@ -172,7 +172,7 @@ def check_close(xs, ys, atol=None, rtol=None):
 
 def _check_dtypes_match(xs, ys):
   def _assert_dtypes_match(x, y):
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       assert _dtype(x) == _dtype(y)
     else:
       assert (_dtypes.canonicalize_dtype(_dtype(x)) ==
@@ -373,7 +373,7 @@ def supported_dtypes():
              np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128}
-  if not FLAGS.jax_enable_x64:
+  if not config.x64_enabled:
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
 
@@ -817,7 +817,7 @@ class JaxTestCase(parameterized.TestCase):
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
-    if not FLAGS.jax_enable_x64 and canonicalize_dtypes:
+    if not config.x64_enabled and canonicalize_dtypes:
       self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x)),
                        _dtypes.canonicalize_dtype(_dtype(y)))
     else:

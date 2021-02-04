@@ -193,7 +193,7 @@ class CPPJitTest(jtu.JaxTestCase):
     assert len(side) == 2  # but should still cache
 
     f(one, two, z=np.zeros(3))  # doesn't crash
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       # In the above call, three is of a new type (int64), thus it should
       # trigger a new compilation.
       assert len(side) == 3
@@ -1582,7 +1582,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_dtype_warning(self):
     # cf. issue #1230
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       raise unittest.SkipTest("test only applies when x64 is disabled")
 
     def check_warning(warn, nowarn):

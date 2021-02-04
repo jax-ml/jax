@@ -22,10 +22,8 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental.doubledouble import doubledouble, _DoubleDouble
 
-from jax.config import config, flags
+from jax.config import config
 config.parse_flags_with_absl()
-
-FLAGS = flags.FLAGS
 
 class DoubleDoubleTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -73,7 +71,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     double_op1 = doubledouble(op1)
     args = 1E20 * rng(shape, dtype), rng(shape, dtype)
-    check_dtypes = not FLAGS.jax_enable_x64
+    check_dtypes = not config.x64_enabled
 
     self.assertAllClose(double_op1(*args), op2(*args), check_dtypes=check_dtypes)
 

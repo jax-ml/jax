@@ -12,12 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+import concurrent.futures
+import time
+
 from absl.testing import parameterized
 
-from jax import api, config, lax, partial, random
+from jax import api, lax, partial, random
+from jax.config import config, FLAGS
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
 import jax.test_util as jtu
+
+config.parse_flags_with_absl()
+
 
 def _maybe_jit(jit_type, func, *args, **kwargs):
   if jit_type == "python":
@@ -84,3 +92,33 @@ class X64ContextTests(jtu.JaxTestCase):
 
     with disable_x64():
       self.assertArraysEqual(count_to(10), jnp.float32(10), check_dtypes=True)
+
+  def test_thread_safety(self):
+    def func_x32():
+      with disable_x64():
+        time.sleep(0.1)
+        return jnp.arange(10).dtype
+
+    def func_x64():
+      with enable_x64():
+        time.sleep(0.1)
+        return jnp.arange(10).dtype
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      x32 = executor.submit(func_x32)
+      x64 = executor.submit(func_x64)
+      self.assertEqual(x64.result(), jnp.int64)
+      self.assertEqual(x32.result(), jnp.int32)
+
+  def test_jit_cache(self):
+    # TODO(jakevdp): enable this test when CPP jit cache is fixed.
+    if FLAGS.experimental_cpp_jit:
+      self.skipTest("Known failure due to https://github.com/google/jax/issues/5532")
+
+    f = partial(random.uniform, random.PRNGKey(0), (1,), 'float64', -1, 1)
+    with disable_x64():
+      for _ in range(2):
+        f()
+    with enable_x64():
+      for _ in range(2):
+        f()

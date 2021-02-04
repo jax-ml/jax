@@ -33,7 +33,6 @@ from jax.config import config
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import primitive_harness
@@ -133,7 +132,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Set JAX_OUTPUT_LIMITATIONS_DOC=1 to enable the generation of the documentation")
     # The CPU/GPU have more supported types than TPU.
     self.assertEqual("cpu", jtu.device_under_test(), "The documentation can be generated only on CPU")
-    self.assertTrue(FLAGS.jax_enable_x64, "The documentation must be generated with JAX_ENABLE_X64=1")
+    self.assertTrue(config.x64_enabled, "The documentation must be generated with JAX_ENABLE_X64=1")
 
     with open(os.path.join(os.path.dirname(__file__),
                            '../g3doc/jax_primitives_coverage.md.template')) as f:

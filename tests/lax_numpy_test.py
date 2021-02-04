@@ -660,7 +660,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for rec in JAX_BITWISE_OP_RECORDS))
   def testBitwiseOp(self, np_op, jnp_op, rng_factory, shapes, dtypes):
     rng = rng_factory(self.rng())
-    if not FLAGS.jax_enable_x64 and any(
+    if not config.x64_enabled and any(
         jnp.iinfo(dtype).bits == 64 for dtype in dtypes):
       self.skipTest("x64 types are disabled by jax_enable_x64")
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
@@ -684,7 +684,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                  np.issubdtype(shift_dtype, np.signedinteger)
     has_32 = any(np.iinfo(d).bits == 32 for d in dtypes)
     promoting_to_64 = has_32 and signed_mix
-    if promoting_to_64 and not FLAGS.jax_enable_x64:
+    if promoting_to_64 and not config.x64_enabled:
       self.skipTest("np.right_shift/left_shift promoting to int64"
                     "differs from jnp in 32 bit mode.")
 
@@ -2317,7 +2317,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testLdexp(self, x1_shape, x1_dtype, x2_shape, x1_rng_factory, x2_rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (x1_dtype not in [jnp.bfloat16, np.float16, np.float32]
-        and not FLAGS.jax_enable_x64):
+        and not config.x64_enabled):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
     x1_rng = x1_rng_factory(self.rng())
     x2_rng = x2_rng_factory(self.rng())
@@ -2344,7 +2344,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testFrexp(self, shape, dtype, rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (dtype not in [jnp.bfloat16, np.float16, np.float32]
-        and not FLAGS.jax_enable_x64):
+        and not config.x64_enabled):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
     rng = rng_factory(self.rng())
     np_fun = lambda x: np.frexp(x)
@@ -3326,7 +3326,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if jtu.device_under_test() == 'tpu':
       if jnp.dtype(a_dtype).itemsize in [1, 2] or jnp.dtype(dtype).itemsize in [1, 2]:
         self.skipTest("arr.view() not supported on TPU for 8- or 16-bit types.")
-    if not FLAGS.jax_enable_x64:
+    if not config.x64_enabled:
       if jnp.dtype(a_dtype).itemsize == 8 or jnp.dtype(dtype).itemsize == 8:
         self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_fullrange(self.rng())
@@ -4391,7 +4391,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                    endpoint, base, dtype):
     if (dtype in int_dtypes and
         jtu.device_under_test() in ("gpu", "tpu") and
-        not FLAGS.jax_enable_x64):
+        not config.x64_enabled):
       raise unittest.SkipTest("GPUx32 truncated exponentiation"
                               " doesn't exactly match other platforms.")
     rng = jtu.rand_default(self.rng())

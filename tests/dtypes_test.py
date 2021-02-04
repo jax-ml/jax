@@ -30,7 +30,6 @@ from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 bool_dtypes = [np.dtype('bool')]
 
@@ -73,7 +72,7 @@ class DtypesTest(jtu.JaxTestCase):
         True: _EXPECTED_CANONICALIZE_X64,
         False: _EXPECTED_CANONICALIZE_X32,
     }
-    for in_dtype, expected_dtype in expected[FLAGS.jax_enable_x64].items():
+    for in_dtype, expected_dtype in expected[config.x64_enabled].items():
       self.assertEqual(dtypes.canonicalize_dtype(in_dtype), expected_dtype)
 
   @parameterized.named_parameters(
@@ -229,7 +228,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Note: * here refers to weakly-typed values
     typecodes = \
         ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       expected = [
         ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
         ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f8','c8'],

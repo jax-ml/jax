@@ -99,7 +99,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     def to_numpy_dtype(dt):
       return dt if isinstance(dt, np.dtype) else dt.as_numpy_dtype
 
-    if not config.FLAGS.jax_enable_x64 and canonicalize_dtypes:
+    if not config.x64_enabled and canonicalize_dtypes:
       self.assertEqual(
           dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(x))),
           dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(y))))

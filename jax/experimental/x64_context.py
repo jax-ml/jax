@@ -18,7 +18,7 @@
 """
 
 from contextlib import contextmanager
-from jax import config
+from jax.config import config
 
 @contextmanager
 def enable_x64():
@@ -36,12 +36,12 @@ def enable_x64():
   --------
   jax.experimental.disable_x64 :  temporarily disable X64 mode.
   """
-  _x64_state = config.FLAGS.jax_enable_x64
-  config.update('jax_enable_x64', True)
+  _x64_state = config.x64_enabled
+  config._set_x64_enabled(True)
   try:
     yield
   finally:
-    config.update('jax_enable_x64', _x64_state)
+    config._set_x64_enabled(_x64_state)
 
 @contextmanager
 def disable_x64():
@@ -59,9 +59,9 @@ def disable_x64():
   --------
   jax.experimental.enable_x64 : temporarily enable X64 mode.
   """
-  _x64_state = config.FLAGS.jax_enable_x64
-  config.update('jax_enable_x64', False)
+  _x64_state = config.x64_enabled
+  config._set_x64_enabled(False)
   try:
     yield
   finally:
-    config.update('jax_enable_x64', _x64_state)
+    config._set_x64_enabled(_x64_state)

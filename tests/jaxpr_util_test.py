@@ -20,7 +20,6 @@ from jax.config import config
 
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 class JaxprStatsTest(jtu.JaxTestCase):
@@ -59,7 +58,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
 
     hist = jaxpr_util.primitives_by_shape(make_jaxpr(f)(1., 1.).jaxpr)
 
-    t = '64' if FLAGS.jax_enable_x64 else '32'
+    t = '64' if config.x64_enabled else '32'
     shapes = [
         f'add :: float{t}[]',
         f'sin :: float{t}[]',

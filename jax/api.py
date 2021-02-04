@@ -110,6 +110,7 @@ def _check_callable(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
 
 
+# TODO(jakevdp): merge this with _thread_local_state in jax.config
 class _ThreadLocalState(threading.local):
 
   def __init__(self):
@@ -355,7 +356,7 @@ def _cpp_jit(
     functions decorated with jax.jit), so we delay inspecting the value
     of the jax_enable_x64 flag until JIT time.
     """
-    return FLAGS.jax_enable_x64
+    return config.x64_enabled
 
   def get_jax_disable_jit_flag():
     """Returns the value of the `jax_disable_jit` flag.
@@ -376,7 +377,7 @@ def _cpp_jit(
   @api_boundary
   def f_jitted(*args, **kwargs):
     context = (getattr(core.thread_local_state.trace_state.trace_stack,
-                       'dynamic', None), bool(FLAGS.jax_enable_x64))
+                       'dynamic', None), config.x64_enabled)
     # TODO(jblespiau): Move this to C++.
     if (FLAGS.jax_debug_nans or FLAGS.jax_debug_infs) and not _jit_is_disabled():
       device_arrays = cpp_jitted_f(context, *args, **kwargs)

@@ -22,7 +22,7 @@ from typing import Any, Callable
 import numpy as np
 
 import jax
-from jax.config import FLAGS
+from jax.config import config
 
 partial = functools.partial
 
@@ -195,7 +195,7 @@ def cache(max_size=4096):
       if jax.core.debug_state.check_leaks:
         return f(*args, **kwargs)
       else:
-        return cached(bool(FLAGS.jax_enable_x64), *args, **kwargs)
+        return cached(bool(config.x64_enabled), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
@@ -209,7 +209,7 @@ def memoize(f):
 
   @functools.wraps(f)
   def wrapper(*args, **kwargs):
-    return memoized(bool(FLAGS.jax_enable_x64), *args, **kwargs)
+    return memoized(bool(config.x64_enabled), *args, **kwargs)
 
   wrapper.cache_clear = memoized.cache_clear
   wrapper.cache_info = memoized.cache_info
