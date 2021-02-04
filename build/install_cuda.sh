@@ -39,7 +39,7 @@ echo "nccl version: $NCCL_VERSION"
 echo "cudnn version: $CUDNN_VERSION"
 
 apt-get update
-apt-get remove -y --allow-change-held-packages cuda-license-10-0 libcudnn7 libnccl2
+apt-get remove -y --allow-change-held-packages cuda-license-10-0 libcudnn7 libcudnn8 libnccl2
 apt-get install -y --no-install-recommends --allow-downgrades \
   $CUBLAS \
   $CUBLAS_DEV \
