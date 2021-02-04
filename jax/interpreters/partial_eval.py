@@ -1110,8 +1110,9 @@ class DynamicJaxprTrace(core.Trace):
     constvars = map(self.getvar, map(self.instantiate_const, consts))
     outvars = map(self.makevar, out_tracers)
     new_in_axes = (None,) * len(consts) + params['in_axes']
-    new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
-                      call_jaxpr=convert_constvars_jaxpr(jaxpr))
+    with core.extend_axis_env(axis_name, axis_size, None):  # type: ignore
+      new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
+                        call_jaxpr=convert_constvars_jaxpr(jaxpr))
     del new_params['out_axes_thunk']
     update_params = call_param_updaters.get(map_primitive)
     if update_params:
