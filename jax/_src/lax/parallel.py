@@ -650,10 +650,20 @@ def _notuple_allreduce_translation_rule(prim, c, *args, named_axes, axis_env,
   return xops.Tuple(c, outs)
 
 def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
-  if any(isinstance(axis, int) for axis in axes):
-    raise NotImplementedError
+  named_axes, pos_axes = axes_partition = [], []
+  for axis in axes:
+    axes_partition[isinstance(axis, int)].append(axis)
+
+  def broadcast_positional(ct, arg):
+    assert ad.is_undefined_primal(arg)
+    if type(ct) is ad.Zero: return ad.Zero(arg.aval)
+    return lax._reduce_sum_transpose_rule(ct, arg, axes=pos_axes)[0]
+  cts = map(broadcast_positional, cts, args)
+
+  # We treat psum as psum + pbroadcast, which is why the transpose reduces
+  # over the named axes again (unlike for positional axes).
   nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
-  nonzero_in_cts = psum_p.bind(*nonzero_out_cts, axes=axes,
+  nonzero_in_cts = psum_p.bind(*nonzero_out_cts, axes=named_axes,
                                axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 
