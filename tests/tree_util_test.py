@@ -141,8 +141,6 @@ class TreeTest(jtu.JaxTestCase):
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripWithFlattenUpTo(self, inputs):
     _, tree = tree_util.tree_flatten(inputs)
-    if not hasattr(tree, "flatten_up_to"):
-      self.skipTest("Test requires Jaxlib >= 0.1.23")
     xs = tree.flatten_up_to(inputs)
     actual = tree_util.tree_unflatten(tree, xs)
     self.assertEqual(actual, inputs)
@@ -172,14 +170,10 @@ class TreeTest(jtu.JaxTestCase):
     _, tree = tree_util.tree_flatten(((1, 2, 3), (4,)))
     _, c0 = tree_util.tree_flatten((0, 0, 0))
     _, c1 = tree_util.tree_flatten((7,))
-    if not callable(tree.children):
-      self.skipTest("Test requires Jaxlib >= 0.1.23")
     self.assertEqual([c0, c1], tree.children())
 
   def testFlattenUpTo(self):
     _, tree = tree_util.tree_flatten([(1, 2), None, ATuple(foo=3, bar=7)])
-    if not hasattr(tree, "flatten_up_to"):
-      self.skipTest("Test requires Jaxlib >= 0.1.23")
     out = tree.flatten_up_to([({
         "foo": 7
     }, (3, 4)), None, ATuple(foo=(11, 9), bar=None)])

@@ -1503,11 +1503,7 @@ def _initialize_outfeed_receiver(
       size of arrays in the callback queue. When this limit is reached the
       device listener pauses.
   """
-  try:
-    outfeed_receiver_module = xla_extension.outfeed_receiver
-  except AttributeError as err:
-    raise NotImplementedError(
-        "id_tap works only with jaxlib version 0.1.51 and higher") from err
+  outfeed_receiver_module = xla_extension.outfeed_receiver
 
   with _outfeed_receiver.lock:
     if _outfeed_receiver.receiver is not None:

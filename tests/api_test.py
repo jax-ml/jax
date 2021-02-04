@@ -43,7 +43,6 @@ from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
-from jax.lib import version
 import jax._src.util
 
 from jax.config import config
@@ -65,11 +64,7 @@ class CPPJitTest(jtu.JaxTestCase):
     # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
     # This is in the future, because we are making a breaking change to
     # Tensorflow.
-    if version <= (0, 1, 55):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
-    else:
-      return jax.api._cpp_jit
+    return jax.api._cpp_jit
 
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
@@ -135,9 +130,6 @@ class CPPJitTest(jtu.JaxTestCase):
     assert len(side) == 3
 
   def test_static_args_equality(self):
-    if version < (0, 1, 57):
-      raise unittest.SkipTest("this test requires a newest jaxlib")
-
     class A():
 
       def __hash__(self):
@@ -320,9 +312,6 @@ class CPPJitTest(jtu.JaxTestCase):
     assert len(effects) == 3
 
   def test_static_argnum_errors_on_keyword_arguments(self):
-    if version < (0, 1, 58):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
     f = self.jit(lambda x: x, static_argnums=0)
     msg = ("jitted function has static_argnums=(0,), donate_argnums=() but was "
            "called with only 0 positional arguments.")
@@ -440,10 +429,6 @@ class CPPJitTest(jtu.JaxTestCase):
       jitted_f(1, np.asarray(1))
 
   def test_cpp_jit_raises_on_non_hashable_static_argnum(self):
-    if version < (0, 1, 57):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
-
     if self.jit != jax.api._cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
@@ -474,9 +459,6 @@ class CPPJitTest(jtu.JaxTestCase):
       jitted_f(1, HashableWithoutEq())
 
   def test_cpp_jitted_function_returns_PyBuffer(self):
-    if version < (0, 1, 58):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
     if self.jit != jax.api._cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 

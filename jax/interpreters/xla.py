@@ -1013,12 +1013,7 @@ _forward_to_value = partial(_forward_method, "_value")
 
 # The following is used for the type _CppDeviceArray or _DeviceArray.
 DeviceArrayProtocol = Any
-if hasattr(xc, "DeviceArrayBase"):
-  DeviceArray = xc.DeviceArrayBase
-else:
-  # prior to jaxlib version 0.1.58.
-  class DeviceArray:  # type: ignore
-    pass
+DeviceArray = xc.DeviceArrayBase
 
 _CppDeviceArray: DeviceArrayProtocol = xc.Buffer
 
