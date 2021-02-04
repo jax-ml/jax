@@ -774,7 +774,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
 
 def bernoulli(key: jnp.ndarray,
               p: jnp.ndarray = np.float32(0.5),
-              shape: Optional[Sequence[int]] = None) -> jnp.ndarray:
+              shape: Optional[Union[Sequence[int], NamedShape]] = None) -> jnp.ndarray:
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
@@ -791,7 +791,7 @@ def bernoulli(key: jnp.ndarray,
   """
   dtype = dtypes.canonicalize_dtype(lax.dtype(p))
   if shape is not None:
-    shape = core.canonicalize_shape(shape)
+    shape = core.as_named_shape(shape)
   if not jnp.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
@@ -801,6 +801,7 @@ def bernoulli(key: jnp.ndarray,
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape) -> jnp.ndarray:
   if shape is None:
+    # TODO: Use the named part of `p` as well
     shape = np.shape(p)
   else:
     _check_shape("bernoulli", shape, np.shape(p))

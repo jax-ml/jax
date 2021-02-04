@@ -416,6 +416,7 @@ class NamedRandomTest(jtu.JaxTestCase):
     for name, sample in [
       ("Uniform", jax.random.uniform),
       ("Normal", jax.random.normal),
+      ("Bernoulli", partial(jax.random.bernoulli, p=0.5)),
       ("TruncatedNormal", partial(jax.random.truncated_normal, lower=-2, upper=2)),
     ])
   @ignore_xmap_warning()
@@ -426,7 +427,7 @@ class NamedRandomTest(jtu.JaxTestCase):
     replicated = sample((3,), 4)
     self.assertTrue((replicated[:,[0]] == replicated).all())
     sharded = sample(NamedShape(3, i=4), 4)
-    self.assertFalse((sharded[:,[0]] == sharded[:,1:]).any())
+    self.assertFalse((sharded[:,[0]] == sharded[:,1:]).all(1).any())
     error = "The shape of axis i was specified as 4, but it really is 5"
     with self.assertRaisesRegex(ValueError, error):
       sample(NamedShape(3, i=4), 5)
