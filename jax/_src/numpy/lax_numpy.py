@@ -3178,8 +3178,7 @@ will be repeated.
 
 @_wraps(np.repeat, lax_description=_TOTAL_REPEAT_LENGTH_DOC)
 def repeat(a, repeats, axis: Optional[int] = None, *, total_repeat_length=None):
-  _check_arraylike("repeat", a)
-  _check_arraylike("repeat", repeats)
+  _check_arraylike("repeat", a, repeats)
 
   if axis is None:
     a = ravel(a)
