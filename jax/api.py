@@ -60,7 +60,8 @@ from .lib import xla_bridge as xb
 from .lib import xla_client as xc
 # Unused imports to be exported
 from .lib.xla_bridge import (device_count, local_device_count, devices,
-                             local_devices, host_id, host_ids, host_count)
+                             local_devices, host_id, host_ids, host_count,
+                             default_backend)
 from .core import ConcreteArray, ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla

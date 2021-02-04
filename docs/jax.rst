@@ -32,6 +32,7 @@ Just-in-time compilation (:code:`jit`)
     make_jaxpr
     eval_shape
     device_put
+    default_backend
     named_call
 
 Automatic differentiation
@@ -83,6 +84,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
 .. autofunction:: device_put
+.. autofunction:: default_backend
 .. autofunction:: named_call
 
 .. autofunction:: grad
