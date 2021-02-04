@@ -7,6 +7,12 @@ Change Log
 
 .. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
+jaxlib 0.1.61 (Unreleased)
+--------------------------
+
+* Bug fixes:
+
+
 jax 0.2.10 (Unreleased)
 -----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.9...master>`__.
