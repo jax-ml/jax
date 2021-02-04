@@ -26,6 +26,7 @@ import jax.numpy as jnp
 from jax import lax
 from jax import ops
 from jax import random
+from jax import core
 from jax._src.util import prod
 
 def zeros(key, shape, dtype=jnp.float32): return jnp.zeros(shape, dtype)
@@ -41,14 +42,15 @@ def normal(stddev=1e-2, dtype=jnp.float32):
     return random.normal(key, shape, dtype) * stddev
   return init
 
-def _compute_fans(shape, in_axis=-2, out_axis=-1):
-  receptive_field_size = prod(shape) / shape[in_axis] / shape[out_axis]
+def _compute_fans(shape: core.NamedShape, in_axis=-2, out_axis=-1):
+  receptive_field_size = shape.total / shape[in_axis] / shape[out_axis]
   fan_in = shape[in_axis] * receptive_field_size
   fan_out = shape[out_axis] * receptive_field_size
   return fan_in, fan_out
 
 def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=jnp.float32):
   def init(key, shape, dtype=dtype):
+    shape = core.as_named_shape(shape)
     fan_in, fan_out = _compute_fans(shape, in_axis, out_axis)
     if mode == "fan_in": denominator = fan_in
     elif mode == "fan_out": denominator = fan_out

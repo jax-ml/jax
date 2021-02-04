@@ -35,6 +35,7 @@ import jax.scipy as jscipy
 from jax import test_util as jtu
 from jax import vmap
 from jax import lax
+from jax.core import NamedShape
 from jax.experimental.maps import Mesh, mesh, xmap
 from jax.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
@@ -402,6 +403,42 @@ class NamedNumPyTest(jtu.JaxTestCase):
     x = rng.randn(2, 5, 6)
     self.assertAllClose(ref_red(x), xmap_red(x))
 
+
+class NamedRandomTest(jtu.JaxTestCase):
+  def setUp(self):
+    if jax.lib.version < (0, 1, 58):
+      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
+    if not config.omnistaging_enabled:
+      raise SkipTest("xmap requires omnistaging")
+
+  @parameterized.named_parameters(
+    {"testcase_name": name, "distr_sample": sample}
+    for name, sample in [
+      ("Uniform", jax.random.uniform),
+      ("Normal", jax.random.normal),
+      ("TruncatedNormal", partial(jax.random.truncated_normal, lower=-2, upper=2)),
+    ])
+  @ignore_xmap_warning()
+  def testSample(self, distr_sample):
+    def sample(shape, map_size):
+      return xmap(lambda: distr_sample(jax.random.PRNGKey(0), shape=shape),
+                  in_axes=(), out_axes=[None, 'i', ...], axis_sizes={'i': map_size})()
+    replicated = sample((3,), 4)
+    self.assertTrue((replicated[:,[0]] == replicated).all())
+    sharded = sample(NamedShape(3, i=4), 4)
+    self.assertFalse((sharded[:,[0]] == sharded[:,1:]).any())
+    error = "The shape of axis i was specified as 4, but it really is 5"
+    with self.assertRaisesRegex(ValueError, error):
+      sample(NamedShape(3, i=4), 5)
+
+
+class NamedNNTest(jtu.JaxTestCase):
+  def setUp(self):
+    if jax.lib.version < (0, 1, 58):
+      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
+    if not config.omnistaging_enabled:
+      raise SkipTest("xmap requires omnistaging")
+
   @ignore_xmap_warning()
   def testOneHot(self):
     f = xmap(lambda x: jax.nn.one_hot([1, 2, 0], 3, axis='i'),
@@ -423,6 +460,39 @@ class NamedNumPyTest(jtu.JaxTestCase):
              in_axes=['i', ...], out_axes=['i', ...])
     with self.assertRaisesRegex(ValueError, "to match the size of axis i, but 3 != 5"):
       f(jnp.ones((5,)))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": f"_map_in={map_in}_map_out={map_out}_fan={fan}_distr={distr}",
+     "map_in": map_in, "map_out": map_out, "fan": fan,
+     "distr": distr}
+    for map_in, map_out in [(True, False), (False, True), (True, True)]
+    for fan in ['fan_in', 'fan_out', 'fan_avg']
+    for distr in ['uniform', 'normal', 'truncated_normal']))
+  @ignore_xmap_warning()
+  def testVarianceScaling(self, map_in, map_out, fan, distr):
+    shape = (80, 50, 7)
+    fan_in, fan_out = jax._src.nn.initializers._compute_fans(
+        NamedShape(*shape), 0, 1)
+    key = jax.random.PRNGKey(0)
+    base_scaling = partial(jax.nn.initializers.variance_scaling, 100, fan, distr)
+    ref_sampler = lambda: base_scaling(in_axis=0, out_axis=1)(key, shape)
+    if map_in and map_out:
+      out_axes=['i', 'o', ...]
+      named_shape = NamedShape(shape[2], i=shape[0], o=shape[1])
+      xmap_sampler = lambda: base_scaling(in_axis='i', out_axis='o')(key, named_shape)
+    elif map_in:
+      out_axes = ['i', ...]
+      named_shape = NamedShape(shape[1], shape[2], i=shape[0])
+      xmap_sampler = lambda: base_scaling(in_axis='i', out_axis=0)(key, named_shape)
+    elif map_out:
+      out_axes = [None, 'o', ...]
+      named_shape = NamedShape(shape[0], shape[2], o=shape[1])
+      xmap_sampler = lambda: base_scaling(in_axis=0, out_axis='o')(key, named_shape)
+    mapped_sampler = xmap(xmap_sampler,
+                          in_axes=(), out_axes=out_axes,
+                          axis_sizes={'i': shape[0], 'o': shape[1]})
+    self.assertAllClose(jnp.var(mapped_sampler()), jnp.var(ref_sampler()),
+                        atol=1e-4, rtol=2e-2)
 
 
 AxisIndices = Tuple[int, ...]
