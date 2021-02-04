@@ -88,8 +88,6 @@ def with_mesh_from_kwargs(f):
 
 class XMapTest(jtu.JaxTestCase):
   def setUp(self):
-    if jax.lib.version < (0, 1, 58):
-      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
     if not config.omnistaging_enabled:
       raise SkipTest("xmap requires omnistaging")
 
@@ -374,8 +372,6 @@ class XMapTestSPMD(XMapTest):
 
 class NamedNumPyTest(jtu.JaxTestCase):
   def setUp(self):
-    if jax.lib.version < (0, 1, 58):
-      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
     if not config.omnistaging_enabled:
       raise SkipTest("xmap requires omnistaging")
 

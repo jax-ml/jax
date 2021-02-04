@@ -302,7 +302,11 @@ JAX_COMPOUND_OP_RECORDS = [
               # numpy.unwrap always returns float64
               check_dtypes=False,
               # numpy cumsum is inaccurate, see issue #3517
-              tolerance={dtypes.bfloat16: 1e-1, np.float16: 1e-1})
+              tolerance={dtypes.bfloat16: 1e-1, np.float16: 1e-1}),
+    op_record("isclose", 2, [t for t in all_dtypes if t != jnp.bfloat16],
+              all_shapes, jtu.rand_small_positive, []),
+    op_record("gcd", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
+    op_record("lcm", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
 ]
 
 JAX_BITWISE_OP_RECORDS = [
@@ -351,6 +355,7 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
               [], inexact=True),
     op_record("nanstd", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan,
               [], inexact=True),
+    op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
 ]
 
 JAX_ARGMINMAX_RECORDS = [
@@ -425,18 +430,6 @@ class _OverrideNothing(object):
 for rec in JAX_OPERATOR_OVERLOADS + JAX_RIGHT_OPERATOR_OVERLOADS:
   if rec.nargs == 2:
     setattr(_OverrideNothing, rec.name, lambda self, other: NotImplemented)
-
-
-if numpy_version >= (1, 15):
-  JAX_COMPOUND_OP_RECORDS += [
-      op_record("isclose", 2, [t for t in all_dtypes if t != jnp.bfloat16],
-                all_shapes, jtu.rand_small_positive, []),
-      op_record("gcd", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
-      op_record("lcm", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
-  ]
-  JAX_REDUCER_NO_DTYPE_RECORDS += [
-      op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
-  ]
 
 
 def _dtypes_are_compatible_for_bitwise_ops(args):
@@ -3740,8 +3733,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                               'midpoint']))
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
                    axis, keepdims, interpolation):
-    if "quantile" in op and numpy_version < (1, 15):
-      raise SkipTest("Numpy < 1.15 does not have np.quantile")
     a_rng = a_rng(self.rng())
     q_rng = q_rng(self.rng())
     if "median" in op:
