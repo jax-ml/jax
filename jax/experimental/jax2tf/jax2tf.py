@@ -34,7 +34,6 @@ from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
-from jax._src.lax import parallel as lax_parallel
 import jax._src.random
 from jax.lib import xla_bridge as xb
 
@@ -831,18 +830,19 @@ for unexpected in xla.call_translations: # Call primitives are inlined
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  lax.reduce_p, lax.rng_uniform_p,
+  "reduce", "rng_uniform",
 
-  lax.igamma_grad_a_p,
-  lax.random_gamma_grad_p,
+  "igamma_grad_a",
+  "random_gamma_grad",
 
   # Not high priority?
-  lax.after_all_p, lax_parallel.all_to_all_p, lax.create_token_p,
-  lax.infeed_p, lax.outfeed_p, lax_parallel.pmax_p,
-  lax_parallel.pmin_p, lax_parallel.ppermute_p, lax_parallel.psum_p,
-  lax_parallel.axis_index_p, lax_parallel.pdot_p, lax_parallel.all_gather_p,
+  "after_all", "all_to_all", "create_token",
+  "infeed", "outfeed", "pmax_p",
+  "pmin", "ppermute", "psum", "pmax",
+  "axis_index", "pdot", "all_gather",
 
-  pxla.xla_pmap_p,
+  "xla_pmap",
+  "call_tf",
 ]
 
 try:
