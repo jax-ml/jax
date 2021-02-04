@@ -1996,15 +1996,20 @@ def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)
 
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
-                       weak_type_rule=None):
+                       weak_type_rule=None, named_shape_rule=None):
   weak_type_rule = weak_type_rule or _standard_weak_type_rule
   prim = Primitive(name)
   prim.def_impl(partial(xla.apply_primitive, prim))
-  prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule, weak_type_rule))
+  named_shape_rule = named_shape_rule or partial(
+      fallback_named_shape_rule, prim)
+  prim.def_abstract_eval(
+      partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
+              weak_type_rule, named_shape_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
   return prim
 
-def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule, *avals, **kwargs):
+def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
+                           named_shape_rule, *avals, **kwargs):
   assert all(isinstance(aval, UnshapedArray) for aval in avals), avals
   assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
@@ -2015,7 +2020,8 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule, *avals,
                          weak_type=weak_type)
   elif least_specialized is ShapedArray:
     return ShapedArray(shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
-                       weak_type=weak_type)
+                       weak_type=weak_type,
+                       named_shape=named_shape_rule(*avals, **kwargs))
   elif least_specialized is UnshapedArray:
     return UnshapedArray(dtype_rule(*avals, **kwargs), weak_type=weak_type)
   else:
@@ -2048,6 +2054,53 @@ def standard_multi_result_abstract_eval(
 def standard_translate(name, c, *args, **kwargs):
   xla_opname = ''.join(term.capitalize() for term in name.split('_'))
   return getattr(xops, xla_opname)(*args, **kwargs)
+
+
+@lu.transformation_with_aux
+def get_dims_out(dims_in, *args, **kwargs):
+  vals_out, dims_out = yield (args, dims_in), kwargs
+  yield vals_out, dims_out
+
+def fallback_named_shape_rule(prim, *avals, **params):
+  all_named_shape_tuples = set(
+      item for aval in avals for item in aval.named_shape.items())
+  out_named_shape = None
+  # note: this relies on independence of batching over different axes
+  # (= commutativity of batching rules). That isn't true for at least
+  # `while_loop`.
+  for name, size in all_named_shape_tuples:
+    vmap_avals = [aval.update(shape=(size, *aval.shape),
+                              weak_type=False).strip_named_shape()
+                  if name in aval.named_shape else aval for aval in avals]
+    vmap_dims = [0 if name in aval.named_shape else batching.not_mapped
+                 for aval in avals]
+    if prim in batching.collective_rules:
+      raise NotImplementedError(
+          f"collective {prim} should have a custom abstract_eval rule")
+    elif prim in batching.initial_style_batchers:
+      rule = partial(batching.initial_style_batchers[prim], axis_name=name)
+    elif prim in batching.primitive_batchers:
+      rule = batching.primitive_batchers[prim]
+    else:
+      raise NotImplementedError(f"primitive {prim} cannot be used with named "
+                                f"axes because it has no batching rule")
+    f = lu.wrap_init(rule, params)
+    f, vmap_dims_out = get_dims_out(f, vmap_dims)
+    _, in_tree = tree_util.tree_flatten(vmap_avals)
+    f, _ = api_util.flatten_fun_nokwargs(f, in_tree)
+    if config.omnistaging_enabled:
+      pe.trace_to_jaxpr_dynamic(f, vmap_avals)
+    else:
+      vmap_pvals = [pe.PartialVal.unknown(aval) for aval in vmap_avals]
+      pe.trace_to_jaxpr(f, vmap_pvals)
+    dims_out = vmap_dims_out()
+    if not prim.multiple_results: dims_out = [dims_out]
+    mapped_out = [d is not batching.not_mapped for d in dims_out]
+    if out_named_shape is None:
+      out_named_shape = [{} for m in mapped_out]
+    out_named_shape = [{name: size, **ns} if m else ns
+                       for ns, m in safe_zip(out_named_shape, mapped_out)]
+  return out_named_shape
 
 
 def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
@@ -3173,7 +3226,7 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
   input_bitwidth = np.dtype(input_dtype).itemsize
   preferred_bitwidth = np.dtype(preferred_element_type).itemsize
   if preferred_bitwidth < input_bitwidth:
-     raise TypeError("`preferred_element_type` must not be narrower than the original type.")
+    raise TypeError("`preferred_element_type` must not be narrower than the original type.")
   return preferred_element_type
 
 def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
