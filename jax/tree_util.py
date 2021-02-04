@@ -327,6 +327,15 @@ class Partial(functools.partial):
   >>> call_func(add_one, 2)
   DeviceArray(3, dtype=int32)
 
+  Passing zero arguments to ``Partial`` effectively wraps the original function,
+  making it a valid argument in JAX transformed functions:
+
+  >>> call_func(Partial(jnp.add), 1, 2)
+  DeviceArray(3, dtype=int32)
+
+  Had we passed ``jnp.add`` to ``call_func`` directly, it would have resulted in a
+  ``TypeError``.
+
   Note that if the result of ``Partial`` is used in the context where the
   value is traced, it results in all bound arguments being traced when passed
   to the partially-evaluated function:
