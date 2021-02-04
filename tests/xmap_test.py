@@ -890,7 +890,7 @@ class PDotTests(jtu.JaxTestCase):
     x = rng.randn(3)
     y = rng.randn(3)
     out = xmap(partial(jnp.einsum, '{i},{i}->'),
-               in_axes=(['i', ...], ['i', ...]), out_axes=[...])(x, y)
+               in_axes=(['i'], ['i']), out_axes=[])(x, y)
     expected = np.einsum('i,i->', x, y)
     self.assertAllClose(out, expected, check_dtypes=False)
 
@@ -900,7 +900,7 @@ class PDotTests(jtu.JaxTestCase):
     x = rng.randn(3)
     y = rng.randn(3)
     out = xmap(partial(jnp.einsum, '{i},{j}->{i,j}'),
-               in_axes=(['i', ...], ['j', ...]), out_axes=['i', 'j', ...])(x, y)
+               in_axes=(['i'], ['j']), out_axes=['i', 'j'])(x, y)
     expected = np.einsum('i,j->ij', x, y)
     self.assertAllClose(out, expected, check_dtypes=True)
 
@@ -911,8 +911,8 @@ class PDotTests(jtu.JaxTestCase):
     y = rng.randn(4, 5)
 
     out = xmap(partial(jnp.einsum, '{i,j},{j,k}->{i,k}'),
-               in_axes=(['i', 'j', ...], ['j', 'k', ...]),
-               out_axes=['i', 'k', ...])(x, y)
+               in_axes=(['i', 'j'], ['j', 'k']),
+               out_axes=['i', 'k'])(x, y)
     expected = np.einsum('ij,jk->ik', x, y)
     tol = 1e-1 if jtu.device_under_test() == "tpu" else None
     self.assertAllClose(out, expected, check_dtypes=True,
@@ -920,8 +920,8 @@ class PDotTests(jtu.JaxTestCase):
 
     # order of named axes in the spec doesn't matter!
     out = xmap(partial(jnp.einsum, '{i,j},{k,j}->{k,i}'),
-               in_axes=(['i', 'j', ...], ['j', 'k', ...]),
-               out_axes=['i', 'k', ...])(x, y)
+               in_axes=(['i', 'j'], ['j', 'k']),
+               out_axes=['i', 'k'])(x, y)
     expected = np.einsum('ij,jk->ik', x, y)
     tol = 1e-1 if jtu.device_under_test() == "tpu" else None
     self.assertAllClose(out, expected, check_dtypes=True,
@@ -1030,6 +1030,20 @@ class XMapErrorTest(jtu.JaxTestCase):
       xmap(lambda x: x, in_axes={-1: 'i'}, out_axes={0: 'i'})(jnp.ones((5,)))
     with self.assertRaisesRegex(ValueError, "xmap doesn't support negative axes in out_axes"):
       xmap(lambda x: x, in_axes={0: 'i'}, out_axes={-1: 'i'})(jnp.ones((5,)))
+
+  @ignore_xmap_warning()
+  def testListAxesRankAssertion(self):
+    error = (r"xmap argument has an in_axes specification of \['i', None\], which "
+             r"asserts that it should be of rank 2, but the argument has rank 1 "
+             r"\(and shape \(5,\)\)")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x: x, in_axes=['i', None], out_axes=['i', None])(jnp.ones((5,)))
+    error = (r"xmap output has an out_axes specification of \['i', None\], which "
+             r"asserts that it should be of rank 2, but the output has rank 3 "
+             r"\(and shape \(5, 2, 2\)\)")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x: x.reshape((2, 2)),
+           in_axes=['i', None], out_axes=['i', None])(jnp.ones((5, 4)))
 
 
 if __name__ == '__main__':

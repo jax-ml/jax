@@ -170,11 +170,17 @@ def fresh_resource_name(tag=None):
 # This is really a Dict[AxisName, int], but we don't define a
 # pytree instance for it, so that it is treated as a leaf.
 class AxisNamePos(FrozenDict):
-  user_repr: Any
+  user_repr: str
+  expected_rank: Optional[int] = None
 
   def __init__(self, *args, user_repr, **kwargs):
     super().__init__(*args, **kwargs)
     self.user_repr = user_repr
+
+class AxisNamePosWithRank(AxisNamePos):
+  def __init__(self, *args, expected_rank, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.expected_rank = expected_rank
 
 
 # str(...) == 'Ellipsis' which is really annoying
@@ -188,16 +194,23 @@ def _parse_entry(arg_name, entry):
     result = AxisNamePos(((name, axis) for axis, name in entry.items()),
                          user_repr=str(entry))
     num_mapped_dims = len(entry)
-  # Non-empty lists or tuples that terminate with an ellipsis
-  elif isinstance(entry, (tuple, list)) and entry and entry[-1] == ...:
-    result = AxisNamePos(((name, axis) for axis, name in enumerate(entry[:-1])
-                          if name is not None),
-                         user_repr=str(entry[:-1] + [DotDotDotRepr()]))
-    num_mapped_dims = sum(name is not None for name in entry[:-1])
+  # Non-empty lists or tuples that optionally terminate with an ellipsis
+  elif isinstance(entry, (tuple, list)):
+    if entry and entry[-1] == ...:
+      constr = AxisNamePos
+      entry = entry[:-1]
+      user_repr = str(entry + [DotDotDotRepr()])
+    else:
+      constr = partial(AxisNamePosWithRank, expected_rank=len(entry))
+      user_repr = str(entry)
+    result = constr(((name, axis) for axis, name in enumerate(entry)
+                     if name is not None),
+                    user_repr=user_repr)
+    num_mapped_dims = sum(name is not None for name in entry)
   else:
     raise TypeError(f"""\
 Value mapping specification in xmap {arg_name} pytree can be either:
-- lists of axis names, ending with ellipsis (...)
+- lists of axis names (possibly ending with the ellipsis object: ...)
 - dictionaries that map axis names to positional axes (integers)
 but got: {entry}""")
   if len(result) != num_mapped_dims:
@@ -432,6 +445,10 @@ def xmap(fun: Callable,
       raise ValueError(f"Resource assignment of a single axis must be a tuple of "
                        f"distinct resources, but specified {resources} for axis {axis}")
 
+  # A little performance optimization to avoid iterating over all args unnecessarily
+  has_input_rank_assertions = any(spec.expected_rank is not None for spec in in_axes_entries)
+  has_output_rank_assertions = any(spec.expected_rank is not None for spec in out_axes_entries)
+
   @wraps(fun)
   def fun_mapped(*args):
     # Putting this outside of fun_mapped would make resources lexically scoped
@@ -459,6 +476,12 @@ def xmap(fun: Callable,
                        f"You've probably passed in empty containers in place of arguments that had "
                        f"those axes in their in_axes. Provide the sizes of missing axes explicitly "
                        f"via axis_sizes to fix this error.")
+    if has_input_rank_assertions:
+      for arg, spec in zip(args_flat, in_axes_flat):
+        if spec.expected_rank is not None and spec.expected_rank != arg.ndim:
+          raise ValueError(f"xmap argument has an in_axes specification of {spec.user_repr}, "
+                           f"which asserts that it should be of rank {spec.expected_rank}, "
+                           f"but the argument has rank {arg.ndim} (and shape {arg.shape})")
     out_flat = xmap_p.bind(
       fun_flat, *args_flat,
       name=getattr(fun, '__name__', '<unnamed function>'),
@@ -468,6 +491,12 @@ def xmap(fun: Callable,
       axis_resources=frozen_axis_resources,
       resource_env=resource_env,
       backend=backend)
+    if has_output_rank_assertions:
+      for out, spec in zip(out_flat, out_axes_thunk()):
+        if spec.expected_rank is not None and spec.expected_rank != out.ndim:
+          raise ValueError(f"xmap output has an out_axes specification of {spec.user_repr}, "
+                           f"which asserts that it should be of rank {spec.expected_rank}, "
+                           f"but the output has rank {out.ndim} (and shape {out.shape})")
     return tree_unflatten(out_tree(), out_flat)
 
   return fun_mapped
