@@ -29,6 +29,10 @@ jax 0.2.10 (Unreleased)
   * :func:`jax.numpy.i0` no longer accepts complex numbers. Previously the
     function computed the absolute value of complex arguments. This change was
     made to match the semantics of NumPy 1.20.0.
+  * Several `jax.numpy` functions no longer accept tuples or lists in place
+    of array arguments: :func:`jax.numpy.pad`, :func`jax.numpy.ravel`,
+    :func:`jax.numpy.repeat`.
+    In general, `jax.numpy` functions should be used with scalars or array arguments.
 
 jaxlib 0.1.60 (Febuary 3 2021)
 --------------------------

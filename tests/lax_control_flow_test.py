@@ -695,10 +695,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("Pred type must be either boolean or number, got <function")):
       lax.cond(lambda x: True, lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("Pred type must be either boolean or number, got foo.")):
+        re.escape("Pred must be a scalar, got foo of type <class 'str'>")):
       lax.cond("foo", lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("Pred must be a scalar, got (1.0, 1.0) of shape (2,).")):
+        re.escape("Pred must be a scalar, got (1.0, 1.0) of type <class 'tuple'>")):
       lax.cond((1., 1.), lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
         re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):

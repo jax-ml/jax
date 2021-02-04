@@ -1494,7 +1494,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         'wrap': {},
         'empty': {}
     }
-    arr = [1, 2, 3]
+    arr = jnp.array([1, 2, 3])
     pad_width = 1
 
     for mode in modes.keys():
@@ -1550,7 +1550,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testPadWithNumpyPadWidth(self):
-    a = [1, 2, 3, 4, 5]
+    a = jnp.array([1, 2, 3, 4, 5])
     f = jax.jit(
         partial(
             jnp.pad,
@@ -1944,7 +1944,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     else:
       args_maker = lambda: [m]
 
-    for repeats in [2, [1,3,2,1,1,2], [1,3,0,1,1,2], [2], jnp.array([1,3,2,1,1,2]), jnp.array([2])]:
+    for repeats in [2, jnp.array([1,3,0,1,1,2]), jnp.array([1,3,2,1,1,2]), jnp.array([2])]:
       test_single(m, args_maker, repeats, axis=None)
       test_single(m, args_maker, repeats, axis=0)
 
@@ -1954,10 +1954,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     else:
       args_maker = lambda: [m_rect]
 
-    for repeats in [2, [2,1], [2], jnp.array([2,1]), jnp.array([2])]:
+    for repeats in [2, jnp.array([2,1]), jnp.array([2])]:
       test_single(m_rect, args_maker, repeats, axis=0)
 
-    for repeats in [2, [1,3,2], [2], jnp.array([1,3,2]), jnp.array([2])]:
+    for repeats in [2, jnp.array([1,3,2]), jnp.array([2])]:
       test_single(m_rect, args_maker, repeats, axis=1)
 
   def testIssue2330(self):
