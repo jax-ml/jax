@@ -41,7 +41,6 @@ from jax._src.lax.lax import _device_put_raw
 
 from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 ### lax tests
@@ -194,7 +193,7 @@ class LaxTest(jtu.JaxTestCase):
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
-    if (not FLAGS.jax_enable_x64 and op_name == "nextafter"
+    if (not config.x64_enabled and op_name == "nextafter"
         and dtype == np.float64):
       raise SkipTest("64-bit mode disabled")
     rng = rng_factory(self.rng())
@@ -897,7 +896,7 @@ class LaxTest(jtu.JaxTestCase):
         (np.int8, np.int64), (np.int16, np.int16), (np.int16, np.int32), (np.int16, np.int64),
         (np.int32, np.int32), (np.int32, np.int64), (np.int64, np.int64)]))
   def testDotPreferredElement(self, lhs_shape, rhs_shape, dtype, preferred_element_type):
-    if (not FLAGS.jax_enable_x64 and
+    if (not config.x64_enabled and
        (dtype == np.float64 or preferred_element_type == np.float64
         or dtype == np.int64 or preferred_element_type == np.int64)):
       raise SkipTest("64-bit mode disabled")

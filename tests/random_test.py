@@ -37,7 +37,6 @@ import jax._src.random
 
 from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex
@@ -156,7 +155,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
       bits64 = jax._src.random._random_bits(key, 64, (3,))
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
     else:
@@ -397,7 +396,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for b in [0.2, 5.]
       for dtype in [np.float64]))  # NOTE: KS test fails with float32
   def testBeta(self, a, b, dtype):
-    if not FLAGS.jax_enable_x64:
+    if not config.x64_enabled:
       raise SkipTest("skip test except on X64")
     key = random.PRNGKey(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
@@ -728,7 +727,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testIssue756(self):
     key = random.PRNGKey(0)
     w = random.normal(key, ())
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       self.assertEqual(np.result_type(w), np.float64)
     else:
       self.assertEqual(np.result_type(w), np.float32)
@@ -751,7 +750,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Test to ensure consistent random values between JAX versions
     k = random.PRNGKey(0)
 
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
         self.assertAllClose(
             random.randint(k, (3, 3), 0, 8),
             np.array([[7, 2, 6],
@@ -917,20 +916,20 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
       {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
       {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
-      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
-      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
+      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
       {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
       {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
-      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
-      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
+      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
       {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
       {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
       {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
       {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
     ]
   ))
   def test_prng_seeds_and_keys(self, seed, type, jit, key):

@@ -25,7 +25,6 @@ from jax import test_util as jtu
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 try:
   import torch
@@ -95,7 +94,7 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in dlpack_dtypes))
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testTensorFlowToJax(self, shape, dtype):
-    if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.uint64,
+    if not config.x64_enabled and dtype in [jnp.int64, jnp.uint64,
                                               jnp.float64]:
       raise self.skipTest("x64 types are disabled by jax_enable_x64")
     if (jtu.device_under_test() == "gpu" and
@@ -118,7 +117,7 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in dlpack_dtypes))
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testJaxToTensorFlow(self, shape, dtype):
-    if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.uint64,
+    if not config.x64_enabled and dtype in [jnp.int64, jnp.uint64,
                                               jnp.float64]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
     if (jtu.device_under_test() == "gpu" and
@@ -142,7 +141,7 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
   def testTorchToJax(self, shape, dtype):
-    if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.float64]:
+    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
@@ -160,7 +159,7 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
   def testJaxToTorch(self, shape, dtype):
-    if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.float64]:
+    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)

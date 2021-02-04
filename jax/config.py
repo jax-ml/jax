@@ -14,6 +14,8 @@
 
 import os
 import sys
+import threading
+from typing import Optional
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.
@@ -40,7 +42,15 @@ def int_env(varname: str, default: int) -> int:
   return int(os.getenv(varname, default))
 
 
+class _ThreadLocalState(threading.local):
+
+  def __init__(self):
+    self.enable_x64: Optional[bool] = None
+
+
 class Config:
+  _thread_local_state = _ThreadLocalState()
+
   def __init__(self):
     self.values = {}
     self.meta = {}
@@ -121,7 +131,6 @@ class Config:
       if not FLAGS.jax_omnistaging:
         self.disable_omnistaging()
 
-
   def register_omnistaging_disabler(self, disabler):
     if self.omnistaging_enabled:
       self._omnistaging_disablers.append(disabler)
@@ -137,6 +146,16 @@ class Config:
       for disabler in self._omnistaging_disablers:
         disabler()
       self.omnistaging_enabled = False
+
+  @property
+  def x64_enabled(self):
+    if self._thread_local_state.enable_x64 is None:
+      self._thread_local_state.enable_x64 = bool(self.read('jax_enable_x64'))
+    return self._thread_local_state.enable_x64
+
+  # TODO(jakevdp): make this public when thread-local x64 is fully implemented.
+  def _set_x64_enabled(self, state):
+    self._thread_local_state.enable_x64 = bool(state)
 
 
 class NameSpace(object):

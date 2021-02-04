@@ -34,7 +34,6 @@ from jax._src import util
 
 from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 # We disable the whitespace continuation check in this file because otherwise it
 # makes the test name formatting unwieldy.
@@ -54,7 +53,7 @@ IndexSpec = collections.namedtuple("IndexTest", ["shape", "indexer"])
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   # TODO(mattjj,dougalm): add higher-order check
-  default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
+  default_tol = 1e-6 if config.x64_enabled else 1e-2
   atol = atol or default_tol
   rtol = rtol or default_tol
   eps = eps or default_tol

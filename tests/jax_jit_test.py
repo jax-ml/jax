@@ -22,11 +22,10 @@ from jax import dtypes
 from jax import lib as jaxlib
 from jax import numpy as jnp
 from jax import test_util as jtu
-from jax.config import flags
+from jax.config import config
 from jax.lib import version
 import numpy as np
 
-FLAGS = flags.FLAGS
 
 # It covers all JAX numpy types types except bfloat16 and numpy array.
 # TODO(jblespiau): Add support for float0 and bfloat16 in the C++ path.
@@ -37,7 +36,7 @@ _SCALAR_NUMPY_TYPES = [
 
 
 def _cpp_device_put(value, device):
-  return jaxlib.jax_jit.device_put(value, FLAGS.jax_enable_x64, device)
+  return jaxlib.jax_jit.device_put(value, config.x64_enabled, device)
 
 
 class JaxJitTest(parameterized.TestCase):
@@ -167,7 +166,7 @@ class JaxJitTest(parameterized.TestCase):
                    "old jaxlib version")
   def test_arg_signature_of_value(self):
     """Tests the C++ code-path."""
-    jax_enable_x64 = FLAGS.jax_enable_x64
+    jax_enable_x64 = config.x64_enabled
 
     # 1. Numpy scalar types
     for dtype in _SCALAR_NUMPY_TYPES:

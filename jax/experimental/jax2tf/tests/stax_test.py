@@ -51,7 +51,7 @@ class StaxTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_res_net(self):
-    if config.FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       raise unittest.SkipTest("ResNet test fails on JAX when X64 is enabled")
     key = jax.random.PRNGKey(0)
     shape = (224, 224, 3, 1)

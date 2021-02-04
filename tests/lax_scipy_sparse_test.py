@@ -90,7 +90,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for dtype in [np.float64, np.complex128]
       for preconditioner in [None, 'identity', 'exact', 'random']))
   def test_cg_against_scipy(self, shape, dtype, preconditioner):
-    if not config.FLAGS.jax_enable_x64:
+    if not config.x64_enabled:
       raise unittest.SkipTest("requires x64 mode")
 
     rng = jtu.rand_default(self.rng())
@@ -208,7 +208,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for solve_method in ['incremental', 'batched']))
   def test_gmres_against_scipy(
       self, shape, dtype, preconditioner, solve_method):
-    if not config.FLAGS.jax_enable_x64:
+    if not config.x64_enabled:
       raise unittest.SkipTest("requires x64 mode")
 
     rng = jtu.rand_default(self.rng())
@@ -325,7 +325,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     """
     The Arnoldi decomposition within GMRES is correct.
     """
-    if not config.FLAGS.jax_enable_x64:
+    if not config.x64_enabled:
       raise unittest.SkipTest("requires x64 mode")
 
     rng = jtu.rand_default(self.rng())

@@ -70,7 +70,6 @@ from jax.interpreters import xla
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -206,7 +205,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     # The CPU has more supported types, and harnesses
     self.assertEqual("cpu", jtu.device_under_test())
     self.assertTrue(
-        FLAGS.jax_enable_x64,
+        config.x64_enabled,
         "Documentation generation must be run with JAX_ENABLE_X64=1")
 
     with open(

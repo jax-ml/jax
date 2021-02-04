@@ -25,10 +25,8 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 
 from jax.config import config
-from jax.config import flags
 config.parse_flags_with_absl()
 
-FLAGS = flags.FLAGS
 
 float_dtypes = jtu.dtypes.floating
 inexact_dtypes = jtu.dtypes.inexact
@@ -112,7 +110,7 @@ class FftTest(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
-    if (FLAGS.jax_enable_x64 and
+    if (config.x64_enabled and
         dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
       # TODO(skye): can we be more precise?
       tol = 0.15
