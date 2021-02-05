@@ -17,7 +17,7 @@
 
 __all__ = [
   'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
-  'pytree', 'tpu_client', 'version', 'xla_client'
+  'pocketfft', 'pytree', 'tpu_client', 'version', 'xla_client'
 ]
 
 import jaxlib
@@ -52,6 +52,7 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
+from jaxlib import pocketfft
 
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
@@ -82,10 +83,3 @@ try:
   from jaxlib import tpu_client  # pytype: disable=import-error
 except:
   tpu_client = None
-
-# TODO(phawkins): Make this import unconditional once the minimum jaxlib version
-# is 0.1.57 or greater.
-try:
-  from jaxlib import pocketfft  # pytype: disable=import-error
-except:
-  pocketfft = None

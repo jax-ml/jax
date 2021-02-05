@@ -21,7 +21,6 @@ import numpy as np
 
 from jax import test_util as jtu
 from jax import numpy as jnp
-from jax.lib import version
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -57,11 +56,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans.block_until_ready()
 
   def testCallDeoptimized(self):
-    to_test = [jax.api._python_jit]
-    if version > (0, 1, 56):
-      to_test.append(jax.api._cpp_jit)
-
-    for jit in to_test:
+    for jit in [jax.api._python_jit, jax.api._cpp_jit]:
 
       @jit
       def f(x):
@@ -108,11 +103,7 @@ class DebugInfsTest(jtu.JaxTestCase):
       ans.block_until_ready()
 
   def testCallDeoptimized(self):
-    to_test = [jax.api._python_jit]
-    if version > (0, 1, 56):
-      to_test.append(jax.api._cpp_jit)
-
-    for jit in to_test:
+    for jit in [jax.api._python_jit, jax.api._cpp_jit]:
 
       @jit
       def f(x):

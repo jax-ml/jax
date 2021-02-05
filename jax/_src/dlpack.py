@@ -15,7 +15,6 @@
 from jax import core
 from jax import lazy
 from jax.interpreters import xla
-import jax.lib
 from jax.lib import xla_client
 from jax.lib import xla_bridge
 
@@ -37,15 +36,8 @@ def to_dlpack(x: xla.DeviceArrayProtocol, take_ownership: bool = False):
     raise TypeError("Argument to to_dlpack must be a DeviceArray, got {}"
                     .format(type(x)))
   buf = xla._force(x).device_buffer
-  if jax.lib.version >= (0, 1, 57):
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(
-        buf, take_ownership=take_ownership)
-  else:
-    # Jaxlibs before 0.1.57 always take ownership.
-    if not take_ownership:
-      raise ValueError(
-          "to_dlpack with take_ownership=False requires jaxlib >= 0.1.57")
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(buf)
+  return xla_client._xla.buffer_to_dlpack_managed_tensor(
+      buf, take_ownership=take_ownership)
 
 def from_dlpack(dlpack, backend=None):
   """Returns a `DeviceArray` representation of a DLPack tensor `dlpack`.
@@ -61,9 +53,7 @@ def from_dlpack(dlpack, backend=None):
   backend = backend or xla_bridge.get_backend()
   client = getattr(backend, "client", backend)
   buf = xla_client._xla.dlpack_managed_tensor_to_buffer(dlpack, client)
-  # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
-  # the default.
-  xla_shape = getattr(buf, "xla_shape", buf.shape)()
+  xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
   return xla.make_device_array(aval, buf.device(), lazy.array(aval.shape), buf)  # pytype: disable=attribute-error

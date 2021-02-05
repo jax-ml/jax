@@ -584,11 +584,7 @@ class ShardedDeviceArray(xla._DeviceArray):
         buf_idx = None
       if buf_idx is not None:
         buf = self.device_buffers[buf_idx]
-        # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58
-        # is the default.
-        aval = ShapedArray(
-            getattr(buf, "xla_shape", buf.shape)().dimensions(),
-            self.aval.dtype)
+        aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
         return xla.make_device_array(aval, None, lazy.array(aval.shape), buf)
     return super(ShardedDeviceArray, self).__getitem__(idx)
 

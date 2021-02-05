@@ -96,7 +96,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
 flags.DEFINE_bool(
-    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", version >= (0, 1, 57)),
+    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
     "A temporary flag enabling the C++ jax.jit fast path."
     "Set this to `False` only if it crashes otherwise and report "
     "the error to the jax-team.")
@@ -328,10 +328,7 @@ def _cpp_jit(
         avals.append(aval)
         lazy_exprs.append(None if xla.lazy.is_trivial(lazy_expr) else lazy_expr)
       assert len(avals) == len(out_flat)
-      if version >= (0, 1, 58):
-        fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals, lazy_exprs)
-      else:
-        fastpath_data = (xla_executable, result_handlers, out_pytree_def)
+      fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals, lazy_exprs)
     else:
       fastpath_data = None
 

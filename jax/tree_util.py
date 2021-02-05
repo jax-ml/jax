@@ -65,9 +65,7 @@ def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
     A pair where the first element is a list of leaf values and the second
     element is a treedef representing the structure of the flattened tree.
   """
-  # We skip the second argument in support of old jaxlibs
-  # TODO: Remove once 0.1.58 becomes the minimum supported jaxlib version
-  return pytree.flatten(tree) if is_leaf is None else pytree.flatten(tree, is_leaf)
+  return pytree.flatten(tree, is_leaf)
 
 
 def tree_unflatten(treedef, leaves):
