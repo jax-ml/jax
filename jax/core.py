@@ -1217,6 +1217,79 @@ def canonicalize_shape(shape):
   raise TypeError(msg.format(shape))
 
 
+# ------------------- Named shapes -------------------
+
+
+class NamedShape:
+  def __init__(self, *args, **kwargs):
+    self.__positional = canonicalize_shape(args)
+    # TODO: Assert that kwargs match axis env?
+    self.__named = dict(kwargs)
+
+  @property
+  def rank(self):
+    return len(self.__positional) + len(self.__named)
+
+  @property
+  def positional_rank(self):
+    return len(self.__positional)
+
+  @property
+  def named_rank(self):
+    return len(self.__named)
+
+  @property
+  def positional(self):
+    return self.__positional
+
+  @property
+  def names(self):
+    return self.__named.keys()
+
+  @property
+  def named_sizes(self):
+    return self._named.values()
+
+  @property
+  def named_items(self):
+    return self.__named.items()
+
+  def __getitem__(self, idx):
+    try:
+      idx = operator.index(idx)
+      return self.__positional[idx]
+    except TypeError:
+      pass
+    return self.__named[idx]
+
+  @property
+  def total(self):
+    total = 1
+    for s in self.__positional: total *= s
+    for s in self.__named.values(): total *= s
+    return total
+
+  def __str__(self):
+    return (f"({', '.join(map(str, self.__positional))}{', ' if self.__named else ''}"
+            f"{', '.join(f'{k}={v}' for k, v in self.__named.items())})")
+
+  def __eq__(self, other):
+    if isinstance(other, NamedShape):
+      return (self.__positional, self.__named) == (other.__positional, other.__named)
+    if isinstance(other, tuple):
+      return not self.__named and self.__positional == other
+    raise TypeError(f"NamedShape doesn't support comparisons with {type(other)}")
+
+  def __hash__(self):
+    return hash((self.__positional, tuple(self.__named.items())))
+
+# TODO: Make canonicalize_shape return named shapes?
+def as_named_shape(shape) -> NamedShape:
+  if isinstance(shape, NamedShape):
+    return shape
+  return NamedShape(*shape)
+
+
 # ------------------- Call -------------------
 
 def apply_todos(todos, outs):

@@ -20,14 +20,15 @@ import warnings
 import numpy as np
 
 from jax import lax
+from jax import core
 from jax import numpy as jnp
 from jax import dtypes
+from jax.core import NamedShape
 from jax.api import jit, vmap
 from jax._src.numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
-from jax import core
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -289,7 +290,15 @@ def _random_bits(key, bit_width, shape):
     raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
-  size = prod(shape)
+  shape = core.as_named_shape(shape)
+  for name, size in shape.named_items:
+    real_size = lax.psum(1, name)
+    if real_size != size:
+      raise ValueError(f"The shape of axis {name} was specified as {size}, "
+                       f"but it really is {real_size}")
+    axis_index = lax.axis_index(name)
+    key = fold_in(key, axis_index)
+  size = prod(shape.positional)
   max_count = int(np.ceil(bit_width * size / 32))
 
   nblocks, rem = divmod(max_count, jnp.iinfo(np.uint32).max)
@@ -326,12 +335,12 @@ def _random_bits(key, bit_width, shape):
 ### random samplers
 
 
-def _check_shape(name, shape, *param_shapes):
-  shape = core.canonicalize_shape(shape)
+def _check_shape(name, shape: Union[Sequence[int], NamedShape], *param_shapes):
+  shape = core.as_named_shape(shape)
 
   if param_shapes:
-    shape_ = lax.broadcast_shapes(shape, *param_shapes)
-    if shape != shape_:
+    shape_ = lax.broadcast_shapes(shape.positional, *param_shapes)
+    if shape.positional != shape_:
       msg = ("{} parameter shapes must be broadcast-compatible with shape "
              "argument, and the result of broadcasting the shapes must equal "
              "the shape argument, but got result {} for shape argument {}.")
@@ -339,7 +348,7 @@ def _check_shape(name, shape, *param_shapes):
 
 
 def uniform(key: jnp.ndarray,
-            shape: Sequence[int] = (),
+            shape: Union[Sequence[int], NamedShape] = (),
             dtype: np.dtype = dtypes.float_,
             minval: Union[float, jnp.ndarray] = 0.,
             maxval: Union[float, jnp.ndarray] = 1.) -> jnp.ndarray:
@@ -361,7 +370,7 @@ def uniform(key: jnp.ndarray,
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = core.canonicalize_shape(shape)
+  shape = core.as_named_shape(shape)
   return _uniform(key, shape, dtype, minval, maxval)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2))
@@ -372,8 +381,8 @@ def _uniform(key, shape, dtype, minval, maxval) -> jnp.ndarray:
 
   minval = lax.convert_element_type(minval, dtype)
   maxval = lax.convert_element_type(maxval, dtype)
-  minval = lax.broadcast_to_rank(minval, len(shape))
-  maxval = lax.broadcast_to_rank(maxval, len(shape))
+  minval = lax.broadcast_to_rank(minval, shape.positional_rank)
+  maxval = lax.broadcast_to_rank(maxval, shape.positional_rank)
 
   finfo = jnp.finfo(dtype)
   nbits, nmant = finfo.bits, finfo.nmant
@@ -393,7 +402,7 @@ def _uniform(key, shape, dtype, minval, maxval) -> jnp.ndarray:
   floats = lax.bitcast_convert_type(float_bits, dtype) - np.array(1., dtype)
   return lax.max(
       minval,
-      lax.reshape(floats * (maxval - minval) + minval, shape))
+      lax.reshape(floats * (maxval - minval) + minval, shape.positional))
 
 
 def randint(key: jnp.ndarray,
@@ -595,7 +604,7 @@ def choice(key, a, shape=(), replace=True, p=None):
 
 
 def normal(key: jnp.ndarray,
-           shape: Sequence[int] = (),
+           shape: Union[Sequence[int], NamedShape] = (),
            dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample standard normal random values with given shape and float dtype.
 
@@ -613,7 +622,7 @@ def normal(key: jnp.ndarray,
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = core.canonicalize_shape(shape)
+  shape = core.as_named_shape(shape)
   return _normal(key, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2))
@@ -709,7 +718,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> jnp.ndarray:
 def truncated_normal(key: jnp.ndarray,
                      lower: Union[float, jnp.ndarray],
                      upper: Union[float, jnp.ndarray],
-                     shape: Optional[Sequence[int]] = None,
+                     shape: Optional[Union[Sequence[int], NamedShape]] = None,
                      dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample truncated standard normal random values with given shape and dtype.
 
@@ -736,7 +745,7 @@ def truncated_normal(key: jnp.ndarray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = core.canonicalize_shape(shape)
+    shape = core.as_named_shape(shape)
   return _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4))
@@ -765,7 +774,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
 
 def bernoulli(key: jnp.ndarray,
               p: jnp.ndarray = np.float32(0.5),
-              shape: Optional[Sequence[int]] = None) -> jnp.ndarray:
+              shape: Optional[Union[Sequence[int], NamedShape]] = None) -> jnp.ndarray:
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
@@ -782,7 +791,7 @@ def bernoulli(key: jnp.ndarray,
   """
   dtype = dtypes.canonicalize_dtype(lax.dtype(p))
   if shape is not None:
-    shape = core.canonicalize_shape(shape)
+    shape = core.as_named_shape(shape)
   if not jnp.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
@@ -792,6 +801,7 @@ def bernoulli(key: jnp.ndarray,
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape) -> jnp.ndarray:
   if shape is None:
+    # TODO: Use the named part of `p` as well
     shape = np.shape(p)
   else:
     _check_shape("bernoulli", shape, np.shape(p))
