@@ -14,7 +14,6 @@
 
 
 import itertools
-import unittest
 
 from absl.testing import absltest, parameterized
 
