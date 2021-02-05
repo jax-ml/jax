@@ -2273,6 +2273,10 @@ class APITest(jtu.JaxTestCase):
         lax.scan(to_scan, x, None, length=1)
       f(np.arange(5.))  # doesn't crash
 
+  def test_default_backend(self):
+    first_local_device = api.local_devices()[0]
+    self.assertEqual(first_local_device.platform, api.default_backend())
+
 
 class RematTest(jtu.JaxTestCase):
 

@@ -30,6 +30,7 @@ from .api import (
   custom_jvp,
   custom_vjp,
   custom_transforms,
+  default_backend,
   defjvp,
   defjvp_all,
   defvjp,

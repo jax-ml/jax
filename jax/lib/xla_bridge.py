@@ -228,6 +228,11 @@ def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
   return get_backend(backend).devices()
 
 
+def default_backend() -> str:
+  """Returns the platform name of the default XLA backend."""
+  return get_backend(None).platform
+
+
 def local_devices(host_id: Optional[int] = None,
                   backend: Optional[str] = None) -> List[xla_client.Device]:
   """Like :py:func:`jax.devices`, but only returns devices local to a given host.
