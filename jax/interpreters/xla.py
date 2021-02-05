@@ -362,7 +362,10 @@ def _execute_replicated_primitive(prim, compiled, result_handler, *args):
   input_bufs = [
       list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
       for device in compiled.local_devices()]
-  out_bufs = compiled.execute_on_local_devices(input_bufs)[0]
+  out_bufs = [
+      buf[0] for buf in compiled.execute_sharded_on_local_devices(
+          list(zip(*input_bufs)))
+  ]
   return result_handler(*out_bufs)
 
 
@@ -846,7 +849,10 @@ def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
   input_bufs = [
       list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
       for device in compiled.local_devices()]
-  out_bufs = compiled.execute_on_local_devices(input_bufs)[0]
+  out_bufs = [
+      buf[0] for buf in compiled.execute_sharded_on_local_devices(
+          list(zip(*input_bufs)))
+  ]
   check_special(xla_call_p, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
