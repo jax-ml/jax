@@ -654,11 +654,12 @@ def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
   for axis in axes:
     axes_partition[isinstance(axis, int)].append(axis)
 
-  def broadcast_positional(ct, arg):
-    assert ad.is_undefined_primal(arg)
-    if type(ct) is ad.Zero: return ad.Zero(arg.aval)
-    return lax._reduce_sum_transpose_rule(ct, arg, axes=pos_axes)[0]
-  cts = map(broadcast_positional, cts, args)
+  if pos_axes:
+    def broadcast_positional(ct, arg):
+      assert ad.is_undefined_primal(arg)
+      if type(ct) is ad.Zero: return ad.Zero(arg.aval)
+      return lax._reduce_sum_transpose_rule(ct, arg, axes=pos_axes)[0]
+    cts = map(broadcast_positional, cts, args)
 
   # We treat psum as psum + pbroadcast, which is why the transpose reduces
   # over the named axes again (unlike for positional axes).
