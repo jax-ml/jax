@@ -1774,9 +1774,7 @@ def _lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
   def fun(*tangents):
     tangent_avals = list(map(core.get_aval, tangents))
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
-      try:
-        core.lattice_join(primal_aval.at_least_vspace(), tangent_aval)
-      except TypeError as e:
+      if not core.typecompat(primal_aval.at_least_vspace(), tangent_aval):
         raise ValueError("linearized function called on tangent values inconsistent with "
                          "the original primal values: "
                          f"got {tangent_aval} for primal aval {primal_aval}")

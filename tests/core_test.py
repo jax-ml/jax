@@ -469,6 +469,25 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     aval = core.raise_to_shaped(core.get_aval(value))
     self.assertEqual(aval.weak_type, weak_type)
 
+  def test_lattice_join_named_shape(self):
+    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
+    self.assertEqual(core.lattice_join(aval1, aval1), aval1)
+
+    aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
+    expected = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
+    self.assertEqual(core.lattice_join(aval1, aval2), expected)
+
+    aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
+    self.assertRaises(TypeError, lambda: core.lattice_join(aval1, aval3))
+
+  def test_typecompat_named_shape(self):
+    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
+    aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
+    self.assertTrue(core.typecompat(aval1, aval2))
+
+    aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
+    self.assertFalse(core.typecompat(aval1, aval3))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

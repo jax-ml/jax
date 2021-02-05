@@ -34,7 +34,7 @@ from . import linear_util as lu
 
 from jax._src import source_info_util
 from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
-                   tuple_insert, tuple_delete, as_hashable_function,
+                   tuple_insert, tuple_delete, as_hashable_function, unzip2,
                    HashableFunction)
 from ._src.pprint_util import pp, vcat, PrettyPrint
 
@@ -851,6 +851,9 @@ class AbstractValue:
   def strip_weak_type(self) -> 'AbstractValue':
     return self
 
+  def strip_named_shape(self) -> 'AbstractValue':
+    return self
+
   def join(self, other):
     raise NotImplementedError("must override")
 
@@ -885,7 +888,7 @@ def lattice_join(x: Optional[AbstractValue],
   elif isinstance(y, type(x)):
     return x.join(y)
   else:
-    raise TypeError((x, y))
+    raise TypeError(x, y)
 
 # For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
 Value = Any
@@ -1038,21 +1041,24 @@ class UnshapedArray(AbstractValue):
     raise TypeError(msg)
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape']
+  __slots__ = ['shape', 'named_shape']
   array_abstraction_level = 1
 
-  def __init__(self, shape, dtype, weak_type=False):
+  def __init__(self, shape, dtype, weak_type=False, named_shape={}):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
+    self.named_shape = canonicalize_named_shape(named_shape)
 
-  def update(self, shape=None, dtype=None, weak_type=None):
+  def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    return ShapedArray(shape, dtype, weak_type)
+    if named_shape is None:
+      named_shape = self.named_shape
+    return ShapedArray(shape, dtype, weak_type, named_shape)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
@@ -1065,21 +1071,25 @@ class ShapedArray(UnshapedArray):
   def __eq__(self, other):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
-            and self.weak_type == other.weak_type)
+            and self.weak_type == other.weak_type
+            and self.named_shape == other.named_shape)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype, self.weak_type))
+    return hash((self.shape, self.dtype, self.weak_type,
+                 tuple(self.named_shape.items())))
 
   def at_least_vspace(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       self.weak_type)
+                       self.weak_type, self.named_shape)
 
   def join(self, other):
     if self.shape == other.shape and self.dtype == other.dtype:
-      return self.update(weak_type=self.weak_type and other.weak_type)
+      weak_type = self.weak_type and other.weak_type
+      named_shape = join_named_shapes(self.named_shape, other.named_shape)
+      return self.update(weak_type=weak_type, named_shape=named_shape)
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype)
     else:
@@ -1087,7 +1097,14 @@ class ShapedArray(UnshapedArray):
 
   def str_short(self):
     shapestr = ','.join(map(str, self.shape))
-    return '{}[{}]'.format(self.dtype.name, shapestr)
+    if self.named_shape:
+      named_shapestr = ','.join(f'{k}:{v}' for k, v in self.named_shape.items())
+      return f'{self.dtype.name}[{shapestr};{named_shapestr}]'
+    else:
+      return f'{self.dtype.name}[{shapestr}]'
+
+  def strip_named_shape(self):
+    return self.update(named_shape={})
 
   def __len__(self):
     try:
@@ -1131,12 +1148,16 @@ class ConcreteArray(ShapedArray):
   def __hash__(self):
     return id(self.val)
 
-  def join(self, other) -> UnshapedArray:
+  def join(self, other) -> AbstractValue:
     if self == other:
       return self
     elif self.shape == other.shape and self.dtype == other.dtype:
-      return ShapedArray(self.shape, self.dtype,
-                         weak_type=self.weak_type and other.weak_type)
+      weak_type = self.weak_type and other.weak_type
+      named_shape = {name: size
+                     for ns in (self.named_shape, other.named_shape)
+                     for name, size in ns.items()}
+      return ShapedArray(
+          self.shape, self.dtype, weak_type=weak_type, named_shape=named_shape)
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype,
                            weak_type=self.weak_type and other.weak_type)
@@ -1183,7 +1204,10 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
 raise_to_shaped_mappings : Dict[type, Callable] = {
   AbstractUnit: lambda aval, _: aval,
   AbstractToken: lambda aval, _: aval,
-  ShapedArray: lambda aval, weak_type: ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
+  Bot: lambda aval, _: aval,
+  UnshapedArray: lambda aval, _: aval,
+  ShapedArray: lambda aval, weak_type: ShapedArray(
+      aval.shape, aval.dtype, weak_type, aval.named_shape)
 }
 
 # Registry for valid dimension types. This is used by masking.Poly.
@@ -1215,6 +1239,26 @@ def canonicalize_shape(shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
   raise TypeError(msg.format(shape))
+
+def canonicalize_named_shape(named_shape):
+  return dict(sorted(named_shape.items()))
+
+def join_named_shapes(*named_shapes):
+  named_shape_tuples = sorted(set(
+      item for named_shape in named_shapes for item in named_shape.items()))
+  if not named_shape_tuples:
+    return {}
+  names, sizes = unzip2(named_shape_tuples)
+  if len(set(names)) != len(names):
+    seen = set()
+    for name in names:
+      if name in seen:
+        break
+      seen.add(name)
+    raise TypeError(
+        f"Axis name {name} used with inconsistent sizes "
+        f"{[item[1] for item in named_shape_tuples if item[0] == name]}")
+  return dict(zip(names, sizes))
 
 
 # ------------------- Named shapes -------------------
@@ -1419,6 +1463,7 @@ def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]]):
 # object. We don't want to use the function object itself because that might
 # persist references to the function object.
 # TODO(mattjj): revisit this unique axis name strategy
+@total_ordering
 class _TempAxisName:
 
   def __init__(self, obj):
@@ -1432,6 +1477,9 @@ class _TempAxisName:
 
   def __eq__(self, other):
     return type(other) is _TempAxisName and self.id == other.id
+
+  def __lt__(self, other):
+    return type(other) is _TempAxisName and self.id < other.id
 
 
 def axis_frame(axis_name):
@@ -1488,15 +1536,28 @@ def typecheck(aval: AbstractValue, x) -> bool:
   return typecompat(aval, get_aval(x))
 
 def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
-  """Determine whether `aval` conforms to `aval_ref`"""
-  aval_ref = raise_to_shaped(aval_ref).strip_weak_type()
+  """Determine whether `aval` conforms to `aval_ref`.
+
+  Ignores weak_type and named_shape, other than to check that an axis name isn't
+  used with different sizes.
+  """
   try:
-    return aval_ref == lattice_join(aval_ref, aval).strip_weak_type()
+    return typematch(aval_ref, lattice_join(aval_ref, aval))
   except TypeError:
     return False
 
-def typematch(aval1: UnshapedArray, aval2: UnshapedArray) -> bool:
-  return raise_to_shaped(aval1, weak_type=False) == raise_to_shaped(aval2, weak_type=False)
+def typematch(aval1: AbstractValue, aval2: AbstractValue) -> bool:
+  """Determine whether `aval1` and `aval2` are equivalent.
+
+  Ignores weak_type and named_shape, other than to check that an axis name isn't
+  used with different sizes.
+  """
+  aval1 = raise_to_shaped(aval1, weak_type=False)
+  aval2 = raise_to_shaped(aval2, weak_type=False)
+  if isinstance(aval1, ShapedArray) and isinstance(aval2, ShapedArray):
+    # check for named shape conflicts
+    join_named_shapes(aval1.named_shape, aval2.named_shape)
+  return aval1.strip_named_shape() == aval2.strip_named_shape()
 
 class JaxprTypeError(TypeError): pass
 
