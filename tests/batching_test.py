@@ -978,7 +978,7 @@ class BatchingTest(jtu.JaxTestCase):
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
   def testCommAssocCollective(self, collective, bulk_op, vmap_names, collective_names):
-    x = jnp.arange(3 * 4 * 5).reshape((3, 4, 5))
+    x = jnp.arange(3 * 4 * 5, dtype=jnp.float32).reshape((3, 4, 5))
 
     # To test relative permutations of the order in which the axis names appear
     # in the primitive call versus the order the vmaps are applied, we always
@@ -988,6 +988,9 @@ class BatchingTest(jtu.JaxTestCase):
     for axis_name in vmap_names:
       f = vmap(f, axis_name=axis_name)
     self.assertAllClose(f(x), x - bulk_op(x, axis=tuple(range(len(vmap_names)))))
+
+    if collective is lax.psum:
+      jtu.check_grads(f, (x,), 2, eps=1)
 
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
