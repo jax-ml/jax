@@ -129,6 +129,16 @@ jax.scipy.stats.beta
    logpdf
    pdf
 
+jax.scipy.stats.betabinom
+~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.betabinom
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
 jax.scipy.stats.cauchy
 ~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.cauchy
