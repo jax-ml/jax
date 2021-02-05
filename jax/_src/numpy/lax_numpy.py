@@ -26,6 +26,7 @@ rules for the underlying :code:`lax` primitives.
 
 import builtins
 import collections
+import collections.abc
 import operator
 import os
 import types
@@ -50,7 +51,7 @@ from jax import lax
 from jax._src.lax.lax import _device_put_raw
 from jax import ops
 from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip,
-                           canonicalize_axis as _canonicalize_axis)
+                           canonicalize_axis as _canonicalize_axis, maybe_named_axis)
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
 FLAGS = flags.FLAGS
@@ -1915,10 +1916,7 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   return lax.convert_element_type(result, dtype or result_dtype)
 
 def _canonicalize_axis_allow_named(x, rank):
-  try:
-    return _canonicalize_axis(x, rank)
-  except TypeError:
-    return x
+  return maybe_named_axis(x, lambda i: _canonicalize_axis(i, rank), lambda name: name)
 
 def _reduction_dims(a, axis):
   if axis is None:
@@ -1995,6 +1993,15 @@ amax = max
 alltrue = all
 sometrue = any
 
+def _axis_size(a, axis):
+  if not isinstance(axis, collections.abc.Sequence):
+    axis = (axis,)
+  size = 1
+  a_shape = shape(a)
+  for a in axis:
+    size *= maybe_named_axis(a, lambda i: a_shape[i], lambda name: lax.psum(1, name))
+  return size
+
 @_wraps(np.mean)
 def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
          out=None, keepdims=False):
@@ -2006,7 +2013,7 @@ def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   if axis is None:
     normalizer = size(a)
   else:
-    normalizer = np.prod(np.take(shape(a), axis))  # type: ignore
+    normalizer = _axis_size(a, axis)
   if dtype is None:
     if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
       dtype = float_
@@ -2087,7 +2094,7 @@ def var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   if axis is None:
     normalizer = size(a)
   else:
-    normalizer = np.prod(np.take(shape(a), axis))  # type: ignore
+    normalizer = _axis_size(a, axis)
   normalizer = normalizer - ddof
 
   result = sum(centered, axis, keepdims=keepdims)

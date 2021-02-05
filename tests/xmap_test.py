@@ -533,7 +533,8 @@ class NamedNumPyTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": f"_{reduction.__name__}_axes={axes}_i={mapped_axis}",
       "reduction": reduction, "axes": axes, "mapped_axis": mapped_axis}
-    for reduction in (jnp.sum, jnp.max, jnp.min, jscipy.special.logsumexp)
+    for reduction in (jnp.sum, jnp.max, jnp.min, jnp.mean, jnp.var, jnp.std,
+                      jscipy.special.logsumexp)
     for axes in (0, 'i', (1,), ('i',), (0, 1), (0, 'i'), ('i', 0))
     for mapped_axis in range(3)))
   @ignore_xmap_warning()
