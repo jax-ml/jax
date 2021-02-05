@@ -14,10 +14,12 @@
 
 
 import itertools
+import unittest
 
 from absl.testing import absltest, parameterized
 
 import numpy as np
+import scipy as osp
 import scipy.stats as osp_stats
 
 from jax import api
@@ -29,6 +31,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
+scipy_version = tuple(map(int, osp.version.version.split('.')[:2]))
 
 
 def genNamedParametersNArgs(n):
@@ -419,6 +422,26 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=5e-4)
     self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(5)
+  def testBetaBinomLogPmf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    lax_fun = lsp_stats.betabinom.logpmf
+
+    def args_maker():
+      k, n, a, b, loc = map(rng, shapes, dtypes)
+      k = np.floor(k)
+      n = np.ceil(n)
+      a = np.clip(a, a_min = 0.1, a_max = None)
+      b = np.clip(a, a_min = 0.1, a_max = None)
+      loc = np.floor(loc)
+      return [k, n, a, b, loc]
+
+    if scipy_version >= (1, 4):
+      scipy_fun = osp_stats.betabinom.logpmf
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
   def testIssue972(self):
     self.assertAllClose(
