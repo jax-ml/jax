@@ -59,10 +59,7 @@ class CallTfTest(jtu.JaxTestCase):
   def test_eval(self, with_jit=True):
     x = jnp.float32(3.)
 
-    def fun_tf(x):
-      return tf.math.sin(x)
-
-    res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
+    res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
     self.assertAllClose(jnp.sin(x), res)
 
   @parameterized_jit

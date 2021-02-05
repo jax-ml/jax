@@ -109,11 +109,11 @@ def call_tf(func_tf: Callable) -> Callable:
   def make_call_vjp_bwd(residual, ct_res):
     args_jax = residual  # residual is the primal argument
 
-    def tf_vjp_fun(arg, ct_res):
+    def tf_vjp_fun(args, ct_res):
       """Invoke TF gradient."""
       with tf.GradientTape(persistent=True) as tape:
-        tape.watch(arg)
-        res = func_tf(*arg)
+        tape.watch(args)
+        res = func_tf(*args)
 
       tf.nest.assert_same_structure(res, ct_res)
       # If the result is not a scalar, we must accumulate arguments cotangents.
@@ -122,9 +122,9 @@ def call_tf(func_tf: Callable) -> Callable:
       def acc_ct(res_, ct_res_):
         dres_darg = tape.gradient(
             res_,
-            sources=arg,
+            sources=args,
             unconnected_gradients=tf.UnconnectedGradients.ZERO)
-        tf.nest.assert_same_structure(dres_darg, arg)
+        tf.nest.assert_same_structure(dres_darg, args)
         scaled_dres_darg = tf.nest.map_structure(lambda d: d * ct_res_,
                                                  dres_darg)
         nonlocal accumulator
@@ -204,7 +204,7 @@ def _call_tf_translation_rule(builder, *args_op, func_tf,
         inp_const = np.asarray(inp)
       captured_ops.append(xops.ConstantLiteral(builder, np.asarray(inp_const)))
 
-  # For unoptimized HLO, does not make a different which device we use.
+  # TODO(necula): For unoptimized HLO, does it make a difference which device we use?
   tf_device_name = "/device:CPU:0"
   func_tf_hlo = func_tf.experimental_get_compiler_ir(*args_tf)(
       stage="hlo_serialized", device_name=tf_device_name)
