@@ -47,19 +47,11 @@ result_to_populate = ResultToPopulate()
 
 
 def _avals_to_results_handler(nrep, npart, partitions, out_avals):
-  nouts = len(out_avals)
   handlers = [_aval_to_result_handler(npart, parts, out_aval)
               for parts, out_aval in safe_zip(partitions, out_avals)]
 
   def handler(out_bufs):
-    assert nrep * npart == len(out_bufs)
-    buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
-    for r, tuple_buf in enumerate(out_bufs):
-      for i, buf in enumerate(tuple_buf):
-        buffers[i][r] = buf
-    assert not any(buf is result_to_populate for bufs in buffers
-                  for buf in bufs)
-    return [h(bufs) for h, bufs in zip(handlers, buffers)]
+    return [h(bufs) for h, bufs in zip(handlers, out_bufs)]
 
   return handler
 
@@ -228,7 +220,7 @@ def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.execute_on_local_devices(list(input_bufs))
+  out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
   return out_handler(out_bufs)
 
 
@@ -474,19 +466,11 @@ def omnistaging_disabler() -> None:
   global _pvals_to_results_handler, _pval_to_result_handler
 
   def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
-    nouts = len(out_pvals)
     handlers = [_pval_to_result_handler(npart, parts, out_pval)
                 for parts, out_pval in safe_zip(partitions, out_pvals)]  # type: ignore
 
     def handler(out_bufs):
-      assert nrep * npart == len(out_bufs)
-      buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
-      for r, tuple_buf in enumerate(out_bufs):
-        for i, buf in enumerate(tuple_buf):
-          buffers[i][r] = buf
-      assert not any(buf is result_to_populate for bufs in buffers
-                    for buf in bufs)
-      return [h(bufs) for h, bufs in zip(handlers, buffers)]
+      return [h(bufs) for h, bufs in zip(handlers, out_bufs)]
 
     return handler
 
