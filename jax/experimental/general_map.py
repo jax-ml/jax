@@ -14,6 +14,7 @@
 
 import enum
 from collections import namedtuple
+from jax.core import ShapedArray
 from typing import Callable
 from warnings import warn
 from functools import wraps
@@ -121,14 +122,18 @@ def _apply_schedule(fun: lu.WrappedFun,
                     schedule,
                     *avals):
   assert all(mapped_invars)
-  mapped_avals = [core.mapped_aval(axis_size, aval) if mapped else aval
+  mapped_avals = [core.mapped_aval(full_axis_name, axis_size, aval) if mapped else aval
                   for mapped, aval in zip(mapped_invars, avals)]
   with core.extend_axis_env(full_axis_name, axis_size, None):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_avals)
 
   axis_names = tuple(_GMapSubaxis(full_axis_name, i) for i in range(len(schedule)))
-  if binds_axis_name:
-    jaxpr = subst_axis_names(jaxpr, full_axis_name, axis_names)
+  dim_sizes = tuple(loop.size for loop in schedule)
+  non_seq_names = tuple(name for name, loop in zip(axis_names, schedule)
+                        if loop.type is not LoopType.sequential)
+  non_seq_sizes = tuple(size for size, loop in zip(dim_sizes, schedule)
+                        if loop.type is not LoopType.sequential)
+  jaxpr = subst_axis_names(jaxpr, full_axis_name, non_seq_names, non_seq_sizes)
 
   sched_fun = lambda *args: core.eval_jaxpr(jaxpr, consts, *args)
   for (ltype, size), axis_name in list(zip(schedule, axis_names))[::-1]:
@@ -140,10 +145,8 @@ def _apply_schedule(fun: lu.WrappedFun,
       if binds_axis_name:
         raise NotImplementedError("gmaps with sequential components of the schedule don't support "
                                   "collectives yet. Please open a feature request!")
-      assert not binds_axis_name
       sched_fun = lambda *args, sched_fun=sched_fun: jax.lax.map(lambda xs: sched_fun(*xs), args)
 
-  dim_sizes = tuple(loop.size for loop in schedule)
   def sched_fun_wrapper(*args):
     split_args = [arg.reshape(dim_sizes + arg.shape[1:]) for arg in args]
     results = sched_fun(*split_args)
@@ -154,17 +157,33 @@ gmap_p = core.MapPrimitive('gmap')
 gmap_p.def_impl(gmap_impl)
 
 
-def subst_axis_names(jaxpr, replaced_name, axis_names):
-  eqns = [subst_eqn_axis_names(eqn, replaced_name, axis_names) for eqn in jaxpr.eqns]
-  return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, eqns)
+def subst_axis_names(jaxpr, replaced_name, axis_names, axis_sizes):
+  invars = [subst_var_axis_names(v, replaced_name, axis_names, axis_sizes) for v in jaxpr.invars]
+  outvars = [subst_var_axis_names(v, replaced_name, axis_names, axis_sizes) for v in jaxpr.outvars]
+  constvars = [subst_var_axis_names(v, replaced_name, axis_names, axis_sizes) for v in jaxpr.constvars]
+  eqns = [subst_eqn_axis_names(eqn, replaced_name, axis_names, axis_sizes) for eqn in jaxpr.eqns]
+  return core.Jaxpr(constvars, invars, outvars, eqns)
 
-def subst_eqn_axis_names(eqn, replaced_name, axis_names):
+def subst_eqn_axis_names(eqn, replaced_name, axis_names, axis_sizes):
+  invars = [subst_var_axis_names(v, replaced_name, axis_names, axis_sizes) for v in eqn.invars]
+  outvars = [subst_var_axis_names(v, replaced_name, axis_names, axis_sizes) for v in eqn.outvars]
+  eqn = eqn._replace(invars=invars, outvars=outvars)
   if isinstance(eqn.primitive, (core.CallPrimitive, core.MapPrimitive)):
     if eqn.params.get('axis_name', None) == replaced_name:  # Check for shadowing
       return eqn
-    new_call_jaxpr = subst_axis_names(eqn.params['call_jaxpr'], replaced_name, axis_names)
+    new_call_jaxpr = subst_axis_names(eqn.params['call_jaxpr'], replaced_name, axis_names, axis_sizes)
     return eqn._replace(params=dict(eqn.params, call_jaxpr=new_call_jaxpr))
   elif eqn.params.get('axis_name', None) == replaced_name:
     return eqn._replace(params=dict(eqn.params, axis_name=axis_names))
   else:
     return eqn
+
+def subst_var_axis_names(v, replaced_name, axis_names, axis_sizes):
+  named_shape = v.aval.named_shape
+  if replaced_name not in named_shape:
+    return v
+  named_shape.update(dict(zip(axis_names, axis_sizes)))
+  del named_shape[replaced_name]
+  # operate in-place because Var identity is load-bearing
+  v.aval = ShapedArray(v.aval.shape, v.aval.dtype, v.aval.weak_type, named_shape)
+  return v

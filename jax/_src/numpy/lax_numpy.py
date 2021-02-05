@@ -235,7 +235,10 @@ def _promote_shapes(fun_name, *args):
   else:
     shapes = [shape(arg) for arg in args]
     nonscalar_ranks = [len(shp) for shp in shapes if shp]
-    if not nonscalar_ranks or len(set(nonscalar_ranks)) == 1:
+    named_shapes = [core.raise_to_shaped(core.get_aval(arg)).named_shape
+                    for arg in args]
+    if (not _any(named_shapes) and
+        (not nonscalar_ranks or len(set(nonscalar_ranks)) == 1)):
       return args
     else:
       if FLAGS.jax_numpy_rank_promotion != "allow":

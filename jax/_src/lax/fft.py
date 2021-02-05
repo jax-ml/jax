@@ -82,7 +82,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
   else:
     shape = x.shape
     dtype = x.dtype
-  return ShapedArray(shape, dtype)
+  return ShapedArray(shape, dtype, named_shape=x.named_shape)
 
 def fft_translation_rule(c, x, fft_type, fft_lengths):
   return xops.Fft(x, fft_type, fft_lengths)

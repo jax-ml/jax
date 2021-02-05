@@ -2004,7 +2004,7 @@ class LaxTest(jtu.JaxTestCase):
   def test_primitive_jaxtype_error(self):
     with core.skipping_checks():
       with self.assertRaisesRegex(
-          TypeError, "Argument .* of type .* is not a valid JAX type"):
+          TypeError, ".* of type .* is not a valid JAX type"):
         lax.add(1, 'hi')
 
   def test_reduction_with_repeated_axes_error(self):

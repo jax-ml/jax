@@ -372,6 +372,7 @@ class MaskTracer(Tracer):
 
   @property
   def aval(self):
+    # TODO: named shapes
     return ShapedArray(self.polymorphic_shape, self.dtype)
 
   @property

@@ -24,7 +24,7 @@ import threading
 import types
 from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
-                    Type, Union, cast)
+                    Type, Union, cast, no_type_check, Hashable)
 
 import numpy as np
 
@@ -35,6 +35,8 @@ from . import linear_util as lu
 from . import source_info_util
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
+
+AxisName = Hashable
 
 # TODO(dougalm): compilation cache breaks the leak detector. Consisder solving.
 check_leaks = False
@@ -313,6 +315,12 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       return env[v]
 
   def write(v, val):
+    if not skip_checks and v.aval is not abstract_unit:
+      try:
+        aval = get_aval(val)
+      except:
+        aval = val.aval
+      assert v.aval == raise_to_shaped(aval)
     env[v] = val
 
   env: Dict[Var, Any] = {}
@@ -633,7 +641,12 @@ class TraceStack:
     return new
 
 class Sublevel(int): pass
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
+
+class AxisEnvFrame(NamedTuple):
+  name: AxisName
+  size: int
+  main_trace: Optional[MainTrace]
+
 
 class TraceState:
   trace_stack: TraceStack
@@ -821,14 +834,14 @@ def valid_jaxtype(x):
 
 def check_valid_jaxtype(x):
   if not valid_jaxtype(x):
-    raise TypeError(f"{x} of type {type(x)} is not a valid JAX type")
+    raise TypeError(f"{repr(x)} of type {type(x)} is not a valid JAX type")
 
 
 def concrete_aval(x):
   for typ in type(x).mro():
     handler = pytype_aval_mappings.get(typ)
     if handler: return handler(x)
-  raise TypeError(f"{type(x)} is not a valid JAX type")
+  raise TypeError(f"{repr(x)} of type {type(x)} is not a valid JAX type")
 
 
 def get_aval(x):
@@ -952,12 +965,15 @@ class UnshapedArray(AbstractValue):
     raise TypeError(msg)
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape']
+  __slots__ = ['shape', 'named_shape']
+  shape: Sequence[int]
+  named_shape: Dict[AxisName, int]
   array_abstraction_level = 1
 
-  def __init__(self, shape, dtype, weak_type=False):
+  def __init__(self, shape, dtype, weak_type=False, named_shape={}):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
+    self.named_shape = canonicalize_named_shape(named_shape)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
@@ -970,24 +986,30 @@ class ShapedArray(UnshapedArray):
   def __eq__(self, other):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
-            and self.weak_type == other.weak_type)
+            and self.weak_type == other.weak_type
+            and self.named_shape == other.named_shape)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype, self.weak_type))
+    return hash((self.shape, self.dtype, self.weak_type,
+                 tuple(self.named_shape.items())))
 
   def at_least_vspace(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                        self.weak_type)
 
   def join(self, other):
-    if self.shape == other.shape and self.dtype == other.dtype:
-      if self.weak_type == other.weak_type:
-        return self
-      else:
-        return ShapedArray(self.shape, self.dtype, weak_type=False)
+    if self == other:
+      return self
+    elif self.shape == other.shape and self.dtype == other.dtype:
+      weak_type = self.weak_type and other.weak_type
+      named_shape = {axis_name: size
+                     for ns in (self.named_shape, other.named_shape)
+                     for axis_name, size in ns.items()}
+      return ShapedArray(self.shape, self.dtype, weak_type=weak_type,
+                         named_shape=named_shape)
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype)
     else:
@@ -995,7 +1017,11 @@ class ShapedArray(UnshapedArray):
 
   def str_short(self):
     shapestr = ','.join(map(str, self.shape))
-    return '{}[{}]'.format(self.dtype.name, shapestr)
+    if self.named_shape:
+      named_shapestr = ','.join(f'{k}:{v}' for k, v in self.named_shape.items())
+      return f'{self.dtype.name}[{shapestr};{named_shapestr}]'
+    else:
+      return f'{self.dtype.name}[{shapestr}]'
 
   def __len__(self):
     try:
@@ -1007,7 +1033,10 @@ class ShapedArray(UnshapedArray):
     return len(self)
 
   def strip_weak_type(self):
-    return ShapedArray(self.shape, self.dtype) if self.weak_type else self
+    if self.weak_type:
+      return ShapedArray(self.shape, self.dtype, named_shape=self.named_shape)
+    else:
+      return self
 
 
 def _forward_to_value(self, fun, ignored_tracer, *args):
@@ -1093,7 +1122,8 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
 raise_to_shaped_mappings : Dict[type, Callable] = {
   AbstractUnit: lambda aval, _: aval,
   AbstractToken: lambda aval, _: aval,
-  ShapedArray: lambda aval, weak_type: ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
+  ShapedArray: lambda aval, weak_type: ShapedArray(aval.shape, aval.dtype, weak_type,
+                                                   aval.named_shape)
 }
 
 # Registry for valid dimension types. This is used by masking.Poly.
@@ -1125,6 +1155,12 @@ def canonicalize_shape(shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
   raise TypeError(msg.format(shape))
+
+def canonicalize_named_shape(named_shape):
+  sorted_named_shape = sorted(
+    named_shape.items(),
+    key=lambda x: x if isinstance(x, str) else hash(x))
+  return dict(sorted_named_shape)
 
 
 # ------------------- Call -------------------
@@ -1205,13 +1241,26 @@ class MapPrimitive(Primitive):
     return trace.post_process_map(self, out_tracers, params)
 
 @contextmanager
-def extend_axis_env(axis_name, size: int, tag: Any):
-  frame = AxisEnvFrame(axis_name, size, tag)
+def extend_axis_env(axis_name: AxisName, size: int,
+                    main_trace: Optional[MainTrace] = None):
+  frame = AxisEnvFrame(axis_name, size, main_trace)
   thread_local_state.trace_state.axis_env.append(frame)
   try:
     yield
   finally:
-    thread_local_state.trace_state.axis_env.pop()
+    frame_ = thread_local_state.trace_state.axis_env.pop()
+    assert frame is frame_
+
+@contextmanager
+def replace_axis_env(new_env):
+  frames = [AxisEnvFrame(name, size, None)
+            for name, size in new_env]
+  old_env = thread_local_state.trace_state.axis_env
+  thread_local_state.trace_state.axis_env = frames
+  try:
+    yield
+  finally:
+    thread_local_state.trace_state.axis_env = old_env
 
 
 # When a mapped function is given no axis name, we generate a name object based
@@ -1251,26 +1300,55 @@ def axis_frame(axis_name):
       'by pmap) are available to collectives operations:'
       f'{named_axis}')
 
+def axis_frames():
+  return thread_local_state.trace_state.axis_env
+
 
 # ------------------- Jaxpr checking -------------------
 
-def mapped_aval(size: int, aval: AbstractValue) -> AbstractValue:
+# TODO(mattjj): make registry-extensible?
+# TODO(mattjj): rename to unstack / stack?
+def mapped_aval(axis_name: AxisName, size: int, aval: AbstractValue,
+                ) -> AbstractValue:
   if aval is abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
     # might be raising abstraction level from Concrete here
     assert aval.shape[0] == size
-    return ShapedArray(aval.shape[1:], aval.dtype)
+    assert axis_name not in aval.named_shape, "TODO enable shadowing?"
+    return ShapedArray(aval.shape[1:], aval.dtype,
+                       named_shape={axis_name:size, **aval.named_shape})
   else:
-    raise TypeError(f"Mapped operand {aval}")
+    raise TypeError(f"Cannot map {aval}")
 
-def unmapped_aval(size: int, aval: AbstractValue) -> AbstractValue:
+def unmapped_aval(axis_name: AxisName, size: int, aval: AbstractValue,
+                  ) -> AbstractValue:
   if aval is abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
-    return ShapedArray((size,) + aval.shape, aval.dtype)
+    assert axis_name in aval.named_shape
+    assert aval.named_shape[axis_name] == size
+    named_shape = dict(aval.named_shape)
+    del named_shape[axis_name]
+    return ShapedArray((size,) + aval.shape, aval.dtype,
+                       named_shape=named_shape)
   else:
-    raise TypeError(f"Mapped output {aval}")
+    raise TypeError(f"Cannot unmap {aval}")
+
+def maybe_unmapped_aval(axis_name: AxisName, size: int,
+                        aval: AbstractValue) -> AbstractValue:
+  if aval is abstract_unit:
+    return aval
+  elif isinstance(aval, ShapedArray):
+    if axis_name not in aval.named_shape:
+      return aval
+    assert aval.named_shape[axis_name] == size
+    named_shape = dict(aval.named_shape)
+    del named_shape[axis_name]
+    return ShapedArray((size,) + aval.shape, aval.dtype,
+                       named_shape=named_shape)
+  else:
+    raise TypeError(f"Cannot unmap {aval}")
 
 def typecheck(aval: AbstractValue, x) -> bool:
   return typecompat(aval, get_aval(x))
@@ -1398,23 +1476,38 @@ def check_map(prim, in_avals, params):
   typecheck_assert("axis_size" in params,
                    f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
+  typecheck_assert("axis_name" in params,
+                   f"Map primitive {prim} missing 'axis_name' parameter")
+  axis_name = params["axis_name"]
   typecheck_assert("mapped_invars" in params,
                    f"Map primitive {prim} missing 'mapped_invars' parameter")
   mapped_invars = params["mapped_invars"]
+  typecheck_assert(len(mapped_invars) == len(call_jaxpr.invars),
+                   f"Map primitive {prim} has a 'mapped_invars' parameter of "
+                   f"length {len(mapped_invars)} but its jaxpr has "
+                   f"{len(call_jaxpr.invars)} invars")
+  typecheck_assert(len(mapped_invars) == len(call_jaxpr.invars),
+                   f"Map primitive {prim} passes {len(in_avals)} operands to "
+                   f"jaxpr expecting {len(call_jaxpr.invars)}")
 
-  binder_avals = [unmapped_aval(axis_size, v.aval) if mapped else v.aval
-                  for v, mapped in zip(call_jaxpr.invars, mapped_invars)]
-  for binder_aval, in_aval in zip(binder_avals, in_avals):
+  for invar, mapped, in_aval in zip(call_jaxpr.invars, mapped_invars, in_avals):
+    binder_aval = invar.aval
+    if mapped and binder_aval is not abstract_unit:
+      typecheck_assert(axis_name in binder_aval.named_shape,
+                       f"Map primitive {prim} passes operand {in_aval} "
+                       f"to jaxpr expecting unmapped {binder_aval}, "
+                       f"but the invar is listed as mapped")
+      binder_aval = unmapped_aval(axis_name, axis_size, binder_aval)
     typecheck_assert(typecompat(binder_aval, in_aval),
-                     f"Call primitive {prim} passes operand {in_aval} "
+                     f"Map primitive {prim} passes operand {in_aval} "
                      f"to jaxpr expecting {binder_aval}")
 
-  mapped_avals = [mapped_aval(axis_size, aval) if mapped else aval
+  mapped_avals = [mapped_aval(axis_name, axis_size, aval) if mapped else aval
                   for aval, mapped in zip(in_avals, mapped_invars)]
   _check_jaxpr(call_jaxpr, mapped_avals)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_size, aval) for aval in mapped_out_avals]
+  out_avals = [unmapped_aval(axis_name, axis_size, aval) for aval in mapped_out_avals]
   return out_avals
 
 
@@ -1629,7 +1722,12 @@ def omnistaging_disabler() -> None:
     return apply_todos(env_trace_todo(), map(full_lower, outs))
 
   @contextmanager
-  def extend_axis_env(axis_name, size: int, tag: Any):
+  def extend_axis_env(axis_name, size: int,
+                      main_trace: Optional[MainTrace] = None):
+    yield
+
+  @contextmanager
+  def replace_axis_env(axis_env: List[Tuple[AxisName, int]]):
     yield
 
   @contextmanager

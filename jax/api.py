@@ -34,6 +34,7 @@ from warnings import warn
 import numpy as np
 from contextlib import contextmanager, ExitStack
 
+import jax
 from . import core
 from . import lib
 from . import linear_util as lu
@@ -640,10 +641,13 @@ def _xla_computation(
           "xla_computation in_parts", in_tree.children()[0], in_parts))
     jaxtree_fun, out_tree = flatten_fun(f, in_tree)
     avals = map(abstractify, args_flat)
+    if axis_env is not None:
+      new_named_shape = {name: size for name, size in axis_env}
+      avals = [core.ShapedArray(aval.shape, aval.dtype, aval.weak_type,
+                                dict(aval.named_shape, **new_named_shape))
+              for aval in avals]
     if config.omnistaging_enabled:
-      with ExitStack() as stack:
-        for axis_name, size in axis_env or []:
-          stack.enter_context(core.extend_axis_env(axis_name, size, None))
+      with core.replace_axis_env(axis_env or []):
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
     else:
       pvals = [pe.PartialVal.unknown(aval) for aval in avals]
@@ -816,7 +820,11 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     _check_scalar(ans)
     dtype = dtypes.result_type(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(np.ones((), dtype=dtype))
+    # the default behavior of `grad` is to act elementwise over all named axes
+    # TODO(jekbradbury): allow acting collectively over certain axes instead
+    ans_ct = jax.lax.lax_parallel.maybe_pbroadcast_all(
+        np.ones((), dtype=dtype))
+    g = vjp_py(ans_ct)
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -1116,6 +1124,8 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0, axis_name=None) -> Callab
       the number of dimensions of the array returned by the :func:`vmap`-ed
       function, which is one more than the number of dimensions of the
       corresponding array returned by ``fun``.
+    axis_name: Optional, a hashable Python object used to identify the mapped
+      axis so that collectives can be applied.
 
   Returns:
     Batched/vectorized version of ``fun`` with arguments that correspond to
@@ -1277,6 +1287,11 @@ def _mapped_axis_size(tree, vals, dims, name):
       sizes = [x.shape[d] if d is not None else None for x, d in zip(vals, dims)]
       sizes = tree_unflatten(tree, sizes)
       raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from None
+
+@lu.transformation
+def _maybe_pbroadcast_fun(axis_name, *args, **kwargs):
+  ans = yield args, kwargs
+  yield tree_map(partial(jax.lax.lax_parallel.maybe_pbroadcast, axis_name=axis_name), ans)
 
 def pmap(fun: Callable[..., T],
          axis_name: Optional[AxisName] = None, *, in_axes=0,
@@ -1525,7 +1540,11 @@ def pmap(fun: Callable[..., T],
     in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
     for arg in args: _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
+    # wrap the function to be mapped to return broadcasted values,
+    # so the map primitive will follow out_axes=0 behavior
+    # TODO(jekbradbury): out_axes=None
+    pb_fun = _maybe_pbroadcast_fun(f, axis_name)
+    flat_fun, out_tree = flatten_fun(pb_fun, in_tree)
     out = pxla.xla_pmap(
         flat_fun, *args, backend=backend, axis_name=axis_name,
         axis_size=local_axis_size, global_axis_size=axis_size,
@@ -1557,9 +1576,14 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
     mapped_invars = tuple(axis is not None for axis in in_axes_flat)
     axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
     for arg in args_flat: _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
+    # wrap the function to be mapped to return broadcasted values,
+    # so the map primitive will follow out_axes=0 behavior
+    # TODO(jekbradbury): out_axes=None
+    pb_fun = _maybe_pbroadcast_fun(f, axis_name)
+    flat_fun, out_tree = flatten_fun(pb_fun, in_tree)
     outs = pxla.soft_pmap(flat_fun, *args_flat, axis_name=axis_name,
-                          axis_size=axis_size, mapped_invars=mapped_invars)
+                          axis_size=axis_size, name=flat_fun.__name__,
+                          mapped_invars=mapped_invars)
     return tree_unflatten(out_tree(), outs)
   return f_pmapped
 
@@ -1840,6 +1864,12 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
   primals_flat, in_tree = tree_flatten(primals)
   for arg in primals_flat: _check_arg(arg)
+  # this pbroadcast exists for backwards compatibility,
+  # in the case where the function passed to `vjp` acts
+  # elementwise along a named axis except for a `pbroadcast`
+  # to promote a replicated argument.
+  # TODO(jekbradbury): remove it
+  # primals_flat = map(jax.lax.lax_parallel.maybe_pbroadcast_all, primals_flat)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
     out_primal, out_vjp = ad.vjp(flat_fun, primals_flat)
@@ -1933,6 +1963,7 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
 def make_jaxpr(fun: Callable,
                static_argnums: Union[int, Iterable[int]] = (),
                return_shape: bool = False,
+               axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None
                ) -> Callable[..., core.ClosedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
@@ -1947,6 +1978,10 @@ def make_jaxpr(fun: Callable,
       the output of ``fun`` and where the leaves are objects with ``shape`` and
       ``dtype`` attributes representing the corresponding types of the output
       leaves.
+    axis_env: Optional, a sequence of pairs where the first element is an axis
+      name and the second element is a positive integer representing the size of
+      the mapped axis with that name. See the :py:func:`jax.xla_computation`
+      docstring.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
@@ -2000,9 +2035,15 @@ def make_jaxpr(fun: Callable,
       wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    in_avals = [raise_to_shaped(core.get_aval(x)) for x in jax_args]
+    in_avals = map(xla.abstractify, jax_args)
+    if axis_env is not None:
+      new_named_shape = {name: size for name, size in axis_env}
+      in_avals = [core.ShapedArray(aval.shape, aval.dtype, aval.weak_type,
+                                   dict(aval.named_shape, **new_named_shape))
+                  for aval in in_avals]
     if config.omnistaging_enabled:
-      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, in_avals)
+      with core.replace_axis_env([] if axis_env is None else axis_env):
+        jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, in_avals)
     else:
       in_pvals = [pe.PartialVal.unknown(a) for a in in_avals]
       jaxpr, out_pvals, consts = pe.trace_to_jaxpr(

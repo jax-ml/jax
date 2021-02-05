@@ -233,9 +233,11 @@ def _flatten_jvp(in_tree, *args):
     msg = ("Custom JVP rule must produce primal and tangent outputs with equal "
            "container (pytree) structures, but got {} and {} respectively.")
     raise TypeError(msg.format(out_tree, out_tree2))
+  # TODO: also check that primal avals are a subtype of tangent avals
   primal_avals_out = [raise_to_shaped(core.get_aval(x), weak_type=False) for x in primals_out]
   tangent_avals_out = [raise_to_shaped(core.get_aval(t), weak_type=False) for t in tangents_out]
-  if primal_avals_out != tangent_avals_out:
+  if not all(av1.shape == av2.shape and av1.dtype == av2.dtype
+             for av1, av2 in zip(primal_avals_out, tangent_avals_out)):
     if len(primal_avals_out) == 1:
       (av1,), (av2,) = primal_avals_out, tangent_avals_out
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
@@ -315,7 +317,7 @@ def _custom_jvp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
 def _custom_jvp_call_jaxpr_vmap(
-    args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
+    args, in_dims, axis_name, *, fun_jaxpr: core.ClosedJaxpr,
     jvp_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     num_consts: int):
   size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
@@ -324,19 +326,20 @@ def _custom_jvp_call_jaxpr_vmap(
   num_out = len(fun_jaxpr.out_avals)
 
   in_batched = [d is not not_mapped for d in in_dims]
-  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
+      fun_jaxpr, size, in_batched, False, axis_name)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []  # mutable cell updated by batched_jvp_jaxpr_thunk
 
   @pe._memoize
   def batched_jvp_jaxpr_thunk():
     jvp_jaxpr = core.ClosedJaxpr(*jvp_jaxpr_thunk())  # consts can be tracers
-    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, size, in_batched * 2, False)
+    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, size, in_batched * 2, False, axis_name)
     primals_batched, tangents_batched = split_list(all_batched, [num_out])
     out_batched = map(op.or_, primals_batched, tangents_batched)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     batched_jvp_jaxpr, _ = batching.batch_jaxpr(
-        jvp_jaxpr, size, in_batched * 2, out_batched * 2)
+        jvp_jaxpr, size, in_batched * 2, out_batched * 2, axis_name)
     return batched_jvp_jaxpr.jaxpr, batched_jvp_jaxpr.consts
 
   batched_outs = custom_jvp_call_jaxpr_p.bind(
@@ -344,7 +347,7 @@ def _custom_jvp_call_jaxpr_vmap(
       jvp_jaxpr_thunk=batched_jvp_jaxpr_thunk, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.primitive_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
+batching.initial_style_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
 
 xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_jvp_call_jaxpr_impl)
@@ -607,7 +610,7 @@ def _custom_vjp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
 def _custom_vjp_call_jaxpr_vmap(
-    args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
+    args, in_dims, axis_name, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
   size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
@@ -615,20 +618,23 @@ def _custom_vjp_call_jaxpr_vmap(
           else x for x, d in zip(args, in_dims)]
 
   in_batched = [d is not not_mapped for d in in_dims]
-  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
+      fun_jaxpr, size, in_batched, False, axis_name)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
   @pe._memoize
   def batched_fwd_jaxpr_thunk():
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk())  # consts can be tracers
-    batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(fwd_jaxpr, size, in_batched, False)
+    batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
+        fwd_jaxpr, size, in_batched, False, axis_name)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     return batched_fwd_jaxpr.jaxpr, batched_fwd_jaxpr.consts
 
   fwd_in_dims = [0 if b else not_mapped for b in in_batched]
   fwd_out_dims = lambda: out_dims2[0]
-  # TODO(mattjj,apaszke): Support collectives in custom_vjp?
+  # TODO: Support collectives in custom_vjp?
+  # TODO: named axes in custom_vjp
   batched_bwd = batching.batch_fun(bwd, fwd_out_dims, fwd_in_dims,
                                    axis_name='__unused_axis_name', sum_match=True)
 
@@ -640,7 +646,7 @@ def _custom_vjp_call_jaxpr_vmap(
   if not config.omnistaging_enabled:
     out_dims = out_dims[:len(batched_outs)]
   return batched_outs, out_dims
-batching.primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
+batching.initial_style_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
 xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_vjp_call_jaxpr_impl)

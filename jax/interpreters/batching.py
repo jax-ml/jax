@@ -92,6 +92,14 @@ def _batch_fun2(in_dims, *in_vals, **params):
 NotMapped = type(None)
 not_mapped = None
 
+def axis_frame_from_main_trace(main_trace):
+  for frame in reversed(core.axis_frames()):
+    if frame.main_trace is main_trace:
+      break
+  else:
+    raise ValueError(f"axis corresponding to batch trace not found in environment")
+  return frame
+
 class BatchTracer(Tracer):
   __slots__ = ['val', 'batch_dim']
 
@@ -103,6 +111,7 @@ class BatchTracer(Tracer):
 
   @property
   def aval(self):
+    # TODO(jekbradbury): dedup with core.mapped_aval
     aval = raise_to_shaped(core.get_aval(self.val))
     if self.batch_dim is not_mapped:
       return aval
@@ -112,7 +121,9 @@ class BatchTracer(Tracer):
       elif type(aval) is ShapedArray:
         assert 0 <= self.batch_dim < aval.ndim
         new_shape = tuple(np.delete(aval.shape, self.batch_dim))
-        return ShapedArray(new_shape, aval.dtype)
+        frame = axis_frame_from_main_trace(self._trace.main)
+        return ShapedArray(new_shape, aval.dtype, named_shape={
+            frame.name: frame.size, **aval.named_shape})
       else:
         raise TypeError(aval)
 
@@ -140,21 +151,27 @@ class BatchTrace(Trace):
       axis_names = params['axis_name']
       if not isinstance(axis_names, (tuple, list)):
         axis_names = (axis_names,)
-      for i, axis_name in enumerate(axis_names):
-        frame = core.axis_frame(axis_name)
-        if frame.main_trace is not self.main:
-          continue
+      frame = axis_frame_from_main_trace(self.main)
+      if frame.name in axis_names:        
         # We run the split_axis rule with tracers, which is supposed to never
         # mix this axis name with another one. We will handle any invocations
         # of collectives over the vmapped axis in a recursive call from a tracer.
         if len(axis_names) > 1:
-          return split_axis(primitive, axis_name, tracers, params)
+          return split_axis(primitive, frame.name, tracers, params)
         vals_out, dims_out = collective_rules[primitive](vals_in, dims_in, frame.size, **params)
         results = map(partial(BatchTracer, self), vals_out, dims_out)
         return results if primitive.multiple_results else results[0]
-    # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
-    batched_primitive = get_primitive_batcher(primitive)
-    val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
+      else:
+        batched_primitive = get_primitive_batcher(primitive)
+        val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
+    elif primitive in initial_style_batchers:
+      batched_primitive = initial_style_batchers[primitive]
+      frame = axis_frame_from_main_trace(self.main)
+      val_out, dim_out = batched_primitive(vals_in, dims_in, frame.name, **params)
+    else:
+      # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
+      batched_primitive = get_primitive_batcher(primitive)
+      val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
     if primitive.multiple_results:
       return map(partial(BatchTracer, self), val_out, dim_out)
     else:
@@ -241,6 +258,7 @@ class BatchTrace(Trace):
 
 BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
 primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
+initial_style_batchers: Dict[core.Primitive, BatchingRule] = {}
 
 def get_primitive_batcher(p):
   try:
@@ -372,29 +390,24 @@ def bdim_at_front(x, bdim, size):
     return moveaxis(x, bdim, 0)
 
 
-def _promote_aval_rank(sz, aval):
-  if aval is core.abstract_unit:
-    return core.abstract_unit
-  else:
-    return ShapedArray((sz,) + aval.shape, aval.dtype)
-
-def batch_jaxpr(closed_jaxpr, size, batched, instantiate):
+def batch_jaxpr(closed_jaxpr, size, batched, instantiate, axis_name):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
-  f, batched_out = batched_traceable(f, size, batched, instantiate)
-  avals_in = [_promote_aval_rank(size, a) if b else a
-              for a, b in zip(closed_jaxpr.in_avals, batched)]
+  f, batched_out = batched_traceable(f, size, batched, instantiate, axis_name)
+  avals_in = [core.unmapped_aval(axis_name, size, a) if b else a
+              for a, b in zip(jaxpr.in_avals, batched)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), batched_out()
 
 @lu.transformation_with_aux
-def batched_traceable(size, batched, instantiate, *vals):
+def batched_traceable(size, batched, instantiate, axis_name, *vals):
   in_dims = [0 if b else None for b in batched]
   with core.new_main(BatchTrace) as main:
-    trace = BatchTrace(main, core.cur_sublevel())
-    ans = yield map(partial(BatchTracer, trace), vals, in_dims), {}
-    out_tracers = map(trace.full_raise, ans)
-    out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
-    del main, out_tracers
+    with core.extend_axis_env(axis_name, core.axis_frame(axis_name).size, main):
+      trace = BatchTrace(main, core.cur_sublevel())
+      ans = yield map(partial(BatchTracer, trace), vals, in_dims), {}
+      out_tracers = map(trace.full_raise, ans)
+      out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    del out_tracers
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_vals)
   out_vals = [moveaxis(x, d, 0) if d is not not_mapped and d != 0

@@ -1300,9 +1300,9 @@ class PmapTest(jtu.JaxTestCase):
 
   def testMakeJaxprOfOpenSpmd(self):
     f = lambda x: x - lax.psum(x, 'i')
-    shape = (xla_bridge.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
-    make_jaxpr(f)(x)  # doesn't crash
+    x = np.arange(4)
+    # doesn't crash
+    make_jaxpr(f, axis_env=[('i', xla_bridge.device_count())])(x)
 
   def testCompositionWithJitTwice(self):
     @jit
