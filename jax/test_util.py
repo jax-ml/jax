@@ -452,6 +452,8 @@ def _dims_of_shape(shape):
     return shape
   elif isinstance(shape, ScalarShape):
     return ()
+  elif np.ndim(shape) == 0:
+    return (shape,)
   else:
     raise TypeError(type(shape))
 
@@ -466,6 +468,9 @@ def _cast_to_shape(value, shape, dtype):
     return np.asarray(value).item()
   elif type(shape) in (list, tuple):
     assert np.shape(value) == tuple(shape)
+    return value
+  elif np.ndim(shape) == 0:
+    assert np.shape(value) == (shape,)
     return value
   else:
     raise TypeError(type(shape))

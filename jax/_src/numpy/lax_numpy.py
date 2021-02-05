@@ -1665,6 +1665,7 @@ The JAX version does not necessarily return a view of the input.
 """)
 def broadcast_to(arr, shape):
   arr = arr if isinstance(arr, ndarray) else array(arr)
+  shape = (shape,) if ndim(shape) == 0 else shape
   shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
@@ -2879,17 +2880,26 @@ def ones_like(a, dtype=None, shape=None):
 @_wraps(np.full)
 def full(shape, fill_value, dtype=None):
   lax._check_user_dtype_supported(dtype, "full")
-  shape = (shape,) if ndim(shape) == 0 else shape
-  return lax.full(shape, fill_value, dtype)
+  _check_arraylike("full", fill_value)
+  if ndim(fill_value) == 0:
+    shape = (shape,) if ndim(shape) == 0 else shape
+    return lax.full(shape, fill_value, dtype)
+  else:
+    return broadcast_to(asarray(fill_value, dtype=dtype), shape)
 
 
 @_wraps(np.full_like)
 def full_like(a, fill_value, dtype=None, shape=None):
-  _check_arraylike("full_like", a)
   lax._check_user_dtype_supported(dtype, "full_like")
-  if np.isscalar(shape):
-    shape = (shape,)
-  return lax.full_like(a, fill_value, dtype, shape)
+  _check_arraylike("full_like", a, fill_value)
+  if shape is not None:
+    shape = (shape,) if ndim(shape) == 0 else shape
+  if ndim(fill_value) == 0:
+    return lax.full_like(a, fill_value, dtype, shape)
+  else:
+    shape = np.shape(a) if shape is None else shape
+    dtype = _dtype(a) if dtype is None else dtype
+    return broadcast_to(asarray(fill_value, dtype=dtype), shape)
 
 
 @_wraps(np.zeros)
