@@ -130,7 +130,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO: remove tie_in once omnistaging is on by default
       if p.name == "axis_index" or p.name == "tie_in":
         continue
-      if p in tf_not_yet_impl:
+      if p.name in tf_not_yet_impl:
         self.assertNotIn(
             p, tf_impl)  # Should not be in both tf_impl and tf_not_yet_impl
       else:
