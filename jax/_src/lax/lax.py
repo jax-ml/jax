@@ -591,10 +591,10 @@ def conv_general_dilated(
     rhs_dilation = (1,) * (rhs.ndim - 2)
   if isinstance(padding, str):
     lhs_perm, rhs_perm, _ = dnums
-    rhs_shape = np.take(rhs.shape, rhs_perm)[2:]
+    rhs_shape = np.take(rhs.shape, rhs_perm)[2:]  # type: ignore[index]
     effective_rhs_shape = [(k-1) * r + 1 for k, r in zip(rhs_shape, rhs_dilation)]
     padding = padtype_to_pads(
-        np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,
+        np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,  # type: ignore[index]
         window_strides, padding)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
@@ -1515,7 +1515,7 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   shape = tuple(map(int, shape))
   axes = tuple(map(int, axes))
   dtype = dtypes.canonicalize_dtype(dtype)
-  base_shape = tuple(np.take(shape, axes))
+  base_shape = tuple(np.take(shape, axes))  # type: ignore[arg-type]
   if config.omnistaging_enabled:
     iotas = [broadcasted_iota(np.uint32, base_shape, i)
              for i in range(len(base_shape))]
@@ -1716,7 +1716,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       raise ValueError('No 4+ dimensional dimension_number defaults.')
   dn = conv_dimension_numbers(lhs.shape, rhs.shape, dimension_numbers)
   k_shape = np.take(rhs.shape, dn.rhs_spec)
-  k_sdims = k_shape[2:]
+  k_sdims = k_shape[2:]  # type: ignore[index]
   # Calculate correct output shape given padding and strides.
   pads: Union[str, Sequence[Tuple[int, int]]]
   if padding in {'SAME', 'VALID'}:
@@ -2734,7 +2734,7 @@ def _conv_general_dilated_shape_rule(
   rhs_trans = _dilate_shape(np.take(rhs.shape, rhs_perm), rhs_dilation)
   out_trans = conv_shape_tuple(lhs_trans, rhs_trans, window_strides, padding,
                                batch_group_count)
-  return tuple(np.take(out_trans, np.argsort(out_perm)))
+  return tuple(np.take(out_trans, np.argsort(out_perm)))  # type: ignore[arg-type]
 
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -3132,7 +3132,7 @@ def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
   else:
     ans_batch, _, ans_y = ranges_like(x_batch, x_kept, y_kept)
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
-  x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
+  x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))  # type: ignore[arg-type]
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
   return transpose(dot_general(g, y, dims, precision=precision, preferred_element_type=preferred_element_type),
                    tuple(out_axes))
@@ -3733,7 +3733,7 @@ transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 transpose_p.def_impl(_transpose_impl)
 ad.deflinear2(transpose_p,
-              lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
+              lambda t, _, permutation: [transpose(t, np.argsort(permutation))])  # type: ignore[arg-type]
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
 masking.masking_rules[transpose_p] = _transpose_masking_rule
 

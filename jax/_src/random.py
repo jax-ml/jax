@@ -57,7 +57,7 @@ def PRNGKey(seed: int) -> jnp.ndarray:
 
   # Explicitly cast to int64 for JIT invariance of behavior on large ints.
   if isinstance(seed, int):
-    seed = np.int64(seed)
+    seed = np.int64(seed)  # type: ignore[assignment]
   # Converting to jnp.array may truncate bits when jax_enable_x64=False, but this
   # is necessary for the sake of JIT invariance of the result for such values.
   seed = jnp.asarray(seed)
@@ -643,7 +643,7 @@ def _normal_real(key, shape, dtype) -> jnp.ndarray:
   _check_shape("normal", shape)
   lo = np.nextafter(np.array(-1., dtype), 0., dtype=dtype)
   hi = np.array(1., dtype)
-  u = uniform(key, shape, dtype, lo, hi)
+  u = uniform(key, shape, dtype, lo, hi)  # type: ignore[arg-type]
   return np.array(np.sqrt(2), dtype) * lax.erf_inv(u)
 
 
@@ -773,7 +773,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
 
 
 def bernoulli(key: jnp.ndarray,
-              p: jnp.ndarray = np.float32(0.5),
+              p: jnp.ndarray = np.float32(0.5),  # type: ignore[assignment]
               shape: Optional[Union[Sequence[int], NamedShape]] = None) -> jnp.ndarray:
   """Sample Bernoulli random values with given shape and mean.
 

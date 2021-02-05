@@ -29,7 +29,7 @@ setup(
     package_data={'jax': ['py.typed']},
     python_requires='>=3.6',
     install_requires=[
-        'numpy >=1.12,<1.20',
+        'numpy >=1.12',
         'absl-py',
         'opt_einsum',
     ],

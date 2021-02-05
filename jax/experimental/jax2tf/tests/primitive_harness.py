@@ -293,8 +293,8 @@ class Limitation:
       description: str,
       *,
       enabled: bool = True,
-      devices: Sequence[str] = ("cpu", "gpu", "tpu"),
-      dtypes: Sequence[DType] = (),
+      devices: Union[str, Sequence[str]] = ("cpu", "gpu", "tpu"),
+      dtypes: Union[DType, Sequence[DType]] = (),
       skip_run: bool = False,
   ):
     """Args:

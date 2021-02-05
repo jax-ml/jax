@@ -973,7 +973,7 @@ class XMapErrorTest(jtu.JaxTestCase):
   def testNestedDifferentResources(self):
     @partial(xmap, in_axes={0: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'x'})
     def f(x):
-      with mesh(np.empty((), dtype=np.object), ()):
+      with mesh(np.empty((), dtype=np.object_), ()):
         @partial(xmap, in_axes={0: 'b'}, out_axes={0: 'b'})
         def h(x):
           return x
