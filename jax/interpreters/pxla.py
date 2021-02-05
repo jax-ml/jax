@@ -1346,12 +1346,12 @@ class Mesh:
     return Mesh(self.devices[subcube_indices], self.axis_names)
 
   def __getitem__(self, new_axes):
-    indices = [0] * len(self.axis_names)
     axis_pos = {name: i for i, name in enumerate(self.axis_names)}
-    for axis in new_axes:
-      indices[axis_pos[axis]] = slice(None)
-    new_devices = self.devices[tuple(indices)]
-    new_devices = new_devices.transpose(tuple(axis_pos[axis] for axis in new_axes))
+    new_devices = self.devices.transpose(tuple(axis_pos[axis] for axis in new_axes) +
+                                         tuple(axis_pos[axis] for axis in self.axis_names
+                                               if axis not in new_axes))
+    new_devices = new_devices[(slice(None),) * len(new_axes) +
+                              (0,) * (len(self.axis_names) - len(new_axes))]
     return Mesh(new_devices, new_axes)
 
   @property

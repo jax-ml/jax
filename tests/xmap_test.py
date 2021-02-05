@@ -304,6 +304,14 @@ class XMapTest(jtu.JaxTestCase):
                           (pxla.ShardedAxis(1), pxla.ShardedAxis(0))))
 
   @ignore_xmap_warning()
+  @with_mesh([('x', 2), ('y', 2)])
+  def testSkipFirstMeshDim(self):
+    def run(axis_resources):
+      return xmap(lambda x: x * 2, in_axes=['i', ...], out_axes=['i', ...],
+                  axis_resources=axis_resources)(jnp.ones((4,)))
+    self.assertAllClose(run({'i': 'x'}), run({'i': 'y'}))
+
+  @ignore_xmap_warning()
   @with_mesh([('x', 2)])
   def testCompilationCache(self):
     def f(x):
