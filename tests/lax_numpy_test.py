@@ -1180,6 +1180,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp.union1d, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_assume_unique={}".format(
+       jtu.format_shape_dtype_string(shape1, dtype1),
+       jtu.format_shape_dtype_string(shape2, dtype2),
+       assume_unique),
+       "shape1": shape1, "dtype1": dtype1, "shape2": shape2, "dtype2": dtype2,
+       "assume_unique": assume_unique}
+      for dtype1 in [s for s in default_dtypes if s != jnp.bfloat16]
+      for dtype2 in [s for s in default_dtypes if s != jnp.bfloat16]
+      for shape1 in all_shapes
+      for shape2 in all_shapes
+      for assume_unique in [False, True]))
+  def testSetxor1d(self, shape1, dtype1, shape2, dtype2, assume_unique):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
+    jnp_fun = lambda ar1, ar2: jnp.setxor1d(ar1, ar2, assume_unique=assume_unique)
+    def np_fun(ar1, ar2):
+      if assume_unique:
+        # pre-flatten the arrays to match with jax implementation
+        ar1 = np.ravel(ar1)
+        ar2 = np.ravel(ar2)
+      return np.setxor1d(ar1, ar2, assume_unique)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_assume_unique={}_return_indices={}".format(
        jtu.format_shape_dtype_string(shape1, dtype1),
        jtu.format_shape_dtype_string(shape2, dtype2),

@@ -317,6 +317,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     select
     set_printoptions
     setdiff1d
+    setxor1d
     shape
     sign
     signbit
