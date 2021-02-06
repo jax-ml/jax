@@ -982,6 +982,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
     jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
+  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
+  def testCondGradVmapNan(self):
+    eps = 1e-3
+
+    def safe1(x):
+      return lax.cond(x < eps, lambda _: eps, lambda _: jnp.sqrt(x), ())
+
+    out = api.grad(lambda x: api.vmap(safe1)(x).sum())(np.zeros(10))
+    self.assertFalse(np.isnan(out).any())
+
   def testSwitchGrad(self):
     branches = [lambda x: 3. * x,
                 lambda x: jnp.sin(x),

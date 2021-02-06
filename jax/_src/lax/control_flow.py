@@ -754,47 +754,58 @@ def _select_tree(indices, branch_vals):
   assert len(branch_vals) > 0
   if len(branch_vals) == 1:
     return branch_vals[0]
-  mid = len(branch_vals) // 2
-  mid = np.array(mid, dtypes.canonicalize_dtype(lax.dtype(indices)))
-  return lax.select(lax.lt(indices, mid),
-                    _select_tree(indices, branch_vals[:mid]),
-                    _select_tree(indices - mid, branch_vals[mid:]))
+  mid = lax._const(indices, len(branch_vals) // 2)
+  return _bcast_select(lax.lt(indices, mid),
+                       _select_tree(indices, branch_vals[:mid]),
+                       _select_tree(indices - mid, branch_vals[mid:]))
 
-def _cond_index_bcast_and_select_tree(indices, branch_vals):
-  if all(core.get_aval(x) is core.abstract_unit for x in branch_vals):
-    return branch_vals[0]
-  else:
-    bcast_indices = lax.broadcast_in_dim(
-        indices, np.shape(branch_vals[0]), list(range(np.ndim(indices))))
-    return _select_tree(bcast_indices, branch_vals)
+def _bcast_select(pred, on_true, on_false):
+  if np.ndim(pred) != np.ndim(on_true):
+    idx = list(range(np.ndim(pred)))
+    pred = lax.broadcast_in_dim(pred, np.shape(on_true), idx)
+  return lax.select(pred, on_true, on_false)
 
 def _cond_batching_rule(args, dims, axis_name, branches, linear):
-  # TODO: maybe avoid moving arg axes to front if we're promoting to select?
   size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
-  args = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
-          else x for x, d in zip(args, dims)]
-  orig_bat = [d is not batching.not_mapped for d in dims]
-  del dims
   index, *ops = args
-  index_bat, *bat = orig_bat
+  index_dim, *op_dims = dims
 
-  branches_out_bat = [batching.batch_jaxpr(jaxpr, size, bat, False, axis_name)[1]
-                      for jaxpr in branches]
-  out_bat = [any(bat) for bat in zip(*branches_out_bat)]
+  if index_dim is not batching.not_mapped:
+    # Convert to a lax.select. While we could get away with not broadcasting
+    # some operands yet, because all outputs must be broadcast together anyway
+    # for the select we broadcast the input operands for simplicity and leave
+    # optimizations to XLA.
+    # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
+    index, *ops = [batching.bdim_at_front(x, d, size) for x, d in zip(args, dims)]
 
-  branches_batched = tuple(batching.batch_jaxpr(jaxpr, size, bat, out_bat, axis_name)[0]
-                           for jaxpr in branches)
+    branches_batched = [
+        batching.batch_jaxpr(jaxpr, size, [True] * len(ops), True, axis_name)[0]
+        for jaxpr in branches]
 
-  if index_bat:
     branch_outs = []
-    for jaxpr in branches_batched:
-      out = core.jaxpr_as_fun(jaxpr)(*ops)
-      out = [batching.broadcast(x, size, 0) if not b else x
-             for x, b in zip(out, out_bat)]
-      branch_outs.append(out)
-    return [_cond_index_bcast_and_select_tree(index, outs)
-            for outs in zip(*branch_outs)], [0] * len(branch_outs[0])
+    for i, jaxpr in enumerate(branches_batched):
+      # Perform a select on the inputs for safety of reverse-mode autodiff; see
+      # https://github.com/google/jax/issues/1052
+      ops_ = [_bcast_select(lax.eq(index, lax._const(index, i)),
+                            x, lax.stop_gradient(x))
+              if x is not core.unit else x for x in ops]
+      branch_outs.append(core.jaxpr_as_fun(jaxpr)(*ops_))
+    out = [_select_tree(index, outs) if outs[0] is not core.unit else outs[0]
+           for outs in zip(*branch_outs)]
+    return out, [0] * len(branch_outs[0])
   else:
+    ops_bat = [d is not batching.not_mapped for d in op_dims]
+    ops = [batching.moveaxis(x, d, 0) if b else x
+           for b, x, d in zip(ops_bat, ops, op_dims)]
+
+    branches_out_bat = [
+        batching.batch_jaxpr(jaxpr, size, ops_bat, False, axis_name)[1]
+        for jaxpr in branches]
+    out_bat = [any(bat) for bat in zip(*branches_out_bat)]
+    branches_batched = tuple(
+        batching.batch_jaxpr(jaxpr, size, ops_bat, out_bat, axis_name)[0]
+        for jaxpr in branches)
+
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
     out = cond_p.bind(
         index, *ops, branches=branches_batched, linear=linear)
