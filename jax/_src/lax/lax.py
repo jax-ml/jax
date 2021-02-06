@@ -422,6 +422,8 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
   new_dtype = dtypes.canonicalize_dtype(new_dtype)
+  if hasattr(operand, '__jax_array__'):
+    operand = operand.__jax_array__()
   # Avoids dropping precision by casting Python scalars to the default Jax
   # type. If we passed a Python scalar directly to the bind call below, it is
   # cast to the default type as part of the calling convention.
