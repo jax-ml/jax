@@ -613,7 +613,7 @@ def switch(index, branches: Sequence[Callable], operand):
   return tree_unflatten(out_trees[0], out)
 
 
-def cond(*args, **kwargs):
+def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   ``cond()`` has equivalent semantics to this Python implementation::
@@ -651,17 +651,6 @@ def cond(*args, **kwargs):
     pytree (nested Python tuple/list/dict) thereof.
   """
 
-  # detect an attempt to call the former, deprecated cond
-  try:
-    ba = inspect.signature(_cond_with_per_branch_args).bind(*args, **kwargs)
-  except TypeError:
-    pass
-  else:
-    return _cond_with_per_branch_args(*ba.args)
-
-  return _cond(*args, **kwargs)
-
-def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
   if isinstance(pred, Sequence) or np.ndim(pred) != 0:
     raise TypeError(
         f"Pred must be a scalar, got {pred} of " +
@@ -706,6 +695,18 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
       index, *consts, *ops,
       branches=(false_jaxpr, true_jaxpr), linear=linear)
   return tree_unflatten(out_tree, out)
+
+@functools.wraps(_cond)
+def cond(*args, **kwargs):
+  # detect an attempt to call the former, deprecated cond
+  try:
+    ba = inspect.signature(_cond_with_per_branch_args).bind(*args, **kwargs)
+  except TypeError:
+    pass
+  else:
+    return _cond_with_per_branch_args(*ba.args)
+
+  return _cond(*args, **kwargs)
 
 def _cond_with_per_branch_args(pred,
                                true_operand, true_fun: Callable,
