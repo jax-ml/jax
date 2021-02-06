@@ -60,7 +60,7 @@ from jax._src.numpy.lax_numpy import (
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,
     trim_zeros, triu, triu_indices, triu_indices_from, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
-    unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
+    union1d, unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
     vstack, where, zeros, zeros_like, _NOT_IMPLEMENTED)
 
 from jax._src.numpy.polynomial import roots

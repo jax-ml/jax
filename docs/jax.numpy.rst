@@ -362,6 +362,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     uint64
     uint8
     unique
+    union1d
     unpackbits
     unravel_index
     unsignedinteger
