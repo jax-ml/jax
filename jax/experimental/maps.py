@@ -545,15 +545,16 @@ def make_xmap_callable(fun: lu.WrappedFun,
   if used_mesh_axes:
     submesh = resource_env.physical_mesh[sorted(used_mesh_axes, key=str)]
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
-    return pxla.mesh_tiled_callable(f,
-                                    name,
-                                    backend,
-                                    submesh,
-                                    mesh_in_axes,
-                                    mesh_out_axes,
-                                    donated_invars,
-                                    EXPERIMENTAL_SPMD_LOWERING,
-                                    *in_avals)
+    return pxla.mesh_callable(f,
+                              name,
+                              backend,
+                              submesh,
+                              mesh_in_axes,
+                              lambda: mesh_out_axes,
+                              donated_invars,
+                              EXPERIMENTAL_SPMD_LOWERING,
+                              *in_avals,
+                              tile_by_mesh_axes=True)
   else:
     return xla._xla_callable(f, None, backend, name, donated_invars,
                              *((a, None) for a in in_avals))
@@ -820,10 +821,10 @@ def _xmap_translation_rule_spmd(c, axis_env,
                                 call_jaxpr, name,
                                 in_axes, out_axes, donated_invars,
                                 axis_sizes, axis_resources, resource_env, backend):
-  # TODO(apaszke): This is quite difficult to implement given the current lowering
-  #                in mesh_tiled_callable. There, we vmap the mapped axes, but we
-  #                have no idea which positional axes they end up being in this
-  #                translation rule!
+  # TODO(apaszke): This is quite difficult to implement given the current
+  #                lowering in mesh_callable. There, we vmap the mapped axes,
+  #                but we have no idea which positional axes they end up being
+  #                in this translation rule!
   raise NotImplementedError
 
 

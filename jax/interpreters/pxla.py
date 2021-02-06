@@ -1383,15 +1383,16 @@ def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
     shape[axis] *= axis_sizes[name]
   return aval.update(shape=tuple(shape))
 
-def mesh_tiled_callable(fun: lu.WrappedFun,
-                        transformed_name: str,
-                        backend_name: Optional[str],
-                        mesh: Mesh,
-                        in_axes: Sequence[ArrayMapping],
-                        out_axes: Sequence[ArrayMapping],
-                        donated_invars: Sequence[bool],
-                        spmd_lowering,
-                        *local_in_untiled_avals):
+def mesh_callable(fun: lu.WrappedFun,
+                  transformed_name: str,
+                  backend_name: Optional[str],
+                  mesh: Mesh,
+                  in_axes: Sequence[ArrayMapping],
+                  out_axes_thunk: Callable[[], Sequence[ArrayMapping]],
+                  donated_invars: Sequence[bool],
+                  spmd_lowering: bool,
+                  *local_in_untiled_avals,
+                  tile_by_mesh_axes: bool):
   assert config.omnistaging_enabled
   local_mesh = mesh.local_mesh
   global_axis_sizes = mesh.shape
@@ -1408,10 +1409,11 @@ def mesh_tiled_callable(fun: lu.WrappedFun,
   if spmd_lowering:
     # TODO: Consider handling xmap's 'vectorize' in here. We can vmap once instead of vtile twice!
     for name, size in reversed(mesh.shape.items()):
-      fun = vtile(fun,
-                  tuple(a.get(name, None) for a in in_axes),
-                  tuple(a.get(name, None) for a in out_axes),
-                  tile_size=size, axis_name=name)
+      if tile_by_mesh_axes:
+        fun = vtile(fun,
+                    tuple(a.get(name, None) for a in in_axes),
+                    tuple(a.get(name, None) for a in out_axes_thunk()),
+                    tile_size=size, axis_name=name)
     global_in_untiled_avals = [untile_aval_nd(global_axis_sizes, aval_in_axes, aval)
                                for aval, aval_in_axes in safe_zip(in_tiled_avals, in_axes)]
     in_jaxpr_avals = global_in_untiled_avals
@@ -1419,6 +1421,7 @@ def mesh_tiled_callable(fun: lu.WrappedFun,
     in_jaxpr_avals = in_tiled_avals
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
+  out_axes = out_axes_thunk()
   assert len(out_axes) == len(out_jaxpr_avals)
   if spmd_lowering:
     global_out_untiled_avals = out_jaxpr_avals
