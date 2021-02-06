@@ -154,6 +154,8 @@ def canonicalize_dtype(x):
   for typ in typ.mro():
     handler = canonicalize_dtype_handlers.get(typ)
     if handler: return handler(x)
+  if hasattr(x, '__jax_array__'):
+    return canonicalize_dtype(x.__jax_array__())
   raise TypeError(f"No canonicalize_dtype handler for type: {type(x)}")
 
 def _canonicalize_ndarray_dtype(x):
@@ -176,6 +178,8 @@ def abstractify(x) -> core.AbstractValue:
   for typ in typ.mro():
     aval_fn = pytype_aval_mappings.get(typ)
     if aval_fn: return aval_fn(x)
+  if hasattr(x, '__jax_array__'):
+    return abstractify(x.__jax_array__())
   raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
 
 def _make_abstract_python_scalar(typ, _):

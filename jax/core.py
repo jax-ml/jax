@@ -910,6 +910,8 @@ def concrete_aval(x):
   for typ in type(x).mro():
     handler = pytype_aval_mappings.get(typ)
     if handler: return handler(x)
+  if hasattr(x, '__jax_array__'):
+    return concrete_aval(x.__jax_array__())
   raise TypeError(f"{type(x)} is not a valid JAX type")
 
 
