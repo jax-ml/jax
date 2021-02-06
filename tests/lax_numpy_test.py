@@ -61,7 +61,7 @@ scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE, jtu.PYTHON_SCALAR_SHAPE]
 array_shapes = nonempty_array_shapes + empty_array_shapes
 nonzerodim_shapes = nonempty_nonscalar_array_shapes + empty_array_shapes
 nonempty_shapes = scalar_shapes + nonempty_array_shapes
-all_shapes =  scalar_shapes + array_shapes
+all_shapes = scalar_shapes + array_shapes
 
 float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex
@@ -92,7 +92,7 @@ def _shape_and_dtypes(shapes, dtypes):
       yield (shape, dtype)
 
 def _compatible_shapes(shape):
-  if shape in scalar_shapes:
+  if shape in scalar_shapes or np.ndim(shape) == 0:
     return [shape]
   return (shape[n:] for n in range(len(shape) + 1))
 
@@ -2500,19 +2500,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_outdtype={}".format(
+      {"testcase_name": "_inshape={}_outdtype={}_fillshape={}".format(
           jtu.format_shape_dtype_string(shape, fill_value_dtype),
-          np.dtype(out_dtype).name if out_dtype else "None"),
-       "shape": shape, "fill_value_dtype": fill_value_dtype,
-       "out_dtype": out_dtype}
+          np.dtype(out_dtype).name if out_dtype else "None",
+          fill_value_shape),
+       "fill_value_dtype": fill_value_dtype, "fill_value_shape": fill_value_shape,
+       "shape": shape, "out_dtype": out_dtype}
       for shape in array_shapes + [3, np.array(7, dtype=np.int32)]
       for fill_value_dtype in default_dtypes
+      for fill_value_shape in _compatible_shapes(shape)
       for out_dtype in [None] + default_dtypes))
-  def testFull(self, shape, fill_value_dtype, out_dtype):
+  def testFull(self, shape, fill_value_dtype, fill_value_shape, out_dtype):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda fill_value: np.full(shape, fill_value, dtype=out_dtype)
     jnp_fun = lambda fill_value: jnp.full(shape, fill_value, dtype=out_dtype)
-    args_maker = lambda: [rng((), fill_value_dtype)]
+    args_maker = lambda: [rng(fill_value_shape, fill_value_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -2575,20 +2577,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_filldtype={}_outdtype={}_outshape={}".format(
+      {"testcase_name": "_inshape={}_filldtype={}_fillshape={}_outdtype={}_outshape={}".format(
           jtu.format_shape_dtype_string(shape, in_dtype),
-          np.dtype(fill_value_dtype).name,
-          np.dtype(out_dtype).name,
-          out_shape),
+          np.dtype(fill_value_dtype).name, fill_value_shape,
+          np.dtype(out_dtype).name, out_shape),
        "shape": shape, "in_dtype": in_dtype,
-       "fill_value_dtype": fill_value_dtype, "out_dtype": out_dtype,
-       "out_shape": out_shape}
+       "fill_value_dtype": fill_value_dtype, "fill_value_shape": fill_value_shape,
+       "out_dtype": out_dtype, "out_shape": out_shape}
       for shape in array_shapes
       for out_shape in [None] + array_shapes
       for in_dtype in default_dtypes
       for fill_value_dtype in default_dtypes
+      for fill_value_shape in _compatible_shapes(shape if out_shape is None else out_shape)
       for out_dtype in default_dtypes))
-  def testFullLike(self, shape, in_dtype, fill_value_dtype, out_dtype, out_shape):
+  def testFullLike(self, shape, in_dtype, fill_value_dtype, fill_value_shape, out_dtype, out_shape):
     if numpy_version < (1, 19) and out_shape == ():
       raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
     rng = jtu.rand_default(self.rng())
@@ -2596,7 +2598,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x, fill_value, dtype=out_dtype, shape=out_shape)
     jnp_fun = lambda x, fill_value: jnp.full_like(
       x, fill_value, dtype=out_dtype, shape=out_shape)
-    args_maker = lambda: [rng(shape, in_dtype), rng((), fill_value_dtype)]
+    args_maker = lambda: [rng(shape, in_dtype), rng(fill_value_shape, fill_value_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4563,6 +4565,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           [(3,), (2, 1, 3)],
           [(3,), (3, 3)],
           [(1,), (3,)],
+          [(1,), 3],
       ])
   def testBroadcastTo(self, from_shape, to_shape):
     rng = jtu.rand_default(self.rng())
