@@ -945,7 +945,7 @@ def _lu_pivots_body_fn(i, permutation_and_swaps):
   return ops.index_update(permutation, ops.index[iotas + (j,)], x), swaps
 
 
-@partial(api.jit, static_argnums=(1,))
+@partial(api.jit, static_argnums=(1,))  # type: ignore
 def lu_pivots_to_permutation(swaps, m):
   """Converts the pivots (row swaps) returned by LU to a permutation.
 
@@ -991,7 +991,7 @@ def _lu_solve_core(lu, permutation, b, trans):
   return lax.reshape(x, b.shape)
 
 
-@partial(api.jit, static_argnums=(3,))
+@partial(api.jit, static_argnums=(3,))  # type: ignore
 def _lu_solve(lu, permutation, b, trans):
   if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
     raise ValueError("last two dimensions of LU decomposition must be equal, "

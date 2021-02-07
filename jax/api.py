@@ -53,7 +53,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         treedef_is_leaf, treedef_children, Partial)
 from ._src.util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                         split_list, extend_name_stack, wrap_name, cache, wraps,
-                        HashableFunction)
+                        HashableFunction, overrideable)
 from .lib import jax_jit
 from .lib import version
 from .lib import xla_bridge as xb
@@ -86,7 +86,7 @@ AxisName = Any
 # in JIT internals, as Tracer values are passed through the function.
 # Should this raise any type errors for the tracing code in future, we can disable
 # type checking in parts of the tracing code, or remove these annotations.
-F = TypeVar("F", bound=Callable)
+F = TypeVar("F", bound=Callable[..., Any])
 T = TypeVar("T")
 U = TypeVar("U")
 
@@ -121,6 +121,7 @@ class _ThreadLocalState(threading.local):
 _thread_local_state = _ThreadLocalState()
 
 
+@overrideable('jit')
 def jit(
   fun: F,
   static_argnums: Union[int, Iterable[int]] = (),
@@ -690,6 +691,8 @@ def xla_computation(fun: Callable,
 
   return computation_maker
 
+
+@overrideable('grad')
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
          has_aux: bool = False, holomorphic: bool = False,
          allow_int: bool = False) -> Callable:
@@ -752,6 +755,8 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   return grad_f_aux if has_aux else grad_f
 
+
+@overrideable('value_and_grad')
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
                    allow_int: bool = False) -> Callable[..., Tuple[Any, Any]]:
@@ -862,6 +867,7 @@ def _check_output_dtype_revderiv(name, holomorphic, x):
 _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
 
 
+@overrideable('jacfwd')
 def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
            holomorphic: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated column-by-column using forward-mode AD.
@@ -928,6 +934,7 @@ def _check_output_dtype_jacfwd(holomorphic, x):
                       f"but got {aval.dtype.name}.")
 
 
+@overrideable('jacrev')
 def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
            holomorphic: bool = False, allow_int: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated row-by-row using reverse-mode AD.
@@ -980,6 +987,7 @@ _check_input_dtype_jacrev = partial(_check_input_dtype_revderiv, "jacrev")
 _check_output_dtype_jacrev = partial(_check_output_dtype_revderiv, "jacrev")
 
 
+@overrideable('hessian')
 def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
             holomorphic: bool = False) -> Callable:
   """Hessian of ``fun`` as a dense array.
@@ -1069,6 +1077,7 @@ def _dtype(x):
   return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
 
+@overrideable('vmap')
 def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
@@ -1274,6 +1283,8 @@ def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
       sizes = tree_unflatten(tree, sizes)
       raise ValueError(msg.format(f"the tree of axis sizes is:\n{sizes}")) from None
 
+
+@overrideable('pmap')
 def pmap(
   fun: F,
   axis_name: Optional[AxisName] = None,
@@ -1632,6 +1643,7 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
                        map(tuple, out_shapes), out_tree_thunk())
   return fun
 
+@overrideable('jvp')
 def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
   """Computes a (forward-mode) Jacobian-vector product of ``fun``.
 
@@ -1697,6 +1709,7 @@ def _jvp(fun: lu.WrappedFun, primals, tangents):
   return (tree_unflatten(out_tree(), out_primals),
           tree_unflatten(out_tree(), out_tangents))
 
+@overrideable('linearize')
 def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   """Produces a linear approximation to ``fun`` using :py:func:`jvp` and partial eval.
 
@@ -1827,7 +1840,8 @@ else:
                                     Tuple[Any, Callable, Any]]:
         ...
 
-def vjp(  # type: ignore
+@overrideable('vjp')  # type: ignore
+def vjp(
     fun: Callable, *primals, has_aux: bool = False,
 ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
@@ -1897,6 +1911,7 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
+@overrideable('linear_transpose')
 def linear_transpose(fun: Callable, *primals) -> Callable:
   """Transpose a function that is promised to be linear.
 
@@ -2328,6 +2343,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   return tree_unflatten(out_tree(), out)
 
 
+@overrideable('checkpoint')
 def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
@@ -2422,6 +2438,7 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
 remat = checkpoint
 
 
+@overrideable('named_call')
 def named_call(
     fun: Callable[..., Any],
     *,

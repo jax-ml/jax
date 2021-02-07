@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import contextlib
 import functools
 import itertools as it
 import operator
+import threading
 import types
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, TypeVar
 
 import numpy as np
 
@@ -371,3 +372,90 @@ class HashableFunction:
 
 def as_hashable_function(closure):
   return lambda f: HashableFunction(f, closure)
+
+
+class ContextVar:
+  """Like contextvars.ContextVar, but implemented with threading.local()."""
+  # TODO(shoyer): remove in favor of contextvars when JAX requires Python 3.7+
+
+  def __init__(self, name, *, default):
+    self.name = name
+    self.default = default
+    self._state = threading.local()
+    self._state.value = default
+    self._lock = threading.Lock()
+
+  def get(self):
+    return getattr(self._state, 'value', self.default)
+
+  def set(self, value):
+    with self._lock:
+      old_value = self.get()
+      self._state.value = value
+    return old_value
+
+  def reset(self, token):
+    self._state.value = token
+
+
+_OVERRIDES = {}
+
+
+F = TypeVar('F', bound=Callable[..., Any])
+
+
+def overrideable(name: str) -> Callable[[F], F]:
+  """Make an internal JAX function overrideable."""
+  def decorator(fun):
+    _OVERRIDES[name] = ContextVar(name, default=fun)
+    @functools.wraps(fun)
+    def wrapper(*args, **kwargs):
+      impl = _OVERRIDES[name].get()
+      # A typical override will call back into the original JAX function after
+      # doing some processing. We remove the override here, because otherwise
+      # this would end up in an infinite loop.
+      with override_context({name: fun}):
+        return impl(*args, **kwargs)
+    return wrapper
+  return decorator
+
+
+@contextlib.contextmanager
+def override_context(implementations: Mapping[str, Callable]):
+  """Experimental override for JAX functions within a context.
+
+  This context manager allows for overriding the implementation of higher order
+  JAX functions within a limited scope. It is intended for libraries such as
+  Haiku and Flax that implement their own versions of these functions that
+  support mutation, and may be removed in the future if/when JAX has a unified
+  interface for handling mutable state.
+
+  Usage example::
+
+    import jax
+
+    def my_grad(f):
+      print("inside my_grad")
+      return jax.grad(f)
+
+    with jax.experimental.override_context({'grad': my_grad}):
+      # All calls to jax.grad() are replaced by my_grad().
+      # However, calls to jax.grad() from *inside* the implementation of
+      # my_grad() will use the original.
+      y = jax.grad(lambda x: x ** 2)(1.0)  # prints "inside my_grad"
+      assert y == 2
+
+  This context manager only overrides implementations within the current thread,
+  and hence is thread-safe.
+
+  Currently supported functions:
+  checkpoint, grad, hessian, jacfwd, jacrev, jit, jvp, lax.associative_scan,
+  lax.cond, lax.fori_loop, lax.scan, lax.switch, lax.while_loop,
+  linear_transpose, linearize, named_call, pmap, value_and_grad, vjp, vmap
+  """
+  tokens = {k: _OVERRIDES[k].set(v) for k, v in implementations.items()}
+  try:
+    yield
+  finally:
+    for k, v in tokens.items():
+      _OVERRIDES[k].reset(v)

@@ -45,7 +45,7 @@ from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax._src.util import (partial, unzip2, unzip3, unzip4, safe_map, safe_zip,
-                           split_list, cache, extend_name_stack)
+                           split_list, cache, extend_name_stack, overrideable)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves)
@@ -137,6 +137,7 @@ def _fori_scan_body_fun(body_fun):
     return (lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)), None
   return scanned_fun
 
+@overrideable('lax.fori_loop')
 def fori_loop(lower, upper, body_fun, init_val):
   """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
 
@@ -203,6 +204,7 @@ def fori_loop(lower, upper, body_fun, init_val):
   return result
 
 
+@overrideable('lax.while_loop')
 def while_loop(cond_fun: Callable[[T], bool],
                body_fun: Callable[[T], T],
                init_val: T) -> T:
@@ -549,6 +551,7 @@ batching.initial_style_batchers[while_p] = _while_loop_batching_rule
 
 ### cond and switch
 
+@overrideable('lax.switch')
 def switch(index, branches: Sequence[Callable], operand):
   """Apply exactly one of ``branches`` given by ``index``.
 
@@ -696,6 +699,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
       branches=(false_jaxpr, true_jaxpr), linear=linear)
   return tree_unflatten(out_tree, out)
 
+@overrideable('lax.cond')
 @functools.wraps(_cond)
 def cond(*args, **kwargs):
   # detect an attempt to call the former, deprecated cond
@@ -1132,6 +1136,7 @@ Carry = TypeVar('Carry')
 X = TypeVar('X')
 Y = TypeVar('Y')
 
+@overrideable('lax.scan')
 def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
          init: Carry,
          xs: X,
@@ -2377,6 +2382,8 @@ def _interleave(a, b, axis):
   return lax.add(lax.pad(a, lax._const(a, 0), a_pad),
                  lax.pad(b, lax._const(b, 0), b_pad))
 
+
+@overrideable('lax.associative_scan')
 def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   """Performs a scan with an associative binary operation, in parallel.
 

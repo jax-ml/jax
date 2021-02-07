@@ -17,3 +17,4 @@ jax.experimental package
 
 .. autofunction:: enable_x64
 .. autofunction:: disable_x64
+.. autofunction:: override_context

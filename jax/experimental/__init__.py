@@ -16,3 +16,4 @@
 from ..interpreters.sharded_jit import (sharded_jit, PartitionSpec,
                                         with_sharding_constraint)
 from .x64_context import enable_x64, disable_x64
+from .._src.util import override_context
