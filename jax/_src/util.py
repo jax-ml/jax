@@ -449,9 +449,10 @@ def override_context(implementations: Mapping[str, Callable]):
   and hence is thread-safe.
 
   Currently supported functions:
-  checkpoint, grad, hessian, jacfwd, jacrev, jit, jvp, lax.associative_scan,
-  lax.cond, lax.fori_loop, lax.scan, lax.switch, lax.while_loop,
-  linear_transpose, linearize, named_call, pmap, value_and_grad, vjp, vmap
+  checkpoint, eval_shape, grad, hessian, invertible, jacfwd, jacrev, jit, jvp,
+  lax.associative_scan, lax.cond, lax.fori_loop, lax.scan, lax.switch,
+  lax.while_loop, linear_transpose, linearize, named_call, pmap, value_and_grad,
+  vjp, vmap
   """
   tokens = {k: _OVERRIDES[k].set(v) for k, v in implementations.items()}
   try:

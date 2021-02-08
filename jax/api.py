@@ -2273,6 +2273,8 @@ class ShapeDtypeStruct:
   def __hash__(self):
     return hash((self.shape, self.dtype))
 
+
+@overrideable('eval_shape')
 def eval_shape(fun: Callable, *args, **kwargs):
   """Compute the shape/dtype of ``fun`` without any FLOPs.
 
@@ -2623,6 +2625,7 @@ def defvjp(fun, *vjprules):
     return ans, vjpfun
   defvjp_all(fun, custom_vjp)
 
+@overrideable('invertible')
 def invertible(fun: Callable) -> Callable:
   """Asserts that the decorated function is invertible.
 
