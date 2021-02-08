@@ -18,6 +18,7 @@ Parallelization primitives.
 import collections
 import string
 import warnings
+from typing import Union
 
 import numpy as np
 
@@ -26,13 +27,13 @@ from jax import dtypes
 from jax import tree_util
 from jax._src import source_info_util
 from . import lax
-from jax.core import ShapedArray, raise_to_shaped
+from jax.core import ShapedArray, AxisName, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-from jax._src.util import partial, unzip2, prod, canonicalize_axis, safe_map
+from jax._src.util import partial, unzip2, prod, canonicalize_axis, safe_map, moveaxis
 from jax.lib import xla_client as xc
 from jax.lib import xla_bridge as xb
 from jax.config import config
@@ -490,6 +491,14 @@ class XeinsumSpecParser:
     return arg_specs
 
 
+def pgather(src, idx, axes: Union[int, AxisName]):
+  """Uses the last positional axis of idx to index into src's axes."""
+  if not isinstance(axes, (tuple, list)):
+    axes = (axes,)
+  # TODO: Canonicalize exes!
+  return pgather_p.bind(src, idx, axes=tuple(axes))
+
+
 ### parallel primitives
 
 def _subst_all_names_in_param(
@@ -530,8 +539,6 @@ def _reduction_with_positional_batcher(prim, vals_in, dims_in, axis_index_groups
   assert all(v is not None for v in vals_out)
   return vals_out
 
-# This is only used for collectives that do not include the vmapped axis name,
-# which is why the rule is so simple.
 def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
   if not any(isinstance(axis, int) for axis in axes):
     return prim.bind(*vals_in, axes=axes, axis_index_groups=axis_index_groups), dims_in
@@ -1162,6 +1169,84 @@ def _pdot_transpose_rhs(g, x, *, axis_name, pos_contract, pos_batch):
 ad.defbilinear(pdot_p, _pdot_transpose_lhs, _pdot_transpose_rhs)
 
 pxla.multi_host_supported_collectives.add(pdot_p)
+
+
+def _pgather_impl(src, idx, *, axes):
+  assert all(isinstance(axis, int) for axis in axes)
+  src_axes_front = moveaxis(src, axes, range(len(axes)))
+  non_axes_shape = src_axes_front.shape[len(axes):]
+  src_one_axis_front = src_axes_front.reshape((-1,) + non_axes_shape)
+  slice_sizes = (1,) + non_axes_shape
+  idx = lax.reshape(idx, idx.shape + (1,))
+  offset_dims = tuple(range(idx.ndim - 1, idx.ndim + src_one_axis_front.ndim - 2))
+  dnums = lax.GatherDimensionNumbers(
+      offset_dims=offset_dims,
+      collapsed_slice_dims=(0,),
+      start_index_map=(0,))
+  return lax.gather(src_one_axis_front, idx, dimension_numbers=dnums,
+                    slice_sizes=tuple(slice_sizes))
+
+def _pgather_abstract_eval(src, idx, *, axes):
+  # TODO: Avals with names rule: remove all axes from src, insert those from idx
+  #       The order is important, because it is ok to re-insert one of the deleted axes!
+  shape = list(src.shape)
+  for axis in sorted((a for a in axes if isinstance(a, int)), reverse=True):
+    del shape[axis]
+  shape = idx.shape + tuple(shape)
+  return ShapedArray(shape, src.dtype)
+
+def _pgather_parallel_translation(c, src, idx, *, axes, axis_env, platform):
+  if any(not isinstance(axis, int) for axis in axes):
+    raise NotImplementedError("pgather only supported in the SPMD lowering."
+                              "Please open a feature request!")
+  return xla.lower_fun(_pgather_impl, multiple_results=False)(c, src, idx, axes=axes)
+
+def _pgather_batcher(vals_in, dims_in, *, axes):
+  src, idx = vals_in
+  dsrc, didx = dims_in
+  if didx is not batching.not_mapped and dsrc is not batching.not_mapped:
+    # NB: We could just go forward with it and take the diagonal along the
+    #     two axes we get in the output, but that would be quite inefficient
+    raise NotImplementedError("Please open a feature request!")
+  elif didx is not batching.not_mapped:
+    return pgather_p.bind(src, idx, axes=axes), didx
+  elif dsrc is not batching.not_mapped:
+    src_last_batched = moveaxis(src, dsrc, -1)
+    result = pgather_p.bind(src_last_batched, idx, axes=axes)
+    return result, result.ndim - 1
+  else:
+    assert False  # This shouldn't get called anyway
+
+def _pgather_collective_batcher(frame, vals_in, dims_in, *, axes):
+  src, idx = vals_in
+  dsrc, didx = dims_in
+  if dsrc is batching.not_mapped:
+    raise ValueError("pgather axis {frame.name} is missing from the indexed value")
+  if didx is not batching.not_mapped:
+    # NOTE: This is allowed and the output would be mapped along this axis!
+    raise NotImplementedError("Please open a feature request!")
+  # Now source is mapped, idx is not
+  new_axes = tuple(dsrc if axis == frame.name else
+                   axis + (dsrc <= axis) if isinstance(axis, int) else
+                   axis
+                   for axis in axes)
+  # The result is not mapped, because we eliminate all axes, and those include
+  # the batched axis.
+  if all(isinstance(axis, int) for axis in axes):
+    # We rewrite a purely positional pgather as a gather, because that one
+    # is more fully featured (e.g. supports AD).
+    return _pgather_impl(src, idx, axes=new_axes), batching.not_mapped
+  else:
+    return pgather_p.bind(src, idx, axes=new_axes), batching.not_mapped
+
+pgather_p = core.Primitive('pgather')
+pgather_p.def_impl(_pgather_impl)
+pgather_p.def_abstract_eval(_pgather_abstract_eval)
+xla.parallel_translations[pgather_p] = _pgather_parallel_translation
+# TODO: Transpose? That requires adding pscatter...
+batching.primitive_batchers[pgather_p] = _pgather_batcher
+batching.collective_rules[pgather_p] = _pgather_collective_batcher
+core.axis_substitution_rules[pgather_p] = partial(_subst_all_names_in_param, 'axes')
 
 
 @config.register_omnistaging_disabler

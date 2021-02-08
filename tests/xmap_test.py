@@ -40,6 +40,7 @@ from jax.experimental.maps import Mesh, mesh, xmap
 from jax.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
 from jax._src.lax.lax import DotDimensionNumbers
+from jax._src.lax.parallel import pgather
 from jax.interpreters import pxla
 
 from jax.config import config
@@ -656,6 +657,40 @@ class NamedNNTest(XMapTestCase):
                           axis_sizes={'i': shape[0], 'o': shape[1]})
     self.assertAllClose(jnp.var(mapped_sampler()), jnp.var(ref_sampler()),
                         atol=1e-4, rtol=2e-2)
+
+
+class NewPrimitiveTest(XMapTestCase):
+  def setUp(self):
+    if jax.lib.version < (0, 1, 58):
+      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
+    if not config.omnistaging_enabled:
+      raise SkipTest("xmap requires omnistaging")
+
+  def testGatherPositional(self):
+    x = jnp.arange(27).reshape((9, 3))
+    idx = jnp.array([1, 2, 1, 0]).reshape((2, 2))
+    self.assertAllClose(pgather(x, idx, 0), x[idx.ravel()].reshape((2, 2, 3)))
+
+    x_explode = x.reshape((3, 3, 3))
+    self.assertAllClose(pgather(x, idx, 0), pgather(x_explode, idx, (0, 1)))
+
+  @with_and_without_mesh
+  @ignore_xmap_warning()
+  def testGather(self, mesh, axis_resources):
+    if axis_resources and not jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING:
+      raise SkipTest("pgather over mesh axes without SPMD lowering not implemented")
+    x = jnp.arange(12, dtype=np.float32).reshape((4, 3))
+    y = jnp.arange(35).reshape((5, 7)) % 3
+    f = xmap(lambda src, idx: pgather(src, idx, 'j'),
+             in_axes=(['i', 'j'], ['k', 'm']),
+             out_axes=['i', 'k', 'm'],
+             axis_resources=dict(axis_resources))
+    f_ref = lambda x, y: x[:, y.reshape((-1,))].reshape((4, 5, 7))
+    self.assertAllClose(f(x, y), f_ref(x, y))
+
+
+class NewPrimitiveTestSPMD(SPMDTestMixin, NewPrimitiveTest):
+  pass
 
 
 AxisIndices = Tuple[int, ...]
