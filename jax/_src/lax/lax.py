@@ -1127,6 +1127,13 @@ def reduce(operands: Array, init_values: Array, computation: Callable,
   """Wraps XLA's `Reduce
   <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
   operator.
+
+  ``init_values`` and ``computation`` together must form a `monoid
+  <https://en.wikipedia.org/wiki/Monoid>`_
+  for correctness. That is ``init_values`` must be an identity of
+  ``computation``, and ``computation`` must be associative. XLA may exploit both
+  of these properties during code generation; if either is violated the result
+  is undefined.
   """
   flat_operands, operand_tree = tree_util.tree_flatten(operands)
   flat_init_values, init_value_tree = tree_util.tree_flatten(init_values)
