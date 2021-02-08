@@ -207,7 +207,7 @@ def schedules(sizes: Dict[str, int]
           yield axis_resources, mesh_data
 
 
-class XMapTest(jtu.JaxTestCase):
+class XMapTest(jtu.BufferDonationTestCase):
   def setUp(self):
     if not config.omnistaging_enabled:
       raise SkipTest("xmap requires omnistaging")
@@ -383,6 +383,31 @@ class XMapTest(jtu.JaxTestCase):
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))
   @with_mesh_from_kwargs
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
+  @ignore_xmap_warning()
+  def testBufferDonation(self, mesh, axis_resources):
+    shard = lambda x: x
+    if axis_resources:
+      shard = xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...],
+                   axis_resources=dict(axis_resources))
+    f = xmap(lambda x, y: x + y * 4,
+             in_axes=['i', ...], out_axes=['i', ...],
+             axis_resources=dict(axis_resources),
+             donate_argnums=0)
+    # The multiplications below disable some optimizations that prevent reuse
+    x = shard(jnp.zeros((2, 5)) * 4)
+    y = shard(jnp.ones((2, 5)) * 2)
+    f(x, y)
+    self.assertNotDeleted(y)
+    self.assertDeleted(x)
+
+  @parameterized.named_parameters(
+    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
+    for name, mesh, axis_resources in (
+      ('', (), ()),
+      ('Mesh', (('x', 2),), (('i', 'x'),))
+    ))
+  @with_mesh_from_kwargs
   @ignore_xmap_warning()
   def testAxisSizes(self, mesh, axis_resources):
     result = xmap(lambda: lax.axis_index('i'),
@@ -480,6 +505,7 @@ class XMapTestSPMD(XMapTest):
 
   skipped_tests = {
     "NestedMesh",  # Nesting xmap calls is not supported in the SPMD lowering yet
+    "NestedMap",  # Same as above
     "CollectivePermute2D"  # vmap of multidimensional permute not implemented yet
   }
 

@@ -28,7 +28,8 @@ from .. import linear_util as lu
 from ..api import _check_callable, _check_arg
 from ..tree_util import (tree_flatten, tree_unflatten, all_leaves,
                          _replace_nones, tree_map, tree_leaves)
-from ..api_util import flatten_fun_nokwargs, flatten_axes
+from ..api_util import (flatten_fun_nokwargs, flatten_axes, _ensure_index_tuple,
+                        donation_vector)
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
 from ..interpreters import xla
@@ -111,6 +112,9 @@ class ResourceEnv:
 
   def __hash__(self):
     return hash(self.physical_mesh)
+
+  def __repr__(self):
+    return f"ResourceEnv({self.physical_mesh!r})"
 
 thread_resources = threading.local()
 thread_resources.env = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -243,6 +247,7 @@ def xmap(fun: Callable,
          *,
          axis_sizes: Dict[AxisName, int] = {},
          axis_resources: Dict[AxisName, Union[ResourceAxisName, Tuple[ResourceAxisName, ...]]] = {},
+         donate_argnums: Union[int, Sequence[int]] = (),
          backend: Optional[str] = None):
   """Assign a positional signature to a program that uses named array axes.
 
@@ -445,6 +450,8 @@ def xmap(fun: Callable,
       raise ValueError(f"Resource assignment of a single axis must be a tuple of "
                        f"distinct resources, but specified {resources} for axis {axis}")
 
+  donate_argnums = _ensure_index_tuple(donate_argnums)
+
   # A little performance optimization to avoid iterating over all args unnecessarily
   has_input_rank_assertions = any(spec.expected_rank is not None for spec in in_axes_entries)
   has_output_rank_assertions = any(spec.expected_rank is not None for spec in out_axes_entries)
@@ -463,6 +470,10 @@ def xmap(fun: Callable,
     args_flat, in_tree = tree_flatten(args)
     for arg in args_flat: _check_arg(arg)
     fun_flat, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    if donate_argnums:
+      donated_invars = donation_vector(donate_argnums, args, ())
+    else:
+      donated_invars = (False,) * len(args_flat)
     # TODO: Check that:
     #         - two axes mapped to the same resource never coincide (even inside f)
     in_axes_flat = flatten_axes("xmap in_axes", in_tree, in_axes)
@@ -487,6 +498,7 @@ def xmap(fun: Callable,
       name=getattr(fun, '__name__', '<unnamed function>'),
       in_axes=tuple(in_axes_flat),
       out_axes_thunk=out_axes_thunk,
+      donated_invars=donated_invars,
       axis_sizes=frozen_axis_sizes,
       axis_resources=frozen_axis_resources,
       resource_env=resource_env,
@@ -501,17 +513,17 @@ def xmap(fun: Callable,
 
   return fun_mapped
 
-def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, axis_sizes,
-              axis_resources, resource_env, backend):
+def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_invars,
+              axis_sizes, axis_resources, resource_env, backend):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  return make_xmap_callable(fun, name, in_axes, out_axes_thunk, axis_sizes,
+  return make_xmap_callable(fun, name, in_axes, out_axes_thunk, donated_invars, axis_sizes,
                             axis_resources, resource_env, backend, *in_avals)(*args)
 
 @lu.cache
 def make_xmap_callable(fun: lu.WrappedFun,
                        name,
-                       in_axes, out_axes_thunk, axis_sizes,
-                       axis_resources, resource_env, backend,
+                       in_axes, out_axes_thunk, donated_invars,
+                       axis_sizes, axis_resources, resource_env, backend,
                        *in_avals):
   plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env, axis_sizes)
 
@@ -539,12 +551,12 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                     submesh,
                                     mesh_in_axes,
                                     mesh_out_axes,
+                                    donated_invars,
                                     EXPERIMENTAL_SPMD_LOWERING,
                                     *in_avals)
   else:
-    # We have to trace again, because `f` is an lu.WrappedFun, so we can't just return it.
-    final_jaxpr, out_avals, final_consts = pe.trace_to_jaxpr_final(f, in_avals)
-    return core.jaxpr_as_fun(core.ClosedJaxpr(final_jaxpr, final_consts))
+    return xla._xla_callable(f, None, backend, name, donated_invars,
+                             *((a, None) for a in in_avals))
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
@@ -700,8 +712,8 @@ xla.call_translations[xmap_p] = _xmap_translation_rule
 def _xmap_translation_rule_replica(c, axis_env,
                                    in_nodes, name_stack, *,
                                    call_jaxpr, name,
-                                   in_axes, out_axes, axis_sizes,
-                                   axis_resources, resource_env, backend):
+                                   in_axes, out_axes, donated_invars,
+                                   axis_sizes, axis_resources, resource_env, backend):
   plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env, axis_sizes)
 
   local_mesh = resource_env.physical_mesh.local_mesh
@@ -806,8 +818,8 @@ def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
 def _xmap_translation_rule_spmd(c, axis_env,
                                 in_nodes, name_stack, *,
                                 call_jaxpr, name,
-                                in_axes, out_axes, axis_sizes,
-                                axis_resources, resource_env, backend):
+                                in_axes, out_axes, donated_invars,
+                                axis_sizes, axis_resources, resource_env, backend):
   # TODO(apaszke): This is quite difficult to implement given the current lowering
   #                in mesh_tiled_callable. There, we vmap the mapped axes, but we
   #                have no idea which positional axes they end up being in this

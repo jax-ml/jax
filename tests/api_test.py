@@ -50,7 +50,7 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-class CPPJitTest(jtu.JaxTestCase):
+class CPPJitTest(jtu.BufferDonationTestCase):
   """Shared tests between the Python and the C++ jax,jit implementations.
 
   Because the Python implementation supports more features, we need to have the
@@ -208,15 +208,6 @@ class CPPJitTest(jtu.JaxTestCase):
     self.assertEqual(f(list(range(500))), sum(range(500)))
 
   # Jit and Donate arguments
-  assertDeleted = lambda self, x: self._assertDeleted(x, True)
-  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
-
-  def _assertDeleted(self, x, deleted):
-    if hasattr(x, "device_buffer"):
-      self.assertEqual(x.device_buffer.is_deleted(), deleted)
-    else:
-      for buffer in x.device_buffers:
-        self.assertEqual(buffer.is_deleted(), deleted)
 
   def test_jit_donate_argnums_warning_raised(self):
     x = jnp.array([1.0, 2.0], jnp.float32)
@@ -4934,7 +4925,7 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     print(gf(a, b))  # doesn't crash
 
 
-class BufferDonationTest(jtu.JaxTestCase):
+class BufferDonationTest(jtu.BufferDonationTestCase):
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_pmap_donate_argnums_invalidates_input(self):
@@ -4954,16 +4945,6 @@ class BufferDonationTest(jtu.JaxTestCase):
     #   pmap_fun(a)
 
     pmap_fun(a)  # doesn't crash
-
-  assertDeleted = lambda self, x: self._assertDeleted(x, True)
-  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
-
-  def _assertDeleted(self, x, deleted):
-    if hasattr(x, "device_buffer"):
-      self.assertEqual(x.device_buffer.is_deleted(), deleted)
-    else:
-      for buffer in x.device_buffers:
-        self.assertEqual(buffer.is_deleted(), deleted)
 
 
 class NamedCallTest(jtu.JaxTestCase):

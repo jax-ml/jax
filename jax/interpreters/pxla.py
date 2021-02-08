@@ -1325,6 +1325,8 @@ class Mesh:
   # TODO: This is pretty expensive to compute. Cache this on the mesh object?
   @property
   def local_mesh(self):
+    if not self.devices.ndim:
+      return self
     host_id = xb.host_id()
     is_local_device = np.vectorize(lambda d: d.host_id == host_id, otypes=[bool])(self.devices)
     subcube_indices = []
@@ -1358,6 +1360,10 @@ class Mesh:
   def device_ids(self):
     return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
 
+  def __repr__(self):
+    return f"Mesh({self.devices!r}, {self.axis_names!r})"
+
+
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   if aval is core.abstract_unit:
     return aval
@@ -1383,6 +1389,7 @@ def mesh_tiled_callable(fun: lu.WrappedFun,
                         mesh: Mesh,
                         in_axes: Sequence[ArrayMapping],
                         out_axes: Sequence[ArrayMapping],
+                        donated_invars: Sequence[bool],
                         spmd_lowering,
                         *local_in_untiled_avals):
   assert config.omnistaging_enabled
@@ -1429,7 +1436,6 @@ def mesh_tiled_callable(fun: lu.WrappedFun,
   # 3. Build up the HLO
   c = xb.make_computation_builder(f"xmap_{fun.__name__}")
   xla_consts = map(partial(xb.constant, c), consts)
-  donated_invars = (False,) * len(in_jaxpr_avals)  # TODO(apaszke): support donation
   tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
   in_partitions: Optional[List]
   if spmd_lowering:
@@ -1465,9 +1471,9 @@ def mesh_tiled_callable(fun: lu.WrappedFun,
     out_tuple = xb.with_sharding_proto(c, out_partitions_t, xops.Tuple, c, out_nodes)
   else:
     out_tuple = xops.Tuple(c, out_nodes)
-  # TODO(apaszke): Does that work with SPMD sharding?
   if backend.platform in ("gpu", "tpu"):
-    donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+    xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+    # TODO: Warn about unused donations?
   built = c.Build(out_tuple)
 
   # 4. Compile the HLO
