@@ -384,8 +384,9 @@ def xmap(fun: Callable,
     def regression_loss(x, y, w, b):
       # Contract over in_features. Batch and out_features are present in
       # both inputs and output, so they don't need to be mentioned
-      y_pred = jnp.einsum('{in_features},{in_features}->{}') + b
-      return jnp.mean((y - y_pred) ** 2, axis='batch')
+      y_pred = jnp.einsum('{in_features},{in_features}->{}', x, w) + b
+      loss = jnp.sum((y - y_pred) ** 2, axis='out_features')
+      return jnp.mean(loss, axis='batch')
 
     xmap(regression_loss,
          in_axes=(['batch', 'in_features', ...],
@@ -395,7 +396,7 @@ def xmap(fun: Callable,
          out_axes={})  # Loss is reduced over all axes, including batch!
 
   .. note::
-    When using ``axis_resources`` along with a mesh that is controled by
+    When using ``axis_resources`` along with a mesh that is controlled by
     multiple JAX hosts, keep in mind that in any given process :py:func:`xmap`
     only expects the data slice that corresponds to its local devices to be
     specified. This is in line with the current multi-host :py:func:`pmap`
