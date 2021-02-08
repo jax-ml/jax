@@ -497,6 +497,19 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.jit(init)()
     self.assertIsInstance(key_list[0], core.Tracer)
 
+  def test_jit_wrapped_attributes(self):
+    def f(x: int) -> int:
+      """docstring of f."""
+      return x + 1
+    f.some_value = 4
+    jf = self.jit(f)
+    for attr in ["doc", "name", "module", "qualname", "annotations"]:
+      self.assertEqual(
+        {attr: getattr(f, f"__{attr}__")},
+        {attr: getattr(jf, f"__{attr}__")})
+    self.assertEqual(f.some_value, jf.some_value)
+
+
 class PythonJitTest(CPPJitTest):
 
   @property
