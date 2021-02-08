@@ -308,6 +308,13 @@ def extract_call_jaxpr(
 
 
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
+  # Note: it must be possible to eval a jaxpr with values whose
+  # avals are LESS specialized than the jaxpr's in_avals,
+  # because the body functions that get retraced with
+  # less-specialized inputs during loop fixpoint can contain
+  # jaxprs that were constructed with more-specialized values.
+  # TODO: do we also need to handle eval with more-specialized
+  # values?
   def read(v):
     if type(v) is Literal:
       return v.val
@@ -315,12 +322,13 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       return env[v]
 
   def write(v, val):
-    if not skip_checks and v.aval is not abstract_unit:
+    if not skip_checks and hasattr(v.aval, 'shape'):
       try:
         aval = get_aval(val)
       except:
         aval = val.aval
-      assert v.aval == raise_to_shaped(aval)
+      # TODO: typecompat
+      assert aval_compat(v.aval, aval)
     env[v] = val
 
   env: Dict[Var, Any] = {}
@@ -792,6 +800,9 @@ class AbstractValue:
   def join(self, other):
     raise NotImplementedError("must override")
 
+  def update(self, **kwargs):
+    raise NotImplementedError("must override")
+
 class Bot(AbstractValue): pass
 
 bot = Bot()
@@ -809,7 +820,12 @@ class AbstractUnit(AbstractValue):
 abstract_unit = AbstractUnit()
 
 def lattice_join(x: Optional[AbstractValue],
-                 y: Optional[AbstractValue]) -> AbstractValue:
+                 *rest: Sequence[Optional[AbstractValue]]) -> AbstractValue:
+  if not rest:
+    return x
+  if len(rest) > 1:
+    return lattice_join(x, lattice_join(*rest))
+  y, = rest
   if x is None:
     return cast(AbstractValue, y)
   elif y is None:
@@ -913,6 +929,13 @@ class UnshapedArray(AbstractValue):
     self.dtype = np.dtype(dtypes.canonicalize_dtype(dtype))
     self.weak_type = weak_type
 
+  def update(self, dtype=None, weak_type=None):
+    if dtype is None:
+      dtype = self.dtype
+    if weak_type is None:
+      weak_type = self.weak_type
+    return UnshapedArray(dtype, weak_type)
+
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype and
             self.weak_type == other.weak_type)
@@ -938,8 +961,7 @@ class UnshapedArray(AbstractValue):
   _oct     = concretization_function_error(oct)
 
   def at_least_vspace(self) -> AbstractValue:
-    return UnshapedArray(primal_dtype_to_tangent_dtype(self.dtype),
-                         self.weak_type)
+    return self.update(dtype=primal_dtype_to_tangent_dtype(self.dtype))
 
   def join(self, other):
     if self.dtype == other.dtype:
@@ -975,6 +997,17 @@ class ShapedArray(UnshapedArray):
     self.shape = canonicalize_shape(shape)
     self.named_shape = canonicalize_named_shape(named_shape)
 
+  def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
+    if shape is None:
+      shape = self.shape
+    if dtype is None:
+      dtype = self.dtype
+    if weak_type is None:
+      weak_type = self.weak_type
+    if named_shape is None:
+      named_shape = self.named_shape
+    return ShapedArray(shape, dtype, weak_type, named_shape)
+
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
 
@@ -997,8 +1030,7 @@ class ShapedArray(UnshapedArray):
                  tuple(self.named_shape.items())))
 
   def at_least_vspace(self):
-    return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       self.weak_type)
+    return self.update(dtype=primal_dtype_to_tangent_dtype(self.dtype))
 
   def join(self, other):
     if self == other:
@@ -1034,7 +1066,7 @@ class ShapedArray(UnshapedArray):
 
   def strip_weak_type(self):
     if self.weak_type:
-      return ShapedArray(self.shape, self.dtype, named_shape=self.named_shape)
+      return self.update(weak_type=False)
     else:
       return self
 
@@ -1066,7 +1098,7 @@ class ConcreteArray(ShapedArray):
 
   def at_least_vspace(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       weak_type=self.weak_type)
+                       weak_type=self.weak_type, named_shape=self.named_shape)
 
   def join(self, other) -> UnshapedArray:
     if self == other:
@@ -1122,8 +1154,7 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
 raise_to_shaped_mappings : Dict[type, Callable] = {
   AbstractUnit: lambda aval, _: aval,
   AbstractToken: lambda aval, _: aval,
-  ShapedArray: lambda aval, weak_type: ShapedArray(aval.shape, aval.dtype, weak_type,
-                                                   aval.named_shape)
+  ShapedArray: lambda aval, weak_type: aval.update(weak_type=weak_type)
 }
 
 # Registry for valid dimension types. This is used by masking.Poly.
@@ -1297,7 +1328,7 @@ def axis_frame(axis_name):
   ]
   raise NameError(
       f'unbound axis name: {axis_name}. The following axis names (e.g. defined '
-      'by pmap) are available to collectives operations:'
+      'by pmap) are available to collective operations:'
       f'{named_axis}')
 
 def axis_frames():
@@ -1316,7 +1347,7 @@ def mapped_aval(axis_name: AxisName, size: int, aval: AbstractValue,
     # might be raising abstraction level from Concrete here
     assert aval.shape[0] == size
     assert axis_name not in aval.named_shape, "TODO enable shadowing?"
-    return ShapedArray(aval.shape[1:], aval.dtype,
+    return aval.update(shape=aval.shape[1:],
                        named_shape={axis_name:size, **aval.named_shape})
   else:
     raise TypeError(f"Cannot map {aval}")
@@ -1330,8 +1361,7 @@ def unmapped_aval(axis_name: AxisName, size: int, aval: AbstractValue,
     assert aval.named_shape[axis_name] == size
     named_shape = dict(aval.named_shape)
     del named_shape[axis_name]
-    return ShapedArray((size,) + aval.shape, aval.dtype,
-                       named_shape=named_shape)
+    return aval.update(shape=(size,) + aval.shape, named_shape=named_shape)
   else:
     raise TypeError(f"Cannot unmap {aval}")
 
@@ -1345,8 +1375,7 @@ def maybe_unmapped_aval(axis_name: AxisName, size: int,
     assert aval.named_shape[axis_name] == size
     named_shape = dict(aval.named_shape)
     del named_shape[axis_name]
-    return ShapedArray((size,) + aval.shape, aval.dtype,
-                       named_shape=named_shape)
+    return aval.update(shape=(size,) + aval.shape, named_shape=named_shape)
   else:
     raise TypeError(f"Cannot unmap {aval}")
 
@@ -1354,15 +1383,23 @@ def typecheck(aval: AbstractValue, x) -> bool:
   return typecompat(aval, get_aval(x))
 
 def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
-  """Determine whether `aval` conforms to `aval_ref`"""
-  aval_ref = raise_to_shaped(aval_ref).strip_weak_type()
-  try:
-    return aval_ref == lattice_join(aval_ref, aval).strip_weak_type()
-  except TypeError:
-    return False
+  # just typematch for now
+  return typematch(aval_ref, aval)
 
 def typematch(aval1: UnshapedArray, aval2: UnshapedArray) -> bool:
   return raise_to_shaped(aval1, weak_type=False) == raise_to_shaped(aval2, weak_type=False)
+
+def aval_check(aval: AbstractValue, x) -> bool:
+  return aval_compat(aval, get_aval(x))
+
+def aval_compat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
+  """Determine whether `aval` conforms to `aval_ref`"""
+  if aval_ref is abstract_unit or aval is abstract_unit:
+    return True
+  aval_ref, aval = raise_to_shaped(aval_ref), raise_to_shaped(aval)
+  if hasattr(aval_ref, 'weak_type') and aval_ref.weak_type:
+    return aval_ref.shape == aval.shape and aval_ref.dtype.kind == aval.dtype.kind
+  return aval_ref.shape == aval.shape and aval_ref.dtype == aval.dtype
 
 class JaxprTypeError(TypeError): pass
 
@@ -1507,13 +1544,14 @@ def check_map(prim, in_avals, params):
   _check_jaxpr(call_jaxpr, mapped_avals)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_name, axis_size, aval) for aval in mapped_out_avals]
+  out_avals = [maybe_unmapped_aval(axis_name, axis_size, aval)
+               for aval in mapped_out_avals]
   return out_avals
 
 
 # ------------------- Jaxpr printed representation -------------------
 
-def pp_vars(vs: Sequence[Any], print_shapes: bool = False) -> str:
+def pp_vars(vs: Sequence[Any], print_shapes: bool = True) -> str:
   if print_shapes:
     return ' '.join(f'{v}:{v.aval.str_short()}' for v in vs)
   else:
@@ -1525,12 +1563,12 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
                          not isinstance(v, (Jaxpr, ClosedJaxpr)))}
   return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
-def pp_eqn(eqn: JaxprEqn, print_shapes: bool = False) -> PrettyPrint:
+def pp_eqn(eqn: JaxprEqn, print_shapes: bool = True) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars, print_shapes)
   pp_lhs = pp(f'{lhs} =')
   pp_rhs = (pp(eqn.primitive.name) >>
             pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
-            pp(pp_vars(eqn.invars, print_shapes)))
+            pp(pp_vars(eqn.invars, False)))
   if len(lhs) <= 6 or print_shapes:
     return pp_lhs >> pp(' ') >> pp_rhs
   else:

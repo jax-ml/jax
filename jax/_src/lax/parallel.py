@@ -558,8 +558,7 @@ def _remove_named_axis(axis_name, aval):
   axis_names = axis_name if isinstance(axis_name, (list, tuple)) else [axis_name]
   for axis_name in axis_names:
     del named_shape[axis_name]
-  return ShapedArray(aval.shape, aval.dtype, weak_type=aval.weak_type,
-                     named_shape=named_shape)
+  return aval.update(named_shape=named_shape)
 
 psum_p = core.Primitive('psum')
 psum_p.multiple_results = True
@@ -768,8 +767,7 @@ def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis):
   shape = list(input_aval.shape)
   size = shape.pop(split_axis)
   shape.insert(concat_axis, size)
-  return ShapedArray(tuple(shape), input_aval.dtype, weak_type=False,
-                     named_shape=input_aval.named_shape)
+  return input_aval.update(shape=tuple(shape))
 
 all_to_all_p = core.Primitive('all_to_all')
 all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
@@ -785,8 +783,8 @@ batching.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 def _pbroadcast_abstract_eval(*avals, axis_name, axis_size):
   avals = [core.raise_to_shaped(aval) for aval in avals]
   assert all(axis_name not in aval.named_shape for aval in avals)
-  return [ShapedArray(aval.shape, aval.dtype,
-                      named_shape={axis_name:axis_size, **aval.named_shape})
+  return [aval.__class__(aval.shape, aval.dtype,
+                         named_shape={axis_name:axis_size, **aval.named_shape})
           for aval in avals]
 
 def _pbroadcast_translation_rule(c, *xla_xs, axis_name, axis_size, axis_env, platform):

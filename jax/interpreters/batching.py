@@ -122,7 +122,7 @@ class BatchTracer(Tracer):
         assert 0 <= self.batch_dim < aval.ndim
         new_shape = tuple(np.delete(aval.shape, self.batch_dim))
         frame = axis_frame_from_main_trace(self._trace.main)
-        return ShapedArray(new_shape, aval.dtype, named_shape={
+        return aval.update(shape=new_shape, named_shape={
             frame.name: frame.size, **aval.named_shape})
       else:
         raise TypeError(aval)
@@ -244,9 +244,10 @@ class BatchTrace(Trace):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims)
-    # TODO(mattjj,apaszke): support collectives in custom_vjp?
+    # TODO(mattjj,apaszke,jekbradbury): support collectives in custom_vjp?
+    frame = axis_frame_from_main_trace(self.main)
     bwd = batch_fun(bwd, out_dims2, in_dims,
-                    axis_name='__unused_axis_name', sum_match=True)
+                    axis_name=frame.name, sum_match=True)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
@@ -391,11 +392,26 @@ def bdim_at_front(x, bdim, size):
 
 
 def batch_jaxpr(closed_jaxpr, size, batched, instantiate, axis_name):
+  # TODO: batch-polymorphic jaxprs (the below constraint is too strong)
+  # assert all((axis_name in aval.named_shape) ^ (not b) for b, aval in
+  #            zip(batched, closed_jaxpr.in_avals))
+  # handle inputs that are more or less batched than the stored jaxpr expects
+  avals_in = []
+  for b, aval in zip(batched, closed_jaxpr.in_avals):
+    if isinstance(aval, ShapedArray):
+      if b:
+        if axis_name not in aval.named_shape:
+          aval = aval.update(named_shape={axis_name: size, **aval.named_shape})
+      else:
+        if axis_name in aval.named_shape:
+          aval = aval.update(named_shape={
+              n: s for n, s in aval.named_shape.items() if n != axis_name})
+    avals_in.append(aval)
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, batched_out = batched_traceable(f, size, batched, instantiate, axis_name)
-  avals_in = [core.unmapped_aval(axis_name, size, a) if b else a
-              for a, b in zip(jaxpr.in_avals, batched)]
-  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
+  unmapped_avals_in = [core.unmapped_aval(axis_name, size, a) if b else a
+                       for a, b in zip(avals_in, batched)]
+  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, unmapped_avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), batched_out()
 
 @lu.transformation_with_aux

@@ -411,8 +411,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
 
   def write(v, node):
     assert node is not None
-    if v.aval not in (core.abstract_unit, core.abstract_token):
-      assert c.get_shape(node).dimensions() == v.aval.shape
+    if v.aval not in (core.abstract_unit, core.abstract_token) and len(node) == 1:
+      assert c.get_shape(node[0]).dimensions() == v.aval.shape
     env[v] = node
 
   env = {}

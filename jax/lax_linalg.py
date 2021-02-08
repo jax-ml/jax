@@ -188,8 +188,8 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
     n = operand.shape[-1]
     dtype = np.complex64 if dtypes.finfo(operand.dtype).bits == 32 else np.complex128
     dtype = dtypes.canonicalize_dtype(dtype)
-    vl = vr = ShapedArray(batch_dims + (n, n), dtype, named_shape=operand.named_shape)
-    w = ShapedArray(batch_dims + (n,), dtype, named_shape=operand.named_shape)
+    vl = vr = operand.update(shape=batch_dims + (n, n), dtype=dtype)
+    w = operand.update(shape=batch_dims + (n,), dtype=dtype)
   else:
     raise NotImplementedError
 
@@ -272,10 +272,9 @@ def eigh_abstract_eval(operand, lower):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    v = ShapedArray(batch_dims + (n, n), operand.dtype,
-                    named_shape=operand.named_shape)
-    w = ShapedArray(batch_dims + (n,), lax_internal._complex_basetype(operand.dtype),
-                    named_shape=operand.named_shape)
+    v = operand.update(shape=batch_dims + (n, n))
+    w = operand.update(shape=batch_dims + (n,),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
   return v, w
@@ -824,8 +823,8 @@ def qr_abstract_eval(operand, full_matrices):
     m = operand.shape[-2]
     n = operand.shape[-1]
     k = m if full_matrices else min(m, n)
-    q = ShapedArray(batch_dims + (m, k), operand.dtype, named_shape=operand.named_shape)
-    r = ShapedArray(batch_dims + (k, n), operand.dtype, named_shape=operand.named_shape)
+    q = operand.update(shape=batch_dims + (m, k))
+    r = operand.update(shape=batch_dims + (k, n))
   else:
     q = operand
     r = operand
@@ -934,13 +933,11 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    s = ShapedArray(batch_dims + (min(m, n),), lax_internal._complex_basetype(operand.dtype),
-                    named_shape=operand.named_shape)
+    s = operand.update(shape=batch_dims + (min(m, n),),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
     if compute_uv:
-      u = ShapedArray(batch_dims + (m, m if full_matrices else min(m, n)), operand.dtype,
-                      named_shape=operand.named_shape)
-      vt = ShapedArray(batch_dims + (n if full_matrices else min(m, n), n), operand.dtype,
-                       named_shape=operand.named_shape)
+      u = operand.update(shape=batch_dims + (m, m if full_matrices else min(m, n)))
+      vt = operand.update(shape=batch_dims + (n if full_matrices else min(m, n), n))
       return s, u, vt
     else:
       return s,

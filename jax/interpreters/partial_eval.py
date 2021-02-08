@@ -1085,6 +1085,7 @@ class DynamicJaxprTrace(core.Trace):
     invars = map(self.getvar, tracers)
     outvars = map(self.getvar, out_tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
+    # maybe assert that all consts are unmapped
     new_mapped_invars = (False,) * len(consts) + params['mapped_invars']
     new_params = dict(params, mapped_invars=new_mapped_invars, call_jaxpr=jaxpr)
     update_params = call_param_updaters.get(map_primitive)

@@ -820,10 +820,18 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     _check_scalar(ans)
     dtype = dtypes.result_type(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    # the default behavior of `grad` is to act elementwise over all named axes
-    # TODO(jekbradbury): allow acting collectively over certain axes instead
-    ans_ct = jax.lax.lax_parallel.maybe_pbroadcast_all(
-        np.ones((), dtype=dtype))
+    # The default behavior of `grad` is to act elementwise over all named axes
+    # in the environment, in order to preserve the invariant that all code
+    # acts elementwise over novel named axes. For this to make sense, the
+    # function being differentiated must be pure over all of these axes. 
+    # We therefore use a seed of the same named shape as the output primal (and
+    # thus also the input primals).
+    # TODO(jekbradbury): edit the above (no longer the same input primals?)
+    # TODO(jekbradbury): allow acting collectively over specified axes instead
+    # TODO(jekbradbury): throw an error on collectives inside non-collective grad
+    ans_ct = np.ones((), dtype=dtype)
+    for axis_name in core.get_aval(ans).named_shape:
+      ans_ct = jax.lax.pbroadcast(ans_ct, axis_name)
     g = vjp_py(ans_ct)
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
@@ -1291,7 +1299,7 @@ def _mapped_axis_size(tree, vals, dims, name):
 @lu.transformation
 def _maybe_pbroadcast_fun(axis_name, *args, **kwargs):
   ans = yield args, kwargs
-  yield tree_map(partial(jax.lax.lax_parallel.maybe_pbroadcast, axis_name=axis_name), ans)
+  yield tree_map(partial(jax._src.lax.parallel.maybe_pbroadcast, axis_name=axis_name), ans)
 
 def pmap(fun: Callable[..., T],
          axis_name: Optional[AxisName] = None, *, in_axes=0,
@@ -1930,6 +1938,9 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
   (DeviceArray(0.5, dtype=float32), DeviceArray(-0.5, dtype=float32))
   """
   def abstractify(x):
+    if hasattr(x, 'named_shape'):
+      return core.ShapedArray(
+          np.shape(x), dtypes.result_type(x), named_shape=x.named_shape)
     return core.ShapedArray(np.shape(x), dtypes.result_type(x))
   primals_flat, in_tree = tree_flatten(primals)
   flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
@@ -1950,7 +1961,8 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
       msg = ("cotangent tree does not match function output, "
              f"expected {out_tree()} but got {out_tree2}")
       raise TypeError(msg)
-    if not all(map(core.typecheck, out_avals, out_cotangents)):
+    if not all(core.aval_compat(aval, core.get_aval(ct))
+               for aval, ct in zip(out_avals, out_cotangents)):
       raise TypeError("cotangent type does not match function output, "
                       f"expected {out_avals} but got {out_cotangents}")
     dummies = [ad.UndefinedPrimal(a) for a in in_avals]
@@ -2131,7 +2143,7 @@ def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]):
     assert all(aval.shape == avals[0].shape and aval.dtype == avals[0].dtype for aval in avals),\
       f"abstract values not compatible: {avals}"
     x_aval = core.raise_to_shaped(avals[0])
-    aval = ShapedArray((len(devices),) + x_aval.shape, x_aval.dtype)
+    aval = x_aval.update(shape=(len(devices),) + x_aval.shape)
     buffers = list(it.chain.from_iterable(xla.device_put(x, d) for x, d in zip(xs, devices)))
     return pxla.ShardedDeviceArray(aval, buffers)
   return tree_multimap(_device_put_sharded, *x)

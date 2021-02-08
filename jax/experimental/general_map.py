@@ -185,5 +185,5 @@ def subst_var_axis_names(v, replaced_name, axis_names, axis_sizes):
   named_shape.update(dict(zip(axis_names, axis_sizes)))
   del named_shape[replaced_name]
   # operate in-place because Var identity is load-bearing
-  v.aval = ShapedArray(v.aval.shape, v.aval.dtype, v.aval.weak_type, named_shape)
+  v.aval = v.aval.update(named_shape=named_shape)
   return v

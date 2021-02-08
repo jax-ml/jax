@@ -364,7 +364,7 @@ class ShardedDeviceArray(xla.DeviceArray):
     # creating pmap-style ShardedDeviceArrays.
     if device_buffers is None:
       device_buffers = sharding_spec
-      sharded_aval = ShapedArray(aval.shape[1:], aval.dtype)
+      sharded_aval = aval.update(shape=aval.shape[1:])
       sharding_spec = _pmap_sharding_spec(aval.shape[0], aval.shape[0],
                                           1, None, sharded_aval, True)
 
@@ -805,13 +805,13 @@ def avals_to_results_handler(axis_name, size, nrep, npart, out_parts, out_avals)
     out_parts = (None,) * len(out_avals)
 
   # TODO(mattjj,skyewm): can probably clean up this logic
-  out_specs = [_pmap_sharding_spec(nrep, size, npart, parts, aval, True)
+  out_specs = [_pmap_sharding_spec(nrep, size, npart, parts, aval, axis_name in aval.named_shape)
               if aval is not core.abstract_unit else None
               for parts, aval in zip(out_parts, out_avals)]
-  out_indices = [spec_to_indices(core.unmapped_aval(axis_name, size, aval).shape, spec)
+  out_indices = [spec_to_indices(core.maybe_unmapped_aval(axis_name, size, aval).shape, spec)
                 if aval is not core.abstract_unit else None
                 for aval, spec in zip(out_avals, out_specs)]  # pytype: disable=attribute-error
-  handlers = [aval_to_result_handler(spec, idcs, core.unmapped_aval(axis_name, size, aval))
+  handlers = [aval_to_result_handler(spec, idcs, core.maybe_unmapped_aval(axis_name, size, aval))
               for spec, idcs, aval in zip(out_specs, out_indices, out_avals)]
 
   def handler(out_bufs):
@@ -859,7 +859,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
   assert nrep == len(devices)
 
   aval = xla.abstractify(val)  # type: ShapedArray
-  replicated_aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
+  replicated_aval = aval.update(shape=(axis_size,) + aval.shape)
   # TODO(skye): figure out how partitioning should work here
   sharding_spec = _pmap_sharding_spec(nrep, axis_size, 1, None, aval, True)
   device_buffers = device_put(val, devices, replicate=True)
@@ -955,7 +955,7 @@ def _pmap_translation_rule(c, axis_env,
     _xla_shard(c, aval, new_env, in_node) if in_node_mapped else in_node
     for aval, in_node, in_node_mapped in zip(in_avals, in_nodes, mapped_invars))
 
-  with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+  with core.extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     sharded_outs = xla.jaxpr_subcomp(
         c, call_jaxpr, backend, new_env, (),
         extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
@@ -1085,7 +1085,7 @@ def _partially_unmapped_aval(axis_name, chunk_size, aval):
     named_shape = dict(aval.named_shape)
     assert axis_name in named_shape
     named_shape[axis_name] //= chunk_size
-    return ShapedArray((chunk_size,) + aval.shape, aval.dtype,
+    return aval.update(shape=(chunk_size,) + aval.shape,
                        named_shape=named_shape)
   else:
     raise TypeError(f"Cannot partially unmap {aval}")
@@ -1254,7 +1254,7 @@ def omnistaging_disabler() -> None:
       return lambda _: bcast_const  # type: ignore
     else:
       if pv is not core.abstract_unit:
-        unsharded_aval = ShapedArray((axis_size,) + pv.shape, pv.dtype)
+        unsharded_aval = pv.update(shape=(axis_size,) + pv.shape)
         sharding_spec = _pmap_sharding_spec(nrep, axis_size, npart, parts, pv,
                                             True)
         indices = spec_to_indices(unsharded_aval.shape, sharding_spec)

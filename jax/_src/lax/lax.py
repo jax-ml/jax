@@ -144,7 +144,6 @@ def nextafter(x1: Array, x2: Array) -> Array:
 
   For the smallest usable (i.e. normal) float, use ``tiny`` of ``jnp.finfo``.
   """
-  x1, x2 = _promote_named_shape(x1, x2)
   return nextafter_p.bind(_brcast(x1, x2), _brcast(x2, x1))
 
 def floor(x: Array) -> Array:
@@ -201,12 +200,10 @@ def cos(x: Array) -> Array:
 def atan2(x: Array, y: Array) -> Array:
   r"""Elementwise arc tangent of two variables:
     :math:`\mathrm{atan}({x \over y})`."""
-  x, y = _promote_named_shape(x, y)
   return atan2_p.bind(x, y)
 
 def betainc(a: Array, b: Array, x: Array) -> Array:
   r"""Elementwise regularized incomplete beta integral."""
-  a, b, x = _promote_named_shape(a, b, x)
   return regularized_incomplete_beta_p.bind(a, b, x)
 
 def lgamma(x: Array) -> Array:
@@ -219,22 +216,18 @@ def digamma(x: Array) -> Array:
 
 def igamma(a: Array, x: Array) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
-  a, x = _promote_named_shape(a, x)
   return igamma_p.bind(a, x)
 
 def igammac(a: Array, x: Array) -> Array:
   r"""Elementwise complementary regularized incomplete gamma function."""
-  a, x = _promote_named_shape(a, x)
   return igammac_p.bind(a, x)
 
 def igamma_grad_a(a: Array, x: Array) -> Array:
   r"""Elementwise derivative of the regularized incomplete gamma function."""
-  a, x = _promote_named_shape(a, x)
   return igamma_grad_a_p.bind(a, x)
 
 def random_gamma_grad(a: Array, x: Array) -> Array:
   r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
-  a, x = _promote_named_shape(a, x)
   return random_gamma_grad_p.bind(a, x)
 
 def bessel_i0e(x: Array) -> Array:
@@ -281,7 +274,6 @@ def complex(x: Array, y: Array) -> Array:
 
   Builds a complex number from real and imaginary parts.
   """
-  x, y = _promote_named_shape(x, y)
   return complex_p.bind(_brcast(x, y), _brcast(y, x))
 
 def conj(x: Array) -> Array:
@@ -294,7 +286,6 @@ def abs(x: Array) -> Array:
 
 def pow(x: Array, y: Array) -> Array:
   r"""Elementwise power: :math:`x^y`."""
-  x, y = _promote_named_shape(x, y)
   return pow_p.bind(x, y)
 
 def integer_pow(x: Array, y: int) -> Array:
@@ -320,17 +311,14 @@ def bitwise_not(x: Array) -> Array:
 
 def bitwise_and(x: Array, y: Array) -> Array:
   r"""Elementwise AND: :math:`x \wedge y`."""
-  x, y = _promote_named_shape(x, y)
   return and_p.bind(x, y)
 
 def bitwise_or(x: Array, y: Array) -> Array:
   r"""Elementwise OR: :math:`x \vee y`."""
-  x, y = _promote_named_shape(x, y)
   return or_p.bind(x, y)
 
 def bitwise_xor(x: Array, y: Array) -> Array:
   r"""Elementwise exclusive OR: :math:`x \oplus y`."""
-  x, y = _promote_named_shape(x, y)
   return xor_p.bind(x, y)
 
 def population_count(x: Array) -> Array:
@@ -339,27 +327,22 @@ def population_count(x: Array) -> Array:
 
 def add(x: Array, y: Array) -> Array:
   r"""Elementwise addition: :math:`x + y`."""
-  x, y = _promote_named_shape(x, y)
   return add_p.bind(x, y)
 
 def sub(x: Array, y: Array) -> Array:
   r"""Elementwise subtraction: :math:`x - y`."""
-  x, y = _promote_named_shape(x, y)
   return sub_p.bind(x, y)
 
 def mul(x: Array, y: Array) -> Array:
   r"""Elementwise multiplication: :math:`x \times y`."""
-  x, y = _promote_named_shape(x, y)
   return mul_p.bind(x, y)
 
 def div(x: Array, y: Array) -> Array:
   r"""Elementwise division: :math:`x \over y`."""
-  x, y = _promote_named_shape(x, y)
   return div_p.bind(x, y)
 
 def rem(x: Array, y: Array) -> Array:
   r"""Elementwise remainder: :math:`x \bmod y`."""
-  x, y = _promote_named_shape(x, y)
   return rem_p.bind(x, y)
 
 def max(x: Array, y: Array) -> Array:
@@ -367,7 +350,6 @@ def max(x: Array, y: Array) -> Array:
 
   For complex numbers, uses a lexicographic comparison on the
   `(real, imaginary)` pairs."""
-  x, y = _promote_named_shape(x, y)
   return max_p.bind(x, y)
 
 def min(x: Array, y: Array) -> Array:
@@ -375,42 +357,34 @@ def min(x: Array, y: Array) -> Array:
 
   For complex numbers, uses a lexicographic comparison on the
   `(real, imaginary)` pairs."""
-  x, y = _promote_named_shape(x, y)
   return min_p.bind(x, y)
 
 def shift_left(x: Array, y: Array) -> Array:
   r"""Elementwise left shift: :math:`x \ll y`."""
-  x, y = _promote_named_shape(x, y)
   return shift_left_p.bind(x, y)
 
 def shift_right_arithmetic(x: Array, y: Array) -> Array:
   r"""Elementwise arithmetic right shift: :math:`x \gg y`."""
-  x, y = _promote_named_shape(x, y)
   return shift_right_arithmetic_p.bind(x, y)
 
 def shift_right_logical(x: Array, y: Array) -> Array:
   r"""Elementwise logical right shift: :math:`x \gg y`."""
-  x, y = _promote_named_shape(x, y)
   return shift_right_logical_p.bind(x, y)
 
 def eq(x: Array, y: Array) -> Array:
   r"""Elementwise equals: :math:`x = y`."""
-  x, y = _promote_named_shape(x, y)
   return eq_p.bind(x, y)
 
 def ne(x: Array, y: Array) -> Array:
   r"""Elementwise not-equals: :math:`x \neq y`."""
-  x, y = _promote_named_shape(x, y)
   return ne_p.bind(x, y)
 
 def ge(x: Array, y: Array) -> Array:
   r"""Elementwise greater-than-or-equals: :math:`x \geq y`."""
-  x, y = _promote_named_shape(x, y)
   return ge_p.bind(x, y)
 
 def gt(x: Array, y: Array) -> Array:
   r"""Elementwise greater-than: :math:`x > y`."""
-  x, y = _promote_named_shape(x, y)
   return gt_p.bind(x, y)
 
 def le(x: Array, y: Array) -> Array:
@@ -419,7 +393,6 @@ def le(x: Array, y: Array) -> Array:
 
 def lt(x: Array, y: Array) -> Array:
   r"""Elementwise less-than: :math:`x < y`."""
-  x, y = _promote_named_shape(x, y)
   return lt_p.bind(x, y)
 
 def convert_element_type(operand: Array, new_dtype: DType) -> Array:
@@ -502,7 +475,6 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
   Returns:
     An array containing the concatenation.
   """
-  operands = _promote_named_shape(*operands)
   return concatenate_p.bind(*operands, dimension=dimension)
 
 Precision = xla_client.PrecisionConfig.Precision
@@ -1394,7 +1366,6 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
     operand : sorted version of the input or inputs.
   """
   if isinstance(operand, Sequence):
-    operand = _promote_named_shape(*operand)
     if len(operand) == 0:
       raise TypeError("Sort requires at least one operand")
     if not (1 <= num_keys <= len(operand)):
@@ -1412,7 +1383,6 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
 def sort_key_val(keys: Array, values: Array, dimension: int = -1,
                  is_stable: bool = True) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
-  keys, values = _promote_named_shape(keys, values)
   dimension = canonicalize_axis(dimension, len(keys.shape))
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
@@ -1973,7 +1943,7 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
   prim.def_impl(partial(xla.apply_primitive, prim))
   prim.def_abstract_eval(partial(
       standard_abstract_eval, prim, shape_rule, dtype_rule,
-      named_shape_rule or strict_named_shape_rule))
+      named_shape_rule or promoting_named_shape_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
   return prim
 
@@ -2892,8 +2862,7 @@ def _conv_general_dilated_masking_rule(
 conv_general_dilated_p = standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
     'conv_general_dilated', partial(_conv_general_dilated_translation_rule,
-                                    expand_complex_convolutions=False),
-    promoting_named_shape_rule)
+                                    expand_complex_convolutions=False))
 
 # TODO(b/161124619, b/161126248): XLA does not support complex convolution on
 # CPU or GPU; on these backends, lower complex convolutions away.
@@ -3125,8 +3094,7 @@ def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general',
-                                   _dot_general_translation_rule,
-                                   promoting_named_shape_rule)
+                                   _dot_general_translation_rule)
 ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
@@ -3671,8 +3639,7 @@ def _select_masking_rule(padded_vals, logical_shapes):
   assert np.array_equal(pred_shape, false_shape)
   return select(*padded_vals)
 
-select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select',
-                              named_shape_rule=promoting_named_shape_rule)
+select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select')
 ad.defjvp(select_p,
           None,
           lambda g, b, x, y: select(b, g, _zeros(g)),
@@ -3777,7 +3744,7 @@ def _slice_masking_rule(
                strides=strides)
 
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
-                             _slice_translation_rule, promoting_named_shape_rule)
+                             _slice_translation_rule)
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 masking.masking_rules[slice_p] = _slice_masking_rule
@@ -3863,7 +3830,7 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
 
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
-    _dynamic_slice_translation_rule, promoting_named_shape_rule)
+    _dynamic_slice_translation_rule)
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp  # TODO
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
@@ -3944,8 +3911,7 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
 
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
-    'dynamic_update_slice', _dynamic_update_slice_translation_rule,
-    promoting_named_shape_rule)
+    'dynamic_update_slice', _dynamic_update_slice_translation_rule)
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
@@ -4190,7 +4156,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    _gather_translation_rule, promoting_named_shape_rule)
+    _gather_translation_rule)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
@@ -4471,7 +4437,7 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
-    _scatter_translation_rule, promoting_named_shape_rule)
+    _scatter_translation_rule)
 ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
@@ -4480,7 +4446,7 @@ batching.primitive_batchers[scatter_add_p] = (
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
-    _scatter_translation_rule, promoting_named_shape_rule)
+    _scatter_translation_rule)
 
 def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
                          indices_are_sorted, unique_indices, **kw):
@@ -4597,14 +4563,14 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
 scatter_min_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
-    _scatter_translation_rule, promoting_named_shape_rule)
+    _scatter_translation_rule)
 batching.primitive_batchers[scatter_min_p] = (
   partial(_scatter_batching_rule, scatter_min))
 ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 
 scatter_max_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
-    _scatter_translation_rule, promoting_named_shape_rule)
+    _scatter_translation_rule)
 batching.primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max))
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
@@ -4692,7 +4658,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
 scatter_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter',
-    _scatter_translation_rule, promoting_named_shape_rule)
+    _scatter_translation_rule)
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
@@ -4743,7 +4709,7 @@ def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
   return bind(masked_val, axes=axes)
 
 reduce_p = standard_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
-                              _reduce_translation_rule, promoting_named_shape_rule)
+                              _reduce_translation_rule)
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 
@@ -5011,7 +4977,7 @@ def _generic_reduce_window_batch_rule(
 
 reduce_window_p = standard_primitive(
     _reduce_window_shape_rule, _input_dtype, 'reduce_window',
-    _reduce_window_translation_rule, promoting_named_shape_rule)
+    _reduce_window_translation_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 
@@ -5073,7 +5039,7 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
 
 reduce_window_sum_p = standard_primitive(
     _reduce_window_sum_shape_rule, _input_dtype, 'reduce_window_sum',
-    _reduce_window_sum_translation_rule, promoting_named_shape_rule)
+    _reduce_window_sum_translation_rule)
 ad.deflinear2(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
 batching.primitive_batchers[reduce_window_sum_p] = partial(
   _reduce_window_batch_rule, _reduce_window_sum)
@@ -5145,7 +5111,7 @@ _reduce_window_max_translation_rule = partial(
     _reduce_window_chooser_translation_rule, max_p, _get_max_identity)
 reduce_window_max_p = standard_primitive(
     _common_reduce_window_shape_rule, _input_dtype, 'reduce_window_max',
-    _reduce_window_max_translation_rule, promoting_named_shape_rule)
+    _reduce_window_max_translation_rule)
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule, max_p))
 batching.primitive_batchers[reduce_window_max_p] = partial(
   _reduce_window_batch_rule, _reduce_window_max)
@@ -5154,7 +5120,7 @@ _reduce_window_min_translation_rule = partial(
     _reduce_window_chooser_translation_rule, min_p, _get_min_identity)
 reduce_window_min_p = standard_primitive(
     _common_reduce_window_shape_rule, _input_dtype, 'reduce_window_min',
-    _reduce_window_min_translation_rule, promoting_named_shape_rule)
+    _reduce_window_min_translation_rule)
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule, min_p))
 
 _reduce_window_min_batch_rule = partial(_reduce_window_batch_rule,
@@ -5185,7 +5151,7 @@ def _select_and_scatter_translation(
 
 select_and_scatter_p = standard_primitive(
     _select_and_scatter_shape_rule, _input_dtype, 'select_and_scatter',
-    _select_and_scatter_translation, promoting_named_shape_rule)
+    _select_and_scatter_translation)
 
 
 def _select_and_scatter_add_shape_rule(
@@ -5250,7 +5216,7 @@ def _select_and_scatter_add_batch_rule(
 
 select_and_scatter_add_p = standard_primitive(
     _select_and_scatter_add_shape_rule, _input_dtype, 'select_and_scatter_add',
-    _select_and_scatter_add_translation, promoting_named_shape_rule)
+    _select_and_scatter_add_translation)
 ad.primitive_transposes[select_and_scatter_add_p] = \
     _select_and_scatter_add_transpose
 ad.primitive_jvps[select_and_scatter_add_p] = _select_and_scatter_add_jvp
@@ -5439,7 +5405,7 @@ def _select_and_gather_add_batching_rule(
 
 select_and_gather_add_p = standard_primitive(
     _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
-    _select_and_gather_add_translation, promoting_named_shape_rule)
+    _select_and_gather_add_translation)
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
   _select_and_gather_add_transpose
@@ -5574,7 +5540,7 @@ def _top_k_abstract_eval(operand, *, k):
     msg = "k argument to top_k must be no larger than minor dimension; {} vs {}"
     raise ValueError(msg.format(k, shape))
   shape[-1] = k
-  return (ShapedArray(shape, operand.dtype, named_shape=operand.named_shape),
+  return (operand.update(shape=shape),
           ShapedArray(shape, np.dtype(np.int32), named_shape=operand.named_shape))
 
 def _top_k_jvp(primals, tangents, *, k):
@@ -5761,7 +5727,6 @@ def rng_uniform(a, b, shape):
 
   This API may be removed at any time.
   """
-  a, b = _promote_named_shape(a, b)
   return rng_uniform_p.bind(a, b, shape=tuple(shape))
 
 def _rng_uniform_abstract_eval(a, b, *, shape):

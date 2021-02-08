@@ -233,14 +233,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]).")):
       lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
-    with  self.assertRaisesRegex(TypeError,
+    with self.assertRaisesRegex(TypeError,
         re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])].")):
       lax.while_loop(lambda c: np.float32(1.), lambda c: c, np.float32(0.))
     with self.assertRaisesRegex(TypeError,
         re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
     with self.assertRaisesWithLiteralMatch(TypeError,
-        ("body_fun output and input must have identical types, got\n"
+        ("types joined due to control flow must be compatible, got\n"
          "ShapedArray(bool[], weak_type=True)\n"
          "and\n"
          "ShapedArray(float32[]).")):
@@ -418,6 +418,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     body_fun = lambda carry: (carry[0] + 1, carry[1] + 1)
     f = lambda x: lax.while_loop(cond_fun, body_fun, (0, x))
     jaxpr = api.make_jaxpr(api.vmap(f))(jnp.arange(3))
+    # this should be eqns[0] when while_loop predicates aren't excessively batched
     eqn = jaxpr.jaxpr.eqns[1]
     self.assertIs(eqn.primitive, lax.while_p)
     self.assertEqual(eqn.params['cond_jaxpr'].in_avals[0].shape, ())
@@ -1544,7 +1545,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.scan(lambda c, x: (0, x), None, a)
     with self.assertRaisesWithLiteralMatch(
         TypeError,
-        "scan carry output and input must have identical types, got\n"
+        "types joined due to control flow must be compatible, got\n"
         "ShapedArray(int32[])\n"
         "and\n"
         "ShapedArray(float32[])."):

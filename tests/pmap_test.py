@@ -413,21 +413,21 @@ class PmapTest(jtu.JaxTestCase):
 
     @partial(pmap, axis_name='i')
     def test_fun(x):
-      y = jnp.sum(jnp.sin(x))
+      y = jnp.sum(x)
 
       @partial(pmap, axis_name='j')
       def g(z):
-        return 3. * jnp.exp(jnp.sin(x).sum() * jnp.cos(y) * jnp.tan(z))
+        return jnp.exp(jnp.sin(y) * jnp.sin(z))
 
       return grad(lambda w: jnp.sum(g(w)))(x)
 
     @vmap
     def baseline_fun(x):
-      y = jnp.sum(jnp.sin(x))
+      y = jnp.sum(x)
 
       @vmap
       def g(z):
-        return 3. * jnp.exp(jnp.sin(x).sum() * jnp.cos(y) * jnp.tan(z))
+        return jnp.exp(jnp.sin(y) * jnp.sin(z))
 
       return grad(lambda w: jnp.sum(g(w)))(x)
 

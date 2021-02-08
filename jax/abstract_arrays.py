@@ -16,6 +16,7 @@ from functools import partial
 
 import numpy as np
 
+import jax
 from . import ad_util
 from . import core
 from . import dtypes
@@ -54,8 +55,10 @@ for t in array_types:
 def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
   if aval.dtype == dtypes.float0:
-    return np.zeros(aval.shape, dtypes.float0)
-  return np.broadcast_to(np.array(0, aval.dtype), aval.shape)
+    val = np.zeros(aval.shape, dtypes.float0)
+  else:
+    val = np.broadcast_to(np.array(0, aval.dtype), aval.shape)
+  return jax.lax.pbroadcast(val, tuple(aval.named_shape.keys()))
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 

@@ -17,6 +17,7 @@ import functools
 import itertools as it
 from typing import Any, Callable, Dict, Set, List
 
+import jax
 from . import partial_eval as pe
 from ..config import config
 from .. import core
@@ -163,16 +164,37 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
   if all(type(ct) is Zero for ct in cotangents_in):
     return map(lambda v: Zero(v.aval), jaxpr.invars)
 
+  # TODO: maybe add something along these lines later?
+  # all_primal_names = {name for var in jaxpr.invars + jaxpr.constvars
+  #                     for name in (var.aval.named_shape if isinstance(
+  #                         var.aval, core.ShapedArray) else ())}
+  # for eqn in jaxpr.eqns:
+  #   # TODO: this should be a more general "what names is this primitive impure over" 
+  #   if 'axis_name' in eqn.params:
+  #     names = eqn.params['axis_name']
+  #     if not isinstance(names, (list, tuple)):
+  #       names = (names,)
+  #     all_primal_names.update(names)
+
+  ct_in_names = {name for ct in cotangents_in for name in
+                 ((ct.aval if isinstance(ct, Zero) else get_aval(ct)).named_shape
+                  if isinstance(ct.aval if isinstance(ct, Zero) else get_aval(ct),
+                                core.ShapedArray)
+                  else ())}
+
   def write_cotangent(v, ct):
     # assert v not in primal_env
     if (ct is not None and type(v) is not Literal and
         type(ct) is not Zero and ct is not Zero):
+      if isinstance(v.aval, core.ShapedArray) and core.get_aval(ct) is not core.abstract_unit:
+        extra_names = {name for name in core.get_aval(ct).named_shape
+                       if name not in v.aval.named_shape and name not in ct_in_names}
+        if extra_names:
+          ct = jax.lax.psum(ct, tuple(extra_names))
       ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
-      if not core.skip_checks:
+      if not core.skip_checks and v.aval is not core.abstract_unit:
         ct_aval = core.get_aval(ct_env[v])
-        # TODO: promote named axes in lattice join
-        # TODO: what tests fail when we don't lattice join?
-        assert v.aval.strip_weak_type() == core.lattice_join(v.aval, ct_aval).strip_weak_type(), (v.aval, ct_aval)
+        assert core.aval_compat(v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.get(v, Zero(v.aval))
@@ -208,6 +230,12 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
   for eqn, to_drop in zip(jaxpr.eqns[::-1], drop_cts[::-1]):
     # FIXME: Some invars correspond to tangents
     invals = map(read_primal, eqn.invars)
+    # cts_in_extra_names = {}
+    # for v in eqn.outvars:
+    #   if isinstance(v.aval, core.ShapedArray):
+    #     cts_in_extra_names.update(
+    #         name for name in get_aval(read_cotangent(v)).named_shape
+    #         if name not in v.aval.named_shape)
     if eqn.primitive.multiple_results:
       cts_in = map(read_cotangent, eqn.outvars)
     else:
@@ -221,6 +249,14 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
       else:
         cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals,
                                                          **eqn.params)
+    # def maybe_psum_cotangent(ct, v):
+    #   if ct is not None and isinstance(v.aval, core.ShapedArray):
+    #     names_to_sum = {name for name in core.get_aval(ct).named_shape
+    #                     if name not in v.aval.named_shape
+    #                     and name not in cts_in_extra_names}
+    #     ct = jax.lax.psum(ct, tuple(names_to_sum))
+    #   return ct
+    # cts_out = map(maybe_psum_cotangent, cts_out, eqn.invars)
     cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
     # FIXME: Some invars correspond to primals!
     map(write_cotangent, eqn.invars, cts_out)
@@ -382,6 +418,7 @@ def _primal_tangent_shapes_match(primal, tangent):
     assert primal_aval.shape == tangent_aval.shape, (primal_aval.shape, tangent_aval.shape)
     expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
     assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
+    # assert set(primal_aval.named_shape) <= set(tangent_aval.named_shape)
 
 call_param_updaters: Dict[core.Primitive, Callable] = {}
 call_transpose_param_updaters: Dict[core.Primitive, Callable] = {}
@@ -555,9 +592,20 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
 primitive_transposes[pe.remat_call_p] = remat_transpose
 
 
+@lu.transformation
+def maybe_psum_cts(axis_name, mapped, *args):
+  cts = yield args, {}
+  cts = [ct if m or isinstance(ct, Zero)
+         or not isinstance(core.get_aval(ct), core.ShapedArray)
+         or axis_name not in core.get_aval(ct).named_shape
+         else jax._src.lax.parallel.psum(ct, axis_name=axis_name)
+         for m, ct in zip(mapped, cts)]
+  yield cts
+
 def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
+  fun = maybe_psum_cts(fun, params['axis_name'], params['mapped_invars'])
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   mapped_outvars = [isinstance(outvar.aval, core.ShapedArray)
                     and params['axis_name'] in outvar.aval.named_shape
@@ -573,15 +621,16 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
     new_params = update_params(new_params, map(is_undefined_primal, args),
                                [type(x) is not Zero for x in ct])
   out_flat = primitive.bind(fun, *all_args, **new_params)
+  # TODO(jekbradbury): unmap the avals inside the Zeros in out_tree
   arg_cts = tree_unflatten(out_tree(), out_flat)
   return arg_cts
 
 
-def jvp_jaxpr(jaxpr, nonzeros, instantiate):
-  assert len(jaxpr.in_avals) == len(nonzeros)
+def jvp_jaxpr(jaxpr, nonzeros, instantiate, tangent_avals):
+  assert len(jaxpr.in_avals) == len(nonzeros) == len(tangent_avals)
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
-  tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
+  tangent_avals = [aval for aval, nz in zip(tangent_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
   jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
   return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()

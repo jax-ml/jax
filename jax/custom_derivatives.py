@@ -634,9 +634,9 @@ def _custom_vjp_call_jaxpr_vmap(
   fwd_in_dims = [0 if b else not_mapped for b in in_batched]
   fwd_out_dims = lambda: out_dims2[0]
   # TODO: Support collectives in custom_vjp?
-  # TODO: named axes in custom_vjp
+  # TODO: think through named axes in custom_vjp; understand sum_match
   batched_bwd = batching.batch_fun(bwd, fwd_out_dims, fwd_in_dims,
-                                   axis_name='__unused_axis_name', sum_match=True)
+                                   axis_name=axis_name, sum_match=True)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
