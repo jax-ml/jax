@@ -295,17 +295,22 @@ def ceil_of_ratio(x, y):
 
 @curry
 def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
+  """
+  Like functools.wraps, but with finer-grained control over the name and docstring
+  of the resulting function.
+  """
   try:
-    fun.__name__ = namestr.format(fun=get_name(wrapped))
-    fun.__module__ = get_module(wrapped)
-    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+    name = getattr(wrapped, "__name__", "<unnamed function>")
+    doc = getattr(wrapped, "__doc__", "") or ""
+    fun.__dict__.update(getattr(wrapped, "__dict__", {}))
+    fun.__annotations__ = getattr(wrapped, "__annotations__", {})
+    fun.__name__ = namestr.format(fun=name)
+    fun.__module__ = getattr(wrapped, "__module__", "<unknown module>")
+    fun.__doc__ = docstr.format(fun=name, doc=doc, **kwargs)
+    fun.__qualname__ = getattr(wrapped, "__qualname__", fun.__name__)
     fun.__wrapped__ = wrapped
   finally:
     return fun
-
-def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
-def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
-def get_doc(fun): return getattr(fun, "__doc__", "")
 
 # NOTE: Ideally we would annotate both the argument and return type as NoReturn
 #       but it seems like pytype doesn't support that...
