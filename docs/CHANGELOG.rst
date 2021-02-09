@@ -28,6 +28,13 @@ jax 0.2.10 (Unreleased)
 
 * Breaking changes:
 
+  * JAX's promotion rules were adjusted to make promotion more consistent and
+    invariant to JIT. In particular, binary operations can now result in weakly-typed
+    values when appropriate. The main user-visible effect of the change is that
+    some operations result in outputs of different precision than before; for
+    example the expression ``jnp.bfloat16(1) + 0.1 * jnp.arange(10)``
+    previously returned a `float64` array, and now returns a `bfloat16` array.
+    JAX's type promotion behavior is described at :ref:`type-promotion`.
   * :func:`jax.numpy.linspace` now computes the floor of integer values, i.e.,
     rounding towards -inf rather than 0. This change was made to match NumPy
     1.20.0.

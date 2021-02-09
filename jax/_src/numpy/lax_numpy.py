@@ -272,15 +272,21 @@ def _promote_dtypes(*args):
   if len(args) < 2:
     return args
   else:
-    to_dtype = result_type(*args)
-    return [lax.convert_element_type(x, to_dtype) for x in args]
+    to_dtype_raw = dtypes._result_type_raw(*args)
+    weak_type = to_dtype_raw in set(dtypes._weak_types)
+    to_dtype = dtypes.canonicalize_dtype(to_dtype_raw)
+    return [lax.convert_element_type(x, to_dtype, weak_type) for x in args]
 
 def _promote_dtypes_inexact(*args):
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
-  to_dtype = _to_inexact_dtype(result_type(*args))
-  return [lax.convert_element_type(x, to_dtype) for x in args]
+  to_dtype_raw = dtypes._result_type_raw(*args)
+  to_dtype = dtypes.canonicalize_dtype(to_dtype_raw)
+  to_dtype_inexact = _to_inexact_dtype(to_dtype)
+  weak_type = (to_dtype == to_dtype_inexact
+               and to_dtype_raw in set(dtypes._weak_types))
+  return [lax.convert_element_type(x, to_dtype_inexact, weak_type) for x in args]
 
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
@@ -353,6 +359,8 @@ def issubdtype(arg1, arg2):
 
 @_wraps(np.isscalar)
 def isscalar(element):
+  if hasattr(element, '__jax_array__'):
+    element = element.__jax_array__()
   return dtypes.is_python_scalar(element) or np.isscalar(element)
 
 iterable = np.iterable
@@ -2828,6 +2836,8 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
   lax._check_user_dtype_supported(dtype, "array")
+
+  weak_type = dtype is None and dtypes.is_weakly_typed(object)
   dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
   if _can_call_numpy_array(object):
@@ -2835,13 +2845,13 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
-    out = _device_put_raw(object)
+    out = _device_put_raw(object, weak_type=weak_type)
     if dtype: assert _dtype(out) == dtype
   elif isinstance(object, (DeviceArray, core.Tracer)):
     if isinstance(object, DeviceArray) and copy:
       # We perform a copy by bouncing back to the host
       # TODO(phawkins): add a device runtime function to copy a buffer
-      out = _device_put_raw(_np_asarray(object))
+      out = _device_put_raw(_np_asarray(object), weak_type=weak_type)
     else:
       out = object
   elif isinstance(object, (list, tuple)):
@@ -2859,8 +2869,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
-  if dtype and _dtype(out) != dtype:
-    out = lax.convert_element_type(out, dtype)
+  out = lax.convert_element_type(out, dtype, weak_type=weak_type)
 
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))

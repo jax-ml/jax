@@ -208,8 +208,10 @@ For example:
 ...
 >>> print(make_jaxpr(one_of_three)(1, 5.))
 { lambda  ; a b.
-  let c = clamp 0 a 2
-      d = cond[ branches=( { lambda  ; a.
+  let c = convert_element_type[ new_dtype=int32
+                                weak_type=False ] a
+      d = clamp 0 c 2
+      e = cond[ branches=( { lambda  ; a.
                              let b = add a 1.0
                              in (b,) }
                            { lambda  ; a.
@@ -218,8 +220,8 @@ For example:
                            { lambda  ; a.
                              let b = add a 3.0
                              in (b,) } )
-                linear=(False,) ] c b
-  in (d,) }
+                linear=(False,) ] d b
+  in (e,) }
 
 The cond primitive has a number of parameters:
 
@@ -248,7 +250,8 @@ Another example, using :py:func:`lax.cond`:
 >>> print(make_jaxpr(func7)(5.))
 { lambda  ; a.
   let b = ge a 0.0
-      c = convert_element_type[ new_dtype=int32 ] b
+      c = convert_element_type[ new_dtype=int32
+                                weak_type=False ] b
       d = cond[ branches=( { lambda  ; a.
                              let b = sub a 3.0
                              in (b,) }
@@ -278,16 +281,20 @@ contains a constant ``jnp.ones(1)`` that is hoisted as a `constvar`
 >>> print(make_jaxpr(func8)(5., (jnp.zeros(1), 2.)))
 { lambda a ; b c d.
   let e = ge b 0.0
-      f = convert_element_type[ new_dtype=int32 ] e
+      f = convert_element_type[ new_dtype=int32
+                                weak_type=False ] e
       g = cond[ branches=( { lambda  ; a b c.
-                             let d = convert_element_type[ new_dtype=float32 ] a
+                             let d = convert_element_type[ new_dtype=float32
+                                                           weak_type=True ] a
                                  e = add d c
                              in (e,) }
                            { lambda  ; f_ a b.
-                             let
+                             let 
                              in (a,) } )
                 linear=(False, False, False) ] f a c d
   in (g,) }
+
+
 
 
 While
@@ -368,9 +375,13 @@ For the example consider the function ``func11`` below
                             shape=(16,) ] 1.0
       d e = scan[ jaxpr={ lambda  ; a b c d.
                           let e = mul c d
-                              f = add b e
-                              g = add f a
-                          in (g, b) }
+                              f = convert_element_type[ new_dtype=float32
+                                                        weak_type=False ] b
+                              g = add f e
+                              h = convert_element_type[ new_dtype=float32
+                                                        weak_type=False ] a
+                              i = add g h
+                          in (i, b) }
                   length=16
                   linear=(False, False, False, False)
                   num_carry=1
@@ -411,14 +422,20 @@ computation should run. For example
                     call_jaxpr={ lambda  ; a b.
                                  let c = broadcast_in_dim[ broadcast_dimensions=(  )
                                                            shape=(1,) ] 1.0
-                                     d = mul a c
-                                     e = add b d
-                                 in (e,) }
+                                     d = convert_element_type[ new_dtype=float32
+                                                               weak_type=False ] a
+                                     e = mul d c
+                                     f = convert_element_type[ new_dtype=float32
+                                                               weak_type=False ] b
+                                     g = add f e
+                                 in (g,) }
                     device=None
                     donated_invars=(False, False)
                     name=inner ] a b
-      d = add a c
-  in (d,) }
+      d = convert_element_type[ new_dtype=float32
+                                weak_type=False ] a
+      e = add d c
+  in (e,) }
 
 
 XLA_pmap
@@ -441,14 +458,16 @@ captured using the ``xla_pmap`` primitive. Consider this example
                     axis_size=1
                     backend=None
                     call_jaxpr={ lambda  ; a b.
-                                 let c = add b a
-                                     d = broadcast_in_dim[ broadcast_dimensions=(  )
+                                 let c = convert_element_type[ new_dtype=float32
+                                                               weak_type=False ] a
+                                     d = add b c
+                                     e = broadcast_in_dim[ broadcast_dimensions=(  )
                                                            shape=(1,) ] 1.0
-                                     e = add c d
-                                     f = psum[ axes=('rows',)
+                                     f = add d e
+                                     g = psum[ axes=('rows',)
                                                axis_index_groups=None ] b
-                                     g = div e f
-                                 in (g,) }
+                                     h = div f g
+                                 in (h,) }
                     devices=None
                     donated_invars=(False, False)
                     global_arg_shapes=(None,)
