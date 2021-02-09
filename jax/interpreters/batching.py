@@ -153,7 +153,7 @@ class BatchTrace(Trace):
     if all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
     if (primitive in collective_rules and
-          _main_trace_for_axis_names(self.main, core.used_axis_names(primitive, params))):
+        _main_trace_for_axis_names(self.main, core.used_axis_names(primitive, params))):
       frame = core.axis_frame(self.axis_name)
       val_out, dim_out = collective_rules[primitive](frame, vals_in, dims_in, **params)
     else:
