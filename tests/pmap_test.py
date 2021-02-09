@@ -33,6 +33,7 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import tree_util
 from jax import lax
+from jax._src.lax import parallel
 from jax import random
 from jax.core import ShapedArray
 from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
@@ -1652,6 +1653,29 @@ class PmapTest(jtu.JaxTestCase):
     y = jnp.arange(num_devices * 5).reshape(num_devices, 5)
     z = pmap(f, axis_name='i', out_axes=None)(x, y)
     self.assertAllClose(z, jnp.dot(x.T, y))
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_shape={}_axis={}_collective={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          axis, collective.__name__.replace(" ", "")),
+       "shape": shape, "dtype": dtype, "axis": axis,
+       "collective": collective, "bulk_op": bulk_op}
+      for collective, bulk_op in [(parallel.pargmax, jnp.argmax),
+                                  (parallel.pargmin, jnp.argmin)]
+      for dtype in [np.float32, np.int32]
+      for shape in [(4,), (4, 2)]
+      for axis in range(len(shape))
+  )
+  def testArgAllReduce(self, shape, dtype, axis, collective, bulk_op):
+    if not config.omnistaging_enabled:
+      self.skipTest("test requires omnistaging")
+
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    ans = pmap(lambda x: collective(x, 'i'), in_axes=axis, out_axes=None,
+               axis_name='i')(x)
+    expected = bulk_op(x, axis=axis)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):
