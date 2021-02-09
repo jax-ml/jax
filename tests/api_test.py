@@ -1222,6 +1222,17 @@ class APITest(jtu.JaxTestCase):
 
     self.assertEqual(out_shape.shape, (3, 5))
 
+  def test_eval_shape_duck_typing2(self):
+    # https://github.com/google/jax/issues/5683
+    class EasyDict(dict):
+      def __init__(self, *args, **kwargs):
+          super().__init__(*args, **kwargs)
+          self.__dict__ = self
+
+    x = EasyDict(shape=(3,), dtype=np.dtype('float32'))
+    out_shape = api.eval_shape(lambda x: x, x)  # doesn't crash
+    self.assertEqual(out_shape.shape, (3,))
+
   def test_issue_871(self):
     T = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
     x = jnp.array([1, 2, 3])

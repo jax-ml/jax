@@ -324,7 +324,9 @@ def dtype(x):
 def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
    # TODO(jakevdp): propagate weak_type to the result.
-  if len(args) < 2:
+  if len(args) == 0:
+    raise ValueError("at least one array or dtype is required")
+  if len(args) == 1:
     return canonicalize_dtype(dtype(args[0]))
   # TODO(jakevdp): propagate weak_type to the result when necessary.
   return canonicalize_dtype(_least_upper_bound(*{_jax_type(arg) for arg in args}))

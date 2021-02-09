@@ -2318,8 +2318,14 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
+  def dtype(x):
+    try:
+      return dtypes.result_type(x)
+    except ValueError:
+      return dtypes.result_type(getattr(x, 'dtype'))
+
   def abstractify(x):
-    return ShapedArray(np.shape(x), dtypes.result_type(x))
+    return ShapedArray(np.shape(x), dtype(x))
   args_flat, in_tree = tree_flatten((args, kwargs))
   wrapped_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   out = pe.abstract_eval_fun(wrapped_fun.call_wrapped,
