@@ -1994,7 +1994,7 @@ alltrue = all
 sometrue = any
 
 def _axis_size(a, axis):
-  if not isinstance(axis, collections.abc.Sequence):
+  if not isinstance(axis, (tuple, list)):
     axis = (axis,)
   size = 1
   a_shape = shape(a)

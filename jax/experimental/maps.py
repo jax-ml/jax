@@ -367,15 +367,15 @@ def xmap(fun: Callable,
   while named axes are just a convenient way to achieve batching. While this
   might seem like a silly example at first, it might turn out to be useful in
   practice, since with conjuction with ``axis_resources`` this makes it possible
-  to implement a distributed matrix-multiplication in just a few lines of code:
+  to implement a distributed matrix-multiplication in just a few lines of code::
 
-  >>> devices = np.array(jax.devices())[:4].reshape((2, 2))
-  >>> with mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
-  ...   distributed_out = xmap(
-  ...     jnp.vdot,
-  ...     in_axes=({0: 'left', 1: 'right'}),
-  ...     out_axes=['left', 'right', ...],
-  ...     axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
+    devices = np.array(jax.devices())[:4].reshape((2, 2))
+    with mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
+      distributed_out = xmap(
+        jnp.vdot,
+        in_axes=({0: 'left'}, {1: 'right'}),
+        out_axes=['left', 'right', ...],
+        axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
 
   Still, the above examples are quite simple. After all, the xmapped
   computation was a simple NumPy function that didn't use the axis names at all!
@@ -384,8 +384,9 @@ def xmap(fun: Callable,
     def regression_loss(x, y, w, b):
       # Contract over in_features. Batch and out_features are present in
       # both inputs and output, so they don't need to be mentioned
-      y_pred = jnp.einsum('{in_features},{in_features}->{}') + b
-      return jnp.mean((y - y_pred) ** 2, axis='batch')
+      y_pred = jnp.einsum('{in_features},{in_features}->{}', x, w) + b
+      error = jnp.sum((y - y_pred) ** 2, axis='out_features')
+      return jnp.mean(error, axis='batch')
 
     xmap(regression_loss,
          in_axes=(['batch', 'in_features', ...],
