@@ -105,7 +105,8 @@ class NdimageTest(jtu.JaxTestCase):
 
   def testMapCoordinatesErrors(self):
     x = np.arange(5.0)
-    c = [np.linspace(0, 5, num=3)]
+    _c = np.linspace(0, 5, num=3)
+    c = [_c]
     with self.assertRaisesRegex(NotImplementedError, 'requires order<=1'):
       lsp_ndimage.map_coordinates(x, c, order=2)
     with self.assertRaisesRegex(
@@ -113,6 +114,8 @@ class NdimageTest(jtu.JaxTestCase):
       lsp_ndimage.map_coordinates(x, c, order=1, mode='reflect')
     with self.assertRaisesRegex(ValueError, 'sequence of length'):
       lsp_ndimage.map_coordinates(x, [c, c], order=1)
+    with self.assertRaisesRegex(RuntimeError, 'coordinates must have shape'):
+      lsp_ndimage.map_coordinates(x, _c, order=1)
 
   def testMapCoordinateDocstring(self):
     self.assertIn("Only nearest neighbor",

@@ -58,9 +58,12 @@ def _linear_indices_and_weights(coordinate):
 @functools.partial(api.jit, static_argnums=(2, 3, 4))
 def _map_coordinates(input, coordinates, order, mode, cval):
   input = jnp.asarray(input)
-  coordinates = [jnp.asarray(c) for c in coordinates]
+  coordinates = jnp.asarray(coordinates)
   cval = jnp.asarray(cval, input.dtype)
 
+  if len(coordinates.shape[1:]) < 1:
+    raise RuntimeError('coordinates must have '
+                       'shape=(input.ndim, <num mapped coordinates>)')
   if len(coordinates) != input.ndim:
     raise ValueError('coordinates must be a sequence of length input.ndim, but '
                      '{} != {}'.format(len(coordinates), input.ndim))
