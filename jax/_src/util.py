@@ -284,10 +284,15 @@ def canonicalize_axis(axis, num_dims) -> int:
 def moveaxis(x, src, dst):
   if src == dst:
     return x
-  src = canonicalize_axis(src, x.ndim)
-  dst = canonicalize_axis(dst, x.ndim)
-  perm = [i for i in range(np.ndim(x)) if i != src]
-  perm.insert(dst, src)
+  if isinstance(src, int):
+    src = (src,)
+  if isinstance(dst, int):
+    dst = (dst,)
+  src = [canonicalize_axis(a, x.ndim) for a in src]
+  dst = [canonicalize_axis(a, x.ndim) for a in dst]
+  perm = [i for i in range(np.ndim(x)) if i not in src]
+  for d, s in sorted(zip(dst, src)):
+    perm.insert(d, s)
   return x.transpose(perm)
 
 def ceil_of_ratio(x, y):
@@ -324,6 +329,10 @@ def tuple_insert(t, idx, val):
 def tuple_delete(t, idx):
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
+
+def tuple_replace(t, idx, val):
+  assert 0 <= idx < len(t), (idx, len(t))
+  return t[:idx] + (val,) + t[idx:]
 
 # TODO(mattjj): replace with dataclass when Python 2 support is removed
 def taggedtuple(name, fields) -> Callable[..., Any]:

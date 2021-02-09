@@ -838,7 +838,7 @@ tf_not_yet_impl = [
   # Not high priority?
   "after_all", "all_to_all", "create_token",
   "infeed", "outfeed", "pmax_p",
-  "pmin", "ppermute", "psum", "pmax",
+  "pmin", "ppermute", "psum", "pmax", "pgather",
   "axis_index", "pdot", "all_gather",
 
   "xla_pmap",
