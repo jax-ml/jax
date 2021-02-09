@@ -40,7 +40,7 @@ jax 0.2.10 (Unreleased)
     In general, `jax.numpy` functions should be used with scalars or array arguments.
 
 jaxlib 0.1.60 (Febuary 3 2021)
---------------------------
+------------------------------
 
 * Bug fixes:
 
