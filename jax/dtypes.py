@@ -322,10 +322,12 @@ def dtype(x):
   return np.result_type(x)
 
 def _result_type_raw(*args):
-  if len(args) < 2:
+  if len(args) == 1:
     return _jax_type(args[0])
   return _least_upper_bound(*{_jax_type(arg) for arg in args})
 
 def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
+  if len(args) == 0:
+    raise ValueError("at least one array or dtype is required")
   return canonicalize_dtype(_result_type_raw(*args))
