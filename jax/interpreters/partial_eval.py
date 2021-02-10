@@ -748,7 +748,7 @@ def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
   return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
 
 
-remat_call_p = core.CallPrimitive('remat_call')
+remat_call_p: core.Primitive = core.CallPrimitive('remat_call')
 remat_call = remat_call_p.bind
 remat_call_p.def_impl(core.call_impl)
 

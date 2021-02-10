@@ -235,7 +235,7 @@ def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
 # TODO(mattjj): remove the Python-side registry when the C++-side registry is
 # sufficiently queryable that we can express _replace_nones. That may mean once
 # we have a flatten_one function.
-_RegistryEntry = collections.namedtuple("RegistryEntry", ["to_iter", "from_iter"])
+_RegistryEntry = collections.namedtuple("_RegistryEntry", ["to_iter", "from_iter"])
 _registry = {
     tuple: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: tuple(xs)),
     list: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: list(xs)),

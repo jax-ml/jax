@@ -82,7 +82,7 @@ def canonicalize_dtype(dtype):
 
 
 # Default dtypes corresponding to Python scalars.
-python_scalar_dtypes = {
+python_scalar_dtypes : dict = {
   bool: np.dtype(bool_),
   int: np.dtype(int_),
   float: np.dtype(float_),
