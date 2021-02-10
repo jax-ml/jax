@@ -964,22 +964,19 @@ class PDotTests(XMapTestCase):
     x = rng.randn(3, 4)
     y = rng.randn(4, 5)
 
-    out = xmap(partial(jnp.einsum, '{i,j},{j,k}->{i,k}'),
-               in_axes=(['i', 'j'], ['j', 'k']),
-               out_axes=['i', 'k'])(x, y)
-    expected = np.einsum('ij,jk->ik', x, y)
-    tol = 1e-1 if jtu.device_under_test() == "tpu" else None
-    self.assertAllClose(out, expected, check_dtypes=True,
-                        atol=tol, rtol=tol)
-
-    # order of named axes in the spec doesn't matter!
-    out = xmap(partial(jnp.einsum, '{i,j},{k,j}->{k,i}'),
-               in_axes=(['i', 'j'], ['j', 'k']),
-               out_axes=['i', 'k'])(x, y)
-    expected = np.einsum('ij,jk->ik', x, y)
-    tol = 1e-1 if jtu.device_under_test() == "tpu" else None
-    self.assertAllClose(out, expected, check_dtypes=True,
-                        atol=tol, rtol=tol)
+    def check(spec):
+      out = xmap(partial(jnp.einsum, spec),
+                 in_axes=(['i', 'j'], ['j', 'k']),
+                 out_axes=['i', 'k'])(x, y)
+      expected = np.einsum('ij,jk->ik', x, y)
+      tol = 1e-1 if jtu.device_under_test() == "tpu" else None
+      self.assertAllClose(out, expected, check_dtypes=True,
+                          atol=tol, rtol=tol)
+    check('{i,j},{j,k}->{i,k}')
+    check('{i,j},{k,j}->{k,i}')  # order of named axes in the spec doesn't matter!
+    check('{j},{k,j}->{k}')
+    check('{i,j},{j}->{i}')
+    check('{j},{j}->{}')
 
   def test_xeinsum_no_named_axes_vector_dot(self):
     rng = np.random.RandomState(0)

@@ -451,8 +451,8 @@ class XeinsumSpecParser:
 
     axis_name = self.spec[self.pos:end]
     assert axis_name
-    self.pos = end + 1
-    return axis_name, self.spec[end] == ','
+    self.pos = end
+    return axis_name
 
   def maybe_take(self, char: str, on_eof: bool = False):
     if self.eof:
@@ -474,10 +474,15 @@ class XeinsumSpecParser:
       return True, (subscripts, names)
     else:
       assert self.maybe_take('{')
-      while True:
-        axis_name, cont = self.parse_axis_name()
+      first = True
+      while not self.maybe_take('}'):
+        if not first:
+          assert self.maybe_take(',')
+        first = False
+        if self.eof:
+          raise ValueError("Unterminated named axis brace")
+        axis_name = self.parse_axis_name()
         names.append(axis_name)
-        if not cont: break
       return self.maybe_take(',', False), (subscripts, names)
 
   def parse_args(self):
