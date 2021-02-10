@@ -285,10 +285,15 @@ def canonicalize_axis(axis, num_dims) -> int:
 def moveaxis(x, src, dst):
   if src == dst:
     return x
-  src = canonicalize_axis(src, x.ndim)
-  dst = canonicalize_axis(dst, x.ndim)
-  perm = [i for i in range(np.ndim(x)) if i != src]
-  perm.insert(dst, src)
+  if isinstance(src, int):
+    src = (src,)
+  if isinstance(dst, int):
+    dst = (dst,)
+  src = [canonicalize_axis(a, x.ndim) for a in src]
+  dst = [canonicalize_axis(a, x.ndim) for a in dst]
+  perm = [i for i in range(np.ndim(x)) if i not in src]
+  for d, s in sorted(zip(dst, src)):
+    perm.insert(d, s)
   return x.transpose(perm)
 
 def ceil_of_ratio(x, y):
@@ -296,17 +301,22 @@ def ceil_of_ratio(x, y):
 
 @curry
 def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
+  """
+  Like functools.wraps, but with finer-grained control over the name and docstring
+  of the resulting function.
+  """
   try:
-    fun.__name__ = namestr.format(fun=get_name(wrapped))
-    fun.__module__ = get_module(wrapped)
-    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+    name = getattr(wrapped, "__name__", "<unnamed function>")
+    doc = getattr(wrapped, "__doc__", "") or ""
+    fun.__dict__.update(getattr(wrapped, "__dict__", {}))
+    fun.__annotations__ = getattr(wrapped, "__annotations__", {})
+    fun.__name__ = namestr.format(fun=name)
+    fun.__module__ = getattr(wrapped, "__module__", "<unknown module>")
+    fun.__doc__ = docstr.format(fun=name, doc=doc, **kwargs)
+    fun.__qualname__ = getattr(wrapped, "__qualname__", fun.__name__)
     fun.__wrapped__ = wrapped
   finally:
     return fun
-
-def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
-def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
-def get_doc(fun): return getattr(fun, "__doc__", "")
 
 # NOTE: Ideally we would annotate both the argument and return type as NoReturn
 #       but it seems like pytype doesn't support that...
@@ -320,6 +330,10 @@ def tuple_insert(t, idx, val):
 def tuple_delete(t, idx):
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
+
+def tuple_replace(t, idx, val):
+  assert 0 <= idx < len(t), (idx, len(t))
+  return t[:idx] + (val,) + t[idx:]
 
 # TODO(mattjj): replace with dataclass when Python 2 support is removed
 def taggedtuple(name, fields) -> Callable[..., Any]:
@@ -460,3 +474,12 @@ def override_context(implementations: Mapping[str, Callable]):
   finally:
     for k, v in tokens.items():
       _OVERRIDES[k].reset(v)
+
+
+def maybe_named_axis(axis, if_pos, if_named):
+  try:
+    pos = operator.index(axis)
+    named = False
+  except TypeError:
+    named = True
+  return if_named(axis) if named else if_pos(pos)

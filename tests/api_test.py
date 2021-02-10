@@ -50,7 +50,7 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-class CPPJitTest(jtu.JaxTestCase):
+class CPPJitTest(jtu.BufferDonationTestCase):
   """Shared tests between the Python and the C++ jax,jit implementations.
 
   Because the Python implementation supports more features, we need to have the
@@ -208,15 +208,6 @@ class CPPJitTest(jtu.JaxTestCase):
     self.assertEqual(f(list(range(500))), sum(range(500)))
 
   # Jit and Donate arguments
-  assertDeleted = lambda self, x: self._assertDeleted(x, True)
-  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
-
-  def _assertDeleted(self, x, deleted):
-    if hasattr(x, "device_buffer"):
-      self.assertEqual(x.device_buffer.is_deleted(), deleted)
-    else:
-      for buffer in x.device_buffers:
-        self.assertEqual(buffer.is_deleted(), deleted)
 
   def test_jit_donate_argnums_warning_raised(self):
     x = jnp.array([1.0, 2.0], jnp.float32)
@@ -505,6 +496,19 @@ class CPPJitTest(jtu.JaxTestCase):
     init()
     self.jit(init)()
     self.assertIsInstance(key_list[0], core.Tracer)
+
+  def test_jit_wrapped_attributes(self):
+    def f(x: int) -> int:
+      """docstring of f."""
+      return x + 1
+    f.some_value = 4
+    jf = self.jit(f)
+    for attr in ["doc", "name", "module", "qualname", "annotations"]:
+      self.assertEqual(
+        {attr: getattr(f, f"__{attr}__")},
+        {attr: getattr(jf, f"__{attr}__")})
+    self.assertEqual(f.some_value, jf.some_value)
+
 
 class PythonJitTest(CPPJitTest):
 
@@ -1892,9 +1896,9 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
     subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
-    self.assertLen(inner_jaxpr.eqns, 2)
-    self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
-    self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
+    self.assertLen(inner_jaxpr.eqns, 2 if config.omnistaging_enabled else 3)
+    self.assertEqual(inner_jaxpr.eqns[-2].primitive.name, 'mul')
+    self.assertEqual(inner_jaxpr.eqns[-1].primitive.name, 'add')
 
   def test_primitive_compilation_cache(self):
     with jtu.count_primitive_compiles() as count:
@@ -2744,7 +2748,8 @@ class JaxprTest(jtu.JaxTestCase):
         let b = ge a 0.0
             c = add a 1.0
             d = add a 2.0
-            e = convert_element_type[ new_dtype=int32 ] b
+            e = convert_element_type[ new_dtype=int32
+                                      weak_type=False ] b
             f = cond[ branches=( { lambda  ; e_ a b c.
                                    let d = sub c a
                                    in (d,) }
@@ -2752,24 +2757,29 @@ class JaxprTest(jtu.JaxTestCase):
                                    let d = add b a
                                    in (d,) } )
                       linear=(False, False, False, False) ] e a a c d
-      in (f,) }
-      """
+        in (f,) }
+        """
     else:
       expected = """
       { lambda  ; a.
         let b = ge a 0.0
-            c = convert_element_type[ new_dtype=int32 ] b
-            d = add a 1.0
-            e = add a 2.0
-            f = cond[ branches=( { lambda  ; e_ c a b.
+            c = convert_element_type[ new_dtype=int32
+                                      weak_type=False ] b
+            d = convert_element_type[ new_dtype=float32
+                                      weak_type=False ] a
+            e = convert_element_type[ new_dtype=float32
+                                      weak_type=False ] a
+            f = add a 1.0
+            g = add a 2.0
+            h = cond[ branches=( { lambda  ; e_ c a b.
                                    let d = sub b c
                                    in (d,) }
                                  { lambda  ; c f_ a b.
                                    let d = add a c
                                    in (d,) } )
-                      linear=(False, False, False, False) ] c a a d e
-        in (f,) }
-        """
+                      linear=(False, False, False, False) ] c d e f g
+        in (h,) }
+      """
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -4934,7 +4944,7 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     print(gf(a, b))  # doesn't crash
 
 
-class BufferDonationTest(jtu.JaxTestCase):
+class BufferDonationTest(jtu.BufferDonationTestCase):
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_pmap_donate_argnums_invalidates_input(self):
@@ -4954,16 +4964,6 @@ class BufferDonationTest(jtu.JaxTestCase):
     #   pmap_fun(a)
 
     pmap_fun(a)  # doesn't crash
-
-  assertDeleted = lambda self, x: self._assertDeleted(x, True)
-  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
-
-  def _assertDeleted(self, x, deleted):
-    if hasattr(x, "device_buffer"):
-      self.assertEqual(x.device_buffer.is_deleted(), deleted)
-    else:
-      for buffer in x.device_buffers:
-        self.assertEqual(buffer.is_deleted(), deleted)
 
 
 class NamedCallTest(jtu.JaxTestCase):

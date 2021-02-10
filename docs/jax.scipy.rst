@@ -130,7 +130,7 @@ jax.scipy.stats.beta
    pdf
 
 jax.scipy.stats.betabinom
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.betabinom
 
 .. autosummary::
@@ -150,7 +150,7 @@ jax.scipy.stats.cauchy
    pdf
 
 jax.scipy.stats.chi2
-~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.chi2
 
 .. autosummary::

@@ -838,7 +838,7 @@ tf_not_yet_impl = [
   # Not high priority?
   "after_all", "all_to_all", "create_token",
   "infeed", "outfeed", "pmax_p",
-  "pmin", "ppermute", "psum", "pmax",
+  "pmin", "ppermute", "psum", "pmax", "pgather",
   "axis_index", "pdot", "all_gather",
 
   "xla_pmap",
@@ -1105,7 +1105,7 @@ tf_impl[lax.lt_p] = tf.math.less
 
 tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
-def _convert_element_type(operand, *, new_dtype):
+def _convert_element_type(operand, *, new_dtype, weak_type=False):
   old_dtype = operand.dtype.as_numpy_dtype
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
