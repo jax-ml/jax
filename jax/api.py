@@ -45,7 +45,8 @@ from .core import eval_jaxpr, checking_leaks
 from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial,
                        argnums_partial_except, flatten_axes, donation_vector,
-                       rebase_donate_argnums, _ensure_index, _ensure_index_tuple)
+                       rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
+                       shaped_abstractify)
 from ._src import traceback_util
 from ._src.traceback_util import api_boundary
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
@@ -608,9 +609,6 @@ def xla_computation(fun: Callable,
       names, sizes = unzip2(axis_env)
       return xla.AxisEnv(nreps, names, sizes)
 
-  def abstractify(x):
-    return ShapedArray(np.shape(x), dtypes.result_type(x))
-
   @wraps(fun)
   @api_boundary
   def computation_maker(*args, **kwargs):
@@ -636,7 +634,7 @@ def xla_computation(fun: Callable,
       in_parts_flat = tuple(flatten_axes(
           "xla_computation in_parts", in_tree.children()[0], in_parts))
     jaxtree_fun, out_tree = flatten_fun(f, in_tree)
-    avals = map(abstractify, args_flat)
+    avals = map(shaped_abstractify, args_flat)
     if config.omnistaging_enabled:
       with ExitStack() as stack:
         for axis_name, size in axis_env or []:
@@ -1934,11 +1932,9 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
   >>> f_transpose(1.0)
   (DeviceArray(0.5, dtype=float32), DeviceArray(-0.5, dtype=float32))
   """
-  def abstractify(x):
-    return core.ShapedArray(np.shape(x), dtypes.result_type(x))
   primals_flat, in_tree = tree_flatten(primals)
   flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  in_avals = map(abstractify, primals_flat)
+  in_avals = map(shaped_abstractify, primals_flat)
   in_dtypes = map(dtypes.dtype, in_avals)
   if any(not np.issubdtype(dtype, np.inexact) for dtype in in_dtypes):
     raise TypeError("linear_transpose only supports float and complex inputs, "
@@ -2040,7 +2036,7 @@ def make_jaxpr(fun: Callable,
       wrapped, args = argnums_partial(wrapped, dyn_argnums, args)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    in_avals = [raise_to_shaped(core.get_aval(x)) for x in jax_args]
+    in_avals = map(shaped_abstractify, jax_args)
     if config.omnistaging_enabled:
       with ExitStack() as stack:
         for axis_name, size in axis_env or []:
@@ -2318,18 +2314,10 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
-  def dtype(x):
-    try:
-      return dtypes.result_type(x)
-    except ValueError:
-      return dtypes.result_type(getattr(x, 'dtype'))
-
-  def abstractify(x):
-    return ShapedArray(np.shape(x), dtype(x))
   args_flat, in_tree = tree_flatten((args, kwargs))
   wrapped_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   out = pe.abstract_eval_fun(wrapped_fun.call_wrapped,
-                             *map(abstractify, args_flat))
+                             *map(shaped_abstractify, args_flat))
   out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
   return tree_unflatten(out_tree(), out)
 

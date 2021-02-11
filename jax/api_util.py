@@ -15,6 +15,10 @@
 import operator
 from typing import Any, Tuple, Union
 
+import numpy as np
+
+from . import core
+from . import dtypes
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure, treedef_children, treedef_is_leaf)
 from . import linear_util as lu
@@ -191,3 +195,20 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False):
   axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes
+
+def _dtype(x):
+  try:
+    return dtypes.result_type(x)
+  except ValueError:
+    return dtypes.result_type(getattr(x, 'dtype'))
+
+def shaped_abstractify(x):
+  try:
+    return core.raise_to_shaped(core.get_aval(x))
+  except TypeError:
+    pass
+
+  weak_type = getattr(x, 'weak_type', False)
+  named_shape = getattr(x, 'named_shape', {})
+  return core.ShapedArray(np.shape(x), _dtype(x), weak_type=weak_type,
+                          named_shape=named_shape)
