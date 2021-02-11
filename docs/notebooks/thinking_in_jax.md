@@ -13,7 +13,7 @@ kernelspec:
 
 ```{code-cell}
 :id: aPUwOm-eCSFD
-:nbsphinx: hidden
+:tags: [remove-cell]
 
 # Configure ipython to hide long tracebacks.
 import sys
@@ -32,6 +32,8 @@ ipython.showtraceback = minimal_traceback
 +++ {"id": "LQHmwePqryRU"}
 
 # How to Think in JAX
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/thinking_ind_jax.ipynb)
 
 JAX provides a simple and powerful API for writing accelerated numerical code, but working effectively in JAX sometimes requires extra consideration. This document is meant to help build a ground-up understanding of how JAX operates, so that you can use it more effectively.
 

@@ -16,6 +16,8 @@ kernelspec:
 
 # Writing custom Jaxpr interpreters in JAX
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/Writing_custom_interpreters_in_Jax.ipynb)
+
 +++ {"colab_type": "text", "id": "r-3vMiKRYXPJ"}
 
 JAX offers several composable function transformations (`jit`, `grad`, `vmap`,

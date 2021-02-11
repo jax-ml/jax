@@ -16,6 +16,8 @@ kernelspec:
 
 # Training a Simple Neural Network, with PyTorch Data Loading
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
+
 **Copyright 2018 Google LLC.**
 
 Licensed under the Apache License, Version 2.0 (the "License");you may not use this file except in compliance with the License.
