@@ -76,24 +76,24 @@ def check_python_version(python_version):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/3.1.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/3.7.2/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-3.1.0-linux-x86_64",
+            file="bazel-3.7.2-linux-x86_64",
             sha256=
-            "753434f4fa730266cf5ce21d1fdd425e1e167dd9347ad3e8adc19e8c0d54edca"),
+            "70dc0bee198a4c3d332925a32d464d9036a831977501f66d4996854ad4e4fc0d"),
     "Darwin":
         BazelPackage(
-            file="bazel-3.1.0-darwin-x86_64",
+            file="bazel-3.7.2-darwin-x86_64",
             sha256=
-            "b7c5b07026eb653d431b7f15c569ecfc36a5f79427e66b5a55cab7ee885927ab"),
+            "80c82e93a12ba30021692b11c78007807e82383a673be1602573b944beb359ab"),
     "Windows":
         BazelPackage(
-            file="bazel-3.1.0-windows-x86_64.exe",
+            file="bazel-3.7.2-windows-x86_64.exe",
             sha256=
-            "776db1f4986dacc3eda143932f00f7529f9ee65c7c1c004414c44aaa6419d0e9"),
+            "ecb696b1b9c9da6728d92fbfe8410bafb4b3a65c358980e49742233f33f74d10"),
 }
 
 
