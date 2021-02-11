@@ -59,8 +59,7 @@ def jvpfun(instantiate, primals, tangents):
                   in zip(out_tangents, instantiate)]
   yield out_primals, out_tangents
 
-@lu.transformation
-def jvp_subtrace(main, primals, tangents):
+def jvp_subtrace_gen(main, primals, tangents):
   trace = JVPTrace(main, core.cur_sublevel())
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
@@ -71,6 +70,8 @@ def jvp_subtrace(main, primals, tangents):
   out_tracers = map(trace.full_raise, ans)
   yield unzip2([(out_tracer.primal, out_tracer.tangent)
                 for out_tracer in out_tracers])
+
+jvp_subtrace = lu.transformation(jvp_subtrace_gen)
 
 @lu.transformation_with_aux
 def jvp_subtrace_aux(main, primals, tangents):

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools as it
 from functools import partial, reduce, wraps
 import itertools
 from jax._src.numpy.lax_numpy import isin
@@ -267,16 +268,62 @@ class TreeCall(core.Primitive):
   def bind(self, f, *args, **params):
     top_trace = core.find_top_trace(args)
     tracers = map(top_trace.full_raise, args)
-    if isinstance(top_trace, TreeTrace):
-      out = top_trace.process_tree_call(self, f, tracers, params)
-    else:
-      out = top_trace.process_call(self, f, tracers, params)
+    out = top_trace.process_tree_call(self, f, tracers, params)
     return map(core.full_lower, out)
 
+from jax.interpreters import ad
+
+@lu.transformation
+def _tree_jvp_subtrace(main, primal_in_trees, tangent_in_trees):
+  # trees -> lists for primals and tangents
+  primal_in_lists, primal_in_tdefs = unzip2(tree_flatten(pt) for pt in primal_in_trees)
+  tangent_in_lists, tangent_in_tdefs = unzip2(tree_flatten(tt) for tt in tangent_in_trees)
+  assert primal_in_tdefs == tangent_in_tdefs
+  in_tdefs = primal_in_tdefs
+  # lists -> flat list for primals and tangents
+  primal_in_list = list(it.chain(*primal_in_lists))
+  tangent_in_list = list(it.chain(*tangent_in_lists))
+  # flat list -> jvp tracer list
+  gen = ad.jvp_subtrace_gen(main, primal_in_list, tangent_in_list)
+  jvp_in_list, _ = next(gen)
+  # jvp tracer list -> jvp tracer tree
+  jvp_in_lists = split_list(jvp_in_list, [td.num_leaves for td in in_tdefs[:-1]])
+  jvp_out_trees = yield map(tree_unflatten, in_tdefs, jvp_in_lists), {}
+  # jvp tracer tree -> jvp tracer list
+  jvp_out_lists, out_tdefs = unzip2(tree_flatten(jt) for jt in jvp_out_trees)
+  jvp_out_list = list(it.chain(*jvp_out_lists))
+  # jvp tracer list -> lists for primals and tangents
+  primal_out_list, tangent_out_list = gen.send(jvp_out_list)
+  tree_sizes = [td.num_leaves for td in out_tdefs[:-1]]
+  # lists for primals and tangents -> trees for primals and tangents
+  primal_out_trees = map(tree_unflatten, out_tdefs, split_list(primal_out_list, tree_sizes))
+  tangent_out_trees = map(tree_unflatten, out_tdefs, split_list(tangent_out_list, tree_sizes))
+  yield primal_out_trees, tangent_out_trees
+
+@lu.transformation_with_aux
+def _zero_tangent_adapter(num_primals, in_tree_def, *primals_and_tangents):
+  new_primals  = primals_and_tangents[:num_primals]
+  new_tangents = primals_and_tangents[num_primals:]
+  new_tangents = tree_unflatten(in_tree_def, new_tangents)
+  primal_out_trees, tangent_out_trees = yield (new_primals, new_tangents), {}
+  # TODO: Deal with zero tangents!
+  yield primal_out_trees + tangent_out_trees, len(primal_out_trees)
+
+def _jvp_process_tree_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+  assert call_primitive.multiple_results
+  primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
+  nonzero_tangents, tangent_tree_def = tree_flatten(tangents)
+  f_jvp = _tree_jvp_subtrace(f, self.main)
+  f_jvp, num_out_primals = _zero_tangent_adapter(f_jvp, len(primals), tangent_tree_def)
+  result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **params)
+  primal_out, tangent_out = split_list(result, [num_out_primals()])
+  return [ad.JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
+ad.JVPTrace.process_tree_call = _jvp_process_tree_call
+
+core.EvalTrace.process_tree_call = core.EvalTrace.process_call
 
 def _tree_call_impl(fun: lu.WrappedFun, *args, **params):
   return fun.call_wrapped(*args)
-
 
 tree_call_p = TreeCall('tree_call')
 tree_call_p.def_impl(_tree_call_impl)
