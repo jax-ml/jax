@@ -181,6 +181,23 @@ def pmin(x, axis_name, *, axis_index_groups=None):
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
 
+# TODO(mattjj): add a pargmin_p, or add named axis support to lax.argmin_p
+def pargmin(x, axis_name):
+  if isinstance(axis_name, (tuple, list)):
+    raise TypeError(f"pargmin only accepts a single axis, got {axis_name}")
+  return _axis_index_of_val(x, pmin(x, axis_name), axis_name)
+
+# TODO(mattjj): add a pargmax_p, or add named axis support to lax.argmax_p
+def pargmax(x, axis_name):
+  if isinstance(axis_name, (tuple, list)):
+    raise TypeError(f"pargmin only accepts a single axis, got {axis_name}")
+  return _axis_index_of_val(x, pmax(x, axis_name), axis_name)
+
+def _axis_index_of_val(x, val, axis_name):
+  idx = axis_index(axis_name)
+  validx = lax_numpy.where(val == x, idx, dtypes.iinfo(dtypes.dtype(idx)).max)
+  return pmin(validx, axis_name)
+
 def _validate_axis_index_groups(axis_index_groups):
   if axis_index_groups is None:
     return
