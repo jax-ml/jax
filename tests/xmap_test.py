@@ -244,7 +244,7 @@ class XMapTestCase(jtu.BufferDonationTestCase):
 # A mixin that enables SPMD lowering tests
 class SPMDTestMixin:
   def setUp(self):
-    if jtu.device_under_test() != "tpu":
+    if jtu.device_under_test() not in ['tpu', 'gpu']:
       raise SkipTest
     super().setUp()
     jax.experimental.maps.make_xmap_callable.cache_clear()
