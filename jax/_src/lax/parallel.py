@@ -181,6 +181,16 @@ def pmin(x, axis_name, *, axis_index_groups=None):
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
 
+def pargmax(x, axis_name):
+  if isinstance(axis_name, (tuple, list)):
+    raise TypeError(f"pargmax only accepts a single axis, got {axis_name}")
+  return pargmax_p.bind(x, axis=axis_name)
+
+def pargmin(x, axis_name):
+  if isinstance(axis_name, (tuple, list)):
+    raise TypeError(f"pargmin only accepts a single axis, got {axis_name}")
+  return pargmin_p.bind(x, axis=axis_name)
+
 def _validate_axis_index_groups(axis_index_groups):
   if axis_index_groups is None:
     return
@@ -742,6 +752,82 @@ batching.collective_rules[pmin_p] = \
 core.axis_substitution_rules[pmin_p] = partial(_subst_all_names_in_param, 'axes')
 
 
+# TODO(mattjj): merge with lax.argmin_p / lax.argmax_p
+pargmax_p = core.Primitive('pargmax')
+pargmin_p = core.Primitive('pargmin')
+
+def _pargminmax_impl(prim, x, *, axis):
+  if not isinstance(axis, int): raise NameError(f"unbound axis name: {axis}")
+  return xla.apply_primitive(prim, x, axis=axis)
+pargmax_p.def_impl(partial(_pargminmax_impl, pargmax_p))
+pargmin_p.def_impl(partial(_pargminmax_impl, pargmin_p))
+
+def _pargminmax_abstract_eval(x, *, axis):
+  if isinstance(axis, int):
+    if not 0 <= axis < np.ndim(x):
+      raise ValueError(f"axis index {axis} for operand shape {np.shape(x)}")
+    shape = tuple(np.delete(np.shape(x), axis))
+  else:
+    # TODO(mattjj): avals with names, check and eliminate axis name
+    shape = np.shape(x)
+  return ShapedArray(shape, np.dtype('int32'))
+pargmax_p.def_abstract_eval(_pargminmax_abstract_eval)
+pargmin_p.def_abstract_eval(_pargminmax_abstract_eval)
+
+def _pargminmax_vmap_collective_rule(reducer, frame, vals_in, dims_in, *, axis):
+  del frame, axis  # Unused.
+  (x,), (d,) = vals_in, dims_in
+  return reducer(x, d, np.dtype('int32')), None
+batching.collective_rules[pargmax_p] = partial(_pargminmax_vmap_collective_rule,
+                                               lax.argmax)
+batching.collective_rules[pargmin_p] = partial(_pargminmax_vmap_collective_rule,
+                                               lax.argmin)
+
+def _pargminmax_vmap_batching_rule(prim, vals_in, dims_in, *, axis):
+  (x,), (d,) = vals_in, dims_in
+  if isinstance(axis, int):
+    new_axis = axis + (d <= axis)
+    return prim.bind(x, axis=new_axis)
+  else:
+    return prim.bind(x, axis)
+batching.primitive_batchers[pargmax_p] = partial(_pargminmax_vmap_batching_rule,
+                                                 pargmax_p)
+batching.primitive_batchers[pargmin_p] = partial(_pargminmax_vmap_batching_rule,
+                                                 pargmin_p)
+
+def _pargminmax_axis_subst_rule(params: core.ParamDict, subst: core.AxisSubst
+                             ) -> core.ParamDict:
+  axis = params['axis']
+  if isinstance(axis, int):
+    return params
+  else:
+    return dict(params, axis=subst(axis))
+core.axis_substitution_rules[pargmax_p] = _pargminmax_axis_subst_rule
+core.axis_substitution_rules[pargmin_p] = _pargminmax_axis_subst_rule
+
+def _pargminmax_translation_rule(prim, reduc, c, x, *, axis, axis_env, platform):
+  if isinstance(axis, int):
+    rule = xla.backend_specific_translations[platform].get(prim)
+    rule = rule or xla.translations[prim]
+    return rule(c, x, axes=(axis,), index_dtype=np.dtype('int32'))
+  else:
+    def translation(x):
+      idx = lax.broadcast(axis_index(axis), x.shape)
+      maxval = lax.full_like(idx, dtypes.iinfo(dtypes.dtype(idx)).max)
+      return pmin(lax.select(reduc(x, axis) == x, idx, maxval), axis)
+    rule = xla.lower_fun(translation, multiple_results=False, parallel=True)
+    return rule(c, x, axis_env=axis_env, platform=platform)
+xla.parallel_translations[pargmax_p] = partial(_pargminmax_translation_rule,
+                                               lax.argmax_p, pmax)  # type: ignore
+xla.parallel_translations[pargmin_p] = partial(_pargminmax_translation_rule,
+                                               lax.argmin_p, pmin)  # type: ignore
+
+ad.defjvp_zero(pargmax_p)
+ad.defjvp_zero(pargmin_p)
+pxla.multi_host_supported_collectives.add(pargmax_p)
+pxla.multi_host_supported_collectives.add(pargmin_p)
+
+
 def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
   replica_groups = _replica_groups(axis_env, axis_name, None)
   group_size = len(replica_groups[0])
@@ -1061,13 +1147,16 @@ batching.collective_rules[all_gather_p] = _all_gather_batched_collective
 core.axis_substitution_rules[all_gather_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
-  axis_pos = list(axis_env.names).index(axis_name)
-  nreplicas = axis_env.nreps // prod(axis_env.sizes)
-  div = xb.constant(c, np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
-                                dtype=np.uint32))
-  mod = xb.constant(c, np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
-  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
-  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
+  if len(axis_env.names) == 1:
+    return xops.ConvertElementType(xops.ReplicaId(c), xb.dtype_to_etype(np.int32))
+  else:
+    axis_pos = list(axis_env.names).index(axis_name)
+    nreplicas = axis_env.nreps // prod(axis_env.sizes)
+    div = xb.constant(c, np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
+                                  dtype=np.uint32))
+    mod = xb.constant(c, np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
+    unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
+    return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
 axis_index_p = core.Primitive('axis_index')
 xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
@@ -1081,20 +1170,23 @@ core.axis_substitution_rules[axis_index_p] = partial(_subst_all_names_in_param, 
 # wants to bind an axis name has to additionally implement `process_axis_index`
 # and put its main trace on the axis env stack.
 def _axis_index_bind(*, axis_name):
-  if not isinstance(axis_name, (tuple, list)):
-    axis_name = (axis_name,)
-  inner_size = 1
-  index = 0
-  for name in reversed(axis_name):
+  def name_idx(name):
     frame = core.axis_frame(name)
     if frame.main_trace is not None:
       trace = frame.main_trace.with_cur_sublevel()
-      name_idx = trace.process_axis_index(frame)
+      return trace.process_axis_index(frame)
     else:
-      name_idx = core.Primitive.bind(axis_index_p, axis_name=name)
-    index += name_idx * inner_size
-    inner_size *= psum(1, name)
-  return index
+      return core.Primitive.bind(axis_index_p, axis_name=name)
+
+  if not isinstance(axis_name, (tuple, list)):
+    return name_idx(axis_name)
+  else:
+    inner_size = 1
+    index = 0
+    for name in reversed(axis_name):
+      index += name_idx(name) * inner_size
+      inner_size *= psum(1, name)
+    return index
 axis_index_p.def_custom_bind(_axis_index_bind)
 
 def _process_axis_index(self, frame):

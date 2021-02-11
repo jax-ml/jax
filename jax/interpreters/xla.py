@@ -414,6 +414,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
     platform = xb.get_backend(backend).platform  # canonicalize
   else:
     platform = backend
+  assert platform in ('cpu', 'gpu', 'tpu')
 
   def read(v):
     if type(v) is Literal:
