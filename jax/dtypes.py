@@ -87,7 +87,6 @@ python_scalar_dtypes : dict = {
   int: np.dtype(int_),
   float: np.dtype(float_),
   complex: np.dtype(complex_),
-  float0: float0
 }
 
 def scalar_type_of(x):
