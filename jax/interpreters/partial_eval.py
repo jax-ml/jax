@@ -943,11 +943,11 @@ class DynamicJaxprTracer(core.Tracer):
       raise core.escaped_tracer_error(self, None)
 
 class JaxprStackFrame:
-  __slots__ = ['newvar', 'tracer_to_var', 'constid_to_var', 'constvar_to_val',
+  __slots__ = ['gensym', 'tracer_to_var', 'constid_to_var', 'constvar_to_val',
                'tracers', 'eqns', 'invars']
 
   def __init__(self):
-    self.newvar = core.gensym()
+    self.gensym = core.gensym()
     self.tracer_to_var = {}
     self.constid_to_var = {}
     self.constvar_to_val = {}
@@ -963,6 +963,9 @@ class JaxprStackFrame:
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     out_avals = [t.aval for t in out_tracers]
     return jaxpr, out_avals, constvals
+
+  def newvar(self, aval):
+    return self.gensym(aval)
 
   def find_progenitors(self, tracer):
     var = self.tracer_to_var.get(id(tracer))
