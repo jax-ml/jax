@@ -2726,6 +2726,12 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
     self.assertLen(jaxpr.jaxpr.constvars, 0)
 
+  def test_abstract_inputs(self):
+    jaxpr = api.make_jaxpr(lambda x: x + 2.)(
+        types.SimpleNamespace(shape=(), dtype=np.float32))
+    self.assertEqual(jaxpr.in_avals[0].shape, ())
+    self.assertEqual(jaxpr.in_avals[0].dtype, np.float32)
+
   def test_const(self):
     def fun(x):
       return (x, 1., np.zeros(1))
