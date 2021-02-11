@@ -2848,16 +2848,8 @@ class JaxprTest(jtu.JaxTestCase):
     def f(x):
       return x - lax.psum(x, 'i')
 
-    class FakeNamedArray:
-      def __init__(self, shape, dtype, named_shape):
-        self.shape = shape
-        self.dtype = dtype
-        self.named_shape = named_shape
-
-    core.pytype_aval_mappings[FakeNamedArray] = lambda x: core.ShapedArray(
-        x.shape, x.dtype, named_shape=x.named_shape)
-
-    x = FakeNamedArray((2, 3), jnp.float32, {'i': 10})
+    x = types.SimpleNamespace(
+        shape=(2, 3), dtype=jnp.float32, named_shape={'i': 10})
     jaxpr = api.make_jaxpr(f, axis_env=[('i', 10)])(x)
     named_shapes = [v.aval.named_shape for v in jaxpr.jaxpr.eqns[1].invars]
     self.assertEqual(named_shapes, [{'i': 10}, {}])
