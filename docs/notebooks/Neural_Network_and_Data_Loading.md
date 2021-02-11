@@ -12,8 +12,6 @@ kernelspec:
   name: python3
 ---
 
-+++ {"colab_type": "text", "id": "18AF5Ab4p6VL"}
-
 # Training a Simple Neural Network, with PyTorch Data Loading
 
 **Copyright 2018 Google LLC.**
@@ -29,34 +27,22 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-+++ {"colab_type": "text", "id": "B_XlLLpcWjkA"}
-
 ![JAX](https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png)
 
 Let's combine everything we showed in the [quickstart notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use PyTorch's data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library).
 
 Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for builidng our model.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: OksHydJDtbbI
-
+```{code-cell}
 import jax.numpy as jnp
 from jax import grad, jit, vmap
 from jax import random
 ```
 
-+++ {"colab_type": "text", "id": "MTVcKi-ZYB3R"}
-
 ## Hyperparameters
 Let's get a few bookkeeping items out of the way.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: -fmWA06xYE7d
-
+```{code-cell}
 # A helper function to randomly initialize weights and biases
 # for a dense neural network layer
 def random_layer_params(m, n, key, scale=1e-2):
@@ -77,17 +63,11 @@ n_targets = 10
 params = init_network_params(layer_sizes, random.PRNGKey(0))
 ```
 
-+++ {"colab_type": "text", "id": "BtoNk_yxWtIw"}
-
 ## Auto-batching predictions
 
 Let us first define our prediction function. Note that we're defining this for a _single_ image example. We're going to use JAX's `vmap` function to automatically handle mini-batches, with no performance penalty.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 7APc6tD7TiuZ
-
+```{code-cell}
 from jax.scipy.special import logsumexp
 
 def relu(x):
@@ -105,34 +85,16 @@ def predict(params, image):
   return logits - logsumexp(logits)
 ```
 
-+++ {"colab_type": "text", "id": "dRW_TvCTWgaP"}
-
 Let's check that our prediction function only works on single images.
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
-id: 4sW2A5mnXHc5
-outputId: 9d3b29e8-fab3-4ecb-9f63-bc8c092f9006
----
+```{code-cell}
 # This works on single examples
 random_flattened_image = random.normal(random.PRNGKey(1), (28 * 28,))
 preds = predict(params, random_flattened_image)
 print(preds.shape)
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
-id: PpyQxuedXfhp
-outputId: d5d20211-b6da-44e9-f71e-946f2a9d0fc4
----
+```{code-cell}
 # Doesn't work with a batch
 random_flattened_images = random.normal(random.PRNGKey(1), (10, 28 * 28))
 try:
@@ -141,15 +103,7 @@ except TypeError:
   print('Invalid shapes!')
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
-id: oJOOncKMXbwK
-outputId: 31285fab-7667-4871-fcba-28e86adc3fc6
----
+```{code-cell}
 # Let's upgrade it to handle batches using `vmap`
 
 # Make a batched version of the `predict` function
@@ -160,19 +114,11 @@ batched_preds = batched_predict(params, random_flattened_images)
 print(batched_preds.shape)
 ```
 
-+++ {"colab_type": "text", "id": "elsG6nX03BvW"}
-
 At this point, we have all the ingredients we need to define our neural network and train it. We've built an auto-batched version of `predict`, which we should be able to use in a loss function. We should be able to use `grad` to take the derivative of the loss with respect to the neural network parameters. Last, we should be able to use `jit` to speed up everything.
-
-+++ {"colab_type": "text", "id": "NwDuFqc9X7ER"}
 
 ## Utility and loss functions
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 6lTI6I4lWdh5
-
+```{code-cell}
 def one_hot(x, k, dtype=jnp.float32):
   """Create a one-hot encoding of x of size k."""
   return jnp.array(x[:, None] == jnp.arange(k), dtype)
@@ -193,29 +139,16 @@ def update(params, x, y):
           for (w, b), (dw, db) in zip(params, grads)]
 ```
 
-+++ {"colab_type": "text", "id": "umJJGZCC2oKl"}
-
 ## Data Loading with PyTorch
 
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll grab PyTorch's data loader, and make a tiny shim to make it work with NumPy arrays.
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 139
-colab_type: code
-id: gEvWt8_u2pqG
-outputId: 2c83a679-9ce5-4c67-bccb-9ea835a8eaf6
----
+```{code-cell}
 !pip install torch torchvision
 ```
 
-```{code-cell} ipython3
+```{code-cell}
 :cellView: both
-:colab: {}
-:colab_type: code
-:id: 94PjXZ8y3dVF
 
 import numpy as np
 from torch.utils import data
@@ -253,25 +186,13 @@ class FlattenAndCast(object):
     return np.ravel(np.array(pic, dtype=jnp.float32))
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: l314jsfP4TN4
-
+```{code-cell}
 # Define our dataset, using torch datasets
 mnist_dataset = MNIST('/tmp/mnist/', download=True, transform=FlattenAndCast())
 training_generator = NumpyLoader(mnist_dataset, batch_size=batch_size, num_workers=0)
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 173
-colab_type: code
-id: FTNo4beUvb6t
-outputId: 65a9087c-c326-49e5-cbfc-e0839212fa31
----
+```{code-cell}
 # Get the full train dataset (for checking accuracy while training)
 train_images = np.array(mnist_dataset.train_data).reshape(len(mnist_dataset.train_data), -1)
 train_labels = one_hot(np.array(mnist_dataset.train_labels), n_targets)
@@ -282,19 +203,9 @@ test_images = jnp.array(mnist_dataset_test.test_data.numpy().reshape(len(mnist_d
 test_labels = one_hot(np.array(mnist_dataset_test.test_labels), n_targets)
 ```
 
-+++ {"colab_type": "text", "id": "xxPd6Qw3Z98v"}
-
 ## Training Loop
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 425
-colab_type: code
-id: X2DnZo3iYj18
-outputId: 0eba3ca2-24a1-4cba-aaf4-3ac61d0c650e
----
+```{code-cell}
 import time
 
 for epoch in range(num_epochs):
@@ -310,8 +221,6 @@ for epoch in range(num_epochs):
   print("Training set accuracy {}".format(train_acc))
   print("Test set accuracy {}".format(test_acc))
 ```
-
-+++ {"colab_type": "text", "id": "xC1CMcVNYwxm"}
 
 We've now used the whole of the JAX API: `grad` for derivatives, `jit` for speedups and `vmap` for auto-vectorization.
 We used NumPy to specify all of our computation, and borrowed the great data loaders from PyTorch, and ran the whole thing on the GPU.

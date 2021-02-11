@@ -11,7 +11,6 @@ kernelspec:
   name: python3
 ---
 
-+++ {"id": "oDP4nK_Zgyg-", "colab_type": "text"}
 
 # MAML Tutorial with JAX
 
@@ -34,31 +33,18 @@ In this notebook we'll go through:
 - how to implement MAML for sinusoid task (single-task objective, batching task instances).
 - extending MAML to handle batching at the task-level
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: zKVdo3FtgyhE
-
+```{code-cell}
 ### import jax.numpy (almost-drop-in for numpy) and gradient operators.
 import jax.numpy as jnp
 from jax import grad
 ```
 
-+++ {"id": "gMgclHhxgyhI", "colab_type": "text"}
 
 ## Gradients of Gradients
 
 JAX makes it easy to compute gradients of python functions. Here, we thrice-differentiate $e^x$ and $x^2$
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 123
-colab_type: code
-id: Mt-uRwBGgyhJ
-outputId: db7f718c-c2fb-4f7e-f31c-39a0d36c7051
----
+```{code-cell}
 f = lambda x : jnp.exp(x)
 g = lambda x : jnp.square(x)
 print(grad(f)(1.)) # = e^{1}
@@ -70,17 +56,11 @@ print(grad(grad(g))(2.)) # x = 2
 print(grad(grad(grad(g)))(2.)) # x = 0
 ```
 
-+++ {"id": "7mAd3We_gyhP", "colab_type": "text"}
-
 ## Sinusoid Regression and vmap
 
 To get you familiar with JAX syntax first, we'll optimize neural network params with fixed inputs on a mean-squared error loss to $f_\theta(x) = sin(x)$.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: JN9KA1PvgyhQ
-
+```{code-cell}
 from jax import vmap # for auto-vectorizing functions
 from functools import partial # for use with vmap
 from jax import jit # for compiling functions for speedup
@@ -90,11 +70,7 @@ from jax.experimental.stax import Conv, Dense, MaxPool, Relu, Flatten, LogSoftma
 import matplotlib.pyplot as plt # visualization
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: DeEALFIHgyhU
-
+```{code-cell}
 # Use stax to set up network initialization and evaluation functions
 net_init, net_apply = stax.serial(
     Dense(40), Relu,
@@ -107,26 +83,14 @@ in_shape = (-1, 1,)
 out_shape, net_params = net_init(rng, in_shape)
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: izIi-P1agyhY
-
+```{code-cell}
 def loss(params, inputs, targets):
     # Computes average loss for the batch
     predictions = net_apply(params, inputs)
     return jnp.mean((targets - predictions)**2)
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
-id: sROmpDEmgyhb
-outputId: d1bf00d7-99e7-445e-b439-ea2fabd7a646
----
+```{code-cell}
 # batch the inference across K=100
 xrange_inputs = jnp.linspace(-5,5,100).reshape((100, 1)) # (k, 1)
 targets = jnp.sin(xrange_inputs)
@@ -138,21 +102,13 @@ plt.plot(xrange_inputs, targets, label='target')
 plt.legend()
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: PxAEhrPGgyhh
-
+```{code-cell}
 import numpy as np
 from jax.experimental import optimizers
 from jax.tree_util import tree_multimap  # Element-wise manipulation of collections of numpy arrays 
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: iZtAZfEZgyhk
-
+```{code-cell}
 opt_init, opt_update, get_params = optimizers.adam(step_size=1e-2)
 opt_state = opt_init(net_params)
 
@@ -168,15 +124,7 @@ for i in range(100):
 net_params = get_params(opt_state)
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
-id: Rm9WIz2egyho
-outputId: 183de82d-fdf0-4b81-9b14-01a85e6b8839
----
+```{code-cell}
 # batch the inference across K=100
 targets = jnp.sin(xrange_inputs)
 predictions = vmap(partial(net_apply, net_params))(xrange_inputs)
@@ -186,8 +134,6 @@ plt.plot(xrange_inputs, losses, label='loss')
 plt.plot(xrange_inputs, targets, label='target')
 plt.legend()
 ```
-
-+++ {"id": "7E8gAJBzgyhs", "colab_type": "text"}
 
 ## MAML: Optimizing for Generalization
 
@@ -199,15 +145,7 @@ $x_1, y_2$ and $x_2, y_2$ are identically distributed from $X, Y$. Therefore, MA
 
 The following toy example checks MAML numerics via parameter $x$ and input $y$.
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 88
-colab_type: code
-id: 2YBFsM2dgyht
-outputId: 46160194-04b7-46c9-897d-ecb11e9738be
----
+```{code-cell}
 # gradients of gradients test for MAML
 # check numerics
 g = lambda x, y : jnp.square(x) + y
@@ -221,18 +159,13 @@ print('maml_objective(x,y)={}'.format(maml_objective(x0, y0))) # x**2 + 1 = 5
 print('x0 - maml_objective(x,y) = {}'.format(x0 - grad(maml_objective)(x0, y0))) # x - (2x)
 ```
 
-+++ {"id": "V9G-PMxygyhx", "colab_type": "text"}
 
 ## Sinusoid Task + MAML
 
 
 Now let's re-implement the Sinusoidal regression task from Chelsea Finn's [MAML paper](https://arxiv.org/abs/1703.03400).
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: s1v5VABkgyhy
-
+```{code-cell}
 alpha = .1
 def inner_update(p, x1, y1):
     grads = grad(loss)(p, x1, y1)
@@ -244,15 +177,7 @@ def maml_loss(p, x1, y1, x2, y2):
     return loss(p2, x2, y2)
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 35
-colab_type: code
-id: bQvg749Xgyh2
-outputId: 5043f859-c537-41b8-c390-23670795d57b
----
+```{code-cell}
 x1 = xrange_inputs
 y1 = targets
 x2 = jnp.array([0.])
@@ -260,19 +185,9 @@ y2 = jnp.array([0.])
 maml_loss(net_params, x1, y1, x2, y2)
 ```
 
-+++ {"id": "zMB6BwPogyh6", "colab_type": "text"}
-
 Let's try minimizing the MAML loss (without batching across multiple tasks, which we will do in the next section)
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 371
-colab_type: code
-id: pB5ldBO-gyh7
-outputId: b2365aa4-d7b8-40a0-d759-8257d3e4d768
----
+```{code-cell}
 opt_init, opt_update, get_params = optimizers.adam(step_size=1e-3)  # this LR seems to be better than 1e-2 and 1e-4
 out_shape, net_params = net_init(rng, in_shape)
 opt_state = opt_init(net_params)
@@ -305,15 +220,7 @@ for i in range(20000):
 net_params = get_params(opt_state)
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
-id: ogcpFdJ9gyh_
-outputId: 856924a3-ede5-44ba-ba3c-381673713fad
----
+```{code-cell}
 # batch the inference across K=100
 targets = jnp.sin(xrange_inputs)
 predictions = vmap(partial(net_apply, net_params))(xrange_inputs)
@@ -330,8 +237,6 @@ for i in range(1,5):
 plt.legend()
 ```
 
-+++ {"id": "7TMYcZKVgyiD", "colab_type": "text"}
-
 ## Batching Meta-Gradient Across Tasks
 
 Kind of does the job but not that great. Let's reduce the variance of gradients in outer loop by averaging across a batch of tasks (not just one task at a time). 
@@ -340,11 +245,7 @@ vmap is awesome it enables nice handling of batching at two levels: inner-level 
 
 From a software engineering perspective, it is nice because the "task-batched" MAML implementation simply re-uses code from the non-task batched MAML algorithm, without losing any vectorization benefits.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 9Pj04Z7MgyiF
-
+```{code-cell}
 def sample_tasks(outer_batch_size, inner_batch_size):
     # Select amplitude and phase for the task
     As = []
@@ -365,15 +266,7 @@ def sample_tasks(outer_batch_size, inner_batch_size):
     return x1, y1, x2, y2
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
-id: 7dCIGObKgyiJ
-outputId: c169b529-0f16-4f20-d20e-d802765e4068
----
+```{code-cell}
 outer_batch_size = 2
 x1, y1, x2, y2 = sample_tasks(outer_batch_size, 50)
 for i in range(outer_batch_size):
@@ -383,27 +276,11 @@ for i in range(outer_batch_size):
 plt.legend()
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 35
-colab_type: code
-id: BrSX--wpgyiP
-outputId: 6d81e7ff-7cd9-4aef-c665-952d442369d5
----
+```{code-cell}
 x2.shape
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 371
-colab_type: code
-id: P3WQ8_k2gyiU
-outputId: fed1b78b-7910-4e44-a80b-18f447379022
----
+```{code-cell}
 opt_init, opt_update, get_params = optimizers.adam(step_size=1e-3)
 out_shape, net_params = net_init(rng, in_shape)
 opt_state = opt_init(net_params)
@@ -432,15 +309,7 @@ for i in range(20000):
 net_params = get_params(opt_state)
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
-id: PmxHLrhYgyiX
-outputId: 33ac699e-c66d-46e2-affa-98ae948d52e8
----
+```{code-cell}
 # batch the inference across K=100
 targets = jnp.sin(xrange_inputs)
 predictions = vmap(partial(net_apply, net_params))(xrange_inputs)
@@ -457,26 +326,10 @@ for i in range(1,3):
 plt.legend()
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
-id: cQf2BeDjgyib
-outputId: fc52caf6-1379-4d60-fe44-99f4e4518698
----
+```{code-cell}
 # Comparison of maml_loss for task batch size = 1 vs. task batch size = 8
 plt.plot(np.convolve(np_maml_loss, [.05]*20), label='task_batch=1')
 plt.plot(np.convolve(np_batched_maml_loss, [.05]*20), label='task_batch=4')
 plt.ylim(0., 1e-1)
 plt.legend()
-```
-
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: vCHCvXh-mm1v
-
-
 ```

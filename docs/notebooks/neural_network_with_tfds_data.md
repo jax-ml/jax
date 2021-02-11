@@ -12,13 +12,9 @@ kernelspec:
   name: python3
 ---
 
-+++ {"colab_type": "text", "id": "18AF5Ab4p6VL"}
-
 ##### Copyright 2018 Google LLC.
 
 Licensed under the Apache License, Version 2.0 (the "License");
-
-+++ {"colab_type": "text", "id": "crfqaJOyp8bq"}
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -32,8 +28,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-+++ {"colab_type": "text", "id": "B_XlLLpcWjkA"}
-
 # Training a Simple Neural Network, with tensorflow/datasets Data Loading
 
 _Forked from_ `neural_network_and_data_loading.ipynb`
@@ -44,25 +38,16 @@ Let's combine everything we showed in the [quickstart notebook](https://colab.re
 
 Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for builidng our model.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: OksHydJDtbbI
-
+```{code-cell}
 import jax.numpy as jnp
 from jax import grad, jit, vmap
 from jax import random
 ```
 
-+++ {"colab_type": "text", "id": "MTVcKi-ZYB3R"}
-
 ### Hyperparameters
 Let's get a few bookkeeping items out of the way.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: -fmWA06xYE7d
+```{code-cell}
 :outputId: 520e5fd5-97c4-43eb-ef0e-b714d5287689
 
 # A helper function to randomly initialize weights and biases
@@ -85,17 +70,11 @@ n_targets = 10
 params = init_network_params(layer_sizes, random.PRNGKey(0))
 ```
 
-+++ {"colab_type": "text", "id": "BtoNk_yxWtIw"}
-
 ### Auto-batching predictions
 
 Let us first define our prediction function. Note that we're defining this for a _single_ image example. We're going to use JAX's `vmap` function to automatically handle mini-batches, with no performance penalty.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 7APc6tD7TiuZ
-
+```{code-cell}
 from jax.scipy.special import logsumexp
 
 def relu(x):
@@ -113,14 +92,9 @@ def predict(params, image):
   return logits - logsumexp(logits)
 ```
 
-+++ {"colab_type": "text", "id": "dRW_TvCTWgaP"}
-
 Let's check that our prediction function only works on single images.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 4sW2A5mnXHc5
+```{code-cell}
 :outputId: ce9d86ed-a830-4832-e04d-10d1abb1fb8a
 
 # This works on single examples
@@ -129,10 +103,7 @@ preds = predict(params, random_flattened_image)
 print(preds.shape)
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: PpyQxuedXfhp
+```{code-cell}
 :outputId: f43bbc9d-bc8f-4168-ee7b-79ee9d33f245
 
 # Doesn't work with a batch
@@ -143,10 +114,7 @@ except TypeError:
   print('Invalid shapes!')
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: oJOOncKMXbwK
+```{code-cell}
 :outputId: fa380024-aaf8-4789-d3a2-f060134930e6
 
 # Let's upgrade it to handle batches using `vmap`
@@ -159,19 +127,11 @@ batched_preds = batched_predict(params, random_flattened_images)
 print(batched_preds.shape)
 ```
 
-+++ {"colab_type": "text", "id": "elsG6nX03BvW"}
-
 At this point, we have all the ingredients we need to define our neural network and train it. We've built an auto-batched version of `predict`, which we should be able to use in a loss function. We should be able to use `grad` to take the derivative of the loss with respect to the neural network parameters. Last, we should be able to use `jit` to speed up everything.
-
-+++ {"colab_type": "text", "id": "NwDuFqc9X7ER"}
 
 ### Utility and loss functions
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 6lTI6I4lWdh5
-
+```{code-cell}
 def one_hot(x, k, dtype=jnp.float32):
   """Create a one-hot encoding of x of size k."""
   return jnp.array(x[:, None] == jnp.arange(k), dtype)
@@ -192,17 +152,11 @@ def update(params, x, y):
           for (w, b), (dw, db) in zip(params, grads)]
 ```
 
-+++ {"colab_type": "text", "id": "umJJGZCC2oKl"}
-
 ### Data Loading with `tensorflow/datasets`
 
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll use the `tensorflow/datasets` data loader.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: uWvo1EgZCvnK
-
+```{code-cell}
 import tensorflow_datasets as tfds
 
 data_dir = '/tmp/tfds'
@@ -228,24 +182,16 @@ test_images = jnp.reshape(test_images, (len(test_images), num_pixels))
 test_labels = one_hot(test_labels, num_labels)
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 7VMSC03gCvnO
+```{code-cell}
 :outputId: e565586e-d598-4fa1-dd6f-10ba39617f6a
 
 print('Train:', train_images.shape, train_labels.shape)
 print('Test:', test_images.shape, test_labels.shape)
 ```
 
-+++ {"colab_type": "text", "id": "xxPd6Qw3Z98v"}
-
 ### Training Loop
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: X2DnZo3iYj18
+```{code-cell}
 :outputId: bad334e0-127a-40fe-ec21-b0db77c73088
 
 import time
@@ -272,8 +218,6 @@ for epoch in range(num_epochs):
   print("Training set accuracy {}".format(train_acc))
   print("Test set accuracy {}".format(test_acc))
 ```
-
-+++ {"colab_type": "text", "id": "xC1CMcVNYwxm"}
 
 We've now used the whole of the JAX API: `grad` for derivatives, `jit` for speedups and `vmap` for auto-vectorization.
 We used NumPy to specify all of our computation, and borrowed the great data loaders from `tensorflow/datasets`, and ran the whole thing on the GPU.

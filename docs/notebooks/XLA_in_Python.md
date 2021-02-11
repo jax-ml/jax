@@ -12,8 +12,6 @@ kernelspec:
   name: python3
 ---
 
-+++ {"id": "sAgUgR5Mzzz2"}
-
 # XLA in Python
 
 <img style="height:100px;" src="https://raw.githubusercontent.com/tensorflow/tensorflow/master/tensorflow/compiler/xla/g3doc/images/xlalogo.png"> <img style="height:100px;" src="https://upload.wikimedia.org/wikipedia/commons/c/c3/Python-logo-notext.svg">
@@ -27,8 +25,6 @@ XLA computations are built as computation graphs in HLO IR, which is then lowere
 As end users we interact with the computational primitives offered to us by the HLO spec.
 
 # Caution:  This is a pedagogical notebook covering some low level XLA details, the APIs herein are neither public nor stable!
-
-+++ {"id": "EZK5RseuvZkr"}
 
 ## References 
 
@@ -54,13 +50,9 @@ https://github.com/google/jax/blob/master/jax/lib/xla_bridge.py
 
 https://github.com/google/jax/blob/master/jax/interpreters/xla.py
 
-+++ {"id": "3XR2NGmrzBGe"}
-
 ## Colab Setup and Imports
 
-```{code-cell} ipython3
-:id: Ogo2SBd3u18P
-
+```{code-cell}
 import numpy as np
 
 # We only need to import JAX's xla_client, not all of JAX.
@@ -77,17 +69,9 @@ rcParams['image.cmap'] = 'viridis'
 rcParams['axes.grid'] = False
 ```
 
-+++ {"id": "odmjXyhMuNJ5"}
-
 ## Simple Computations
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: UYUtxVzMYIiv
-outputId: 5c603ab4-0295-472c-b462-9928b2a9520d
----
+```{code-cell}
 # make a computation builder
 c = xc.XlaBuilder("simple_scalar")
 
@@ -120,13 +104,7 @@ device_out = compiled_computation.execute([device_input ,])
 device_out[0].to_py()
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: rIA-IVMVvQs2
-outputId: a4d8ef32-43f3-4a48-f732-e85e158b602e
----
+```{code-cell}
 # same as above with vector type:
 
 c = xc.XlaBuilder("simple_vector")
@@ -153,17 +131,9 @@ device_out = compiled_computation.execute([device_input ,])
 device_out[0].to_py()
 ```
 
-+++ {"id": "F8kWlLaVuQ1b"}
-
 ## Simple While Loop
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: MDQP1qW515Ao
-outputId: 53245817-b5fb-4285-ee62-7eb33a822be4
----
+```{code-cell}
 # trivial while loop, decrement until 0
 #   x = 5
 #   while x > 0:
@@ -207,17 +177,9 @@ device_out = compiled_computation.execute([device_input ,])
 device_out[0].to_py()
 ```
 
-+++ {"id": "7UOnXlY8slI6"}
-
 ## While loops w/ Tuples - Newton's Method for sqrt
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: HEWz-vzd6QPR
-outputId: ad4c4247-8e81-4739-866f-2950fec5e759
----
+```{code-cell}
 Xsqr = 2
 guess = 1.0
 converged_delta = 0.001
@@ -282,24 +244,13 @@ device_out = compiled_computation.execute([device_input_y, device_input_x, devic
 print("square root of {y} is {x}".format(y=y, x=device_out[1].to_py()))
 ```
 
-+++ {"id": "yETVIzTInFYr"}
-
 ## Calculate Symm Eigenvalues
-
-+++ {"id": "AiyR1e2NubKa"}
 
 Let's exploit the XLA QR implementation to solve some eigenvalues for symmetric matrices.  
 
 This is the naive QR algorithm, without acceleration for closely-spaced eigenvalue convergence, nor any permutation to sort eigenvalues by magnitude.
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 451
-id: wjxDPbqCcuXT
-outputId: 2380db52-799d-494e-ded2-856e91f01b0f
----
+```{code-cell}
 Niter = 200
 matrix_shape = (10, 10)
 
@@ -360,22 +311,11 @@ print('sorted error')
 print(np.sort(eigh_vals) - np.sort(np.linalg.eigh(X)[0]))
 ```
 
-+++ {"id": "FpggTihknAOw"}
-
 ## Calculate Full Symm Eigensystem
-
-+++ {"id": "Qos4ankYuj1T"}
 
 We can also calculate the  eigenbasis by accumulating the Qs.
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 979
-id: Kp3A-aAiZk0g
-outputId: bbaff039-20f4-45cd-b8fe-5a664d413f5b
----
+```{code-cell}
 Niter = 100
 matrix_shape = (10, 10)
 
@@ -448,15 +388,11 @@ print('sorted error')
 print(np.sort(eigh_vals) - np.sort(np.linalg.eigh(X)[0]))
 ```
 
-+++ {"id": "Ee3LMzOvlCuK"}
-
 ## Convolutions
 
 I keep hearing from the AGI folks that we can use convolutions to build artificial life.  Let's try it out.
 
-```{code-cell} ipython3
-:id: 9xh6yeXKS9Vg
-
+```{code-cell}
 # Here we borrow convenience functions from LAX to handle conv dimension numbers.
 from typing import NamedTuple, Sequence
 
@@ -491,14 +427,7 @@ def _conv_general_proto(dimension_numbers):
   return proto
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 110
-id: J8QkirDalBse
-outputId: 543a03fd-f038-46f2-9a76-a6532b86874e
----
+```{code-cell}
 Niter=13
 matrix_shape = (1, 1, 20, 20)
 in_shape_0 = xc.Shape.array_shape(np.dtype(np.int32), matrix_shape)
@@ -577,8 +506,6 @@ for i in range(Niter):
   ax1.imshow(movie[i])
 plt.subplots_adjust(left=0.0, right=1.0, top=1.0, bottom=0.0, hspace=0.0, wspace=0.05)
 ```
-
-+++ {"id": "9-0PJlqv237S"}
 
 ## Fin 
 

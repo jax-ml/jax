@@ -12,11 +12,9 @@ kernelspec:
   name: python3
 ---
 
-+++ {"colab_type": "text", "id": "U6IRW9a8G6TB"}
-
 # Generative Modeling by Estimating Gradients of Data Distribution in JAX
 
-[![Run in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/score_matching.ipynb)
+[![Run in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/score_matching.ipynb)
 
 In this notebook we'll implement __Generative Modeling by Estimating Gradients of the Data Distribution__ [[arxiv]](https://arxiv.org/abs/1907.05600).
 
@@ -28,15 +26,7 @@ Let's begin with a simple task: learn to sample from a peculiar probability dist
 
 well... minus the chocolate. Sorry for that.
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 286
-colab_type: code
-id: 0P1xCZPNG6TE
-outputId: 69be38a1-1f02-462e-f4f1-16a41c35fddf
----
+```{code-cell}
 import matplotlib.pyplot as plt
 %matplotlib inline
 import numpy as np
@@ -51,8 +41,6 @@ def sample_batch(size, noise=1.0):
 plt.scatter(*sample_batch(10**4).T, alpha=0.1)
 ```
 
-+++ {"colab_type": "text", "id": "5X-LN4rwG6TH"}
-
 ### Compute score matching objective
 
 The method we apply here was originally proposed by [Hyvarinen et al. (2005)](http://jmlr.org/papers/volume6/hyvarinen05a/old.pdf). The idea behind score matching is to __learn scores:__ the gradients of $\log p(x)$ w.r.t. $x$. When trained this model can "improve" a sample $x$ by changing it in the direction of highest log-probability. However, training such model can get tricky. When predicting a continuous variable, ML folks usually minimize squared error:
@@ -65,11 +53,7 @@ $$ L_{matching} = E_{x \sim p(x)} \space tr( \space \mathbf{J}_x [\space model(x
 
 Here $tr( \space \mathbf{J}_x [\space model(x)  \space])$ is a trace of Jacobian of $model(x)$ w.r.t. $x$. Now all it takes is to minimize the second objective with backpropagation... that is, if you can compute jacobians. Thankfully, we have __jax__!
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 98wjxKcNG6TI
-
+```{code-cell}
 import jax
 import jax.numpy as jnp
 from jax.experimental import optimizers
@@ -87,11 +71,7 @@ net_init, net_apply = stax.serial(
 opt_init, opt_update, get_params = optimizers.adam(1e-3)
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: FgH-YVaZG6TJ
-
+```{code-cell}
 # v-- jax.jit compiles a function for efficient CPU and GPU execution
 
 @jax.jit
@@ -117,19 +97,11 @@ def train_step(step_i, opt_state, batch):
 
 ```
 
-+++ {"id": "LkTYRi6qCwn8", "colab_type": "text"}
-
 __Note__: we use `jax.jacfwd` since the input dimension is only 2
-
-+++ {"colab_type": "text", "id": "Qxza8fDvG6TL"}
 
 ### Training loop
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: NNlbbWNIG6TM
-
+```{code-cell}
 from IPython.display import clear_output
 
 out_shape, net_params = net_init(jax.random.PRNGKey(seed=42), input_shape=(-1, 2))
@@ -138,15 +110,7 @@ opt_state = opt_init(net_params)
 loss_history = []
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 499
-colab_type: code
-id: evDOnCHiG6TN
-outputId: 989db5fe-24a2-41ba-fb01-6d981df7cd06
----
+```{code-cell}
 for i in range(2000):
     x = sample_batch(size=128)
     loss, opt_state = train_step(i, opt_state, x)
@@ -173,20 +137,10 @@ for i in range(2000):
         plt.show()
 ```
 
-+++ {"colab_type": "text", "id": "Ug91tS-RG6TP"}
-
 ### Plot gradient directions
 Once the model is trained we can use it to predict scores at each point. Since those are gradient vectors, we'll use [`Quiver Plot`](https://matplotlib.org/3.1.1/api/_as_gen/matplotlib.pyplot.quiver.html) to draw them.
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 938
-colab_type: code
-id: x6SkLg0VG6TQ
-outputId: 710ab2f4-c3c7-4a3b-f929-e84957fbb233
----
+```{code-cell}
 plt.figure(figsize=[16, 16])
 
 net_params = get_params(opt_state)
@@ -199,13 +153,9 @@ plt.quiver(*xx.T, *scores_log1p.T, width=0.002, color='green')
 plt.scatter(*sample_batch(10_000).T, alpha=0.25)
 ```
 
-+++ {"colab_type": "text", "id": "yewoL6wqG6TS"}
-
 A hot new paper by [Song et al. (2019)](https://arxiv.org/abs/1907.05600) uses this method to generate images by iterative refinement... Apparently it took DL researchers 14 years to understand the proof :)
 
 Seriously though, this paper takes advantage of two new ideas: sampling with __Langevin Dynamics__ and scaling to high dimensions with __Sliced Score Matching__. We'll cover them one at a time.
-
-+++ {"colab_type": "text", "id": "gsXvXhgfG6TS"}
 
 ```
 
@@ -247,11 +197,7 @@ Performing this update multiple times in an MCMC fashion is a special case of La
 
 In practice, we can initialize $x_0$ from some initial guess (e.g. uniform distribution over data space) and $\epsilon$ to some positive value. As the sampling progresses, we can anneal $\epsilon$ it until we are satisfied with the samples. Okay, now let's go implement that :)
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: Byq9q1XdG6TT
-
+```{code-cell}
 def sample_langevin(x_initial, *, net_params, key, eps=1e-2, eps_decay=0.9, num_steps=15, temperature=1.0):
     """ sample x ~ p(x) by applying approximate Langvenin Dynamics, return a sequence of x_t """
     x_t, x_sequence = x_initial, [x_initial]
@@ -266,15 +212,7 @@ def sample_langevin(x_initial, *, net_params, key, eps=1e-2, eps_decay=0.9, num_
     return jnp.stack(x_sequence)
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 938
-colab_type: code
-id: n6ZWX9Z1G6TV
-outputId: 4e061bf6-93c5-4d96-cc9b-7e2d8b8899af
----
+```{code-cell}
 plt.figure(figsize=[16, 16])
 
 key = jax.random.PRNGKey(42)
@@ -302,8 +240,6 @@ plt.quiver(*xx.T, *scores_log1p.T, width=0.002, color='green')
 plt.scatter(*sample_batch(10_000).T, alpha=0.025)
 ```
 
-+++ {"colab_type": "text", "id": "vZrW00brG6TX"}
-
 ### Sliced Score Matching
 
 Now the problem with our previous loss function is that the computation of $tr(\mathbf{J}_x [\space model(x)])$ takes a $O(N^2 + N)$ time to compute, thus not being suitable for high-dimensional problems. The solution is using jacobian vector products which can be easily computed using forward mode auto-differentiation. This method is called Sliced Score Matching and was proposed by [Yang Song et al. (2019)](https://arxiv.org/abs/1905.07088).
@@ -314,11 +250,7 @@ $$E_{\mathbf{v} \sim \mathcal{N}(0, 1)} E_{x \sim p(x)} [ \mathbf{v}^T \mathbf{J
 
 Jacobian Vector products, by the way, can be easily computed using `jax.jvp`.
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: MkAXz0SmG6TY
-
+```{code-cell}
 @jax.jit
 def compute_ssm_loss(net_params, inputs, key):
     apply = jax.jit(partial(net_apply, net_params))
@@ -341,15 +273,9 @@ def train_step(step_i, opt_state, batch, key):
     return loss, opt_update(step_i, grads, opt_state)
 ```
 
-+++ {"id": "GWaKgphWCwoi", "colab_type": "text"}
-
 __Note:__ we compute Jacobian with `jax.jacfwd` (forward-mode differentiation) because the input dimension of the network is just 2. You can read more about autograd modes in jax [documentation](https://jax.readthedocs.io/en/latest/jax.html?highlight=jacfwd#jax.jacfwd) and on wikipedia [wiki](https://en.wikipedia.org/wiki/Automatic_differentiation)
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: 8dxK2pCxG6Tb
-
+```{code-cell}
 key = jax.random.PRNGKey(42)
 key, subkey = jax.random.split(key)
 out_shape, net_params = net_init(subkey, input_shape=(-1, 2))
@@ -358,15 +284,7 @@ opt_state = opt_init(net_params)
 loss_history = []
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 499
-colab_type: code
-id: hQyo8kvTG6Tc
-outputId: 184f28fc-4c6d-418a-9c28-e248b8633fbe
----
+```{code-cell}
 for i in range(2_000):
     x = sample_batch(size=128)
     
@@ -395,20 +313,10 @@ for i in range(2_000):
         plt.show()
 ```
 
-+++ {"colab_type": "text", "id": "A8Ni7_cGG6Tf"}
-
 ## Easy? Let's go deeper!
 MNIST 8x8, computing full jacobian would require 64 passes through the network
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 109
-colab_type: code
-id: Y2ZgeMq-G6Tf
-outputId: 435e69a1-3544-4364-b30c-c066feda7064
----
+```{code-cell}
 from sklearn.datasets import load_digits
 import numpy as np
 
@@ -424,11 +332,7 @@ def sample_batch(size, noise=0.1):
     return jnp.array(X[ix] / 16 + noise * np.random.randn(size, 64))
 ```
 
-```{code-cell} ipython3
-:colab: {}
-:colab_type: code
-:id: rKSjSWQXG6Th
-
+```{code-cell}
 # Set up network to predict scores
 net_init, net_apply = stax.serial(
     stax.Dense(128), stax.Softplus,
@@ -447,15 +351,7 @@ opt_state = opt_init(net_params)
 loss_history = []
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 281
-colab_type: code
-id: YxWvSQJAG6Ti
-outputId: ae47197d-0aa3-496c-83f6-d10328461a00
----
+```{code-cell}
 for i in range(5_000):
     x = sample_batch(size=128)
     key, subkey = jax.random.split(key)
@@ -469,15 +365,7 @@ for i in range(5_000):
         plt.show()
 ```
 
-```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 281
-colab_type: code
-id: gof2XcxwG6Tk
-outputId: 02472a07-4931-4444-d406-344907619a01
----
+```{code-cell}
 key, subkey = jax.random.split(key)
 x = 0.1 * jax.random.uniform(subkey, shape=(64,))
 
@@ -490,8 +378,6 @@ for t, x_t in enumerate(xx):
     plt.imshow(x_t.reshape(8, 8), cmap='gray')
     plt.title('step %i' % t); plt.colorbar(); plt.show()
 ```
-
-+++ {"colab_type": "text", "id": "jMfcQxhWG6Tm"}
 
 ### This is just the beginning
 
