@@ -1996,43 +1996,53 @@ def _argnum_weak_type(*argnums):
   return lambda *args, **_: all(args[i].weak_type for i in argnums)
 
 def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
-                       multiple_results=False, weak_type_rule=None):
-  weak_type_rule = weak_type_rule or partial(_standard_weak_type_rule, name)
+                       weak_type_rule=None):
+  weak_type_rule = weak_type_rule or _standard_weak_type_rule
   prim = Primitive(name)
-  prim.multiple_results = multiple_results
   prim.def_impl(partial(xla.apply_primitive, prim))
   prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule, weak_type_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
   return prim
 
-def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule, *args, **kwargs):
-  assert all(isinstance(arg, UnshapedArray) for arg in args), args
-  weak_types = weak_type_rule(*args, **kwargs)
-  least_specialized = _max(
-      map(type, args), key=operator.attrgetter('array_abstraction_level'))
+def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule, *avals, **kwargs):
+  assert all(isinstance(aval, UnshapedArray) for aval in avals), avals
+  assert not prim.multiple_results
+  weak_type = weak_type_rule(*avals, **kwargs)
+  least_specialized = _max(map(type, avals),
+                           key=operator.attrgetter('array_abstraction_level'))
   if least_specialized is ConcreteArray:
-    out_vals = prim.impl(*[x.val for x in args], **kwargs)
-    if not prim.multiple_results:
-      out_vals, weak_types = [out_vals], [weak_types]
-    out_avals = [ConcreteArray(v, weak_type=weak_type)
-                 for v, weak_type in safe_zip(out_vals, weak_types)]
+    return ConcreteArray(prim.impl(*[x.val for x in avals], **kwargs),
+                         weak_type=weak_type)
   elif least_specialized is ShapedArray:
-    shapes, dtypes = shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs)
-    if not prim.multiple_results:
-      shapes, dtypes, weak_types = [shapes], [dtypes], [weak_types]
-    out_avals = [ShapedArray(shape, dtype, weak_type=weak_type)
-                 for shape, dtype, weak_type in safe_zip(shapes, dtypes, weak_types)]
+    return ShapedArray(shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
+                       weak_type=weak_type)
   elif least_specialized is UnshapedArray:
-    dtypes = dtype_rule(*args, **kwargs)
-    if not prim.multiple_results:
-      dtypes, weak_types = [dtypes], [weak_types]
-    out_avals = [UnshapedArray(dtype, weak_type=weak_type)
-                 for dtype, weak_type in safe_zip(dtypes, weak_types)]
+    return UnshapedArray(dtype_rule(*avals, **kwargs), weak_type=weak_type)
   else:
-    raise TypeError(args, least_specialized)
-  if not prim.multiple_results:
-    return out_avals[0]
-  return out_avals
+    raise TypeError(avals, least_specialized)
+
+def standard_multi_result_abstract_eval(
+    prim, shape_rule, dtype_rule, weak_type_rule, *avals, **kwargs):
+  assert prim.multiple_results
+  assert all(isinstance(aval, UnshapedArray) for aval in avals), avals
+  least_specialized = _max(map(type, avals),
+                           key=operator.attrgetter('array_abstraction_level'))
+  weak_types = weak_type_rule(*avals, **kwargs)
+  if least_specialized is ConcreteArray:
+    out_vals = prim.impl(*[x.val for x in avals], **kwargs)
+    return [ConcreteArray(val, weak_type=weak_type)
+            for val, weak_type in safe_zip(out_vals, weak_types)]
+  elif least_specialized is ShapedArray:
+    out_shapes = shape_rule(*avals, **kwargs)
+    out_dtypes = dtype_rule(*avals, **kwargs)
+    return [ShapedArray(s, d, weak_type=weak_type)
+            for s, d, weak_type in safe_zip(out_shapes, out_dtypes, weak_types)]
+  elif least_specialized is UnshapedArray:
+    out_dtypes = dtype_rule(*avals, **kwargs)
+    return [UnshapedArray(dtype, weak_type=weak_type)
+            for dtype, weak_type in safe_zip(out_dtypes, weak_types)]
+  else:
+    raise TypeError(avals, least_specialized)
 
 
 def standard_translate(name, c, *args, **kwargs):
@@ -2097,7 +2107,7 @@ def _broadcasting_shape_rule(name, *avals):
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
   return result_shape
 
-def _standard_weak_type_rule(name, *avals, **kwargs):
+def _standard_weak_type_rule(*avals, **kwargs):
   return all(aval.weak_type for aval in avals)
 
 def _naryop_weak_type_rule(name, *avals, **kwargs):
@@ -4933,30 +4943,27 @@ batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
 
 
-def _reduce_shape_rule(*args, computation, jaxpr, consts, dimensions):
-  operand_args, init_value_args = split_list(args, [len(args) // 2])
-  if any(arg.shape != () for arg in init_value_args):
-    init_value_shapes = [a.shape for a in init_value_args]
-    raise ValueError(f'Found non-scalar init_value: {init_value_shapes}')
-  return [
-      tuple(np.delete(op_arg.shape, dimensions))
-      for op_arg in operand_args
-  ]
+def _reduce_shape_rule(*avals, computation, jaxpr, consts, dimensions):
+  operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
+  if any(arg.shape != () for arg in init_val_avals):
+    init_val_shapes = [a.shape for a in init_val_avals]
+    raise ValueError(f'reduce found non-scalar initial value: {init_val_shapes}')
+  return [tuple(np.delete(op.shape, dimensions)) for op in operand_avals]
 
-
-def _reduce_dtype_rule(*args, computation, jaxpr, consts, dimensions):
-  operand_args, init_value_args = split_list(args, [len(args) // 2])
-  operand_dtypes = [dtypes.canonicalize_dtype(op.dtype) for op in operand_args]
-  init_value_dtypes = [dtypes.canonicalize_dtype(init.dtype) for init in init_value_args]
-  if operand_dtypes != init_value_dtypes:
-    raise TypeError(f"operand dtypes should match corresponding initial value dtypes; got "
-                    f"operands={operand_args} and initial_values={init_value_args}")
+def _reduce_dtype_rule(*avals, computation, jaxpr, consts, dimensions):
+  operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
+  operand_dtypes = [dtypes.canonicalize_dtype(op.dtype) for op in operand_avals]
+  init_val_dtypes = [dtypes.canonicalize_dtype(init.dtype) for init in init_val_avals]
+  if operand_dtypes != init_val_dtypes:
+    raise TypeError(
+        "reduce operand dtypes should match corresponding initial value dtypes, "
+        f"got operands={operand_avals} and initial_values={init_val_avals}")
   return operand_dtypes
 
-def _reduce_weak_type_rule(*args, computation, jaxpr, consts, dimensions):
-  operand_args, init_value_args = split_list(args, [len(args) // 2])
-  return [op.weak_type and init_value.weak_type
-          for op, init_value in safe_zip(operand_args, init_value_args)]
+def _reduce_weak_type_rule(*avals, computation, jaxpr, consts, dimensions):
+  operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
+  return [op.weak_type and init_val.weak_type
+          for op, init_val in safe_zip(operand_avals, init_val_avals)]
 
 def _reduce_translation_rule(c, *values, computation, jaxpr,
                              consts, dimensions):
@@ -4968,7 +4975,6 @@ def _reduce_translation_rule(c, *values, computation, jaxpr,
     return xops.Tuple(c, (out,))
   xla_computation = _reduction_computation(c, jaxpr, consts, init_values, singleton=False)
   return xops.Reduce(c, operands, init_values, xla_computation, dimensions)
-
 
 def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
                        consts, dimensions):
@@ -4991,7 +4997,6 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
                          jaxpr=jaxpr), new_operand_bdims
   else:
     raise NotImplementedError  # loop and stack
-
 
 def _reduction_computation(c, jaxpr, consts, init_values, singleton=True):
   if singleton:
@@ -5022,9 +5027,13 @@ def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
   bind = prim_bind if input_shape is None else partial(prim_bind, input_shape=padded_shape)
   return bind(masked_val, axes=axes)
 
-reduce_p = standard_primitive(_reduce_shape_rule, _reduce_dtype_rule,
-                              'reduce', translation_rule=_reduce_translation_rule,
-                              multiple_results=True, weak_type_rule=_reduce_weak_type_rule)
+reduce_p = core.Primitive('reduce')
+reduce_p.multiple_results = True
+reduce_p.def_impl(partial(xla.apply_primitive, reduce_p))
+reduce_p.def_abstract_eval(
+    partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
+            _reduce_dtype_rule, _reduce_weak_type_rule))
+xla.translations[reduce_p] = _reduce_translation_rule
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 

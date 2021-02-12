@@ -2272,7 +2272,8 @@ class LaxTest(jtu.JaxTestCase):
     operands = {'x': np.ones(5)}
     bad_init_values = {'x': np.ones(5)}
 
-    with self.assertRaisesRegex(ValueError, 'Found non-scalar init_value'):
+    with self.assertRaisesRegex(ValueError,
+                                'reduce found non-scalar initial value'):
       lax.reduce(operands, bad_init_values,
                  lambda x, y: dict(x=x['x'] + y['x']), [0])
 
