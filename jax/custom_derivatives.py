@@ -21,8 +21,9 @@ from typing import Callable, Sequence, Tuple, Any
 from . import core
 from . import dtypes
 from . import linear_util as lu
-from .tree_util import (tree_flatten, tree_unflatten, tree_map, tree_multimap,
-                        treedef_is_leaf, register_pytree_node_class)
+from .tree_util import (tree_flatten, tree_unflatten, tree_map,
+                        tree_multimap, treedef_is_leaf, treedef_tuple,
+                        register_pytree_node_class)
 from ._src.util import cache, safe_zip, safe_map, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .core import raise_to_shaped
@@ -54,6 +55,9 @@ def _resolve_kwargs(fun, args, kwargs):
 def _initial_style_jaxpr(fun, in_avals):
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   return jaxpr, consts
+
+def _close_jaxpr(jaxpr):
+  return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
 def _initial_style_staging() -> bool:
   return core.thread_local_state.trace_state.initial_style
@@ -951,3 +955,166 @@ def partition_list(choice, lst):
 
 def abstractify(x):
   return core.raise_to_shaped(core.get_aval(x))
+
+
+### Custom transposition
+
+def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
+                linear_args):
+  """Call a linear function, with a custom implementation for its transpose.
+
+  The type signatures of ``fun`` and ``fun_transpose`` are:
+
+  .. code-block:: haskell
+
+    fun           :: r -> a -o b
+    fun_transpose :: r -> b -o a
+
+  where the ``-o`` arrow indicates a linear function, ``r`` is the
+  residual input type and ``a`` is the linear input type.
+
+  The functions ``fun`` and ``fun_transpose`` are coupled as
+  transposes of one another. Specifically, the transpose of a
+  ``linear_call`` primitive is another ``linear_call`` to
+  ``fun_transpose``, with ``fun`` as its custom transposition.
+
+  For example, if::
+
+    def f(r, x):
+      return x / r
+
+    def t(r, t):
+      return t / r
+
+    def div_add(denom, x):
+      return x + linear_call(f, t, denom, x)
+
+    def transpose(f, x_example):
+      def transposed(y):
+        x, = jax.linear_transpose(f, x_example)(y)
+        return x
+      return transposed
+
+  Then:
+
+  >>> div_add(9., 3.)
+  12.0
+  >>> transpose(partial(div_add, 3.), 1.)(18.)  # custom
+  24.0
+  >>> transpose(lambda x: x + x / 3., 1.)(18.)  # reference
+  24.0
+
+  The above definition of ``f`` illustrates the purpose of a residual
+  argument: division is linear in one of its inputs (the dividend
+  ``x``) but not the other (the divisor ``r``).
+
+  As another example, if::
+
+    def custom_id(x):
+      def f(_, x): return x
+      def t(_, t): return 7.
+      return linear_call(f, t, (), x)
+
+  Then:
+
+  >>> custom_id(1.)
+  1.0
+  >>> transpose(custom_id, 1.)(1.)
+  7.0
+  >>> transpose(transpose(custom_id, 1.), 1.)(1.)
+  1.0
+  >>> transpose(transpose(transpose(custom_id, 1.), 1.), 1.)(1.)
+  7.0
+
+  Args:
+    fun: a Python callable specifying a linear function. It should
+      take two arguments: one of "residual" inputs (type ``r``),
+      i.e. inputs in which the function is not necessarly linear, and
+      one of "linear" inputs (type ``a``).  It should return output
+      whose components are linear in the linear input (type ``b``).
+    fun_transpose: a Python callable specifying a structurally linear
+      function that is the transpose of ``fun`` with respect to its
+      linear inputs. Its first argument is the same residual inputs
+      (``r``) as ``fun``. Its second argument is of type
+      ``b``. Finally, its output is of type ``a`` and each of its
+      component are linear in its second argument (the ``b`` inputs).
+    residual_args: Argument in which ``fun`` and ``fun_transpose`` are
+      not necessarily linear. Not involved in transposition.
+    linear_args: Argument in which ``fun`` and ``fun_transpose`` are
+      linear and with respect to which the two are transposes.
+
+  Returns:
+    The call result, i.e. ``fun(residual_args, linear_args)``.
+
+  """
+  operands_res, res_tree = tree_flatten(residual_args)
+  operands_lin, lin_tree = tree_flatten(linear_args)
+
+  f_in_tree = treedef_tuple((res_tree, lin_tree))
+  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), f_in_tree)
+
+  res_avals = map(abstractify, operands_res)
+  lin_avals = map(abstractify, operands_lin)
+  f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
+  f_jaxpr = _close_jaxpr(f_jaxpr)
+  out_avals = map(core.raise_to_shaped, f_jaxpr.out_avals)
+
+  t_in_tree = treedef_tuple((res_tree, out_tree()))
+  t, t_out_tree = flatten_fun_nokwargs(lu.wrap_init(fun_transpose), t_in_tree)
+
+  t_jaxpr, t_consts = _initial_style_jaxpr(t, (*res_avals, *out_avals))
+  t_jaxpr = _close_jaxpr(t_jaxpr)
+
+  if t_out_tree() != lin_tree:
+    raise TypeError(
+        'transpose output pytree structure must match that of linear inputs, '
+        f'got output structure {t_out_tree()} '
+        f'and input structure {lin_tree}.')
+
+  out = linear_call_p.bind(*f_consts, *t_consts, *operands_res, *operands_lin,
+                           callee=f_jaxpr,
+                           transpose=t_jaxpr,
+                           num_callee_consts=len(f_consts),
+                           num_transpose_consts=len(t_consts),
+                           num_res=len(operands_res))
+
+  return tree_unflatten(out_tree(), out)
+
+def _linear_call_impl(*args, callee, transpose, num_callee_consts,
+                      num_transpose_consts, num_res):
+  del transpose
+  consts, _, operands_res, operands_lin = split_list(
+      args, [num_callee_consts, num_transpose_consts, num_res])
+  return core.eval_jaxpr(callee.jaxpr, (), *consts, *operands_res, *operands_lin)
+
+def _linear_call_transpose_rule(cts, *args, callee, transpose,
+                                num_callee_consts,
+                                num_transpose_consts, num_res):
+  f_consts, t_consts, operands_res, operands_lin = split_list(
+      args, [num_callee_consts, num_transpose_consts, num_res])
+  _, _, cts_avals = split_list(
+      transpose.in_avals, [num_transpose_consts, num_res])
+
+  assert all(ad.is_undefined_primal(x)     for x in operands_lin)
+  assert all(not ad.is_undefined_primal(x) for x in operands_res)
+
+  cts = [zeros_like_aval(a) if type(ct) is Zero else ct
+         for ct, a in zip(cts, cts_avals)]
+
+  cts_out = linear_call_p.bind(*t_consts, *f_consts, *operands_res, *cts,
+                               callee=transpose,
+                               transpose=callee,
+                               num_callee_consts=len(t_consts),
+                               num_transpose_consts=len(f_consts),
+                               num_res=len(operands_res))
+
+  return [None] * (num_callee_consts + num_transpose_consts + num_res) + cts_out
+
+def _linear_call_abstract_eval(*args, **kwargs):
+  return map(core.raise_to_shaped, kwargs['callee'].out_avals)
+
+linear_call_p = core.Primitive('linear_call')
+linear_call_p.multiple_results = True
+linear_call_p.def_impl(_linear_call_impl)
+linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
+ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
