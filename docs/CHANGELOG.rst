@@ -7,16 +7,6 @@ Change Log
 
 .. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
-jaxlib 0.1.61 (Unreleased)
---------------------------
-
-.. AFTER RELEASING THE NEXT JAXLIB, please remove the numpy<1.20 requirements in
-.. test-requirements.txt. It is there only to match the previously released
-.. jaxlib 0.1.60
-
-* Bug fixes:
-
-
 jax 0.2.10 (Unreleased)
 -----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.9...master>`__.
@@ -45,6 +35,12 @@ jax 0.2.10 (Unreleased)
     of array arguments: :func:`jax.numpy.pad`, :func`jax.numpy.ravel`,
     :func:`jax.numpy.repeat`, :func:`jax.numpy.reshape`.
     In general, `jax.numpy` functions should be used with scalars or array arguments.
+
+jaxlib 0.1.62 (Unreleased)
+--------------------------
+
+jaxlib 0.1.61 (February 12 2021)
+--------------------------
 
 jaxlib 0.1.60 (Febuary 3 2021)
 ------------------------------

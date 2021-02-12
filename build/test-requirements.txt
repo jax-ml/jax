@@ -1,6 +1,6 @@
 flake8
 # For now, we pin the numpy version here
-numpy>=1.16,<1.20
+numpy>=1.16
  # Must be kept in sync with the minimum jaxlib version in jax/lib/__init__.py
 jaxlib==0.1.60
 mypy==0.790
