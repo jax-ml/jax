@@ -424,13 +424,13 @@ Next, run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax jaxlib==0.1.60+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install --upgrade jax jaxlib==0.1.61+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
-installation you want to use, with `cuda111` for CUDA 11.1, `cuda110` for CUDA
-11.0, `cuda102` for CUDA 10.2, and `cuda101` for CUDA 10.1. You can find your
-CUDA version with the command:
+installation you want to use, with `cuda112` for CUDA 11.2, `cuda111` for CUDA
+11.1, `cuda110` for CUDA 11.0, `cuda102` for CUDA 10.2, and `cuda101` for CUDA
+10.1. You can find your CUDA version with the command:
 
 ```bash
 nvcc --version
