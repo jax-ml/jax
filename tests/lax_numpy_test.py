@@ -4001,7 +4001,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       "weights": weights,
       "minlength": minlength,
       "length": length}
-    for shape in [(5,), (10,)]
+    for shape in [(0,), (5,), (10,)]
     for dtype in int_dtypes
     for weights in [True, False]
     for minlength in [0, 20]

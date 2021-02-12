@@ -1659,7 +1659,7 @@ def bincount(x, weights=None, minlength=0, *, length=None):
     x = core.concrete_or_error(asarray, x,
       "The error occured because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
-    length = max(x) + 1
+    length = max(x, initial=-1) + 1
   length = _max(length, minlength)
   if ndim(x) != 1:
     raise ValueError("only 1-dimensional input supported.")
