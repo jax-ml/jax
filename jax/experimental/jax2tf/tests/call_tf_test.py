@@ -53,14 +53,59 @@ class CallTfTest(jtu.JaxTestCase):
   def setUp(self):
     if tf is None:
       raise unittest.SkipTest("Test requires tensorflow")
+    # TODO(b/171320191): this line works around a missing context initialization
+    # bug in TensorFlow.
+    _ = tf.add(1, 1)
     super().setUp()
 
   @parameterized_jit
-  def test_eval(self, with_jit=True):
-    x = jnp.float32(3.)
-
+  def test_eval_scalar_arg(self, with_jit=False):
+    x = 3.
     res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
-    self.assertAllClose(jnp.sin(x), res)
+    self.assertAllClose(jnp.sin(x), res, check_dtypes=False)
+
+  @parameterized_jit
+  def test_eval_scalar_res(self, with_jit=False):
+    x = 3.
+    res = _maybe_jit(with_jit, jax2tf.call_tf(lambda x: 4.))(x)
+    self.assertAllClose(4., res, check_dtypes=False)
+
+  @parameterized_jit
+  def test_eval_numpy_arg(self, with_jit=False):
+    x = np.ones((2, 3), dtype=np.float32)
+    res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
+    self.assertAllClose(jnp.sin(x), res, check_dtypes=False)
+
+  @parameterized_jit
+  def test_eval_numpy_res(self, with_jit=False):
+    x = np.ones((2, 3), dtype=np.float32)
+    res = _maybe_jit(with_jit, jax2tf.call_tf(lambda _: x))(x)
+    self.assertAllClose(x, res, check_dtypes=False)
+
+  def test_eval_numpy_no_copy(self):
+    if jtu.device_under_test() != "cpu":
+      raise unittest.SkipTest("no_copy test works only on CPU")
+    # For ndarray, zero-copy only works for sufficiently-aligned arrays.
+    x = np.ones((16, 16), dtype=np.float32)
+    res = jax2tf.call_tf(lambda x: x)(x)
+    self.assertAllClose(x, res)
+    self.assertTrue(np.shares_memory(x, res))
+
+  @parameterized_jit
+  def test_eval_devicearray_arg(self, with_jit=False):
+    x = jnp.ones((2, 3), dtype=np.float32)
+    res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
+    self.assertAllClose(jnp.sin(x), res, check_dtypes=False)
+
+  def test_eval_devicearray_no_copy(self):
+    if jtu.device_under_test() != "cpu":
+      # TODO(necula): add tests for GPU and TPU
+      raise unittest.SkipTest("no_copy test works only on CPU")
+    # For DeviceArray zero-copy works even if not aligned
+    x = jnp.ones((3, 3), dtype=np.float32)
+    res = jax2tf.call_tf(lambda x: x)(x)
+    self.assertAllClose(x, res)
+    self.assertTrue(np.shares_memory(x, res))
 
   @parameterized_jit
   def test_eval_pytree(self, with_jit=True):

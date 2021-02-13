@@ -45,9 +45,7 @@ except:
   tf = None
 
 
-dlpack_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-                 jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
-                 jnp.float16, jnp.float32, jnp.float64]
+dlpack_dtypes = jax.dlpack.SUPPORTED_DTYPES
 torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
 

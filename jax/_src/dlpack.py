@@ -13,10 +13,16 @@
 # limitations under the License.
 
 from jax import core
+from jax import numpy as jnp
 from jax import lazy
 from jax.interpreters import xla
 from jax.lib import xla_client
 from jax.lib import xla_bridge
+
+SUPPORTED_DTYPES = set([jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+                        jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+                        jnp.float16, jnp.bfloat16, jnp.float32, jnp.float64])
+
 
 def to_dlpack(x: xla.DeviceArrayProtocol, take_ownership: bool = False):
   """Returns a DLPack tensor that encapsulates a DeviceArray `x`.

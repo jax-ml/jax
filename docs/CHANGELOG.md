@@ -13,6 +13,9 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features:
   * {func}`jax.scipy.stats.chi2` is now available as a distribution with logpdf and pdf methods.
   * {func}`jax.scipy.stats.betabinom` is now available as a distribution with logpmf and pmf methods.
+  * Added {func}`jax.experimental.jax2tf.call_tf` to call TensorFlow functions
+    from JAX ([#5627](https://github.com/google/jax/pull/5627)
+    and [README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
 * Bug fixes:
 * Breaking changes:
   * JAX's promotion rules were adjusted to make promotion more consistent and

@@ -237,8 +237,9 @@ before conversion. (This is a hypothesis, we have not verified it extensively.)
 
 The experimental function ```call_tf``` allows JAX to call
 TensorFlow functions. These functions can be called anywhere in a JAX
-computation, including in ``jax.jit``, ``jax.pmap``, ``jax.xmap``,
-or inside JAX's control-flow primitives.
+computation, including in staging contexts ``jax.jit``, ``jax.pmap``, ``jax.xmap``,
+or inside JAX's control-flow primitives. In non-staging contexts, 
+the TensorFlow function is called in eager mode.
 For now, only reverse-mode autodiff is supported for these functions
 (no forward-mode autodiff, nor ``vmap``).
 
@@ -314,6 +315,11 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
     JAX XLA computation.
   * The TF custom gradients are respected, since it is TF that generates the
     gradient computation.
+  * In op-by-op mode, when we call TensorFlow in eager mode, we use 
+    DLPack to try to avoid copying the data. This works for CPU (for
+    DeviceArray data or for np.ndarray that are aligned on 16-byte
+    boundaries) and on GPU (for DeviceArray). 
+    The zero-copy does not yet work on TPU.   
   * ``call_tf`` works best with pure TF functions that do not capture
     ``tf.Variable``s or tensors from the environment, and all such
     context is passed explicitly through arguments, and if variables

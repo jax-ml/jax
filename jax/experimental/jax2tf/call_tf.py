@@ -27,11 +27,13 @@ from typing import Callable
 
 import jax
 from jax import core
+from jax import dlpack
 from jax import dtypes
 from jax import numpy as jnp
 from jax import tree_util
 from jax._src import util
 from jax.interpreters import xla
+from jax.lib import xla_bridge
 from jax.lib import xla_client
 
 import numpy as np
@@ -39,6 +41,10 @@ import tensorflow as tf  # type: ignore[import]
 
 xops = xla_client._xla.ops  # type: ignore
 
+# The platforms for which to use DLPack to avoid copying (only works on GPU
+# and CPU at the moment, and only for DeviceArray). For CPU we don't need
+# DLPack, if we are careful.
+_DLPACK_PLATFORMS = ("gpu",)
 
 def call_tf(func_tf: Callable) -> Callable:
   """Calls a TensorFlow function from JAX, with support for reverse autodiff.
@@ -147,13 +153,36 @@ call_tf_p.multiple_results = True
 
 
 # The impl will be used in op-by-op mode and calls func_tf in TF eager mode.
-def _call_tf_impl(*args, args_treedef, func_tf, **_):
-  # TODO(necula): does this copy to the host?
-  args_tf_flat = [tf.constant(np.asarray(a)) for a in args]
+def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
+  # On GPU we use dlpack to avoid copies of data to the host.
+  def _arg_jax_to_tf(arg_jax):
+    if (isinstance(arg_jax, xla.DeviceArray) and
+        arg_jax.device_buffer.client.platform in _DLPACK_PLATFORMS and
+        arg_jax.dtype in dlpack.SUPPORTED_DTYPES):
+      arg_dlpack = jax.dlpack.to_dlpack(arg_jax, take_ownership=False)
+      return tf.experimental.dlpack.from_dlpack(arg_dlpack)
+    # The following avoids copies to the host on CPU, always for DeviceArray
+    # and even for ndarray if they are sufficiently aligned.
+    # TODO(necula): on TPU this copies to the host!
+    return tf.constant(np.asarray(arg_jax))
+
+  args_tf_flat = tuple(map(_arg_jax_to_tf, args_jax_flat))
   res_tf = func_tf(*args_treedef.unflatten(args_tf_flat))
+  res_tf_flat, _ = tree_util.tree_flatten(res_tf)
   # TODO(necula): check the result for tree and aval
-  # TODO(necula): does this copy to the host?
-  return [jnp.asarray(np.asarray(r)) for r in tree_util.tree_flatten(res_tf)[0]]
+
+  def _res_tf_to_jax(res_tf):
+    if isinstance(res_tf, tf.Tensor) and res_tf.dtype in dlpack.SUPPORTED_DTYPES:
+      res_tf_platform = tf.DeviceSpec.from_string(res_tf.backing_device).device_type
+      res_jax_platform = res_tf_platform.lower()
+      if res_jax_platform in _DLPACK_PLATFORMS:
+        res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
+        return jax.dlpack.from_dlpack(
+            res_dlpack, backend=xla_bridge.get_backend(res_jax_platform))
+
+    return jnp.asarray(np.asarray(res_tf))
+
+  return list(map(_res_tf_to_jax, res_tf_flat))
 
 
 call_tf_p.def_impl(_call_tf_impl)
