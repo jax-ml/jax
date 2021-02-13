@@ -54,7 +54,7 @@ Common causes of OOM failures
   in TF1, which should be set in a :code:`tf.ConfigProto` passed to
   :code:`tf.Session`. See
   `Using GPUs: Limiting GPU memory growth
-  <https://www.tensorflow.org/beta/guide/using_gpu#limiting_gpu_memory_growth>`_
+  <https://www.tensorflow.org/guide/gpu#limiting_gpu_memory_growth>`_
   for TF2).
 
 **Running JAX on the display GPU.**
