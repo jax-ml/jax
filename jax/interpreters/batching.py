@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union, Sequence, Iterab
 import jax
 from ..config import config
 from .. import core
-from ..core import ShapedArray, raise_to_shaped, Trace, Tracer
+from ..core import raise_to_shaped, Trace, Tracer
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
 from .._src.util import (unzip2, partial, safe_map, wrap_name, split_list,
@@ -116,17 +116,10 @@ class BatchTracer(Tracer):
   @property
   def aval(self):
     aval = raise_to_shaped(core.get_aval(self.val))
-    if self.batch_dim is not_mapped:
+    if self.batch_dim is not_mapped or aval is core.abstract_unit:
       return aval
     else:
-      if aval is core.abstract_unit:
-        return aval
-      elif type(aval) is ShapedArray:
-        assert 0 <= self.batch_dim < aval.ndim
-        new_shape = tuple(np.delete(aval.shape, self.batch_dim))
-        return aval.update(shape=new_shape)
-      else:
-        raise TypeError(aval)
+      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
 
   def full_lower(self):
     if self.batch_dim is not_mapped:
