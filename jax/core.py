@@ -1425,6 +1425,38 @@ named_call_p.def_impl(call_impl)
 
 # ------------------- Map -------------------
 
+def mapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
+  handler, _ = aval_mapping_handlers.get(type(aval), (None, None))
+  if handler is not None:
+    return handler(size, axis, aval)
+  else:
+    raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
+
+def unmapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
+  _, handler = aval_mapping_handlers.get(type(aval), (None, None))
+  if handler is not None:
+    return handler(size, axis, aval)
+  else:
+    raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
+
+def _map_unit(size: int, axis: int, aval: AbstractUnit) -> AbstractUnit:
+  return aval
+
+def _map_shaped_array(size: int, axis: int, aval: ShapedArray) -> ShapedArray:
+  assert aval.shape[axis] == size
+  return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype)
+
+def _unmap_shaped_array(size: int, axis: int, aval: ShapedArray) -> ShapedArray:
+  return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype)
+
+AvalMapHandlerPair = Tuple[Callable, Callable]
+aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
+    AbstractUnit: (_map_unit, _map_unit),
+    ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
+    ConcreteArray: (_map_shaped_array, _unmap_shaped_array),
+}
+
+
 class MapPrimitive(Primitive):
   multiple_results = True
   map_primitive = True
@@ -1515,24 +1547,6 @@ def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst) 
 axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst], ParamDict]] = {}
 
 # ------------------- Jaxpr checking -------------------
-
-def mapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
-  if aval is abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    # might be raising abstraction level from Concrete here
-    assert aval.shape[axis] == size
-    return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype)
-  else:
-    raise TypeError(f"Mapped operand {aval}")
-
-def unmapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
-  if aval is abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype)
-  else:
-    raise TypeError(f"Mapped output {aval}")
 
 def typecheck(aval: AbstractValue, x) -> bool:
   return typecompat(aval, get_aval(x))
