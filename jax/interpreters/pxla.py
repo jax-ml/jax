@@ -35,7 +35,8 @@ import itertools as it
 import operator as op
 import threading
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
-                    Type, Union, Iterable, no_type_check, NamedTuple, TYPE_CHECKING)
+                    Type, Union, Iterable, no_type_check, NamedTuple,
+                    TYPE_CHECKING)
 
 from absl import logging
 import numpy as np
@@ -48,9 +49,10 @@ from ..abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
 from .._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
                          extend_name_stack, wrap_name, assert_unreachable,
-                         tuple_insert, tuple_delete, taggedtuple, curry)
+                         tuple_insert, tuple_delete, curry)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
+from ..lib import pmap_lib
 from ..tree_util import tree_flatten, tree_map
 from . import batching
 from . import partial_eval as pe
@@ -71,77 +73,37 @@ unsafe_map, map = map, safe_map  # type: ignore
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
 
-class NoSharding:
-
-  def __eq__(self, other):
-    return isinstance(other, NoSharding)
-
-  def __repr__(self):
-    return "NoSharding()"
-
-
-_UNSHARDED_INSTANCE = NoSharding()
-
-# mypy is very unhappy about taggedtuple
+# mypy cannot deal with the C++ types. An alternative is to use `# type: ignore`
 if TYPE_CHECKING:
+  # We cannot use `NoSharding = Any` with mypy, otherwise you get:
+  # error: Cannot use isinstance() with Any type  [misc]
+  class NoSharding:
+    pass
+
+  class Chunked(NamedTuple):
+    chunks: List[int]
+
   class Unstacked(NamedTuple):
     size: int
-else:
-  Unstacked = taggedtuple('Unstacked', ('size',))
 
-class Chunked:
-  chunks: Tuple[int, ...]
-
-  def __init__(self, chunks: Union[int, Tuple[int, ...]]):
-    if not isinstance(chunks, tuple):
-      chunks = (chunks,)
-    object.__setattr__(self, 'chunks', chunks)
-
-  def __setattr__(self, name, value):
-    raise RuntimeError("Chunked is immutable")
-
-  def __delattr__(self, name):
-    raise RuntimeError("Chunked is immutable")
-
-  def __hash__(self):
-    return hash(self.chunks)
-
-  def __eq__(self, other):
-    return type(other) is Chunked and self.chunks == other.chunks
-
-  def __repr__(self):
-    return f'Chunked({self.chunks})'
-
-"""
-Represents all the ways we can shard a dimension.
-- `None` means no sharding;
-- `Chunked` means that the dimension is split into the specified number of chunks,
-  but the split dimension itself is preserved inside the map;
-- `Unstacked` means that the dimension is split into chunks of size 1, and doesn't
-  appear inside the map.
-"""
-AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
-
-# mypy is very unhappy about taggedtuple
-if TYPE_CHECKING:
   class ShardedAxis(NamedTuple):
     axis: int
+
   class Replicated(NamedTuple):
     replicas: int
 else:
-  ShardedAxis = taggedtuple('ShardedAxis', ('axis',))
-  Replicated = taggedtuple('Replicated', ('replicas',))
+  # See the C++ code for comments.
+  NoSharding = pmap_lib.NoSharding
+  Chunked = pmap_lib.Chunked
+  Unstacked = pmap_lib.Unstacked
 
-"""
-Assigns sharded axes to mesh dimensions.
+  ShardedAxis = pmap_lib.ShardedAxis
+  Replicated = pmap_lib.Replicated
 
-When no axis is assigned, the data is replicated.
-Note that `ShardedAxis(2)` refers to the second actually sharded axis (i.e.
-counting as if the None dimensions of sharding were filtered out). For example,
-given the sharding `[Unstacked(n), None, Chunked(m)]`, an entry of `ShardedAxis(1)`
-refers to the `Chunked(m)` axis, not the `None`.
-"""
+_UNSHARDED_INSTANCE = NoSharding()
+AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
 MeshDimAssignment = Union[ShardedAxis, Replicated]
+
 
 class ShardingSpec:
   """Describes the sharding of an ndarray.
@@ -299,7 +261,8 @@ class ShardingSpec:
               .transpose(perm))
 
   def __eq__(self, other):
-    return (self.sharding, self.mesh_mapping) == (other.sharding, other.mesh_mapping)
+    return (self.sharding, self.mesh_mapping) == (other.sharding,
+                                                  other.mesh_mapping)
 
   def __hash__(self):
     return hash((self.sharding, self.mesh_mapping))
@@ -1172,8 +1135,10 @@ def partitioned_sharding_spec(num_partitions: int,
         mesh_mapping=maybe_replicate)
   else:
     assert len(partitions) == len(aval.shape)
-    return ShardingSpec(sharding=map(Chunked, partitions),
-                        mesh_mapping=map(ShardedAxis, range(len(partitions))))
+    return ShardingSpec(
+        # Chunked expects a list of integers
+        sharding=map(Chunked, [[x] for x in partitions]),
+        mesh_mapping=map(ShardedAxis, range(len(partitions))))
 
 
 def execute_replicated(compiled, backend, in_handler, out_handler, *args):
@@ -1570,8 +1535,8 @@ def mesh_sharding_specs(axis_sizes, axis_names):
       assert aval_shape[axis] % axis_sizes[name] == 0, (axis_sizes[name], aval.shape[axis])
       aval_shape[axis] //= axis_sizes[name]
       if isinstance(sharding[axis], NoSharding):
-        sharding[axis] = Chunked(())
-      sharding[axis] = Chunked(sharding[axis].chunks + (axis_sizes[name],))
+        sharding[axis] = Chunked([])
+      sharding[axis] = Chunked(sharding[axis].chunks + [axis_sizes[name]])
       assert isinstance(mesh_mapping[mesh_axis_pos[name]], Replicated), \
           "Value mapped to the same mesh axis twice"
       mesh_mapping[mesh_axis_pos[name]] = ShardedAxis(next_sharded_axis)

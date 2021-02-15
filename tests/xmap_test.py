@@ -380,7 +380,7 @@ class XMapTest(XMapTestCase):
     y = f(x)
     self.assertAllClose(y, (jnp.sin(x * 2).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
     self.assertEqual(y[0].sharding_spec.sharding,
-                      (pxla.Chunked(2), pxla.NoSharding(), pxla.NoSharding()))
+                      (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
     self.assertEqual(y[0].sharding_spec.mesh_mapping,
                     (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
 
