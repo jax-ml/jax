@@ -178,9 +178,7 @@ def check_bazel_version(bazel_path):
   if match is None:
     return False
   actual_ints = [int(x) for x in match.group(1).split(".")]
-  if (2, 0, 0) > actual_ints:
-    return False
-  return True
+  return actual_ints >= (2, 0, 0)
 
 
 BAZELRC_TEMPLATE = """
