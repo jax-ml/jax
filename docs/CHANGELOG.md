@@ -38,6 +38,13 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jaxlib 0.1.62 (Unreleased)
 
+* New features:
+  * jaxlib wheels are now built to require AVX instructions on x86-64 machines
+    by default. If you want to use JAX on a machine that doesn't support AVX,
+    you can build a jaxlib from source using the `--target_cpu_features` flag
+    to `build.py`. `--target_cpu_features` also replaces
+    `--enable_march_native`.
+
 ## jaxlib 0.1.61 (February 12 2021)
 
 ## jaxlib 0.1.60 (Febuary 3 2021)
