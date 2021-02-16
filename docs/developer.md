@@ -195,27 +195,19 @@ mypy --config=mypy.ini --show-error-codes jax
 # Update documentation
 
 To rebuild the documentation, install several packages:
-
 ```
 pip install -r docs/requirements.txt
 ```
-
-You must also install `pandoc` in order to regenerate the notebooks.
-See [Install Pandoc](https://pandoc.org/installing.html),
-or using [Miniconda](https://docs.conda.io/en/latest/miniconda.html) which
-I have used successfully on the Mac: `conda install -c conda-forge pandoc`.
-If you do not want to install `pandoc` then you should regenerate the documentation
-without the notebooks.
-
-You run at top-level one of the following commands:
-
+And then run:
 ```
-sphinx-build -b html docs docs/build/html  # with the notebooks
-sphinx-build -b html -D nbsphinx_execute=never docs docs/build/html  # without the notebooks
+sphinx-build -b html docs docs/build/html
 ```
-
-You can then see the generated documentation in
-`docs/build/html/index.html`.
+This can take a long time because it executes many of the notebooks in the documentation source;
+if you'd prefer to build the docs without exeuting the notebooks, you can run:
+```
+sphinx-build -b html -D jupyter_execute_notebooks=off docs docs/build/html
+```
+You can then see the generated documentation in `docs/build/html/index.html`.
 
 ## Update notebooks
 

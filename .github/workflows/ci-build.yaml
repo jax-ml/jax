@@ -121,7 +121,6 @@ jobs:
           ${{ runner.os }}-pip-
     - name: Install dependencies
       run: |
-        sudo apt install -y pandoc
         pip install -r docs/requirements.txt
     - name: Test documentation
       run: |
