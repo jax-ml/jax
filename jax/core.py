@@ -903,7 +903,8 @@ def valid_jaxtype(x):
 
 def check_valid_jaxtype(x):
   if not valid_jaxtype(x):
-    raise TypeError(f"{x} of type {type(x)} is not a valid JAX type")
+    raise TypeError(
+      f"Value {repr(x)} of type {type(x)} is not a valid JAX type")
 
 
 def concrete_aval(x):
@@ -912,7 +913,8 @@ def concrete_aval(x):
     if handler: return handler(x)
   if hasattr(x, '__jax_array__'):
     return concrete_aval(x.__jax_array__())
-  raise TypeError(f"{type(x)} is not a valid JAX type")
+  raise TypeError(f"Value {repr(x)} with type {type(x)} is not a valid JAX "
+                   "type")
 
 
 def get_aval(x):
