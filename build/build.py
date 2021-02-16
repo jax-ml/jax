@@ -193,11 +193,13 @@ build --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"
 build --repo_env TF_NEED_ROCM="{tf_need_rocm}"
 build --action_env TF_ROCM_AMDGPU_TARGETS="{rocm_amdgpu_targets}"
 build --distinct_host_configuration=false
-build:linux --copt=-Wno-sign-compare
-build:macos --copt=-Wno-sign-compare
+build:posix --copt=-Wno-sign-compare
 build -c opt
-build:opt --copt=-march=native
-build:opt --host_copt=-march=native
+build:avx_posix --copt=-mavx
+build:avx_posix --host_copt=-mavx
+build:avx_windows --copt=/arch=AVX
+build:native_arch_posix --copt=-march=native
+build:native_arch_posix --host_copt=-march=native
 build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
 # Sets the default Apple platform to macOS.
@@ -210,12 +212,9 @@ build --announce_rc
 build --define open_source_build=true
 
 # Disable enabled-by-default TensorFlow features that we don't care about.
-build:linux --define=no_aws_support=true
-build:macos --define=no_aws_support=true
-build:linux --define=no_gcp_support=true
-build:macos --define=no_gcp_support=true
-build:linux --define=no_hdfs_support=true
-build:macos --define=no_hdfs_support=true
+build:posix --define=no_aws_support=true
+build:posix --define=no_gcp_support=true
+build:posix --define=no_hdfs_support=true
 build --define=no_kafka_support=true
 build --define=no_ignite_support=true
 build --define=grpc_no_ares=true
@@ -247,14 +246,14 @@ build:windows --host_copt=-DNOGDI
 # otherwise, there will be some compiling error due to preprocessing.
 build:windows --copt=/Zc:preprocessor
 
-build:linux --cxxopt=-std=c++14
-build:linux --host_cxxopt=-std=c++14
-
-build:macos --cxxopt=-std=c++14
-build:macos --host_cxxopt=-std=c++14
+build:posix --cxxopt=-std=c++14
+build:posix --host_cxxopt=-std=c++14
 
 build:windows --cxxopt=/std:c++14
 build:windows --host_cxxopt=/std:c++14
+
+build:linux --config=posix
+build:macos --config=posix
 
 # Generate PDB files, to generate useful PDBs, in opt compilation_mode
 # --copt /Z7 is needed.
@@ -352,13 +351,17 @@ def main():
       "--python_bin_path",
       help="Path to Python binary to use. The default is the Python "
       "interpreter used to run the build script.")
-  add_boolean_argument(
-      parser,
-      "enable_march_native",
-      default=False,
-      help_str="Generate code targeted to the current machine? This may "
-          "increase performance, but may generate code that does not run on "
-          "older machines.")
+  parser.add_argument(
+      "--target_cpu_features",
+      choices=["release", "native", "default"],
+      default="release",
+      help="What CPU features should we target? 'release' enables CPU "
+           "features that should be enabled for a release build, which on "
+           "x86-64 architectures enables AVX. 'native' enables "
+           "-march=native, which generates code targeted to use all "
+           "features of the current machine. 'default' means don't opt-in "
+           "to any architectural features and use whatever the C compiler "
+           "generates by default.")
   add_boolean_argument(
       parser,
       "enable_mkl_dnn",
@@ -439,7 +442,7 @@ def main():
   check_python_version(python_version)
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
-  print("-march=native: {}".format("yes" if args.enable_march_native else "no"))
+  print("Target CPU features: {}".format(args.target_cpu_features))
 
   cuda_toolkit_path = args.cuda_path
   cudnn_install_path = args.cudnn_path
@@ -478,8 +481,16 @@ def main():
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   config_args = args.bazel_options
   config_args += ["--config=short_logs"]
-  if args.enable_march_native:
-    config_args += ["--config=opt"]
+  if args.target_cpu_features == "release":
+    if platform.uname().machine == "x86_64":
+      config_args += ["--config=avx_windows" if is_windows()
+                      else "--config=avx_posix"]
+  elif args.target_cpu_features == "native":
+    if is_windows():
+      print("--target_cpu_features=native is not supported on Windows; ignoring.")
+    else:
+      config_args += ["--config=native_arch_posix"]
+
   if args.enable_mkl_dnn:
     config_args += ["--config=mkl_open_source_only"]
   if args.enable_cuda:
