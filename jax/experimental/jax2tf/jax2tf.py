@@ -807,6 +807,7 @@ tf_not_yet_impl = [
   "infeed", "outfeed", "pmax_p",
   "pmin", "ppermute", "psum", "pmax", "pgather",
   "axis_index", "pdot", "all_gather",
+  "rng_bit_generator",
 
   "xla_pmap",
   "call_tf",

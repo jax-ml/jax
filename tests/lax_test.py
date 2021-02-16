@@ -17,6 +17,7 @@ import collections
 from functools import partial
 import itertools
 import operator
+import unittest
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -2283,6 +2284,23 @@ class LaxTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda x: jax.jvp(lambda x: lax.select(True, x, x),
                                              (x,), (1.,)))(1.)
     self.assertLen(jaxpr.jaxpr.eqns, 2)
+
+  @unittest.skipIf(jax.lib.version < (0, 1, 62), "Needs jaxlib 0.1.62 or newer")
+  def testRngBitGenerator(self):
+    if not config.x64_enabled:
+      raise SkipTest("RngBitGenerator requires 64bit key")
+
+    key = np.array((1, 2)).astype(np.uint64)
+    def fn(k):
+      return lax.rng_bit_generator(
+          k, shape=(5, 7), algorithm=lax.RandomAlgorithm.RNG_THREE_FRY)
+
+    out = fn(key)
+    out_jit = api.jit(fn)(key)
+    self.assertEqual(out[0].shape, (2,))
+    self.assertEqual(out[1].shape, (5, 7))
+    self.assertArraysEqual(out[0], out_jit[0])
+    self.assertArraysEqual(out[1], out_jit[1])
 
 
 class LazyConstantTest(jtu.JaxTestCase):
