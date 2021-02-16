@@ -12,10 +12,6 @@ myst-nb
 # The next packages are for notebooks
 matplotlib
 sklearn
-# RTD defaults to an older version of pygments which is incompatible with the
-# nbsphinx/jupyter versions that gets installed. This can be removed if/when RTD
-# defaults to a newer version.
-pygments==2.4.1
 # For CI tests.
 pytest
 pytest-xdist
