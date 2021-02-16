@@ -91,6 +91,10 @@ def minimize(
   if options is None:
     options = {}
 
+  if not isinstance(args, tuple):
+    msg = "args argument to jax.scipy.optimize.minimize must be a tuple, got {}"
+    raise TypeError(msg.format(args))
+
   fun_with_args = lambda x: fun(x, *args)
 
   if method.lower() == 'bfgs':
