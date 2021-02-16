@@ -14,7 +14,7 @@ kernelspec:
 
 +++ {"colab_type": "text", "id": "18AF5Ab4p6VL"}
 
-##### Copyright 2018 Google LLC.
+**Copyright 2018 Google LLC.**
 
 Licensed under the Apache License, Version 2.0 (the "License");
 
@@ -36,6 +36,8 @@ limitations under the License.
 
 # Training a Simple Neural Network, with tensorflow/datasets Data Loading
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/neural_network_with_tfds_data.ipynb)
+
 _Forked from_ `neural_network_and_data_loading.ipynb`
 
 ![JAX](https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png)
@@ -56,7 +58,7 @@ from jax import random
 
 +++ {"colab_type": "text", "id": "MTVcKi-ZYB3R"}
 
-### Hyperparameters
+## Hyperparameters
 Let's get a few bookkeeping items out of the way.
 
 ```{code-cell} ipython3
@@ -87,7 +89,7 @@ params = init_network_params(layer_sizes, random.PRNGKey(0))
 
 +++ {"colab_type": "text", "id": "BtoNk_yxWtIw"}
 
-### Auto-batching predictions
+## Auto-batching predictions
 
 Let us first define our prediction function. Note that we're defining this for a _single_ image example. We're going to use JAX's `vmap` function to automatically handle mini-batches, with no performance penalty.
 
@@ -165,7 +167,7 @@ At this point, we have all the ingredients we need to define our neural network 
 
 +++ {"colab_type": "text", "id": "NwDuFqc9X7ER"}
 
-### Utility and loss functions
+## Utility and loss functions
 
 ```{code-cell} ipython3
 :colab: {}
@@ -194,7 +196,7 @@ def update(params, x, y):
 
 +++ {"colab_type": "text", "id": "umJJGZCC2oKl"}
 
-### Data Loading with `tensorflow/datasets`
+## Data Loading with `tensorflow/datasets`
 
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll use the `tensorflow/datasets` data loader.
 
@@ -240,7 +242,7 @@ print('Test:', test_images.shape, test_labels.shape)
 
 +++ {"colab_type": "text", "id": "xxPd6Qw3Z98v"}
 
-### Training Loop
+## Training Loop
 
 ```{code-cell} ipython3
 :colab: {}

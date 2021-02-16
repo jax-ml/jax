@@ -16,6 +16,8 @@ kernelspec:
 
 # Autobatching log-densities example
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/vmapped_log_probs.ipynb)
+
 This notebook demonstrates a simple Bayesian inference example where autobatching makes user code easier to write, easier to read, and less likely to include bugs.
 
 Inspired by a notebook by @davmre.

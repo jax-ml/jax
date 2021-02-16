@@ -16,6 +16,8 @@ kernelspec:
 
 # The Autodiff Cookbook
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/autodiff_cookbook.ipynb)
+
 *alexbw@, mattjj@*  
 
 JAX has a pretty general automatic differentiation system. In this notebook, we'll go through a whole bunch of neat autodiff ideas that you can cherry pick for your own work, starting with the basics.

@@ -16,7 +16,7 @@ kernelspec:
 
 # Generative Modeling by Estimating Gradients of Data Distribution in JAX
 
-[![Run in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/score_matching.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/score_matching.ipynb)
 
 In this notebook we'll implement __Generative Modeling by Estimating Gradients of the Data Distribution__ [[arxiv]](https://arxiv.org/abs/1907.05600).
 
@@ -53,7 +53,7 @@ plt.scatter(*sample_batch(10**4).T, alpha=0.1)
 
 +++ {"colab_type": "text", "id": "5X-LN4rwG6TH"}
 
-### Compute score matching objective
+## Compute score matching objective
 
 The method we apply here was originally proposed by [Hyvarinen et al. (2005)](http://jmlr.org/papers/volume6/hyvarinen05a/old.pdf). The idea behind score matching is to __learn scores:__ the gradients of $\log p(x)$ w.r.t. $x$. When trained this model can "improve" a sample $x$ by changing it in the direction of highest log-probability. However, training such model can get tricky. When predicting a continuous variable, ML folks usually minimize squared error:
 
@@ -123,7 +123,7 @@ __Note__: we use `jax.jacfwd` since the input dimension is only 2
 
 +++ {"colab_type": "text", "id": "Qxza8fDvG6TL"}
 
-### Training loop
+## Training loop
 
 ```{code-cell} ipython3
 :colab: {}
@@ -175,7 +175,7 @@ for i in range(2000):
 
 +++ {"colab_type": "text", "id": "Ug91tS-RG6TP"}
 
-### Plot gradient directions
+## Plot gradient directions
 Once the model is trained we can use it to predict scores at each point. Since those are gradient vectors, we'll use [`Quiver Plot`](https://matplotlib.org/3.1.1/api/_as_gen/matplotlib.pyplot.quiver.html) to draw them.
 
 ```{code-cell} ipython3
@@ -207,33 +207,7 @@ Seriously though, this paper takes advantage of two new ideas: sampling with __L
 
 +++ {"colab_type": "text", "id": "gsXvXhgfG6TS"}
 
-```
-
-```
-
-```
-
-```
-
-```
-
-```
-
-```
-
-```
-
-```
-
-```
-
-```
-
-```
-
-
-
-### Sampling with Langevin Dynamics
+## Sampling with Langevin Dynamics
 
 Once we have $\nabla_x log p(x)$, we can use it to generate data. One simple thing you can do is a gradient ascent w.r.t image to find a local maximum of p(x):
 $$\hat x_{t + 1} := x_t + \epsilon \nabla_{x_t} log p(x_t)$$
@@ -304,7 +278,7 @@ plt.scatter(*sample_batch(10_000).T, alpha=0.025)
 
 +++ {"colab_type": "text", "id": "vZrW00brG6TX"}
 
-### Sliced Score Matching
+## Sliced Score Matching
 
 Now the problem with our previous loss function is that the computation of $tr(\mathbf{J}_x [\space model(x)])$ takes a $O(N^2 + N)$ time to compute, thus not being suitable for high-dimensional problems. The solution is using jacobian vector products which can be easily computed using forward mode auto-differentiation. This method is called Sliced Score Matching and was proposed by [Yang Song et al. (2019)](https://arxiv.org/abs/1905.07088).
 
@@ -493,7 +467,7 @@ for t, x_t in enumerate(xx):
 
 +++ {"colab_type": "text", "id": "jMfcQxhWG6Tm"}
 
-### This is just the beginning
+## This is just the beginning
 
 In their paper, [Song et al. (2019)](https://arxiv.org/abs/1907.05600) propose a more sophisticated sampling procedure that can efficiently sample larger images. They also utilize a technique called _Denoising Score Matching_ which can be safely ported even to earthling frameworks like tensorflow and pytorch. Go take a look!
 

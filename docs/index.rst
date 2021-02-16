@@ -25,7 +25,12 @@ For an introduction to JAX, start at the
    notebooks/Common_Gotchas_in_JAX
    notebooks/Custom_derivative_rules_for_Python_code
    notebooks/How_JAX_primitives_work
-   notebooks/Writing_custom_interpreters_in_Jax.ipynb
+   notebooks/Writing_custom_interpreters_in_Jax
+   notebooks/Neural_Network_and_Data_Loading
+   notebooks/XLA_in_Python
+   notebooks/maml
+   notebooks/neural_network_with_tfds_data
+   notebooks/score_matching
 
 .. toctree::
    :maxdepth: 1

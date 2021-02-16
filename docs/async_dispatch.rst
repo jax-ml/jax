@@ -1,3 +1,5 @@
+.. _async-dispatch:
+
 Asynchronous dispatch
 =====================
 
