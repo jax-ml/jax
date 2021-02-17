@@ -313,7 +313,7 @@ def sqrt(x: Array) -> Array:
   return sqrt_p.bind(x)
 
 def rsqrt(x: Array) -> Array:
-  r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}."""
+  r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}`."""
   return rsqrt_p.bind(x)
 
 def bitwise_not(x: Array) -> Array:
