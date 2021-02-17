@@ -37,8 +37,6 @@ In this notebook we'll go through:
 - extending MAML to handle batching at the task-level
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: zKVdo3FtgyhE
 
 ### import jax.numpy (almost-drop-in for numpy) and gradient operators.
@@ -54,10 +52,6 @@ JAX makes it easy to compute gradients of python functions. Here, we thrice-diff
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 123
-colab_type: code
 id: Mt-uRwBGgyhJ
 outputId: db7f718c-c2fb-4f7e-f31c-39a0d36c7051
 ---
@@ -79,8 +73,6 @@ print(grad(grad(grad(g)))(2.)) # x = 0
 To get you familiar with JAX syntax first, we'll optimize neural network params with fixed inputs on a mean-squared error loss to $f_\theta(x) = sin(x)$.
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: JN9KA1PvgyhQ
 
 from jax import vmap # for auto-vectorizing functions
@@ -93,8 +85,6 @@ import matplotlib.pyplot as plt # visualization
 ```
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: DeEALFIHgyhU
 
 # Use stax to set up network initialization and evaluation functions
@@ -110,8 +100,6 @@ out_shape, net_params = net_init(rng, in_shape)
 ```
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: izIi-P1agyhY
 
 def loss(params, inputs, targets):
@@ -122,10 +110,6 @@ def loss(params, inputs, targets):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
 id: sROmpDEmgyhb
 outputId: d1bf00d7-99e7-445e-b439-ea2fabd7a646
 ---
@@ -141,8 +125,6 @@ plt.legend()
 ```
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: PxAEhrPGgyhh
 
 import numpy as np
@@ -151,8 +133,6 @@ from jax.tree_util import tree_multimap  # Element-wise manipulation of collecti
 ```
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: iZtAZfEZgyhk
 
 opt_init, opt_update, get_params = optimizers.adam(step_size=1e-2)
@@ -172,10 +152,6 @@ net_params = get_params(opt_state)
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
 id: Rm9WIz2egyho
 outputId: 183de82d-fdf0-4b81-9b14-01a85e6b8839
 ---
@@ -203,10 +179,6 @@ The following toy example checks MAML numerics via parameter $x$ and input $y$.
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 88
-colab_type: code
 id: 2YBFsM2dgyht
 outputId: 46160194-04b7-46c9-897d-ecb11e9738be
 ---
@@ -231,8 +203,6 @@ print('x0 - maml_objective(x,y) = {}'.format(x0 - grad(maml_objective)(x0, y0)))
 Now let's re-implement the Sinusoidal regression task from Chelsea Finn's [MAML paper](https://arxiv.org/abs/1703.03400).
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: s1v5VABkgyhy
 
 alpha = .1
@@ -248,10 +218,6 @@ def maml_loss(p, x1, y1, x2, y2):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 35
-colab_type: code
 id: bQvg749Xgyh2
 outputId: 5043f859-c537-41b8-c390-23670795d57b
 ---
@@ -268,10 +234,6 @@ Let's try minimizing the MAML loss (without batching across multiple tasks, whic
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 371
-colab_type: code
 id: pB5ldBO-gyh7
 outputId: b2365aa4-d7b8-40a0-d759-8257d3e4d768
 ---
@@ -309,10 +271,6 @@ net_params = get_params(opt_state)
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
 id: ogcpFdJ9gyh_
 outputId: 856924a3-ede5-44ba-ba3c-381673713fad
 ---
@@ -343,8 +301,6 @@ vmap is awesome it enables nice handling of batching at two levels: inner-level 
 From a software engineering perspective, it is nice because the "task-batched" MAML implementation simply re-uses code from the non-task batched MAML algorithm, without losing any vectorization benefits.
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: 9Pj04Z7MgyiF
 
 def sample_tasks(outer_batch_size, inner_batch_size):
@@ -369,10 +325,6 @@ def sample_tasks(outer_batch_size, inner_batch_size):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
 id: 7dCIGObKgyiJ
 outputId: c169b529-0f16-4f20-d20e-d802765e4068
 ---
@@ -387,10 +339,6 @@ plt.legend()
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 35
-colab_type: code
 id: BrSX--wpgyiP
 outputId: 6d81e7ff-7cd9-4aef-c665-952d442369d5
 ---
@@ -399,10 +347,6 @@ x2.shape
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 371
-colab_type: code
 id: P3WQ8_k2gyiU
 outputId: fed1b78b-7910-4e44-a80b-18f447379022
 ---
@@ -436,10 +380,6 @@ net_params = get_params(opt_state)
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
 id: PmxHLrhYgyiX
 outputId: 33ac699e-c66d-46e2-affa-98ae948d52e8
 ---
@@ -461,10 +401,6 @@ plt.legend()
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 287
-colab_type: code
 id: cQf2BeDjgyib
 outputId: fc52caf6-1379-4d60-fe44-99f4e4518698
 ---
@@ -476,8 +412,6 @@ plt.legend()
 ```
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: vCHCvXh-mm1v
 
 

@@ -36,7 +36,7 @@ For an introduction to JAX's automatic differentiation API, see [The Autodiff Co
 
 ### Custom JVPs with `jax.custom_jvp`
 
-```{code-cell}
+```{code-cell} ipython3
 :id: zXic8tr--1PK
 
 import jax.numpy as jnp
@@ -55,10 +55,8 @@ def f_jvp(primals, tangents):
   return primal_out, tangent_out
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: RrNf588X_kJF
 outputId: b962bafb-e8a3-4b0d-ddf4-202e088231c3
 ---
@@ -71,7 +69,7 @@ print(y_dot)
 print(grad(f)(2., 3.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 1kHd3cKOWQgB
 
 # Equivalent alternative using the defjvps convenience wrapper
@@ -84,10 +82,8 @@ f.defjvps(lambda x_dot, primal_out, x, y: jnp.cos(x) * x_dot * y,
           lambda y_dot, primal_out, x, y: jnp.sin(x) * y_dot)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: Zn81cHeYWVOw
 outputId: bf29b66c-897b-485e-c0a0-ee0fbd729a95
 ---
@@ -102,7 +98,7 @@ print(grad(f)(2., 3.))
 
 ### Custom VJPs with `jax.custom_vjp`
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 35ScHqhrBwPh
 
 from jax import custom_vjp
@@ -122,10 +118,8 @@ def f_bwd(res, g):
 f.defvjp(f_fwd, f_bwd)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: HpSozxKUCXgp
 outputId: 57277102-7bdb-41f0-c805-a27fcf9fb1ae
 ---
@@ -138,7 +132,6 @@ print(grad(f)(2., 3.))
 
 To get an idea of what problems `jax.custom_jvp` and `jax.custom_vjp` are meant to solve, let's go over a few examples. A more thorough introduction to the `jax.custom_jvp` and `jax.custom_vjp` APIs is in [the next section](#scrollTo=Dr0aNkBslfQf).
 
-
 +++ {"id": "AR02eyd1GQhC"}
 
 ### Numerical stability
@@ -147,13 +140,10 @@ One application of `jax.custom_jvp` is to improve the numerical stability of dif
 
 +++ {"id": "GksPXslaGPaW"}
 
-
 Say we want to write a function called `log1pexp`, which computes $x \mapsto \log ( 1 + e^x )$. We can write that using `jax.numpy`:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: 6lWbTvs40ET-
 outputId: 8caff99e-add1-4c70-ace3-212c0c5c6f4e
 ---
@@ -169,10 +159,8 @@ log1pexp(3.)
 
 Since it's written in terms of `jax.numpy`, it's JAX-transformable:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: XgtGKFld02UD
 outputId: 809d399d-8eca-401e-b969-810e46648571
 ---
@@ -187,10 +175,8 @@ print(vmap(jit(grad(log1pexp)))(jnp.arange(3.)))
 
 But there's a numerical stability problem lurking here:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: sVM6iwIO22sB
 outputId: 9c935ee8-f174-475a-ca01-fc80949199e5
 ---
@@ -203,10 +189,8 @@ That doesn't seem right! After all, the derivative of $x \mapsto \log (1 + e^x)$
 
 We can get a bit more insight into what's going on by looking at the jaxpr for the gradient computation:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: dO6uZlYR4TVp
 outputId: 61e06b1e-14cd-4030-f330-a949be185df8
 ---
@@ -227,7 +211,7 @@ This is one application of custom derivative rules for Python functions that are
 
 Here's a solution using `jax.custom_jvp`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: XQt6MAuTJewG
 
 from jax import custom_jvp
@@ -245,20 +229,16 @@ def log1pexp_jvp(primals, tangents):
   return ans, ans_dot
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: rhiMHulfKBIF
 outputId: 883bc4d2-3a1b-48d3-b205-c500f77d229c
 ---
 print(grad(log1pexp)(100.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: 9cLDuAo6KGUu
 outputId: 59984494-6124-4540-84fd-608ad4fc6bc6
 ---
@@ -271,7 +251,7 @@ print(vmap(jit(grad(log1pexp)))(jnp.arange(3.)))
 
 Here's a `defjvps` convenience wrapper to express the same thing:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: xfQTp8F7USEM
 
 @custom_jvp
@@ -281,10 +261,8 @@ def log1pexp(x):
 log1pexp.defjvps(lambda t, ans, x: (1 - 1/(1 + jnp.exp(x))) * t)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: dtdh-PLaUsvw
 outputId: aa36aec6-15af-4397-fc55-8b9fb7e607d8
 ---
@@ -302,10 +280,9 @@ A related application is to enforce a differentiation convention, perhaps at a b
 
 +++ {"id": "l_6tdb-QGK-H"}
 
-
 Consider the function $f : \mathbb{R}_+ \mapsto \mathbb{R}_+$ with $f(x) = \frac{x}{1 + \sqrt{x}}$, where we take $\mathbb{R}_+ = [0, \infty)$. We might implement $f$ as a program like this:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: AfF5P7x_GaSe
 
 def f(x):
@@ -316,10 +293,8 @@ def f(x):
 
 As a mathematical function on $\mathbb{R}$ (the full real line), $f$ is not differentiable at zero (because the limit defining the derivative doesn't exist from the left). Correspondingly, autodiff produces a `nan` value:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: piI0u5MiHhQh
 outputId: c045308f-2f3b-4c22-ebb2-b9ee582b4d25
 ---
@@ -332,7 +307,7 @@ But mathematically if we think of $f$ as a function on $\mathbb{R}_+$ then it is
 
 We can use a custom JVP rule! In particular, we can define the JVP rule in terms of the derivative function $x \mapsto \frac{\sqrt{x} + 2}{2(\sqrt{x} + 1)^2}$ on $\mathbb{R}_+$,
 
-```{code-cell}
+```{code-cell} ipython3
 :id: ksHmCkcSKQJr
 
 @custom_jvp
@@ -348,10 +323,8 @@ def f_jvp(primals, tangents):
   return ans, ans_dot
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: Gsh9ZvMTKi1O
 outputId: a3076175-6542-4210-ce4a-d0d82e0051c6
 ---
@@ -362,7 +335,7 @@ print(grad(f)(0.))
 
 Here's the convenience wrapper version:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: qXnrxIfaVYCs
 
 @custom_jvp
@@ -372,10 +345,8 @@ def f(x):
 f.defjvps(lambda t, ans, x: ((jnp.sqrt(x) + 2) / (2 * (jnp.sqrt(x) + 1)**2)) * t)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: uUU5qRmEViK1
 outputId: ea7dc2c4-a100-48f4-a74a-859070daf994
 ---
@@ -390,7 +361,7 @@ While in some cases we want to express a mathematical differentiation computatio
 
 For gradient clipping, we can use `jnp.clip` together with a `jax.custom_vjp` reverse-mode-only rule:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 8jfjSanIW_tJ
 
 from functools import partial
@@ -410,11 +381,8 @@ def clip_gradient_bwd(res, g):
 clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 282
 id: 4OLU_vf8Xw2J
 outputId: 5a51ff2c-79c2-41ba-eead-53679b4eddbc
 ---
@@ -427,11 +395,8 @@ plt.plot(jnp.sin(t))
 plt.plot(vmap(grad(jnp.sin))(t))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 282
 id: iS8nRuBZYLcD
 outputId: 299dc977-ff2f-43a4-c0d2-9fa6c7eaeeb2
 ---
@@ -451,7 +416,6 @@ Another application that is motivated by development workflow rather than numeri
 
 +++ {"id": "cgxMjNTrGjJn"}
 
-
 When trying to track down the source of a `nan` runtime error, or just examine carefully the cotangent (gradient) values being propagated, it can be useful to insert a debugger at a point in the backward pass that corresponds to a specific point in the primal computation. You can do that with `jax.custom_vjp`.
 
 We'll defer an example until the next section.
@@ -468,7 +432,7 @@ Another application for `jax.custom_vjp` is reverse-mode differentiation of func
 
 For example, consider this `fixed_point` routine which computes a fixed point by iteratively applying a function in a `while_loop`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 2uA8X2izXH2b
 
 from jax.lax import while_loop
@@ -492,7 +456,7 @@ This is an iterative procedure for numerically solving the equation $x = f(a, x)
 
 We can use `fixed_point` to run iterative procedures to convergence, for example running Newton's method to calculate square roots while only executing adds, multiplies, and divides:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: rDDwM8bYYzRT
 
 def newton_sqrt(a):
@@ -500,10 +464,8 @@ def newton_sqrt(a):
   return fixed_point(update, a, a)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: 42Ydd7_6aLXU
 outputId: c576dc92-33df-42b9-b2e8-ad54119514b1
 ---
@@ -514,10 +476,8 @@ print(newton_sqrt(2.))
 
 We can `vmap` or `jit` the function as well:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: t_YSXieT3Yyk
 outputId: 76483e18-81f3-47a8-e8aa-e81535c01fe2
 ---
@@ -550,7 +510,7 @@ where $w^\mathsf{T} = v^\mathsf{T} (I - A)^{-1}$, or equivalently $w^\mathsf{T} 
 
 Here's the upshot:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: g4jo-xlvdiym
 
 from jax import vjp
@@ -588,20 +548,16 @@ def rev_iter(f, packed, u):
 fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: iKzfT6d_mEoB
 outputId: 5d04c4a0-61dd-42de-ffa4-101b71d15a57
 ---
 print(newton_sqrt(2.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: Hmcpjr6gmtkO
 outputId: 9c4a406c-0144-4d5f-e789-a7a4c850a3cc
 ---
@@ -613,10 +569,8 @@ print(grad(grad(newton_sqrt))(2.))
 
 We can check our answers by differentiating `jnp.sqrt`, which uses a totally different implementation:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: jj_JnI9Pm4jg
 outputId: 6eb3e158-209b-41f2-865c-376a1d07624b
 ---
@@ -634,12 +588,11 @@ A limitation to this approach is that the argument `f` can't close over any valu
 
 +++ {"id": "MojTOg4tmQNT"}
 
-
 ### Use `jax.custom_jvp` to define forward-mode (and, indirectly, reverse-mode) rules
 
 Here's a canonical basic example of using `jax.custom_jvp`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: nVkhbIFAOGZk
 
 from jax import custom_jvp
@@ -659,10 +612,8 @@ def f_jvp(primals, tangents):
 f.defjvp(f_jvp)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: fxhlECvW7Krj
 outputId: 30dc5e8b-d157-4ae2-cd17-145d4e1ba47b
 ---
@@ -697,10 +648,8 @@ def f_jvp(primals, tangents):
 
 Even though we defined only a JVP rule and no VJP rule, we can use both forward- and reverse-mode differentiation on `f`. JAX will automatically transpose the linear computation on tangent values from our custom JVP rule, computing the VJP as efficiently as if we had written the rule by hand:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: hl9Io86pQD6s
 outputId: a9ef39aa-4df0-459f-ee1d-64b648cabcc4
 ---
@@ -718,7 +667,7 @@ For automatic transposition to work, the JVP rule's output tangents must be line
 
 Multiple arguments work like this:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: JFLXlXuq6pRf
 
 @custom_jvp
@@ -734,10 +683,8 @@ def f_jvp(primals, tangents):
   return primal_out, tangent_out
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: QpKwA0oA8DfE
 outputId: 80855f56-04a5-4179-fd8b-199ea7eba476
 ---
@@ -748,8 +695,7 @@ print(grad(f)(2., 3.))
 
 The `defjvps` convenience wrapper lets us define a JVP for each argument separately, and the results are computed separately then summed:
 
-
-```{code-cell}
+```{code-cell} ipython3
 :id: CsQIUhUkajua
 
 @custom_jvp
@@ -759,10 +705,8 @@ def f(x):
 f.defjvps(lambda t, ans, x: jnp.cos(x) * t)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: zfSgXrPEap-i
 outputId: bf552090-a60d-4c2a-fc91-603396df94cd
 ---
@@ -773,7 +717,7 @@ print(grad(f)(3.))
 
 Here's a `defjvps` example with multiple arguments:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: Vx4Jv9s9bCi1
 
 @custom_jvp
@@ -784,10 +728,8 @@ f.defjvps(lambda x_dot, primal_out, x, y: 2 * x * y * x_dot,
           lambda y_dot, primal_out, x, y: x ** 2 * y_dot)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: o9ezUYsjbbvC
 outputId: f60f4941-d5e3-49c3-920f-76fd92414697
 ---
@@ -800,7 +742,7 @@ print(grad(f, 1)(2., 3.))
 
 As a shorthand, with `defjvps` you can pass a `None` value to indicate that the JVP for a particular argument is zero:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: z4z3esdZbTzQ
 
 @custom_jvp
@@ -811,10 +753,8 @@ f.defjvps(lambda x_dot, primal_out, x, y: 2 * x * y * x_dot,
           None)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: jOtQfp-5btSo
 outputId: b60aa797-4c1e-4421-826d-691ba418bc1d
 ---
@@ -831,7 +771,7 @@ Calling a `jax.custom_jvp` function with keyword arguments, or writing a `jax.cu
 
 When you're not performing differentiation, the function `f` is called just as if it weren't decorated by `jax.custom_jvp`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: b-tB3xCHPRFt
 
 @custom_jvp
@@ -847,10 +787,8 @@ def f_jvp(primals, tangents):
   return f(x), jnp.cos(x) * t
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: xAlRea95PjA5
 outputId: 10b4db9e-3192-415e-ac1c-0dc57c7dc086
 ---
@@ -859,10 +797,8 @@ from jax import vmap, jit
 print(f(3.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: dyD2ow4NmpI-
 outputId: 1d66b67f-c1b4-4a9d-d6ed-12d88767842c
 ---
@@ -874,10 +810,8 @@ print(jit(f)(3.))
 
 The custom JVP rule is invoked during differentiation, whether forward or reverse:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: hKF0xyAxPyLZ
 outputId: 214cc5a7-a992-41c8-aa01-8ea4b2b3b4d6
 ---
@@ -885,10 +819,8 @@ y, y_dot = jvp(f, (3.,), (1.,))
 print(y_dot)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: Z1KaEgA58MEG
 outputId: 86263d76-5a98-4d96-f5c2-9146bcf1b6fd
 ---
@@ -899,10 +831,8 @@ print(grad(f)(3.))
 
 Notice that `f_jvp` calls `f` to compute the primal outputs. In the context of higher-order differentiation, each application of a differentiation transform will use the custom JVP rule if and only if the rule calls the original `f` to compute the primal outputs. (This represents a kind of fundamental tradeoff, where we can't make use of intermediate values from the evaluation of `f` in our rule _and also_ have the rule apply in all orders of higher-order differentiation.)
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: B6PLJooTQgVp
 outputId: 0d7ac628-656e-4b67-d285-f810155b6b9c
 ---
@@ -913,7 +843,7 @@ grad(grad(f))(3.)
 
 You can use Python control flow with `jax.custom_jvp`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: kkXlSJL6adU2
 
 @custom_jvp
@@ -934,10 +864,8 @@ def f_jvp(primals, tangents):
     return ans, 3 * x_dot
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: QCHmJ56Na2G3
 outputId: 1772d3b4-44ef-4745-edd3-553c6312c553
 ---
@@ -951,7 +879,7 @@ print(grad(f)(-1.))
 
 While `jax.custom_jvp` suffices for controlling both forward- and, via JAX's automatic transposition, reverse-mode differentiation behavior, in some cases we may want to directly control a VJP rule, for example in the latter two example problems presented above. We can do that with `jax.custom_vjp`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: zAZk1n3dUw76
 
 from jax import custom_vjp
@@ -973,10 +901,8 @@ def f_bwd(cos_x, y_bar):
 f.defvjp(f_fwd, f_bwd)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: E8W-H2S0Ngdr
 outputId: cd0dc221-e779-436d-f3b4-21e799f40620
 ---
@@ -998,7 +924,7 @@ The function `f_bwd` describes the backward pass. It takes two inputs, where the
 
 So multiple arguments work like this:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: IhMb64gkngAt
 
 from jax import custom_vjp
@@ -1017,10 +943,8 @@ def f_bwd(res, g):
 f.defvjp(f_fwd, f_bwd)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: EnRtIhhLnkry
 outputId: e03907ec-463a-4f3c-ae8e-feecb4394b2b
 ---
@@ -1035,7 +959,7 @@ Calling a `jax.custom_vjp` function with keyword arguments, or writing a `jax.cu
 
 As with `jax.custom_jvp`, the custom VJP rule comprised by `f_fwd` and `f_bwd` is not invoked if differentiation is not applied. If function is evaluated, or transformed with `jit`, `vmap`, or other non-differentiation transformations, then only `f` is called.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: s-_Dbqi-N5Ij
 
 @custom_vjp
@@ -1054,30 +978,24 @@ def f_bwd(cos_x, y_bar):
 f.defvjp(f_fwd, f_bwd)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: r0aZ79OmOAR5
 outputId: 9cf16d9e-ca96-4987-e01a-dc0e22405576
 ---
 print(f(3.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: 7ToB9BYlm6uN
 outputId: aa9f3e3f-e6c3-4ee4-b87a-4526074f43aa
 ---
 print(grad(f)(3.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: s1Pn_qCIODcF
 outputId: 423d34e0-35b8-4b57-e89d-f70f20e28ea9
 ---
@@ -1087,10 +1005,8 @@ y, f_vjp = vjp(f, 3.)
 print(y)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: dvgQtDHaOHuo
 outputId: d92649c5-0aab-49a9-9158-f7ddc5fccb9b
 ---
@@ -1101,10 +1017,8 @@ print(f_vjp(1.))
 
 **Forward-mode autodiff cannot be used on the** `jax.custom_vjp` **function** and will raise an error:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: 3RGQRbI_OSEX
 outputId: 6385a024-7a10-445a-8380-b2eef722e597
 ---
@@ -1124,7 +1038,7 @@ If you want to use both forward- and reverse-mode, use `jax.custom_jvp` instead.
 
 We can use `jax.custom_vjp` together with `pdb` to insert a debugger trace in the backward pass:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: -DvRKsHPZk_g
 
 import pdb
@@ -1143,7 +1057,7 @@ def debug_bwd(x, g):
 debug.defvjp(debug_fwd, debug_bwd)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 49GdkP4pZ2IV
 
 def foo(x):
@@ -1178,7 +1092,7 @@ You should expect standard Python containers like lists, tuples, namedtuples, an
 
 Here's a contrived example with `jax.custom_jvp`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 6sDLZ3dAn3P2
 
 from collections import namedtuple
@@ -1204,10 +1118,8 @@ def fun(pt):
   return dct['a'] + dct['b'][0]
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: My8pbOlPppJj
 outputId: 04cc1129-d0fb-4018-bec1-2ccf8b7906e3
 ---
@@ -1216,10 +1128,8 @@ pt = Point(1., 2.)
 print(f(pt))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: a9qyiCAhqLd3
 outputId: 08bd0615-7c35-44ff-f90b-c175618c2c40
 ---
@@ -1230,7 +1140,7 @@ print(grad(fun)(pt))
 
 And an analogous contrived example with `jax.custom_vjp`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: QkdbwGkJqS3J
 
 @custom_vjp
@@ -1255,10 +1165,8 @@ def fun(pt):
   return dct['a'] + dct['b'][0]
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: 3onW7t6nrJ4E
 outputId: ac455ab0-cac0-41fc-aea3-034931316053
 ---
@@ -1267,10 +1175,8 @@ pt = Point(1., 2.)
 print(f(pt))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: ryyeKIXtrNpd
 outputId: 1780f738-ffd8-4ed7-ffbe-71d84bd62709
 ---
@@ -1291,7 +1197,7 @@ Some use cases, like the final example problem, call for non-differentiable argu
 
 Use the optional `nondiff_argnums` parameter to `jax.custom_jvp` to indicate arguments like these. Here's an example with `jax.custom_jvp`:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: b3YMxxTBvy0I
 
 from functools import partial
@@ -1307,20 +1213,16 @@ def app_jvp(f, primals, tangents):
   return f(x), 2. * x_dot
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: 5W-yEw9IB34S
 outputId: a2c1444a-9cc7-43ee-cb52-6c5d1cec02f1
 ---
 print(app(lambda x: x ** 3, 3.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: zbVIlOmqB7_O
 outputId: a0174f54-89b0-4957-9362-c05af922f974
 ---
@@ -1331,7 +1233,7 @@ print(grad(app, 1)(lambda x: x ** 3, 3.))
 
 Notice the gotcha here: no matter where in the argument list these parameters appear, they're placed at the *start* of the signature of the corresponding JVP rule. Here's another example:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 9hokWmyHBgKK
 
 @partial(custom_jvp, nondiff_argnums=(0, 2))
@@ -1345,20 +1247,16 @@ def app2_jvp(f, g, primals, tangents):
   return f(g(x)), 3. * x_dot
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: J7GsvJTgCfS0
 outputId: 43dd6a02-2e4e-449e-924a-d1a03fe622fe
 ---
 print(app2(lambda x: x ** 3, 3., lambda y: 5 * y))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: kPP8Jt1CCb1X
 outputId: 6eff9aae-8d6e-4998-92ed-56272c32d6e8
 ---
@@ -1373,7 +1271,7 @@ print(grad(app2, 1)(lambda x: x ** 3, 3., lambda y: 5 * y))
 
 A similar option exists for `jax.custom_vjp`, and similarly the convention is that the non-differentiable arguments are passed as the first arguments to the rules, no matter where they appear in the original function's signature. Here's an example:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: yCdu-_9GClWs
 
 @partial(custom_vjp, nondiff_argnums=(0,))
@@ -1389,20 +1287,16 @@ def app_bwd(f, x, g):
 app.defvjp(app_fwd, app_bwd)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: qSgcWa1eDj4r
 outputId: 43939686-f857-47ea-9f85-53f440ef12ee
 ---
 print(app(lambda x: x ** 2, 4.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: tccagflcDmaz
 outputId: c75ca70b-2431-493b-e335-4f4d340902f1
 ---

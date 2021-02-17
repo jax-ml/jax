@@ -12,7 +12,7 @@ kernelspec:
   name: python3
 ---
 
-+++ {"colab_type": "text", "id": "U6IRW9a8G6TB"}
++++ {"id": "U6IRW9a8G6TB"}
 
 # Generative Modeling by Estimating Gradients of Data Distribution in JAX
 
@@ -30,10 +30,6 @@ well... minus the chocolate. Sorry for that.
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 286
-colab_type: code
 id: 0P1xCZPNG6TE
 outputId: 69be38a1-1f02-462e-f4f1-16a41c35fddf
 ---
@@ -51,7 +47,7 @@ def sample_batch(size, noise=1.0):
 plt.scatter(*sample_batch(10**4).T, alpha=0.1)
 ```
 
-+++ {"colab_type": "text", "id": "5X-LN4rwG6TH"}
++++ {"id": "5X-LN4rwG6TH"}
 
 ## Compute score matching objective
 
@@ -66,8 +62,6 @@ $$ L_{matching} = E_{x \sim p(x)} \space tr( \space \mathbf{J}_x [\space model(x
 Here $tr( \space \mathbf{J}_x [\space model(x)  \space])$ is a trace of Jacobian of $model(x)$ w.r.t. $x$. Now all it takes is to minimize the second objective with backpropagation... that is, if you can compute jacobians. Thankfully, we have __jax__!
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: 98wjxKcNG6TI
 
 import jax
@@ -88,8 +82,6 @@ opt_init, opt_update, get_params = optimizers.adam(1e-3)
 ```
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: FgH-YVaZG6TJ
 
 # v-- jax.jit compiles a function for efficient CPU and GPU execution
@@ -121,13 +113,11 @@ def train_step(step_i, opt_state, batch):
 
 __Note__: we use `jax.jacfwd` since the input dimension is only 2
 
-+++ {"colab_type": "text", "id": "Qxza8fDvG6TL"}
++++ {"id": "Qxza8fDvG6TL"}
 
 ## Training loop
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: NNlbbWNIG6TM
 
 from IPython.display import clear_output
@@ -140,10 +130,6 @@ loss_history = []
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 499
-colab_type: code
 id: evDOnCHiG6TN
 outputId: 989db5fe-24a2-41ba-fb01-6d981df7cd06
 ---
@@ -173,17 +159,13 @@ for i in range(2000):
         plt.show()
 ```
 
-+++ {"colab_type": "text", "id": "Ug91tS-RG6TP"}
++++ {"id": "Ug91tS-RG6TP"}
 
 ## Plot gradient directions
 Once the model is trained we can use it to predict scores at each point. Since those are gradient vectors, we'll use [`Quiver Plot`](https://matplotlib.org/3.1.1/api/_as_gen/matplotlib.pyplot.quiver.html) to draw them.
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 938
-colab_type: code
 id: x6SkLg0VG6TQ
 outputId: 710ab2f4-c3c7-4a3b-f929-e84957fbb233
 ---
@@ -199,13 +181,13 @@ plt.quiver(*xx.T, *scores_log1p.T, width=0.002, color='green')
 plt.scatter(*sample_batch(10_000).T, alpha=0.25)
 ```
 
-+++ {"colab_type": "text", "id": "yewoL6wqG6TS"}
++++ {"id": "yewoL6wqG6TS"}
 
 A hot new paper by [Song et al. (2019)](https://arxiv.org/abs/1907.05600) uses this method to generate images by iterative refinement... Apparently it took DL researchers 14 years to understand the proof :)
 
 Seriously though, this paper takes advantage of two new ideas: sampling with __Langevin Dynamics__ and scaling to high dimensions with __Sliced Score Matching__. We'll cover them one at a time.
 
-+++ {"colab_type": "text", "id": "gsXvXhgfG6TS"}
++++ {"id": "gsXvXhgfG6TS"}
 
 ## Sampling with Langevin Dynamics
 
@@ -222,8 +204,6 @@ Performing this update multiple times in an MCMC fashion is a special case of La
 In practice, we can initialize $x_0$ from some initial guess (e.g. uniform distribution over data space) and $\epsilon$ to some positive value. As the sampling progresses, we can anneal $\epsilon$ it until we are satisfied with the samples. Okay, now let's go implement that :)
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: Byq9q1XdG6TT
 
 def sample_langevin(x_initial, *, net_params, key, eps=1e-2, eps_decay=0.9, num_steps=15, temperature=1.0):
@@ -242,10 +222,6 @@ def sample_langevin(x_initial, *, net_params, key, eps=1e-2, eps_decay=0.9, num_
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 938
-colab_type: code
 id: n6ZWX9Z1G6TV
 outputId: 4e061bf6-93c5-4d96-cc9b-7e2d8b8899af
 ---
@@ -276,7 +252,7 @@ plt.quiver(*xx.T, *scores_log1p.T, width=0.002, color='green')
 plt.scatter(*sample_batch(10_000).T, alpha=0.025)
 ```
 
-+++ {"colab_type": "text", "id": "vZrW00brG6TX"}
++++ {"id": "vZrW00brG6TX"}
 
 ## Sliced Score Matching
 
@@ -289,8 +265,6 @@ $$E_{\mathbf{v} \sim \mathcal{N}(0, 1)} E_{x \sim p(x)} [ \mathbf{v}^T \mathbf{J
 Jacobian Vector products, by the way, can be easily computed using `jax.jvp`.
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: MkAXz0SmG6TY
 
 @jax.jit
@@ -320,8 +294,6 @@ def train_step(step_i, opt_state, batch, key):
 __Note:__ we compute Jacobian with `jax.jacfwd` (forward-mode differentiation) because the input dimension of the network is just 2. You can read more about autograd modes in jax [documentation](https://jax.readthedocs.io/en/latest/jax.html?highlight=jacfwd#jax.jacfwd) and on wikipedia [wiki](https://en.wikipedia.org/wiki/Automatic_differentiation)
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: 8dxK2pCxG6Tb
 
 key = jax.random.PRNGKey(42)
@@ -334,10 +306,6 @@ loss_history = []
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 499
-colab_type: code
 id: hQyo8kvTG6Tc
 outputId: 184f28fc-4c6d-418a-9c28-e248b8633fbe
 ---
@@ -369,17 +337,13 @@ for i in range(2_000):
         plt.show()
 ```
 
-+++ {"colab_type": "text", "id": "A8Ni7_cGG6Tf"}
++++ {"id": "A8Ni7_cGG6Tf"}
 
 ## Easy? Let's go deeper!
 MNIST 8x8, computing full jacobian would require 64 passes through the network
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 109
-colab_type: code
 id: Y2ZgeMq-G6Tf
 outputId: 435e69a1-3544-4364-b30c-c066feda7064
 ---
@@ -399,8 +363,6 @@ def sample_batch(size, noise=0.1):
 ```
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: rKSjSWQXG6Th
 
 # Set up network to predict scores
@@ -423,10 +385,6 @@ loss_history = []
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 281
-colab_type: code
 id: YxWvSQJAG6Ti
 outputId: ae47197d-0aa3-496c-83f6-d10328461a00
 ---
@@ -445,10 +403,6 @@ for i in range(5_000):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 281
-colab_type: code
 id: gof2XcxwG6Tk
 outputId: 02472a07-4931-4444-d406-344907619a01
 ---
@@ -465,7 +419,7 @@ for t, x_t in enumerate(xx):
     plt.title('step %i' % t); plt.colorbar(); plt.show()
 ```
 
-+++ {"colab_type": "text", "id": "jMfcQxhWG6Tm"}
++++ {"id": "jMfcQxhWG6Tm"}
 
 ## This is just the beginning
 

@@ -12,13 +12,13 @@ kernelspec:
   name: python3
 ---
 
-+++ {"colab_type": "text", "id": "hjM_sV_AepYf"}
++++ {"id": "hjM_sV_AepYf"}
 
 # 🔪 JAX - The Sharp Bits 🔪
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/Common_Gotchas_in_JAX.ipynb)
 
-+++ {"colab_type": "text", "id": "4k5PVzEo2uJO"}
++++ {"id": "4k5PVzEo2uJO"}
 
 *levskaya@ mattjj@*
 
@@ -28,8 +28,6 @@ __JAX__ is a language for __expressing__ and __composing__ __transformations__ o
 JAX works great for many numerical and scientific programs, but __only if they are written with certain constraints__ that we describe below.
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: GoK_PCxPeYcy
 
 import numpy as np
@@ -46,15 +44,11 @@ rcParams['image.cmap'] = 'viridis'
 rcParams['axes.grid'] = False
 ```
 
-+++ {"colab_type": "text", "id": "cxwbr3XK2_mK"}
-
-
-
-+++ {"colab_type": "text", "id": "gX8CZU1g2agP"}
++++ {"id": "gX8CZU1g2agP"}
 
 ## 🔪 Pure functions
 
-+++ {"colab_type": "text", "id": "2oHigBkW2dPT"}
++++ {"id": "2oHigBkW2dPT"}
 
 JAX transformation and compilation are designed to work only on Python functions that are functionally pure: all the input data is passed through the function parameters, all the results are output through the function results. A pure function will always return the same result if invoked with the same inputs. 
 
@@ -62,10 +56,6 @@ Here are some examples of functions that are not functially pure for which JAX b
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 102
-colab_type: code
 id: A6R-pdcm4u3v
 outputId: 389605df-a4d5-4d4b-8d74-64e9d5d39456
 ---
@@ -86,10 +76,6 @@ print ("Third call, different type: ", jit(impure_print_side_effect)(jnp.array([
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 68
-colab_type: code
 id: -N8GhitI2bhD
 outputId: f16ce914-1387-43b4-9b8a-1d6e3b97b11d
 ---
@@ -111,10 +97,6 @@ print ("Third call, different type: ", jit(impure_uses_globals)(jnp.array([4.]))
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 51
-colab_type: code
 id: RTB6iFgu4DL6
 outputId: e93d2a70-1c18-477a-d69d-d09ed556305a
 ---
@@ -129,20 +111,15 @@ print ("First call: ", jit(impure_saves_global)(4.))
 print ("Saved global: ", g)  # Saved global has an internal JAX value
 ```
 
-+++ {"colab_type": "text", "id": "Mlc2pQlp6v-9"}
++++ {"id": "Mlc2pQlp6v-9"}
 
 A Python function can be functionally pure even if it actually uses stateful objects internally, as long as it does not read or write external state:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: TP-Mqf_862C0
 outputId: 78df2d95-2c6f-41c9-84a9-feda6329e75e
 ---
-
 def pure_uses_internal_state(x):
   state = dict(even=0, odd=0)
   for i in range(10):
@@ -182,20 +159,16 @@ iter_operand = iter(range(10))
 # lax.cond(True, iter_operand, lambda x: next(x)+1, iter_operand, lambda x: next(x)-1) # throws error
 ```
 
-+++ {"colab_type": "text", "id": "oBdKtkVW8Lha"}
++++ {"id": "oBdKtkVW8Lha"}
 
 ## 🔪 In-Place Updates
 
-+++ {"colab_type": "text", "id": "JffAqnEW4JEb"}
++++ {"id": "JffAqnEW4JEb"}
 
 In Numpy you're used to doing this:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 153
-colab_type: code
 id: om4xV7_84N9j
 outputId: 733f901e-d433-4dc8-b5bb-0c23bf2b1306
 ---
@@ -209,16 +182,12 @@ print("updated array:")
 print(numpy_array)
 ```
 
-+++ {"colab_type": "text", "id": "go3L4x3w4-9p"}
++++ {"id": "go3L4x3w4-9p"}
 
 If we try to update a JAX device array in-place, however, we get an __error__!  (☉_☉)
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 54
-colab_type: code
 id: 2AxeCufq4wAp
 outputId: d5d873db-cee0-49dc-981d-ec852347f7ca
 tags: [raises-exception]
@@ -232,7 +201,7 @@ except Exception as e:
   print("Exception {}".format(e))
 ```
 
-+++ {"colab_type": "text", "id": "7mo76sS25Wco"}
++++ {"id": "7mo76sS25Wco"}
 
 __What gives?!__  
 
@@ -243,27 +212,21 @@ Instead, JAX offers the _functional_ update functions: [__index_update__](https:
 ️⚠️ inside `jit`'d code and `lax.while_loop` or `lax.fori_loop` the __size__ of slices can't be functions of argument _values_ but only functions of argument _shapes_ -- the slice start indices have no such restriction.  See the below __Control Flow__ Section for more information on this limitation.
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: m5lg1RYq5D9p
 
 from jax.ops import index, index_add, index_update
 ```
 
-+++ {"colab_type": "text", "id": "X2Xjjvd-l8NL"}
++++ {"id": "X2Xjjvd-l8NL"}
 
 ### index_update
 
-+++ {"colab_type": "text", "id": "eM6MyndXL2NY"}
++++ {"id": "eM6MyndXL2NY"}
 
 If the __input values__ of __index_update__ aren't reused, __jit__-compiled code will perform these operations _in-place_.
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 221
-colab_type: code
 id: ygUJT49b7BBk
 outputId: 1a3511c4-a480-472f-cccb-5e01620cbe99
 ---
@@ -280,20 +243,16 @@ print("new array:")
 print(new_jax_array)
 ```
 
-+++ {"colab_type": "text", "id": "7to-sF8EmC_y"}
++++ {"id": "7to-sF8EmC_y"}
 
 ### index_add
 
-+++ {"colab_type": "text", "id": "iI5cLY1xMBLs"}
++++ {"id": "iI5cLY1xMBLs"}
 
 If the __input values__ of __index_update__ aren't reused, __jit__-compiled code will perform these operations _in-place_.
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 221
-colab_type: code
 id: tsw2svao8FUp
 outputId: 874acd15-a493-4d63-efe4-9f440d5d2a12
 ---
@@ -306,20 +265,16 @@ print("new array post-addition:")
 print(new_jax_array)
 ```
 
-+++ {"colab_type": "text", "id": "oZ_jE2WAypdL"}
++++ {"id": "oZ_jE2WAypdL"}
 
 ## 🔪 Out-of-Bounds Indexing
 
-+++ {"colab_type": "text", "id": "btRFwEVzypdN"}
++++ {"id": "btRFwEVzypdN"}
 
 In Numpy, you are used to errors being thrown when you index an array outside of its bounds, like this:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: 5_ZM-BJUypdO
 outputId: 461f38cd-9452-4bcc-a44f-a07ddfa12f42
 tags: [raises-exception]
@@ -330,16 +285,12 @@ except Exception as e:
   print("Exception {}".format(e))
 ```
 
-+++ {"colab_type": "text", "id": "eoXrGARWypdR"}
++++ {"id": "eoXrGARWypdR"}
 
-However, raising an error on other accelerators can be more difficult. Therefore, JAX does not raise an error, instead the index is clamped to the bounds of the array, meaning that for this example the last value of the array will be returned. 
+However, raising an error on other accelerators can be more difficult. Therefore, JAX does not raise an error, instead the index is clamped to the bounds of the array, meaning that for this example the last value of the array will be returned.
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: cusaAD0NypdR
 outputId: 48428ad6-6cde-43ad-c12d-2eb9b9fe59cf
 ---
@@ -348,27 +299,23 @@ jnp.arange(10)[11]
 
 Note that due to this behavior jnp.nanargmin and jnp.nanargmax return -1 for slices consisting of NaNs whereas Numpy would throw an error.
 
-+++ {"colab_type": "text", "id": "MUycRNh6e50W"}
++++ {"id": "MUycRNh6e50W"}
 
 ## 🔪 Random Numbers
 
-+++ {"colab_type": "text", "id": "O8vvaVt3MRG2"}
++++ {"id": "O8vvaVt3MRG2"}
 
 > _If all scientific papers whose results are in doubt because of bad 
 > `rand()`s were to disappear from library shelves, there would be a 
 > gap on each shelf about as big as your fist._ - Numerical Recipes
 
-+++ {"colab_type": "text", "id": "Qikt9pPW9L5K"}
++++ {"id": "Qikt9pPW9L5K"}
 
 ### RNGs and State
 You're used to _stateful_ pseudorandom number generators (PRNGs) from numpy and other libraries, which helpfully hide a lot of details under the hood to give you a ready fountain of pseudorandomness:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 68
-colab_type: code
 id: rr9FeP41fynt
 outputId: 849d84cf-04ad-4e8b-9505-a92f6c0d7a39
 ---
@@ -377,13 +324,11 @@ print(np.random.random())
 print(np.random.random())
 ```
 
-+++ {"colab_type": "text", "id": "ORMVVGZJgSVi"}
++++ {"id": "ORMVVGZJgSVi"}
 
 Underneath the hood, numpy uses the [Mersenne Twister](https://en.wikipedia.org/wiki/Mersenne_Twister) PRNG to power its pseudorandom functions.  The PRNG has a period of $2^{19937}-1$ and at any point can be described by __624 32bit unsigned ints__ and a __position__ indicating how much of this  "entropy" has been used up.
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: 7Pyp2ajzfPO2
 
 np.random.seed(0)
@@ -394,13 +339,11 @@ rng_state = np.random.get_state()
 #       3048484911, 1796872496], dtype=uint32), 624, 0, 0.0)
 ```
 
-+++ {"colab_type": "text", "id": "aJIxHVXCiM6m"}
++++ {"id": "aJIxHVXCiM6m"}
 
 This pseudorandom state vector is automagically updated behind the scenes every time a random number is needed, "consuming" 2 of the uint32s in the Mersenne twister state vector:
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: GAHaDCYafpAF
 
 _ = np.random.uniform()
@@ -425,18 +368,17 @@ rng_state = np.random.get_state()
 #      4162027047, 3277342478], dtype=uint32), 2, 0, 0.0)
 ```
 
-+++ {"colab_type": "text", "id": "N_mWnleNogps"}
++++ {"id": "N_mWnleNogps"}
 
 The problem with magic PRNG state is that it's hard to reason about how it's being used and updated across different threads, processes, and devices, and it's _very easy_ to screw up when the details of entropy production and consumption are hidden from the end user.
 
-The Mersenne Twister PRNG is also known to have a [number](https://cs.stackexchange.com/a/53475) of problems, it has a large 2.5Kb state size, which leads to problematic [initialization issues](https://dl.acm.org/citation.cfm?id=1276928).  It [fails](http://www.pcg-random.org/pdf/toms-oneill-pcg-family-v1.02.pdf) modern BigCrush tests, and is generally slow. 
+The Mersenne Twister PRNG is also known to have a [number](https://cs.stackexchange.com/a/53475) of problems, it has a large 2.5Kb state size, which leads to problematic [initialization issues](https://dl.acm.org/citation.cfm?id=1276928).  It [fails](http://www.pcg-random.org/pdf/toms-oneill-pcg-family-v1.02.pdf) modern BigCrush tests, and is generally slow.
 
-+++ {"colab_type": "text", "id": "Uvq7nV-j4vKK"}
++++ {"id": "Uvq7nV-j4vKK"}
 
 ### JAX PRNG
 
-+++ {"colab_type": "text", "id": "COjzGBpO4tzL"}
-
++++ {"id": "COjzGBpO4tzL"}
 
 JAX instead implements an _explicit_ PRNG where entropy production and consumption are handled by explicitly passing and iterating PRNG state.  JAX uses a modern [Threefry counter-based PRNG](https://github.com/google/jax/blob/master/design_notes/prng.md) that's __splittable__.  That is, its design allows us to __fork__ the PRNG state into new PRNGs for use with parallel stochastic generation.
 
@@ -444,10 +386,6 @@ The random state is described by two unsigned-int32s that we call a __key__:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: yPHE7KTWgAWs
 outputId: 329e7757-2461-434c-a08c-fde80a2d10c9
 ---
@@ -456,7 +394,7 @@ key = random.PRNGKey(0)
 key
 ```
 
-+++ {"colab_type": "text", "id": "XjYyWYNfq0hW"}
++++ {"id": "XjYyWYNfq0hW"}
 
 JAX's random functions produce pseudorandom numbers from the PRNG state, but __do not__ change the state!  
 
@@ -464,10 +402,6 @@ Reusing the same state will cause __sadness__ and __monotony__, depriving the en
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 85
-colab_type: code
 id: 7zUdQMynoE5e
 outputId: 50617324-b887-42f2-a7ff-2a10f92d876a
 ---
@@ -478,16 +412,12 @@ print(random.normal(key, shape=(1,)))
 print(key)
 ```
 
-+++ {"colab_type": "text", "id": "hQN9van8rJgd"}
++++ {"id": "hQN9van8rJgd"}
 
 Instead, we __split__ the PRNG to get usable __subkeys__ every time we need a new pseudorandom number:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 68
-colab_type: code
 id: ASj0_rSzqgGh
 outputId: bcc2ed60-2e41-4ef8-e84f-c724654aa198
 ---
@@ -498,16 +428,12 @@ print("    \---SPLIT --> new key   ", key)
 print("             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
 ```
 
-+++ {"colab_type": "text", "id": "tqtFVE4MthO3"}
++++ {"id": "tqtFVE4MthO3"}
 
 We propagate the __key__ and make new __subkeys__ whenever we need a new random number:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 68
-colab_type: code
 id: jbC34XLor2Ek
 outputId: 6834a812-7160-4646-ee19-a246f683905a
 ---
@@ -518,16 +444,12 @@ print("    \---SPLIT --> new key   ", key)
 print("             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
 ```
 
-+++ {"colab_type": "text", "id": "0KLYUluz3lN3"}
++++ {"id": "0KLYUluz3lN3"}
 
 We can generate more than one __subkey__ at a time:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 68
-colab_type: code
 id: lEi08PJ4tfkX
 outputId: 3bb513de-8d14-4d37-ae57-51d6f5eaa762
 ---
@@ -536,11 +458,11 @@ for subkey in subkeys:
   print(random.normal(subkey, shape=(1,)))
 ```
 
-+++ {"colab_type": "text", "id": "rg4CpMZ8c3ri"}
++++ {"id": "rg4CpMZ8c3ri"}
 
 ## 🔪 Control Flow
 
-+++ {"colab_type": "text", "id": "izLTvT24dAq0"}
++++ {"id": "izLTvT24dAq0"}
 
 ### ✔ python control_flow + autodiff ✔
 
@@ -548,10 +470,6 @@ If you just want to apply `grad` to your python functions, you can use regular p
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 51
-colab_type: code
 id: aAx0T3F8lLtu
 outputId: 808cfa77-d924-4586-af19-35a8fd7d2238
 ---
@@ -565,7 +483,7 @@ print(grad(f)(2.))  # ok!
 print(grad(f)(4.))  # ok!
 ```
 
-+++ {"colab_type": "text", "id": "hIfPT7WMmZ2H"}
++++ {"id": "hIfPT7WMmZ2H"}
 
 ### python control flow + JIT
 
@@ -575,10 +493,6 @@ This works:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: OZ_BJX0CplNC
 outputId: 48ce004c-536a-44f5-b020-9267825e7e4d
 ---
@@ -591,16 +505,12 @@ def f(x):
 print(f(3))
 ```
 
-+++ {"colab_type": "text", "id": "22RzeJ4QqAuX"}
++++ {"id": "22RzeJ4QqAuX"}
 
 So does this:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: pinVnmRWp6w6
 outputId: e3e6f2f7-ba59-4a98-cdfc-905c91b38ed1
 ---
@@ -614,16 +524,12 @@ def g(x):
 print(g(jnp.array([1., 2., 3.])))
 ```
 
-+++ {"colab_type": "text", "id": "TStltU2dqf8A"}
++++ {"id": "TStltU2dqf8A"}
 
 But this doesn't, at least by default:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 54
-colab_type: code
 id: 9z38AIKclRNM
 outputId: 466730dd-df8b-4b80-ac5e-e55b5ea85ec7
 ---
@@ -641,7 +547,7 @@ except Exception as e:
   print("Exception {}".format(e))
 ```
 
-+++ {"colab_type": "text", "id": "pIbr4TVPqtDN"}
++++ {"id": "pIbr4TVPqtDN"}
 
 __What gives!?__
 
@@ -659,10 +565,6 @@ The good news is that you can control this tradeoff yourself. By having `jit` tr
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: -Tzp0H7Bt1Sn
 outputId: aba57a88-d8eb-40b0-ff22-7c266d892b13
 ---
@@ -677,16 +579,12 @@ f = jit(f, static_argnums=(0,))
 print(f(2.))
 ```
 
-+++ {"colab_type": "text", "id": "MHm1hIQAvBVs"}
++++ {"id": "MHm1hIQAvBVs"}
 
 Here's another example, this time involving a loop:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: iwY86_JKvD6b
 outputId: 1ec847ea-df2b-438d-c0a1-fabf7b93b73d
 ---
@@ -701,11 +599,11 @@ f = jit(f, static_argnums=(1,))
 f(jnp.array([2., 3., 4.]), 2)
 ```
 
-+++ {"colab_type": "text", "id": "nSPTOX8DvOeO"}
++++ {"id": "nSPTOX8DvOeO"}
 
 In effect, the loop gets statically unrolled.  JAX can also trace at _higher_ levels of abstraction, like `Unshaped`, but that's not currently the default for any transformation
 
-+++ {"colab_type": "text", "id": "wWdg8LTYwCW3"}
++++ {"id": "wWdg8LTYwCW3"}
 
 ️⚠️ **functions with argument-__value__ dependent shapes**
 
@@ -713,10 +611,6 @@ These control-flow issues also come up in a more subtle way: numerical functions
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 122
-colab_type: code
 id: Tqe9uLmUI_Gv
 outputId: fe319758-9959-434c-ab9d-0926e599dbc0
 ---
@@ -739,18 +633,14 @@ print(good_example_jit(10, 4))
 print(good_example_jit(5, 4))
 ```
 
-+++ {"colab_type": "text", "id": "MStx_r2oKxpp"}
++++ {"id": "MStx_r2oKxpp"}
 
 `static_argnums` can be handy if `length` in our example rarely changes, but it would be disastrous if it changed a lot!  
 
-Lastly, if your function has global side-effects, JAX's tracer can cause weird things to happen. A common gotcha is trying to print arrays inside __jit__'d functions: 
+Lastly, if your function has global side-effects, JAX's tracer can cause weird things to happen. A common gotcha is trying to print arrays inside __jit__'d functions:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 68
-colab_type: code
 id: m2ABpRd8K094
 outputId: 64da37a0-aa06-46a3-e975-88c676c5b9fa
 ---
@@ -763,7 +653,7 @@ def f(x):
 f(2)
 ```
 
-+++ {"colab_type": "text", "id": "uCDcWG4MnVn-"}
++++ {"id": "uCDcWG4MnVn-"}
 
 ### Structured control flow primitives
 
@@ -774,8 +664,7 @@ There are more options for control flow in JAX. Say you want to avoid re-compila
  - `lax.fori_loop` __fwd-mode-differentiable__
  - `lax.scan` _differentiable_
 
-
-+++ {"colab_type": "text", "id": "Sd9xrLMXeK3A"}
++++ {"id": "Sd9xrLMXeK3A"}
 
 #### cond
 python equivalent:
@@ -790,10 +679,6 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: SGxz9JOWeiyH
 outputId: b29da06c-037f-4b05-dbd8-ba52ac35a8cf
 ---
@@ -806,7 +691,7 @@ lax.cond(False, operand, lambda x: x+1, operand, lambda x: x-1)
 # --> array([-1.], dtype=float32)
 ```
 
-+++ {"colab_type": "text", "id": "xkOFAw24eOMg"}
++++ {"id": "xkOFAw24eOMg"}
 
 #### while_loop
 
@@ -821,10 +706,6 @@ def while_loop(cond_fun, body_fun, init_val):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: jM-D39a-c436
 outputId: b9c97167-fecf-4559-9ca7-1cb0235d8ad2
 ---
@@ -835,7 +716,7 @@ lax.while_loop(cond_fun, body_fun, init_val)
 # --> array(10, dtype=int32)
 ```
 
-+++ {"colab_type": "text", "id": "apo3n3HAeQY_"}
++++ {"id": "apo3n3HAeQY_"}
 
 #### fori_loop
 python equivalent:
@@ -849,10 +730,6 @@ def fori_loop(start, stop, body_fun, init_val):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: dt3tUpOmeR8u
 outputId: 864f2959-2429-4666-b364-4baf90a57482
 ---
@@ -864,7 +741,7 @@ lax.fori_loop(start, stop, body_fun, init_val)
 # --> array(45, dtype=int32)
 ```
 
-+++ {"colab_type": "text", "id": "SipXS5qiqk8e"}
++++ {"id": "SipXS5qiqk8e"}
 
 #### Summary
 
@@ -887,11 +764,11 @@ $$
 $$
 <center>$\ast$ = argument-__value__-independent loop condition - unrolls the loop </center>
 
-+++ {"colab_type": "text", "id": "DKTMw6tRZyK2"}
++++ {"id": "DKTMw6tRZyK2"}
 
 ## 🔪 NaNs
 
-+++ {"colab_type": "text", "id": "ncS0NI4jZrwy"}
++++ {"id": "ncS0NI4jZrwy"}
 
 ### Debugging NaNs
 
@@ -1020,7 +897,7 @@ When this code sees a nan in the output of an `@jit` function, it calls into the
 
 ⚠️ You shouldn't have the NaN-checker on if you're not debugging, as it can introduce lots of device-host round-trips and performance regressions!
 
-+++ {"colab_type": "text", "id": "YTktlwTTMgFl"}
++++ {"id": "YTktlwTTMgFl"}
 
 ## Double (64bit) precision
 
@@ -1028,10 +905,6 @@ At the moment, JAX by default enforces single-precision numbers to mitigate the 
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: CNNGtzM3NDkO
 outputId: d1384021-d9bf-450f-a9ae-82024fa5fc1a
 ---
@@ -1039,7 +912,7 @@ x = random.uniform(random.PRNGKey(0), (1000,), dtype=jnp.float64)
 x.dtype
 ```
 
-+++ {"colab_type": "text", "id": "VcvqzobxNPbd"}
++++ {"id": "VcvqzobxNPbd"}
 
 To use double-precision numbers, you need to set the `jax_enable_x64` configuration variable __at startup__.  
 
@@ -1077,10 +950,6 @@ We can then confirm that `x64` mode is enabled:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: HqGbBa9Rr-2g
 outputId: cd241d63-3d00-4fd7-f9c0-afc6af01ecf4
 ---
@@ -1090,12 +959,12 @@ x = random.uniform(random.PRNGKey(0), (1000,), dtype=jnp.float64)
 x.dtype # --> dtype('float64')
 ```
 
-+++ {"colab_type": "text", "id": "6Cks2_gKsXaW"}
++++ {"id": "6Cks2_gKsXaW"}
 
 ### Caveats
 ⚠️ XLA doesn't support 64-bit convolutions on all backends!
 
-+++ {"colab_type": "text", "id": "WAHjmL0E2XwO"}
++++ {"id": "WAHjmL0E2XwO"}
 
 ## Fin.
 

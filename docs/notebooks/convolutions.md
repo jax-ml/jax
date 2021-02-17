@@ -33,11 +33,8 @@ For basic convolution operations, the `jax.numpy` and `jax.scipy` operations are
 
 Basic one-dimensional convolution is implemented by {func}`jax.numpy.convolve`, which provides a JAX interface for {func}`numpy.convolve`. Here is a simple example of 1D smoothing implemented via a convolution:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 265
 id: 0qYLpeZO3Z9-
 outputId: 4f6717ac-a062-4a85-8330-d57bf80de384
 ---
@@ -73,11 +70,8 @@ For *N*-dimensional convolution, {func}`jax.scipy.signal.convolve` provides a si
 
 For example, here is a simple approach to de-noising an image based on convolution with a Gaussian filter:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 212
 id: Jk5qdnbv6QgT
 outputId: 292205eb-aa09-446f-eec2-af8c23cfc718
 ---
@@ -121,11 +115,8 @@ A survey of the family of convolutional operators, [a guide to convolutional ari
 
 Let's define a simple diagonal edge kernel:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 286
 id: Yud1Y3ss-x1K
 outputId: 3185fba5-1ad7-462f-96ba-7ed1b0c3d5a2
 ---
@@ -143,11 +134,8 @@ plt.imshow(kernel[:, :, 0, 0]);
 
 And we'll make a simple synthetic image:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 286
 id: cpbGsIGa_Qyx
 outputId: d7c5d21f-c3a0-42e9-c9bc-3da1a508c0e7
 ---
@@ -172,11 +160,8 @@ These are the simple convenience functions for convolutions
 
 ️⚠️ The convenience `lax.conv`, `lax.conv_with_general_padding` helper function assume __NCHW__ images and __OIHW__ kernels.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 628
 id: kppxbxpZW0nb
 outputId: 9fc5494c-b443-4e74-fe48-fac09e12378c
 ---
@@ -191,11 +176,8 @@ plt.figure(figsize=(10,10))
 plt.imshow(np.array(out)[0,0,:,:]);
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 628
 id: aonr1tWvYCW9
 outputId: 3d44d494-9620-4736-e331-c9569a4888cd
 ---
@@ -227,10 +209,8 @@ The important argument is the 3-tuple of axis layout arguments:
 
 ⚠️ To demonstrate the flexibility of dimension numbers we choose a __NHWC__ image and __HWIO__ kernel convention for `lax.conv_general_dilated` below.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: oXKebfCb_i2B
 outputId: d5a569b3-febc-4832-f725-1d5e8fd31b9b
 ---
@@ -244,11 +224,8 @@ print(dn)
 
 #### SAME padding, no stride, no dilation
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 628
 id: rgb2T15aFVG6
 outputId: 9b33cdb0-6959-4c88-832a-b92c4e42ae72
 ---
@@ -269,11 +246,8 @@ plt.imshow(np.array(out)[0,:,:,0]);
 
 #### VALID padding, no stride, no dilation
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 628
 id: 1HQwudKVFVG-
 outputId: be9d6b26-8e3e-44d9-dbd2-df2f6bbf98c2
 ---
@@ -294,11 +268,8 @@ plt.imshow(np.array(out)[0,:,:,0]);
 
 #### SAME padding, 2,2 stride, no dilation
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 627
 id: mKq2-zmmFVHC
 outputId: 14cc0114-e230-4555-a682-23e00b534863
 ---
@@ -319,11 +290,8 @@ plt.imshow(np.array(out)[0,:,:,0]);
 
 #### VALID padding, no stride, rhs kernel dilation ~ Atrous convolution (excessive to illustrate)
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 628
 id: _pGr0x6qFVHF
 outputId: 9edbccb6-d976-4b55-e0b7-e6f3b743e476
 ---
@@ -344,11 +312,8 @@ plt.imshow(np.array(out)[0,:,:,0]);
 
 #### VALID padding, no stride, lhs=input dilation  ~ Transposed Convolution
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 629
 id: B9Ail8ppFVHJ
 outputId: 7aa19474-566f-4419-bfae-8286dd026c1c
 ---
@@ -369,11 +334,8 @@ plt.imshow(np.array(out)[0,:,:,0]);
 
 We can use the last to, for instance, implement _transposed convolutions_:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 629
 id: 5EYIj77-NdHE
 outputId: f45b16f7-cc6e-4593-8aca-36b4152c3dfa
 ---
@@ -407,11 +369,8 @@ plt.imshow(np.array(out)[0,:,:,0]);
 
 You aren't limited to 2D convolutions, a simple 1D demo is below:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 674
 id: jJ-jcAn3cig-
 outputId: 67c46ace-6adc-4c47-c1c7-1f185be5fd4b
 ---
@@ -450,11 +409,8 @@ plt.plot(out[0]);
 
 ### 3D Convolutions
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 530
 id: QNvSiq5-mcLd
 outputId: c99ec88c-6d5c-4acd-c8d3-331f026f5631
 ---

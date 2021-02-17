@@ -12,7 +12,7 @@ kernelspec:
   name: python3
 ---
 
-+++ {"colab_type": "text", "id": "6umP1IKf4Dg6"}
++++ {"id": "6umP1IKf4Dg6"}
 
 # Autobatching log-densities example
 
@@ -23,8 +23,6 @@ This notebook demonstrates a simple Bayesian inference example where autobatchin
 Inspired by a notebook by @davmre.
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: 8RZDkfbV3zdR
 
 import functools
@@ -46,13 +44,11 @@ import numpy as np
 import scipy as sp
 ```
 
-+++ {"colab_type": "text", "id": "p2VcZS1d34C6"}
++++ {"id": "p2VcZS1d34C6"}
 
 ## Generate a fake binary classification dataset
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: pq41hMvn4c_i
 
 np.random.seed(10009)
@@ -67,29 +63,23 @@ y = (np.random.rand(num_points) < sp.special.expit(all_x.dot(true_beta))).astype
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 102
-colab_type: code
 id: O0nVumAw7IlT
 outputId: 751a3290-a81b-4538-9183-16cd685fbaf9
 ---
 y
 ```
 
-+++ {"colab_type": "text", "id": "DZRVvhpn5aB1"}
++++ {"id": "DZRVvhpn5aB1"}
 
 ## Write the log-joint function for the model
 
 We'll write a non-batched version, a manually batched version, and an autobatched version.
 
-+++ {"colab_type": "text", "id": "C_mDXInL7nsP"}
++++ {"id": "C_mDXInL7nsP"}
 
 ### Non-batched
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: ZHyL2sJh5ajG
 
 def log_joint(beta):
@@ -102,10 +92,6 @@ def log_joint(beta):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: e51qW0ro6J7C
 outputId: 2ec6bbbd-12ee-45bc-af76-5111c53e4d5a
 ---
@@ -114,10 +100,6 @@ log_joint(np.random.randn(num_features))
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: fglQXK1Y6wnm
 outputId: 2b934336-08ad-4776-9a58-aa575bf601eb
 ---
@@ -131,13 +113,11 @@ except ValueError as e:
   print("Caught expected exception " + str(e))
 ```
 
-+++ {"colab_type": "text", "id": "_lQ8MnKq7sLU"}
++++ {"id": "_lQ8MnKq7sLU"}
 
 ### Manually batched
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: 2g5-4bQE7gRA
 
 def batched_log_joint(beta):
@@ -157,10 +137,6 @@ def batched_log_joint(beta):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 68
-colab_type: code
 id: KdDMr-Gy85CO
 outputId: db746654-68e9-43b8-ce3b-6e5682e22eb5
 ---
@@ -170,7 +146,7 @@ batched_test_beta = np.random.randn(batch_size, num_features)
 batched_log_joint(batched_test_beta)
 ```
 
-+++ {"colab_type": "text", "id": "-uuGlHQ_85kd"}
++++ {"id": "-uuGlHQ_85kd"}
 
 ### Autobatched with vmap
 
@@ -178,10 +154,6 @@ It just works.
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 68
-colab_type: code
 id: SU20bouH8-Za
 outputId: ee450298-982f-4b9a-bed9-a6f9b8f63d92
 ---
@@ -189,19 +161,17 @@ vmap_batched_log_joint = jax.vmap(log_joint)
 vmap_batched_log_joint(batched_test_beta)
 ```
 
-+++ {"colab_type": "text", "id": "L1KNBo9y_yZJ"}
++++ {"id": "L1KNBo9y_yZJ"}
 
 ## Self-contained variational inference example
 
 A little code is copied from above.
 
-+++ {"colab_type": "text", "id": "lQTPaaQMJh8Y"}
++++ {"id": "lQTPaaQMJh8Y"}
 
 ### Set up the (batched) log-joint function
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: AITXbaofA3Pm
 
 @jax.jit
@@ -215,13 +185,11 @@ def log_joint(beta):
 batched_log_joint = jax.jit(jax.vmap(log_joint))
 ```
 
-+++ {"colab_type": "text", "id": "UmmFMQ8LJk6a"}
++++ {"id": "UmmFMQ8LJk6a"}
 
 ### Define the ELBO and its gradient
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: MJtnskL6BKwV
 
 def elbo(beta_loc, beta_log_scale, epsilon):
@@ -232,16 +200,12 @@ elbo = jax.jit(elbo)
 elbo_val_and_grad = jax.jit(jax.value_and_grad(elbo, argnums=(0, 1)))
 ```
 
-+++ {"colab_type": "text", "id": "oQC7xKYnJrp5"}
++++ {"id": "oQC7xKYnJrp5"}
 
 ### Optimize the ELBO using SGD
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 1000
-colab_type: code
 id: 9JrD5nNgH715
 outputId: 80bf62d8-821a-45c4-885c-528b2e449e97
 ---
@@ -270,7 +234,7 @@ for i in range(1000):
         print('{}\t{}'.format(i, elbo_val))
 ```
 
-+++ {"colab_type": "text", "id": "b3ZAe5fJJ2KM"}
++++ {"id": "b3ZAe5fJJ2KM"}
 
 ### Display the results
 
@@ -278,10 +242,6 @@ Coverage isn't quite as good as we might like, but it's not bad, and nobody said
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 463
-colab_type: code
 id: zt1NBLoVHtOG
 outputId: fb159795-e6e7-497c-e501-9933ec761af4
 ---
@@ -297,8 +257,6 @@ legend(loc='best')
 ```
 
 ```{code-cell} ipython3
-:colab: {}
-:colab_type: code
 :id: _bXdOlvUEJl0
 
 

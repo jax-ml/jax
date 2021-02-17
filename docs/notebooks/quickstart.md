@@ -12,7 +12,7 @@ kernelspec:
   name: python3
 ---
 
-+++ {"colab_type": "text", "id": "xtWX4x9DCF5_"}
++++ {"id": "xtWX4x9DCF5_"}
 
 # JAX Quickstart
 
@@ -37,7 +37,7 @@ Compilation and automatic differentiation can be composed arbitrarily, so you
 can express sophisticated algorithms and get maximal performance without having
 to leave Python.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: SY8mDvEvCGqk
 
 import jax.numpy as jnp
@@ -45,24 +45,24 @@ from jax import grad, jit, vmap
 from jax import random
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 :tags: [remove-cell]
 
 # Execute this to consume & hide the GPU warning.
 jnp.arange(10)
 ```
 
-+++ {"colab_type": "text", "id": "FQ89jHCYfhpg"}
++++ {"id": "FQ89jHCYfhpg"}
 
 ## Multiplying Matrices
 
-+++ {"colab_type": "text", "id": "Xpy1dSgNqCP4"}
++++ {"id": "Xpy1dSgNqCP4"}
 
 We'll be generating random data in the following examples. One big difference between NumPy and JAX is how you generate random numbers. For more details, see [Common Gotchas in JAX].
 
 [Common Gotchas in JAX]: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Random-Numbers
 
-```{code-cell}
+```{code-cell} ipython3
 :id: u0nseKZNqOoH
 
 key = random.PRNGKey(0)
@@ -70,11 +70,11 @@ x = random.normal(key, (10,))
 print(x)
 ```
 
-+++ {"colab_type": "text", "id": "hDJF0UPKnuqB"}
++++ {"id": "hDJF0UPKnuqB"}
 
 Let's dive right in and multiply two big matrices.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: eXn8GUl6CG5N
 
 size = 3000
@@ -82,13 +82,13 @@ x = random.normal(key, (size, size), dtype=jnp.float32)
 %timeit jnp.dot(x, x.T).block_until_ready()  # runs on the GPU
 ```
 
-+++ {"colab_type": "text", "id": "0AlN7EbonyaR"}
++++ {"id": "0AlN7EbonyaR"}
 
 We added that `block_until_ready` because JAX uses asynchronous execution by default (see {ref}`async-dispatch`).
 
 JAX NumPy functions work on regular NumPy arrays.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: ZPl0MuwYrM7t
 
 import numpy as np
@@ -96,11 +96,11 @@ x = np.random.normal(size=(size, size)).astype(np.float32)
 %timeit jnp.dot(x, x.T).block_until_ready()
 ```
 
-+++ {"colab_type": "text", "id": "_SrcB2IurUuE"}
++++ {"id": "_SrcB2IurUuE"}
 
 That's slower because it has to transfer data to the GPU every time. You can ensure that an NDArray is backed by device memory using {func}`~jax.device_put`.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: Jj7M7zyRskF0
 
 from jax import device_put
@@ -110,23 +110,22 @@ x = device_put(x)
 %timeit jnp.dot(x, x.T).block_until_ready()
 ```
 
-+++ {"colab_type": "text", "id": "clO9djnen8qi"}
-
++++ {"id": "clO9djnen8qi"}
 
 The output of {func}`~jax.device_put` still acts like an NDArray, but it only copies values back to the CPU when they're needed for printing, plotting, saving to disk, branching, etc. The behavior of {func}`~jax.device_put` is equivalent to the function `jit(lambda x: x)`, but it's faster.
 
-+++ {"colab_type": "text", "id": "ghkfKNQttDpg"}
++++ {"id": "ghkfKNQttDpg"}
 
 If you have a GPU (or TPU!) these calls run on the accelerator and have the potential to be much faster than on CPU.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: RzXK8GnIs7VV
 
 x = np.random.normal(size=(size, size)).astype(np.float32)
 %timeit np.dot(x, x.T)
 ```
 
-+++ {"colab_type": "text", "id": "iOzp0P_GoJhb"}
++++ {"id": "iOzp0P_GoJhb"}
 
 JAX is much more than just a GPU-backed NumPy. It also comes with a few program transformations that are useful when writing numerical code. For now, there's three main ones:
 
@@ -136,15 +135,15 @@ JAX is much more than just a GPU-backed NumPy. It also comes with a few program 
 
 Let's go over these, one-by-one. We'll also end up composing these in interesting ways.
 
-+++ {"colab_type": "text", "id": "bTTrTbWvgLUK"}
++++ {"id": "bTTrTbWvgLUK"}
 
 ## Using {func}`~jax.jit` to speed up functions
 
-+++ {"colab_type": "text", "id": "YrqE32mvE3b7"}
++++ {"id": "YrqE32mvE3b7"}
 
 JAX runs transparently on the GPU (or CPU, if you don't have one, and TPU coming soon!). However, in the above example, JAX is dispatching kernels to the GPU one operation at a time. If we have a sequence of operations, we can use the `@jit` decorator to compile multiple operations together using [XLA](https://www.tensorflow.org/xla). Let's try that.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: qLGdCtFKFLOR
 
 def selu(x, alpha=1.67, lmbda=1.05):
@@ -154,24 +153,24 @@ x = random.normal(key, (1000000,))
 %timeit selu(x).block_until_ready()
 ```
 
-+++ {"colab_type": "text", "id": "a_V8SruVHrD_"}
++++ {"id": "a_V8SruVHrD_"}
 
 We can speed it up with `@jit`, which will jit-compile the first time `selu` is called and will be cached thereafter.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: fh4w_3NpFYTp
 
 selu_jit = jit(selu)
 %timeit selu_jit(x).block_until_ready()
 ```
 
-+++ {"colab_type": "text", "id": "HxpBc4WmfsEU"}
++++ {"id": "HxpBc4WmfsEU"}
 
 ## Taking derivatives with {func}`~jax.grad`
 
 In addition to evaluating numerical functions, we also want to transform them. One transformation is [automatic differentiation](https://en.wikipedia.org/wiki/Automatic_differentiation). In JAX, just like in [Autograd](https://github.com/HIPS/autograd), you can compute gradients with the {func}`~jax.grad` function.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: IMAgNJaMJwPD
 
 def sum_logistic(x):
@@ -182,11 +181,11 @@ derivative_fn = grad(sum_logistic)
 print(derivative_fn(x_small))
 ```
 
-+++ {"colab_type": "text", "id": "PtNs881Ohioc"}
++++ {"id": "PtNs881Ohioc"}
 
 Let's verify with finite differences that our result is correct.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: JXI7_OZuKZVO
 
 def first_finite_differences(f, x):
@@ -198,21 +197,21 @@ def first_finite_differences(f, x):
 print(first_finite_differences(sum_logistic, x_small))
 ```
 
-+++ {"colab_type": "text", "id": "Q2CUZjOWNZ-3"}
++++ {"id": "Q2CUZjOWNZ-3"}
 
 Taking derivatives is as easy as calling {func}`~jax.grad`. {func}`~jax.grad` and {func}`~jax.jit` compose and can be mixed arbitrarily. In the above example we jitted `sum_logistic` and then took its derivative. We can go further:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: TO4g8ny-OEi4
 
 print(grad(jit(grad(jit(grad(sum_logistic)))))(1.0))
 ```
 
-+++ {"colab_type": "text", "id": "yCJ5feKvhnBJ"}
++++ {"id": "yCJ5feKvhnBJ"}
 
 For more advanced autodiff, you can use {func}`jax.vjp` for reverse-mode vector-Jacobian products and {func}`jax.jvp` for forward-mode Jacobian-vector products. The two can be composed arbitrarily with one another, and with other JAX transformations. Here's one way to compose them to make a function that efficiently computes full Hessian matrices:
 
-```{code-cell}
+```{code-cell} ipython3
 :id: Z-JxbiNyhxEW
 
 from jax import jacfwd, jacrev
@@ -220,18 +219,19 @@ def hessian(fun):
   return jit(jacfwd(jacrev(fun)))
 ```
 
-+++ {"colab_type": "text", "id": "TI4nPsGafxbL"}
++++ {"id": "TI4nPsGafxbL"}
 
 ## Auto-vectorization with {func}`~jax.vmap`
-+++ {"colab_type": "text", "id": "PcxkONy5aius"}
+
++++ {"id": "PcxkONy5aius"}
 
 JAX has one more transformation in its API that you might find useful: {func}`~jax.vmap`, the vectorizing map. It has the familiar semantics of mapping a function along array axes, but instead of keeping the loop on the outside, it pushes the loop down into a function’s primitive operations for better performance. When composed with {func}`~jax.jit`, it can be just as fast as adding the batch dimensions by hand.
 
-+++ {"colab_type": "text", "id": "TPiX4y-bWLFS"}
++++ {"id": "TPiX4y-bWLFS"}
 
 We're going to work with a simple example, and promote matrix-vector products into matrix-matrix products using {func}`~jax.vmap`. Although this is easy to do by hand in this specific case, the same technique can apply to more complicated functions.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 8w0Gpsn8WYYj
 
 mat = random.normal(key, (150, 100))
@@ -241,11 +241,11 @@ def apply_matrix(v):
   return jnp.dot(mat, v)
 ```
 
-+++ {"id": "0zWsc0RisQWx", "colab_type": "text"}
++++ {"id": "0zWsc0RisQWx"}
 
 Given a function such as `apply_matrix`, we can loop over a batch dimension in Python, but usually the performance of doing so is poor.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: KWVc9BsZv0Ki
 
 def naively_batched_apply_matrix(v_batched):
@@ -255,11 +255,11 @@ print('Naively batched')
 %timeit naively_batched_apply_matrix(batched_x).block_until_ready()
 ```
 
-+++ {"id": "qHfKaLE9stbA", "colab_type": "text"}
++++ {"id": "qHfKaLE9stbA"}
 
 We know how to batch this operation manually. In this case, `jnp.dot` handles extra batch dimensions transparently.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: ipei6l8nvrzH
 
 @jit
@@ -270,11 +270,11 @@ print('Manually batched')
 %timeit batched_apply_matrix(batched_x).block_until_ready()
 ```
 
-+++ {"id": "1eF8Nhb-szAb", "colab_type": "text"}
++++ {"id": "1eF8Nhb-szAb"}
 
 However, suppose we had a more complicated function without batching support. We can use {func}`~jax.vmap` to add batching support automatically.
 
-```{code-cell}
+```{code-cell} ipython3
 :id: 67Oeknf5vuCl
 
 @jit
@@ -285,10 +285,10 @@ print('Auto-vectorized with vmap')
 %timeit vmap_batched_apply_matrix(batched_x).block_until_ready()
 ```
 
-+++ {"colab_type": "text", "id": "pYVl3Z2nbZhO"}
++++ {"id": "pYVl3Z2nbZhO"}
 
 Of course, {func}`~jax.vmap` can be arbitrarily composed with {func}`~jax.jit`, {func}`~jax.grad`, and any other JAX transformation.
 
-+++ {"id": "WwNnjaI4th_8", "colab_type": "text"}
++++ {"id": "WwNnjaI4th_8"}
 
 This is just a taste of what JAX can do. We're really excited to see what you do with it!
