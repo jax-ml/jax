@@ -293,7 +293,8 @@ class JVPTrace(Trace):
     primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
     nonzero_tangents, tangent_tree_def = tree_flatten(tangents)
     nz_tangents = [type(t) is not Zero for t in tangents]
-    params = dict(params, name=wrap_name(params['name'], 'jvp'))
+    if 'name' in params:
+      params = dict(params, name=wrap_name(params['name'], 'jvp'))
     f_jvp = jvp_subtrace(f, self.main)
     if isinstance(call_primitive, core.MapPrimitive):
       in_axes = params['in_axes']

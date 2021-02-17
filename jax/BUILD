@@ -131,3 +131,10 @@ pytype_library(
         ":jax",
     ],
 )
+
+pytype_library(
+    name = "djax",
+    srcs = ["experimental/djax.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
