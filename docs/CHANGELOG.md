@@ -17,6 +17,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     from JAX ([#5627](https://github.com/google/jax/pull/5627)
     and [README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
 * Bug fixes:
+  * {func}`jax.numpy.take` properly handles negative indices
+    ([#5768](https://github.com/google/jax/pull/5768))
 * Breaking changes:
   * JAX's promotion rules were adjusted to make promotion more consistent and
     invariant to JIT. In particular, binary operations can now result in weakly-typed
