@@ -93,17 +93,19 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in dlpack_dtypes))
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testTensorFlowToJax(self, shape, dtype):
-    if not config.x64_enabled and dtype in [jnp.int64, jnp.uint64,
-                                              jnp.float64]:
+    if not config.x64_enabled and dtype in [jnp.int64, jnp.uint64, jnp.float64]:
       raise self.skipTest("x64 types are disabled by jax_enable_x64")
     if (jtu.device_under_test() == "gpu" and
         not tf.config.list_physical_devices("GPU")):
       raise self.skipTest("TensorFlow not configured with GPU support")
 
+    if jtu.device_under_test() == "gpu" and dtype == jnp.int32:
+      raise self.skipTest("TensorFlow does not place int32 tensors on GPU")
+
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     with tf.device("/GPU:0" if jtu.device_under_test() == "gpu" else "/CPU:0"):
-      x = tf.constant(np)
+      x = tf.identity(tf.constant(np))
     dlpack = tf.experimental.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
     self.assertAllClose(np, y)

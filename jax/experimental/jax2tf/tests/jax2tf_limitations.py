@@ -131,7 +131,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "abs", "and", "argmin", "argmax", "broadcast", "broadcast_in_dim", "ceil",
       "concatenate", "cos", "complex", "conj", "device_put", "dynamic_slice",
       "dynamic_update_slice", "exp", "eq", "floor", "log", "gather", "imag",
-      "iota", "is_finite", "ne", "not", "or", "pad", "random_split",
+      "iota", "is_finite", "ne", "not", "or", "pad",
       "reduce_and", "reduce_prod", "reduce_or", "reduce_sum", "real", "reshape",
       "select", "shift_left", "shift_right_logical", "shift_right_arithmetic",
       "sin", "slice", "sqrt", "squeeze", "stop_gradient", "tie_in", "transpose",
@@ -313,6 +313,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         Jax2TfLimitation(
             "jax2tf BUG: batch_group_count > 1 not yet converted",
             enabled=(harness.params["batch_group_count"] > 1)),
+        missing_tf_kernel(dtypes=[np.complex64, np.complex128], devices="gpu"),
         custom_numeric(devices="gpu", tol=1e-4),
         custom_numeric(devices="tpu", tol=1e-3),
         # TODO(bchetioui): significant discrepancies in some float16 cases.
@@ -723,6 +724,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       tst.assertAllClose(result_jax[~special_cases], result_tf[~special_cases])
 
     return [
+        # TODO(necula): Produces mismatched outputs on GPU.
+        Jax2TfLimitation("mismatched outputs on GPU",
+                         devices=("gpu",), skip_comparison=True),
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16, np.float16]),
         custom_numeric(
@@ -758,6 +762,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           rtol=tol)
 
     return [
+        # TODO(necula): Produces mismatched outputs on GPU.
+        Jax2TfLimitation("mismatched outputs on GPU",
+                         devices=("gpu",), skip_comparison=True),
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16, np.float16]),
         custom_numeric(dtypes=np.float64, tol=1e-9),
@@ -951,8 +958,23 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
+  def random_split(cls, harness: primitive_harness.Harness):
+    return [
+        missing_tf_kernel(
+            dtypes=[],
+            devices="gpu",
+        )
+    ]
+
+  @classmethod
   def random_gamma(cls, harness: primitive_harness.Harness):
-    return [custom_numeric(devices="tpu", tol=1e-3)]
+    return [
+        custom_numeric(devices="tpu", tol=1e-3),
+        missing_tf_kernel(
+            dtypes=[np.float32, np.float64],
+            devices="gpu",
+        )
+    ]
 
   @classmethod
   def reduce_max(cls, harness: primitive_harness.Harness):
