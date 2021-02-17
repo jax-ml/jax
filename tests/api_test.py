@@ -1233,6 +1233,24 @@ class APITest(jtu.JaxTestCase):
     out_shape = api.eval_shape(lambda x: x, x)  # doesn't crash
     self.assertEqual(out_shape.shape, (3,))
 
+  def test_eval_shape_names(self):
+    def fun(x, y):
+      return lax.psum(x, 'i') + y
+
+    class MyArgArray(object):
+      def __init__(self, shape, dtype, named_shape):
+        self.shape = shape
+        self.dtype = dtype
+        self.named_shape = named_shape
+
+    x = MyArgArray((3, 2), jnp.float32, {'i': 10})
+    y = MyArgArray((3, 2), jnp.float32, {'j': 5})
+    with core.extend_axis_env('i', 10, None):
+      with core.extend_axis_env('j', 5, None):
+        out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape.named_shape, {'j': 5})
+
   def test_issue_871(self):
     T = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
     x = jnp.array([1, 2, 3])
@@ -2822,6 +2840,19 @@ class JaxprTest(jtu.JaxTestCase):
       return x - lax.psum(x, 'i')
     jaxpr = api.make_jaxpr(f, axis_env=[('i', 4)])(2)
     self.assertIn('psum', str(jaxpr))
+
+  def test_make_jaxpr_named(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    def f(x):
+      return x - lax.psum(x, 'i')
+
+    x = types.SimpleNamespace(
+        shape=(2, 3), dtype=jnp.float32, named_shape={'i': 10})
+    jaxpr = api.make_jaxpr(f, axis_env=[('i', 10)])(x)
+    named_shapes = [v.aval.named_shape for v in jaxpr.jaxpr.eqns[1].invars]
+    self.assertEqual(named_shapes, [{'i': 10}, {}])
 
 
 class LazyTest(jtu.JaxTestCase):
