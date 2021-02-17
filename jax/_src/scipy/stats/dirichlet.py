@@ -13,29 +13,40 @@
 # limitations under the License.
 
 
-import numpy as np
 import scipy.stats as osp_stats
 
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax.scipy.special import gammaln, xlogy
+from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
 
 
 def _is_simplex(x):
-    x_sum = jnp.sum(x, axis=-1)
-    return jnp.all(x > 0, axis=-1) & (x_sum <= 1) & (x_sum > 1 - 1e-6)
+  x_sum = jnp.sum(x, axis=0)
+  return jnp.all(x > 0, axis=0) & (abs(x_sum - 1) < 1E-6)
 
 
 @_wraps(osp_stats.dirichlet.logpdf, update_doc=False)
 def logpdf(x, alpha):
-    args = (np.ones((0,), lax.dtype(x)), np.ones((1,), lax.dtype(alpha)))
-    to_dtype = lax.dtype(osp_stats.dirichlet.logpdf(*args))
-    x, alpha = [lax.convert_element_type(arg, to_dtype) for arg in (x, alpha)]
-    one = jnp._constant_like(x, 1)
-    normalize_term = jnp.sum(gammaln(alpha), axis=-1) - gammaln(jnp.sum(alpha, axis=-1))
-    log_probs = lax.sub(jnp.sum(xlogy(lax.sub(alpha, one), x), axis=-1), normalize_term)
-    return jnp.where(_is_simplex(x), log_probs, -jnp.inf)
+  x, alpha = _promote_dtypes_inexact(x, alpha)
+  if alpha.ndim != 1:
+    raise ValueError(
+      f"`alpha` must be one-dimensional; got alpha.shape={alpha.shape}"
+    )
+  if x.shape[0] not in (alpha.shape[0], alpha.shape[0] - 1):
+    raise ValueError(
+      "`x` must have either the same number of entries as `alpha` "
+      f"or one entry fewer; got x.shape={x.shape}, alpha.shape={alpha.shape}"
+    )
+  one = jnp._constant_like(x, 1)
+  if x.shape[0] != alpha.shape[0]:
+    x = jnp.concatenate([x, lax.sub(one, x.sum(0, keepdims=True))], axis=0)
+  normalize_term = jnp.sum(gammaln(alpha)) - gammaln(jnp.sum(alpha))
+  if x.ndim > 1:
+    alpha = lax.broadcast_in_dim(alpha, alpha.shape + (1,) * (x.ndim - 1), (0,))
+  log_probs = lax.sub(jnp.sum(xlogy(lax.sub(alpha, one), x), axis=0), normalize_term)
+  return jnp.where(_is_simplex(x), log_probs, -jnp.inf)
 
 
 @_wraps(osp_stats.dirichlet.pdf, update_doc=False)
