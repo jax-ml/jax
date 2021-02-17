@@ -4101,7 +4101,8 @@ def packbits(a, axis: Optional[int] = None, bitorder='big'):
 
   remainder = a.shape[-1] % 8
   if remainder:
-    a = pad(a, (a.ndim - 1) * [(0, 0)] + [(0, 8 - remainder)])
+    a = lax.pad(a, np.uint8(0),
+                (a.ndim - 1) * [(0, 0, 0)] + [(0, 8 - remainder, 0)])
 
   a = a.reshape(a.shape[:-1] + (a.shape[-1] // 8, 8))
   packed = (a << bits).sum(-1).astype('uint8')
