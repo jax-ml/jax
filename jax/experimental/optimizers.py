@@ -78,7 +78,7 @@ Example Usage:
     return value, opt_state
 
   for i in range(num_steps):
-    value, opt_state = step(step, opt_state)
+    value, opt_state = step(i, opt_state)
 """
 
 from typing import Any, Callable, NamedTuple, Tuple, Union
