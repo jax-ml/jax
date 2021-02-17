@@ -22,9 +22,10 @@ class OptimizeResults(NamedTuple):
 
   Parameters:
     x: final solution.
-    success: True if optimization succeeded.
-    status: integer solver specific return code. 0 means nominal.
-    message: solver specific message.
+    success: ``True`` if optimization succeeded.
+    status: integer solver specific return code. 0 means converged (nominal),
+      1=max BFGS iters reached, 3=zoom failed, 4=saddle point reached,
+      5=max line search iters reached, -1=undefined
     fun: final function value.
     jac: final jacobian array.
     hess_inv: final inverse Hessian estimate.
@@ -35,7 +36,6 @@ class OptimizeResults(NamedTuple):
   x: jnp.ndarray
   success: Union[bool, jnp.ndarray]
   status: Union[int, jnp.ndarray]
-  message: str
   fun: jnp.ndarray
   jac: jnp.ndarray
   hess_inv: jnp.ndarray
@@ -74,10 +74,10 @@ def minimize(
       where ``x`` is an 1-D array with shape ``(n,)`` and ``args`` is a tuple
       of the fixed parameters needed to completely specify the function.
       ``fun`` must support differentiation.
-    x0: initial guess. Array of real elements of size ``(n,)``, where 'n' is
+    x0: initial guess. Array of real elements of size ``(n,)``, where ``n`` is
       the number of independent variables.
     args: extra arguments passed to the objective function.
-    method: solver type. Currently only "BFGS" is supported.
+    method: solver type. Currently only ``"BFGS"`` is supported.
     tol: tolerance for termination. For detailed control, use solver-specific
       options.
     options: a dictionary of solver options. All methods accept the following
@@ -86,7 +86,8 @@ def minimize(
             Maximum number of iterations to perform. Depending on the
             method each iteration may use several function evaluations.
 
-  Returns: OptimizeResults object.
+  Returns:
+    An :class:`OptimizeResults` object.
   """
   if options is None:
     options = {}
@@ -99,14 +100,10 @@ def minimize(
 
   if method.lower() == 'bfgs':
     results = minimize_bfgs(fun_with_args, x0, **options)
-    message = ("status meaning: 0=converged, 1=max BFGS iters reached, "
-               "3=zoom failed, 4=saddle point reached, "
-               "5=max line search iters reached, -1=undefined")
     success = (results.converged) & jnp.logical_not(results.failed)
     return OptimizeResults(x=results.x_k,
                            success=success,
                            status=results.status,
-                           message=message,
                            fun=results.f_k,
                            jac=results.g_k,
                            hess_inv=results.H_k,

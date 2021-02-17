@@ -47,6 +47,7 @@ jax.scipy.optimize
   :toctree: _autosummary
 
    minimize
+   OptimizeResults
 
 jax.scipy.signal
 ----------------
