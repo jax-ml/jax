@@ -76,6 +76,11 @@ intersphinx_mapping = {
     'scipy': ('https://docs.scipy.org/doc/scipy/reference/', None),
 }
 
+suppress_warnings = [
+    'ref.citation',  # Many duplicated citations in numpy/scipy docstrings.
+    'ref.footnote',  # Many unreferenced footnotes in numpy/scipy docstrings
+]
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
