@@ -675,7 +675,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     fun = partial(lax.scatter_add, dimension_numbers=dnums)
     self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape, update_shape],
                         [dtype, idxs.dtype, dtype], jtu.rand_default(self.rng()),
-                        rtol={np.float16: 5e-3})
+                        rtol={np.float16: 5e-3, dtypes.bfloat16: 3e-2})
 
   def testShapeUsesBuiltinInt(self):
     x = lax.iota(np.int32, 3) + 1
