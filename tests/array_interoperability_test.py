@@ -45,7 +45,8 @@ except:
   tf = None
 
 
-dlpack_dtypes = jax.dlpack.SUPPORTED_DTYPES
+dlpack_dtypes = sorted(list(jax.dlpack.SUPPORTED_DTYPES),
+                       key=lambda x: x.__name__)
 torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
 
