@@ -1245,5 +1245,10 @@ class BatchingTest(jtu.JaxTestCase):
     expected = bulk_op(x, axis=axis)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testNonJaxTypedOutput(self):
+    with self.assertRaisesRegex(
+      TypeError, "Output from batched function.*is not a valid JAX type"):
+      vmap(lambda x: "hello")(np.arange(5))
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

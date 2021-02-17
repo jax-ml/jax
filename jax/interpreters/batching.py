@@ -392,7 +392,12 @@ def broadcast(x, sz, axis):
   return jax.lax.broadcast_in_dim(x, shape, broadcast_dims)
 
 def matchaxis(sz, src, dst, x, sum_match=False):
-  if core.get_aval(x) is core.abstract_unit:
+  try:
+    aval = core.get_aval(x)
+  except TypeError as e:
+    raise TypeError(f"Output from batched function {repr(x)} with type "
+                    f"{type(x)} is not a valid JAX type") from e
+  if aval is core.abstract_unit:
     return core.unit
   if src == dst:
     return x
