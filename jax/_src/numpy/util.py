@@ -103,6 +103,7 @@ def _wraps(fun, update_doc=True, lax_description=""):
           f"{body}")
 
       op.__name__ = fun.__name__
+      op.__qualname__ = fun.__qualname__
       op.__doc__ = docstr
       op.__np_wrapped__ = fun
     finally:
