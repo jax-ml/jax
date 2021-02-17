@@ -3621,7 +3621,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                   [cast(Optional[int], None)])
       for dtype in all_dtypes
       for index_dtype in int_dtypes
-      for mode in ['wrap', 'clip']))
+      for mode in [None, 'wrap', 'clip']))
   def testTake(self, shape, dtype, index_shape, index_dtype, axis, mode):
     def args_maker():
       x = rng(shape, dtype)
@@ -3629,7 +3629,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return x, i
 
     rng = jtu.rand_default(self.rng())
-    rng_indices = jtu.rand_int(self.rng(), -5, 5)
+    if mode is None:
+      rng_indices = jtu.rand_int(self.rng(), -shape[axis or 0], shape[axis or 0])
+    else:
+      rng_indices = jtu.rand_int(self.rng(), -5, 5)
     jnp_op = lambda x, i: jnp.take(x, i, axis=axis, mode=mode)
     np_op = lambda x, i: np.take(x, i, axis=axis, mode=mode)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
