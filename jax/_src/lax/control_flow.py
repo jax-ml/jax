@@ -32,6 +32,7 @@ from jax import api
 from jax import core
 from jax import dtypes
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src import util
 from jax._src.lax import lax
 from jax import linear_util as lu
@@ -51,6 +52,8 @@ from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_leaves)
 from jax import ad_util
 from jax.config import config
+
+traceback_util.register_exclusion(__file__)
 
 xops = xla_client.ops
 
