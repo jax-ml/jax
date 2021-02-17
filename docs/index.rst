@@ -23,6 +23,7 @@ For an introduction to JAX, start at the
    :caption: Advanced JAX Tutorials
 
    notebooks/Common_Gotchas_in_JAX
+   notebooks/convolutions
    notebooks/Custom_derivative_rules_for_Python_code
    notebooks/How_JAX_primitives_work
    notebooks/Writing_custom_interpreters_in_Jax
