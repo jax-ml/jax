@@ -30,6 +30,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
+one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
 scipy_version = tuple(map(int, osp.version.version.split('.')[:2]))
 
 
@@ -163,22 +164,44 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker)
 
-  @genNamedParametersNArgs(2)
+  @parameterized.named_parameters(
+    jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [x_shape, alpha_shape], dtypes),
+        "shapes": [x_shape, alpha_shape], "dtypes": dtypes}
+      for x_shape in one_and_two_dim_shapes
+      for alpha_shape in [(x_shape[0],), (x_shape[0] + 1,)]
+      for dtypes in itertools.combinations_with_replacement(jtu.dtypes.floating, 2)
+  ))
   def testDirichletLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
-    scipy_fun = osp_stats.cauchy.logpdf
-    lax_fun = lsp_stats.cauchy.logpdf
-    dim = 4
-    shapes = (shapes[0] + (dim,), shapes[1] + (dim,))
+
+    def _normalize(x, alpha):
+      x_norm = x.sum(0) + (0.0 if x.shape[0] == alpha.shape[0] else 0.1)
+      return (x / x_norm).astype(x.dtype), alpha
+
+    def lax_fun(x, alpha):
+      return lsp_stats.dirichlet.logpdf(*_normalize(x, alpha))
+
+    def scipy_fun(x, alpha):
+      # scipy validates the x normalization using float64 arithmetic, so we must
+      # cast x to float64 before normalization to ensure this passes.
+      x, alpha = _normalize(x.astype('float64'), alpha)
+
+      result = osp_stats.dirichlet.logpdf(x, alpha)
+      # if x.shape is (N, 1), scipy flattens the output, while JAX returns arrays
+      # of a consistent rank. This check ensures the results have the same shape.
+      return result if x.ndim == 1 else np.atleast_1d(result)
 
     def args_maker():
+      # Don't normalize here, because we want normalization to happen at 64-bit
+      # precision in the scipy version.
       x, alpha = map(rng, shapes, dtypes)
-      x = x / np.sum(x, axis=-1, keepdims=True)
-      return [x, alpha]
+      return x, alpha
 
+    tol = {np.float32: 1E-3, np.float64: 1e-5}
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+                            tol=tol)
+    self._CompileAndCheck(lax_fun, args_maker, atol=tol, rtol=tol)
 
   @genNamedParametersNArgs(3)
   def testExponLogPdf(self, shapes, dtypes):
