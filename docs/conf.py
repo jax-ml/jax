@@ -165,6 +165,7 @@ html_static_path = ['_static']
 # html_sidebars = {}
 
 # -- Options for myst ----------------------------------------------
+jupyter_execute_notebooks = "force"
 execution_allow_errors = False
 execution_fail_on_error = True  # Requires https://github.com/executablebooks/MyST-NB/pull/296
 
@@ -180,8 +181,6 @@ execution_excludepatterns = [
     'notebooks/Neural_Network_and_Data_Loading.*',
     'notebooks/score_matching.*',
     'notebooks/maml.*',
-    # Fails with shape error in XL
-    'notebooks/XLA_in_Python.*',
     # Strange error apparently due to asynchronous cell execution
     'notebooks/thinking_in_jax.*'
 ]
