@@ -144,7 +144,9 @@ register_backend('xla', _get_local_backend)
 _tpu_backend = None
 
 def _get_tpu_driver_backend(platform):
-  del platform
+  if platform == "cpu":
+    return _get_local_backend("cpu")
+
   global _tpu_backend
   if _tpu_backend is None:
     backend_target = FLAGS.jax_backend_target
