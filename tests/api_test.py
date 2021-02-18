@@ -876,6 +876,16 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(g, grad(lambda x: x**3)(3.))
     self.assertAllClose(aux, [9.], check_dtypes=False)
 
+  def test_grad_and_aux_error(self):
+    with self.assertRaisesRegex(TypeError, "two-element tuple"):
+      grad(lambda x: (1, 2, 3), has_aux=True)(1.)
+
+    with self.assertRaisesRegex(TypeError, "two-element tuple"):
+      grad(lambda x: x, has_aux=True)(1.)
+
+    with self.assertRaisesRegex(TypeError, "two-element tuple"):
+      grad(lambda x: (x,), has_aux=True)(1.)
+
   def test_grad_and_aux_nested(self):
     def f(x):
       g, aux = grad(lambda x: (x**3, [x**3]), has_aux=True)(x)
@@ -2317,6 +2327,7 @@ class APITest(jtu.JaxTestCase):
     a = AlexArray(x)
     for f in [jnp.isscalar, jnp.size, jnp.shape, jnp.dtype]:
       self.assertEqual(f(x), f(a))
+
 
 
 class RematTest(jtu.JaxTestCase):
