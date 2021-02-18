@@ -1675,6 +1675,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_order={}_k={}".format(
+          jtu.format_shape_dtype_string(a_shape, dtype),
+          order, k),
+       "dtype": dtype, "a_shape": a_shape, "order" : order, "k": k}
+      for dtype in default_dtypes
+      for a_shape in one_dim_array_shapes
+      for order in range(5)
+      for k in [np.arange(order, dtype=dtype), np.zeros(1, dtype), np.ones(1, dtype), None]
+))
+  def testPolyInt(self, a_shape, order, k, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda arg1: np.polyint(arg1, m=order, k=k)
+    jnp_fun = lambda arg1: jnp.polyint(arg1, m=order, k=k)
+    args_maker = lambda: [rng(a_shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_order={}".format(
           jtu.format_shape_dtype_string(a_shape, dtype),
           order),

@@ -283,6 +283,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     piecewise
     polyadd
     polyder
+    polyint
     polymul
     polysub
     polyval
