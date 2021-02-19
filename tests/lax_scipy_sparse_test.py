@@ -30,7 +30,6 @@ import jax._src.scipy.sparse.linalg
 
 from jax.config import config
 config.parse_flags_with_absl()
-config.update("jax_enable_x64", True)
 
 
 float_types = jtu.dtypes.floating
