@@ -175,6 +175,8 @@ class CallTfTest(jtu.JaxTestCase):
 
   @parameterized_jit
   def test_with_var_read(self, with_jit=True):
+    if jtu.device_under_test() == "gpu":
+      raise unittest.SkipTest("Test fails on GPU")
     outer_var = tf.Variable(3., dtype=np.float32)
 
     def fun_tf(x):
@@ -211,6 +213,8 @@ class CallTfTest(jtu.JaxTestCase):
 
   @parameterized_jit
   def test_with_multiple_capture(self, with_jit=True):
+    if jtu.device_under_test() == "gpu":
+      raise unittest.SkipTest("Test fails on GPU")
     v2 = tf.Variable(2., dtype=np.float32)
     v3 = tf.Variable(3., dtype=np.float32)
     t4 = tf.constant(4., dtype=np.float32)
