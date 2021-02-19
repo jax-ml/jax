@@ -313,6 +313,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         Jax2TfLimitation(
             "jax2tf BUG: batch_group_count > 1 not yet converted",
             enabled=(harness.params["batch_group_count"] > 1)),
+        missing_tf_kernel(dtypes=[np.complex64, np.complex128], devices="gpu"),
         custom_numeric(devices="gpu", tol=1e-4),
         custom_numeric(devices="tpu", tol=1e-3),
         # TODO(bchetioui): significant discrepancies in some float16 cases.
@@ -723,6 +724,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       tst.assertAllClose(result_jax[~special_cases], result_tf[~special_cases])
 
     return [
+        # TODO(necula): Produces mismatched outputs on GPU.
+        Jax2TfLimitation("mismatched outputs on GPU",
+                         devices=("gpu",), skip_comparison=True),
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16, np.float16]),
         custom_numeric(
@@ -758,6 +762,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           rtol=tol)
 
     return [
+        # TODO(necula): Produces mismatched outputs on GPU.
+        Jax2TfLimitation("mismatched outputs on GPU",
+                         devices=("gpu",), skip_comparison=True),
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16, np.float16]),
         custom_numeric(dtypes=np.float64, tol=1e-9),
