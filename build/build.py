@@ -271,6 +271,9 @@ build:short_logs --output_filter=DONT_MATCH_ANYTHING
 # Workaround for gcc 10+ warnings related to upb.
 # See https://github.com/tensorflow/tensorflow/issues/39467
 build:linux --copt=-Wno-stringop-truncation
+
+# Build with Cloud TPU support.
+build --define=with_tpu_support=true
 """
 
 
