@@ -687,7 +687,8 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
 
   if not _on_exit:
     log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
-    logging.log(log_priority, "Compiling %s for args %s.", fun.__name__, abstract_args)
+    logging.log(log_priority, "Compiling %s (%s) for args %s.",
+                fun.__name__, id(fun), abstract_args)
 
   if nreps > 1:
     warn(f"The jitted function {fun.__name__} includes a pmap. Using "
