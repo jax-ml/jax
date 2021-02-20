@@ -547,7 +547,7 @@ def f(x):
   print(f"x.shape = {x.shape}")
   print(f"jnp.array(x.shape).prod() = {jnp.array(x.shape).prod()}")
   # comment this out to avoid the error:
-  # return x.reshape(jnp.array(x.shape).prot())
+  # return x.reshape(jnp.array(x.shape).prod())
 
 f(x)
 ```
