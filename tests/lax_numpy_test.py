@@ -4267,28 +4267,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name":
-          "_shape={}_dtype={}_rowvar={}_ddof={}_bias={}_fweights={}_aweights={}".format(
-            shape, dtype, rowvar, ddof, bias, fweights, aweights),
-         "shape": shape, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
+          "_shape={}_dtype={}_y={}_rowvar={}_ddof={}_bias={}_fweights={}_aweights={}".format(
+            shape, dtype, y, rowvar, ddof, bias, fweights, aweights),
+         "shape": shape, "y": y, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
          "bias": bias, "fweights": fweights, "aweights": aweights}
         for shape in [(5,), (10, 5), (5, 10)]
         for dtype in all_dtypes
+        for y in [None, dtype]
         for rowvar in [True, False]
         for bias in [True, False]
         for ddof in [None, 2, 3]
         for fweights in [True, False]
         for aweights in [True, False]))
-  def testCov(self, shape, dtype, rowvar, ddof, bias, fweights, aweights):
+  def testCov(self, shape, dtype, y, rowvar, ddof, bias, fweights, aweights):
     rng = jtu.rand_default(self.rng())
     wrng = jtu.rand_positive(self.rng())
     wdtype = np.real(dtype(0)).dtype
     wshape = shape[-1:] if rowvar or shape[0] == 1 else shape[:1]
     args_maker = lambda: [rng(shape, dtype),
+                          rng(shape, y) if y else None,
                           wrng(wshape, int) if fweights else None,
                           wrng(wshape, wdtype) if aweights else None]
     kwargs = dict(rowvar=rowvar, ddof=ddof, bias=bias)
-    np_fun = lambda m, f, a: np.cov(m, fweights=f, aweights=a, **kwargs)
-    jnp_fun = lambda m, f, a: jnp.cov(m, fweights=f, aweights=a, **kwargs)
+    np_fun = lambda m, y, f, a: np.cov(m, y, fweights=f, aweights=a, **kwargs)
+    jnp_fun = lambda m, y, f, a: jnp.cov(m, y, fweights=f, aweights=a, **kwargs)
     tol = {jnp.bfloat16: 5E-2, np.float16: 1E-2, np.float32: 1e-5,
            np.float64: 1e-13, np.complex64: 1e-5, np.complex128: 1e-13}
     tol = 7e-2 if jtu.device_under_test() == "tpu" else tol
