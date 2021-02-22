@@ -14,12 +14,11 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.scipy.stats.chi2` is now available as a distribution with logpdf and pdf methods.
   * {func}`jax.scipy.stats.betabinom` is now available as a distribution with logpmf and pmf methods.
   * Added {func}`jax.experimental.jax2tf.call_tf` to call TensorFlow functions
-    from JAX ([#5627](https://github.com/google/jax/pull/5627)
+    from JAX ({jax-issue}`#5627`)
     and [README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
   * Extended the batching rule for `lax.pad` to support batching of the padding values.
 * Bug fixes:
-  * {func}`jax.numpy.take` properly handles negative indices
-    ([#5768](https://github.com/google/jax/pull/5768))
+  * {func}`jax.numpy.take` properly handles negative indices ({jax-issue}`#5768`)
 * Breaking changes:
   * JAX's promotion rules were adjusted to make promotion more consistent and
     invariant to JIT. In particular, binary operations can now result in weakly-typed
@@ -79,21 +78,21 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.7...jax-v0.2.8).
 * New features:
   * Add {func}`jax.closure_convert` for use with higher-order custom
-    derivative functions. ([#5244](https://github.com/google/jax/pull/5244))
+    derivative functions. ({jax-issue}`#5244`)
   * Add {func}`jax.experimental.host_callback.call` to call a custom Python
     function on the host and return a result to the device computation.
-    ([#5243](https://github.com/google/jax/pull/5243))
+    ({jax-issue}`#5243`)
 * Bug fixes:
   * `jax.numpy.arccosh` now returns the same branch as `numpy.arccosh` for
-    complex inputs ([#5156](https://github.com/google/jax/pull/5156))
+    complex inputs ({jax-issue}`#5156`)
   * `host_callback.id_tap` now works for `jax.pmap` also. There is a
     optional parameter for `id_tap` and `id_print` to request that the
     device from which the value is tapped be passed as a keyword argument
-    to the tap function ([#5182](https://github.com/google/jax/pull/5182)).
+    to the tap function ({jax-issue}`#5182`).
 * Breaking changes:
   * `jax.numpy.pad` now takes keyword arguments. Positional argument `constant_values`
     has been removed. In addition, passing unsupported keyword arguments raises an error.
-  * Changes for {func}`jax.experimental.host_callback.id_tap` ([#5243](https://github.com/google/jax/pull/5243)):
+  * Changes for {func}`jax.experimental.host_callback.id_tap` ({jax-issue}`#5243`):
     * Removed support for `kwargs` for {func}`jax.experimental.host_callback.id_tap`.
       (This support has been deprecated for a few months.)
     * Changed the printing of tuples for {func}`jax.experimental.host_callback.id_print`
@@ -104,7 +103,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     * `host_callback.outfeed_receiver` has been removed (it is not necessary,
       and was deprecated a few months ago).
 * New features:
-  * New flag for debugging `inf`, analagous to that for `NaN` ([#5224](https://github.com/google/jax/pull/5224)).
+  * New flag for debugging `inf`, analagous to that for `NaN` ({jax-issue}`#5224`).
 
 ## jax 0.2.7 (Dec 4 2020)
 
@@ -124,7 +123,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     `optax` Python package.
   * indexing of JAX arrays with non-tuple sequences now raises a `TypeError`. This type of indexing
     has been deprecated in Numpy since v1.16, and in JAX since v0.2.4.
-    See [#4564](https://github.com/google/jax/pull/4564).
+    See {jax-issue}`#4564`.
 
 ## jax 0.2.6 (Nov 18 2020)
 
@@ -136,7 +135,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
   * Raise an error on non-hashable static arguments for jax.jit and
     xla_computation.  See [cb48f42](https://github.com/google/jax/commit/cb48f42).
-  * Improve consistency of type promotion behavior ([#4744](https://github.com/google/jax/pull/4744)):
+  * Improve consistency of type promotion behavior ({jax-issue}`#4744`):
     * Adding a complex Python scalar to a JAX floating point number respects the precision of
       the JAX float. For example, `jnp.float32(1) + 1j` now returns `complex64`, where previously
       it returned `complex128`.
@@ -148,7 +147,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * The contents of the (undocumented) `jax.lax_linalg` linear algebra module
     are now exposed publicly as `jax.lax.linalg`.
   * `jax.random.PRNGKey` now produces the same results in and out of JIT compilation
-    ([#4877](https://github.com/google/jax/pull/4877)).
+    ({jax-issue}`#4877`).
     This required changing the result for a given seed in a few particular cases:
     * With `jax_enable_x64=False`, negative seeds passed as Python integers now return a different result
       outside JIT mode. For example, `jax.random.PRNGKey(-1)` previously returned
@@ -189,7 +188,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.4...jax-v0.2.5).
 * Improvements:
-  * Ensure that `check_jaxpr` does not perform FLOPS.  See [#4650](https://github.com/google/jax/pull/4650).
+  * Ensure that `check_jaxpr` does not perform FLOPS.  See {jax-issue}`#4650`.
   * Expanded the set of JAX primitives converted by jax2tf.
     See [primitives_with_limited_support.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/primitives_with_limited_support.md).
 
@@ -197,11 +196,11 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.3...jax-v0.2.4).
 * Improvements:
-  * Add support for `remat` to jax.experimental.host_callback.  See [#4608](https://github.com/google/jax/pull/4608).
+  * Add support for `remat` to jax.experimental.host_callback.  See {jax-issue}`#4608`.
 * Deprecations
 
   * Indexing with non-tuple sequences is now deprecated, following a similar deprecation in Numpy.
-    In a future release, this will result in a TypeError. See [#4564](https://github.com/google/jax/pull/4564).
+    In a future release, this will result in a TypeError. See {jax-issue}`#4564`.
 
 ## jaxlib 0.1.56 (October 14, 2020)
 
@@ -227,7 +226,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0).
 * Improvements:
-  * Omnistaging on by default. See [#3370](https://github.com/google/jax/pull/3370).
+  * Omnistaging on by default. See {jax-issue}`#3370`.
 
 ## jax (0.1.77) (September 15 2020)
 
@@ -279,7 +278,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * jax.numpy.lexsort (#3812)
   * `lax.scan` and the `scan` primitive support an `unroll`
     parameter for loop unrolling when lowering to XLA
-    ([#3738](https://github.com/google/jax/pull/3738)).
+    ({jax-issue}`#3738`).
 * Bug Fixes:
   * Fix reduction repeated axis error (#3618)
   * Fix shape rule for lax.pad for input dimensions of size 0. (#3608)
@@ -311,7 +310,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.71...jax-v0.1.72).
 * Bug fixes:
   * Fix an odeint bug introduced in the previous release, see
-    [#3587](https://github.com/google/jax/pull/3587).
+    {jax-issue}`#3587`.
 
 ## jax 0.1.71 (June 25, 2020)
 
@@ -320,7 +319,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
   * Allow `jax.experimental.ode.odeint` dynamics functions to close over
     values with respect to which we're differentiating
-    [#3562](https://github.com/google/jax/pull/3562).
+    {jax-issue}`#3562`.
 
 ## jaxlib 0.1.50 (June 25, 2020)
 
@@ -356,7 +355,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * `lax.switch` introduces indexed conditionals with multiple
     branches, together with a generalization of the `cond`
     primitive
-    [#3318](https://github.com/google/jax/pull/3318).
+    {jax-issue}`#3318`.
 
 ## jax 0.1.69 (June 3, 2020)
 
@@ -368,20 +367,20 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features:
   * {func}`lax.cond` supports a single-operand form, taken as the argument
     to both branches
-    [#2993](https://github.com/google/jax/pull/2993).
+    {jax-issue}`#2993`.
 * Notable changes:
   * The format of the `transforms` keyword for the {func}`jax.experimental.host_callback.id_tap`
-    primitive has changed [#3132](https://github.com/google/jax/pull/3132).
+    primitive has changed {jax-issue}`#3132`.
 
 ## jax 0.1.67 (May 12, 2020)
 
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.66...jax-v0.1.67).
 * New features:
   * Support for reduction over subsets of a pmapped axis using `axis_index_groups`
-    [#2382](https://github.com/google/jax/pull/2382).
+    {jax-issue}`#2382`.
   * Experimental support for printing and calling host-side Python function from
     compiled code. See [id_print and id_tap](https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html)
-    ([#3006](https://github.com/google/jax/pull/3006)).
+    ({jax-issue}`#3006`).
 * Notable changes:
   * The visibility of names exported from {mod}`jax.numpy` has been
     tightened. This may break code that was making use of names that were
@@ -396,7 +395,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.65...jax-v0.1.66).
 * New features:
   * Support for `in_axes=None` on {func}`pmap`
-    [#2896](https://github.com/google/jax/pull/2896).
+    {jax-issue}`#2896`.
 
 ## jaxlib 0.1.46 (May 5, 2020)
 
@@ -409,17 +408,17 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.64...jax-v0.1.65).
 * New features:
   * Differentiation of determinants of singular matrices
-    [#2809](https://github.com/google/jax/pull/2809).
+    {jax-issue}`#2809`.
 * Bug fixes:
   * Fix {func}`odeint` differentiation with respect to time of ODEs with
-    time-dependent dynamics [#2817](https://github.com/google/jax/pull/2817),
+    time-dependent dynamics {jax-issue}`#2817`,
     also add ODE CI testing.
   * Fix {func}`lax_linalg.qr` differentiation
-    [#2867](https://github.com/google/jax/pull/2867).
+    {jax-issue}`#2867`.
 
 ## jaxlib 0.1.45 (April 21, 2020)
 
-* Fixes segfault: <https://github.com/google/jax/issues/2755>
+* Fixes segfault: {jax-issue}`#2755`
 * Plumb is_stable option on Sort HLO through to Python.
 
 ## jax 0.1.64 (April 21, 2020)
@@ -427,19 +426,19 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.63...jax-v0.1.64).
 * New features:
   * Add syntactic sugar for functional indexed updates
-    [#2684](https://github.com/google/jax/issues/2684).
-  * Add {func}`jax.numpy.linalg.multi_dot` [#2726](https://github.com/google/jax/issues/2726).
-  * Add {func}`jax.numpy.unique` [#2760](https://github.com/google/jax/issues/2760).
-  * Add {func}`jax.numpy.rint` [#2724](https://github.com/google/jax/issues/2724).
-  * Add {func}`jax.numpy.rint` [#2724](https://github.com/google/jax/issues/2724).
+    {jax-issue}`#2684`.
+  * Add {func}`jax.numpy.linalg.multi_dot` {jax-issue}`#2726`.
+  * Add {func}`jax.numpy.unique` {jax-issue}`#2760`.
+  * Add {func}`jax.numpy.rint` {jax-issue}`#2724`.
+  * Add {func}`jax.numpy.rint` {jax-issue}`#2724`.
   * Add more primitive rules for {func}`jax.experimental.jet`.
 * Bug fixes:
-  * Fix {func}`logaddexp` and {func}`logaddexp2` differentiation at zero [#2107](https://github.com/google/jax/issues/2107).
+  * Fix {func}`logaddexp` and {func}`logaddexp2` differentiation at zero {jax-issue}`#2107`.
   * Improve memory usage in reverse-mode autodiff without {func}`jit`
-    [#2719](https://github.com/google/jax/issues/2719).
+    {jax-issue}`#2719`.
 * Better errors:
   * Improves error message for reverse-mode differentiation of {func}`lax.while_loop`
-    [#2129](https://github.com/google/jax/issues/2129).
+    {jax-issue}`#2129`.
 
 ## jaxlib 0.1.44 (April 16, 2020)
 
@@ -452,17 +451,17 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.1.63 (April 12, 2020)
 
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.62...jax-v0.1.63).
-* Added `jax.custom_jvp` and `jax.custom_vjp` from [#2026](https://github.com/google/jax/pull/2026), see the [tutorial notebook](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html). Deprecated `jax.custom_transforms` and removed it from the docs (though it still works).
-* Add `scipy.sparse.linalg.cg` [#2566](https://github.com/google/jax/pull/2566).
-* Changed how Tracers are printed to show more useful information for debugging [#2591](https://github.com/google/jax/pull/2591).
-* Made `jax.numpy.isclose` handle `nan` and `inf` correctly [#2501](https://github.com/google/jax/pull/2501).
-* Added several new rules for `jax.experimental.jet` [#2537](https://github.com/google/jax/pull/2537).
+* Added `jax.custom_jvp` and `jax.custom_vjp` from {jax-issue}`#2026`, see the [tutorial notebook](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html). Deprecated `jax.custom_transforms` and removed it from the docs (though it still works).
+* Add `scipy.sparse.linalg.cg` {jax-issue}`#2566`.
+* Changed how Tracers are printed to show more useful information for debugging {jax-issue}`#2591`.
+* Made `jax.numpy.isclose` handle `nan` and `inf` correctly {jax-issue}`#2501`.
+* Added several new rules for `jax.experimental.jet` {jax-issue}`#2537`.
 * Fixed `jax.experimental.stax.BatchNorm` when `scale`/`center` isn't provided.
-* Fix some missing cases of broadcasting in `jax.numpy.einsum` [#2512](https://github.com/google/jax/pull/2512).
-* Implement `jax.numpy.cumsum` and `jax.numpy.cumprod` in terms of a parallel prefix scan [#2596](https://github.com/google/jax/pull/2596) and make `reduce_prod` differentiable to arbitray order [#2597](https://github.com/google/jax/pull/2597).
-* Add `batch_group_count` to `conv_general_dilated` [#2635](https://github.com/google/jax/pull/2635).
-* Add docstring for `test_util.check_grads` [#2656](https://github.com/google/jax/pull/2656).
-* Add `callback_transform` [#2665](https://github.com/google/jax/pull/2665).
+* Fix some missing cases of broadcasting in `jax.numpy.einsum` {jax-issue}`#2512`.
+* Implement `jax.numpy.cumsum` and `jax.numpy.cumprod` in terms of a parallel prefix scan {jax-issue}`#2596` and make `reduce_prod` differentiable to arbitray order {jax-issue}`#2597`.
+* Add `batch_group_count` to `conv_general_dilated` {jax-issue}`#2635`.
+* Add docstring for `test_util.check_grads` {jax-issue}`#2656`.
+* Add `callback_transform` {jax-issue}`#2665`.
 * Implement `rollaxis`, `convolve`/`correlate` 1d & 2d, `copysign`,
   `trunc`, `roots`, and `quantile`/`percentile` interpolation options.
 
@@ -533,7 +532,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     to primitives.
 * New features:
   * Reverse-mode automatic differentiation (e.g. `grad`) of `lax.cond`, making it
-    now differentiable in both modes (<https://github.com/google/jax/pull/2091>)
+    now differentiable in both modes ({jax-issue}`#2091`)
   * JAX now supports DLPack, which allows sharing CPU and GPU arrays in a
     zero-copy way with other libraries, such as PyTorch.
   * JAX GPU DeviceArrays now support `__cuda_array_interface__`, which is another
@@ -562,7 +561,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features
 
   >   > * Forward-mode automatic differentiation (`jvp`) of while loop
-  >   (<https://github.com/google/jax/pull/1980>)
+  >   ({jax-issue}`#1980`)
   > * New NumPy and SciPy functions:
   >   
   >   * {py:func}`jax.numpy.fft.fft2`
