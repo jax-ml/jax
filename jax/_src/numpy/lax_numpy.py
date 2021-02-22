@@ -2568,7 +2568,7 @@ def _broadcast_to_pairs(nvals, nd, name):
     return tuple((nvals.flat[0], nvals.flat[0]) for i in range(nd))
   else:
     raise ValueError(f"{name} given unexpected structure: {nvals}. "
-                     "See docstring for valid {name} formats.")
+                     f"See docstring for valid {name} formats.")
 
 
 @partial(jit, static_argnums=(1, 2, 4, 5, 6))
