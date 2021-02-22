@@ -52,8 +52,10 @@ def solver(func, A, b, M=None, atol=0.0, **kwargs):
 
 lax_cg = partial(solver, jax.scipy.sparse.linalg.cg)
 lax_gmres = partial(solver, jax.scipy.sparse.linalg.gmres)
+lax_bicgstab = partial(solver, jax.scipy.sparse.linalg.bicgstab)
 scipy_cg = partial(solver, scipy.sparse.linalg.cg)
 scipy_gmres = partial(solver, scipy.sparse.linalg.gmres)
+scipy_bicgstab = partial(solver, scipy.sparse.linalg.bicgstab)
 
 
 def rand_sym_pos_def(rng, shape, dtype):
@@ -193,6 +195,113 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual, _ = jax.scipy.sparse.linalg.cg(A, b)
     self.assertAllClose(expected, actual.value)
 
+  # BICGSTAB
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_preconditioner={}".format(
+            jtu.format_shape_dtype_string(shape, dtype),
+            preconditioner),
+       "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
+      for shape in [(5, 5)]
+      for dtype in [np.float64, np.complex128]
+      for preconditioner in [None, 'identity', 'exact', 'random']
+  ))
+  def test_bicgstab_against_scipy(
+      self, shape, dtype, preconditioner):
+    if not config.FLAGS.jax_enable_x64:
+      raise unittest.SkipTest("requires x64 mode")
+
+    rng = jtu.rand_default(self.rng())
+    A = rng(shape, dtype)
+    b = rng(shape[:1], dtype)
+    M = self._fetch_preconditioner(preconditioner, A, rng=rng)
+
+    def args_maker():
+      return A, b
+
+    self._CheckAgainstNumpy(
+        partial(scipy_bicgstab, M=M, maxiter=1),
+        partial(lax_bicgstab, M=M, maxiter=1),
+        args_maker,
+        tol=1e-5)
+
+    self._CheckAgainstNumpy(
+        partial(scipy_bicgstab, M=M, maxiter=2),
+        partial(lax_bicgstab, M=M, maxiter=2),
+        args_maker,
+        tol=1e-4)
+
+    self._CheckAgainstNumpy(
+        partial(scipy_bicgstab, M=M, maxiter=1),
+        partial(lax_bicgstab, M=M, maxiter=1),
+        args_maker,
+        tol=1e-4)
+
+    self._CheckAgainstNumpy(
+        np.linalg.solve,
+        partial(lax_bicgstab, M=M, atol=1e-6),
+        args_maker,
+        tol=1e-4)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_preconditioner={}".format(
+         jtu.format_shape_dtype_string(shape, dtype),
+         preconditioner),
+      "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
+      for shape in [(2, 2), (7, 7)]
+      for dtype in float_types + complex_types
+      for preconditioner in [None, 'identity', 'exact']
+      ))
+  def test_bicgstab_on_identity_system(self, shape, dtype, preconditioner):
+    A = jnp.eye(shape[1], dtype=dtype)
+    solution = jnp.ones(shape[1], dtype=dtype)
+    rng = jtu.rand_default(self.rng())
+    M = self._fetch_preconditioner(preconditioner, A, rng=rng)
+    b = matmul_high_precision(A, solution)
+    tol = shape[0] * jnp.finfo(dtype).eps
+    x, info = jax.scipy.sparse.linalg.bicgstab(A, b, tol=tol, atol=tol,
+                                               M=M)
+    using_x64 = solution.dtype.kind in {np.float64, np.complex128}
+    solution_tol = 1e-8 if using_x64 else 1e-4
+    self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_preconditioner={}".format(
+         jtu.format_shape_dtype_string(shape, dtype),
+         preconditioner),
+      "shape": shape, "dtype": dtype, "preconditioner": preconditioner
+      }
+      for shape in [(2, 2), (4, 4)]
+      for dtype in float_types + complex_types
+      for preconditioner in [None, 'identity', 'exact']
+      ))
+  def test_bicgstab_on_random_system(self, shape, dtype, preconditioner):
+    rng = jtu.rand_default(self.rng())
+    A = rng(shape, dtype)
+    solution = rng(shape[1:], dtype)
+    M = self._fetch_preconditioner(preconditioner, A, rng=rng)
+    b = matmul_high_precision(A, solution)
+    tol = shape[0] * jnp.finfo(A.dtype).eps
+    x, info = jax.scipy.sparse.linalg.bicgstab(A, b, tol=tol, atol=tol, M=M)
+    using_x64 = solution.dtype.kind in {np.float64, np.complex128}
+    solution_tol = 1e-8 if using_x64 else 1e-4
+    self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
+    # solve = lambda A, b: jax.scipy.sparse.linalg.bicgstab(A, b)[0]
+    # jtu.check_grads(solve, (A, b), order=1, rtol=3e-1)
+
+
+  def test_bicgstab_pytree(self):
+    A = lambda x: {"a": x["a"] + 0.5 * x["b"], "b": 0.5 * x["a"] + x["b"]}
+    b = {"a": 1.0, "b": -4.0}
+    expected = {"a": 4.0, "b": -6.0}
+    actual, _ = jax.scipy.sparse.linalg.bicgstab(A, b)
+    self.assertEqual(expected.keys(), actual.keys())
+    self.assertAlmostEqual(expected["a"], actual["a"], places=5)
+    self.assertAlmostEqual(expected["b"], actual["b"], places=5)
+
+
   # GMRES
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -302,6 +411,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     using_x64 = solution.dtype.kind in {np.float64, np.complex128}
     solution_tol = 1e-8 if using_x64 else 1e-4
     self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
+    # solve = lambda A, b: jax.scipy.sparse.linalg.gmres(A, b)[0]
+    # jtu.check_grads(solve, (A, b), order=1, rtol=2e-1)
 
   def test_gmres_pytree(self):
     A = lambda x: {"a": x["a"] + 0.5 * x["b"], "b": 0.5 * x["a"] + x["b"]}
