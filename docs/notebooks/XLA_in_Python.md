@@ -85,8 +85,6 @@ rcParams['axes.grid'] = False
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: UYUtxVzMYIiv
 outputId: 5c603ab4-0295-472c-b462-9928b2a9520d
 ---
@@ -124,8 +122,6 @@ device_out[0].to_py()
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: rIA-IVMVvQs2
 outputId: a4d8ef32-43f3-4a48-f732-e85e158b602e
 ---
@@ -161,8 +157,6 @@ device_out[0].to_py()
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: MDQP1qW515Ao
 outputId: 53245817-b5fb-4285-ee62-7eb33a822be4
 ---
@@ -215,8 +209,6 @@ device_out[0].to_py()
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: HEWz-vzd6QPR
 outputId: ad4c4247-8e81-4739-866f-2950fec5e759
 ---
@@ -296,9 +288,6 @@ This is the naive QR algorithm, without acceleration for closely-spaced eigenval
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 451
 id: wjxDPbqCcuXT
 outputId: 2380db52-799d-494e-ded2-856e91f01b0f
 ---
@@ -372,9 +361,6 @@ We can also calculate the  eigenbasis by accumulating the Qs.
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 979
 id: Kp3A-aAiZk0g
 outputId: bbaff039-20f4-45cd-b8fe-5a664d413f5b
 ---
@@ -495,9 +481,6 @@ def _conv_general_proto(dimension_numbers):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 110
 id: J8QkirDalBse
 outputId: 543a03fd-f038-46f2-9a76-a6532b86874e
 ---

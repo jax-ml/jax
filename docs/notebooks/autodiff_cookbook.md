@@ -44,8 +44,6 @@ You can differentiate a function with `grad`:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: 0NLO4Wfknzmk
 outputId: ec6f5fe3-3d90-4ec9-a405-f3191b6099da
 ---
@@ -61,8 +59,6 @@ Since `grad` operates on functions, you can apply it to its own output to differ
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: RDGk1GDsoawu
 outputId: 157bab60-52a8-4ca9-a298-b57561b30032
 ---
@@ -109,8 +105,6 @@ Use the `grad` function with its `argnums` argument to differentiate a function 
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: bpmd8W8-6vu6
 outputId: 5faafcc6-e9c5-4a2d-fc35-5c23e0be2d6d
 ---
@@ -148,8 +142,6 @@ Differentiating with respect to standard Python containers just works, so use tu
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: IY82kdAe6vu_
 outputId: d4004d2d-97ed-4ddc-bb1d-fc4af21edd23
 ---
@@ -175,8 +167,6 @@ Another convenient function is `value_and_grad` for efficiently computing both a
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: RsQSyT5p7OJW
 outputId: c2502c2e-091e-4e9c-ca20-1e0c2670fd7a
 ---
@@ -194,8 +184,6 @@ A great thing about derivatives is that they're straightforward to check with fi
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: R8q5RiY3l7Fw
 outputId: 4f2ccbe9-da9f-438e-9f3e-ad03e3c3e247
 ---
@@ -274,8 +262,6 @@ You can compute full Jacobian matrices using the `jacfwd` and `jacrev` functions
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: cbETzAvKvf5I
 outputId: 7c8d2361-cc68-4139-9f1f-afa2431b3cd2
 ---
@@ -303,8 +289,6 @@ You can also use `jacfwd` and `jacrev` with container types:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: eH46Xnm88bfm
 outputId: ab1f5dce-926e-40b9-9664-5bd5e628e0b5
 ---
@@ -327,8 +311,6 @@ Using a composition of two of these functions gives us a way to compute dense He
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: n155ypD9rfIZ
 outputId: 69622bc4-9a8d-47f1-aab6-40ab21d450d9
 ---
@@ -551,8 +533,6 @@ Here's an example of how to use it:
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: bmpuQa5_f1Al
 outputId: 20ef2514-0ab7-4071-c2f4-77b59b013ffc
 ---
@@ -588,8 +568,6 @@ That's not quite as good, though, because forward-mode has less overhead than re
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: lxfv25qTX5gZ
 outputId: b88dae03-7bd1-4836-f994-880c57bc4714
 ---
@@ -623,8 +601,6 @@ Now that we have `jvp` and `vjp` transformations that give us functions to push-
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: asAWvxVaCmsx
 outputId: 05d3b5f9-f526-42a4-ea2b-6163b267db26
 ---
@@ -661,8 +637,6 @@ assert jnp.allclose(loop_vs, vmap_vs), 'Vmap and non-vmapped Matrix-Jacobian Pro
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: TDaxsJrlDraK
 outputId: 99a7591c-643d-4b91-c0fc-c7a3c73b0de6
 ---
@@ -740,8 +714,6 @@ Another thing that Autograd couldn't do is `jit`. Interestingly, no matter how m
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: _5jDflC08bgB
 outputId: 7d37cca8-3954-40b9-bea8-937ac655387c
 ---
@@ -844,8 +816,6 @@ def check(seed):
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: I2OBU3OGp-CY
 outputId: 28ae844b-0c25-4255-ca9b-598b0dbeb404
 ---
@@ -925,8 +895,6 @@ For $\mathbb{R} \to \mathbb{R}$ functions, recall we defined `grad(f)(x)` as bei
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: xz_9lK61wGdm
 outputId: 96693583-2a36-48fd-d811-cd1a0f1a50c5
 ---
@@ -946,8 +914,6 @@ Because this only works for holomorphic functions, to use this trick we need to 
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: Y3n9hPVrwvXx
 outputId: 20f72dfe-7083-47f8-b086-4a16426ba97b
 ---
@@ -964,8 +930,6 @@ All the `holomorphic=True` promise does is disable the error when the output is 
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: th9xhwp2xaeU
 outputId: 2dfebe3a-bbfe-46a1-b282-f5d59d53c772
 ---
@@ -992,8 +956,6 @@ You should expect complex numbers to work everywhere in JAX. Here's differentiat
 
 ```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
 id: WrDHHfKI8bgM
 outputId: c04baa8a-2408-4a76-e3dc-4522782d1bc5
 ---

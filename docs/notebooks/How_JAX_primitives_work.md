@@ -11,7 +11,7 @@ kernelspec:
   name: python3
 ---
 
-+++ {"id": "vfxqky4PCUnh", "colab_type": "text"}
++++ {"id": "vfxqky4PCUnh"}
 
 # How JAX primitives work
 
@@ -51,9 +51,7 @@ as "multiply_add(x, y, z) = x * y + z".
 This function operates on 3 identically-shaped tensors of floating point 
 values and performs the opertions pointwise.
 
-
-
-+++ {"id": "HIJYIHNTD1yI", "colab_type": "text"}
++++ {"id": "HIJYIHNTD1yI"}
 
 ## Using existing primitives
 
@@ -61,12 +59,8 @@ The easiest way to define new functions is to write them in terms of JAX primiti
 functions that are themselves written using JAX primitives, e.g., those 
 defined in the `jax.lax` module:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 105
-colab_type: code
 id: tbOF0LB0EMne
 outputId: 3fb1c8a7-7a4c-4a3a-f7ff-37b7dc740528
 ---
@@ -87,15 +81,13 @@ print("square_add_lax = ", square_add_lax(2., 10.))
 print("grad(square_add_lax) = ", api.grad(square_add_lax, argnums=0)(2.0, 10.))
 ```
 
-+++ {"id": "Cgv60Wm3E_D5", "colab_type": "text"}
++++ {"id": "Cgv60Wm3E_D5"}
 
 In order to understand how JAX is internally using the primitives,
 we add some helpers for tracing function calls.
 
-```{code-cell}
+```{code-cell} ipython3
 :cellView: form
-:colab: {}
-:colab_type: code
 :id: mQRQGEGiE53K
 
 #@title Helper functions (execute this cell)
@@ -169,17 +161,13 @@ class expectNotImplementedError(object):
       return False
 ```
 
-+++ {"id": "Qf4eLrLCFYDl", "colab_type": "text"}
++++ {"id": "Qf4eLrLCFYDl"}
 
 Instead of using `jax.lax` primitives directly, we can use other functions 
-that are already written in terms of those primitives, such as those in `jax.numpy`: 
+that are already written in terms of those primitives, such as those in `jax.numpy`:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 255
-colab_type: code
 id: QhKorz6cFRJb
 outputId: aba3cef3-6bcc-4eb3-c7b3-34e405f2f82a
 ---
@@ -200,7 +188,7 @@ print("\nGradient evaluation:")
 print("grad(square_add_numpy) = ", api.grad(square_add_numpy)(2.0, 10.))
 ```
 
-+++ {"id": "Sg-D8EdeFn4a", "colab_type": "text"}
++++ {"id": "Sg-D8EdeFn4a"}
 
 Notice that in the process of computing `grad`, JAX invokes `square_add_numpy` and
 `multiply_add_numpy` with special arguments `ConcreteArray(...)` (described further 
@@ -210,9 +198,9 @@ operate not only on concrete arguments but also on special abstract arguments
 that JAX may use to abstract the function execution.
 
 The JAX traceability property is satisfied as long as the function is written 
-in terms of JAX primitives. 
+in terms of JAX primitives.
 
-+++ {"id": "WxrQO7-XGLcg", "colab_type": "text"}
++++ {"id": "WxrQO7-XGLcg"}
 
 ## Defining new JAX primitives
 
@@ -221,9 +209,7 @@ JAX primitives, as shown above. However, in order to demonstrate how JAX
 primitives work let us pretend that we want to add a new primitive to 
 JAX for the multiply-add functionality.
 
-```{code-cell}
-:colab: {}
-:colab_type: code
+```{code-cell} ipython3
 :id: cPqAH1XOGTN4
 
 from jax import core
@@ -244,17 +230,13 @@ def square_add_prim(a, b):
   return multiply_add_prim(a, a, b)
 ```
 
-+++ {"id": "LMzs5PAKGr-4", "colab_type": "text"}
++++ {"id": "LMzs5PAKGr-4"}
 
 If we try to call the newly defined functions we get an error, because
 we have not yet told JAX anything about the semantics of the new primitive.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 221
-colab_type: code
 id: _X3PAYxhGpWd
 outputId: 90ea2c6a-9ef3-40ea-e9a3-3ab1cfc59fc8
 ---
@@ -262,18 +244,12 @@ with expectNotImplementedError():
   square_add_prim(2., 10.)
 ```
 
-+++ {"id": "elha0FdgHSEF", "colab_type": "text"}
++++ {"id": "elha0FdgHSEF"}
 
 ### Primal evaluation rules
 
-
-
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: FT34FFAGHARU
 outputId: 4c54f1c2-8a50-4788-90e1-06aee412c43b
 ---
@@ -295,30 +271,22 @@ def multiply_add_impl(x, y, z):
 multiply_add_p.def_impl(multiply_add_impl)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 119
-colab_type: code
 id: G5bstKaeNAVV
 outputId: deb94d5b-dfea-4e6f-9ec2-70b416c996c5
 ---
 assert square_add_prim(2., 10.) == 14.
 ```
 
-+++ {"id": "upBf-uAuHhPJ", "colab_type": "text"}
++++ {"id": "upBf-uAuHhPJ"}
 
 ### JIT
 
 If we now try to use `jit` we get a `NotImplementedError`:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 241
-colab_type: code
 id: QG-LULjiHk4b
 outputId: d4ef4406-8dae-4c96-97ca-b662340474ee
 ---
@@ -326,7 +294,7 @@ with expectNotImplementedError():
   api.jit(square_add_prim)(2., 10.)
 ```
 
-+++ {"id": "rHS1bAGHH44E", "colab_type": "text"}
++++ {"id": "rHS1bAGHH44E"}
 
 #### Abstract evaluation rules
 In order to JIT the function, and for other transformations as well, 
@@ -342,12 +310,8 @@ purposes:
 For example, the abstraction of a vector with 3 elements may be `ShapedArray(float32[3])`, or `ConcreteArray([1., 2., 3.])`. 
 In the latter case, JAX uses the actual concrete value wrapped as an abstract value.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 34
-colab_type: code
 id: ctQmEeckIbdo
 outputId: e751d0cc-460e-4ffd-df2e-fdabf9cffdc2
 ---
@@ -371,17 +335,13 @@ def multiply_add_abstract_eval(xs, ys, zs):
 multiply_add_p.def_abstract_eval(multiply_add_abstract_eval)
 ```
 
-+++ {"id": "RPN88X6YI43A", "colab_type": "text"}
++++ {"id": "RPN88X6YI43A"}
 
 If we re-attempt to JIT, we see how the abstract evaluation proceeds, but
 we get another error, about missing the actual XLA compilation rule:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 309
-colab_type: code
 id: eOcNR92SI2h-
 outputId: 356ef229-3703-4696-cc3d-7c05de405fb0
 ---
@@ -389,7 +349,7 @@ with expectNotImplementedError():
   api.jit(square_add_prim)(2., 10.)
 ```
 
-+++ {"id": "9IOV1R-fJMHp", "colab_type": "text"}
++++ {"id": "9IOV1R-fJMHp"}
 
 #### XLA Compilation rules
 
@@ -399,9 +359,7 @@ This is biggest hurdle to adding new functionality to JAX, because the
 set of XLA operations is limited, and JAX already has pre-defined primitives
 for most of them. However, XLA includes a `CustomCall` operation that can be used to encapsulate arbitrary functionality defined using C++.
 
-```{code-cell}
-:colab: {}
-:colab_type: code
+```{code-cell} ipython3
 :id: FYQWSSjKJaWP
 
 from jax.lib import xla_client
@@ -422,26 +380,22 @@ from jax.interpreters import xla
 xla.backend_specific_translations['cpu'][multiply_add_p] = multiply_add_xla_translation
 ```
 
-+++ {"id": "K98LX-VaJkFu", "colab_type": "text"}
++++ {"id": "K98LX-VaJkFu"}
 
 Now we succeed to JIT. Notice below that JAX first evaluates the function
 abstractly, which triggers the `multiply_add_abstract_eval` function, and 
 then compiles the set of primitives it has encountered, including `multiply_add`.
 At this point JAX invokes `multiply_add_xla_translation`.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 173
-colab_type: code
 id: rj3TLsolJgEc
 outputId: e384bee4-1e9c-4344-f49c-d3b5ec08eb32
 ---
 assert api.jit(lambda x, y: square_add_prim(x, y))(2., 10.) == 14.
 ```
 
-+++ {"id": "Omrez-2_KFfo", "colab_type": "text"}
++++ {"id": "Omrez-2_KFfo"}
 
 Below is another use of `jit` where we compile only
 with respect to the first argument. Notice how the second argument to `square_add_prim` is concrete, which leads
@@ -449,12 +403,8 @@ in the third argument to `multiply_add_abstract_eval` being
 `ConcreteArray`. We see that `multiply_add_abstract_eval` may be used with
 both `ShapedArray` and `ConcreteArray`.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 173
-colab_type: code
 id: mPfTwIBoKOEK
 outputId: b293b9b6-a2f9-48f5-f7eb-d4f99c3d905b
 ---
@@ -462,7 +412,7 @@ assert api.jit(lambda x, y: square_add_prim(x, y),
                static_argnums=1)(2., 10.) == 14.
 ```
 
-+++ {"id": "_Ya3B5l4J1VA", "colab_type": "text"}
++++ {"id": "_Ya3B5l4J1VA"}
 
 ### Forward differentiation
 
@@ -473,12 +423,8 @@ If we attempt now to compute the `jvp` function we get an
 error because we have not yet told JAX how to differentiate
 the `multiply_add` primitive.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 340
-colab_type: code
 id: OxDx6NQnKwMI
 outputId: ce659ef3-c03c-4856-f252-49ec4b6eb964
 ---
@@ -489,9 +435,7 @@ with expectNotImplementedError():
   api.jvp(square_add_prim, (2., 10.), (1., 1.))
 ```
 
-```{code-cell}
-:colab: {}
-:colab_type: code
+```{code-cell} ipython3
 :id: zxG24C1JMIMM
 
 from jax.interpreters import ad
@@ -541,12 +485,8 @@ def multiply_add_value_and_jvp(arg_values, arg_tangents):
 ad.primitive_jvps[multiply_add_p] = multiply_add_value_and_jvp
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 357
-colab_type: code
 id: ma3KBkiAMfW1
 outputId: f34cbbc6-20d9-48ca-9a9a-b5d91a972cdd
 ---
@@ -554,7 +494,7 @@ outputId: f34cbbc6-20d9-48ca-9a9a-b5d91a972cdd
 assert api.jvp(square_add_prim, (2., 10.), (1., 1.)) == (14., 5.)
 ```
 
-+++ {"id": "69QsEcu-lP4u", "colab_type": "text"}
++++ {"id": "69QsEcu-lP4u"}
 
 TO EXPLAIN: 
 
@@ -562,20 +502,15 @@ TO EXPLAIN:
   * Not sure how to explain that multiply_add_prim is invoked with ConcreteValue, yet
   we do not call the multiply_add_abstract_eval.
   * I think it would be useful to show the jaxpr here
- 
 
-+++ {"id": "Sb6e3ZAHOPHv", "colab_type": "text"}
++++ {"id": "Sb6e3ZAHOPHv"}
 
 #### JIT of forward differentiation
 
 We can apply JIT to the forward differentiation function:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 479
-colab_type: code
 id: hg-hzVu-N-hv
 outputId: 38d32067-e152-4046-ad80-7f95a31ba628
 ---
@@ -584,14 +519,14 @@ assert api.jit(lambda arg_values, arg_tangents:
          (2., 10.), (1., 1.)) == (14., 5.)
 ```
 
-+++ {"id": "jlZt1_v2mU88", "colab_type": "text"}
++++ {"id": "jlZt1_v2mU88"}
 
 Notice that first we evaluate `multiply_add_value_and_jvp` abstractly, which in turn
 evaluates abstractly both the primal and the tangent evaluation (a total of 
 3 invocations of the `ma` primitive). Then we compile the 3 occurrences
 of the primitive.
 
-+++ {"id": "555yt6ZIOePB", "colab_type": "text"}
++++ {"id": "555yt6ZIOePB"}
 
 ### Reverse differentiation
 
@@ -614,12 +549,8 @@ Observe also that during the abstract evaluation of the tangent we pass the
 value 0.0 as the tangent for the 3rd argument. This is due to the use
 of the `make_zero` function in the definition of `multiply_add_value_and_jvp`.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 666
-colab_type: code
 id: 8eAVnexaOjBn
 outputId: e4ee89cf-ab4a-4505-9817-fa978a2865ab
 ---
@@ -628,12 +559,12 @@ with expectNotImplementedError():
   api.grad(square_add_prim)(2., 10.)
 ```
 
-+++ {"id": "fSHLUMDN26AY", "colab_type": "text"}
++++ {"id": "fSHLUMDN26AY"}
 
 The above error is because there is a missing piece for JAX to be able
-to use the forward differentiation code to compute reverse differentiation. 
+to use the forward differentiation code to compute reverse differentiation.
 
-+++ {"id": "3ibDbGF-PjK9", "colab_type": "text"}
++++ {"id": "3ibDbGF-PjK9"}
 
 #### Transposition
 
@@ -696,12 +627,7 @@ In particular,
  mult_transpose(out_ct, _, y) = (out_ct * y, None)
 ```
 
-
-
-
-```{code-cell}
-:colab: {}
-:colab_type: code
+```{code-cell} ipython3
 :id: JaHxFdkRO42r
 
 @trace("multiply_add_transpose")
@@ -745,60 +671,48 @@ def multiply_add_transpose(ct, x, y, z):
 ad.primitive_transposes[multiply_add_p] = multiply_add_transpose
 ```
 
-+++ {"id": "PpChox-Jp7wb", "colab_type": "text"}
++++ {"id": "PpChox-Jp7wb"}
 
 Now we can complete the run of the `grad`:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 581
-colab_type: code
 id: PogPKS4MPevd
 outputId: d33328d4-3e87-45b5-9b31-21ad624b67af
 ---
 assert api.grad(square_add_prim)(2., 10.) == 4.
 ```
 
-+++ {"id": "8M1xLCXW4fK7", "colab_type": "text"}
++++ {"id": "8M1xLCXW4fK7"}
 
 Notice the two calls to `multiply_add_transpose`. They correspond to the two
 uses of `multiply_add_prim` in the computation of the `output_tangent` in `multiply_add_value_and_jvp`. The first call to transpose corresponds to the 
 last use of `multiply_add_prim`: `multiply_add_prim(xt, y, ...)` where `y` is the constant 2.0.
 
-+++ {"id": "EIJs6FYmPg6c", "colab_type": "text"}
++++ {"id": "EIJs6FYmPg6c"}
 
 #### JIT of reverse differentiation 
 
 Notice that the abstract evaluation of the `multiply_add_value_and_jvp` is using only
 abstract values, while in the absensce of JIT we used `ConcreteArray`.
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 649
-colab_type: code
 id: FZ-JGbWZPq2-
 outputId: e42b5222-9c3e-4853-e13a-874f6605d178
 ---
 assert api.jit(api.grad(square_add_prim))(2., 10.) == 4.
 ```
 
-+++ {"id": "-3lqPkdQPvl5", "colab_type": "text"}
++++ {"id": "-3lqPkdQPvl5"}
 
 ### Batching
 
 The batching transformation takes a point-wise computation and turns it
 into a computation on vectors. If we try it right now, we get a `NotImplementedError`:
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 360
-colab_type: code
 id: hFvBR3I9Pzh3
 outputId: 434608bc-281f-4d3b-83bd-eaaf3b51b1cd
 ---
@@ -808,13 +722,11 @@ with expectNotImplementedError():
                                                np.array([10., 20.]))
 ```
 
-+++ {"id": "gILasMiP6elR", "colab_type": "text"}
++++ {"id": "gILasMiP6elR"}
 
 We need to tell JAX how to evaluate the batched version of the primitive. In this particular case, the `multiply_add_prim` already operates pointwise for any dimension of input vectors. So the batched version can use the same `multiply_add_prim` implementation.
 
-```{code-cell}
-:colab: {}
-:colab_type: code
+```{code-cell} ipython3
 :id: KQfeqRIrP7zg
 
 from jax.interpreters import batching
@@ -848,12 +760,8 @@ def multiply_add_batch(vector_arg_values, batch_axes):
 batching.primitive_batchers[multiply_add_p] = multiply_add_batch
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 224
-colab_type: code
 id: VwxNk869P_YG
 outputId: 9d22c921-5803-4d33-9e88-b6e439ba9738
 ---
@@ -863,16 +771,12 @@ assert np.allclose(api.vmap(square_add_prim, in_axes=0, out_axes=0)(
   [14., 29.])
 ```
 
-+++ {"id": "NmqLlV1TQDCC", "colab_type": "text"}
++++ {"id": "NmqLlV1TQDCC"}
 
 #### JIT of batching
 
-```{code-cell}
+```{code-cell} ipython3
 ---
-colab:
-  base_uri: https://localhost:8080/
-  height: 258
-colab_type: code
 id: xqEdXVUgQCTt
 outputId: 9c22fd9c-919c-491d-bbeb-32c241b808fa
 ---
