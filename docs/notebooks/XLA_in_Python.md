@@ -28,7 +28,7 @@ XLA computations are built as computation graphs in HLO IR, which is then lowere
 
 As end users we interact with the computational primitives offered to us by the HLO spec.
 
-# Caution:  This is a pedagogical notebook covering some low level XLA details, the APIs herein are neither public nor stable!
+**Caution:  This is a pedagogical notebook covering some low level XLA details, the APIs herein are neither public nor stable!**
 
 +++ {"id": "EZK5RseuvZkr"}
 
