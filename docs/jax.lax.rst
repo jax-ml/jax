@@ -200,7 +200,7 @@ Linear algebra operators (jax.lax.linalg)
 Argument classes
 ----------------
 
-.. automodule:: jax.lax
+.. currentmodule:: jax.lax
 
 .. autoclass:: ConvDimensionNumbers
 .. autoclass:: GatherDimensionNumbers

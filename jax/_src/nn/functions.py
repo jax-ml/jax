@@ -41,6 +41,9 @@ def relu(x: Array) -> Array:
 
   .. math::
     \mathrm{relu}(x) = \max(x, 0)
+
+  Args:
+    x : input array
   """
   return jnp.maximum(x, 0)
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
@@ -52,6 +55,9 @@ def softplus(x: Array) -> Array:
 
   .. math::
     \mathrm{softplus}(x) = \log(1 + e^x)
+
+  Args:
+    x : input array
   """
   return jnp.logaddexp(x, 0)
 
@@ -62,6 +68,9 @@ def soft_sign(x: Array) -> Array:
 
   .. math::
     \mathrm{soft\_sign}(x) = \frac{x}{|x| + 1}
+
+  Args:
+    x : input array
   """
   return x / (jnp.abs(x) + 1)
 
@@ -72,6 +81,9 @@ def sigmoid(x: Array) -> Array:
 
   .. math::
     \mathrm{sigmoid}(x) = \frac{1}{1 + e^{-x}}
+
+  Args:
+    x : input array
   """
   return expit(x)
 
@@ -82,6 +94,9 @@ def silu(x: Array) -> Array:
 
   .. math::
     \mathrm{silu}(x) = x \cdot \mathrm{sigmoid}(x) = \frac{x}{1 + e^{-x}}
+
+  Args:
+    x : input array
   """
   return x * sigmoid(x)
 
@@ -94,6 +109,9 @@ def log_sigmoid(x: Array) -> Array:
 
   .. math::
     \mathrm{log\_sigmoid}(x) = \log(\mathrm{sigmoid}(x)) = -\log(1 + e^{-x})
+
+  Args:
+    x : input array
   """
   return -softplus(-x)
 
@@ -107,6 +125,10 @@ def elu(x: Array, alpha: Array = 1.0) -> Array:
       x, & x > 0\\
       \alpha \left(\exp(x) - 1\right), & x \le 0
     \end{cases}
+
+  Args:
+    x : input array
+    alpha : scalar or array of alpha values (default: 1.0)
   """
   safe_x = jnp.where(x > 0, 0., x)
   return jnp.where(x > 0, x, alpha * jnp.expm1(safe_x))
@@ -123,6 +145,10 @@ def leaky_relu(x: Array, negative_slope: Array = 1e-2) -> Array:
     \end{cases}
 
   where :math:`\alpha` = :code:`negative_slope`.
+
+  Args:
+    x : input array
+    negative_slope : array or scalar specifying the negative slope (default: 0.01)
   """
   return jnp.where(x >= 0, x, negative_slope * x)
 
@@ -137,6 +163,9 @@ def hard_tanh(x: Array) -> Array:
       x, & 0 \le x \le 1\\
       1, & 1 < x
     \end{cases}
+
+  Args:
+    x : input array
   """
   return jnp.where(x > 1, 1, jnp.where(x < -1, -1, x))
 
@@ -153,7 +182,12 @@ def celu(x: Array, alpha: Array = 1.0) -> Array:
 
   For more information, see
   `Continuously Differentiable Exponential Linear Units
-  <https://arxiv.org/pdf/1704.07483.pdf>`_."""
+  <https://arxiv.org/pdf/1704.07483.pdf>`_.
+
+  Args:
+    x : input array
+    alpha : array or scalar (default: 1.0)
+  """
   return jnp.where(x > 0, x, alpha * jnp.expm1(x / alpha))
 
 def selu(x: Array) -> Array:
@@ -173,6 +207,9 @@ def selu(x: Array) -> Array:
   For more information, see
   `Self-Normalizing Neural Networks
   <https://papers.nips.cc/paper/6698-self-normalizing-neural-networks.pdf>`_.
+
+  Args:
+    x : input array
   """
   alpha = 1.6732632423543772848170429916717
   scale = 1.0507009873554804934193349852946
@@ -197,6 +234,7 @@ def gelu(x: Array, approximate: bool = True) -> Array:
   <https://arxiv.org/abs/1606.08415>`_, section 2.
 
   Args:
+    x : input array
     approximate: whether to use the approximate or exact formulation.
   """
   if approximate:
@@ -207,7 +245,12 @@ def gelu(x: Array, approximate: bool = True) -> Array:
     return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
 
 def glu(x: Array, axis: int = -1) -> Array:
-  """Gated linear unit activation function."""
+  """Gated linear unit activation function.
+
+  Args:
+    x : input array
+    axis: the axis along which the split should be computed (default: -1)
+  """
   size = x.shape[axis]
   assert size % 2 == 0, "axis size must be divisible by 2"
   x1, x2 = jnp.split(x, 2, axis)
@@ -229,6 +272,7 @@ def log_softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> A
     \right)
 
   Args:
+    x : input array
     axis: the axis or axes along which the :code:`log_softmax` should be
       computed. Either an integer or a tuple of integers.
   """
@@ -245,6 +289,7 @@ def softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> Array
     \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
 
   Args:
+    x : input array
     axis: the axis or axes along which the softmax should be computed. The
       softmax output summed across these dimensions should sum to :math:`1`.
       Either an integer or a tuple of integers.
@@ -291,6 +336,8 @@ def one_hot(x: Array, num_classes: int, *,
     num_classes: Number of classes in the one-hot dimension.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    axis: the axis or axes along which the function should be
+      computed.
   """
   num_classes = core.concrete_or_error(
       int, num_classes,
@@ -321,6 +368,9 @@ def relu6(x: Array) -> Array:
 
   .. math::
     \mathrm{relu6}(x) = \min(\max(x, 0), 6)
+
+  Args:
+    x : input array
   """
   return jnp.minimum(jnp.maximum(x, 0), 6.)
 
@@ -331,6 +381,9 @@ def hard_sigmoid(x: Array) -> Array:
 
   .. math::
     \mathrm{hard\_sigmoid}(x) = \frac{\mathrm{relu6}(x + 3)}{6}
+
+  Args:
+    x : input array
   """
   return relu6(x + 3.) / 6.
 
@@ -341,6 +394,9 @@ def hard_silu(x: Array) -> Array:
 
   .. math::
     \mathrm{hard\_silu}(x) = x \cdot \mathrm{hard\_sigmoid}(x)
+
+  Args:
+    x : input array
   """
   return x * hard_sigmoid(x)
 
