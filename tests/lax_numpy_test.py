@@ -4773,6 +4773,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('stop')):
       jax.jit(lambda stop: jnp.arange(0, stop))(3)
 
+  def testIssue2347(self):
+    # https://github.com/google/jax/issues/2347
+    object_list = List[Tuple[jnp.array, float, float, jnp.array, bool]]
+    self.assertRaises(TypeError, jnp.array, object_list)
+
+    np_object_list = np.array(object_list)
+    self.assertRaises(TypeError, jnp.array, np_object_list)
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
