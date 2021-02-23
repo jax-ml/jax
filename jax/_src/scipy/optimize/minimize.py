@@ -82,9 +82,9 @@ def minimize(
       options.
     options: a dictionary of solver options. All methods accept the following
       generic options:
-        maxiter : int
-            Maximum number of iterations to perform. Depending on the
-            method each iteration may use several function evaluations.
+
+      - maxiter (int): Maximum number of iterations to perform. Depending on the
+        method each iteration may use several function evaluations.
 
   Returns:
     An :class:`OptimizeResults` object.

@@ -15,6 +15,7 @@
 import re
 import textwrap
 
+_parameter_break = re.compile("\n(?=[A-Za-z_])")
 
 def update_numpydoc(docstr, fun, op):
   '''Transforms the numpy docstring to remove references of
@@ -34,15 +35,13 @@ def update_numpydoc(docstr, fun, op):
   begin_idx = docstr.find("--\n", begin_idx) + 2
   end_idx = docstr.find("Returns", begin_idx)
 
-  parameters = docstr[begin_idx:end_idx]
-  param_list = parameters.replace('\n    ', '@@').split('\n')
+  param_list = _parameter_break.split(docstr[begin_idx:end_idx])
   for idx, p in enumerate(param_list):
     param = p[:p.find(' : ')].split(", ")[0]
     if param not in op.__code__.co_varnames:
       param_list[idx] = ''
-  param_list = [param for param in param_list if param != '']
-  parameters = '\n'.join(param_list).replace('@@', '\n    ')
-  return docstr[:begin_idx + 1] + parameters + docstr[end_idx - 2:]
+  parameters = '\n'.join(param for param in param_list if param != '')
+  return docstr[:begin_idx + 1] + parameters + docstr[end_idx:]
 
 _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\([\w\W]*\)$')
 
