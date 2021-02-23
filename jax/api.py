@@ -2122,9 +2122,9 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     >>> np.allclose(y[1], y1)
     True
 
-  See also:
-  - device_put
-  - device_put_replicated
+  See Also:
+    - device_put
+    - device_put_replicated
   """
   # TODO(jakevdp): provide a default for devices that considers both local
   # devices and pods
@@ -2174,9 +2174,9 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
     >>> np.allclose(y, jax.numpy.stack([x for _ in devices]))
     True
 
-  See also:
-  - device_put
-  - device_put_sharded
+  See Also:
+    - device_put
+    - device_put_sharded
   """
   if not isinstance(devices, Sequence) or not devices:
     raise ValueError("`devices` argument to `device_put_replicated must be "

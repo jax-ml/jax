@@ -32,6 +32,8 @@ Just-in-time compilation (:code:`jit`)
     make_jaxpr
     eval_shape
     device_put
+    device_put_replicated
+    device_put_sharded
     default_backend
     named_call
 
@@ -84,6 +86,8 @@ Parallelization (:code:`pmap`)
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
 .. autofunction:: device_put
+.. autofunction:: device_put_replicated
+.. autofunction:: device_put_sharded
 .. autofunction:: default_backend
 .. autofunction:: named_call
 
@@ -111,6 +115,7 @@ Parallelization (:code:`pmap`)
 
 .. autofunction:: vmap
 .. autofunction:: jax.numpy.vectorize
+  :noindex:
 
 .. autofunction:: pmap
 .. autofunction:: devices
