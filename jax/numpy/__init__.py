@@ -51,7 +51,7 @@ from jax._src.numpy.lax_numpy import (
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,
     negative, newaxis, nextafter, nonzero, not_equal, number, numpy_version,
     object_, ones, ones_like, operator_name, outer, packbits, pad, percentile,
-    pi, piecewise, polyadd, polyder, polymul, polysub, polyval, positive, power,
+    pi, piecewise, polyadd, polyder, polyint, polymul, polysub, polyval, positive, power,
     prod, product, promote_types, ptp, quantile,
     rad2deg, radians, ravel, ravel_multi_index, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,

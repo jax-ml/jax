@@ -3484,6 +3484,26 @@ def polyadd(a1, a2):
     return a2.at[-a1.shape[0]:].add(a1)
 
 
+@_wraps(np.polyint)
+def polyint(p, m=1, k=None):
+  m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyint")
+  p = asarray(p)
+  if m < 0:
+    raise ValueError("Order of integral must be positive (see polyder)")
+  if k is None:
+    k = zeros(m)
+  k = atleast_1d(k)
+  if len(k) == 1:
+    k = full((m,), k[0])
+  if len(k) != m or k.ndim > 1:
+    raise ValueError("k must be a scalar or a rank-1 array of length 1 or m.")
+  if m == 0:
+    return p
+  else:
+    coeff = maximum(1, arange(len(p) + m, 0, -1) - 1 - arange(m)[:, newaxis]).prod(0)
+    return true_divide(concatenate((p, k)), coeff)
+
+
 @_wraps(np.polyder)
 def polyder(p, m=1):
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyder")
