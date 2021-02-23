@@ -777,9 +777,9 @@ def parallel_callable(fun: lu.WrappedFun,
 
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
-              f"Compiling {fun.__name__} for {num_global_shards} devices with "
-              f"args {avals}. (num_replicas={num_global_replicas} "
-              f"num_partitions={num_partitions})")
+              f"Compiling {fun.__name__} ({id(fun)}) for {num_global_shards} "
+              f"devices with args {avals}. (num_replicas={num_global_replicas}"
+              f" num_partitions={num_partitions})")
 
   axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,))
 
@@ -1365,7 +1365,7 @@ def mesh_callable(fun: lu.WrappedFun,
 
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
-              f"Compiling {fun.__name__} for {tuple(global_axis_sizes.items())} "
+              f"Compiling {fun.__name__} ({id(fun)}) for {tuple(global_axis_sizes.items())} "
               f"mesh with args {local_in_untiled_avals}. Argument mapping: {in_axes}.")
 
   # 1. Trace to jaxpr and preprocess/verify it
