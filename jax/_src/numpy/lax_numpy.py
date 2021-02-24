@@ -1534,6 +1534,30 @@ def union1d(ar1, ar2):
   return unique(conc)
 
 
+@_wraps(np.setxor1d, lax_description="""
+In the JAX version, the input arrays are explicilty flattened regardless
+of assume_unique value.
+""")
+def setxor1d(ar1, ar2, assume_unique=False):
+  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in setxor1d()")
+  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in setxor1d()")
+
+  ar1 = ravel(ar1)
+  ar2 = ravel(ar2)
+
+  if not assume_unique:
+    ar1 = unique(ar1)
+    ar2 = unique(ar2)
+
+  aux = concatenate((ar1, ar2))
+  if aux.size == 0:
+    return aux
+
+  aux = sort(aux)
+  flag = concatenate((array([True]), aux[1:] != aux[:-1], array([True])))
+  return aux[flag[1:] & flag[:-1]]
+
+
 @partial(jit, static_argnums=2)
 def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
   """
