@@ -1,30 +1,35 @@
 # JAX and TensorFlow interoperation (jax2tf/call_tf)
 
 This package provides experimental support for interoperation between JAX and TensorFlow.
+There are two interoperation directions: 
+(a) `jax2tf.convert`: using JAX functions in a TensorFlow context, e.g., 
+for eager or graph execution, or for saving as a SavedModel, 
+and (b) `call_tf`: using TensorFlow 
+functions in a JAX context, e.g., to use a TensorFlow library or a SavedModel. 
+
 The `jax2tf.convert` mechanism can wrap a function
 written in JAX, possibly including JAX transformations, and turn it into
 a function that uses only TensorFlow operations. The converted function
 can be called or traced from TensorFlow and will behave as if it was written in TensorFlow.
 In practice this means that you can take some code written in JAX and execute it using
 TensorFlow eager mode, or stage it out as a TensorFlow graph, even save it
-as a SavedModel for use with TensorFlow tools such as serving stack,
+as a SavedModel for archival, or for use with TensorFlow tools such as serving stack,
 or TensorFlow Hub.
 
-The package also contains the `call_tf` mechanism to call TensorFlow functions
+This package also contains the `call_tf` mechanism to call TensorFlow functions
 from JAX. These functions can be called in JAX's op-by-op execution mode,
 in which case the callee is executed in eager mode, or in JAX's jit (staged) context,
 in which case the callee is compiled to XLA and embedded in JAX's staged XLA. 
 
 Both interoperation directions rely on the ability of 
 TensorFlow to use the XLA compiler (`tf.function(jit_compile=True)`). For the 
-`jax2tf` direction the jit compilation of the resulting TensorFlow code ensures
+`jax2tf.convert` direction the JIT compilation of the resulting TensorFlow code ensures
 that the performance characteristics of the code match those of the JAX source.
-For the `call_tf` direction, jit compilation is used to compile the TensorFlow 
-code to an XLA function that is called from JAX's XLA computation. In fact, 
-for this interoperation direction, only TensorFlow function that can be jit-compiled 
-are supported. In particular, this mechanism supports calling from JAX the TensorFlow
-functions that are the result of `jax2tf.convert`, thus enabling a round-trip from 
-JAX to TensorFlow (e.g., a SavedModel), and back.  
+For the `call_tf` direction, JIT compilation is an essential part of the implementation 
+mechanism. Only TensorFlow functions that can be JIT-compiled can be called from 
+JAX. Since the TensorFlow functions that are produced by `jax2tf.convert` can 
+be JIT-compiled by design, we can round-trip from JAX to TensorFlow 
+(e.g., a SavedModel) and back. 
 
 We describe below some general concepts and capabilities, first for 
 `jax2tf.convert` and [later](#calling-tensorflow-functions-from-jax)
