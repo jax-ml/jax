@@ -267,25 +267,3 @@ epub_exclude_files = ['search.html']
 # Tell sphinx-autodoc-typehints to generate stub parameter annotations including
 # types, even if the parameters aren't explicitly documented.
 always_document_param_types = True
-
-# Monkey-patch the myst-nb execution logger
-# TODO(jakevdp): remove this monkey-patch when execution_fail_on_error is available.
-# See https://github.com/executablebooks/MyST-NB/pull/296
-from myst_nb import execution
-
-class _FakeLogger:
-    def __init__(self, logger):
-        self._logger = logger
-
-    def verbose(self, *args, **kwargs):
-        return self._logger.verbose(*args, **kwargs)
-
-    def info(self, *args, **kwargs):
-        return self._logger.info(*args, **kwargs)
-
-    def error(self, *args, **kwargs):
-        if str(args[0]).lower().startswith("execution failed"):
-            raise ValueError(args[0])
-        return self._logger.error(*args, **kwargs)
-
-execution.LOGGER = _FakeLogger(execution.LOGGER)
