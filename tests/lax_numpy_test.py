@@ -96,6 +96,16 @@ def _compatible_shapes(shape):
     return [shape]
   return (shape[n:] for n in range(len(shape) + 1))
 
+def _get_y_shapes(y_dtype, shape, rowvar):
+  # Helper function for testCov.
+  if y_dtype is None:
+    return [None]
+  if len(shape) == 1:
+    return [shape]
+  elif rowvar or shape[0] == 1:
+    return [(1, shape[-1]), (2, shape[-1]), (5, shape[-1])]
+  return [(shape[0], 1), (shape[0], 2), (shape[0], 5)]
+
 OpRecord = collections.namedtuple(
   "OpRecord",
   ["name", "nargs", "dtypes", "shapes", "rng_factory", "diff_modes",
@@ -4283,31 +4293,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker, rtol=tol,
                             atol=tol)
 
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name":
-          "_shape={}_dtype={}_rowvar={}_ddof={}_bias={}_fweights={}_aweights={}".format(
-            shape, dtype, rowvar, ddof, bias, fweights, aweights),
-         "shape": shape, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
+          "_shape={}_dtype={}_y_shape={}_y_dtype={}_rowvar={}_ddof={}_bias={}_fweights={}_aweights={}".format(
+            shape, dtype, y_shape, y_dtype, rowvar, ddof, bias, fweights, aweights),
+         "shape": shape, "y_shape": y_shape, "dtype": dtype, "y_dtype": y_dtype,"rowvar": rowvar, "ddof": ddof,
          "bias": bias, "fweights": fweights, "aweights": aweights}
         for shape in [(5,), (10, 5), (5, 10)]
         for dtype in all_dtypes
+        for y_dtype in [None, dtype]
         for rowvar in [True, False]
+        for y_shape in _get_y_shapes(y_dtype, shape, rowvar)
         for bias in [True, False]
         for ddof in [None, 2, 3]
         for fweights in [True, False]
         for aweights in [True, False]))
-  def testCov(self, shape, dtype, rowvar, ddof, bias, fweights, aweights):
+  def testCov(self, shape, dtype, y_shape, y_dtype, rowvar, ddof, bias, fweights, aweights):
     rng = jtu.rand_default(self.rng())
     wrng = jtu.rand_positive(self.rng())
     wdtype = np.real(dtype(0)).dtype
     wshape = shape[-1:] if rowvar or shape[0] == 1 else shape[:1]
+
     args_maker = lambda: [rng(shape, dtype),
+                          rng(y_shape, y_dtype) if y_dtype else None,
                           wrng(wshape, int) if fweights else None,
                           wrng(wshape, wdtype) if aweights else None]
     kwargs = dict(rowvar=rowvar, ddof=ddof, bias=bias)
-    np_fun = lambda m, f, a: np.cov(m, fweights=f, aweights=a, **kwargs)
-    jnp_fun = lambda m, f, a: jnp.cov(m, fweights=f, aweights=a, **kwargs)
+    np_fun = lambda m, y, f, a: np.cov(m, y, fweights=f, aweights=a, **kwargs)
+    jnp_fun = lambda m, y, f, a: jnp.cov(m, y, fweights=f, aweights=a, **kwargs)
     tol = {jnp.bfloat16: 5E-2, np.float16: 1E-2, np.float32: 1e-5,
            np.float64: 1e-13, np.complex64: 1e-5, np.complex128: 1e-13}
     tol = 7e-2 if jtu.device_under_test() == "tpu" else tol

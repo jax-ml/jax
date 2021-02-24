@@ -4845,19 +4845,27 @@ def compress(condition, a, axis: Optional[int] = None, out=None):
 @_wraps(np.cov)
 def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
         aweights=None):
-  if y is not None: raise NotImplementedError(
-    "jax.numpy.cov not implemented for nontrivial y. "
-    "Open a feature request at https://github.com/google/jax/issues !")
-
-  m, = _promote_args_inexact("cov", m)
+  if y is not None:
+    m, y = _promote_args_inexact("cov", m, y)
+    if y.ndim > 2:
+      raise ValueError("y has more than 2 dimensions")
+  else:
+    m, = _promote_args_inexact("cov", m)
 
   if m.ndim > 2:
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
+
   X = atleast_2d(m)
   if not rowvar and X.shape[0] != 1:
     X = X.T
   if X.shape[0] == 0:
     return array([]).reshape(0, 0)
+
+  if y is not None:
+    y = atleast_2d(y)
+    if not rowvar and y.shape[0] != 1:
+      y = y.T
+    X = concatenate((X, y), axis=0)
   if ddof is None:
     ddof = 1 if bias == 0 else 0
 
