@@ -15,7 +15,7 @@ kernelspec:
 
 # Custom derivative rules for JAX-transformable Python functions
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb)
 
 *mattjj@ Mar 19 2020, last updated Oct 14 2020*
 
@@ -56,10 +56,9 @@ def f_jvp(primals, tangents):
 ```
 
 ```{code-cell} ipython3
----
-id: RrNf588X_kJF
-outputId: b962bafb-e8a3-4b0d-ddf4-202e088231c3
----
+:id: RrNf588X_kJF
+:outputId: b962bafb-e8a3-4b0d-ddf4-202e088231c3
+
 from jax import jvp, grad
 
 print(f(2., 3.))
@@ -83,10 +82,9 @@ f.defjvps(lambda x_dot, primal_out, x, y: jnp.cos(x) * x_dot * y,
 ```
 
 ```{code-cell} ipython3
----
-id: Zn81cHeYWVOw
-outputId: bf29b66c-897b-485e-c0a0-ee0fbd729a95
----
+:id: Zn81cHeYWVOw
+:outputId: bf29b66c-897b-485e-c0a0-ee0fbd729a95
+
 print(f(2., 3.))
 y, y_dot = jvp(f, (2., 3.), (1., 0.))
 print(y)
@@ -119,10 +117,9 @@ f.defvjp(f_fwd, f_bwd)
 ```
 
 ```{code-cell} ipython3
----
-id: HpSozxKUCXgp
-outputId: 57277102-7bdb-41f0-c805-a27fcf9fb1ae
----
+:id: HpSozxKUCXgp
+:outputId: 57277102-7bdb-41f0-c805-a27fcf9fb1ae
+
 print(grad(f)(2., 3.))
 ```
 
@@ -143,10 +140,9 @@ One application of `jax.custom_jvp` is to improve the numerical stability of dif
 Say we want to write a function called `log1pexp`, which computes $x \mapsto \log ( 1 + e^x )$. We can write that using `jax.numpy`:
 
 ```{code-cell} ipython3
----
-id: 6lWbTvs40ET-
-outputId: 8caff99e-add1-4c70-ace3-212c0c5c6f4e
----
+:id: 6lWbTvs40ET-
+:outputId: 8caff99e-add1-4c70-ace3-212c0c5c6f4e
+
 import jax.numpy as jnp
 
 def log1pexp(x):
@@ -160,10 +156,9 @@ log1pexp(3.)
 Since it's written in terms of `jax.numpy`, it's JAX-transformable:
 
 ```{code-cell} ipython3
----
-id: XgtGKFld02UD
-outputId: 809d399d-8eca-401e-b969-810e46648571
----
+:id: XgtGKFld02UD
+:outputId: 809d399d-8eca-401e-b969-810e46648571
+
 from jax import jit, grad, vmap
 
 print(jit(log1pexp)(3.))
@@ -176,10 +171,9 @@ print(vmap(jit(grad(log1pexp)))(jnp.arange(3.)))
 But there's a numerical stability problem lurking here:
 
 ```{code-cell} ipython3
----
-id: sVM6iwIO22sB
-outputId: 9c935ee8-f174-475a-ca01-fc80949199e5
----
+:id: sVM6iwIO22sB
+:outputId: 9c935ee8-f174-475a-ca01-fc80949199e5
+
 print(grad(log1pexp)(100.))
 ```
 
@@ -190,10 +184,9 @@ That doesn't seem right! After all, the derivative of $x \mapsto \log (1 + e^x)$
 We can get a bit more insight into what's going on by looking at the jaxpr for the gradient computation:
 
 ```{code-cell} ipython3
----
-id: dO6uZlYR4TVp
-outputId: 61e06b1e-14cd-4030-f330-a949be185df8
----
+:id: dO6uZlYR4TVp
+:outputId: 61e06b1e-14cd-4030-f330-a949be185df8
+
 from jax import make_jaxpr
 
 make_jaxpr(grad(log1pexp))(100.)
@@ -230,18 +223,16 @@ def log1pexp_jvp(primals, tangents):
 ```
 
 ```{code-cell} ipython3
----
-id: rhiMHulfKBIF
-outputId: 883bc4d2-3a1b-48d3-b205-c500f77d229c
----
+:id: rhiMHulfKBIF
+:outputId: 883bc4d2-3a1b-48d3-b205-c500f77d229c
+
 print(grad(log1pexp)(100.))
 ```
 
 ```{code-cell} ipython3
----
-id: 9cLDuAo6KGUu
-outputId: 59984494-6124-4540-84fd-608ad4fc6bc6
----
+:id: 9cLDuAo6KGUu
+:outputId: 59984494-6124-4540-84fd-608ad4fc6bc6
+
 print(jit(log1pexp)(3.))
 print(jit(grad(log1pexp))(3.))
 print(vmap(jit(grad(log1pexp)))(jnp.arange(3.)))
@@ -262,10 +253,9 @@ log1pexp.defjvps(lambda t, ans, x: (1 - 1/(1 + jnp.exp(x))) * t)
 ```
 
 ```{code-cell} ipython3
----
-id: dtdh-PLaUsvw
-outputId: aa36aec6-15af-4397-fc55-8b9fb7e607d8
----
+:id: dtdh-PLaUsvw
+:outputId: aa36aec6-15af-4397-fc55-8b9fb7e607d8
+
 print(grad(log1pexp)(100.))
 print(jit(log1pexp)(3.))
 print(jit(grad(log1pexp))(3.))
@@ -294,10 +284,9 @@ def f(x):
 As a mathematical function on $\mathbb{R}$ (the full real line), $f$ is not differentiable at zero (because the limit defining the derivative doesn't exist from the left). Correspondingly, autodiff produces a `nan` value:
 
 ```{code-cell} ipython3
----
-id: piI0u5MiHhQh
-outputId: c045308f-2f3b-4c22-ebb2-b9ee582b4d25
----
+:id: piI0u5MiHhQh
+:outputId: c045308f-2f3b-4c22-ebb2-b9ee582b4d25
+
 print(grad(f)(0.))
 ```
 
@@ -324,10 +313,9 @@ def f_jvp(primals, tangents):
 ```
 
 ```{code-cell} ipython3
----
-id: Gsh9ZvMTKi1O
-outputId: a3076175-6542-4210-ce4a-d0d82e0051c6
----
+:id: Gsh9ZvMTKi1O
+:outputId: a3076175-6542-4210-ce4a-d0d82e0051c6
+
 print(grad(f)(0.))
 ```
 
@@ -346,10 +334,9 @@ f.defjvps(lambda t, ans, x: ((jnp.sqrt(x) + 2) / (2 * (jnp.sqrt(x) + 1)**2)) * t
 ```
 
 ```{code-cell} ipython3
----
-id: uUU5qRmEViK1
-outputId: ea7dc2c4-a100-48f4-a74a-859070daf994
----
+:id: uUU5qRmEViK1
+:outputId: ea7dc2c4-a100-48f4-a74a-859070daf994
+
 print(grad(f)(0.))
 ```
 
@@ -382,10 +369,9 @@ clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
 ```
 
 ```{code-cell} ipython3
----
-id: 4OLU_vf8Xw2J
-outputId: 5a51ff2c-79c2-41ba-eead-53679b4eddbc
----
+:id: 4OLU_vf8Xw2J
+:outputId: 5a51ff2c-79c2-41ba-eead-53679b4eddbc
+
 import matplotlib.pyplot as plt
 from jax import vmap
 
@@ -396,10 +382,9 @@ plt.plot(vmap(grad(jnp.sin))(t))
 ```
 
 ```{code-cell} ipython3
----
-id: iS8nRuBZYLcD
-outputId: 299dc977-ff2f-43a4-c0d2-9fa6c7eaeeb2
----
+:id: iS8nRuBZYLcD
+:outputId: 299dc977-ff2f-43a4-c0d2-9fa6c7eaeeb2
+
 def clip_sin(x):
   x = clip_gradient(-0.75, 0.75, x)
   return jnp.sin(x)
@@ -465,10 +450,9 @@ def newton_sqrt(a):
 ```
 
 ```{code-cell} ipython3
----
-id: 42Ydd7_6aLXU
-outputId: c576dc92-33df-42b9-b2e8-ad54119514b1
----
+:id: 42Ydd7_6aLXU
+:outputId: c576dc92-33df-42b9-b2e8-ad54119514b1
+
 print(newton_sqrt(2.))
 ```
 
@@ -477,10 +461,9 @@ print(newton_sqrt(2.))
 We can `vmap` or `jit` the function as well:
 
 ```{code-cell} ipython3
----
-id: t_YSXieT3Yyk
-outputId: 76483e18-81f3-47a8-e8aa-e81535c01fe2
----
+:id: t_YSXieT3Yyk
+:outputId: 76483e18-81f3-47a8-e8aa-e81535c01fe2
+
 print(jit(vmap(newton_sqrt))(jnp.array([1., 2., 3., 4.])))
 ```
 
@@ -549,18 +532,16 @@ fixed_point.defvjp(fixed_point_fwd, fixed_point_rev)
 ```
 
 ```{code-cell} ipython3
----
-id: iKzfT6d_mEoB
-outputId: 5d04c4a0-61dd-42de-ffa4-101b71d15a57
----
+:id: iKzfT6d_mEoB
+:outputId: 5d04c4a0-61dd-42de-ffa4-101b71d15a57
+
 print(newton_sqrt(2.))
 ```
 
 ```{code-cell} ipython3
----
-id: Hmcpjr6gmtkO
-outputId: 9c4a406c-0144-4d5f-e789-a7a4c850a3cc
----
+:id: Hmcpjr6gmtkO
+:outputId: 9c4a406c-0144-4d5f-e789-a7a4c850a3cc
+
 print(grad(newton_sqrt)(2.))
 print(grad(grad(newton_sqrt))(2.))
 ```
@@ -570,10 +551,9 @@ print(grad(grad(newton_sqrt))(2.))
 We can check our answers by differentiating `jnp.sqrt`, which uses a totally different implementation:
 
 ```{code-cell} ipython3
----
-id: jj_JnI9Pm4jg
-outputId: 6eb3e158-209b-41f2-865c-376a1d07624b
----
+:id: jj_JnI9Pm4jg
+:outputId: 6eb3e158-209b-41f2-865c-376a1d07624b
+
 print(grad(jnp.sqrt)(2.))
 print(grad(grad(jnp.sqrt))(2.))
 ```
@@ -613,10 +593,9 @@ f.defjvp(f_jvp)
 ```
 
 ```{code-cell} ipython3
----
-id: fxhlECvW7Krj
-outputId: 30dc5e8b-d157-4ae2-cd17-145d4e1ba47b
----
+:id: fxhlECvW7Krj
+:outputId: 30dc5e8b-d157-4ae2-cd17-145d4e1ba47b
+
 from jax import jvp
 
 print(f(3.))
@@ -649,10 +628,9 @@ def f_jvp(primals, tangents):
 Even though we defined only a JVP rule and no VJP rule, we can use both forward- and reverse-mode differentiation on `f`. JAX will automatically transpose the linear computation on tangent values from our custom JVP rule, computing the VJP as efficiently as if we had written the rule by hand:
 
 ```{code-cell} ipython3
----
-id: hl9Io86pQD6s
-outputId: a9ef39aa-4df0-459f-ee1d-64b648cabcc4
----
+:id: hl9Io86pQD6s
+:outputId: a9ef39aa-4df0-459f-ee1d-64b648cabcc4
+
 from jax import grad
 
 print(grad(f)(3.))
@@ -684,10 +662,9 @@ def f_jvp(primals, tangents):
 ```
 
 ```{code-cell} ipython3
----
-id: QpKwA0oA8DfE
-outputId: 80855f56-04a5-4179-fd8b-199ea7eba476
----
+:id: QpKwA0oA8DfE
+:outputId: 80855f56-04a5-4179-fd8b-199ea7eba476
+
 print(grad(f)(2., 3.))
 ```
 
@@ -706,10 +683,9 @@ f.defjvps(lambda t, ans, x: jnp.cos(x) * t)
 ```
 
 ```{code-cell} ipython3
----
-id: zfSgXrPEap-i
-outputId: bf552090-a60d-4c2a-fc91-603396df94cd
----
+:id: zfSgXrPEap-i
+:outputId: bf552090-a60d-4c2a-fc91-603396df94cd
+
 print(grad(f)(3.))
 ```
 
@@ -729,10 +705,9 @@ f.defjvps(lambda x_dot, primal_out, x, y: 2 * x * y * x_dot,
 ```
 
 ```{code-cell} ipython3
----
-id: o9ezUYsjbbvC
-outputId: f60f4941-d5e3-49c3-920f-76fd92414697
----
+:id: o9ezUYsjbbvC
+:outputId: f60f4941-d5e3-49c3-920f-76fd92414697
+
 print(grad(f)(2., 3.))
 print(grad(f, 0)(2., 3.))  # same as above
 print(grad(f, 1)(2., 3.))
@@ -754,10 +729,9 @@ f.defjvps(lambda x_dot, primal_out, x, y: 2 * x * y * x_dot,
 ```
 
 ```{code-cell} ipython3
----
-id: jOtQfp-5btSo
-outputId: b60aa797-4c1e-4421-826d-691ba418bc1d
----
+:id: jOtQfp-5btSo
+:outputId: b60aa797-4c1e-4421-826d-691ba418bc1d
+
 print(grad(f)(2., 3.))
 print(grad(f, 0)(2., 3.))  # same as above
 print(grad(f, 1)(2., 3.))
@@ -788,20 +762,18 @@ def f_jvp(primals, tangents):
 ```
 
 ```{code-cell} ipython3
----
-id: xAlRea95PjA5
-outputId: 10b4db9e-3192-415e-ac1c-0dc57c7dc086
----
+:id: xAlRea95PjA5
+:outputId: 10b4db9e-3192-415e-ac1c-0dc57c7dc086
+
 from jax import vmap, jit
 
 print(f(3.))
 ```
 
 ```{code-cell} ipython3
----
-id: dyD2ow4NmpI-
-outputId: 1d66b67f-c1b4-4a9d-d6ed-12d88767842c
----
+:id: dyD2ow4NmpI-
+:outputId: 1d66b67f-c1b4-4a9d-d6ed-12d88767842c
+
 print(vmap(f)(jnp.arange(3.)))
 print(jit(f)(3.))
 ```
@@ -811,19 +783,17 @@ print(jit(f)(3.))
 The custom JVP rule is invoked during differentiation, whether forward or reverse:
 
 ```{code-cell} ipython3
----
-id: hKF0xyAxPyLZ
-outputId: 214cc5a7-a992-41c8-aa01-8ea4b2b3b4d6
----
+:id: hKF0xyAxPyLZ
+:outputId: 214cc5a7-a992-41c8-aa01-8ea4b2b3b4d6
+
 y, y_dot = jvp(f, (3.,), (1.,))
 print(y_dot)
 ```
 
 ```{code-cell} ipython3
----
-id: Z1KaEgA58MEG
-outputId: 86263d76-5a98-4d96-f5c2-9146bcf1b6fd
----
+:id: Z1KaEgA58MEG
+:outputId: 86263d76-5a98-4d96-f5c2-9146bcf1b6fd
+
 print(grad(f)(3.))
 ```
 
@@ -832,10 +802,9 @@ print(grad(f)(3.))
 Notice that `f_jvp` calls `f` to compute the primal outputs. In the context of higher-order differentiation, each application of a differentiation transform will use the custom JVP rule if and only if the rule calls the original `f` to compute the primal outputs. (This represents a kind of fundamental tradeoff, where we can't make use of intermediate values from the evaluation of `f` in our rule _and also_ have the rule apply in all orders of higher-order differentiation.)
 
 ```{code-cell} ipython3
----
-id: B6PLJooTQgVp
-outputId: 0d7ac628-656e-4b67-d285-f810155b6b9c
----
+:id: B6PLJooTQgVp
+:outputId: 0d7ac628-656e-4b67-d285-f810155b6b9c
+
 grad(grad(f))(3.)
 ```
 
@@ -865,10 +834,9 @@ def f_jvp(primals, tangents):
 ```
 
 ```{code-cell} ipython3
----
-id: QCHmJ56Na2G3
-outputId: 1772d3b4-44ef-4745-edd3-553c6312c553
----
+:id: QCHmJ56Na2G3
+:outputId: 1772d3b4-44ef-4745-edd3-553c6312c553
+
 print(grad(f)(1.))
 print(grad(f)(-1.))
 ```
@@ -902,10 +870,9 @@ f.defvjp(f_fwd, f_bwd)
 ```
 
 ```{code-cell} ipython3
----
-id: E8W-H2S0Ngdr
-outputId: cd0dc221-e779-436d-f3b4-21e799f40620
----
+:id: E8W-H2S0Ngdr
+:outputId: cd0dc221-e779-436d-f3b4-21e799f40620
+
 from jax import grad
 
 print(f(3.))
@@ -944,10 +911,9 @@ f.defvjp(f_fwd, f_bwd)
 ```
 
 ```{code-cell} ipython3
----
-id: EnRtIhhLnkry
-outputId: e03907ec-463a-4f3c-ae8e-feecb4394b2b
----
+:id: EnRtIhhLnkry
+:outputId: e03907ec-463a-4f3c-ae8e-feecb4394b2b
+
 print(grad(f)(2., 3.))
 ```
 
@@ -979,26 +945,23 @@ f.defvjp(f_fwd, f_bwd)
 ```
 
 ```{code-cell} ipython3
----
-id: r0aZ79OmOAR5
-outputId: 9cf16d9e-ca96-4987-e01a-dc0e22405576
----
+:id: r0aZ79OmOAR5
+:outputId: 9cf16d9e-ca96-4987-e01a-dc0e22405576
+
 print(f(3.))
 ```
 
 ```{code-cell} ipython3
----
-id: 7ToB9BYlm6uN
-outputId: aa9f3e3f-e6c3-4ee4-b87a-4526074f43aa
----
+:id: 7ToB9BYlm6uN
+:outputId: aa9f3e3f-e6c3-4ee4-b87a-4526074f43aa
+
 print(grad(f)(3.))
 ```
 
 ```{code-cell} ipython3
----
-id: s1Pn_qCIODcF
-outputId: 423d34e0-35b8-4b57-e89d-f70f20e28ea9
----
+:id: s1Pn_qCIODcF
+:outputId: 423d34e0-35b8-4b57-e89d-f70f20e28ea9
+
 from jax import vjp
 
 y, f_vjp = vjp(f, 3.)
@@ -1006,10 +969,9 @@ print(y)
 ```
 
 ```{code-cell} ipython3
----
-id: dvgQtDHaOHuo
-outputId: d92649c5-0aab-49a9-9158-f7ddc5fccb9b
----
+:id: dvgQtDHaOHuo
+:outputId: d92649c5-0aab-49a9-9158-f7ddc5fccb9b
+
 print(f_vjp(1.))
 ```
 
@@ -1018,10 +980,9 @@ print(f_vjp(1.))
 **Forward-mode autodiff cannot be used on the** `jax.custom_vjp` **function** and will raise an error:
 
 ```{code-cell} ipython3
----
-id: 3RGQRbI_OSEX
-outputId: 6385a024-7a10-445a-8380-b2eef722e597
----
+:id: 3RGQRbI_OSEX
+:outputId: 6385a024-7a10-445a-8380-b2eef722e597
+
 from jax import jvp
 
 try:
@@ -1119,20 +1080,18 @@ def fun(pt):
 ```
 
 ```{code-cell} ipython3
----
-id: My8pbOlPppJj
-outputId: 04cc1129-d0fb-4018-bec1-2ccf8b7906e3
----
+:id: My8pbOlPppJj
+:outputId: 04cc1129-d0fb-4018-bec1-2ccf8b7906e3
+
 pt = Point(1., 2.)
 
 print(f(pt))
 ```
 
 ```{code-cell} ipython3
----
-id: a9qyiCAhqLd3
-outputId: 08bd0615-7c35-44ff-f90b-c175618c2c40
----
+:id: a9qyiCAhqLd3
+:outputId: 08bd0615-7c35-44ff-f90b-c175618c2c40
+
 print(grad(fun)(pt))
 ```
 
@@ -1166,20 +1125,18 @@ def fun(pt):
 ```
 
 ```{code-cell} ipython3
----
-id: 3onW7t6nrJ4E
-outputId: ac455ab0-cac0-41fc-aea3-034931316053
----
+:id: 3onW7t6nrJ4E
+:outputId: ac455ab0-cac0-41fc-aea3-034931316053
+
 pt = Point(1., 2.)
 
 print(f(pt))
 ```
 
 ```{code-cell} ipython3
----
-id: ryyeKIXtrNpd
-outputId: 1780f738-ffd8-4ed7-ffbe-71d84bd62709
----
+:id: ryyeKIXtrNpd
+:outputId: 1780f738-ffd8-4ed7-ffbe-71d84bd62709
+
 print(grad(fun)(pt))
 ```
 
@@ -1214,18 +1171,16 @@ def app_jvp(f, primals, tangents):
 ```
 
 ```{code-cell} ipython3
----
-id: 5W-yEw9IB34S
-outputId: a2c1444a-9cc7-43ee-cb52-6c5d1cec02f1
----
+:id: 5W-yEw9IB34S
+:outputId: a2c1444a-9cc7-43ee-cb52-6c5d1cec02f1
+
 print(app(lambda x: x ** 3, 3.))
 ```
 
 ```{code-cell} ipython3
----
-id: zbVIlOmqB7_O
-outputId: a0174f54-89b0-4957-9362-c05af922f974
----
+:id: zbVIlOmqB7_O
+:outputId: a0174f54-89b0-4957-9362-c05af922f974
+
 print(grad(app, 1)(lambda x: x ** 3, 3.))
 ```
 
@@ -1248,18 +1203,16 @@ def app2_jvp(f, g, primals, tangents):
 ```
 
 ```{code-cell} ipython3
----
-id: J7GsvJTgCfS0
-outputId: 43dd6a02-2e4e-449e-924a-d1a03fe622fe
----
+:id: J7GsvJTgCfS0
+:outputId: 43dd6a02-2e4e-449e-924a-d1a03fe622fe
+
 print(app2(lambda x: x ** 3, 3., lambda y: 5 * y))
 ```
 
 ```{code-cell} ipython3
----
-id: kPP8Jt1CCb1X
-outputId: 6eff9aae-8d6e-4998-92ed-56272c32d6e8
----
+:id: kPP8Jt1CCb1X
+:outputId: 6eff9aae-8d6e-4998-92ed-56272c32d6e8
+
 print(grad(app2, 1)(lambda x: x ** 3, 3., lambda y: 5 * y))
 ```
 
@@ -1288,18 +1241,16 @@ app.defvjp(app_fwd, app_bwd)
 ```
 
 ```{code-cell} ipython3
----
-id: qSgcWa1eDj4r
-outputId: 43939686-f857-47ea-9f85-53f440ef12ee
----
+:id: qSgcWa1eDj4r
+:outputId: 43939686-f857-47ea-9f85-53f440ef12ee
+
 print(app(lambda x: x ** 2, 4.))
 ```
 
 ```{code-cell} ipython3
----
-id: tccagflcDmaz
-outputId: c75ca70b-2431-493b-e335-4f4d340902f1
----
+:id: tccagflcDmaz
+:outputId: c75ca70b-2431-493b-e335-4f4d340902f1
+
 print(grad(app, 1)(lambda x: x ** 2, 4.))
 ```
 

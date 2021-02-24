@@ -15,7 +15,7 @@ kernelspec:
 
 # How JAX primitives work
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
 
 *necula@google.com*, October 2019.
 
@@ -60,10 +60,9 @@ functions that are themselves written using JAX primitives, e.g., those
 defined in the `jax.lax` module:
 
 ```{code-cell} ipython3
----
-id: tbOF0LB0EMne
-outputId: 3fb1c8a7-7a4c-4a3a-f7ff-37b7dc740528
----
+:id: tbOF0LB0EMne
+:outputId: 3fb1c8a7-7a4c-4a3a-f7ff-37b7dc740528
+
 from jax import lax
 from jax import api
 
@@ -167,10 +166,9 @@ Instead of using `jax.lax` primitives directly, we can use other functions
 that are already written in terms of those primitives, such as those in `jax.numpy`:
 
 ```{code-cell} ipython3
----
-id: QhKorz6cFRJb
-outputId: aba3cef3-6bcc-4eb3-c7b3-34e405f2f82a
----
+:id: QhKorz6cFRJb
+:outputId: aba3cef3-6bcc-4eb3-c7b3-34e405f2f82a
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -236,10 +234,9 @@ If we try to call the newly defined functions we get an error, because
 we have not yet told JAX anything about the semantics of the new primitive.
 
 ```{code-cell} ipython3
----
-id: _X3PAYxhGpWd
-outputId: 90ea2c6a-9ef3-40ea-e9a3-3ab1cfc59fc8
----
+:id: _X3PAYxhGpWd
+:outputId: 90ea2c6a-9ef3-40ea-e9a3-3ab1cfc59fc8
+
 with expectNotImplementedError():
   square_add_prim(2., 10.)
 ```
@@ -249,10 +246,9 @@ with expectNotImplementedError():
 ### Primal evaluation rules
 
 ```{code-cell} ipython3
----
-id: FT34FFAGHARU
-outputId: 4c54f1c2-8a50-4788-90e1-06aee412c43b
----
+:id: FT34FFAGHARU
+:outputId: 4c54f1c2-8a50-4788-90e1-06aee412c43b
+
 @trace("multiply_add_impl")
 def multiply_add_impl(x, y, z):
   """Concrete implementation of the primitive.
@@ -272,10 +268,9 @@ multiply_add_p.def_impl(multiply_add_impl)
 ```
 
 ```{code-cell} ipython3
----
-id: G5bstKaeNAVV
-outputId: deb94d5b-dfea-4e6f-9ec2-70b416c996c5
----
+:id: G5bstKaeNAVV
+:outputId: deb94d5b-dfea-4e6f-9ec2-70b416c996c5
+
 assert square_add_prim(2., 10.) == 14.
 ```
 
@@ -286,10 +281,9 @@ assert square_add_prim(2., 10.) == 14.
 If we now try to use `jit` we get a `NotImplementedError`:
 
 ```{code-cell} ipython3
----
-id: QG-LULjiHk4b
-outputId: d4ef4406-8dae-4c96-97ca-b662340474ee
----
+:id: QG-LULjiHk4b
+:outputId: d4ef4406-8dae-4c96-97ca-b662340474ee
+
 with expectNotImplementedError():
   api.jit(square_add_prim)(2., 10.)
 ```
@@ -311,10 +305,9 @@ For example, the abstraction of a vector with 3 elements may be `ShapedArray(flo
 In the latter case, JAX uses the actual concrete value wrapped as an abstract value.
 
 ```{code-cell} ipython3
----
-id: ctQmEeckIbdo
-outputId: e751d0cc-460e-4ffd-df2e-fdabf9cffdc2
----
+:id: ctQmEeckIbdo
+:outputId: e751d0cc-460e-4ffd-df2e-fdabf9cffdc2
+
 from jax import abstract_arrays
 @trace("multiply_add_abstract_eval")
 def multiply_add_abstract_eval(xs, ys, zs):
@@ -341,10 +334,9 @@ If we re-attempt to JIT, we see how the abstract evaluation proceeds, but
 we get another error, about missing the actual XLA compilation rule:
 
 ```{code-cell} ipython3
----
-id: eOcNR92SI2h-
-outputId: 356ef229-3703-4696-cc3d-7c05de405fb0
----
+:id: eOcNR92SI2h-
+:outputId: 356ef229-3703-4696-cc3d-7c05de405fb0
+
 with expectNotImplementedError():
   api.jit(square_add_prim)(2., 10.)
 ```
@@ -388,10 +380,9 @@ then compiles the set of primitives it has encountered, including `multiply_add`
 At this point JAX invokes `multiply_add_xla_translation`.
 
 ```{code-cell} ipython3
----
-id: rj3TLsolJgEc
-outputId: e384bee4-1e9c-4344-f49c-d3b5ec08eb32
----
+:id: rj3TLsolJgEc
+:outputId: e384bee4-1e9c-4344-f49c-d3b5ec08eb32
+
 assert api.jit(lambda x, y: square_add_prim(x, y))(2., 10.) == 14.
 ```
 
@@ -404,10 +395,9 @@ in the third argument to `multiply_add_abstract_eval` being
 both `ShapedArray` and `ConcreteArray`.
 
 ```{code-cell} ipython3
----
-id: mPfTwIBoKOEK
-outputId: b293b9b6-a2f9-48f5-f7eb-d4f99c3d905b
----
+:id: mPfTwIBoKOEK
+:outputId: b293b9b6-a2f9-48f5-f7eb-d4f99c3d905b
+
 assert api.jit(lambda x, y: square_add_prim(x, y), 
                static_argnums=1)(2., 10.) == 14.
 ```
@@ -424,10 +414,9 @@ error because we have not yet told JAX how to differentiate
 the `multiply_add` primitive.
 
 ```{code-cell} ipython3
----
-id: OxDx6NQnKwMI
-outputId: ce659ef3-c03c-4856-f252-49ec4b6eb964
----
+:id: OxDx6NQnKwMI
+:outputId: ce659ef3-c03c-4856-f252-49ec4b6eb964
+
 # The second argument `(2., 10.)` are the argument values
 # where we evaluate the Jacobian, and the third `(1., 1.)`
 # are the values of the tangents for the arguments.
@@ -486,10 +475,9 @@ ad.primitive_jvps[multiply_add_p] = multiply_add_value_and_jvp
 ```
 
 ```{code-cell} ipython3
----
-id: ma3KBkiAMfW1
-outputId: f34cbbc6-20d9-48ca-9a9a-b5d91a972cdd
----
+:id: ma3KBkiAMfW1
+:outputId: f34cbbc6-20d9-48ca-9a9a-b5d91a972cdd
+
 # Tangent is: xt*y + x*yt + zt = 1.*2. + 2.*1. + 1. = 5.
 assert api.jvp(square_add_prim, (2., 10.), (1., 1.)) == (14., 5.)
 ```
@@ -510,10 +498,9 @@ TO EXPLAIN:
 We can apply JIT to the forward differentiation function:
 
 ```{code-cell} ipython3
----
-id: hg-hzVu-N-hv
-outputId: 38d32067-e152-4046-ad80-7f95a31ba628
----
+:id: hg-hzVu-N-hv
+:outputId: 38d32067-e152-4046-ad80-7f95a31ba628
+
 assert api.jit(lambda arg_values, arg_tangents: 
                    api.jvp(square_add_prim, arg_values, arg_tangents))(
          (2., 10.), (1., 1.)) == (14., 5.)
@@ -550,10 +537,9 @@ value 0.0 as the tangent for the 3rd argument. This is due to the use
 of the `make_zero` function in the definition of `multiply_add_value_and_jvp`.
 
 ```{code-cell} ipython3
----
-id: 8eAVnexaOjBn
-outputId: e4ee89cf-ab4a-4505-9817-fa978a2865ab
----
+:id: 8eAVnexaOjBn
+:outputId: e4ee89cf-ab4a-4505-9817-fa978a2865ab
+
 # This is reverse differentiation w.r.t. the first argument of square_add_prim
 with expectNotImplementedError():
   api.grad(square_add_prim)(2., 10.)
@@ -676,10 +662,9 @@ ad.primitive_transposes[multiply_add_p] = multiply_add_transpose
 Now we can complete the run of the `grad`:
 
 ```{code-cell} ipython3
----
-id: PogPKS4MPevd
-outputId: d33328d4-3e87-45b5-9b31-21ad624b67af
----
+:id: PogPKS4MPevd
+:outputId: d33328d4-3e87-45b5-9b31-21ad624b67af
+
 assert api.grad(square_add_prim)(2., 10.) == 4.
 ```
 
@@ -697,10 +682,9 @@ Notice that the abstract evaluation of the `multiply_add_value_and_jvp` is using
 abstract values, while in the absensce of JIT we used `ConcreteArray`.
 
 ```{code-cell} ipython3
----
-id: FZ-JGbWZPq2-
-outputId: e42b5222-9c3e-4853-e13a-874f6605d178
----
+:id: FZ-JGbWZPq2-
+:outputId: e42b5222-9c3e-4853-e13a-874f6605d178
+
 assert api.jit(api.grad(square_add_prim))(2., 10.) == 4.
 ```
 
@@ -712,10 +696,9 @@ The batching transformation takes a point-wise computation and turns it
 into a computation on vectors. If we try it right now, we get a `NotImplementedError`:
 
 ```{code-cell} ipython3
----
-id: hFvBR3I9Pzh3
-outputId: 434608bc-281f-4d3b-83bd-eaaf3b51b1cd
----
+:id: hFvBR3I9Pzh3
+:outputId: 434608bc-281f-4d3b-83bd-eaaf3b51b1cd
+
 # The arguments are two vectors instead of two scalars
 with expectNotImplementedError():
   api.vmap(square_add_prim, in_axes=0, out_axes=0)(np.array([2., 3.]),
@@ -761,10 +744,9 @@ batching.primitive_batchers[multiply_add_p] = multiply_add_batch
 ```
 
 ```{code-cell} ipython3
----
-id: VwxNk869P_YG
-outputId: 9d22c921-5803-4d33-9e88-b6e439ba9738
----
+:id: VwxNk869P_YG
+:outputId: 9d22c921-5803-4d33-9e88-b6e439ba9738
+
 assert np.allclose(api.vmap(square_add_prim, in_axes=0, out_axes=0)(
   np.array([2., 3.]),
   np.array([10., 20.])),
@@ -776,10 +758,9 @@ assert np.allclose(api.vmap(square_add_prim, in_axes=0, out_axes=0)(
 #### JIT of batching
 
 ```{code-cell} ipython3
----
-id: xqEdXVUgQCTt
-outputId: 9c22fd9c-919c-491d-bbeb-32c241b808fa
----
+:id: xqEdXVUgQCTt
+:outputId: 9c22fd9c-919c-491d-bbeb-32c241b808fa
+
 assert np.allclose(api.jit(api.vmap(square_add_prim, in_axes=0, out_axes=0))
                     (np.array([2., 3.]),
                      np.array([10., 20.])),

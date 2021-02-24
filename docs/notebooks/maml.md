@@ -11,11 +11,11 @@ kernelspec:
   name: python3
 ---
 
-+++ {"id": "oDP4nK_Zgyg-", "colab_type": "text"}
++++ {"colab_type": "text", "id": "oDP4nK_Zgyg-"}
 
 # MAML Tutorial with JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/maml.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/maml.ipynb)
 
 Eric Jang
 
@@ -44,17 +44,16 @@ import jax.numpy as jnp
 from jax import grad
 ```
 
-+++ {"id": "gMgclHhxgyhI", "colab_type": "text"}
++++ {"colab_type": "text", "id": "gMgclHhxgyhI"}
 
 ## Gradients of Gradients
 
 JAX makes it easy to compute gradients of python functions. Here, we thrice-differentiate $e^x$ and $x^2$
 
 ```{code-cell} ipython3
----
-id: Mt-uRwBGgyhJ
-outputId: db7f718c-c2fb-4f7e-f31c-39a0d36c7051
----
+:id: Mt-uRwBGgyhJ
+:outputId: db7f718c-c2fb-4f7e-f31c-39a0d36c7051
+
 f = lambda x : jnp.exp(x)
 g = lambda x : jnp.square(x)
 print(grad(f)(1.)) # = e^{1}
@@ -66,7 +65,7 @@ print(grad(grad(g))(2.)) # x = 2
 print(grad(grad(grad(g)))(2.)) # x = 0
 ```
 
-+++ {"id": "7mAd3We_gyhP", "colab_type": "text"}
++++ {"colab_type": "text", "id": "7mAd3We_gyhP"}
 
 ## Sinusoid Regression and vmap
 
@@ -109,10 +108,9 @@ def loss(params, inputs, targets):
 ```
 
 ```{code-cell} ipython3
----
-id: sROmpDEmgyhb
-outputId: d1bf00d7-99e7-445e-b439-ea2fabd7a646
----
+:id: sROmpDEmgyhb
+:outputId: d1bf00d7-99e7-445e-b439-ea2fabd7a646
+
 # batch the inference across K=100
 xrange_inputs = jnp.linspace(-5,5,100).reshape((100, 1)) # (k, 1)
 targets = jnp.sin(xrange_inputs)
@@ -151,10 +149,9 @@ net_params = get_params(opt_state)
 ```
 
 ```{code-cell} ipython3
----
-id: Rm9WIz2egyho
-outputId: 183de82d-fdf0-4b81-9b14-01a85e6b8839
----
+:id: Rm9WIz2egyho
+:outputId: 183de82d-fdf0-4b81-9b14-01a85e6b8839
+
 # batch the inference across K=100
 targets = jnp.sin(xrange_inputs)
 predictions = vmap(partial(net_apply, net_params))(xrange_inputs)
@@ -165,7 +162,7 @@ plt.plot(xrange_inputs, targets, label='target')
 plt.legend()
 ```
 
-+++ {"id": "7E8gAJBzgyhs", "colab_type": "text"}
++++ {"colab_type": "text", "id": "7E8gAJBzgyhs"}
 
 ## MAML: Optimizing for Generalization
 
@@ -178,10 +175,9 @@ $x_1, y_2$ and $x_2, y_2$ are identically distributed from $X, Y$. Therefore, MA
 The following toy example checks MAML numerics via parameter $x$ and input $y$.
 
 ```{code-cell} ipython3
----
-id: 2YBFsM2dgyht
-outputId: 46160194-04b7-46c9-897d-ecb11e9738be
----
+:id: 2YBFsM2dgyht
+:outputId: 46160194-04b7-46c9-897d-ecb11e9738be
+
 # gradients of gradients test for MAML
 # check numerics
 g = lambda x, y : jnp.square(x) + y
@@ -195,7 +191,7 @@ print('maml_objective(x,y)={}'.format(maml_objective(x0, y0))) # x**2 + 1 = 5
 print('x0 - maml_objective(x,y) = {}'.format(x0 - grad(maml_objective)(x0, y0))) # x - (2x)
 ```
 
-+++ {"id": "V9G-PMxygyhx", "colab_type": "text"}
++++ {"colab_type": "text", "id": "V9G-PMxygyhx"}
 
 ## Sinusoid Task + MAML
 
@@ -217,10 +213,9 @@ def maml_loss(p, x1, y1, x2, y2):
 ```
 
 ```{code-cell} ipython3
----
-id: bQvg749Xgyh2
-outputId: 5043f859-c537-41b8-c390-23670795d57b
----
+:id: bQvg749Xgyh2
+:outputId: 5043f859-c537-41b8-c390-23670795d57b
+
 x1 = xrange_inputs
 y1 = targets
 x2 = jnp.array([0.])
@@ -228,15 +223,14 @@ y2 = jnp.array([0.])
 maml_loss(net_params, x1, y1, x2, y2)
 ```
 
-+++ {"id": "zMB6BwPogyh6", "colab_type": "text"}
++++ {"colab_type": "text", "id": "zMB6BwPogyh6"}
 
 Let's try minimizing the MAML loss (without batching across multiple tasks, which we will do in the next section)
 
 ```{code-cell} ipython3
----
-id: pB5ldBO-gyh7
-outputId: b2365aa4-d7b8-40a0-d759-8257d3e4d768
----
+:id: pB5ldBO-gyh7
+:outputId: b2365aa4-d7b8-40a0-d759-8257d3e4d768
+
 opt_init, opt_update, get_params = optimizers.adam(step_size=1e-3)  # this LR seems to be better than 1e-2 and 1e-4
 out_shape, net_params = net_init(rng, in_shape)
 opt_state = opt_init(net_params)
@@ -270,10 +264,9 @@ net_params = get_params(opt_state)
 ```
 
 ```{code-cell} ipython3
----
-id: ogcpFdJ9gyh_
-outputId: 856924a3-ede5-44ba-ba3c-381673713fad
----
+:id: ogcpFdJ9gyh_
+:outputId: 856924a3-ede5-44ba-ba3c-381673713fad
+
 # batch the inference across K=100
 targets = jnp.sin(xrange_inputs)
 predictions = vmap(partial(net_apply, net_params))(xrange_inputs)
@@ -290,7 +283,7 @@ for i in range(1,5):
 plt.legend()
 ```
 
-+++ {"id": "7TMYcZKVgyiD", "colab_type": "text"}
++++ {"colab_type": "text", "id": "7TMYcZKVgyiD"}
 
 ## Batching Meta-Gradient Across Tasks
 
@@ -324,10 +317,9 @@ def sample_tasks(outer_batch_size, inner_batch_size):
 ```
 
 ```{code-cell} ipython3
----
-id: 7dCIGObKgyiJ
-outputId: c169b529-0f16-4f20-d20e-d802765e4068
----
+:id: 7dCIGObKgyiJ
+:outputId: c169b529-0f16-4f20-d20e-d802765e4068
+
 outer_batch_size = 2
 x1, y1, x2, y2 = sample_tasks(outer_batch_size, 50)
 for i in range(outer_batch_size):
@@ -338,18 +330,16 @@ plt.legend()
 ```
 
 ```{code-cell} ipython3
----
-id: BrSX--wpgyiP
-outputId: 6d81e7ff-7cd9-4aef-c665-952d442369d5
----
+:id: BrSX--wpgyiP
+:outputId: 6d81e7ff-7cd9-4aef-c665-952d442369d5
+
 x2.shape
 ```
 
 ```{code-cell} ipython3
----
-id: P3WQ8_k2gyiU
-outputId: fed1b78b-7910-4e44-a80b-18f447379022
----
+:id: P3WQ8_k2gyiU
+:outputId: fed1b78b-7910-4e44-a80b-18f447379022
+
 opt_init, opt_update, get_params = optimizers.adam(step_size=1e-3)
 out_shape, net_params = net_init(rng, in_shape)
 opt_state = opt_init(net_params)
@@ -379,10 +369,9 @@ net_params = get_params(opt_state)
 ```
 
 ```{code-cell} ipython3
----
-id: PmxHLrhYgyiX
-outputId: 33ac699e-c66d-46e2-affa-98ae948d52e8
----
+:id: PmxHLrhYgyiX
+:outputId: 33ac699e-c66d-46e2-affa-98ae948d52e8
+
 # batch the inference across K=100
 targets = jnp.sin(xrange_inputs)
 predictions = vmap(partial(net_apply, net_params))(xrange_inputs)
@@ -400,10 +389,9 @@ plt.legend()
 ```
 
 ```{code-cell} ipython3
----
-id: cQf2BeDjgyib
-outputId: fc52caf6-1379-4d60-fe44-99f4e4518698
----
+:id: cQf2BeDjgyib
+:outputId: fc52caf6-1379-4d60-fe44-99f4e4518698
+
 # Comparison of maml_loss for task batch size = 1 vs. task batch size = 8
 plt.plot(np.convolve(np_maml_loss, [.05]*20), label='task_batch=1')
 plt.plot(np.convolve(np_batched_maml_loss, [.05]*20), label='task_batch=4')

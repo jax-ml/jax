@@ -16,7 +16,7 @@ kernelspec:
 
 # The Autodiff Cookbook
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/autodiff_cookbook.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/autodiff_cookbook.ipynb)
 
 *alexbw@, mattjj@*  
 
@@ -43,10 +43,9 @@ key = random.PRNGKey(0)
 You can differentiate a function with `grad`:
 
 ```{code-cell} ipython3
----
-id: 0NLO4Wfknzmk
-outputId: ec6f5fe3-3d90-4ec9-a405-f3191b6099da
----
+:id: 0NLO4Wfknzmk
+:outputId: ec6f5fe3-3d90-4ec9-a405-f3191b6099da
+
 grad_tanh = grad(jnp.tanh)
 print(grad_tanh(2.0))
 ```
@@ -58,10 +57,9 @@ print(grad_tanh(2.0))
 Since `grad` operates on functions, you can apply it to its own output to differentiate as many times as you like:
 
 ```{code-cell} ipython3
----
-id: RDGk1GDsoawu
-outputId: 157bab60-52a8-4ca9-a298-b57561b30032
----
+:id: RDGk1GDsoawu
+:outputId: 157bab60-52a8-4ca9-a298-b57561b30032
+
 print(grad(grad(jnp.tanh))(2.0))
 print(grad(grad(grad(jnp.tanh)))(2.0))
 ```
@@ -104,10 +102,9 @@ b = random.normal(b_key, ())
 Use the `grad` function with its `argnums` argument to differentiate a function with respect to positional arguments.
 
 ```{code-cell} ipython3
----
-id: bpmd8W8-6vu6
-outputId: 5faafcc6-e9c5-4a2d-fc35-5c23e0be2d6d
----
+:id: bpmd8W8-6vu6
+:outputId: 5faafcc6-e9c5-4a2d-fc35-5c23e0be2d6d
+
 # Differentiate `loss` with respect to the first positional argument:
 W_grad = grad(loss, argnums=0)(W, b)
 print('W_grad', W_grad)
@@ -141,10 +138,9 @@ Essentially, when using the `argnums` argument, if `f` is a Python function for 
 Differentiating with respect to standard Python containers just works, so use tuples, lists, and dicts (and arbitrary nesting) however you like.
 
 ```{code-cell} ipython3
----
-id: IY82kdAe6vu_
-outputId: d4004d2d-97ed-4ddc-bb1d-fc4af21edd23
----
+:id: IY82kdAe6vu_
+:outputId: d4004d2d-97ed-4ddc-bb1d-fc4af21edd23
+
 def loss2(params_dict):
     preds = predict(params_dict['W'], params_dict['b'], inputs)
     label_probs = preds * targets + (1 - preds) * (1 - targets)
@@ -166,10 +162,9 @@ You can [register your own container types](https://github.com/google/jax/issues
 Another convenient function is `value_and_grad` for efficiently computing both a function's value as well as its gradient's value:
 
 ```{code-cell} ipython3
----
-id: RsQSyT5p7OJW
-outputId: c2502c2e-091e-4e9c-ca20-1e0c2670fd7a
----
+:id: RsQSyT5p7OJW
+:outputId: c2502c2e-091e-4e9c-ca20-1e0c2670fd7a
+
 from jax import value_and_grad
 loss_value, Wb_grad = value_and_grad(loss, (0, 1))(W, b)
 print('loss value', loss_value)
@@ -183,10 +178,9 @@ print('loss value', loss(W, b))
 A great thing about derivatives is that they're straightforward to check with finite differences:
 
 ```{code-cell} ipython3
----
-id: R8q5RiY3l7Fw
-outputId: 4f2ccbe9-da9f-438e-9f3e-ad03e3c3e247
----
+:id: R8q5RiY3l7Fw
+:outputId: 4f2ccbe9-da9f-438e-9f3e-ad03e3c3e247
+
 # Set a step size for finite differences calculations
 eps = 1e-4
 
@@ -261,10 +255,9 @@ We'll check this implementation a few cells down, once we see how to compute den
 You can compute full Jacobian matrices using the `jacfwd` and `jacrev` functions:
 
 ```{code-cell} ipython3
----
-id: cbETzAvKvf5I
-outputId: 7c8d2361-cc68-4139-9f1f-afa2431b3cd2
----
+:id: cbETzAvKvf5I
+:outputId: 7c8d2361-cc68-4139-9f1f-afa2431b3cd2
+
 from jax import jacfwd, jacrev
 
 # Isolate the function from the weight matrix to the predictions
@@ -288,10 +281,9 @@ These two functions compute the same values (up to machine numerics), but differ
 You can also use `jacfwd` and `jacrev` with container types:
 
 ```{code-cell} ipython3
----
-id: eH46Xnm88bfm
-outputId: ab1f5dce-926e-40b9-9664-5bd5e628e0b5
----
+:id: eH46Xnm88bfm
+:outputId: ab1f5dce-926e-40b9-9664-5bd5e628e0b5
+
 def predict_dict(params, inputs):
     return predict(params['W'], params['b'], inputs)
 
@@ -310,10 +302,9 @@ For more details on forward- and reverse-mode, as well as how to implement `jacf
 Using a composition of two of these functions gives us a way to compute dense Hessian matrices:
 
 ```{code-cell} ipython3
----
-id: n155ypD9rfIZ
-outputId: 69622bc4-9a8d-47f1-aab6-40ab21d450d9
----
+:id: n155ypD9rfIZ
+:outputId: 69622bc4-9a8d-47f1-aab6-40ab21d450d9
+
 def hessian(f):
     return jacfwd(jacrev(f))
 
@@ -532,10 +523,9 @@ Even better, since we didn't have to call `jnp.dot` directly, this `hvp` functio
 Here's an example of how to use it:
 
 ```{code-cell} ipython3
----
-id: bmpuQa5_f1Al
-outputId: 20ef2514-0ab7-4071-c2f4-77b59b013ffc
----
+:id: bmpuQa5_f1Al
+:outputId: 20ef2514-0ab7-4071-c2f4-77b59b013ffc
+
 def f(X):
   return jnp.sum(jnp.tanh(X)**2)
 
@@ -567,10 +557,9 @@ def hvp_revfwd(f, primals, tangents):
 That's not quite as good, though, because forward-mode has less overhead than reverse-mode, and since the outer differentiation operator here has to differentiate a larger computation than the inner one, keeping forward-mode on the outside works best:
 
 ```{code-cell} ipython3
----
-id: lxfv25qTX5gZ
-outputId: b88dae03-7bd1-4836-f994-880c57bc4714
----
+:id: lxfv25qTX5gZ
+:outputId: b88dae03-7bd1-4836-f994-880c57bc4714
+
 # reverse-over-reverse, only works for single arguments
 def hvp_revrev(f, primals, tangents):
   x, = primals
@@ -600,10 +589,9 @@ print("Naive full Hessian materialization")
 Now that we have `jvp` and `vjp` transformations that give us functions to push-forward or pull-back single vectors at a time, we can use JAX's `vmap` [transformation](https://github.com/google/jax#auto-vectorization-with-vmap) to push and pull entire bases at once. In particular, we can use that to write fast matrix-Jacobian and Jacobian-matrix products.
 
 ```{code-cell} ipython3
----
-id: asAWvxVaCmsx
-outputId: 05d3b5f9-f526-42a4-ea2b-6163b267db26
----
+:id: asAWvxVaCmsx
+:outputId: 05d3b5f9-f526-42a4-ea2b-6163b267db26
+
 # Isolate the function from the weight matrix to the predictions
 f = lambda W: predict(W, b, inputs)
 
@@ -636,10 +624,9 @@ assert jnp.allclose(loop_vs, vmap_vs), 'Vmap and non-vmapped Matrix-Jacobian Pro
 ```
 
 ```{code-cell} ipython3
----
-id: TDaxsJrlDraK
-outputId: 99a7591c-643d-4b91-c0fc-c7a3c73b0de6
----
+:id: TDaxsJrlDraK
+:outputId: 99a7591c-643d-4b91-c0fc-c7a3c73b0de6
+
 def loop_jmp(f, W, M):
     # jvp immediately returns the primal and tangent values as a tuple,
     # so we'll compute and select the tangents in a list comprehension
@@ -665,7 +652,6 @@ assert jnp.allclose(loop_vs, vmap_vs), 'Vmap and non-vmapped Jacobian-Matrix pro
 +++ {"id": "MXFEFBDz6vvL"}
 
 ### The implementation of `jacfwd` and `jacrev`
-
 
 +++ {"id": "ZAgUb6sp8bf7"}
 
@@ -713,10 +699,9 @@ Interestingly, [Autograd](https://github.com/hips/autograd) couldn't do this. Ou
 Another thing that Autograd couldn't do is `jit`. Interestingly, no matter how much Python dynamism you use in your function to be differentiated, we could always use `jit` on the linear part of the computation. For example:
 
 ```{code-cell} ipython3
----
-id: _5jDflC08bgB
-outputId: 7d37cca8-3954-40b9-bea8-937ac655387c
----
+:id: _5jDflC08bgB
+:outputId: 7d37cca8-3954-40b9-bea8-937ac655387c
+
 def f(x):
     try:
         if x < 3:
@@ -815,10 +800,9 @@ def check(seed):
 ```
 
 ```{code-cell} ipython3
----
-id: I2OBU3OGp-CY
-outputId: 28ae844b-0c25-4255-ca9b-598b0dbeb404
----
+:id: I2OBU3OGp-CY
+:outputId: 28ae844b-0c25-4255-ca9b-598b0dbeb404
+
 check(0)
 check(1)
 check(2)
@@ -894,10 +878,9 @@ What about convenience wrappers like `grad`, `jacfwd`, and `jacrev`?
 For $\mathbb{R} \to \mathbb{R}$ functions, recall we defined `grad(f)(x)` as being `vjp(f, x)[1](1.0)`, which works because applying a VJP to a `1.0` value reveals the gradient (i.e. Jacobian, or derivative). We can do the same thing for $\mathbb{C} \to \mathbb{R}$ functions: we can still use `1.0` as the cotangent vector, and we just get out a complex number result summarizing the full Jacobian:
 
 ```{code-cell} ipython3
----
-id: xz_9lK61wGdm
-outputId: 96693583-2a36-48fd-d811-cd1a0f1a50c5
----
+:id: xz_9lK61wGdm
+:outputId: 96693583-2a36-48fd-d811-cd1a0f1a50c5
+
 def f(z):
   x, y = jnp.real(z), jnp.imag(z)
   return x**2 + y**2
@@ -913,10 +896,9 @@ For geneneral $\mathbb{C} \to \mathbb{C}$ functions, the Jacobian has 4 real-val
 Because this only works for holomorphic functions, to use this trick we need to promise JAX that our function is holomorphic; otherwise, JAX will raise an error when `grad` is used for a complex-output function:
 
 ```{code-cell} ipython3
----
-id: Y3n9hPVrwvXx
-outputId: 20f72dfe-7083-47f8-b086-4a16426ba97b
----
+:id: Y3n9hPVrwvXx
+:outputId: 20f72dfe-7083-47f8-b086-4a16426ba97b
+
 def f(z):
   return jnp.sin(z)
 
@@ -929,10 +911,9 @@ grad(f, holomorphic=True)(z)
 All the `holomorphic=True` promise does is disable the error when the output is complex-valued. We can still write `holomorphic=True` when the function isn't holomorphic, but the answer we get out won't represent the full Jacobian. Instead, it'll be the Jacobian of the function where we just discard the imaginary part of the output:
 
 ```{code-cell} ipython3
----
-id: th9xhwp2xaeU
-outputId: 2dfebe3a-bbfe-46a1-b282-f5d59d53c772
----
+:id: th9xhwp2xaeU
+:outputId: 2dfebe3a-bbfe-46a1-b282-f5d59d53c772
+
 def f(z):
   return jnp.conjugate(z)
 
@@ -955,10 +936,9 @@ In any case, JVPs and VJPs are always unambiguous. And if we wanted to compute t
 You should expect complex numbers to work everywhere in JAX. Here's differentiating through a Cholesky decomposition of a complex matrix:
 
 ```{code-cell} ipython3
----
-id: WrDHHfKI8bgM
-outputId: c04baa8a-2408-4a76-e3dc-4522782d1bc5
----
+:id: WrDHHfKI8bgM
+:outputId: c04baa8a-2408-4a76-e3dc-4522782d1bc5
+
 A = jnp.array([[5.,    2.+3j,    5j],
               [2.-3j,   7.,  1.+7j],
               [-5j,  1.-7j,    12.]])

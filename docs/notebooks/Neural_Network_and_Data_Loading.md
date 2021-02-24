@@ -16,7 +16,7 @@ kernelspec:
 
 # Training a Simple Neural Network, with PyTorch Data Loading
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
 
 **Copyright 2018 Google LLC.**
 
@@ -106,10 +106,9 @@ def predict(params, image):
 Let's check that our prediction function only works on single images.
 
 ```{code-cell} ipython3
----
-id: 4sW2A5mnXHc5
-outputId: 9d3b29e8-fab3-4ecb-9f63-bc8c092f9006
----
+:id: 4sW2A5mnXHc5
+:outputId: 9d3b29e8-fab3-4ecb-9f63-bc8c092f9006
+
 # This works on single examples
 random_flattened_image = random.normal(random.PRNGKey(1), (28 * 28,))
 preds = predict(params, random_flattened_image)
@@ -117,10 +116,9 @@ print(preds.shape)
 ```
 
 ```{code-cell} ipython3
----
-id: PpyQxuedXfhp
-outputId: d5d20211-b6da-44e9-f71e-946f2a9d0fc4
----
+:id: PpyQxuedXfhp
+:outputId: d5d20211-b6da-44e9-f71e-946f2a9d0fc4
+
 # Doesn't work with a batch
 random_flattened_images = random.normal(random.PRNGKey(1), (10, 28 * 28))
 try:
@@ -130,10 +128,9 @@ except TypeError:
 ```
 
 ```{code-cell} ipython3
----
-id: oJOOncKMXbwK
-outputId: 31285fab-7667-4871-fcba-28e86adc3fc6
----
+:id: oJOOncKMXbwK
+:outputId: 31285fab-7667-4871-fcba-28e86adc3fc6
+
 # Let's upgrade it to handle batches using `vmap`
 
 # Make a batched version of the `predict` function
@@ -182,10 +179,9 @@ def update(params, x, y):
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll grab PyTorch's data loader, and make a tiny shim to make it work with NumPy arrays.
 
 ```{code-cell} ipython3
----
-id: gEvWt8_u2pqG
-outputId: 2c83a679-9ce5-4c67-bccb-9ea835a8eaf6
----
+:id: gEvWt8_u2pqG
+:outputId: 2c83a679-9ce5-4c67-bccb-9ea835a8eaf6
+
 !pip install torch torchvision
 ```
 
@@ -238,10 +234,9 @@ training_generator = NumpyLoader(mnist_dataset, batch_size=batch_size, num_worke
 ```
 
 ```{code-cell} ipython3
----
-id: FTNo4beUvb6t
-outputId: 65a9087c-c326-49e5-cbfc-e0839212fa31
----
+:id: FTNo4beUvb6t
+:outputId: 65a9087c-c326-49e5-cbfc-e0839212fa31
+
 # Get the full train dataset (for checking accuracy while training)
 train_images = np.array(mnist_dataset.train_data).reshape(len(mnist_dataset.train_data), -1)
 train_labels = one_hot(np.array(mnist_dataset.train_labels), n_targets)
@@ -257,10 +252,9 @@ test_labels = one_hot(np.array(mnist_dataset_test.test_labels), n_targets)
 ## Training Loop
 
 ```{code-cell} ipython3
----
-id: X2DnZo3iYj18
-outputId: 0eba3ca2-24a1-4cba-aaf4-3ac61d0c650e
----
+:id: X2DnZo3iYj18
+:outputId: 0eba3ca2-24a1-4cba-aaf4-3ac61d0c650e
+
 import time
 
 for epoch in range(num_epochs):
