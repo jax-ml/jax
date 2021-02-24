@@ -113,10 +113,8 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(x32.result(), jnp.int32)
 
   def test_jit_cache(self):
-    # TODO(jakevdp): enable this test when CPP jit cache is fixed.
-    if FLAGS.experimental_cpp_jit:
-      self.skipTest("Known failure due to https://github.com/google/jax/issues/5532")
-
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("64-bit random not available on TPU")
     f = partial(random.uniform, random.PRNGKey(0), (1,), 'float64', -1, 1)
     with disable_x64():
       for _ in range(2):

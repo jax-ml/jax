@@ -457,6 +457,16 @@ def _jit_is_disabled():
   return _thread_local_state.jit_is_disabled or config.read("jax_disable_jit")
 
 
+def _jax_enable_x64():
+  # TODO(jblespiau): Replace all access to FLAGs.jax_enable_x64 with this
+  # function.
+  thread_local_value = lib.jax_jit.get_enable_x64()
+  if thread_local_value is None:
+    return config.read("jax_disable_jit")
+  else:
+    return thread_local_value
+
+
 def xla_computation(fun: Callable,
                     static_argnums: Union[int, Iterable[int]] = (),
                     axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
@@ -1800,30 +1810,30 @@ def _vjp_pullback_wrapper(cotangent_dtypes, io_tree, fun, py_args):
 
 
 if sys.version_info >= (3, 8):
-    from typing import Literal
+  from typing import Literal
 
-    @overload  # type: ignore
-    def vjp(fun: Callable[..., T],
-            *primals: Any,
-            has_aux: Literal[False] = False) -> Tuple[T, Callable]:
-        ...
+  @overload  # type: ignore
+  def vjp(fun: Callable[..., T],
+          *primals: Any,
+          has_aux: Literal[False] = False) -> Tuple[T, Callable]:
+    ...
 
-    @overload
-    def vjp(fun: Callable[..., Tuple[T, U]],
-            *primals: Any,
-            has_aux: Literal[True]) -> Tuple[T, Callable, U]:
-        ...
+  @overload
+  def vjp(fun: Callable[..., Tuple[T, U]],
+          *primals: Any,
+          has_aux: Literal[True]) -> Tuple[T, Callable, U]:
+    ...
 else:
-    @overload  # type: ignore
-    def vjp(fun: Callable[..., T], *primals: Any) -> Tuple[T, Callable]:
-        ...
+  @overload  # type: ignore
+  def vjp(fun: Callable[..., T], *primals: Any) -> Tuple[T, Callable]:
+    ...
 
-    @overload
-    def vjp(fun: Callable[..., Any],
-            *primals: Any,
-            has_aux: bool) -> Union[Tuple[Any, Callable],
-                                    Tuple[Any, Callable, Any]]:
-        ...
+  @overload
+  def vjp(fun: Callable[..., Any],
+          *primals: Any,
+          has_aux: bool) -> Union[Tuple[Any, Callable],
+                                  Tuple[Any, Callable, Any]]:
+    ...
 
 def vjp(  # type: ignore
     fun: Callable, *primals, has_aux: bool = False,
