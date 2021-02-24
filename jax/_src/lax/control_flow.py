@@ -271,7 +271,9 @@ def while_loop(cond_fun: Callable[[T], bool],
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals[0].strip_weak_type() != ShapedArray((), np.bool_):
+    pred_aval = cond_jaxpr.out_avals[0]
+    if (not isinstance(pred_aval, ShapedArray)
+        or pred_aval.strip_weak_type().strip_named_shape() != ShapedArray((), np.bool_)):
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
     return init_vals, init_avals, body_jaxpr, in_tree, cond_jaxpr, cond_consts, body_consts, body_tree
