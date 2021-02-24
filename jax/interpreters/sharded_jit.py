@@ -290,19 +290,24 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
 
   Args:
     fun: Function to be jitted.
-    in_parts: The input partitions, i.e. how each argument to ``fun`` should be
+    in_parts: Specifications for how each argument to ``fun`` should be
       partitioned or replicated. This should be a PartitionSpec indicating into
-      how many partitions each dimension should be sharded, None indicating
+      how many partitions each dimension should be sharded, ``None`` indicating
       replication, or (nested) standard Python containers thereof. For example,
       ``in_parts=PartitionSpec(2,1)`` means all arguments should be partitioned
       over two devices across the first dimension;
       ``in_parts=(PartitionSpec(2,2), PartitionSpec(4,1), None)`` means the
-      first argument should be partitioned over four devices by splitting the
-      first two dimensions in half, the second argument should be partitioned
-      over the four devices across the first dimension, and the third argument
-      is replicated across the four devices. All PartitionSpecs in a given
-      ``sharded_jit`` call must correspond to the same total number of
-      partitions, i.e. the product of all PartitionSpecs must be equal.
+      first argument should be partitioned over four devices by splitting both
+      of its dimensions in half, the second argument should be partitioned over
+      the four devices across the first dimension, and the third argument is
+      replicated across the four devices.
+
+      All PartitionSpecs in a given ``sharded_jit`` call must correspond to the
+      same total number of partitions, i.e. the product of all PartitionSpecs
+      must be equal, and the number of dimensions in the PartitionSpec
+      corresponding to an array ``a`` should equal ``a.ndim``. Arguments marked
+      as static using ``static_argnums`` (see below) do not require a
+      PartitionSpec.
     out_parts: The output partitions, i.e. how each output of ``fun`` should be
       partitioned or replicated. This follows the same convention as
      ``in_parts``.
@@ -329,9 +334,11 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
       function with different values for these constants will trigger
       recompilation. If the jitted function is called with fewer positional
       arguments than indicated by ``static_argnums`` then an error is raised.
-      Each of the static arguments will be broadcasted to all devices.
-      Arguments that are not arrays or containers thereof must be marked as
-      static. Defaults to ().
+      Each of the static arguments will be broadcasted to all devices, and
+      cannot be partitioned - these arguments will be removed from the *args
+      list before matching each remaining argument with its corresponding
+      PartitionSpec. Arguments that are not arrays or containers thereof must
+      be marked as static. Defaults to ``()``.
 
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
