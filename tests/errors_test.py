@@ -18,7 +18,7 @@ import unittest
 
 from absl.testing import absltest
 
-from jax import grad, jit, vmap
+from jax import grad, jit, vmap, lax
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax._src import traceback_util
@@ -120,6 +120,167 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('<lambda>', 'f = lambda: outermost'),
         ('outermost', 'return 2 + inbetween(x)'),
         ('inbetween', 'return 1 + grad(innermost)(x)')])
+
+  def test_lax_cond(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(_):
+      assert False
+      return ()
+
+    def f():
+      return lax.cond(True, err, lambda _: (), ())
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return lax.cond(True, err, lambda _: (), ())'),
+        ('err', 'assert False')])
+
+  def test_lax_switch(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(_):
+      assert False
+      return ()
+
+    def f():
+      branches = [lambda _: (), err, lambda _: ()]
+      return lax.switch(1, branches, ())
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return lax.switch(1, branches, ())'),
+        ('err', 'assert False')])
+
+  def test_lax_scan(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(*_):
+      assert False
+      return ()
+
+    def f():
+      return lax.scan(err, (), (), 3)
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return lax.scan(err, (), (), 3)'),
+        ('err', 'assert False')])
+
+  def test_lax_fori_loop(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(*_):
+      assert False
+      return ()
+
+    def f():
+      return lax.fori_loop(0, 3, err, ())
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return lax.fori_loop(0, 3, err, ())'),
+        ('err', 'assert False')])
+
+  def test_lax_while_loop(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(*_):
+      assert False
+      return ()
+
+    def f():
+      pred = lambda _: False
+      return lax.while_loop(pred, err, ())
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return lax.while_loop(pred, err, ())'),
+        ('err', 'assert False')])
+
+  def test_lax_map(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(_):
+      assert False
+      return ()
+
+    def f():
+      xs = jnp.ones(3)
+      return lax.map(err, xs)
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return lax.map(err, xs)'),
+        ('err', 'assert False')])
+
+  def test_lax_custom_root(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(*_):
+      assert False
+      return ()
+
+    def g(x): return (x - 1.) ** 2.
+    def solve(*_): return 1.
+
+    def f1():
+      return lax.custom_root(g, 0., err, solve)
+    def f2():
+      return lax.custom_root(g, 0., solve, err)
+    def f3():
+      return lax.custom_root(err, 0., solve, solve)
+
+    check_filtered_stack_trace(self, AssertionError, f1, [
+        ('f1', 'return lax.custom_root(g, 0., err, solve)'),
+        ('err', 'assert False')])
+    check_filtered_stack_trace(self, AssertionError, f2, [
+        ('f2', 'return lax.custom_root(g, 0., solve, err)'),
+        ('err', 'assert False')])
+    check_filtered_stack_trace(self, AssertionError, f3, [
+        ('f3', 'return lax.custom_root(err, 0., solve, solve)'),
+        ('err', 'assert False')])
+
+  def test_lax_custom_linear_solve(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(*_):
+      assert False
+      return ()
+
+    matvec = lambda v: v
+    solve = lambda mv, b: 1.
+    b = 1.
+
+    def f1():
+      return lax.custom_linear_solve(err, b, solve)
+    def f2():
+      return lax.custom_linear_solve(matvec, b, err)
+
+    check_filtered_stack_trace(self, AssertionError, f1, [
+        ('f1', 'return lax.custom_linear_solve(err, b, solve)'),
+        ('err', 'assert False')])
+    check_filtered_stack_trace(self, AssertionError, f2, [
+        ('f2', 'return lax.custom_linear_solve(matvec, b, err)'),
+        ('err', 'assert False')])
+
+  def test_lax_associative_scan(self):
+    if not traceback_util.filtered_tracebacks_supported():
+      raise unittest.SkipTest('Filtered tracebacks not supported')
+
+    def err(*_):
+      assert False
+      return ()
+
+    def f():
+      xs = jnp.arange(4.)
+      return lax.associative_scan(err, xs)
+
+    check_filtered_stack_trace(self, AssertionError, f, [
+        ('f', 'return lax.associative_scan(err, xs)'),
+        ('err', 'assert False')])
 
   def test_cause_chain(self):
     if not traceback_util.filtered_tracebacks_supported():
