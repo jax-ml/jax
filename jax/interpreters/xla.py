@@ -1403,15 +1403,23 @@ ad.deflinear2(device_put_p, lambda cotangent, _, **kwargs: [cotangent])
 masking.defvectorized(device_put_p)
 
 
-def _remat_translation_rule(c, axis_env, in_nodes,
-                            name_stack, backend, name, call_jaxpr,
-                            device=None, concrete=None):
+def _zeros(c, xla_shape):
+  if xla_shape.is_array():
+    shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
+    zero = xb.constant(c, np.array(0, dtype=dtype))
+    return xops.Broadcast(zero, shape)
+  else:
+    # It is a token
+    return xops.CreateToken(c)
+
+
+def _remat_using_cond(
+    c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr):
   """Lower remat to a Conditional which always returns true. This:
     1. Circumvents common subexpression elimination.
     2. In common case of `jax.grad(jax.remat(f))`, ensures the remat blocks
        occur after the primal blocks, because cotangent is an input to the
        Conditional."""
-  del device, concrete  # Unused.
   # Fake condition which always selects True branch.
   rng = xops.RngUniform(xb.constant(c, np.array(0, dtype=np.float32)),
                         xb.constant(c, np.array(1, dtype=np.float32)),
@@ -1421,7 +1429,7 @@ def _remat_translation_rule(c, axis_env, in_nodes,
   true_op = xops.Tuple(c, in_nodes)
   remat_subc = xb.make_computation_builder("remat_call_subcomputation")
   input_op = xb.parameter(remat_subc, 0, c.get_shape(true_op), replicated=[])
-  args = [xops.GetTupleElement(input_op, i) for i in range(len(in_nodes))]
+  args = xla_destructure(remat_subc, input_op)
   out_nodes = jaxpr_subcomp(remat_subc, call_jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'remat')),
                             *args)
@@ -1431,19 +1439,61 @@ def _remat_translation_rule(c, axis_env, in_nodes,
   false_op = true_op
   dummy_subc = xb.make_computation_builder("remat_call_dummy_subcomputation")
   xb.parameter(dummy_subc, 0, c.get_shape(false_op), replicated=[])
-
-  def zeros(xla_shape):
-    if xla_shape.is_array():
-      shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-      zero = xb.constant(dummy_subc, np.array(0, dtype=dtype))
-      return xops.Broadcast(zero, shape)
-    else:
-      # It is a token
-      return xops.CreateToken(dummy_subc)
-  out_nodes = [zeros(s) for s in out_node_shapes]
+  out_nodes = [_zeros(dummy_subc, s) for s in out_node_shapes]
   dummy_subc = dummy_subc.build(xops.Tuple(dummy_subc, out_nodes))
 
   return xops.Conditional(pred, true_op, remat_subc, false_op, dummy_subc)
+
+
+def _remat_using_while(
+    c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr):
+  """Lower remat to a single iteration while loop."""
+  # Dummy subc for getting subcomp shapes.
+  dummy_inputs = xops.Tuple(c, in_nodes)
+  dummy_subc = xb.make_computation_builder("remat_dummy_subcomputation")
+  dummy_input_op = xb.parameter(dummy_subc, 0, c.get_shape(dummy_inputs), replicated=[])
+  dummy_args = xla_destructure(dummy_subc, dummy_input_op)
+  dummy_subcomp_outs = jaxpr_subcomp(
+      dummy_subc, call_jaxpr, backend, axis_env, (),
+      extend_name_stack(name_stack, wrap_name(name, "remat")), *dummy_args)
+  out_node_shapes = [dummy_subc.get_shape(o) for o in dummy_subcomp_outs]
+
+  i_init = xb.constant(c, np.array(0, dtype=np.int32))
+  zeros_like_outs = [_zeros(c, s) for s in out_node_shapes]
+  inputs = xops.Tuple(c, [i_init] + in_nodes + zeros_like_outs)
+
+  cond_subc = xb.make_computation_builder("remat_cond_subcomputation")
+  input_op = xb.parameter(cond_subc, 0, c.get_shape(inputs), replicated=[])
+  i = xops.GetTupleElement(input_op, 0)
+  rng = xops.RngUniform(xb.constant(cond_subc, np.array(1, dtype=np.int32)),
+                        xb.constant(cond_subc, np.array(2, dtype=np.int32)),
+                        xc.Shape.array_shape(xc.PrimitiveType.S32, []))
+  cond_subc = cond_subc.build(xops.Lt(i, rng))
+
+  body_subc = xb.make_computation_builder("remat_body_subcomputation")
+  input_op = xb.parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
+  i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes)+1]
+  i_next = xops.Add(i, xb.constant(body_subc, np.array(1, dtype=np.int32)))
+  subcomp_outs = jaxpr_subcomp(
+      body_subc, call_jaxpr, backend, axis_env, (),
+      extend_name_stack(name_stack, wrap_name(name, "remat")), *args)
+  out_nodes = [i_next] + args + subcomp_outs
+  body_subc = body_subc.build(xops.Tuple(body_subc, out_nodes))
+  outs = xops.While(cond_subc, body_subc, inputs)
+  return xops.Tuple(c, xla_destructure(c, outs)[len(in_nodes)+1:])
+
+
+def _remat_translation_rule(c, axis_env, in_nodes,
+                            name_stack, backend, name, call_jaxpr,
+                            device=None, concrete=None):
+  del device, concrete  # Unused.
+  if backend == "gpu":
+    return _remat_using_while(
+        c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr)
+  else:
+    return _remat_using_cond(
+        c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr)
+
 call_translations[pe.remat_call_p] = _remat_translation_rule  # type: ignore
 
 
