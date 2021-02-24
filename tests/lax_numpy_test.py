@@ -4267,25 +4267,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name":
-          "_shape={}_dtype={}_y={}_rowvar={}_ddof={}_bias={}_fweights={}_aweights={}".format(
-            shape, dtype, y, rowvar, ddof, bias, fweights, aweights),
-         "shape": shape, "y": y, "dtype": dtype, "rowvar": rowvar, "ddof": ddof,
+          "_shape={}_dtype={}_y_dtype={}_rowvar={}_ddof={}_bias={}_fweights={}_aweights={}".format(
+            shape, dtype, y_dtype, rowvar, ddof, bias, fweights, aweights),
+         "shape": shape, "dtype": dtype, "y_dtype": y_dtype, "rowvar": rowvar, "ddof": ddof,
          "bias": bias, "fweights": fweights, "aweights": aweights}
         for shape in [(5,), (10, 5), (5, 10)]
         for dtype in all_dtypes
-        for y in [None, dtype]
+        for y_dtype in [None, dtype]
         for rowvar in [True, False]
         for bias in [True, False]
         for ddof in [None, 2, 3]
         for fweights in [True, False]
         for aweights in [True, False]))
-  def testCov(self, shape, dtype, y, rowvar, ddof, bias, fweights, aweights):
+  def testCov(self, shape, dtype, y_dtype, rowvar, ddof, bias, fweights, aweights):
     rng = jtu.rand_default(self.rng())
     wrng = jtu.rand_positive(self.rng())
     wdtype = np.real(dtype(0)).dtype
     wshape = shape[-1:] if rowvar or shape[0] == 1 else shape[:1]
+
+    import random
+    if len(shape) == 1:
+      y_shape = shape
+    elif rowvar or shape[0] == 1:
+      y_shape = (random.randint(1, 10), shape[-1])
+    else:
+      y_shape = (shape[0], random.randint(1, 10))
+
     args_maker = lambda: [rng(shape, dtype),
-                          rng(shape, y) if y else None,
+                          rng(y_shape, y_dtype) if y_dtype else None,
                           wrng(wshape, int) if fweights else None,
                           wrng(wshape, wdtype) if aweights else None]
     kwargs = dict(rowvar=rowvar, ddof=ddof, bias=bias)
