@@ -162,9 +162,14 @@ def _pjit_callable(
 
 
 def with_sharding_constraint(x, axis_resources):
-  resource_env = maps.thread_resources.env
-  return sharding_constraint_p.bind(x, axis_resources=axis_resources,
-                                    resource_env=resource_env)
+  x_flat, tree = tree_flatten(x)
+  axis_resources_flat = tuple(
+      flatten_axes("with_sharding_constraint axis_resources",
+                   tree, axis_resources))
+  env = maps.thread_resources.env
+  outs = [sharding_constraint_p.bind(y, axis_resources=r, resource_env=env)
+          for y, r in safe_zip(x_flat, axis_resources_flat)]
+  return tree_unflatten(tree, outs)
 
 def _sharding_constraint_impl(x, axis_resources, resource_env):
   # TODO(skye): can we also prevent this from being called in other

@@ -174,6 +174,32 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
+  @with_mesh([('x', 2), ('y', 1)])
+  def testShardingConstraintPyTree(self):
+    @partial(pjit, in_axis_resources=None, out_axis_resources=None)
+    def f(x):
+      x = with_sharding_constraint(x, [P('x', 'y'), P('y', 'x')])
+      x = x.copy()
+      x[0]["a"] *= 2
+      return x
+
+    shape = (8, 8)
+    v = np.arange(prod(shape)).reshape(shape)
+    x = [{"a": v, "b": v * 2}, v * 3]
+    actual = f(x)
+
+    expected = x.copy()
+    expected[0]["a"] *= 2
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertLen(actual[0]["a"].device_buffers, 2)
+
+    hlo = jax.xla_computation(f)(x)
+    # Annotations from with_sharding_constraint
+    self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
+    self.assertIn("sharding={devices=[1,2]0,1}", hlo.as_hlo_text())
+    # Annotation from pjit
+    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
+
 
   # TODO(skye): add more unit tests once API is more finalized
 
