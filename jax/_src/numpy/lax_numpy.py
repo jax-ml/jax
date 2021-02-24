@@ -4820,15 +4820,15 @@ def compress(condition, a, axis: Optional[int] = None, out=None):
 @_wraps(np.cov)
 def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
         aweights=None):
-  m, = _promote_args_inexact("cov", m)
   if y is not None:
-    y, = _promote_args_inexact("cov", y)
+    m, y = _promote_args_inexact("cov", m, y)
+    if y.ndim > 2:
+      raise ValueError("y has more than 2 dimensions")
+  else:
+    m, = _promote_args_inexact("cov", m)
 
   if m.ndim > 2:
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
-  if y is not None:
-    if y.ndim > 2:
-      raise ValueError("y has more than 2 dimensions")
 
   X = atleast_2d(m)
   if not rowvar and X.shape[0] != 1:
