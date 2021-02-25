@@ -16,10 +16,16 @@
 import concurrent.futures
 import time
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
+from absl.testing import parameterized
 
-from jax import api, lax, partial, random
-from jax.config import config, FLAGS
+import jax
+from jax import api
+from jax import lax
+from jax import partial
+from jax import random
+from jax.config import config
+from jax.config import FLAGS
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
 import jax.test_util as jtu
@@ -48,10 +54,34 @@ class X64ContextTests(jtu.JaxTestCase):
     func = _maybe_jit(jit, lambda: jnp.arange(10.0))
     dtype_start = func().dtype
     with enable_x64():
-      self.assertEqual(func().dtype, 'float64')
+      self.assertEqual(func().dtype, "float64")
     with disable_x64():
-      self.assertEqual(func().dtype, 'float32')
+      self.assertEqual(func().dtype, "float32")
     self.assertEqual(func().dtype, dtype_start)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_jit={}_f_{}".format(jit, f.__name__),
+          "jit": jit,
+          "enable_or_disable": f
+      } for jit in ["python", "cpp", None] for f in [enable_x64, disable_x64]))
+  def test_correctly_capture_default(self, jit, enable_or_disable):
+    if jit == "cpp" and not config.omnistaging_enabled:
+      self.skipTest("cpp_jit requires omnistaging")
+
+    # The fact we defined a jitted function with a block with a different value
+    # of `config.enable_x64` has no impact on the output.
+    with enable_or_disable():
+      func = _maybe_jit(jit, lambda: jnp.arange(10.0))
+      func()
+
+    expected_dtype = "float64" if config.read("jax_enable_x64") else "float32"
+    self.assertEqual(func().dtype, expected_dtype)
+
+    with enable_x64():
+      self.assertEqual(func().dtype, "float64")
+    with disable_x64():
+      self.assertEqual(func().dtype, "float32")
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
@@ -113,9 +143,11 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(x32.result(), jnp.int32)
 
   def test_jit_cache(self):
-    # TODO(jakevdp): enable this test when CPP jit cache is fixed.
-    if FLAGS.experimental_cpp_jit:
-      self.skipTest("Known failure due to https://github.com/google/jax/issues/5532")
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("64-bit random not available on TPU")
+    if jax.lib._xla_extension_version < 4 and FLAGS.experimental_cpp_jit:
+      self.skipTest(
+          "Known failure due to https://github.com/google/jax/issues/5532")
 
     f = partial(random.uniform, random.PRNGKey(0), (1,), 'float64', -1, 1)
     with disable_x64():
