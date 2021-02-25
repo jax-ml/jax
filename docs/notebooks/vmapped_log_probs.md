@@ -16,7 +16,7 @@ kernelspec:
 
 # Autobatching log-densities example
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/vmapped_log_probs.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/vmapped_log_probs.ipynb)
 
 This notebook demonstrates a simple Bayesian inference example where autobatching makes user code easier to write, easier to read, and less likely to include bugs.
 
@@ -62,10 +62,9 @@ y = (np.random.rand(num_points) < sp.special.expit(all_x.dot(true_beta))).astype
 ```
 
 ```{code-cell} ipython3
----
-id: O0nVumAw7IlT
-outputId: 751a3290-a81b-4538-9183-16cd685fbaf9
----
+:id: O0nVumAw7IlT
+:outputId: 751a3290-a81b-4538-9183-16cd685fbaf9
+
 y
 ```
 
@@ -91,18 +90,16 @@ def log_joint(beta):
 ```
 
 ```{code-cell} ipython3
----
-id: e51qW0ro6J7C
-outputId: 2ec6bbbd-12ee-45bc-af76-5111c53e4d5a
----
+:id: e51qW0ro6J7C
+:outputId: 2ec6bbbd-12ee-45bc-af76-5111c53e4d5a
+
 log_joint(np.random.randn(num_features))
 ```
 
 ```{code-cell} ipython3
----
-id: fglQXK1Y6wnm
-outputId: 2b934336-08ad-4776-9a58-aa575bf601eb
----
+:id: fglQXK1Y6wnm
+:outputId: 2b934336-08ad-4776-9a58-aa575bf601eb
+
 # This doesn't work, because we didn't write `log_prob()` to handle batching.
 try:
   batch_size = 10
@@ -136,10 +133,9 @@ def batched_log_joint(beta):
 ```
 
 ```{code-cell} ipython3
----
-id: KdDMr-Gy85CO
-outputId: db746654-68e9-43b8-ce3b-6e5682e22eb5
----
+:id: KdDMr-Gy85CO
+:outputId: db746654-68e9-43b8-ce3b-6e5682e22eb5
+
 batch_size = 10
 batched_test_beta = np.random.randn(batch_size, num_features)
 
@@ -153,10 +149,9 @@ batched_log_joint(batched_test_beta)
 It just works.
 
 ```{code-cell} ipython3
----
-id: SU20bouH8-Za
-outputId: ee450298-982f-4b9a-bed9-a6f9b8f63d92
----
+:id: SU20bouH8-Za
+:outputId: ee450298-982f-4b9a-bed9-a6f9b8f63d92
+
 vmap_batched_log_joint = jax.vmap(log_joint)
 vmap_batched_log_joint(batched_test_beta)
 ```
@@ -205,10 +200,9 @@ elbo_val_and_grad = jax.jit(jax.value_and_grad(elbo, argnums=(0, 1)))
 ### Optimize the ELBO using SGD
 
 ```{code-cell} ipython3
----
-id: 9JrD5nNgH715
-outputId: 80bf62d8-821a-45c4-885c-528b2e449e97
----
+:id: 9JrD5nNgH715
+:outputId: 80bf62d8-821a-45c4-885c-528b2e449e97
+
 def normal_sample(key, shape):
     """Convenience function for quasi-stateful RNG."""
     new_key, sub_key = random.split(key)
@@ -241,10 +235,9 @@ for i in range(1000):
 Coverage isn't quite as good as we might like, but it's not bad, and nobody said variational inference was exact.
 
 ```{code-cell} ipython3
----
-id: zt1NBLoVHtOG
-outputId: fb159795-e6e7-497c-e501-9933ec761af4
----
+:id: zt1NBLoVHtOG
+:outputId: fb159795-e6e7-497c-e501-9933ec761af4
+
 figure(figsize=(7, 7))
 plot(true_beta, beta_loc, '.', label='Approximated Posterior Means')
 plot(true_beta, beta_loc + 2*jnp.exp(beta_log_scale), 'r.', label='Approximated Posterior $2\sigma$ Error Bars')

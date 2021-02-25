@@ -16,7 +16,7 @@ kernelspec:
 
 # Generative Modeling by Estimating Gradients of Data Distribution in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.sandbox.google.com/github/google/jax/blob/master/docs/notebooks/score_matching.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/score_matching.ipynb)
 
 In this notebook we'll implement __Generative Modeling by Estimating Gradients of the Data Distribution__ [[arxiv]](https://arxiv.org/abs/1907.05600).
 
@@ -29,10 +29,9 @@ Let's begin with a simple task: learn to sample from a peculiar probability dist
 well... minus the chocolate. Sorry for that.
 
 ```{code-cell} ipython3
----
-id: 0P1xCZPNG6TE
-outputId: 69be38a1-1f02-462e-f4f1-16a41c35fddf
----
+:id: 0P1xCZPNG6TE
+:outputId: 69be38a1-1f02-462e-f4f1-16a41c35fddf
+
 import matplotlib.pyplot as plt
 %matplotlib inline
 import numpy as np
@@ -106,10 +105,9 @@ def train_step(step_i, opt_state, batch):
     loss = compute_loss(net_params, batch)
     grads = jax.grad(compute_loss, argnums=0)(net_params, batch)
     return loss, opt_update(step_i, grads, opt_state)
-
 ```
 
-+++ {"id": "LkTYRi6qCwn8", "colab_type": "text"}
++++ {"colab_type": "text", "id": "LkTYRi6qCwn8"}
 
 __Note__: we use `jax.jacfwd` since the input dimension is only 2
 
@@ -129,10 +127,9 @@ loss_history = []
 ```
 
 ```{code-cell} ipython3
----
-id: evDOnCHiG6TN
-outputId: 989db5fe-24a2-41ba-fb01-6d981df7cd06
----
+:id: evDOnCHiG6TN
+:outputId: 989db5fe-24a2-41ba-fb01-6d981df7cd06
+
 for i in range(2000):
     x = sample_batch(size=128)
     loss, opt_state = train_step(i, opt_state, x)
@@ -165,10 +162,9 @@ for i in range(2000):
 Once the model is trained we can use it to predict scores at each point. Since those are gradient vectors, we'll use [`Quiver Plot`](https://matplotlib.org/3.1.1/api/_as_gen/matplotlib.pyplot.quiver.html) to draw them.
 
 ```{code-cell} ipython3
----
-id: x6SkLg0VG6TQ
-outputId: 710ab2f4-c3c7-4a3b-f929-e84957fbb233
----
+:id: x6SkLg0VG6TQ
+:outputId: 710ab2f4-c3c7-4a3b-f929-e84957fbb233
+
 plt.figure(figsize=[16, 16])
 
 net_params = get_params(opt_state)
@@ -221,10 +217,9 @@ def sample_langevin(x_initial, *, net_params, key, eps=1e-2, eps_decay=0.9, num_
 ```
 
 ```{code-cell} ipython3
----
-id: n6ZWX9Z1G6TV
-outputId: 4e061bf6-93c5-4d96-cc9b-7e2d8b8899af
----
+:id: n6ZWX9Z1G6TV
+:outputId: 4e061bf6-93c5-4d96-cc9b-7e2d8b8899af
+
 plt.figure(figsize=[16, 16])
 
 key = jax.random.PRNGKey(42)
@@ -289,7 +284,7 @@ def train_step(step_i, opt_state, batch, key):
     return loss, opt_update(step_i, grads, opt_state)
 ```
 
-+++ {"id": "GWaKgphWCwoi", "colab_type": "text"}
++++ {"colab_type": "text", "id": "GWaKgphWCwoi"}
 
 __Note:__ we compute Jacobian with `jax.jacfwd` (forward-mode differentiation) because the input dimension of the network is just 2. You can read more about autograd modes in jax [documentation](https://jax.readthedocs.io/en/latest/jax.html?highlight=jacfwd#jax.jacfwd) and on wikipedia [wiki](https://en.wikipedia.org/wiki/Automatic_differentiation)
 
@@ -305,10 +300,9 @@ loss_history = []
 ```
 
 ```{code-cell} ipython3
----
-id: hQyo8kvTG6Tc
-outputId: 184f28fc-4c6d-418a-9c28-e248b8633fbe
----
+:id: hQyo8kvTG6Tc
+:outputId: 184f28fc-4c6d-418a-9c28-e248b8633fbe
+
 for i in range(2_000):
     x = sample_batch(size=128)
     
@@ -343,10 +337,9 @@ for i in range(2_000):
 MNIST 8x8, computing full jacobian would require 64 passes through the network
 
 ```{code-cell} ipython3
----
-id: Y2ZgeMq-G6Tf
-outputId: 435e69a1-3544-4364-b30c-c066feda7064
----
+:id: Y2ZgeMq-G6Tf
+:outputId: 435e69a1-3544-4364-b30c-c066feda7064
+
 from sklearn.datasets import load_digits
 import numpy as np
 
@@ -384,10 +377,9 @@ loss_history = []
 ```
 
 ```{code-cell} ipython3
----
-id: YxWvSQJAG6Ti
-outputId: ae47197d-0aa3-496c-83f6-d10328461a00
----
+:id: YxWvSQJAG6Ti
+:outputId: ae47197d-0aa3-496c-83f6-d10328461a00
+
 for i in range(5_000):
     x = sample_batch(size=128)
     key, subkey = jax.random.split(key)
@@ -402,10 +394,9 @@ for i in range(5_000):
 ```
 
 ```{code-cell} ipython3
----
-id: gof2XcxwG6Tk
-outputId: 02472a07-4931-4444-d406-344907619a01
----
+:id: gof2XcxwG6Tk
+:outputId: 02472a07-4931-4444-d406-344907619a01
+
 key, subkey = jax.random.split(key)
 x = 0.1 * jax.random.uniform(subkey, shape=(64,))
 
