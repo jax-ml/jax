@@ -16,7 +16,7 @@
 import concurrent.futures
 import time
 
-from absl.testing import parameterized
+from absl.testing import absltest, parameterized
 
 from jax import api, lax, partial, random
 from jax.config import config, FLAGS
@@ -57,6 +57,8 @@ class X64ContextTests(jtu.JaxTestCase):
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
       for jit in ["python", "cpp", None]))
   def test_near_singular_inverse(self, jit):
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("64-bit inverse not available on TPU")
     if jit == "cpp" and not config.omnistaging_enabled:
       self.skipTest("cpp_jit requires omnistaging")
     @partial(_maybe_jit, jit, static_argnums=1)
@@ -122,3 +124,6 @@ class X64ContextTests(jtu.JaxTestCase):
     with enable_x64():
       for _ in range(2):
         f()
+
+if __name__ == "__main__":
+  absltest.main(testLoader=jtu.JaxTestLoader())
