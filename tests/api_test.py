@@ -650,6 +650,17 @@ class APITest(jtu.JaxTestCase):
                                 "Abstract tracer value"):
       jit(f)(1)
 
+  def test_list_index_err(self):
+    L = [1, 2, 3]
+    def f(n):
+      return L[n]
+
+    assert jit(f, static_argnums=(0,))(0) == L[0]
+    self.assertRaisesRegex(
+        TypeError,
+        "The __index__ method was called on the JAX Tracer object.*",
+        lambda: jit(f)(0))
+
   def test_range_err(self):
     def f(x, n):
       for i in range(n):
@@ -659,17 +670,22 @@ class APITest(jtu.JaxTestCase):
     assert jit(f, static_argnums=(1,))(0, 5) == 10
     self.assertRaisesRegex(
         TypeError,
-        "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
-        "|Abstract value passed to .*)",
+        "The __index__ method was called on the JAX Tracer object.*",
         lambda: jit(f)(0, 5))
 
+  def test_cast_int(self):
+    f = lambda x: int(x)
+    self.assertRaisesRegex(
+        TypeError,
+        "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
+        "|Abstract tracer value encountered where concrete value is expected.*)", lambda: jit(f)(0))
+
   def test_casts(self):
-    for castfun in [hex, oct, int]:
+    for castfun in [hex, oct]:
       f = lambda x: castfun(x)
       self.assertRaisesRegex(
           TypeError,
-          "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
-          "|Abstract tracer value encountered where concrete value is expected.*)", lambda: jit(f)(0))
+          "The __index__ method was called on the JAX Tracer object.*", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')
