@@ -54,6 +54,7 @@ For an introduction to JAX, start at the
 
    developer
    jax_internal_api
+   autodidax
 
 .. toctree::
    :maxdepth: 3
