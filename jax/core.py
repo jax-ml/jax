@@ -493,8 +493,18 @@ class Tracer:
            "array indexing, like `x[idx]`, it may be that the array being "
            "indexed `x` is a raw numpy.ndarray while the indices `idx` are a "
            "JAX Tracer instance; in that case, you can instead write "
-           "`jax.device_put(x)[idx]`.")
+           "`jnp.asarray(x)[idx]`.")
     raise Exception(msg)
+
+  def __index__(self):
+    msg = (f"The __index__ method was called on the JAX Tracer object {self}.\n\n"
+           "This error can occur when a JAX Tracer object is used in a context where "
+           "a Python integer is expected, such as an argument to the range() function, "
+           "or in index to a Python list. In the latter case, this can often be fixed "
+           "by converting the indexed object to a JAX array, for example by changing "
+           "`obj[idx]` to `jnp.asarray(obj)[idx]`."
+           )
+    raise TypeError(msg)
 
   def __init__(self, trace: Trace):
     self._trace = trace
