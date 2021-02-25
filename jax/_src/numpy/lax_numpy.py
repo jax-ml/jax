@@ -5350,7 +5350,7 @@ setattr(ShapedArray, "nbytes", core.aval_property(_nbytes))
 
 # Forward operators, methods, and properties on DeviceArray to lax_numpy
 # functions (with no Tracers involved; this forwarding is direct)
-for device_array in [_DeviceArray, _CppDeviceArray]:
+for device_array in [DeviceArray]:
   for operator_name, function in _operators.items():
     setattr(device_array, "__{}__".format(operator_name), function)
   for method_name in _nondiff_methods + _diff_methods:

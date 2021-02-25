@@ -1172,7 +1172,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
 
 # Adding methods dynamically to both _DeviceArray and _CppDeviceArray
 # pylint: disable=protected-access
-for device_array in [_DeviceArray, _CppDeviceArray]:
+for device_array in [DeviceArray]:
 
 
   def copy(self):
