@@ -6,7 +6,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.2
+    jupytext_version: 1.10.0
 kernelspec:
   display_name: Python 3
   name: python3
@@ -73,7 +73,7 @@ We can implement stacks of interpreters and even have them all discharge on
 the fly as we execute the Python function to be transformed. To start, let's
 define these primitives so that we can intercept their application:
 
-```{code-cell}
+```{code-cell} ipython3
 from typing import NamedTuple
 
 class Primitive(NamedTuple):
@@ -119,7 +119,7 @@ to the element's height in the stack), an interpreter type (which we'll call a
 needs. We call each element a `MainTrace`, though maybe "Interpreter" would be
 more descriptive.
 
-```{code-cell}
+```{code-cell} ipython3
 from contextlib import contextmanager
 from typing import Type, List, Optional, Any
 
@@ -160,7 +160,7 @@ and `Tracer` base classes. A `Tracer` represents a boxed-up value, perhaps
 carrying some extra context data used by the interpreter. A `Trace` handles
 boxing up vales into `Tracers` and also handles primitive application.
 
-```{code-cell}
+```{code-cell} ipython3
 class Trace:
   main: MainTrace
 
@@ -190,7 +190,7 @@ relationship between `Tracer`s and `AbstractValue`s is that there's one
 `Tracer` per transformation, and at least one `AbstractValue` per base type,
 like arrays.)
 
-```{code-cell}
+```{code-cell} ipython3
 import numpy as np
 from typing import Tuple
 
@@ -284,7 +284,7 @@ singleton set consisting of a single array value.
 Now that we've set up the trace stack, the Trace/Tracer API for interpreters,
 and abstract values, we can come back to implement `bind`:
 
-```{code-cell}
+```{code-cell} ipython3
 def bind(prim, *args, **params):
   top_trace = find_top_trace(args)
   tracers = [full_raise(top_trace, arg) for arg in args]
@@ -300,7 +300,7 @@ rule. The calls to `full_raise` just ensure that the inputs are boxed in the
 top trace's `Tracer` instances, and the call to `full_lower` is an optional
 optimization so that we unbox values out of `Tracer`s as much as possible.
 
-```{code-cell}
+```{code-cell} ipython3
 from operator import attrgetter
 
 def find_top_trace(xs) -> Trace:
@@ -316,7 +316,7 @@ This corresponds to JAX transformations mostly working by data dependence
 _except_ for the special bottom-of-the-stack interpreter, which interprets
 everything.
 
-```{code-cell}
+```{code-cell} ipython3
 def full_lower(val):
   if isinstance(val, Tracer):
     return val.full_lower()
@@ -353,7 +353,7 @@ That's it for the JAX core! Now we can start adding interpreters.
 We'll start with the simplest interpreter: the evaluation interpreter that
 will sit at the bottom of the interpreter stack.
 
-```{code-cell}
+```{code-cell} ipython3
 class EvalTrace(Trace):
   pure = lift = lambda self, x: x  # no boxing in Tracers needed
 
@@ -374,7 +374,7 @@ impl_rules[greater_p] = np.greater
 
 With this interpreter, we can evaluate user functions:
 
-```{code-cell}
+```{code-cell} ipython3
 def f(x):
   y = sin(x) * 2
   z = - y + x
@@ -392,7 +392,7 @@ that now we can add some real transformations.
 
 First, a couple of helper functions:
 
-```{code-cell}
+```{code-cell} ipython3
 def zeros_like(val):
   return np.zeros_like(val)
 
@@ -407,7 +407,7 @@ def unzip2(pairs):
 The `Tracer` for forward-mode autodiff carries a primal-tangent pair. The
 `Trace` applies JVP rules.
 
-```{code-cell}
+```{code-cell} ipython3
 class JVPTracer(Tracer):
   def __init__(self, trace, primal, tangent):
     self._trace = trace
@@ -437,7 +437,7 @@ minimal amount of context, which is a zero tangent value.
 
 Let's add some JVP rules for primitives:
 
-```{code-cell}
+```{code-cell} ipython3
 def add_jvp(primals, tangents):
   (x, y), (x_dot, y_dot) = primals, tangents
   return x + y, x_dot + y_dot
@@ -477,7 +477,7 @@ jvp_rules[greater_p] = greater_jvp
 
 Finally, we add a transformation API to kick off the trace:
 
-```{code-cell}
+```{code-cell} ipython3
 def jvp(f, primals, tangents):
   with new_main(JVPTrace) as main:
     trace = JVPTrace(main)
@@ -490,14 +490,14 @@ def jvp(f, primals, tangents):
 
 And with that, we can differentiate!
 
-```{code-cell}
+```{code-cell} ipython3
 x = 3.0
 y, sin_deriv_at_3 = jvp(sin, (x,), (1.0,))
 print(sin_deriv_at_3)
 print(cos(3.0))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 def f(x):
   y = sin(x) * 2
   z = - y + x
@@ -509,7 +509,7 @@ print(y)
 print(ydot)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 def deriv(f):
   return lambda x: jvp(f, (x,), (1.,))[1]
 
@@ -519,7 +519,7 @@ print(deriv(deriv(deriv(sin)))(3.))
 print(deriv(deriv(deriv(deriv(sin))))(3.))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 def f(x):
   if x > 0.:  # Python control flow
     return 2. * x
@@ -536,7 +536,7 @@ First, a couple helper functions, one for producing mapped abstract values
 from unmapped ones (by removing an axis), and one for moving batch dimensions
 around:
 
-```{code-cell}
+```{code-cell} ipython3
 def mapped_aval(batch_dim, aval):
   shape = list(aval.shape)
   del shape[batch_dim]
@@ -554,7 +554,7 @@ def move_batch_axis(axis_size, src, dst, x):
 The `Tracer` for vectorized batching carries a batched value and an optional
 integer indicating which axis (if any) is the batch axis.
 
-```{code-cell}
+```{code-cell} ipython3
 from typing import Union
 
 class NotMapped: pass
@@ -607,7 +607,7 @@ size.
 
 Next we can define batching interpreter rules for each primitive:
 
-```{code-cell}
+```{code-cell} ipython3
 from functools import partial
 
 def broadcasting_binop_batching_rule(op, axis_size, vals_in, dims_in):
@@ -635,7 +635,7 @@ vmap_rules[reduce_sum_p] = reduce_sum_batching_rule
 
 Finally, we add a transformation API to kick off the trace:
 
-```{code-cell}
+```{code-cell} ipython3
 def vmap(f, in_axes, out_axis):
   def batched_f(*args):
     axis_size, = {x.shape[ax] for x, ax in zip(args, in_axes)
@@ -651,7 +651,7 @@ def vmap(f, in_axes, out_axis):
   return batched_f
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 def add_one_to_a_scalar(scalar):
   assert np.ndim(scalar) == 0
   return 1 + scalar
@@ -663,7 +663,7 @@ print(vector_in)
 print(vector_out)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 def jacfwd(f, x):
   pushfwd = lambda v: jvp(f, (x,), (v,))[1]
   vecs_in = np.eye(np.size(x)).reshape(np.shape(x) * 2)
@@ -743,7 +743,7 @@ How do we represent these as Python data structures? We reuse ShapedArrays to
 represent types, and we can represent the term syntax with a few Python
 structs:
 
-```{code-cell}
+```{code-cell} ipython3
 from typing import Dict, Set
 
 class Var:
@@ -776,7 +776,7 @@ def raise_to_shaped(aval):
   return ShapedArray(aval.shape, aval.dtype)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 class JaxprType:
   in_types: List[ShapedArray]
   out_type: ShapedArray
@@ -825,7 +825,7 @@ a jaxpr; `jit` uses one and `vjp` uses the other. We'll start with the one
 used   by `jit`, which is also used by control flow primitives like
 `lax.cond`, `lax.while_loop`, and `lax.scan`.
 
-```{code-cell}
+```{code-cell} ipython3
 # NB: the analogous class in JAX is called 'DynamicJaxprTracer'
 class JaxprTracer(Tracer):
   __slots__ = ['aval']
@@ -871,7 +871,7 @@ abstract_eval_rules = {}
 Notice that we keep as interpreter-global data a builder object, which keeps
 track of variables, constants, and eqns  as we build up the jaxpr.
 
-```{code-cell}
+```{code-cell} ipython3
 class JaxprBuilder:
   eqns: List[JaxprEqn]
   tracer_to_var: Dict[int, Var]
@@ -923,7 +923,7 @@ abstract evaluation rules need to work on ConcreteArray inputs as well). We'll
 reuse these abstract evaluation rules for the other jaxpr-producing trace
 machinery, where the potential extra generality is useful.
 
-```{code-cell}
+```{code-cell} ipython3
 def broadcast_shapes(*shapes):
   assert len(shapes) > 1
   for sizes in zip(*shapes):
@@ -933,7 +933,7 @@ def broadcast_shapes(*shapes):
   return tuple(next((d for d in sizes if d != 1), 1) for sizes in zip(*shapes))
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 def broadcasting_binop_abstract_eval_rule(*avals_in):
   out_dtype = np.result_type(*map(np.result_type, avals_in))
   out_shape = broadcast_shapes(*map(np.shape, avals_in))
@@ -958,7 +958,7 @@ abstract_eval_rules[reduce_sum_p] = reduce_sum_abstract_eval_rule
 To check our implementation, we can add a `make_jaxpr` transformation and
 first pretty-printer:
 
-```{code-cell}
+```{code-cell} ipython3
 def make_jaxpr(f, avals_in):
   builder = JaxprBuilder()
   with new_main(JaxprTrace, builder) as main:
@@ -969,7 +969,7 @@ def make_jaxpr(f, avals_in):
     return builder.build(tracers_in, tracer_out)
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 from collections import defaultdict
 import itertools as it
 import string
@@ -1033,7 +1033,7 @@ def pp_params(params: Dict[str, Any]) -> PPrint:
     return pp(' ')
 ```
 
-```{code-cell}
+```{code-cell} ipython3
 jaxpr, consts = make_jaxpr(lambda x: 2. * x, [raise_to_shaped(get_aval(3.))])
 print(pp_jaxpr(jaxpr))
 print(typecheck_jaxpr(jaxpr))
