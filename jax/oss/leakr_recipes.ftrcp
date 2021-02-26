@@ -1,0 +1,15 @@
+# See http://g3doc/testing/leakr/g3doc/recipes
+
+name: "JAX filetype recipes"
+desc: "Copybara leakr checks, used by copy.bara.sky."
+
+# Opt ipynb files into extra leak checking (shamelessly copied from
+# //third_party/py/haiku/opensource/leakr_disable.ftrcp)
+file_config: {
+  name: "IPython files"
+  desc: ".ipynb files"
+  ext: "ipynb"
+  file_group: FG_PLAIN_TEXT_GENERIC
+  scan_mode: SCAN_DOC_IPYNB
+  target_type: DOC_IPYNB
+}
