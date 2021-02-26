@@ -115,6 +115,7 @@ exclude_patterns = [
     # Ignore markdown source for notebooks; myst-nb builds from the ipynb
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
+    'jax-101/*.md',
     'autodidax.md',
 ]
 
@@ -185,7 +186,9 @@ execution_excludepatterns = [
     'notebooks/score_matching.*',
     'notebooks/maml.*',
     # Strange error apparently due to asynchronous cell execution
-    'notebooks/thinking_in_jax.*'
+    'notebooks/thinking_in_jax.*',
+    # TODO(jakevdp): enable execution on these
+    'notebooks/jax-101/*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
