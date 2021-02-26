@@ -14,10 +14,10 @@
 
 """Bazel workspace for PocketFFT."""
 
-load("@org_tensorflow//third_party:repo.bzl", "third_party_http_archive")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 def repo():
-    third_party_http_archive(
+    http_archive(
         name = "pocketfft",
         sha256 = "bba6962b9f71a220b4873549bad5e6e5a2630bc465e3f9a9822c4ab2418709a7",
         strip_prefix = "pocketfft-53e9dd4d12f986207c96d97c5183f5a72239c76e",
