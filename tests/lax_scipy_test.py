@@ -146,6 +146,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker)
 
+  def testLogSumExpZeros(self):
+    # Regression test for https://github.com/google/jax/issues/5370
+    scipy_fun = lambda a, b: osp_special.logsumexp(a, b=b)
+    lax_fun = lambda a, b: lsp_special.logsumexp(a, b=b)
+    args_maker = lambda: [np.array([-1000, -2]), np.array([1, 0])]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
+    self._CompileAndCheck(lax_fun, args_maker)
+
   @parameterized.named_parameters(itertools.chain.from_iterable(
     jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix(
