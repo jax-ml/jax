@@ -26,12 +26,10 @@ from absl.testing import parameterized
 import jax
 import jax.lib
 from jax import jit, grad, jvp, vmap
-from jax.interpreters import xla
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
 from jax import test_util as jtu
-from jax._src.lax import linalg as lax_linalg
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -334,10 +332,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigh(self, n, dtype, lower):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    tol = 1e-4
-    if jtu.device_under_test() == "tpu":
-      if jnp.issubdtype(dtype, np.complexfloating):
-        raise unittest.SkipTest("No complex eigh on TPU")
+    tol = 1e-3
+
     args_maker = lambda: [rng((n, n), dtype)]
 
     uplo = "L" if lower else "U"
@@ -354,23 +350,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
                           rtol=1e-3)
 
-  def testEighComplexTPUFails(self):
-    # The eigh TPU translation rule raises NotImplementedError for complex
-    # input. This test is designed to fail if TPU ever starts supporting
-    # complex input, so that we know to remove that check.
-    if jtu.device_under_test() != 'tpu':
-      self.skipTest("Test requires TPU")
-
-    with self.assertRaisesRegex(NotImplementedError, "eigh is not implemented on TPU for complex inputs."):
-      jnp.linalg.eigh(jnp.ones((4, 4), dtype='complex64'))
-
-    tpu_rule = xla.backend_specific_translations['tpu'].pop(lax_linalg.eigh_p)
-    try:
-      with self.assertRaisesRegex(RuntimeError, "Invalid argument: Type of the input matrix must be float: got c64.*"):
-        jnp.linalg.eigh(jnp.ones((4, 4), dtype='complex64'))
-    finally:
-      xla.backend_specific_translations['tpu'][lax_linalg.eigh_p] = tpu_rule
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
            jtu.format_shape_dtype_string(shape, dtype)),
@@ -380,9 +359,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigvalsh(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if jtu.device_under_test() == "tpu":
-      if jnp.issubdtype(dtype, jnp.complexfloating):
-        raise unittest.SkipTest("No complex eigh on TPU")
     n = shape[-1]
     def args_maker():
       a = rng((n, n), dtype)
@@ -425,9 +401,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in complex_types
       for lower in [True, False]
       for eps in [1e-4]))
-  # TODO(phawkins): enable when there is a complex eigendecomposition
-  # implementation for TPU.
-  @jtu.skip_on_devices("tpu")
   def testEighGradVectorComplex(self, shape, dtype, lower, eps):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
@@ -476,9 +449,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEighBatching(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if (jtu.device_under_test() == "tpu" and
-        jnp.issubdtype(dtype, np.complexfloating)):
-      raise unittest.SkipTest("No complex eigh on TPU")
     shape = (10,) + shape
     args = rng(shape, dtype)
     args = (args + np.conj(T(args))) / 2
@@ -922,7 +892,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # jtu.check_grads(lambda *args: jnp_fun(*args)[0], args_maker(), order=2, atol=1e-2, rtol=1e-2)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):
     def test(x):
       val, vec = jnp.linalg.eigh(x)
