@@ -4672,6 +4672,118 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(g_x, 17. * jnp.ones(2), check_dtypes=False)
 
 
+class CustomTransposeTest(jtu.JaxTestCase):
+
+  def transpose(self, f, x_example):
+    def transposed(y):
+      x, = api.linear_transpose(f, x_example)(y)
+      return x
+    return transposed
+
+  def test_linear_call(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return t / r
+      return x + api.linear_call(fn, tp, y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), f_ref(x, y))
+
+    f1     = lambda x: f(x, y)
+    f1_ref = lambda x: f_ref(x, y)
+    self.assertAllClose(self.transpose(f1,     x)(x),
+                        self.transpose(f1_ref, x)(x))
+
+  def test_linear_call_incorrect_transpose(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return t / (2. * r)  # nb: not the true transpose
+      return x + api.linear_call(fn, tp, y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), f_ref(x, y))
+
+    f1     = lambda x: f(x, y)
+    f1_ref = lambda x: f_ref(x, 2. * y)  # nb: double the reference divisor
+    self.assertAllClose(self.transpose(f1,     x)(x),
+                        self.transpose(f1_ref, x)(x))
+
+  def test_linear_call_transpose_transpose_transpose(self):
+    def fn(r, x): return x / r
+    def tp(r, t): return t / (2. * r)  # nb: untrue transpose
+    def f_(x, y):
+      return x + api.linear_call(fn, tp, y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    f = lambda x: f_(x, y)
+    ft   = self.transpose(f,   x)
+    ftt  = self.transpose(ft,  x)
+    fttt = self.transpose(ftt, x)
+    self.assertAllClose(ft(x), x + tp(y, x))
+    self.assertAllClose(f(x),  ftt(x))
+    self.assertAllClose(ft(x), fttt(x))
+
+  def test_linear_call_scalar_to_vector(self):
+    def f(c, x):
+      def fn(_, x):
+        return [x, x]
+
+      def tp(_, t):
+        t1, t2 = t
+        return t1 + t2
+
+      return api.linear_call(fn, tp, (), c * x)
+
+    def f_ref(c, x):
+      return [c * x, c * x]
+
+    c, x = 2., 3.
+    t = [4., 5.]
+    self.assertAllClose(f(c, x), f_ref(c, x))
+    self.assertAllClose(self.transpose(partial(f,     c), x)(t),
+                        self.transpose(partial(f_ref, c), x)(t))
+
+  def test_linear_call_nested(self):
+    # identity function with an untrue transpose of 0
+    def id_(x):
+      def f(_, x): return x
+      def t(_, t): return 0.
+      return api.linear_call(f, t, (), x)
+
+    # identity function with an untrue transpose of 7, and where both
+    # forward and transpose have custom transpositions that should
+    # never end up invoked.
+    def f(x):
+      def f_(_, x): return id_(x)
+      def t_(_, t): return id_(7.)
+      return api.linear_call(f_, t_, (), x)
+
+    x = 5.
+    id_t  = self.transpose(id_,  x)
+    id_tt = self.transpose(id_t, x)
+    ft   = self.transpose(f,    x)
+    ftt  = self.transpose(ft,   x)
+    fttt = self.transpose(ftt,  x)
+
+    self.assertAllClose(id_(x),   x)
+    self.assertAllClose(id_t(x),  0.)
+    self.assertAllClose(id_tt(x), x)
+
+    self.assertAllClose(f(x),    x)
+    self.assertAllClose(ft(x),   7.)
+    self.assertAllClose(ftt(x),  x)
+    self.assertAllClose(fttt(x), 7.)
+
+
 class InvertibleADTest(jtu.JaxTestCase):
 
   def test_invertible_basic(self):
