@@ -334,27 +334,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigh(self, n, dtype, lower):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    tol = 30
+    tol = 1e-4
     if jtu.device_under_test() == "tpu":
       if jnp.issubdtype(dtype, np.complexfloating):
         raise unittest.SkipTest("No complex eigh on TPU")
-      # TODO(phawkins): this tolerance is unpleasantly high.
-      tol = 1500
     args_maker = lambda: [rng((n, n), dtype)]
 
     uplo = "L" if lower else "U"
 
-    # Norm, adjusted for dimension and type.
-    def norm(x):
-      norm = np.linalg.norm(x, axis=(-2, -1))
-      return norm / ((n + 1) * jnp.finfo(dtype).eps)
-
     a, = args_maker()
     a = (a + np.conj(a.T)) / 2
     w, v = jnp.linalg.eigh(np.tril(a) if lower else np.triu(a),
-                          UPLO=uplo, symmetrize_input=False)
-    self.assertTrue(norm(np.eye(n) - np.matmul(np.conj(T(v)), v)) < 5)
-    self.assertTrue(norm(np.matmul(a, v) - w * v) < tol)
+                           UPLO=uplo, symmetrize_input=False)
+    self.assertLessEqual(
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
+    self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
+                         tol * np.linalg.norm(a))
 
     self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
                           rtol=1e-3)
