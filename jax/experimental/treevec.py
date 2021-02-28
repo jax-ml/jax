@@ -30,6 +30,8 @@ from .. import dtypes
 from .. import lax
 from .. import linear_util as lu
 from ..api_util import flatten_fun_nokwargs
+from ..interpreters import batching
+from ..interpreters import partial_eval
 from ..interpreters import xla
 from .._src.util import prod, safe_map as map, split_list, unzip2, unzip3
 from ..tree_util import (
@@ -203,14 +205,16 @@ def _flatten_tree_tracers(tracers):
   return flat, tree_tracer_def
 
 
-@lu.transformation_with_aux
-def tree_subtrace(main, tree_tracer_def_in, *flat_in):
+def tree_subtrace_gen(main, tree_tracer_def_in, *flat_in):
   trace = TreeTrace(main, core.cur_sublevel())
   in_tracers = _unflatten_tree_tracers(trace, tree_tracer_def_in, flat_in)
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
   flat_out, tree_tracer_def_out = _flatten_tree_tracers(out_tracers)
   yield flat_out, tree_tracer_def_out
+
+
+tree_subtrace = lu.transformation_with_aux(tree_subtrace_gen)
 
 
 class TreeTrace(core.Trace):
@@ -256,9 +260,9 @@ class TreeTrace(core.Trace):
       return _unflatten_tree_tracers(trace, tree_tracer_def, flat)
     return flat, todo
 
-  def process_tree_call(self, tree_call_primitive, f, tracers, params):
+  def process_tree_call(self, call_primitive, f, tracers, params):
     args = _tree_tracers_to_trees(tracers)
-    result = f.call_wrapped(*args)
+    result = call_primitive.bind(f, *args, **params)
     return _trees_to_tree_tracers(self, result)
 
 
@@ -270,6 +274,7 @@ class TreeCall(core.Primitive):
     tracers = map(top_trace.full_raise, args)
     out = top_trace.process_tree_call(self, f, tracers, params)
     return map(core.full_lower, out)
+
 
 from jax.interpreters import ad
 
@@ -321,6 +326,48 @@ def _jvp_process_tree_call(self, call_primitive, f: lu.WrappedFun, tracers, para
 ad.JVPTrace.process_tree_call = _jvp_process_tree_call
 
 core.EvalTrace.process_tree_call = core.EvalTrace.process_call
+
+partial_eval.JaxprTrace.process_tree_call = partial_eval.JaxprTrace.process_call
+
+@lu.transformation_with_aux
+def _tree_batch_subtrace(main, in_dims_trees, *in_vals_trees, **params):
+  # trees -> lists
+  in_vals_lists, in_vals_tdefs = unzip2(tree_flatten(x) for x in in_vals_trees)
+  in_dims_lists = [[d] * len(v) for d, v in zip(in_dims_trees, in_vals_lists)]
+  # lists -> flat lists for values and dims
+  in_vals_list = list(it.chain(*in_vals_lists))
+  in_dims_list = list(it.chain(*in_dims_lists))
+  # flat list -> batch tracer list
+  gen = batching.batch_subtrace_gen(main, in_dims_list, *in_vals_list, **params)
+  batch_in_list, _ = next(gen)
+  # batch tracer list -> batch tracer tree
+  batch_in_lists = split_list(batch_in_list, [td.num_leaves for td in in_vals_tdefs[:-1]])
+  batch_out_trees = yield map(tree_unflatten, in_vals_tdefs, batch_in_lists), params
+  # brace tracer tree -> batch tracer list
+  batch_out_lists, out_tdefs = unzip2(tree_flatten(x) for x in batch_out_trees)
+  batch_out_list = list(it.chain(*batch_out_lists))
+  # batch tracer list -> lists
+  out_vals_list, out_dims_list = gen.send(batch_out_list)
+  tree_sizes = [td.num_leaves for td in out_tdefs[:-1]]
+  # lists -> trees
+  out_vals_trees = map(tree_unflatten, out_tdefs, split_list(out_vals_list, tree_sizes))
+  out_dims_lists = split_list(out_dims_list, tree_sizes)
+  out_dims_trees = []
+  for dims in out_dims_lists:
+    dim, = set(dims)
+    out_dims_trees.append(dim)
+  yield out_vals_trees, out_dims_trees
+
+
+def _batch_process_tree_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+  assert call_primitive.multiple_results
+  vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+  f, dims_out = _tree_batch_subtrace(f, self.main, dims)
+  # TODO: deal with unbatched values?
+  vals_out = call_primitive.bind(f, *vals, **params)
+  return [batching.BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+batching.BatchTrace.process_tree_call = _batch_process_tree_call
+
 
 def _tree_call_impl(fun: lu.WrappedFun, *args, **params):
   return fun.call_wrapped(*args)

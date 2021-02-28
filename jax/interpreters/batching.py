@@ -34,8 +34,7 @@ def batch(fun: lu.WrappedFun, in_vals, in_dims, out_dim_dests, axis_name):
   batched_fun = batch_fun(fun, in_dims, out_dim_dests, axis_name=axis_name)
   return batched_fun.call_wrapped(*in_vals)
 
-@lu.transformation_with_aux
-def batch_subtrace(main, in_dims, *in_vals, **params):
+def batch_subtrace_gen(main, in_dims, *in_vals, **params):
   trace = main.with_cur_sublevel()
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                 for val, dim in zip(in_vals, in_dims)]
@@ -44,6 +43,7 @@ def batch_subtrace(main, in_dims, *in_vals, **params):
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
   yield out_vals, out_dims
 
+batch_subtrace = lu.transformation_with_aux(batch_subtrace_gen)
 
 def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, axis_name,
               sum_match=False):

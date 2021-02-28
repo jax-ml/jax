@@ -170,7 +170,15 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(lambda x: x + jnp.ones_like(x))(tree)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
-  def test_arithmetic_broadcasting(self):
+  def test_arithmetic_with_broadcasting(self):
+    tree = {'a': 0.0, 'b': jnp.array([0.1, 0.2])}
+    expected = {'a': jnp.array([1.0, 2.0]),
+                'b': jnp.array([[1.1, 1.2,], [2.1, 2.2]])}
+    y = jnp.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
+    actual = tree_vectorize(lambda x: x + y)(tree)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+  def test_arithmetic_multiple_tree_broadcasting(self):
 
     @tree_vectorize
     # @shapecheck(['n', 'm'], '(n, m)')
@@ -302,13 +310,13 @@ class FlatTreeTest(jtu.JaxTestCase):
     self.assertTreeEqual(actual, 3, check_dtypes=True)
 
   def test_tie_in(self):
-    if config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works without omnistaging")
     x = jnp.array(1)
     tree = {'x': 1, 'y': 2}
     actual = tree_vectorize(lax.tie_in)(x, tree)
     self.assertTreeEqual(actual, tree, check_dtypes=True)
-    self.assertIn('tie_in', str(make_jaxpr(tree_vectorize(lax.tie_in))(x, tree)))
+    if not config.omnistaging_enabled:
+      jaxpr = make_jaxpr(tree_vectorize(lax.tie_in))(x, tree)
+      self.assertIn('tie_in', str(jaxpr))
 
   # integration tests
 
@@ -319,6 +327,14 @@ class FlatTreeTest(jtu.JaxTestCase):
   #   actual = tree_vectorize(jnp.zeros_like)(tree)
   #   expected = {'x': 0, 'y': 0}
   #   self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+  def test_jit_arithmetic_with_broadcasting(self):
+    tree = {'a': 0.0, 'b': jnp.array([0.1, 0.2])}
+    expected = {'a': jnp.array([1.0, 2.0]),
+                'b': jnp.array([[1.1, 1.2,], [2.1, 2.2]])}
+    y = jnp.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
+    actual = tree_vectorize(lambda x: jax.jit(jnp.add)(x, y))(tree)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_transposing_arithmetic(self):
     tree = {'x': 1, 'y': 2}
@@ -397,7 +413,6 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = f(tree)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
-  @pytest.mark.xfail
   def test_vmap_tree_call(self):
 
     def g(x):
@@ -413,6 +428,22 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = f(g, tree)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
+  def test_vmap_tree_call_in_axes(self):
+
+    def g(x, y):
+      assert x['a'].shape == ()
+      assert y['a'].shape == (3,)
+      return {'b': x['a'] + y['a']}
+
+    @tree_vectorize
+    def f(g, x, y):
+      return jax.vmap(g, in_axes=(0, None))(x, y)
+
+    trees = ({'a': jnp.arange(3.0)}, {'a': 10 * jnp.ones(3)})
+    expected = {'b': jnp.array([[10.0, 10, 10], [11, 11, 11], [12, 12, 12]])}
+    actual = f(g, *trees)
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
   def test_jvp(self):
     @tree_vectorize
     def f(x, y):
@@ -424,7 +455,6 @@ class FlatTreeTest(jtu.JaxTestCase):
     expected = ({'x': 0.5, 'y': 2.0}, {'x': 3.0, 'y': 8.0})
     self.assertAllClose(actual, expected, check_dtypes=True)
 
-  # @pytest.mark.xfail
   def test_jvp_tree_call(self):
 
     def g(x):
@@ -441,7 +471,28 @@ class FlatTreeTest(jtu.JaxTestCase):
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   @pytest.mark.xfail
-  def test_jacobian(self):
+  def test_grad(self):
+    def g(x):
+      return x['a'] + 2 * x['b'] + x['c'] ** 2
+
+    @tree_vectorize
+    def f(g, x):
+      return jax.grad(g)(x)
+
+    actual = f(g, {'a': 0.0, 'b': 0.0, 'c': -1.0})
+    expected = {'a': 1.0, 'b': 2.0, 'c': -2.0}
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+  def _jac_apply_argnums(self, transform, fun, argnums=0):
+    def jacfun(*args):
+      f_partial, dyn_args = api.argnums_partial(
+          lu.wrap_init(fun), argnums, args)
+      result = transform(f_partial.call_wrapped, dyn_args)
+      return result[0] if isinstance(argnums, int) else result
+    return jacfun
+
+  @pytest.mark.xfail
+  def test_jacfwd(self):
 
     @tree_vectorize
     def _jacfwd(f, x):
@@ -450,23 +501,7 @@ class FlatTreeTest(jtu.JaxTestCase):
       y, jac = jax.vmap(pushfwd, out_axes=(None, 1))((basis,))
       return jac
 
-    @tree_vectorize
-    def _jacrev(f, x):
-      y, pullback = jax.vjp(f, x)
-      basis = jnp.eye(y.size, dtype=y.dtype)
-      jac = jax.vmap(pullback)(basis)
-      return jac
-
-    def _apply_argnums(transform, fun, argnums=0):
-      def jacfun(*args):
-        f_partial, dyn_args = api.argnums_partial(
-            lu.wrap_init(fun), argnums, args)
-        result = transform(f_partial.call_wrapped, dyn_args)
-        return result[0] if isinstance(argnums, int) else result
-      return jacfun
-
-    jacfwd = partial(_apply_argnums, _jacfwd)
-    jacrev = partial(_apply_argnums, _jacrev)
+    jacfwd = partial(self._jac_apply_argnums, _jacfwd)
 
     f = lambda x: {'c': x['a'] * (1 + x['b'] ** 2), 'd': x['a'] - x['b']}
     tree = {'a': 1.0, 'b': 2.0}
@@ -475,9 +510,24 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = jacfwd(f)(tree)
     self.assertTreeEqual(expected, actual, check_dtypes=True)
 
+  @pytest.mark.xfail
+  def test_jacrev(self):
+
+    @tree_vectorize
+    def _jacrev(f, x):
+      y, pullback = jax.vjp(f, x)
+      basis = jnp.eye(y.size, dtype=y.dtype)
+      jac = jax.vmap(pullback)(basis)
+      return jac
+
+    jacrev = partial(self._jac_apply_argnums, _jacrev)
+
+    f = lambda x: {'c': x['a'] * (1 + x['b'] ** 2), 'd': x['a'] - x['b']}
+    tree = {'a': 1.0, 'b': 2.0}
+    expected = jax.jacrev(f)(tree)
+
     actual = jacrev(f)(tree)
     self.assertTreeEqual(expected, actual, check_dtypes=True)
-
 
 
 if __name__ == "__main__":
