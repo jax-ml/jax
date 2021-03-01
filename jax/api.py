@@ -355,7 +355,11 @@ def _cpp_jit(
     functions decorated with jax.jit), so we delay inspecting the value
     of the jax_enable_x64 flag until JIT time.
     """
-    return config.x64_enabled
+    # TODO(jblespiau): Delete when jaxlib 0.1.62 is the minimal version.
+    if lib._xla_extension_version >= 4:
+      return config.read("jax_enable_x64")
+    else:
+      return config.x64_enabled
 
   def get_jax_disable_jit_flag():
     """Returns the value of the `jax_disable_jit` flag.
@@ -375,8 +379,10 @@ def _cpp_jit(
   @wraps(fun)
   @api_boundary
   def f_jitted(*args, **kwargs):
+    # TODO(jblespiau): We can remove `config.x64_enabled` when jaxlib has
+    # extension version 4
     context = (getattr(core.thread_local_state.trace_state.trace_stack,
-                       'dynamic', None), config.x64_enabled)
+                         "dynamic", None), config.x64_enabled)
     # TODO(jblespiau): Move this to C++.
     if (FLAGS.jax_debug_nans or FLAGS.jax_debug_infs) and not _jit_is_disabled():
       device_arrays = cpp_jitted_f(context, *args, **kwargs)

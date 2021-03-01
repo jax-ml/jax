@@ -18,7 +18,7 @@
 """
 
 from contextlib import contextmanager
-from jax.config import config
+from jax import config
 
 @contextmanager
 def enable_x64():
