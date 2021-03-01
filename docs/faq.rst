@@ -170,7 +170,7 @@ speed of code using JAX:
 4. **Transferring data between CPUs and accelerators takes time.** If you only
    want to measure the how long it takes to evaluate a function, you may want to
    transfer data to the device on which you want to run it first (see
-   faq-data-placement_).
+   :ref:`faq-data-placement`).
 
 Here's an example of how to put together all these tricks into a microbenchmark
 for comparing JAX versus NumPy, making using of IPython's convenient
