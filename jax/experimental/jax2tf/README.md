@@ -2,10 +2,11 @@
 
 This package provides experimental support for interoperation between JAX and TensorFlow.
 There are two interoperation directions: 
-(a) `jax2tf.convert`: using JAX functions in a TensorFlow context, e.g., 
-for eager or graph execution, or for saving as a SavedModel, 
-and (b) `call_tf`: using TensorFlow 
-functions in a JAX context, e.g., to use a TensorFlow library or a SavedModel. 
+
+- `jax2tf.convert`: using JAX functions in a TensorFlow context, e.g., 
+for eager or graph execution, or for saving as a SavedModel; and 
+- `call_tf`: using TensorFlow  functions in a JAX context, e.g., to use a
+TensorFlow library or a SavedModel. 
 
 The `jax2tf.convert` mechanism can wrap a function
 written in JAX, possibly including JAX transformations, and turn it into
@@ -375,4 +376,3 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
   * Ensure that there is no array copy through the host when running in eager
     mode (JAX op-by-op).
   * Show how use ``call_tf`` to load a SavedModel into JAX.   
-
