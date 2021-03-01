@@ -1153,7 +1153,7 @@ def _nonzero_typecheck_rule(invar):
   if len(invar.aval.shape) == 1:
     out_val_aval = AbsArray((out_dim_var,), BaseType(np.dtype('int32')))
   else:
-    indices = tuple(range(len(out_dim_var.aval.shape)))
+    indices = tuple(range(len(out_dim_var.aval.shape)))  # pytype: disable=attribute-error
     expr = DimIndexingExpr(out_dim_var, indices)
     out_val_aval = AbsArray((*invar.aval.shape[:-1], expr),
                               BaseType(np.dtype('int32')))
