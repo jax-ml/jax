@@ -956,8 +956,9 @@ tf_impl[lax.iota_p] = _iota
 def _div(lhs, rhs):
   if lhs.dtype.is_integer:
     quotient = tf.math.floordiv(lhs, rhs)
-    select = tf.math.logical_and(tf.math.sign(lhs) != tf.math.sign(rhs),
-                                 tf.math.floormod(lhs, rhs) != 0)
+    select = tf.math.logical_and(
+        tf.not_equal(tf.math.sign(lhs), tf.math.sign(rhs)),
+        tf.not_equal(tf.math.floormod(lhs, rhs), 0))
     return tf.where(select, quotient + 1, quotient)
   else:
     return tf.math.truediv(lhs, rhs)

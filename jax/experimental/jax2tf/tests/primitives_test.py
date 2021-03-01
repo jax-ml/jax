@@ -65,9 +65,11 @@ from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
+from jax.experimental import jax2tf
 from jax.interpreters import xla
 
 import numpy as np
+import tensorflow as tf
 
 config.parse_flags_with_absl()
 
@@ -241,6 +243,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         x = np.array([1, 2], dtype=x_dtype)
         y = np.array([3, 4], dtype=y_dtype)
         self.ConvertAndCompare(f_jax, x, y)
+
+  def test_integer_div(self):
+    x = jnp.array([-4, -3, -1, 0, 1, 3, 6])
+    y = np.int32(3)
+    self.ConvertAndCompare(jnp.floor_divide, x, y)
+    expected = jnp.floor_divide(x, y)
+    # Try it with TF 1 as well (#5831)
+    with tf.compat.v1.Session() as sess:
+      tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
+      self.assertAllClose(expected, tf1_res)
 
   def test_disable_xla(self):
 
