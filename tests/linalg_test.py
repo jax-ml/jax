@@ -26,12 +26,10 @@ from absl.testing import parameterized
 import jax
 import jax.lib
 from jax import jit, grad, jvp, vmap
-from jax.interpreters import xla
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
 from jax import test_util as jtu
-from jax._src.lax import linalg as lax_linalg
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -353,23 +351,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
                           rtol=1e-3)
-
-  def testEighComplexTPUFails(self):
-    # The eigh TPU translation rule raises NotImplementedError for complex
-    # input. This test is designed to fail if TPU ever starts supporting
-    # complex input, so that we know to remove that check.
-    if jtu.device_under_test() != 'tpu':
-      self.skipTest("Test requires TPU")
-
-    with self.assertRaisesRegex(NotImplementedError, "eigh is not implemented on TPU for complex inputs."):
-      jnp.linalg.eigh(jnp.ones((4, 4), dtype='complex64'))
-
-    tpu_rule = xla.backend_specific_translations['tpu'].pop(lax_linalg.eigh_p)
-    try:
-      with self.assertRaisesRegex(RuntimeError, "Invalid argument: Type of the input matrix must be float: got c64.*"):
-        jnp.linalg.eigh(jnp.ones((4, 4), dtype='complex64'))
-    finally:
-      xla.backend_specific_translations['tpu'][lax_linalg.eigh_p] = tpu_rule
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
