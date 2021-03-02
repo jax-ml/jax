@@ -10,6 +10,7 @@ It is a work in progress; more content will be added soon!
 
   01-jax-basics
   02-jitting
+  03-vectorization
 
 
 .. _Deepmind: http://deepmind.com
