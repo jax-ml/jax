@@ -17,7 +17,7 @@ from jax import core
 from .core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
                    valid_jaxtype, raise_to_shaped, get_aval)
 from .tree_util import register_pytree_node
-from typing import Any, Dict, Type
+from typing import Any, Callable, Dict, Type
 from ._src.util import safe_map
 
 from ._src import traceback_util
@@ -27,7 +27,7 @@ Array = Any
 
 map = safe_map
 
-jaxval_adders = {}
+jaxval_adders: Dict[type, Callable] = {}
 jaxval_adders[Unit] = lambda _, __: unit
 
 def add_jaxvals(x, y):
@@ -36,7 +36,7 @@ def add_jaxvals(x, y):
   else:
     return add_jaxvals_p.bind(x, y)
 
-add_jaxvals_p = Primitive('add_any')
+add_jaxvals_p: Primitive = Primitive('add_any')
 add_any_p = add_jaxvals_p
 
 @add_jaxvals_p.def_impl
@@ -58,7 +58,7 @@ aval_zeros_likers[AbstractUnit] = lambda _: unit
 def zeros_like_jaxval(val):
   return zeros_like_p.bind(val)
 
-zeros_like_p = Primitive('zeros_like')
+zeros_like_p: Primitive = Primitive('zeros_like')
 
 @zeros_like_p.def_impl
 def zeros_like_impl(example):
@@ -85,6 +85,6 @@ def _stop_gradient_impl(x):
                     f"input argument is: {x}")
   return x
 
-stop_gradient_p = Primitive('stop_gradient')
+stop_gradient_p : Primitive = Primitive('stop_gradient')
 stop_gradient_p.def_impl(_stop_gradient_impl)
 stop_gradient_p.def_abstract_eval(lambda x: x)

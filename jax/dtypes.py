@@ -40,8 +40,8 @@ flags.DEFINE_bool('jax_enable_x64',
                   'Enable 64-bit types to be used.')
 
 # bfloat16 support
-bfloat16 = xla_client.bfloat16
-_bfloat16_dtype = np.dtype(bfloat16)
+bfloat16: type = xla_client.bfloat16
+_bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
 
