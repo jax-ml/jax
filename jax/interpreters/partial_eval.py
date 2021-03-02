@@ -922,10 +922,7 @@ class DynamicJaxprTracer(core.Tracer):
                 "depends on the value of the arguments to "
                 f"{self._trace.main.source_info} at flattened positions {invar_pos}, "
                 "and the computation of these values is being staged out "
-                "(that is, delayed rather than executed eagerly).\n\n"
-                "You can use transformation parameters such as `static_argnums` "
-                "for `jit` to avoid tracing particular arguments of transformed "
-                "functions, though at the cost of more recompiles.")
+                "(that is, delayed rather than executed eagerly).")
     elif progenitor_eqns:
       msts = [f"  operation {core.pp_eqn(eqn, print_shapes=True)}\n"
               f"    from line {source_info_util.summarize(eqn.source_info)}"

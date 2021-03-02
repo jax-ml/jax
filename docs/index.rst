@@ -43,6 +43,7 @@ For an introduction to JAX, start at the
 
    CHANGELOG
    faq
+   errors
    jaxpr
    async_dispatch
    concurrency

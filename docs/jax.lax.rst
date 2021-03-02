@@ -137,6 +137,7 @@ Operators
     top_k
     transpose
 
+.. _lax-control-flow:
 
 Control flow operators
 ----------------------
