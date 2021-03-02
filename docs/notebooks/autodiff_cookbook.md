@@ -331,6 +331,8 @@ To implement `hessian`, we could have used `jacfwd(jacrev(f))` or `jacrev(jacfwd
 
 +++ {"id": "mtSRvouV6vvG"}
 
+(jacobian-vector-product)=
+
 ### Jacobian-Vector products (JVPs, aka forward-mode autodiff)
 
 JAX includes efficient and general implementations of both forward- and reverse-mode automatic differentiation. The familiar `grad` function is built on reverse-mode, but to explain the difference in the two modes, and when each can be useful, we need a bit of math background.
@@ -399,6 +401,8 @@ If you're doing gradient-based optimization in machine learning, you probably wa
 To do better for functions like this, we just need to use reverse-mode.
 
 +++ {"id": "PhkvkZazdXu1"}
+
+(vector-jacobian-product)=
 
 ### Vector-Jacobian products (VJPs, aka reverse-mode autodiff)
 
