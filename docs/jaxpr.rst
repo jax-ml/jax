@@ -1,3 +1,5 @@
+.. _understanding-jaxprs:
+
 Understanding Jaxprs
 ====================
 
