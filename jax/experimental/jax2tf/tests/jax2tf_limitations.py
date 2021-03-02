@@ -591,11 +591,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             enabled=(harness.params["shape"] != (0, 0)),  # This actually works!
             ),
         Jax2TfLimitation(
-            "function not yet compilable",
-            dtypes=(np.complex64, np.complex128),
-            modes="compiled",
-            skip_tf_run=True),
-        Jax2TfLimitation(
             "TODO: numeric discrepancies",
             dtypes=np.float16,
             devices="tpu",
