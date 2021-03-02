@@ -905,6 +905,11 @@ def closure_convert(fun, *example_args):
       ``fun``. This type-specialized form of ``fun`` is the function
       that will be closure converted.
 
+  Returns:
+    A pair comprising (i) a Python callable, accepting the same
+    arguments as ``fun`` followed by arguments corresponding to the
+    values hoisted from its closure, and (ii) a list of values hoisted
+    from the closure.
   """
   flat_args, in_tree = tree_flatten(example_args)
   in_avals = tuple(map(abstractify, flat_args))
@@ -928,7 +933,7 @@ def _closure_convert_for_avals(fun, in_tree, in_avals):
 
   # We only want to closure convert for constants with respect to which we're
   # differentiating. As a proxy for that, we hoist consts with float dtype.
-  # TODO(mattjj): revise this approach
+  # TODO(frostig,mattjj): revise this approach
   from .numpy import inexact
   is_float = lambda c: dtypes.issubdtype(dtypes.dtype(c), inexact)
   (closure_consts, hoisted_consts), merge = partition_list(is_float, consts)
