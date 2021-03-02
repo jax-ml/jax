@@ -535,7 +535,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def eigh(cls, harness: primitive_harness.Harness):
     dtype = harness.dtype
-    shape = harness.params["shape"]
 
     def custom_assert(tst, result_jax, result_tf, *, args, tol):
       operand, = args
