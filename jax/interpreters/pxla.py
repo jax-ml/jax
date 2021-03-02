@@ -431,7 +431,7 @@ pxla_result_handlers[ConcreteArray] = array_result_handler
 
 ### lazy device-memory persistence and result handling
 
-class ShardedDeviceArray(xla._DeviceArray):
+class ShardedDeviceArray(xla.DeviceArray):  # type: ignore
   """A ShardedDeviceArray is an ndarray sharded across devices.
 
   The purpose of a ShardedDeviceArray is to reduce the number of transfers when
@@ -456,8 +456,10 @@ class ShardedDeviceArray(xla._DeviceArray):
       stored in the corresponding device buffer, i.e. `array[indices[i]] ==
       device_buffers[i].to_py()`.
   """
-  __slots__ = ["device_buffers", "sharding_spec", "indices",
-               "_one_replica_buffer_indices"]
+  __slots__ = [
+      "aval", "device_buffers", "sharding_spec", "indices",
+      "_one_replica_buffer_indices", "_npy_value"
+  ]
 
   # TODO(skye): expose PyLocalBuffers in xla_client
   def __init__(self,
@@ -501,6 +503,22 @@ class ShardedDeviceArray(xla._DeviceArray):
           seen_index_hashes.add(hashed_index)
       self._one_replica_buffer_indices = one_replica_indices
     return self._one_replica_buffer_indices
+
+  @property
+  def shape(self):
+    return self.aval.shape
+
+  @property
+  def dtype(self):
+    return self.aval.dtype
+
+  @property
+  def size(self):
+    return prod(self.aval.shape)
+
+  @property
+  def ndim(self):
+    return len(self.aval.shape)
 
   def copy_to_host_async(self):
     for buffer_index in self.one_replica_buffer_indices:
@@ -546,7 +564,7 @@ class ShardedDeviceArray(xla._DeviceArray):
         buf = self.device_buffers[buf_idx]
         aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
         return xla.make_device_array(aval, None, lazy.array(aval.shape), buf)
-    return super(ShardedDeviceArray, self).__getitem__(idx)
+    return xla.DeviceArray.__getitem__(self, idx)
 
 
 def _hashable_index(idx):
