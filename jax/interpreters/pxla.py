@@ -912,6 +912,10 @@ def parallel_callable(fun: lu.WrappedFun,
                                             local_out_parts, out_pvals,
                                             compiled.local_devices(), backend)
 
+  if hasattr(backend, "wrap_execute_replicated"):
+    return backend.wrap_execute_replicated(compiled, compiled.local_devices(),
+                                           input_indices, input_sharding_specs,
+                                           handle_outs)
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
@@ -1494,6 +1498,10 @@ def mesh_callable(fun: lu.WrappedFun,
   handle_outs = avals_to_results_handler(num_local_replicas, num_local_partitions,
                                          local_output_specs, local_out_untiled_avals)
 
+  if hasattr(backend, "wrap_execute_replicated"):
+    return backend.wrap_execute_replicated(compiled, compiled.local_devices(),
+                                           input_indices, local_input_specs,
+                                           handle_outs)
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
