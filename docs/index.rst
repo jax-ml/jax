@@ -53,6 +53,7 @@ For an introduction to JAX, start at the
    rank_promotion_warning
    type_promotion
    custom_vjp_update
+   glossary
 
 .. toctree::
    :maxdepth: 2
