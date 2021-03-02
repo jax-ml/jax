@@ -870,7 +870,7 @@ def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers, *
   return [_copy_device_array_to_device(x, device) if type_is_device_array(x)
           else h(*device_put(x, device)) for h, x in zip(handlers, outs)]
 
-xla_call_p = core.CallPrimitive('xla_call')
+xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
 xla_call = xla_call_p.bind
 xla_call_p.def_impl(_xla_call_impl)
 
