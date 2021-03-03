@@ -125,4 +125,4 @@ jobs:
     - name: Test documentation
       run: |
         pytest -n 1 docs
-        pytest -n 1 --doctest-modules jax/api.py
+        pytest -n 1 --doctest-modules jax/api.py jax/_src/errors.py

@@ -30,6 +30,8 @@ import numpy as np
 
 from . import dtypes
 from .config import FLAGS, config
+from .errors import (ConcretizationTypeError, TracerArrayConversionError,
+                     TracerIntegerConversionError)
 from . import linear_util as lu
 
 from jax._src import source_info_util
@@ -483,28 +485,10 @@ class Tracer:
   __slots__ = ['_trace', '__weakref__', '_line_info']
 
   def __array__(self, *args, **kw):
-    msg = ("The numpy.ndarray conversion method __array__() was called on "
-           f"the JAX Tracer object {self}.\n\n"
-           "This error can occur when a JAX Tracer object is passed to a raw "
-           "numpy function, or a method on a numpy.ndarray object. You might "
-           "want to check that you are using `jnp` together with "
-           "`import jax.numpy as jnp` rather than using `np` via "
-           "`import numpy as np`. If this error arises on a line that involves "
-           "array indexing, like `x[idx]`, it may be that the array being "
-           "indexed `x` is a raw numpy.ndarray while the indices `idx` are a "
-           "JAX Tracer instance; in that case, you can instead write "
-           "`jnp.asarray(x)[idx]`.")
-    raise Exception(msg)
+    raise TracerArrayConversionError(self)
 
   def __index__(self):
-    msg = (f"The __index__ method was called on the JAX Tracer object {self}.\n\n"
-           "This error can occur when a JAX Tracer object is used in a context where "
-           "a Python integer is expected, such as an argument to the range() function, "
-           "or in index to a Python list. In the latter case, this can often be fixed "
-           "by converting the indexed object to a JAX array, for example by changing "
-           "`obj[idx]` to `jnp.asarray(obj)[idx]`."
-           )
-    raise TypeError(msg)
+    raise TracerIntegerConversionError(self)
 
   def __init__(self, trace: Trace):
     self._trace = trace
@@ -956,17 +940,6 @@ unitvar = UnitVar()
 
 pytype_aval_mappings[Unit] = lambda _: abstract_unit
 
-class ConcretizationTypeError(TypeError): pass
-
-def raise_concretization_error(val: Tracer, context=""):
-  msg = ("Abstract tracer value encountered where concrete value is expected.\n\n"
-         + context + "\n\n"
-         + val._origin_msg() + "\n\n"
-         "See https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error for more information.\n\n"
-          f"Encountered tracer value: {val}")
-  raise ConcretizationTypeError(msg)
-
-
 def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
   fname_context = f"The problem arose with the `{fname}` function. "
@@ -975,9 +948,8 @@ def concretization_function_error(fun, suggest_astype=False):
                       f"try using `x.astype({fun.__name__})` "
                       f"or `jnp.array(x, {fun.__name__})` instead.")
   def error(self, arg):
-    raise_concretization_error(arg, fname_context)
+    raise ConcretizationTypeError(arg, fname_context)
   return error
-
 
 def concrete_or_error(force: Any, val: Any, context=""):
   """Like force(val), but gives the context in the error message."""
@@ -987,7 +959,7 @@ def concrete_or_error(force: Any, val: Any, context=""):
     if isinstance(val.aval, ConcreteArray):
       return force(val.aval.val)
     else:
-      raise_concretization_error(val, context)
+      raise ConcretizationTypeError(val, context)
   else:
     return force(val)
 

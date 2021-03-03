@@ -3228,7 +3228,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         x = x * x
       return x
 
-    self.assertRaises(TypeError, lambda: f(3., 3))
+    self.assertRaises(jax.errors.TracerIntegerConversionError, lambda: f(3., 3))
 
     @api.jit
     def g(x):
@@ -3237,7 +3237,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       else:
         return x + 2
 
-    self.assertRaises(TypeError, lambda: g(3.))
+    self.assertRaises(jax.errors.ConcretizationTypeError, lambda: g(3.))
 
   def testTracingPrimitiveWithNoTranslationErrorMessage(self):
     # TODO(mattjj): update this for jax3
