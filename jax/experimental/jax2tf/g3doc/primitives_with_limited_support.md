@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-02-02*
+*Last generated on (YYYY-MM-DD): 2021-03-03*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -91,12 +91,13 @@ More detailed information can be found in the
 | eig | TF error: TF Conversion of eig is not implemented when both compute_left_eigenvectors and compute_right_eigenvectors are set to True | all | cpu, gpu, tpu | compiled, eager, graph |
 | eig | TF error: function not compilable | all | cpu | compiled |
 | eigh | TF test skipped: Not implemented in JAX: complex eigh not supported  | complex | tpu | compiled, eager, graph |
-| eigh | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
-| eigh | TF error: function not compilable | complex | cpu, gpu, tpu | compiled |
+| eigh | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu | compiled, eager, graph |
+| eigh | TF test skipped: TF error: XLA lowering bug | complex | gpu | compiled |
+| eigh | TF test skipped: TF error: function not yet compilable | complex | cpu, gpu, tpu | compiled |
+| eigh | TF error: op not defined for dtype | bfloat16 | tpu | compiled, eager, graph |
 | erf | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | erfc | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| fft | TF test skipped: Not implemented in JAX: only 1D FFT is currently supported b/140351181. | all | tpu | compiled, eager, graph |
 | fft | TF error: TF function not compileable | complex128, float64 | cpu, gpu | compiled |
 | ge | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | gt | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
@@ -115,7 +116,6 @@ More detailed information can be found in the
 | min | TF error: op not defined for dtype | bool, complex64, int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | neg | TF error: op not defined for dtype | unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | nextafter | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
-| population_count | TF error: op not defined for dtype | uint32, uint64 | cpu, gpu | eager, graph |
 | qr | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu | compiled, eager, graph |
 | qr | TF error: op not defined for dtype | bfloat16 | tpu | compiled, eager, graph |
 | reduce_max | TF error: op not defined for dtype | complex128 | cpu, gpu, tpu | compiled, eager, graph |
@@ -179,7 +179,6 @@ with jax2tf. The following table lists that cases when this does not quite hold:
 | digamma | May return different results at singularity points 0 and -1.JAX returns nan and TF returns inf | bfloat16 | cpu, gpu, tpu | eager, graph |
 | eig | May return the eigenvalues and eigenvectors in a potentially different order. The eigenvectors may also be different, but equally valid. | all | cpu, gpu, tpu | eager, graph |
 | eigh | May return the eigenvalues and eigenvectors in a potentially different order. The eigenvectors may also be different, but equally valid. | all | cpu, gpu, tpu | compiled, eager, graph |
-| eigh | Numeric comparision disabled: TODO: numeric discrepancies | float64 | cpu, gpu | compiled |
 | eigh | Numeric comparision disabled: TODO: numeric discrepancies | float16 | tpu | compiled, eager, graph |
 | erf_inv | May return different results at undefined points (< -1 or > 1): JAX returns `NaN` and TF returns `+inf` or `-inf`. | float32, float64 | cpu, gpu, tpu | compiled, eager, graph |
 | igamma | May return different results at undefined points (both arguments 0). JAX returns `NaN` and TF returns 0 or JAX returns 1 and TF returns `NaN` | all | cpu, gpu, tpu | eager, graph |

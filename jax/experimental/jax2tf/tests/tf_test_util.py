@@ -76,18 +76,15 @@ class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     # Ensure that all TF ops are created on the proper device (TPU or GPU or CPU)
-    # TODO(necula): why doesn't TF do this automatically?
     tf_preferred_devices = (
         tf.config.list_logical_devices("TPU") +
         tf.config.list_logical_devices("GPU") +
         tf.config.list_logical_devices())
     self.tf_default_device = tf_preferred_devices[0]
     logging.info(f"Running jax2tf converted code on {self.tf_default_device}.")
-    if jtu.device_under_test() != "gpu":
-      # TODO(necula): Change the build flags to ensure the GPU is seen by TF
-      # It seems that we need --config=cuda build flag for this to work?
-      self.assertEqual(jtu.device_under_test().upper(),
-                       self.tf_default_device.device_type)
+    # We need --config=cuda build flag for TF to see the GPUs
+    self.assertEqual(jtu.device_under_test().upper(),
+                     self.tf_default_device.device_type)
 
     with contextlib.ExitStack() as stack:
       stack.enter_context(tf.device(self.tf_default_device))
