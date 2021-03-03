@@ -949,7 +949,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     #   compiling with TF is expected to have worse performance than the
     #   custom calls made in JAX.
     return [
-        custom_numeric(tol=1e-5),
+        custom_numeric(tol=1e-4),
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16],
             devices="tpu",
