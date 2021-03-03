@@ -220,7 +220,7 @@ build --define=no_ignite_support=true
 build --define=grpc_no_ares=true
 
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
-build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
+build:cuda --@local_config_cuda//:enable_cuda
 
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
