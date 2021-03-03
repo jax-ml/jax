@@ -97,6 +97,11 @@ def maybe_print(do_print: bool, arg, what: str, tap_with_device: Optional[bool] 
     return arg
 
 
+def devices():
+  # Tests require using not more than 2 devices.
+  return api.local_devices()[:2]
+
+
 ignore_jit_of_pmap_warning = partial(
     jtu.ignore_warning, message=".*jit-of-pmap.*")
 
@@ -173,24 +178,22 @@ def assertMultiDeviceOutputEqual(tst: jtu.JaxTestCase,
                                  expected_2CPUs: str):
   """Check that the multi-device output is equal to the expected.
 
-  The tests run with 2 CPU devices on CPU (due to the flag), also
-  on TPU (due to how the TPU tests are set up), but only 1 device on
-  GPU. We adjust the expected output here for 1 device.
+  The tests run with 2 devices if available, otherwise 1 device.
+  We adjust the expected output here for 1 device.
 
   Args:
     expected_2CPUs: the expected output for 2 CPUs. If there is only
       one device, this is trimmed to the first device. If the current
       device_under_test is not a CPU, then we change the names
   """
-  assert api.device_count() in (1, 2)
   expected = expected_2CPUs
-  if api.device_count() == 1:
+  if len(devices()) == 1:
     start_device_1 = expected.find('device: cpu:1')
     if start_device_1 >= 0:
       expected = expected[0:start_device_1]
 
   def replace_device_name(m) -> str:
-    return str(api.devices()[int(m.group(1))])
+    return str(devices()[int(m.group(1))])
 
   expected = re.sub(r'cpu:(\d+)', replace_device_name, expected)
   what = testing_stream.output_sorted_by_device
@@ -460,20 +463,19 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   def test_tap_jit_devices(self):
     """Running on multiple devices."""
-    devices = api.local_devices()
-    logging.info(f"{self._testMethodName}: has devices {devices}")
+    logging.info(f"{self._testMethodName}: has devices {devices()}")
 
     def func(x, device_id):
       x1 = hcb.id_print(x, dev=str(device_id), output_stream=testing_stream)
       x2 = hcb.id_print(x1 + 1, dev=str(device_id), output_stream=testing_stream)
       return x2
 
-    for d in devices:
+    for d in devices():
       self.assertEqual(112, api.jit(func, device=d, static_argnums=1)(111, d.id))
     hcb.barrier_wait()
     logging.info(f"{self._testMethodName}: found output {testing_stream.output}")
-    self.assertEqual(len(devices), len(re.findall(r"111", testing_stream.output)))
-    self.assertEqual(len(devices), len(re.findall(r"112", testing_stream.output)))
+    self.assertEqual(len(devices()), len(re.findall(r"111", testing_stream.output)))
+    self.assertEqual(len(devices()), len(re.findall(r"112", testing_stream.output)))
     testing_stream.reset()
 
   @parameterized.named_parameters(
@@ -1201,15 +1203,16 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
 
   def test_tap_pmap(self):
-    xv = jnp.arange(api.device_count(), dtype=jnp.int32)
+    xv = jnp.arange(len(devices()), dtype=jnp.int32)
 
     def fun1(x, do_print=False):  # x: i32
       return maybe_print(do_print, x * 2, "x * 2", tap_with_device=True)
 
-    pmap_fun1 = api.pmap(partial(fun1, do_print=True))
+    pmap_fun1 = api.pmap(partial(fun1, do_print=True), devices=devices())
     res = pmap_fun1(xv)
     hcb.barrier_wait()
-    expected_res = api.pmap(partial(fun1, do_print=False))(xv)
+    expected_res = api.pmap(partial(fun1, do_print=False),
+                            devices=devices())(xv)
     self.assertAllClose(expected_res, res, check_dtypes=False)
     # Assertion text is for 2 devices (also works for 1 device)
     assertMultiDeviceOutputEqual(self, """
@@ -1221,7 +1224,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   def test_tap_pmap_vmap(self):
     # A matrix M[ij] = i * 10 + j
-    nr_devices = api.device_count()
+    nr_devices = len(devices())
     shape = (nr_devices, 3)
     matrix = np.fromfunction(lambda i, j: 10. * i + j, shape,
                              dtype=np.int32)
@@ -1229,11 +1232,13 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     def fun1(x, do_print=False):  # x: i32
       return maybe_print(do_print, x * 2, "x * 2", tap_with_device=True)
 
-    pmap_vmap_fun1 = api.pmap(api.vmap(partial(fun1, do_print=True)))
+    pmap_vmap_fun1 = api.pmap(api.vmap(partial(fun1, do_print=True)),
+                              devices=devices())
 
     res = pmap_vmap_fun1(matrix)
     hcb.barrier_wait()
-    expected_res = api.pmap(api.vmap(partial(fun1, do_print=False)))(matrix)
+    expected_res = api.pmap(api.vmap(partial(fun1, do_print=False)),
+                            devices=devices())(matrix)
     self.assertAllClose(expected_res, res, check_dtypes=False)
     # Assertion text is for 2 devices (also works for 1 device)
     assertMultiDeviceOutputEqual(self, """
@@ -1245,7 +1250,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   def test_tap_pmap_pmap_vmap(self):
     # A matrix M[ijk] = i * 100 + j * 10 + k
-    nr_devices = api.local_device_count()
+    nr_devices = len(devices())
     if nr_devices % 2 != 0:
       raise SkipTest("test works only on even number of devices")
 
@@ -1257,10 +1262,12 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
       y = maybe_print(do_print, x * 2., "x * 2", tap_with_device=True)
       return y ** 2
 
-    pmap_fun1 = api.pmap(api.pmap(api.vmap(partial(fun1, do_print=True))))
+    pmap_fun1 = api.pmap(api.pmap(api.vmap(partial(fun1, do_print=True))),
+                         devices=devices())
     res = pmap_fun1(matrix)
     hcb.barrier_wait()
-    expected_res = api.pmap(api.pmap(api.vmap(partial(fun1, do_print=False))))(matrix)
+    expected_res = api.pmap(api.pmap(api.vmap(partial(fun1, do_print=False))),
+                            devices=devices())(matrix)
     self.assertAllClose(expected_res, res, check_dtypes=False)
     # Assertion text is for 2 devices (also works for 1 device)
     assertMultiDeviceOutputEqual(self, """
@@ -1274,7 +1281,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
   def test_tap_pmap_pmap_extra(self):
     """pmap of a pmap surrounded by extra code."""
     # A matrix M[ij] = i * 10 + j
-    nr_devices = api.local_device_count()
+    nr_devices = len(devices())
     if nr_devices != 2:
       raise SkipTest("test works only on 2 devices")
     shape = (2, 1, 3)
@@ -1312,7 +1319,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           "test works only with omnistaging enabled")
   def test_tap_jvp_pmap_vmap(self):
     # A matrix M[ijk] = i * 100 + j * 10 * k
-    nr_devices = api.local_device_count()
+    nr_devices = len(devices())
     shape = (nr_devices, 2, 3)
     matrix = np.fromfunction(lambda i, j, k: 100. * i + 10. * j + k, shape,
                              dtype=np.float32)
@@ -1343,7 +1350,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   def test_tap_vmap_pmap(self):
     # A matrix M[ijk] = i * 100 + j * 10 * k
-    nr_devices = api.local_device_count()
+    nr_devices = len(devices())
     shape = (2, nr_devices, 3)
     matrix = np.fromfunction(lambda i, j, k: 100. * i + 10. * j + k, shape,
                              dtype=np.float32)
@@ -1371,7 +1378,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
   def test_tap_jit_pmap_extra(self):
     """jit of a pmap surrounded by extra code."""
     # A matrix M[ij] = i * 10 + j
-    nr_devices = api.local_device_count()
+    nr_devices = len(devices())
     assert nr_devices in (1, 2)
     shape = (nr_devices, 3)
     matrix = np.fromfunction(lambda i, j: 10. * i + j, shape,
@@ -1387,7 +1394,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     res = api.jit(partial(fun, do_print=True))(matrix)
     self.assertAllClose(fun(matrix, do_print=False), res, check_dtypes=False)
     hcb.barrier_wait()
-    if api.device_count() == 2:
+    if len(devices()) == 2:
       assertMultiDeviceOutputEqual(self, """
         device: cpu:0 what: before
         [[ 1.00  2.00  3.00]
@@ -1406,7 +1413,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         [[ 3.00  5.00  7.00]
          [23.00 25.00 27.00]]""")
     else:
-      assert api.device_count() == 1
+      assert len(devices()) == 1
       assertMultiDeviceOutputEqual(self, """
         device: cpu:0 what: before
         [[1.00 2.00 3.00]]
@@ -1420,7 +1427,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
   def test_tap_cond_pmap(self):
     raise SkipTest("cond of pmap does not work in JAX. Issue #5178.")
     # A matrix M[ij] = i * 10 + j
-    nr_devices = api.local_device_count()
+    nr_devices = len(devices())
     shape = (nr_devices, 3)
     matrix = np.fromfunction(lambda i, j: 10. * i + j, shape,
                              dtype=np.float32)
@@ -1885,7 +1892,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
                       result_shape=x,
                       call_with_device=True)
 
-    xv = jnp.arange(api.device_count(), dtype=jnp.int32)
+    xv = jnp.arange(len(devices()), dtype=jnp.int32)
     res = api.pmap(fun)(xv)
     self.assertAllClose(api.pmap(lambda x: x * 6)(xv), res)
     # Assertion text is for 2 devices (also works for 1 device)
