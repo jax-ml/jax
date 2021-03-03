@@ -114,8 +114,7 @@ def aval_to_result_handler(device: Optional[Device], aval: core.AbstractValue) -
 def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
   if aval.dtype is dtypes.float0:
     return lambda _: np.zeros(aval.shape, dtypes.float0)
-  return partial(make_device_array, raise_to_shaped(aval), device,
-                 lazy.array(aval.shape))
+  return partial(make_device_array, raise_to_shaped(aval), device, None)
 
 
 xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
@@ -1349,7 +1348,7 @@ def _force(x: DeviceArrayProtocol) -> DeviceArrayProtocol:
       device = x.device_buffer.device()
     force_fun = _lazy_force_computation(x.aval, device, x._lazy_expr)
     result = force_fun(x)
-    return make_device_array(x.aval, x._device, lazy.array(x.aval.shape), result)
+    return make_device_array(x.aval, x._device, None, result)
 
 @cache()
 def _lazy_force_computation(aval: core.ShapedArray,
