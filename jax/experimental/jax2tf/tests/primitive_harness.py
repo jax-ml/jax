@@ -1527,12 +1527,6 @@ def _make_fft_harness(name,
     [RandArg(shape, dtype),
      StaticArg(fft_type),
      StaticArg(fft_lengths)],
-    jax_unimplemented=[
-      Limitation(
-        "only 1D FFT is currently supported b/140351181.",
-        devices="tpu",
-        enabled=len(fft_lengths) > 1),
-    ],
     rng_factory=_fft_rng_factory(dtype),
     shape=shape,
     dtype=dtype,
@@ -1659,7 +1653,7 @@ for dtype in jtu.dtypes.all_inexact:
             devices="tpu",
             dtypes=[np.complex64, np.complex128]),
           Limitation(
-            "unimplemented", devices=("cpu", "gpu", "tpu"),
+            "unimplemented", devices=("cpu", "gpu"),
             dtypes=[np.float16, dtypes.bfloat16]),
         ],
         shape=shape,
