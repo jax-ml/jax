@@ -9,6 +9,7 @@ It is a work in progress; more content will be added soon!
   :caption: Tutorial Outline
 
   01-jax-basics
+  02-jitting
 
 
 .. _Deepmind: http://deepmind.com

@@ -188,7 +188,7 @@ execution_excludepatterns = [
     # Strange error apparently due to asynchronous cell execution
     'notebooks/thinking_in_jax.*',
     # TODO(jakevdp): enable execution on these
-    'notebooks/jax-101/*',
+    'jax-101/*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
