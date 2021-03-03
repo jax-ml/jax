@@ -1586,6 +1586,7 @@ class APITest(jtu.JaxTestCase):
     api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
 
   @jtu.skip_on_devices("cpu", "gpu")
+  @jtu.ignore_warning(message="Some donated buffers were not usable")
   def test_xla_computation_donate_argnums(self):
     api.xla_computation(lambda x: None, donate_argnums=(0,))(3)  # doesn't crash
 
