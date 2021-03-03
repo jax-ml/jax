@@ -125,7 +125,8 @@ class JetTest(jtu.JaxTestCase):
 
     self.check_jet(f, primals, series_in, check_dtypes=False)
 
-  def unary_check(self, fun, lims=[-2, 2], order=3, dtype=None):
+  def unary_check(self, fun, lims=[-2, 2], order=3, dtype=None, atol=1e-4,
+                  rtol=1e-4):
     dims = 2, 3
     rng = np.random.RandomState(0)
     if dtype is None:
@@ -135,7 +136,7 @@ class JetTest(jtu.JaxTestCase):
       rng = jtu.rand_uniform(rng, *lims)
       primal_in = rng(dims, dtype)
       terms_in = [rng(dims, dtype) for _ in range(order)]
-    self.check_jet(fun, (primal_in,), (terms_in,), atol=1e-4, rtol=1e-4)
+    self.check_jet(fun, (primal_in,), (terms_in,), atol, rtol)
 
   def binary_check(self, fun, lims=[-2, 2], order=3, finite=True, dtype=None):
     dims = 2, 3
@@ -343,13 +344,13 @@ class JetTest(jtu.JaxTestCase):
   def test_process_call(self):
     def f(x):
       return jit(lambda x: x * x)(x)
-    self.unary_check(f)
+    self.unary_check(f, rtol=2e-4)
 
   def test_post_process_call(self):
     def f(x):
       return jit(lambda y: x * y)(2.)
 
-    self.unary_check(f)
+    self.unary_check(f, rtol=5e-4)
 
   def test_select(self):
     M, K = 2, 3
@@ -363,7 +364,7 @@ class JetTest(jtu.JaxTestCase):
     terms_x = [rng.randn(*x.shape) for _ in range(order)]
     terms_y = [rng.randn(*y.shape) for _ in range(order)]
     series_in = (terms_b, terms_x, terms_y)
-    self.check_jet(jnp.where, primals, series_in)
+    self.check_jet(jnp.where, primals, series_in, rtol=5e-4)
 
   def test_inst_zero(self):
     def f(x):
