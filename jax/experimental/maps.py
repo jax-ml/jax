@@ -562,10 +562,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
-  resource_env: ResourceEnv
-  axis_sizes: Dict[AxisName, int]
   physical_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
   axis_subst: Dict[AxisName, Tuple[ResourceAxisName, ...]]
+  axis_vmap_size: Dict[AxisName, Optional[int]]
 
   @classmethod
   def from_axis_resources(cls,
@@ -574,21 +573,33 @@ class EvaluationPlan(NamedTuple):
                           axis_sizes: Dict[AxisName, int]):
     # TODO: Support sequential resources
     physical_axis_resources = axis_resources  # NB: We only support physical resources at the moment
-    axis_subst = {name: axes + (fresh_resource_name(name),) for name, axes in axis_resources.items()}
-    return cls(resource_env, axis_sizes, physical_axis_resources, axis_subst)
+    resource_shape = resource_env.shape
+    axis_subst = dict(axis_resources)
+    axis_vmap_size: Dict[AxisName, Optional[int]] = {}
+    for naxis, raxes in axis_resources.items():
+      num_resources = int(np.prod([resource_shape[axes] for axes in raxes], dtype=np.int64))
+      if axis_sizes[naxis] % num_resources != 0:
+        raise ValueError(f"Size of axis {naxis} ({axis_sizes[naxis]}) is not divisible "
+                         f"by the total number of resources assigned to this axis ({raxes}, "
+                         f"{num_resources} in total)")
+      tile_size = axis_sizes[naxis] // num_resources
+      # We have to vmap when there are no resources (to handle the axis name!) or
+      # when every resource gets chunks of values.
+      if not raxes or tile_size > 1:
+        axis_vmap_size[naxis] = tile_size
+        axis_subst[naxis] += (fresh_resource_name(naxis),)
+      else:
+        axis_vmap_size[naxis] = None
+    return cls(physical_axis_resources, axis_subst, axis_vmap_size)
 
   def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
-    resource_shape = self.resource_env.shape
     for naxis, raxes in self.axis_subst.items():
-      paxes, vaxis = raxes[:-1], raxes[-1]
+      tile_size = self.axis_vmap_size[naxis]
+      if tile_size is None:
+        continue
+      vaxis = raxes[-1]
       map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
-      paxes_size = int(np.prod([resource_shape[paxis] for paxis in paxes], dtype=np.int64))
-      if self.axis_sizes[naxis] % paxes_size != 0:
-        raise ValueError(f"Size of axis {naxis} ({self.axis_sizes[naxis]}) is not divisible "
-                         f"by the total number of resources assigned to this axis ({paxes}, "
-                         f"{paxes_size} in total)")
-      tile_size = self.axis_sizes[naxis] // paxes_size
       f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=tile_size, axis_name=vaxis)
     return f
 
