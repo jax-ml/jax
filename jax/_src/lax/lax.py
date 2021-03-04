@@ -1487,17 +1487,9 @@ def iota(dtype: DType, size: int) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  if config.omnistaging_enabled:
-    dtype = dtypes.canonicalize_dtype(dtype)
-    size = core.concrete_or_error(int, size, "size argument of lax.iota")
-    return iota_p.bind(dtype=dtype, shape=(size,), dimension=0)
-  else:
-    size = size if type(size) is masking.Poly else int(size)
-    shape = canonicalize_shape((size,))
-    dtype = dtypes.canonicalize_dtype(dtype)
-    lazy_expr = lazy.iota(dtype, shape[0])
-    aval = ShapedArray(shape, dtype)
-    return xla._DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+  dtype = dtypes.canonicalize_dtype(dtype)
+  size = core.concrete_or_error(int, size, "size argument of lax.iota")
+  return iota_p.bind(dtype=dtype, shape=(size,), dimension=0)
 
 def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
   """Convenience wrapper around ``iota``."""
@@ -1512,14 +1504,9 @@ def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   N, M = tuple(map(int, shape))
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
-  if config.omnistaging_enabled:
-    bool_eye = eq(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
-                  broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False)
-  else:
-    lazy_expr = lazy.eye(dtype, (N, M), offset)
-    aval = ShapedArray((N, M), dtype)
-    return xla._DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+  bool_eye = eq(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
+                broadcasted_iota(np.int32, (N, M), 1))
+  return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False)
 
 def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
@@ -1527,30 +1514,20 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   axes = tuple(map(int, axes))
   dtype = dtypes.canonicalize_dtype(dtype)
   base_shape = tuple(np.take(shape, axes))  # type: ignore[arg-type]
-  if config.omnistaging_enabled:
-    iotas = [broadcasted_iota(np.uint32, base_shape, i)
-             for i in range(len(base_shape))]
-    eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    result = convert_element_type_p.bind(_reduce(operator.and_, eyes), new_dtype=dtype, weak_type=False)
-    return broadcast_in_dim(result, shape, axes)
-  else:
-    lazy_expr = lazy.broadcast(lazy.delta(dtype, base_shape), shape, axes)
-    aval = ShapedArray(shape, dtype)
-    return xla._DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+  iotas = [broadcasted_iota(np.uint32, base_shape, i)
+           for i in range(len(base_shape))]
+  eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
+  result = convert_element_type_p.bind(_reduce(operator.and_, eyes), new_dtype=dtype, weak_type=False)
+  return broadcast_in_dim(result, shape, axes)
 
 def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
   N, M = tuple(map(int, shape))
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
-  if config.omnistaging_enabled:
-    bool_tri = ge(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
-                  broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
-  else:
-    lazy_expr = lazy.tri(dtype, (N, M), offset)
-    aval = ShapedArray((N, M), dtype)
-    return xla._DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+  bool_tri = ge(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
+                broadcasted_iota(np.int32, (N, M), 1))
+  return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
 
 def stop_gradient(x):
   """Stops gradient computation.

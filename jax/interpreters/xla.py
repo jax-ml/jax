@@ -1034,15 +1034,14 @@ def make_device_array(
     aval: core.ShapedArray,
     device: Optional[Device],
     lazy_expr: Optional[lazy.LazyExpr],
-    device_buffer: Union[PyLocalBuffer, "DeviceConstant"],
+    device_buffer: PyLocalBuffer,
 ) -> Union[PyLocalBuffer, "_DeviceArray"]:
   """Returns a DeviceArray implementation based on arguments.
 
   This is to be used only within JAX. It will return either a PythonDeviceArray
   or a C++ equivalent implementation.
   """
-  if (_EXPERIMENTAL_CPP_DEVICE_ARRAY and lazy.is_trivial(lazy_expr) and
-      not isinstance(device_buffer, DeviceConstant)):
+  if _EXPERIMENTAL_CPP_DEVICE_ARRAY and lazy.is_trivial(lazy_expr):
     assert isinstance(device_buffer, _CppDeviceArray)
     device_buffer._device = device    # pylint: disable=protected-access
     device_buffer.aval = aval
@@ -1120,10 +1119,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def _value(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      if is_device_constant(self):
-        self._npy_value = lazy.eval_lexpr(self._lazy_expr, None)
-      else:
-        self._npy_value = _force(self).device_buffer.to_py()
+      self._npy_value = _force(self).device_buffer.to_py()
       self._npy_value.flags.writeable = False
     return self._npy_value
 
@@ -1146,7 +1142,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def copy_to_host_async(self):
     """Requests a copy of the buffer to the host."""
     self._check_if_deleted()
-    if self._npy_value is None and not is_device_constant(self):
+    if self._npy_value is None:
       self.device_buffer.copy_to_host_async()  # pytype: disable=attribute-error
 
   def delete(self):
@@ -1282,14 +1278,8 @@ for device_array in [DeviceArray]:
 class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()
 
-class DeviceConstant(object):
-  __slots__ = ["_device"]
-  def __init__(self, device=None): self._device = device
-  def device(self): return self._device
-  def to_py(self): return None
-
-def is_device_constant(x):
-  return type_is_device_array(x) and type(x.device_buffer) is DeviceConstant
+# TODO(phawkins): remove DeviceConstant after updating users.
+class DeviceConstant(object): pass
 
 for device_array in [_CppDeviceArray, _DeviceArray]:
   core.literalable_types.add(device_array)
@@ -1298,11 +1288,8 @@ for device_array in [_CppDeviceArray, _DeviceArray]:
   canonicalize_dtype_handlers[device_array] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
-  if is_device_constant(val):
-    return lazy.stage_lexpr(c, val._lazy_expr, None)
-  else:
-    base_val = xb.constant(c, val.device_buffer.to_py())
-    return lazy.stage_lexpr(c, val._lazy_expr, base_val)
+  base_val = xb.constant(c, val.device_buffer.to_py())
+  return lazy.stage_lexpr(c, val._lazy_expr, base_val)
 xb.register_constant_handler(_DeviceArray, _device_array_constant_handler)
 xb.register_constant_handler(_CppDeviceArray, _device_array_constant_handler)
 
@@ -1316,10 +1303,6 @@ def _copy_device_array_to_device(x: Union[DeviceArrayProtocol, _DeviceArray], de
   if device is None:
     # no copying to be done because there's no target specified
     return x
-  elif is_device_constant(x):
-    # create a new DeviceArray with the same lazy expr, no copying
-    return make_device_array(x.aval, device, x._lazy_expr,
-                               DeviceConstant(device))
   elif xb.get_device_backend(device).platform == x.device_buffer.platform():
     # source and target platforms are the same
     if x.device_buffer.device() == device:
@@ -1355,14 +1338,11 @@ def _lazy_force_computation(aval: core.ShapedArray,
                             device: Device, lexpr: lazy.LazyExpr
                             ) -> Callable[[_DeviceArray], PyLocalBuffer]:
   c = xb.make_computation_builder("lazy_force")
-  if lazy.is_constant(lexpr):
-    param = None
-  else:
-    idxs = [(src, dst) for dst, src in enumerate(lexpr.dims) if src is not None]
-    param_shape = [None] * len(idxs)
-    for src, dst in idxs:
-      param_shape[src] = aval.shape[dst]
-    param = xb.parameter(c, 0, xc.Shape.array_shape(aval.dtype, param_shape))
+  idxs = [(src, dst) for dst, src in enumerate(lexpr.dims) if src is not None]
+  param_shape = [None] * len(idxs)
+  for src, dst in idxs:
+    param_shape[src] = aval.shape[dst]
+  param = xb.parameter(c, 0, xc.Shape.array_shape(aval.dtype, param_shape))
   xla_out = lazy.stage_lexpr(c, lexpr, param)
   built_c = c.build(xla_out)
 
@@ -1373,13 +1353,8 @@ def _lazy_force_computation(aval: core.ShapedArray,
       device_assignment=device and (device.id,))
   compiled = backend_compile(xb.get_device_backend(device), built_c, options)
 
-  force_fun: Callable[[_DeviceArray], PyLocalBuffer]
-  if lazy.is_constant(lexpr):
-    def force_fun(_):
-      return compiled.execute([])[0]
-  else:
-    def force_fun(x):
-      return compiled.execute([x.device_buffer])[0]
+  def force_fun(x: _DeviceArray) -> PyLocalBuffer:
+    return compiled.execute([x.device_buffer])[0]
   return force_fun
 
 

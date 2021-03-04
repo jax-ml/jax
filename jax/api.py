@@ -311,7 +311,7 @@ def _cpp_jit(
         # has been reset to None). Thus, we do not support the fast-path.
         execute is not None and
         execute.func is xla._execute_compiled and  # not trivial, not pmap
-        # Not supported: ShardedDeviceArray, DeviceConstant.
+        # Not supported: ShardedDeviceArray
         all(xla.type_is_device_array(x) for x in out_flat) and
         # TODO(mattjj): Add support for lazy-expression.
         # If the input is a DeviceArray, then it should have a trivial LazyExpr.

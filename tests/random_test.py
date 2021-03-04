@@ -901,6 +901,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       random.choice(key, 5, 2, replace=True)
 
   def test_eval_shape_big_random_array(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("after deleting lazy constants, requires omnistaging")
     def f(x):
       return random.normal(random.PRNGKey(x), (int(1e12),))
     with core.skipping_checks():  # check_jaxpr will materialize array
