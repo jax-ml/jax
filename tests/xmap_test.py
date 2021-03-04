@@ -35,13 +35,14 @@ import jax.scipy as jscipy
 from jax import test_util as jtu
 from jax import vmap
 from jax import lax
+from jax import core
 from jax.core import NamedShape
 from jax.experimental.maps import Mesh, mesh, xmap
 from jax.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
 from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.lax.parallel import pgather
-from jax.interpreters import pxla
+from jax.interpreters import batching, pxla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -111,6 +112,23 @@ def partitions(s, k):
 def powerset(s):
   s = list(s)
   return it.chain.from_iterable(it.combinations(s, r) for r in range(len(s)+1))
+
+# -------------------- vmap test helpers --------------------
+
+ensure_bdim_p = core.Primitive('ensure_bdim')
+ensure_bdim_p.def_abstract_eval(lambda x, **kwargs: core.raise_to_shaped(x))
+def _ensure_bdim_batcher(frame, vals_in, dims_in, axis_name, bdim):
+  v, = vals_in
+  d, = dims_in
+  assert d is not batching.not_mapped
+  return jnp.moveaxis(v, d, bdim), bdim
+batching.collective_rules[ensure_bdim_p] = _ensure_bdim_batcher
+batching.primitive_batchers[ensure_bdim_p] = lambda v, d: (v[0], d[0])
+core.axis_substitution_rules[ensure_bdim_p] = partial(jax._src.lax.parallel._subst_all_names_in_param,
+                                                      'axis_name')
+
+def ensure_bdim(x, axis_name, bdim):
+  return ensure_bdim_p.bind(x, axis_name=(axis_name,), bdim=bdim)
 
 # -------------------- Axis resources generation --------------------
 
@@ -444,21 +462,26 @@ class XMapTest(XMapTestCase):
           for vmap_dim_y in [*range(2 + len(xmap_dim_y)), None]:
             if vmap_dim_x is None and vmap_dim_y is None:
               continue
-            for vmap_dim_z in range(2 + len(xmap_axes)):
-              for vmap_as_xmap in [False, True]:
-                yield {"testcase_name":
-                          f"_xin={(sorted(xmap_dim_x.items()), sorted(xmap_dim_y.items()))}_"
-                          f"xout={sorted(xmap_dim_z.items())}_vin={(vmap_dim_x, vmap_dim_y)}_"
-                          f"vout={vmap_dim_z}_vmap_as_xmap={vmap_as_xmap}",
-                       "xmap_in_axes": (xmap_dim_x, xmap_dim_y),
-                       "xmap_out_axes": xmap_dim_z,
-                       "vmap_in_axes": (vmap_dim_x, vmap_dim_y),
-                       "vmap_out_axes": vmap_dim_z,
-                       "vmap_as_xmap": vmap_as_xmap}
+            for vmap_dim_result in range(3):
+              for vmap_dim_z in range(2 + len(xmap_axes)):
+                for vmap_as_xmap in [False, True]:
+                  yield {"testcase_name":
+                             f"_xin={(sorted(xmap_dim_x.items()), sorted(xmap_dim_y.items()))}_"
+                             f"xout={sorted(xmap_dim_z.items())}_vin={(vmap_dim_x, vmap_dim_y)}_"
+                             f"vout={vmap_dim_z}_vresult={vmap_dim_result}_vmap_as_xmap={vmap_as_xmap}",
+                         "xmap_in_axes": (xmap_dim_x, xmap_dim_y),
+                         "xmap_out_axes": xmap_dim_z,
+                         "vmap_in_axes": (vmap_dim_x, vmap_dim_y),
+                         "vmap_out_axes": vmap_dim_z,
+                         "vmap_result_axis": vmap_dim_result,
+                         "vmap_as_xmap": vmap_as_xmap}
 
   @parameterized.named_parameters(jtu.cases_from_list(VmapOfXmapCases()))
   @ignore_xmap_warning()
-  def testNestedMap(self, xmap_in_axes, xmap_out_axes, vmap_in_axes, vmap_out_axes, vmap_as_xmap):
+  def testNestedMap(self,
+                    xmap_in_axes, xmap_out_axes,
+                    vmap_in_axes, vmap_out_axes, vmap_result_axis,
+                    vmap_as_xmap):
     """Test various vmap(xmap) and xmap(xmap) combinations.
 
     The outer map always introduces a single dimension, the inner map introduces one or two.
@@ -474,7 +497,7 @@ class XMapTest(XMapTestCase):
     xind = ['n', 'k']
     yind = ['k', 'm']
     zind = ['n', 'm']
-    f = partial(jnp.einsum, 'nk,km->nm')
+    f = lambda x, y: ensure_bdim(jnp.einsum('nk,km->nm', x, y), 'v', vmap_result_axis)
 
     for pos, name in sorted(xin_x.items()):
       xshape.insert(pos, xmap_sizes[name])
@@ -501,7 +524,7 @@ class XMapTest(XMapTestCase):
                                  {vin_y: 'v'} if vin_y is not None else {}),
                         out_axes={vmap_out_axes: 'v'})
     else:
-      do_vmap = partial(vmap, in_axes=vmap_in_axes, out_axes=vmap_out_axes)
+      do_vmap = partial(vmap, in_axes=vmap_in_axes, out_axes=vmap_out_axes, axis_name='v')
 
     fm = do_vmap(xmap(f, in_axes=xmap_in_axes, out_axes=xmap_out_axes))
     fref = partial(jnp.einsum, f"{''.join(xind)},{''.join(yind)}->{''.join(zind)}")
