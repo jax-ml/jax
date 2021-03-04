@@ -1632,6 +1632,9 @@ class PmapTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")
   def test_replicate_backend(self):
+    # TODO(skye): fix backend caching so we always have multiple CPUs available
+    if jax.device_count("cpu") < 4:
+      self.skipTest("test requires 4 CPU device")
     # https://github.com/google/jax/issues/4223
     def fn(indices):
       return jnp.equal(indices, jnp.arange(3)).astype(jnp.float32)
