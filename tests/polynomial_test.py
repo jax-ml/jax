@@ -44,7 +44,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for leading in [0, 1, 2, 3, 5, 7, 10]
     for trailing in [0, 1, 2, 3, 5, 7, 10]))
   # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("gpu", "tpu")
   def testRoots(self, dtype, length, leading, trailing):
     rng = jtu.rand_default(np.random.RandomState(0))
 
@@ -66,7 +66,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for length in [0, 1, 3, 10]
     for trailing in [0, 1, 3, 7]))
   # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("gpu", "tpu")
   def testRootsNostrip(self, length, dtype, trailing):
     rng = jtu.rand_default(np.random.RandomState(0))
 
