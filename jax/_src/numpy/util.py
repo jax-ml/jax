@@ -101,8 +101,13 @@ def _wraps(fun, update_doc=True, lax_description=""):
           f"*Original docstring below.*\n\n"
           f"{body}")
 
-      op.__name__ = fun.__name__
-      op.__qualname__ = fun.__qualname__
+      for attr in ['__name__', '__qualname__']:
+        try:
+          value = getattr(fun, attr)
+        except AttributeError:
+          pass
+        else:
+          setattr(op, attr, value)
       op.__doc__ = docstr
       op.__np_wrapped__ = fun
     finally:
