@@ -29,6 +29,7 @@ import numpy as np
 
 from ._src import util
 from .config import flags, config
+from . import lib
 from .lib import xla_client
 
 from ._src import traceback_util
@@ -38,6 +39,10 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
                   strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
+# TODO(jblespiau): Remove the `if` when jaxlib 0.1.62 is the minimal version.
+if lib._xla_extension_version >= 5:
+  lib.jax_jit.set_enable_x64_cpp_flag(
+      strtobool(os.getenv('JAX_ENABLE_X64', 'False')))
 
 # bfloat16 support
 bfloat16: type = xla_client.bfloat16

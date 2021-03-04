@@ -55,6 +55,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from ._src.util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                         split_list, extend_name_stack, wrap_name, cache, wraps,
                         HashableFunction)
+from . import lib
 from .lib import jax_jit
 from .lib import version
 from .lib import xla_bridge as xb
@@ -97,6 +98,10 @@ zip = safe_zip
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
+# TODO(jblespiau): Remove the `if` when jaxlib 0.1.62 is the minimal version.
+if lib._xla_extension_version >= 5:
+  jax_jit.set_disable_jit_cpp_flag(bool_env("JAX_DISABLE_JIT", False))
+
 flags.DEFINE_bool(
     "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
     "A temporary flag enabling the C++ jax.jit fast path."
