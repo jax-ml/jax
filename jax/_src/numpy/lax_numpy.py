@@ -3866,11 +3866,21 @@ def _einsum(operands: Sequence,
       batch_names_str = ''.join(batch_names)
       lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
                                   for n in contracted_names)
-      dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
-      operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
       deleted_names = batch_names_str + ''.join(contracted_names)
-      names = (batch_names_str + _removechars(lhs_names, deleted_names)
-               + _removechars(rhs_names, deleted_names))
+      remaining_lhs_names = _removechars(lhs_names, deleted_names)
+      remaining_rhs_names = _removechars(rhs_names, deleted_names)
+      # Try both orders of lhs and rhs, in the hope that one of them means we
+      # don't need an explicit transpose. opt_einsum likes to contract from
+      # right to left, so we expect (rhs,lhs) to have the best chance of not
+      # needing a transpose.
+      names = batch_names_str + remaining_rhs_names + remaining_lhs_names
+      if names == result_names:
+        dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
+        operand = lax.dot_general(rhs, lhs, dimension_numbers, precision)
+      else:
+        names = batch_names_str + remaining_lhs_names + remaining_rhs_names
+        dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
+        operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 
