@@ -12,6 +12,7 @@ It is a work in progress; more content will be added soon!
   02-jitting
   03-vectorization
   04-advanced-autodiff
+  05-random-numbers
 
 
 .. _Deepmind: http://deepmind.com
