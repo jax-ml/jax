@@ -74,7 +74,7 @@ Just like for regular TensorFlow functions, it is possible to include in the
 SavedModel multiple versions of a function for different input shapes, by
 "warming up" the function on different input shapes:
 
-```
+```python
 my_model.f = tf.function(jax2tf.convert(f_jax), autograph=False)
 my_model.f(tf.ones([1, 28, 28]))  # a batch size of 1
 my_model.f(tf.ones([16, 28, 28]))  # a batch size of 16
