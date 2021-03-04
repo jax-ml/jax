@@ -103,6 +103,8 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None:
     a, b = _promote_args_inexact("logsumexp", a, b)
     a = jnp.where(b != 0, a, -jnp.inf)
+  else:
+    a, = _promote_args_inexact("logsumexp", a)
   pos_dims, dims = _reduction_dims(a, axis)
   amax = jnp.max(a, axis=dims, keepdims=keepdims)
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
