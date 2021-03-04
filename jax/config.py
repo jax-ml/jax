@@ -110,6 +110,9 @@ class Config:
     import absl.flags as absl_FLAGS  # noqa: F401
     from absl import app, flags as absl_flags
 
+    if self.use_absl:
+      return
+
     self.use_absl = True
     self.absl_flags = absl_flags
     absl_defs = { bool: absl_flags.DEFINE_bool,
