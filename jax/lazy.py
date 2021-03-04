@@ -14,14 +14,11 @@
 
 
 from collections import namedtuple
-import functools
-import operator as op
 from typing import Optional, Sequence
 
 import numpy as np
 
-from ._src.util import safe_map, safe_zip, unzip2, subvals, taggedtuple
-from .lib import xla_bridge as xb
+from ._src.util import safe_map, safe_zip, unzip2
 from .lib import xla_client as xc
 
 from ._src import traceback_util
@@ -35,47 +32,15 @@ zip = safe_zip
 
 ### lazy sublanguage
 
-# There are two components to a LazyExpr: an input and a reindexing
-# specification. The input represents a base array to which the reindexing
-# specification is applied.
-#
-# An input can represent an array constructor (Iota, Eye, etc.) or it can be an
-# ArrayVar which encodes that the base array is some exogenous array value (from
-# an environment with only a single value in it). These LazyExprs are attached
-# to DeviceArrays, so when the input part of the expression is ArrayVar that
-# basically means the associated device buffer represents the input, while if
-# the input is an array constructor then the associated device_buffer field of
-# the DeviceArray should be set to a DeviceConstant sentinel value. For the
-# array constructor expressions:
-#   * Iota builds a 1D sequence [0, 1, ..., N-1],
-#   * Eye builds a 2D array with ones on a (possibly offset) diagonal and zeros
-#     elsewhere (like numpy.eye),
-#   * Tri builds a triangular matrix with ones on and below a diagonal and zeros
-#     elsewhere (like numpy.tri), and
-#   * Delta builds a Kronecker delta array with ones along its multidimensional
-#     main diagonal and zeros elsewhere (for use in tensor contractions).
-#
+# A LazyExpr contains a reindexing specification. The reindexing expression is
+# applied to the value represented by the device buffer backing a DeviceArray.
+
 # The reindexing specification encodes the shape of the final result and a list
 # of dimensions, which are integers or Nones. The integer entries take on values
 # 0, 1, ..., R-1 where R is the rank of the input array, and encode where the
 # axes of the input array are to be mapped in the final output. When an entry is
 # None that indicates that the corresponding axis of the result is a broadcasted
 # one.
-#
-# Here are some examples of lazy expressions and the arrays they represent:
-#
-# LazyExpr(input=Iota(dtype=dtype('float32'), size=3),
-#          shape=(3, 4), dims=(0, None))
-# DeviceArray([[0., 0., 0., 0.],
-#              [1., 1., 1., 1.],
-#              [2., 2., 2., 2.]], dtype=float32)
-#
-# LazyExpr(input=Iota(dtype=dtype('float32'), size=3),
-#          shape=(4, 3), dims=(None, 0))
-# DeviceArray([[0., 1., 2.],
-#              [0., 1., 2.],
-#              [0., 1., 2.],
-#              [0., 1., 2.]], dtype=float32)
 #
 # For performance, some functions on lazy expressions accept None as an input to
 # stand for the identity lazy expression.
@@ -88,49 +53,32 @@ zip = safe_zip
 #   hash(A(1, 2)) == hash(B(1, 2))   # True
 # but we want hashes to be sensitive to the type tag (while still being fast).
 
+# TODO(phawkins): remove `input` from LazyExpr when jaxlib 0.1.63 is the minimum
+
 # pytype: disable=wrong-arg-count
 LazyExpr = namedtuple('LazyExpr', ['input', 'shape', 'dims'])
-ArrayVar = taggedtuple('ArrayVar', [])
-Iota = taggedtuple('Iota', ['dtype', 'size'])           # like np.arange(N)
-Eye = taggedtuple('Eye', ['dtype', 'shape', 'offset'])  # like np.eye
-Tri = taggedtuple('Tri', ['dtype', 'shape', 'offset'])  # like np.tri
-Delta = taggedtuple('Delta', ['dtype', 'shape'])  # kronecker delta arrays
 # pytype: enable=wrong-arg-count
 
+# TODO(phawkins): remove `ArrayVar` when jaxlib 0.1.63 is the minimum.
+class ArrayVar:
+  pass
+
 def array(shape):
-  return LazyExpr(ArrayVar(), shape, tuple(range(len(shape))))
-
-def iota(dtype, size):
-  return LazyExpr(Iota(dtype, size), (size,), (0,))
-
-def eye(dtype, shape, offset):
-  assert len(shape) == 2
-  return LazyExpr(Eye(dtype, shape, offset), shape, (0, 1))
-
-def tri(dtype, shape, offset):
-  assert len(shape) == 2
-  return LazyExpr(Tri(dtype, shape, offset), shape, (0, 1))
-
-def delta(dtype, shape):
-  return LazyExpr(Delta(dtype, shape), shape, tuple(range(len(shape))))
+  return LazyExpr(None, shape, tuple(range(len(shape))))
 
 def broadcast(lexpr, shape, broadcast_dimensions):
   new_dims = [None] * len(shape)
   for i, d in enumerate(broadcast_dimensions):
     new_dims[d] = lexpr.dims[i]
-  return LazyExpr(lexpr.input, shape, tuple(new_dims))
+  return LazyExpr(None, shape, tuple(new_dims))
 
 def transpose(lexpr: LazyExpr, perm: Sequence[int]):
   new_shape = tuple(lexpr.shape[i] for i in perm)
   new_dims = tuple(lexpr.dims[i] for i in perm)
-  return LazyExpr(lexpr.input, new_shape, new_dims)
-
-def is_constant(lexpr: Optional[LazyExpr]):
-  return lexpr is not None and type(lexpr.input) is not ArrayVar
+  return LazyExpr(None, new_shape, new_dims)
 
 def is_trivial(lexpr: Optional[LazyExpr]) -> bool:
-  return lexpr is None or (type(lexpr.input) is ArrayVar and
-          lexpr.dims == tuple(range(len(lexpr.shape))))
+  return lexpr is None or (lexpr.dims == tuple(range(len(lexpr.shape))))
 
 
 def eval_lexpr(lexpr, x):
@@ -141,36 +89,12 @@ def eval_lexpr(lexpr, x):
   Returns:
     An ndarray representing the value of the lazy expression.
   """
-  if lexpr is None or is_trivial(lexpr):
+  if is_trivial(lexpr):
     return x
 
-  input_, shape, dims = lexpr
+  assert x is not None
+  _, shape, dims = lexpr
 
-  # first create a starting ndarray from input_
-  t = type(input_)
-  if t is ArrayVar:
-    assert x is not None and type(x) is np.ndarray
-  elif t is Iota:
-    assert x is None
-    x = np.arange(input_.size, dtype=input_.dtype)
-  elif t is Eye:
-    assert x is None
-    N, M = input_.shape
-    x = np.eye(N, M, dtype=input_.dtype, k=input_.offset)
-  elif t is Tri:
-    assert x is None
-    N, M = input_.shape
-    x = np.tri(N, M, dtype=input_.dtype, k=input_.offset)
-  elif t is Delta:
-    ones = [1] * len(input_.shape)
-    iotas = [np.arange(d).reshape(subvals(ones, [(i, -1)]))
-             for i, d in enumerate(input_.shape)]
-    eyes = [i1 == i2 for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    x = np.asarray(functools.reduce(op.and_, eyes), input_.dtype)
-  else:
-    assert False
-
-  # then apply the reindexing operation
   perm = [d for d in dims if d is not None]
   if perm != list(range(len(perm))):
     x = np.transpose(x, perm)
@@ -181,7 +105,7 @@ def eval_lexpr(lexpr, x):
   return x
 
 
-def stage_lexpr(c, lexpr: Optional[LazyExpr], x):
+def stage_lexpr(c, lexpr, x):
   """Stage a lazy expression into an XLA computation.
   Args:
     c: XLA ComputationBuilder into which to stage the expression.
@@ -190,46 +114,11 @@ def stage_lexpr(c, lexpr: Optional[LazyExpr], x):
   Returns:
     An XlaOp representing the value of the lazy expression.
   """
-  if lexpr is None or is_trivial(lexpr):
+  if is_trivial(lexpr):
     return x
 
-  input_, shape, dims = lexpr
-
-  # first create a starting XlaOp from input_
-  t = type(input_)
-  if t is ArrayVar:
-    assert x is not None
-  elif t is Iota:
-    assert x is None
-    x = xops.Iota(c, xb.dtype_to_etype(input_.dtype), input_.size)
-  elif t is Eye:
-    assert x is None
-    N, M = input_.shape
-    xla_shape = xc.Shape.array_shape(xc.PrimitiveType.S32, (N, M))
-    bool_eye = xops.Eq(
-      xops.Add(xops.Iota(c, xla_shape, 0),
-               xb.constant(c, np.array(input_.offset, np.int32))),
-      xops.Iota(c, xla_shape, 1))
-    x = xops.ConvertElementType(bool_eye, xb.dtype_to_etype(input_.dtype))
-  elif t is Tri:
-    assert x is None
-    N, M = input_.shape
-    xla_shape = xc.Shape.array_shape(xc.PrimitiveType.S32, (N, M))
-    bool_tri = xops.Ge(
-      xops.Add(xops.Iota(c, xla_shape, 0),
-               xb.constant(c, np.array(input_.offset, np.int32))),
-      xops.Iota(c, xla_shape, 1))
-    x = xops.ConvertElementType(bool_tri, xb.dtype_to_etype(input_.dtype))
-  elif t is Delta:
-    etype = xb.dtype_to_etype(input_.dtype)
-    iotas = [xops.Iota(c, xc.Shape.array_shape(xc.PrimitiveType.U32, input_.shape), i)
-             for i in range(len(input_.shape))]
-    eyes = [xops.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    x = xops.ConvertElementType(functools.reduce(xops.And, eyes), etype)
-  else:
-    assert False
-
-  # then apply the operations encoded in reindex
+  assert x is not None
+  _, shape, dims = lexpr
   bcast_dims, perm = unzip2((i, d) for i, d in enumerate(dims) if d is not None)
   if tuple(perm) != tuple(range(len(perm))):
     x = xops.Transpose(x, perm)

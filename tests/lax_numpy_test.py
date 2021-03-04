@@ -4150,11 +4150,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(type(jnp.arange(77, dtype=jnp.int32)),
                       type(lax.iota(np.int32, 77)))
 
-    # test laziness for int dtypes
-    if not config.omnistaging_enabled:
-      self.assertTrue(xla.is_device_constant(jnp.arange(77)))
-      self.assertTrue(xla.is_device_constant(jnp.arange(77, dtype=jnp.int32)))
-
   def testArangeJit(self):
     ans = api.jit(lambda: jnp.arange(5))()
     expected = np.arange(5)
