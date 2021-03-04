@@ -187,7 +187,7 @@ def build_wheel(sources_path, output_path):
     output_file = os.path.join(output_path, os.path.basename(wheel))
     sys.stderr.write(f"Output wheel: {output_file}\n\n")
     sys.stderr.write("To install the newly-built jaxlib wheel, run:\n")
-    sys.stderr.write(f"  pip install {output_file}\n\n")
+    sys.stderr.write(f"  pip install --force-reinstall --no-deps {output_file}\n\n")
     shutil.copy(wheel, output_path)
 
 
