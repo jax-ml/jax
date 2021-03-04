@@ -106,7 +106,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "shapes": shapes, "dtype": dtype,
        "axis": axis, "keepdims": keepdims,
        "return_sign": return_sign, "use_b": use_b}
-      for shape_group in compatible_shapes for dtype in float_dtypes
+      for shape_group in compatible_shapes for dtype in float_dtypes + int_dtypes
       for use_b in [False, True]
       for shapes in itertools.product(*(
         (shape_group, shape_group) if use_b else (shape_group,)))
@@ -143,8 +143,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                                      return_sign=return_sign)
 
       args_maker = lambda: [rng(shapes[0], dtype)]
+    tol = {np.float32: 1E-6, np.float64: 1E-14}
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
-    self._CompileAndCheck(lax_fun, args_maker)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
 
   def testLogSumExpZeros(self):
     # Regression test for https://github.com/google/jax/issues/5370
