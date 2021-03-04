@@ -607,6 +607,9 @@ class Tracer:
   def _origin_msg(self) -> str:
     return ""
 
+  def full_lower(self):
+    return self
+
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
 aval_property = namedtuple("aval_property", ["fget"])
