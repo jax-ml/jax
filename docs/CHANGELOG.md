@@ -1,15 +1,21 @@
 # Change Log
 
-<!---
-This is a comment.
+<!--
 Remember to align the itemized text with the first line of an item within a list.
 
 PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.10 (Unreleased)
+## jax 0.2.11 (unreleased)
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.9...master).
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.10...master).
+* New features:
+* Bug fixes:
+* Breaking changes:
+
+## jax 0.2.10 (March 5 2021)
+
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.9...jax-v0.2.10).
 * New features:
   * {func}`jax.scipy.stats.chi2` is now available as a distribution with logpdf and pdf methods.
   * {func}`jax.scipy.stats.betabinom` is now available as a distribution with logpmf and pmf methods.
