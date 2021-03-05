@@ -33,6 +33,9 @@ from jax._src.util import unzip2, prod
 from jax.config import config
 config.parse_flags_with_absl()
 
+ignore_pjit_warning = partial(
+    jtu.ignore_warning, message=".*is an experimental.*")
+
 # TODO(skye): move into test_util and dedup with xmap_test.py
 MeshSpec = List[Tuple[str, int]]
 
@@ -52,6 +55,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
 # TODO(skye): make the buffer donation utils part of JaxTestCase
 class PJitTest(jtu.BufferDonationTestCase):
 
+  @ignore_pjit_warning()
   @with_mesh([('x', 2)])
   def testBasic1D(self):
     @partial(pjit,
@@ -70,6 +74,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[0].to_py(), expected,
                         check_dtypes=False)
 
+  @ignore_pjit_warning()
   @with_mesh([('x', 2), ('y', 2)])
   def testBasic2D(self):
     @partial(pjit,
@@ -98,6 +103,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[3].to_py(), split1,
                         check_dtypes=False)
 
+  @ignore_pjit_warning()
   @with_mesh([('x', 2), ('y', 2)])
   def testTwoMeshAxisSharding(self):
     @partial(pjit,
@@ -124,6 +130,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[3].to_py(), splits[3],
                         check_dtypes=False)
 
+  @ignore_pjit_warning()
   @with_mesh([('x', 2)])
   def testBufferDonation(self):
     @partial(pjit,
@@ -142,6 +149,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertNotDeleted(y)
     self.assertDeleted(x)
 
+  @ignore_pjit_warning()
   @with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraint(self):
     @partial(pjit, in_axis_resources=None, out_axis_resources=None)
