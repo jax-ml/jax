@@ -697,17 +697,24 @@ def _batch_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params
       for d, in_axis in zip(dims, params['in_axes']))
     f, mapped_dims_out = batching.batch_subtrace(f, self.main, mapped_dims_in)
     out_axes_thunk = params['out_axes_thunk']
+    def axis_after_insertion(axis, inserted_named_axes):
+      for inserted_axis in sorted(inserted_named_axes.values()):
+        if inserted_axis >= axis:
+          break
+        axis += 1
+      return axis
     # NOTE: This assumes that the choice of the dimensions over which outputs
     #       are batched is entirely dependent on the function and not e.g. on the
     #       data or its shapes.
     @as_hashable_function(closure=out_axes_thunk)
     def new_out_axes_thunk():
       return tuple(
-        fmap_dims(out_axes, lambda a: a + (d is not not_mapped and d <= a))
+        out_axes if d is not_mapped else
+        fmap_dims(out_axes, lambda a, nd=axis_after_insertion(d, out_axes): a + (nd <= a))
         for out_axes, d in zip(out_axes_thunk(), mapped_dims_out()))
     new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
     vals_out = primitive.bind(f, *vals, **new_params)
-    dims_out = tuple(d if d is not_mapped else d + sum(a < d for a in out_axes.values())
+    dims_out = tuple(d if d is not_mapped else axis_after_insertion(d, out_axes)
                      for d, out_axes in zip(mapped_dims_out(), out_axes_thunk()))
     return [batching.BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 batching.BatchTrace.process_xmap = _batch_trace_process_xmap  # type: ignore
