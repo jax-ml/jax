@@ -49,6 +49,12 @@ JAX Glossary of Terms
     reverse-mode autodiff
       See :term:`VJP`.
 
+    SPMD
+      Short for *Single Program Multi Data*, it refers to a parallel computation technique in which
+      the same computation (e.g., the forward pass of a neural net) is run on different input data
+      (e.g., different inputs in a batch) in parallel on different devices (e.g., several TPUs).
+      :func:`jax.pmap` is a JAX :term:`transformation` that implements SPMD parallelism.
+
     static
       In a :term:`JIT` compilation, a value that is not traced (see :term:`Tracer`). Also
       sometimes refers to compile-time computations on static values.
