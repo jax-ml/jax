@@ -2566,6 +2566,36 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       scan_v(jnp.ones([1]), jnp.arange(5).reshape((1, 5))),
       (jnp.array([1.]), jnp.array([[0., 1., 2., 3., 4.]])))
 
+  def test_xla_cpu_gpu_loop_cond_bug(self):
+    # https://github.com/google/jax/issues/5900
+    if jax.lib.version < (0, 1, 62):
+      raise SkipTest("test is broken on jaxlib==0.1.61 and 0.1.60")
+
+    def deriv(f):
+      return lambda x, *args: jax.linearize(lambda x: f(x, *args), x)[1](1.0)
+
+    def _while_loop(cond_fun, body_fun, init_val, max_iter):
+      def _iter(val):
+        next_val = body_fun(val)
+        next_cond = True
+        return next_val, next_cond
+
+      def _fun(tup, _):
+        val, cond = tup
+        return jax.lax.cond(cond, _iter, lambda x: (x, False), val), _
+
+      init = (init_val, cond_fun(init_val))
+      return jax.lax.scan(_fun, init, None, length=max_iter)[0][0]
+
+    def my_pow(x, y):
+      def body_fun(val):
+        return val * x
+      def cond_fun(val):
+        return True
+      return _while_loop(cond_fun, body_fun, 1.0, y)
+
+    self.assertAllClose(deriv(my_pow)(3.0, 1), 1.0, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
