@@ -5086,6 +5086,30 @@ class NumpyUfuncTests(jtu.JaxTestCase):
     # that jnp returns float32. e.g. np.cos(np.uint8(0))
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False, tol=1E-2)
 
+class NumpyDocTests(jtu.JaxTestCase):
+  def test_lax_numpy_docstrings(self):
+    # Test that docstring wrapping & transformation didn't fail.
+
+    # Functions that have their own docstrings & don't wrap numpy.
+    known_exceptions = {'broadcast_arrays', 'vectorize'}
+
+    for name in dir(jnp):
+      if name in known_exceptions or name in jnp._NOT_IMPLEMENTED or name.startswith('_'):
+        continue
+
+      # We only check signatures of functions.
+      obj = getattr(jnp, name)
+      if isinstance(obj, type) or not callable(obj):
+        continue
+
+      # Some jnp functions are imported from numpy or jax.dtypes directly.
+      if any(obj is getattr(mod, obj.__name__, None) for mod in [np, dtypes]):
+        continue
+
+      # All other objects should have a wrapped docstring containing this text:
+      if "*Original docstring below.*" not in obj.__doc__:
+        raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
