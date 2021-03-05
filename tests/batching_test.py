@@ -15,13 +15,12 @@
 
 import itertools as it
 import numpy as np
-from unittest import skipIf, SkipTest
+from unittest import skipIf
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
-from jax.interpreters import batching
 from jax import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
@@ -1032,7 +1031,6 @@ class BatchingTest(jtu.JaxTestCase):
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
   def testAllToAllSplitAxis(self, vmap_axis, split_axis, concat_axis):
-    raise SkipTest("all_to_all split axis broken after #4835")  # TODO(mattjj,apaszke)
     shape = (4, 4, 4)
     x = np.arange(np.prod(shape)).reshape(shape)
 

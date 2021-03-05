@@ -618,6 +618,7 @@ class PmapTest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_slow_all_to_all_warning()
   def testGradOfGather(self):
     if not config.omnistaging_enabled:
       self.skipTest("all_to_all doesn't work without omnistaging")
@@ -1146,6 +1147,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
     self.assertAllClose(bz2, bz2, check_dtypes=False)
 
+  @ignore_slow_all_to_all_warning()
   def testPswapaxes(self):
     if not config.omnistaging_enabled:
       self.skipTest("all_to_all doesn't work without omnistaging")
@@ -1157,6 +1159,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_slow_all_to_all_warning()
   def testGradOfPswapaxes(self):
     if not config.omnistaging_enabled:
       self.skipTest("all_to_all doesn't work without omnistaging")

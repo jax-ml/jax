@@ -911,21 +911,52 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
 def _all_to_all_batched_collective(frame, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups):
-  if isinstance(axis_name, (list, tuple)) and len(axis_name) > 1:
-    raise NotImplementedError("update after #4835")  # TODO(mattjj,apaszke)
   if axis_index_groups is not None:
     raise NotImplementedError("Please open a feature request!")
   x, = vals_in
   d, = dims_in
-  if split_axis == concat_axis:
-    axis = split_axis + (d <= split_axis)
-    d_pre_split = d
-    x = _splitaxis(axis, frame.size, x)
-    d += (axis <= d)
-    return _foldaxis(axis, moveaxis(x, (d, axis), (axis, d))), d_pre_split
+  if isinstance(axis_name, (list, tuple)):
+    pos = axis_name.index(frame.name)
+    major_axes, minor_axes = axis_name[:pos], axis_name[pos + 1:]
   else:
-    x_concat = _foldaxis(concat_axis, _moveaxis(d, concat_axis, x))
-    return _splitaxis(split_axis, frame.size, x_concat), split_axis
+    major_axes, minor_axes = (), ()
+  # Optimized case when no splitting is necessary
+  if not major_axes and not minor_axes:
+    if split_axis == concat_axis:
+      axis = split_axis + (d <= split_axis)
+      d_pre_split = d
+      x = _splitaxis(axis, frame.size, x)
+      d += (axis <= d)
+      return _foldaxis(axis, moveaxis(x, (d, axis), (axis, d))), d_pre_split
+    else:
+      x_concat = _foldaxis(concat_axis, _moveaxis(d, concat_axis, x))
+      return _splitaxis(split_axis, frame.size, x_concat), split_axis
+  # Here we have to handle either the major or the minor dimensions
+  # We will be accumulating chunks into the three leading dims: [Major, Current, Minor, ...]
+  x, d = lax.expand_dims(_moveaxis(d, 0, x), (0, 2)), 1
+  split_axis += 3; concat_axis += 3  # Offset by extra three leading dims
+
+  if major_axes:
+    x = all_to_all_p.bind(x, axis_name=major_axes,
+                          split_axis=split_axis, concat_axis=0,
+                          axis_index_groups=axis_index_groups)
+  # Split out the local part into axis new_d (NOTE: d is already in axis 1)
+  x = _splitaxis(split_axis, frame.size, x)
+  new_d = split_axis
+  concat_axis += (split_axis <= concat_axis)  # Offset the existing axes by the new batch axis
+  split_axis += 1
+  if minor_axes:
+    x = all_to_all_p.bind(x, axis_name=minor_axes,
+                          split_axis=split_axis, concat_axis=2,
+                          axis_index_groups=axis_index_groups)
+
+  # Fold the chunk axes into a single one
+  x = _foldaxis(0, _foldaxis(0, x))
+  split_axis -= 2; concat_axis -= 2; new_d -= 2
+  # Fold gathered axes into concat_axis
+  x = _foldaxis(concat_axis - 1, _moveaxis(0, concat_axis - 1, x))
+  new_d -= 1  # We've removed 0th dimension, so new_d needs to be adjusted
+  return x, new_d
 
 def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_groups):
   input_aval = raise_to_shaped(x)
