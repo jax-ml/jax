@@ -45,6 +45,7 @@ from jax import tree_util
 from jax.interpreters import partial_eval, xla
 from jax.test_util import check_grads
 from jax._src.util import prod
+from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -5094,7 +5095,7 @@ class NumpyDocTests(jtu.JaxTestCase):
     known_exceptions = {'broadcast_arrays', 'vectorize'}
 
     for name in dir(jnp):
-      if name in known_exceptions or name in jnp._NOT_IMPLEMENTED or name.startswith('_'):
+      if name in known_exceptions or name.startswith('_'):
         continue
 
       # We only check signatures of functions.
@@ -5106,9 +5107,53 @@ class NumpyDocTests(jtu.JaxTestCase):
       if any(obj is getattr(mod, obj.__name__, None) for mod in [np, dtypes]):
         continue
 
-      # All other objects should have a wrapped docstring containing this text:
-      if "*Original docstring below.*" not in obj.__doc__:
+      wrapped_fun = obj.__np_wrapped__
+
+      # If the wrapped function has a docstring, obj should too
+      if wrapped_fun.__doc__ and not obj.__doc__:
+        raise Exception(f"jnp.{name} does not contain wrapped docstring.")
+
+      if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
         raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+
+
+  def test_parse_numpydoc(self):
+    # Unit test ensuring that _parse_numpydoc correctly parses docstrings for all
+    # functions in NumPy's top-level namespace.
+    section_titles = {'Attributes', 'Examples', 'Notes',
+                      'Parameters', 'Raises', 'References',
+                      'Returns', 'See also', 'See Also', 'Warnings', 'Warns'}
+    headings = [title + '\n' + '-'*len(title) for title in section_titles]
+
+    for name in dir(np):
+      if name.startswith('_'):
+        continue
+      obj = getattr(np, name)
+      if isinstance(obj, type):
+        continue
+      if not callable(obj):
+        continue
+      if 'built-in function' in repr(obj):
+        continue
+      parsed = _parse_numpydoc(obj.__doc__)
+
+      # Check that no docstring is handled gracefully.
+      if not obj.__doc__:
+        self.assertEqual(parsed, ParsedDoc(obj.__doc__))
+        continue
+
+      # Check that no unexpected section names are found.
+      extra_keys = parsed.sections.keys() - section_titles
+      if extra_keys:
+        raise ValueError(f"Extra section headers found in np.{name}: {extra_keys}")
+
+      # Check that every docstring has a summary.
+      if not parsed.summary:
+        raise ValueError(f"No summary found for np.{name}")
+
+      # Check that no expected headings are missed.
+      for heading in headings:
+        assert heading not in parsed.front_matter
 
 
 if __name__ == "__main__":
