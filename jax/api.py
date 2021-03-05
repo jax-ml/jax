@@ -333,7 +333,7 @@ def _cpp_jit(
       for result_handler in result_handlers:
         aval, sticky_device, lazy_expr = result_handler.args
         avals.append(aval)
-        lazy_exprs.append(None if xla.lazy.is_trivial(lazy_expr) else lazy_expr)
+        lazy_exprs.append(lazy_expr)
       assert len(avals) == len(out_flat)
       fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals, lazy_exprs)
     else:
