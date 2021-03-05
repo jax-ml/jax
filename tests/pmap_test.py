@@ -215,6 +215,7 @@ class PmapTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
       "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
+  @ignore_slow_all_to_all_warning()
   def testAllToAll(self, split_axis, concat_axis):
     if not config.omnistaging_enabled:
       self.skipTest("all_to_all doesn't work without omnistaging")
@@ -237,6 +238,7 @@ class PmapTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
+  @ignore_slow_all_to_all_warning()
   def testAllToAllSplitAxis(self, split_axis, concat_axis):
     if not config.omnistaging_enabled:
       self.skipTest("all_to_all doesn't work without omnistaging")
@@ -1172,6 +1174,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.tile(w, reps=device_count).reshape(shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_slow_all_to_all_warning()
   def testAllToAllReplicaGroups(self):
     if not config.omnistaging_enabled:
       self.skipTest("all_to_all doesn't work without omnistaging")
@@ -1202,6 +1205,7 @@ class PmapTest(jtu.JaxTestCase):
         1, 2).reshape(shape)
     self.assertAllClose(fn(x), expected, check_dtypes=False)
 
+  @ignore_slow_all_to_all_warning()
   def testGradOfAllToAllReplicaGroups(self):
     if not config.omnistaging_enabled:
       self.skipTest("all_to_all doesn't work without omnistaging")

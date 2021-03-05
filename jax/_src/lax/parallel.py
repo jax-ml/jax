@@ -291,7 +291,7 @@ def pswapaxes(x, axis_name, axis, *, axis_index_groups=None):
   """
   return all_to_all(x, axis_name, axis, axis, axis_index_groups=axis_index_groups)
 
-def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None):
+def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None, tiled=False):
   """Materialize the mapped axis and map a different axis.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -318,24 +318,47 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None)
       an axis of size 4, [[0, 1], [2, 3]] would run all_to_all over the first
       two and last two replicas). Groups must cover all axis indices exactly
       once, and all groups must be the same size.
+    tiled: when True, all_to_all will divide split_axis into chunks and concatenate
+      them along concat_axis. In particular, no dimensions are added or removed.
+      False by default.
 
   Returns:
-    Array(s) with shape given by the expression::
+    When tiled is False, array(s) with shape given by the expression::
 
       np.insert(np.delete(x.shape, split_axis), concat_axis, axis_size)
 
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
     the input ``x``, i.e. ``axis_size = lax.psum(1, axis_name)``.
+
+    Otherwise array with shape similar to the input shape, except with split_axis
+    divided by axis size and concat_axis multiplied by axis size.
   """
-  def bind(x):
+  def bind(x, split_axis=split_axis, concat_axis=concat_axis):
     group_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
-    if group_size != x.shape[split_axis]:
-      msg = ("all_to_all requires the size of the mapped axis axis_name to "
-             "equal x.shape[split_axis], but they are {} and {} respectively.")
-      raise ValueError(msg.format(group_size, x.shape[split_axis]))
-    return all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
-                             axis_name=axis_name,
-                             axis_index_groups=axis_index_groups)
+    if tiled:
+      if x.shape[split_axis] % group_size != 0:
+        raise ValueError(f"The size of all_to_all split_axis ({x.shape[split_axis]}) "
+                         f"has to be divisible by the size of the named axis "
+                         f"{axis_name} ({group_size})")
+    else:
+      if group_size != x.shape[split_axis]:
+        msg = ("all_to_all requires the size of the mapped axis axis_name to "
+               "equal x.shape[split_axis], but they are {} and {} respectively.")
+        raise ValueError(msg.format(group_size, x.shape[split_axis]))
+      if split_axis < concat_axis:
+        concat_axis += 1  # concat_axis gives a position _after_ split_axis is removed
+        x = lax.expand_dims(x, (concat_axis,))  # insert the new axis
+      elif split_axis == concat_axis:
+        pass
+      else:  # concat_axis < split_axis
+        x = lax.expand_dims(x, (concat_axis,))  # insert the new axis
+        split_axis += 1   # we have a new axis before split_axis now
+    result = all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
+                               axis_name=axis_name,
+                               axis_index_groups=axis_index_groups)
+    if not tiled and split_axis != concat_axis:
+      result = lax.squeeze(result, (split_axis,))
+    return result
 
   return tree_util.tree_map(bind, x)
 
@@ -813,13 +836,27 @@ def _moveaxis(src, dst, x):
   perm.insert(dst, src)
   return lax.transpose(x, perm)
 
+def _splitaxis(axis, factor, x):
+  new_shape = list(x.shape)
+  assert new_shape[axis] % factor == 0, (new_shape[axis], factor)
+  new_shape[axis:axis+1] = [factor, new_shape[axis] // factor]
+  return x.reshape(new_shape)
+
+def _foldaxis(axis, x):
+  new_shape = list(x.shape)
+  new_shape[axis:axis+2] = [x.shape[axis] * x.shape[axis + 1]]
+  return x.reshape(new_shape)
+
 def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis, axis_index_groups):
-  global_full = all_gather(x, axis_name, axis_index_groups=axis_index_groups)
+  full = all_gather(x, axis_name, axis_index_groups=axis_index_groups)
   idx = axis_index(axis_name)
   if axis_index_groups:
     idx = idx % len(axis_index_groups[0])
-  local_slice = lax.dynamic_index_in_dim(global_full, idx, split_axis + 1, keepdims=False)
-  return _moveaxis(0, concat_axis, local_slice)
+  axis_size = full.shape[0]
+  tile_size = x.shape[split_axis] // axis_size
+  tile_base_idx = idx * tile_size
+  sliced = lax.dynamic_slice_in_dim(full, tile_base_idx, tile_size, split_axis + 1)
+  return _foldaxis(concat_axis, _moveaxis(0, concat_axis, sliced))
 
 def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
                                  axis_index_groups, axis_env, platform):
@@ -833,18 +870,7 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
     replica_groups_protos = xc.make_replica_groups(replica_groups)
-    if concat_axis == split_axis:
-      return xops.AllToAll(x, split_axis, concat_axis, split_count,
-                           replica_groups_protos)
-    else:
-      if concat_axis < split_axis:
-        split_axis += 1
-      elif split_axis < concat_axis:
-        concat_axis += 1
-      x = xla.lower_fun(partial(lax.expand_dims, dimensions=(concat_axis,)), multiple_results=False)(c, x)
-      x = xops.AllToAll(x, split_axis, concat_axis, split_count, replica_groups_protos)
-      x = xla.lower_fun(partial(lax.squeeze, dimensions=(split_axis,)), multiple_results=False)(c, x)
-      return x
+    return xops.AllToAll(x, split_axis, concat_axis, split_count, replica_groups_protos)
   else:
     warnings.warn(
         "all_to_all (and pswapaxes) are only implemented properly for TPUs and GPUs (if "
@@ -863,7 +889,6 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
         axis_env=axis_env,
         platform=platform)
 
-
 def _all_to_all_transpose_rule(cts, x, axis_name, split_axis, concat_axis, axis_index_groups):
   return (all_to_all(
       cts,
@@ -872,25 +897,14 @@ def _all_to_all_transpose_rule(cts, x, axis_name, split_axis, concat_axis, axis_
       concat_axis=split_axis,
       axis_index_groups=axis_index_groups),)
 
-
 def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis, axis_index_groups):
   x, = vals_in
   d, = dims_in
-  if d <= split_axis:
-    split_axis += 1
-  if d <= concat_axis:
-    concat_axis += 1
-  # Note: At this point split_axis and concat_axis are adjusted to the extra
-  #       dimension and we have d != split_axis and d != concat_axis.
-  if split_axis < d < concat_axis:
-    d -= 1
-  elif concat_axis < d < split_axis:
-    d += 1
   result = all_to_all_p.bind(
       x,
       axis_name=axis_name,
-      split_axis=split_axis,
-      concat_axis=concat_axis,
+      split_axis=split_axis + (d <= split_axis),
+      concat_axis=concat_axis + (d <= concat_axis),
       axis_index_groups=axis_index_groups)
   return result, d
 
@@ -899,21 +913,27 @@ def _all_to_all_batched_collective(frame, vals_in, dims_in,
                                    axis_index_groups):
   if isinstance(axis_name, (list, tuple)) and len(axis_name) > 1:
     raise NotImplementedError("update after #4835")  # TODO(mattjj,apaszke)
+  if axis_index_groups is not None:
+    raise NotImplementedError("Please open a feature request!")
   x, = vals_in
   d, = dims_in
-  split_axis_adj = split_axis + (1 if d <= split_axis else 0)
-  concat_axis_adj = concat_axis + (1 if split_axis_adj <= concat_axis else 0)
-  if d < split_axis_adj < concat_axis_adj:
-    split_axis_adj -= 1
-  elif concat_axis_adj < split_axis_adj < d:
-    split_axis_adj += 1
-  return _moveaxis(d, concat_axis_adj, x), split_axis_adj
+  if split_axis == concat_axis:
+    axis = split_axis + (d <= split_axis)
+    d_pre_split = d
+    x = _splitaxis(axis, frame.size, x)
+    d += (axis <= d)
+    return _foldaxis(axis, moveaxis(x, (d, axis), (axis, d))), d_pre_split
+  else:
+    x_concat = _foldaxis(concat_axis, _moveaxis(d, concat_axis, x))
+    return _splitaxis(split_axis, frame.size, x_concat), split_axis
 
 def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_groups):
   input_aval = raise_to_shaped(x)
   shape = list(input_aval.shape)
-  size = shape.pop(split_axis)
-  shape.insert(concat_axis, size)
+  axis_size = psum(1, axis_name) if axis_index_groups is None else len(axis_index_groups[0])
+  assert shape[split_axis] % axis_size == 0, (shape[split_axis], axis_size)
+  shape[split_axis] //= axis_size
+  shape[concat_axis] *= axis_size
   return input_aval.update(shape=tuple(shape), weak_type=False)
 
 all_to_all_p = core.Primitive('all_to_all')

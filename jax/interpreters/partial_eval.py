@@ -1100,25 +1100,25 @@ class DynamicJaxprTrace(core.Trace):
     with core.extend_axis_env(axis_name, axis_size, None):  # type: ignore
       jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
           f, self.main, reduced_in_avals)
-    out_axes = params['out_axes_thunk']()
-    out_avals = [core.unmapped_aval(params['axis_size'], out_axis, a)
-                 if out_axis is not None else a
-                 for a, out_axis in zip(reduced_out_avals, out_axes)]
-    source_info = source_info_util.current()
-    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
-    invars = map(self.getvar, tracers)
-    constvars = map(self.getvar, map(self.instantiate_const, consts))
-    outvars = map(self.makevar, out_tracers)
-    new_in_axes = (None,) * len(consts) + params['in_axes']
-    new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
-                      call_jaxpr=convert_constvars_jaxpr(jaxpr))
-    del new_params['out_axes_thunk']
-    update_params = call_param_updaters.get(map_primitive)
-    if update_params:
-      new_params = update_params(new_params, [True] * len(tracers))
-    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
-                        new_params, source_info)
-    self.frame.eqns.append(eqn)
+      out_axes = params['out_axes_thunk']()
+      out_avals = [core.unmapped_aval(params['axis_size'], out_axis, a)
+                  if out_axis is not None else a
+                  for a, out_axis in zip(reduced_out_avals, out_axes)]
+      source_info = source_info_util.current()
+      out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
+      invars = map(self.getvar, tracers)
+      constvars = map(self.getvar, map(self.instantiate_const, consts))
+      outvars = map(self.makevar, out_tracers)
+      new_in_axes = (None,) * len(consts) + params['in_axes']
+      new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
+                        call_jaxpr=convert_constvars_jaxpr(jaxpr))
+      del new_params['out_axes_thunk']
+      update_params = call_param_updaters.get(map_primitive)
+      if update_params:
+        new_params = update_params(new_params, [True] * len(tracers))
+      eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
+                          new_params, source_info)
+      self.frame.eqns.append(eqn)
     return out_tracers
 
   def post_process_map(self, map_primitive, out_tracers, params):
