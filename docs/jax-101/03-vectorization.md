@@ -17,7 +17,7 @@ kernelspec:
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/03-vectorization.ipynb)
 
-*Authors: TODO*
+*Authors: Matteo Hessel*
 
 In the previous section we discussed JIT compilation via the `jax.jit` function. This notebook discusses another of JAX's transforms: vectorization via `jax.vmap`.
 

@@ -17,7 +17,7 @@ kernelspec:
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/05-random-numbers.ipynb)
 
-*Authors: TODO*
+*Authors: Matteo Hessel & Rosalia Schneider*
 
 In this section we focus on pseudo random number generation (PRNG); that is, the process of algorithmically generating sequences of numbers whose properties approximate the properties of sequences of random numbers sampled from an appropriate distribution. 
 
