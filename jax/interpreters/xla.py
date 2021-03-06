@@ -1278,9 +1278,6 @@ for device_array in [DeviceArray]:
 class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()
 
-# TODO(phawkins): remove DeviceConstant after updating users.
-class DeviceConstant(object): pass
-
 for device_array in [_CppDeviceArray, _DeviceArray]:
   core.literalable_types.add(device_array)
   core.pytype_aval_mappings[device_array] = ConcreteArray
