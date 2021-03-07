@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from collections import defaultdict, deque
+from collections import defaultdict, deque, namedtuple
 import itertools as it
 import operator as op
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Type,
@@ -27,7 +27,6 @@ from ..config import flags, bool_env, config
 from .. import core
 from .. import ad_util
 from .. import dtypes
-from .. import lazy
 from .. import linear_util as lu
 from jax._src import source_info_util
 from ..abstract_arrays import (make_shaped_array, array_types)
@@ -114,7 +113,7 @@ def aval_to_result_handler(device: Optional[Device], aval: core.AbstractValue) -
 def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
   if aval.dtype is dtypes.float0:
     return lambda _: np.zeros(aval.shape, dtypes.float0)
-  return partial(make_device_array, raise_to_shaped(aval), device, None)
+  return partial(make_device_array, raise_to_shaped(aval), device)
 
 
 xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
@@ -1033,7 +1032,6 @@ _EXPERIMENTAL_CPP_DEVICE_ARRAY = False
 def make_device_array(
     aval: core.ShapedArray,
     device: Optional[Device],
-    lazy_expr: Optional[lazy.LazyExpr],
     device_buffer: PyLocalBuffer,
 ) -> Union[PyLocalBuffer, "_DeviceArray"]:
   """Returns a DeviceArray implementation based on arguments.
@@ -1041,13 +1039,13 @@ def make_device_array(
   This is to be used only within JAX. It will return either a PythonDeviceArray
   or a C++ equivalent implementation.
   """
-  if _EXPERIMENTAL_CPP_DEVICE_ARRAY and lazy.is_trivial(lazy_expr):
+  if _EXPERIMENTAL_CPP_DEVICE_ARRAY:
     assert isinstance(device_buffer, _CppDeviceArray)
     device_buffer._device = device    # pylint: disable=protected-access
     device_buffer.aval = aval
     return device_buffer
 
-  return _DeviceArray(aval, device, lazy_expr, device_buffer)
+  return _DeviceArray(aval, device, None, device_buffer)
 
 
 def type_is_device_array(x):
@@ -1058,13 +1056,17 @@ def type_is_device_array(x):
   type_x = type(x)
   return type_x is _DeviceArray or type_x is _CppDeviceArray
 
+DeprecatedLazyExpr = namedtuple('LazyExpr', ['input'])
+dummy_nontrivial_lazy_expr = DeprecatedLazyExpr("not none")
+
+LazyBroadcastDims = Optional[Tuple[int, ...]]
 
 class _DeviceArray(DeviceArray):  # type: ignore
   """A DeviceArray is an ndarray backed by a single device memory buffer."""
   # We don't subclass ndarray because that would open up a host of issues,
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
   __slots__ = [
-      "aval", "device_buffer", "_npy_value", "_device", "_lazy_expr"
+      "aval", "device_buffer", "_npy_value", "_device", "_lazy_broadcast_dims"
   ]
   __array_priority__ = 100
 
@@ -1073,7 +1075,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
   _HAS_DYNAMIC_ATTRIBUTES = True
 
   def __init__(self, aval: core.ShapedArray, device: Optional[Device],
-               lazy_expr: Optional[lazy.LazyExpr],
+               lazy_broadcast_dims: Optional[LazyBroadcastDims],
                device_buffer: PyLocalBuffer):
     """Initializer.
 
@@ -1081,15 +1083,16 @@ class _DeviceArray(DeviceArray):  # type: ignore
       aval: The abstract value associated to this array (shape+dtype+weak_type).
       device:  The optional sticky device. See
         https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
-      lazy_expr: An optional `LayExpr`. `None` is equivalent to a trivial
-        `LazyExpr`.
+      lazy_broadcast: Optional lazy broadcast. `None` means "no broadcast".
+        Otherwise a tuple of integers mapping XLA dimension numbers to
+        user-visible dimension numbers.
       device_buffer: The underlying buffer owning the on-device data.
     """
     DeviceArray.__init__(self)
     self.aval = aval
     self.device_buffer = device_buffer
     self._device = device
-    self._lazy_expr = lazy_expr
+    self._lazy_broadcast_dims = lazy_broadcast_dims
 
     self._npy_value = None
     if not core.skip_checks:
@@ -1139,6 +1142,14 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def ndim(self):
     return len(self.aval.shape)
 
+  # TODO(phawkins): remove this property when jaxlib 0.1.63 is the minimum
+  # version. This exists only to indicate to older jaxlib versions that the
+  # array has a nontrivial lazy expression.
+  @property
+  def _lazy_expr(self):
+    return (None if self._lazy_broadcast_dims is None
+            else dummy_nontrivial_lazy_expr)
+
   def copy_to_host_async(self):
     """Requests a copy of the buffer to the host."""
     self._check_if_deleted()
@@ -1164,6 +1175,28 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def __cuda_array_interface__(self):
     return _force(self).device_buffer.__cuda_array_interface__
 
+  def _broadcast(self, new_sizes, broadcast_dimensions):
+    """Internal method used for lazy broadcasts."""
+    if self._lazy_broadcast_dims is None:
+      bcast_dims = tuple(broadcast_dimensions)
+    else:
+      bcast_dims = tuple(broadcast_dimensions[b]
+                         for b in self._lazy_broadcast_dims)
+    aval = ShapedArray(new_sizes, self.dtype, weak_type=self.aval.weak_type)
+    return _DeviceArray(aval, self._device, bcast_dims, self.device_buffer)
+
+  def _transpose(self, permutation):
+    """Internal method used for lazy transposes."""
+    lexpr = self._lazy_broadcast_dims or tuple(range(len(self.shape)))
+    inv_permutation = np.argsort(permutation)
+    bcast_dims = tuple(inv_permutation[b] for b in lexpr)
+    aval = ShapedArray(tuple(np.take(self.shape, permutation)), self.dtype,
+                       weak_type=self.aval.weak_type)
+    return _DeviceArray(aval, self._device, bcast_dims, self.device_buffer)
+
+
+def has_trivial_lazy_expr(x):
+  return getattr(x, "_lazy_broadcast_dims", None) is None
 
 # Adding methods dynamically to both _DeviceArray and _CppDeviceArray
 # pylint: disable=protected-access
@@ -1284,9 +1317,10 @@ for device_array in [_CppDeviceArray, _DeviceArray]:
   pytype_aval_mappings[device_array] = op.attrgetter('aval')
   canonicalize_dtype_handlers[device_array] = identity
 
+
 def _device_array_constant_handler(c, val, canonicalize_types=True):
   base_val = xb.constant(c, val.device_buffer.to_py())
-  return lazy.stage_lexpr(c, val._lazy_expr, base_val)
+  return stage_lexpr(c, val._lazy_broadcast_dims, val.aval.shape, base_val)
 xb.register_constant_handler(_DeviceArray, _device_array_constant_handler)
 xb.register_constant_handler(_CppDeviceArray, _device_array_constant_handler)
 
@@ -1315,31 +1349,54 @@ def _copy_device_array_to_device(x: Union[DeviceArrayProtocol, _DeviceArray], de
     # buffers from different XLA backends are passed through the host.
     backend = xb.get_device_backend(device)
     moved_buf = backend.buffer_from_pyval(x.device_buffer.to_py(), device)
-  return _DeviceArray(x.aval, device, x._lazy_expr, moved_buf)
+  return _DeviceArray(x.aval, device, getattr(x, "_lazy_broadcast_dims", None),
+                      moved_buf)
 
 def _force(x: DeviceArrayProtocol) -> DeviceArrayProtocol:
-  if lazy.is_trivial(x._lazy_expr):
+  if has_trivial_lazy_expr(x):
     return x
   # force x on the device where it lives, but preserve stickiness on result
   if x._device:
     device = x._device
   else:
     device = x.device_buffer.device()
-  force_fun = _lazy_force_computation(x.aval, device, x._lazy_expr)
+  force_fun = _lazy_force_computation(x.aval, device, x._lazy_broadcast_dims)
   result = force_fun(x)
-  return make_device_array(x.aval, x._device, None, result)
+  return make_device_array(x.aval, x._device, result)
+
+
+def stage_lexpr(c, lazy_broadcast_dims: Optional[LazyBroadcastDims], shape, x):
+  """Stage a lazy expression into an XLA computation.
+  Args:
+    c: XLA ComputationBuilder into which to stage the expression.
+    lazy_broadcast_dims: a LazyBroadcastDims to evaluate (or None for the
+      identity expression).
+    x: XlaOp or None, representing the value of ArrayVar if present.
+  Returns:
+    An XlaOp representing the value of the lazy expression.
+  """
+  if lazy_broadcast_dims is None:
+    return x
+
+  assert x is not None
+  perm = np.argsort(lazy_broadcast_dims)
+  bcast_dims = tuple(lazy_broadcast_dims[p] for p in perm)
+  if tuple(perm) != tuple(range(len(perm))):
+    x = xops.Transpose(x, perm)
+  if shape != c.get_shape(x).dimensions():
+    x = xops.BroadcastInDim(x, shape, bcast_dims)
+  return x
 
 @cache()
 def _lazy_force_computation(aval: core.ShapedArray,
-                            device: Device, lexpr: lazy.LazyExpr
+                            device: Device, lexpr: Tuple[int, ...]
                             ) -> Callable[[_DeviceArray], PyLocalBuffer]:
   c = xb.make_computation_builder("lazy_force")
-  idxs = [(src, dst) for dst, src in enumerate(lexpr.dims) if src is not None]
-  param_shape = [None] * len(idxs)
-  for src, dst in idxs:
+  param_shape = [None] * len(lexpr)
+  for src, dst in enumerate(lexpr):
     param_shape[src] = aval.shape[dst]
   param = xb.parameter(c, 0, xc.Shape.array_shape(aval.dtype, param_shape))
-  xla_out = lazy.stage_lexpr(c, lexpr, param)
+  xla_out = stage_lexpr(c, lexpr, aval.shape, param)
   built_c = c.build(xla_out)
 
   device = _device_from_arg_devices([device])

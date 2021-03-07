@@ -61,4 +61,4 @@ def from_dlpack(dlpack, backend=None):
   xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
-  return xla.make_device_array(aval, buf.device(), None, buf)  # pytype: disable=attribute-error
+  return xla.make_device_array(aval, buf.device(), buf)  # pytype: disable=attribute-error

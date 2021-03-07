@@ -34,7 +34,7 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import api, core, lax, lax_reference, lazy
+from jax import api, core, lax, lax_reference
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
@@ -2887,7 +2887,7 @@ class LazyTest(jtu.JaxTestCase):
       return jnp.sum(x)
 
     x = jnp.zeros(10, dtype=jnp.int32)
-    assert not lazy.is_trivial(x._lazy_expr)
+    assert not xla.has_trivial_lazy_expr(x)
 
     python_should_be_executing = True
     _ = f(x)

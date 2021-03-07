@@ -33,7 +33,6 @@ from jax import api
 from jax import api_util
 from jax import linear_util as lu
 from jax import dtypes
-from jax import lazy
 from jax import tree_util
 from jax.config import flags, config
 from jax.core import (Primitive, _canonicalize_dimension, UnshapedArray,
@@ -3308,12 +3307,10 @@ def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
     operand = _device_put_raw(operand)
   if xla.type_is_device_array(operand) and np.all(
       np.equal(operand.shape, np.take(shape, broadcast_dimensions))):
-    shape = _broadcast_in_dim_shape_rule(
-      operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
-    aval = ShapedArray(shape, _dtype(operand), weak_type=dtypes.is_weakly_typed(operand))
-    lazy_expr = operand._lazy_expr or lazy.array(operand.shape)
-    lazy_expr = lazy.broadcast(lazy_expr, shape, broadcast_dimensions)
-    return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
+    if not hasattr(operand, "_broadcast"):
+      operand = xla._DeviceArray(operand.aval, operand._device, None,
+                                 operand.device_buffer)
+    return operand._broadcast(shape, broadcast_dimensions)
   else:
     return xla.apply_primitive(broadcast_in_dim_p, operand, shape=shape,
                                broadcast_dimensions=broadcast_dimensions)
@@ -3624,10 +3621,11 @@ def _reshape_impl(operand, *, new_sizes, dimensions):
   if xla.type_is_device_array(operand) and dimensions is None:
     bcast_dims = _is_singleton_reshape(old_sizes, new_sizes)
     if bcast_dims is not None:
-      aval = ShapedArray(new_sizes, operand.dtype)
-      lazy_expr = operand._lazy_expr or lazy.array(operand.shape)
-      lazy_expr = lazy.broadcast(lazy_expr, new_sizes, bcast_dims)
-      return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
+      if not hasattr(operand, "_broadcast"):
+        operand = xla._DeviceArray(operand.aval, operand._device, None,
+                                   operand.device_buffer)
+      return operand._broadcast(new_sizes, bcast_dims)
+
   return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
                              dimensions=dimensions)
 
@@ -3739,10 +3737,10 @@ batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 def _transpose_impl(operand, *, permutation):
   if xla.type_is_device_array(operand):
-    lazy_expr = operand._lazy_expr or lazy.array(operand.shape)
-    lazy_expr = lazy.transpose(lazy_expr, permutation)
-    aval = ShapedArray(lazy_expr.shape, operand.dtype)
-    return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
+    if not hasattr(operand, "_transpose"):
+      operand = xla._DeviceArray(operand.aval, operand._device, None,
+                                 operand.device_buffer)
+    return operand._transpose(permutation)
   else:
     return xla.apply_primitive(transpose_p, operand, permutation=permutation)
 

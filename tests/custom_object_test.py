@@ -101,8 +101,8 @@ class ConcreteSparseArray(AbstractSparseArray):
 
 def sparse_array_result_handler(device, aval):
   def build_sparse_array(data_buf, indices_buf):
-    data = xla.make_device_array(aval.data_aval, device, None, data_buf)
-    indices = xla.make_device_array(aval.indices_aval, device, None, indices_buf)
+    data = xla.make_device_array(aval.data_aval, device, data_buf)
+    indices = xla.make_device_array(aval.indices_aval, device, indices_buf)
     return SparseArray(aval, data, indices)
   return build_sparse_array
 

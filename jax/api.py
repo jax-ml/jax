@@ -321,7 +321,7 @@ def _cpp_jit(
         # TODO(mattjj): Add support for lazy-expression.
         # If the input is a DeviceArray, then it should have a trivial LazyExpr.
         all(
-            type(x) is not xla.DeviceArray or xla.lazy.is_trivial(x._lazy_expr)
+            type(x) is not xla.DeviceArray or xla.has_trivial_lazy_expr(x)
             for x in args_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
@@ -329,11 +329,10 @@ def _cpp_jit(
       xla_executable, _, result_handlers = execute.args
       sticky_device = None
       avals = []
-      lazy_exprs = []
+      lazy_exprs = [None] * len(result_handlers)
       for result_handler in result_handlers:
-        aval, sticky_device, lazy_expr = result_handler.args
+        aval, sticky_device = result_handler.args
         avals.append(aval)
-        lazy_exprs.append(lazy_expr)
       assert len(avals) == len(out_flat)
       fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals, lazy_exprs)
     else:
