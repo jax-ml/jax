@@ -120,7 +120,10 @@ class MultiDeviceTest(jtu.JaxTestCase):
     x2_uncommitted = jnp.array([2, 3])
     z1, z2, z3 = jax.jit(lambda x, y: (y, 1, x))(x_uncommitted, x2_uncommitted)
     self.assert_uncommitted_to_device(z1, devices[0])
-    self.assertIs(z2, 1)
+    if config.omnistaging_enabled:
+      self.assert_uncommitted_to_device(z2, devices[0])
+    else:
+      self.assertIs(z2, 1)
     self.assert_uncommitted_to_device(z3, devices[0])
 
 
@@ -139,7 +142,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
   def test_primitive_compilation_cache(self):
     devices = self.get_devices()
 
-    x = jax.device_put(1, devices[1])
+    x = jax.device_put(jnp.int32(1), devices[1])
 
     with jtu.count_primitive_compiles() as count:
       y = lax.add(x, x)
@@ -219,4 +222,4 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

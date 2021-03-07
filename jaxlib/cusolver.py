@@ -21,16 +21,16 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from jaxlib import cublas_kernels
+  from . import cublas_kernels
   for _name, _value in cublas_kernels.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="gpu")
+    xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   pass
 
 try:
-  from jaxlib import cusolver_kernels
+  from . import cusolver_kernels
   for _name, _value in cusolver_kernels.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="gpu")
+    xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   pass
 

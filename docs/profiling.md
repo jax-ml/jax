@@ -3,7 +3,7 @@
 ## TensorBoard profiling
 
 [TensorBoard's
-profiler](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras>)
+profiler](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras)
 can be used to profile JAX programs. Tensorboard is a great way to acquire and
 visualize performance traces and profiles of your program, including activity on
 GPU and TPU. The end result looks something like this:
@@ -12,9 +12,10 @@ GPU and TPU. The end result looks something like this:
 
 ### Installation
 
+Install specific nightly versions of TensorBoard, TensorBoard profiler, TensorFlow, as well as the What-If Tool TensorBoard, as follows:
 ```shell
-# Requires TensorFlow and TensorBoard version >= 2.2
-pip install --upgrade tensorflow tensorboard_plugin_profile
+# Profiling is known to work with the following packages.
+pip install --upgrade tb-nightly==2.5.0a20201203 tbp-nightly==2.4.0a20201203 tf-nightly==2.5.0.dev20201203 tensorboard-plugin-wit==1.7.0
 ```
 
 ### Usage
@@ -37,11 +38,13 @@ from a running program.
 
    ```python
    import jax.profiler
-   jax.profiler.start_server(9999)
+   server = jax.profiler.start_server(9999)
    ```
 
     This starts the profiler server that TensorBoard connects to. The profiler
-    server must be running before you move on to the next step.
+    server must be running before you move on to the next step. It will remain
+    alive and listening until the object returned by `start_server()` is 
+    destroyed.
 
     If you'd like to profile a snippet of a long-running program (e.g. a long
     training loop), you can put this at the beginning of the program and start
@@ -113,7 +116,7 @@ sudo update-initramfs -u
 sudo reboot now
 ```
 
-See [Nvidia's documentation on this
+See [NVIDIA's documentation on this
 error](https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-cupti)
 for more information.
 
@@ -133,7 +136,7 @@ ssh -L 6006:localhost:6006 <remote server address>
 
 ## Nsight
 
-Nvidia's `Nsight` tools can be used to trace and profile JAX code on GPU. For
+NVIDIA's `Nsight` tools can be used to trace and profile JAX code on GPU. For
 details, see the [`Nsight`
 documentation](https://developer.nvidia.com/tools-overview).
 

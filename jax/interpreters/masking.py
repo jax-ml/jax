@@ -18,16 +18,14 @@ from functools import partial, reduce
 from itertools import chain, product
 import operator as op
 import string
-from typing import Callable, Dict, Sequence, Union
+from typing import Callable, Dict, Optional, Sequence, Union, Tuple
 
-import numpy as onp
+import numpy as np
 
-from .. import abstract_arrays
 from .. import core, dtypes
 from ..tree_util import tree_unflatten
-from ..core import Trace, Tracer
-from ..util import safe_map, safe_zip, unzip2, prod, wrap_name
-from ..abstract_arrays import ShapedArray
+from ..core import ShapedArray, Trace, Tracer
+from .._src.util import safe_map, safe_zip, unzip2, prod, wrap_name
 from .. import linear_util as lu
 
 map = safe_map
@@ -69,30 +67,30 @@ def extend_shape_envs(logical_env, padded_env):
 
 def shape_as_value(shape):
   assert is_tracing() or not is_polymorphic(shape)
-  return eval_polymorphic_shape(shape, shape_envs.logical)
+  return eval_poly_shape(shape, shape_envs.logical)
 
 def padded_shape_as_value(shape):
   assert is_tracing() or not is_polymorphic(shape)
-  return eval_polymorphic_shape(shape, shape_envs.padded)
+  return eval_poly_shape(shape, shape_envs.padded)
 
 def mask_fun(fun, logical_env, padded_env, in_vals, polymorphic_shapes):
   env_keys, padded_env_vals = unzip2(sorted(padded_env.items()))
   logical_env_vals = [logical_env[k] for k in env_keys]
   # Make padded_env hashable
   padded_env = (env_keys, padded_env_vals)
-  with core.new_master(MaskTrace) as master:
-    fun, out_shapes = mask_subtrace(fun, master, polymorphic_shapes, padded_env)
+  with core.new_main(MaskTrace) as main:
+    fun, out_shapes = mask_subtrace(fun, main, polymorphic_shapes, padded_env)
     out_vals = fun.call_wrapped(*(logical_env_vals + in_vals))
-    del master
+    del main
   return out_vals, out_shapes()
 
 @lu.transformation_with_aux
-def mask_subtrace(master, shapes, padded_env, *in_vals):
+def mask_subtrace(main, shapes, padded_env, *in_vals):
   env_keys, _ = padded_env
   logical_env_vals, in_vals = in_vals[:len(env_keys)], in_vals[len(env_keys):]
   logical_env = dict(zip(env_keys, logical_env_vals))
   padded_env = dict(zip(*padded_env))
-  trace = MaskTrace(master, core.cur_sublevel())
+  trace = MaskTrace(main, core.cur_sublevel())
   in_tracers = [MaskTracer(trace, x, s).full_lower()
                 for x, s in zip(in_vals, shapes)]
   with extend_shape_envs(logical_env, padded_env):
@@ -101,129 +99,173 @@ def mask_subtrace(master, shapes, padded_env, *in_vals):
   out_vals, out_shapes = unzip2((t.val, t.polymorphic_shape) for t in out_tracers)
   yield out_vals, out_shapes
 
-def eval_polymorphic_shape(shape, values_dict):
+def eval_poly_shape(shape, values_dict):
   return tuple(eval_poly(dim, values_dict) for dim in shape)
 
 def eval_poly(poly, values_dict):
   return poly.evaluate(values_dict) if type(poly) is Poly else poly
 
-def _ensure_poly(p):
-  if type(p) is Poly:
-    return p
-
+def _ensure_poly(p: 'Size') -> 'Poly':
+  if isinstance(p, Poly): return p
   return Poly({Mon(): p})
 
-def is_polymorphic(shape: Sequence[Union[int, 'Poly']]):
+def _polys_to_ints(shape):
+  return tuple(int(d) if type(d) is Poly and d.is_constant else d
+               for d in shape)
+
+def is_polymorphic(shape: Sequence['Size']):
   return any(map(lambda d: type(d) is Poly, shape))
 
-class Poly(dict):
-  """Polynomial with nonnegative integer coefficients for polymorphic shapes."""
+class UndefinedPoly(Exception):
+  """Exception raised when an operation involving polynomials is not defined.
 
-  def __init__(self, coeffs):
+  An operation `op` on polynomials `p1` and `p2` either raises this exception,
+  or produce a polynomial `res`, such that `op(Val(p1), Val(p2)) = Val(res)`,
+  for any `Val`, a non-negative integer valuation of the shape variables.
+  """
+  pass
+
+class Poly(dict):
+  """Polynomial with integer coefficients for polymorphic shapes.
+
+  The shape variables are assumed to range over non-negative integers.
+
+  We overload integer operations, but we do that soundly, raising
+  :class:`UndefinedPoly` when the result is not representable as a polynomial.
+
+  The representation of a polynomial is as a dictionary mapping monomials to
+  integer coefficients. The special monomial `Mon()` is mapped to the
+  free integer coefficient of the polynomial.
+  """
+
+  def __init__(self, coeffs: Dict['Mon', int]):
     # Makes sure Polynomials are always in canonical form
     coeffs = {mon: op.index(coeff)
               for mon, coeff in coeffs.items() if coeff != 0}
     coeffs = coeffs or {Mon(): 0}
     super().__init__(coeffs)
 
-  def __add__(self, other):
+  def __hash__(self):
+    return hash(tuple(sorted(self.items())))
+
+  def __add__(self, other: 'Size') -> 'Poly':
     coeffs = self.copy()
     for mon, coeff in _ensure_poly(other).items():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
     return Poly(coeffs)
 
-  def __sub__(self, other):
+  def __sub__(self, other: 'Size') -> 'Poly':
     return self + -other
 
-  def __neg__(self):
+  def __neg__(self) -> 'Poly':
     return Poly({mon: -coeff for mon, coeff in self.items()})
 
-  def __mul__(self, other):
+  def __mul__(self, other: 'Size') -> 'Poly':
     other = _ensure_poly(other)
-    coeffs = {}
+    coeffs: Dict[Mon, int] = {}
     for (mon1, coeff1), (mon2, coeff2) in product(self.items(), other.items()):
       mon = mon1 * mon2
       coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
     return Poly(coeffs)
 
-  def __rmul__(self, other):
+  def __rmul__(self, other: 'Size') -> 'Poly':
     return self * other  # multiplication commutes
 
-  def __radd__(self, other):
+  def __radd__(self, other: 'Size') -> 'Poly':
     return self + other  # addition commutes
 
-  def __rsub__(self, other):
+  def __rsub__(self, other: 'Size') -> 'Poly':
     return _ensure_poly(other) - self
 
-  def __floordiv__(self, divisor):
-    q, _ = divmod(self, divisor)  # pytype: disable=wrong-arg-types
+  def __floordiv__(self, divisor: 'Size') -> 'Poly':
+    q, _ = divmod(self, divisor)  # type: ignore
     return q
 
-  def __mod__(self, divisor):
-    _, r = divmod(self, divisor)  # pytype: disable=wrong-arg-types
+  def __mod__(self, divisor: 'Size') -> int:
+    _, r = divmod(self, divisor)  # type: ignore
     return r
 
-  def __divmod__(self, divisor):
-    if self.is_constant:
-      return divmod(int(self), divisor)
-    else:
-      def divided(count):
-        q, r = divmod(count, divisor)
-        if r != 0:
-          raise ValueError('shapecheck  and masking currently only support '
-                           'strides that exactly divide the strided axis '
-                           'length.')
-        return q
+  def __divmod__(self, divisor: 'Size') -> Tuple['Poly', int]:
+    """
+    Floor division with remainder (divmod) generalized to polynomials. To allow
+    ensuring '0 <= remainder < divisor' for consistency with integer divmod, the
+    divisor must divide the dividend (up to a constant for constant divisors).
+    :return: Quotient resulting from polynomial division and integer remainder.
+    """
+    divisor = _ensure_poly(divisor)
+    dmon, dcount = divisor._leading_term
+    dividend, quotient, remainder = self, _ensure_poly(0), _ensure_poly(0)
+    while not dividend.is_constant or dividend != 0:  # invariant: dividend == divisor*quotient + remainder
+      mon, count = dividend._leading_term
+      qcount, rcount = divmod(count, dcount)
+      try:
+        qmon = mon // dmon
+      except UndefinedPoly:
+        raise UndefinedPoly(f"Stride {divisor} must divide size {self} "
+                            "(up to a constant for constant divisors).")
+      r = Poly({mon: rcount})
+      q = Poly({qmon: qcount})
+      quotient += q
+      remainder += r
+      dividend -= q * divisor + r
+    return quotient, int(remainder)
 
-      return Poly(
-        {k: coeff // divisor if k.degree == 0 else divided(coeff)
-         for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
-
-  def __hash__(self):
-    return hash(tuple(sorted(self.items())))
+  def __rdivmod__(self, dividend: 'Size') -> Tuple['Poly', int]:
+    return divmod(_ensure_poly(dividend), self)  # type: ignore
 
   def __eq__(self, other):
-    return super().__eq__(_ensure_poly(other))
+    lb, ub = (self - other).bounds()
+    if lb == ub == 0:
+      return True
+    if lb is not None and lb > 0:
+      return False
+    if ub is not None and ub < 0:
+      return False
+    raise UndefinedPoly(f"Polynomial comparison {self} == {other} is inconclusive")
 
   def __ne__(self, other):
     return not self == other
 
-  def __ge__(self, other):
-    other = _ensure_poly(other)
-
-    if other.is_constant and self.is_constant:
-      return int(self) >= int(other)
-    elif other.is_constant and int(other) <= 1:
-      # Assume nonzero polynomials are positive, allows use in shape rules
+  def __ge__(self, other: 'Size'):
+    lb, ub = (self - other).bounds()
+    if lb is not None and lb >= 0:
       return True
-    elif self.is_constant and int(self) <= 0:
-      return False  # See above.
-    elif self == other:
-      return True
+    if ub is not None and ub < 0:
+      return False
+    raise UndefinedPoly(f"Polynomial comparison {self} >= {other} is inconclusive")
 
-    raise ValueError('Polynomials comparison "{} >= {}" is inconclusive.'
-                     .format(self, other))
-
-  def __le__(self, other):
+  def __le__(self, other: 'Size'):
     return _ensure_poly(other) >= self
 
-  def __lt__(self, other):
+  def __lt__(self, other: 'Size'):
     return not (self >= other)
 
-  def __gt__(self, other):
+  def __gt__(self, other: 'Size'):
     return not (_ensure_poly(other) >= self)
 
   def __str__(self):
-    return ' + '.join('{} {}'.format(v, k)
-                      if (v != 1 or k.degree == 0) else str(k)
-                      for k, v in sorted(self.items())).strip()
+    return ' + '.join(f'{c} {mon}' if c != 1 or mon.degree == 0 else str(mon)
+                      for mon, c in sorted(self.items(), reverse=True)).strip()
 
   def __repr__(self):
     return str(self)
 
   def __int__(self):
-    assert self.is_constant
-    return op.index(next(iter(self.values())))
+    if self.is_constant:
+      return op.index(next(iter(self.values())))
+    else:
+      raise UndefinedPoly(f"Polynomial {self} is not constant")
+
+  def bounds(self) -> Tuple[Optional[int], Optional[int]]:
+    """Returns the lower and upper bounds, if defined."""
+    lb = ub = self.get(Mon(), 0)
+    for mon, coeff in self.items():
+      if mon.degree > 0:
+        if coeff > 0:
+          ub = None
+        else:
+          lb = None
+    return lb, ub
 
   def evaluate(self, env):
     prod = lambda xs: reduce(op.mul, xs) if xs else 1
@@ -234,6 +276,13 @@ class Poly(dict):
   @property
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
+
+  @property
+  def _leading_term(self) -> Tuple['Mon', int]:
+    """Returns the highest degree term that comes first lexicographically."""
+    return max(self.items())
+
+Size = Union[int, Poly]
 
 def pow(x, deg):
   try:
@@ -249,32 +298,56 @@ def mul(coeff, mon):
   except:
     return coeff * mon
   else:
-    return  0 if coeff == 0 else mon if coeff == 1 else coeff * mon
+    return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
 
 
-abstract_arrays._DIMENSION_TYPES.add(Poly)
-
+core._DIMENSION_TYPES.add(Poly)
 
 class Mon(dict):
+  # TODO: move this before Poly in the file
+  """Represents a multivariate monomial, such as n^3 * m.
+
+  The representation is a dictionary mapping var:exponent. The
+  exponent is >= 1.
+  """
   def __hash__(self):
     return hash(frozenset(self.items()))
 
   def __str__(self):
-    return ' '.join('{}**{}'.format(k, v) if v != 1 else str(k)
-                    for k, v in sorted(self.items()))
+    return ' '.join(f'{key}^{exponent}' if exponent != 1 else str(key)
+                    for key, exponent in sorted(self.items()))
 
-  def __lt__(self, other):
-    # sort by total degree, then lexicographically on indets
+  def __lt__(self, other: 'Mon'):
+    # TODO: do not override __lt__ for this
+    """
+    Comparison to another monomial in graded reverse lexicographic order.
+    """
     self_key = -self.degree, tuple(sorted(self))
     other_key = -other.degree, tuple(sorted(other))
-    return self_key < other_key
+    return self_key > other_key
 
-  def __mul__(self, other):
+  def __mul__(self, other: 'Mon') -> 'Mon':
+    """
+    Returns the product with another monomial. Example: (n^2*m) * n == n^3 * m.
+    """
     return Mon(Counter(self) + Counter(other))
 
   @property
   def degree(self):
     return sum(self.values())
+
+  def __floordiv__(self, divisor: 'Mon') -> 'Mon':
+    """
+    Divides by another monomial. Raises a ValueError if impossible.
+    For example, (n^3 * m) // n == n^2*m, but n // m fails.
+    """
+    d = Counter(self)
+    for key, exponent in divisor.items():
+      diff = self.get(key, 0) - exponent
+      if diff < 0: raise UndefinedPoly(f"Cannot divide {self} by {divisor}.")
+      elif diff == 0: del d[key]
+      elif diff > 0: d[key] = diff
+    return Mon(d)
 
 class ShapeError(Exception): pass
 
@@ -303,6 +376,7 @@ class ShapeSpec(tuple):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
 def finalize_spec(polymorphic_shape, padded_shape):
+  # TODO: what if polymorphic_shape has a constant that does not match padded_shape?
   return tuple(_parse_lit(d) if e is _monomorphic_dim else e
                for e, d in zip(polymorphic_shape, padded_shape))
 
@@ -317,12 +391,12 @@ def parse_spec(spec=''):
 
 def _parse_dim(spec):
   if '+' in spec:
-    return onp.sum(map(_parse_dim, spec.split('+')))
+    return np.sum(map(_parse_dim, spec.split('+')))
   elif '*' in spec:
     return prod(map(_parse_dim, spec.split('*')))
   elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit():
     return _parse_lit(spec)
-  elif spec in _identifiers:
+  elif spec[0] in _identifiers:
     return _parse_id(spec)
   elif spec == '_':
     return _monomorphic_dim
@@ -333,7 +407,7 @@ _identifiers = frozenset(string.ascii_lowercase)
 
 def _parse_id(name): return Poly({Mon({name: 1}): 1})
 
-def _parse_lit(val_str): return Poly({Mon(): int(val_str)})
+def _parse_lit(val_str): return int(val_str)
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
@@ -383,10 +457,10 @@ class MaskTracer(Tracer):
 
 class MaskTrace(Trace):
   def pure(self, val):
-    return MaskTracer(self, val, onp.shape(val))
+    return MaskTracer(self, val, np.shape(val))
 
   def lift(self, val):
-    return MaskTracer(self, val, onp.shape(val))
+    return MaskTracer(self, val, np.shape(val))
 
   def sublift(self, val):
     return MaskTracer(self, val.val, val.polymorphic_shape)
@@ -399,11 +473,14 @@ class MaskTrace(Trace):
     out_aval = primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals, polymorphic_shapes = unzip2((t.val, t.polymorphic_shape) for t in tracers)
     logical_shapes = map(shape_as_value, polymorphic_shapes)
+    # TODO(mattjj): generalize mask rule signature
+    if primitive.name == 'reshape': params['polymorphic_shapes'] = polymorphic_shapes
     out = masking_rule(vals, logical_shapes, **params)
     if primitive.multiple_results:
-      return map(partial(MaskTracer, self), out, (o.shape for o in out_aval))
+      out_shapes = map(_polys_to_ints, [o.shape for o in out_aval])
+      return map(partial(MaskTracer, self), out, out_shapes)
     else:
-      return MaskTracer(self, out, out_aval.shape)
+      return MaskTracer(self, out, _polys_to_ints(out_aval.shape))
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
@@ -417,7 +494,7 @@ class MaskTrace(Trace):
       logical_env_vals = tuple(logical_env[k] for k in env_keys)
       # Make padded_env hashable
       padded_env = (env_keys, padded_env_vals)
-      f, shapes_out = mask_subtrace(f, self.master, shapes, padded_env)
+      f, shapes_out = mask_subtrace(f, self.main, shapes, padded_env)
       if 'donated_invars' in params:
         params = dict(params, donated_invars=((False,) * len(logical_env_vals) +
                                               params['donated_invars']))
@@ -426,9 +503,9 @@ class MaskTrace(Trace):
 
   def post_process_call(self, call_primitive, out_tracers, params):
     vals, shapes = unzip2((t.val, t.polymorphic_shape) for t in out_tracers)
-    master = self.master
+    main = self.main
     def todo(vals):
-      trace = MaskTrace(master, core.cur_sublevel())
+      trace = MaskTrace(main, core.cur_sublevel())
       return map(partial(MaskTracer, trace), vals, shapes)
     return vals, todo
 
@@ -451,8 +528,8 @@ class UniqueIds(dict):
 def remap_ids(names, shape_spec):
   return ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
                          : coeff for mon, coeff in poly.items()})
-                   if poly is not _monomorphic_dim else
-                   _monomorphic_dim for poly in shape_spec)
+                   if isinstance(poly, Poly) else
+                   poly for poly in shape_spec)
 
 def bind_shapes(polymorphic_shapes, padded_shapes):
   env = {}

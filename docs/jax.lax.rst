@@ -1,5 +1,5 @@
 jax.lax package
-================
+===============
 
 .. automodule:: jax.lax
 
@@ -26,6 +26,8 @@ Operators
     abs
     add
     acos
+    argmax
+    argmin
     asin
     atan
     atan2
@@ -51,10 +53,15 @@ Operators
     conv
     convert_element_type
     conv_general_dilated
+    conv_general_dilated_patches
     conv_with_general_padding
     conv_transpose
     cos
     cosh
+    cummax
+    cummin
+    cumprod
+    cumsum
     digamma
     div
     dot
@@ -62,6 +69,7 @@ Operators
     dynamic_index_in_dim
     dynamic_slice
     dynamic_slice_in_dim
+    dynamic_update_slice
     dynamic_update_index_in_dim
     dynamic_update_slice_in_dim
     eq
@@ -129,6 +137,7 @@ Operators
     top_k
     transpose
 
+.. _lax-control-flow:
 
 Control flow operators
 ----------------------
@@ -136,10 +145,12 @@ Control flow operators
 .. autosummary::
   :toctree: _autosummary
 
+    associative_scan
     cond
     fori_loop
     map
     scan
+    switch
     while_loop
 
 Custom gradient operators
@@ -167,5 +178,33 @@ Parallelism support is experimental.
     pmin
     pmean
     ppermute
+    pshuffle
     pswapaxes
     axis_index
+
+Linear algebra operators (jax.lax.linalg)
+-----------------------------------------
+
+.. automodule:: jax.lax.linalg
+
+.. autosummary::
+  :toctree: _autosummary
+
+    cholesky
+    eig
+    eigh
+    lu
+    qr
+    svd
+    triangular_solve
+
+Argument classes
+----------------
+
+.. currentmodule:: jax.lax
+
+.. autoclass:: ConvDimensionNumbers
+.. autoclass:: GatherDimensionNumbers
+.. autoclass:: Precision
+.. autoclass:: RoundingMethod
+.. autoclass:: ScatterDimensionNumbers

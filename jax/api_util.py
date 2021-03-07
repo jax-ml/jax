@@ -12,30 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import operator
+from typing import Any, Dict, Tuple, Union
+
+import numpy as np
+
+from . import core
+from . import dtypes
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
-                        tree_structure)
+                        tree_structure, treedef_children, treedef_is_leaf)
 from . import linear_util as lu
-from .util import safe_map, curry, WrapHashably, Hashable
+from ._src.util import safe_map, WrapHashably, Hashable
 from .core import unit
 
-from typing import Tuple
+from ._src import traceback_util
+traceback_util.register_exclusion(__file__)
 
 map = safe_map
 
-
-@curry
-def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
+def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
+  """Ensure x is either an index or a tuple of indices."""
   try:
-    fun.__name__ = namestr.format(fun=get_name(wrapped))
-    fun.__module__ = get_module(wrapped)
-    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
-    fun.__wrapped__ = wrapped
-  finally:
-    return fun
+    return operator.index(x)
+  except TypeError:
+    return tuple(map(operator.index, x))
 
-def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
-def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
-def get_doc(fun): return getattr(fun, "__doc__", "")
+def _ensure_index_tuple(x: Any) -> Tuple[int, ...]:
+  """Convert x to a tuple of indices."""
+  try:
+    return (operator.index(x),)
+  except TypeError:
+    return tuple(map(operator.index, x))
+
+def _ensure_str(x: str) -> str:
+  if not isinstance(x, str):
+    raise TypeError(f"argument is not a string: {x}")
+  return x
+
+def _ensure_str_tuple(x: Union[str, Tuple[str, ...]]) -> Tuple[str, ...]:
+  """Convert x to a tuple of strings."""
+  if isinstance(x, str):
+    return (x,)
+  else:
+    return tuple(map(_ensure_str, x))
+
 
 @lu.transformation_with_aux
 def flatten_fun(in_tree, *args_flat):
@@ -47,7 +67,7 @@ def apply_flat_fun(fun, io_tree, *py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten((py_args, {}))
   if in_tree != in_tree_expected:
-      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -61,53 +81,98 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
   if in_tree != in_tree_expected:
-      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
 @lu.transformation_with_aux
 def flatten_fun_nokwargs2(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
-  ans, aux = yield py_args, {}
+  pair = yield py_args, {}
+  if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+    raise TypeError("expected function with aux output to return a two-element "
+                    f"tuple, but got type {type(pair)} with value {repr(pair)}")
+  ans, aux = pair
   ans_flat, ans_tree = tree_flatten(ans)
   aux_flat, aux_tree = tree_flatten(aux)
   yield (ans_flat, aux_flat), (ans_tree, aux_tree)
 
+
 def argnums_partial(f, dyn_argnums, args):
-  if isinstance(dyn_argnums, int):
-    dyn_argnums = (dyn_argnums,)
-  else:
-    dyn_argnums = tuple(dyn_argnums)
+  dyn_argnums = _ensure_index_tuple(dyn_argnums)
   fixed_args = tuple(unit if i in dyn_argnums else wrap_hashably(arg)
                      for i, arg in enumerate(args))
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, fixed_args), dyn_args
 
 def argnames_partial(f, dyn_argnames, kwargs):
-  if isinstance(dyn_argnames, str):
-    dyn_argnames = (dyn_argnames,)
-  else:
-    dyn_argnames = tuple(dyn_argnames)
+  dyn_argnames = _ensure_str_tuple(dyn_argnames)
   fixed_kwargs = tuple((k, unit if k in dyn_argnames else wrap_hashably(v))
                        for k, v in kwargs.items())
   dyn_kwargs = {k: kwargs[k] for k in dyn_argnames}
-  return _argnames_partial(f, fixed_kwargs), dyn_kwargs
+  return _argnames_partial(f, WrapHashably(fixed_kwargs)), dyn_kwargs
 
-def apply_argnums(f, static_argnums, args):
-  if static_argnums:
-    dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-    f, dyn_args = argnums_partial(f, dyn_argnums, args)
-  else:
-    dyn_args = args
-  return f, dyn_args
+def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
+                           args: Tuple[Any]):
+  """Version of ``argnums_partial`` that checks hashability of static_argnums."""
+  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
+  dyn_args = tuple(args[i] for i in dyn_argnums)
 
-def apply_argnames(f, static_argnames, kwargs):
-  if static_argnames:
-    dyn_argnames = [k for k in kwargs if k not in static_argnames]
-    f, dyn_kwargs = argnames_partial(f, dyn_argnames, kwargs)
-  else:
-    dyn_kwargs = kwargs
-  return f, dyn_kwargs
+  fixed_args = [unit] * len(args)  # type: ignore
+  for i in static_argnums:
+    if i >= len(args):
+      continue
+    static_arg = args[i]
+    try:
+      hash(static_arg)
+    except TypeError:
+      raise ValueError(
+          "Non-hashable static arguments are not supported, as this can lead "
+          f"to unexpected cache-misses. Static argument (index {i}) of type "
+          f"{type(static_arg)} for function {f.__name__} is non-hashable.")
+    else:
+      fixed_args[i] = Hashable(static_arg)  # type: ignore
+
+  return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
+
+def argnames_partial_except(f: lu.WrappedFun, static_argnames: Tuple[str, ...],
+                            kwargs: Dict[str, Any]):
+  dyn_argnames = tuple(k for k in kwargs if k not in static_argnames)
+  dyn_kwargs = {k: kwargs[k] for k in dyn_argnames}
+
+  fixed_kwargs: Dict[str, Any] = {}
+  for k, arg in kwargs.items():
+    if k in dyn_kwargs:
+      fixed_kwargs = unit
+    else:
+      try:
+        hash(arg)
+      except TypeError:
+        raise ValueError(
+            "Non-hashable static arguments are not supported, as this can lead "
+            f"to unexpected cache-misses. Static argument (name {k}) of type "
+            f"{type(arg)} for function {f.__name__} is non-hashable.")
+      else:
+        fixed_kwargs[k] = Hashable(arg)  # type: ignore
+
+  return _argnames_partial(f, WrapHashably(fixed_kwargs)), dyn_kwargs
+
+
+@lu.transformation
+def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
+  args = [None if arg is unit else arg.val for arg in fixed_args]
+  for i, arg in zip(dyn_argnums, dyn_args):
+    args[i] = arg
+  ans = yield args, kwargs
+  yield ans
+
+@lu.transformation
+def _argnames_partial(fixed_kwargs, *args, **dyn_kwargs):
+  kwargs = {k: None if arg is unit else arg.val
+            for k, arg in fixed_kwargs.val.items()}
+  kwargs.update(dyn_kwargs)
+  ans = yield args, kwargs
+  yield ans
 
 def donation_vector(donate_argnums, args, kwargs) -> Tuple[bool, ...]:
   """Returns a tuple with a boolean value for each leaf in args."""
@@ -160,22 +225,7 @@ def wrap_hashably(arg):
   else:
     return Hashable(arg)
 
-@lu.transformation
-def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
-  args = [None if arg is unit else arg.val for arg in fixed_args]
-  for i, arg in zip(dyn_argnums, dyn_args):
-    args[i] = arg
-  ans = yield args, kwargs
-  yield ans
-
-@lu.transformation
-def _argnames_partial(fixed_kwargs, *args, **dyn_kwargs):
-  kwargs = {k: None if arg is unit else arg.val for k, arg in fixed_kwargs}
-  kwargs.update(dyn_kwargs)
-  ans = yield args, kwargs
-  yield ans
-
-def flatten_axes(treedef, axis_tree):
+def flatten_axes(name, treedef, axis_tree, *, kws=False):
   # given an axis spec tree axis_tree (a pytree with integers and Nones at the
   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
   # the given treedef, build a complete axis spec tree with the same structure
@@ -187,10 +237,33 @@ def flatten_axes(treedef, axis_tree):
   add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
   try:
     tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
-  except ValueError as e:
-    msg = ("axes specification must be a tree prefix of the corresponding "
-           "value, got specification {} for value {}.")
-    raise ValueError(msg.format(axis_tree, treedef)) from e
+  except ValueError:
+    if kws:
+      # if keyword arguments are included in the tree, we make adapt the error
+      # message only to be about the positional arguments
+      treedef, leaf = treedef_children(treedef)
+      assert treedef_is_leaf(leaf)
+      axis_tree, _ = axis_tree
+    raise ValueError(f"{name} specification must be a tree prefix of the "
+                     f"corresponding value, got specification {axis_tree} "
+                     f"for value tree {treedef}.") from None
   axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes
+
+def _dtype(x):
+  try:
+    return dtypes.result_type(x)
+  except ValueError:
+    return dtypes.result_type(getattr(x, 'dtype'))
+
+def shaped_abstractify(x):
+  try:
+    return core.raise_to_shaped(core.get_aval(x))
+  except TypeError:
+    pass
+
+  weak_type = getattr(x, 'weak_type', False)
+  named_shape = getattr(x, 'named_shape', {})
+  return core.ShapedArray(np.shape(x), _dtype(x), weak_type=weak_type,
+                          named_shape=named_shape)

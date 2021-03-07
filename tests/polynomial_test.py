@@ -14,6 +14,7 @@
 
 from functools import partial
 import numpy as np
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,13 +26,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-float_dtypes = [np.float32, np.float64]
-# implementation casts to complex64.
-complex_dtypes = [np.complex64]
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = [np.int32, np.int64]
-real_dtypes = float_dtypes + int_dtypes
-all_dtypes = real_dtypes + complex_dtypes
+all_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 
 
 # TODO: these tests fail without fixed PRNG seeds.
@@ -43,38 +38,37 @@ class TestPolynomial(jtu.JaxTestCase):
     {"testcase_name": "_dtype={}_leading={}_trailing={}".format(
        jtu.format_shape_dtype_string((length+leading+trailing,), dtype),
        leading, trailing),
-     "dtype": dtype, "rng_factory": rng_factory, "length": length,
-     "leading": leading, "trailing": trailing}
+     "dtype": dtype, "length": length, "leading": leading, "trailing": trailing}
     for dtype in all_dtypes
-    for rng_factory in [jtu.rand_default]
     for length in [0, 3, 9, 10, 17]
     for leading in [0, 1, 2, 3, 5, 7, 10]
     for trailing in [0, 1, 2, 3, 5, 7, 10]))
-  def testRoots(self, dtype, rng_factory, length, leading, trailing):
-    rng = rng_factory(np.random.RandomState(0))
+  # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testRoots(self, dtype, length, leading, trailing):
+    rng = jtu.rand_default(np.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
       return jnp.concatenate(
         [jnp.zeros(leading, p.dtype), p, jnp.zeros(trailing, p.dtype)]),
 
-    # order may differ (jnp.sort doesn't deal with complex numbers)
-    np_fn = lambda arg: np.sort(jnp.roots(arg))
+    jnp_fn = lambda arg: jnp.sort(jnp.roots(arg))
     np_fn = lambda arg: np.sort(np.roots(arg))
-    self._CheckAgainstNumpy(np_fn, np_fn, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=3e-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_trailing={}".format(
         jtu.format_shape_dtype_string((length+trailing,), dtype), trailing),
-     "dtype": dtype, "rng_factory": rng_factory, "length": length,
-     "trailing": trailing}
+     "dtype": dtype, "length": length, "trailing": trailing}
     for dtype in all_dtypes
-    for rng_factory in [jtu.rand_default]
     for length in [0, 1, 3, 10]
     for trailing in [0, 1, 3, 7]))
-  def testRootsNostrip(self, length, dtype, rng_factory, trailing):
-    rng = rng_factory(np.random.RandomState(0))
+  # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testRootsNostrip(self, length, dtype, trailing):
+    rng = jtu.rand_default(np.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
@@ -84,26 +78,23 @@ class TestPolynomial(jtu.JaxTestCase):
         # adding trailing would make input invalid (start with zeros)
         return p,
 
-    # order may differ (jnp.sort doesn't deal with complex numbers)
-    np_fn = lambda arg: np.sort(jnp.roots(arg, strip_zeros=False))
+    jnp_fn = lambda arg: jnp.sort(jnp.roots(arg, strip_zeros=False))
     np_fn = lambda arg: np.sort(np.roots(arg))
-    self._CheckAgainstNumpy(np_fn, np_fn, args_maker,
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker,
                             check_dtypes=False, tol=1e-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_trailing={}".format(
       jtu.format_shape_dtype_string((length + trailing,), dtype), trailing),
-      "dtype": dtype, "rng_factory": rng_factory, "length": length,
-      "trailing": trailing}
+      "dtype": dtype, "length": length, "trailing": trailing}
     for dtype in all_dtypes
-    for rng_factory in [jtu.rand_default]
     for length in [0, 1, 3, 10]
     for trailing in [0, 1, 3, 7]))
   # TODO: enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
-  def testRootsJit(self, length, dtype, rng_factory, trailing):
-    rng = rng_factory(np.random.RandomState(0))
+  def testRootsJit(self, length, dtype, trailing):
+    rng = jtu.rand_default(np.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
@@ -113,27 +104,26 @@ class TestPolynomial(jtu.JaxTestCase):
         # adding trailing would make input invalid (start with zeros)
         return p,
 
-    # order may differ (jnp.sort doesn't deal with complex numbers)
     roots_compiled = jit(partial(jnp.roots, strip_zeros=False))
-    np_fn = lambda arg: np.sort(roots_compiled(arg))
+    jnp_fn = lambda arg: jnp.sort(roots_compiled(arg))
     np_fn = lambda arg: np.sort(np.roots(arg))
     # Using strip_zeros=False makes the algorithm less efficient
     # and leads to slightly different values compared ot numpy
-    self._CheckAgainstNumpy(np_fn, np_fn, args_maker,
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker,
                             check_dtypes=False, tol=1e-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_zeros={}_nonzeros={}".format(
         jtu.format_shape_dtype_string((zeros+nonzeros,), dtype),
         zeros, nonzeros),
-     "zeros": zeros, "nonzeros": nonzeros, "dtype": dtype,
-     "rng_factory": rng_factory}
+     "zeros": zeros, "nonzeros": nonzeros, "dtype": dtype}
     for dtype in all_dtypes
-    for rng_factory in [jtu.rand_default]
     for zeros in [1, 2, 5]
     for nonzeros in [0, 3]))
-  def testRootsInvalid(self, zeros, nonzeros, dtype, rng_factory):
-    rng = rng_factory(np.random.RandomState(0))
+  @jtu.skip_on_devices("gpu")
+  def testRootsInvalid(self, zeros, nonzeros, dtype):
+    raise unittest.SkipTest("getting segfaults on MKL")  # TODO(#3711)
+    rng = jtu.rand_default(np.random.RandomState(0))
 
     # The polynomial coefficients here start with zero and would have to
     # be stripped before computing eigenvalues of the companion matrix.
@@ -149,4 +139,4 @@ class TestPolynomial(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

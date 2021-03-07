@@ -23,42 +23,36 @@
 from distutils.util import strtobool
 import functools
 import os
+from typing import Dict
 
 import numpy as np
 
-from . import util
-from .config import flags
+from ._src import util
+from .config import flags, config
+from . import lib
 from .lib import xla_client
+
+from ._src import traceback_util
+traceback_util.register_exclusion(__file__)
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
                   strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
+# TODO(jblespiau): Remove the `if` when jaxlib 0.1.62 is the minimal version.
+if lib._xla_extension_version >= 5:
+  lib.jax_jit.set_enable_x64_cpp_flag(
+      strtobool(os.getenv('JAX_ENABLE_X64', 'False')))
 
 # bfloat16 support
-bfloat16 = xla_client.bfloat16
-_bfloat16_dtype = np.dtype(bfloat16)
-
-class _bfloat16_finfo(object):
-  bits = 16
-  eps = bfloat16(float.fromhex("0x1p-7"))
-  epsneg = bfloat16(float.fromhex("0x1p-8"))
-  machep = -7
-  negep = -8
-  max = bfloat16(float.fromhex("0x1.FEp127"))
-  min = -max
-  nexp = 8
-  nmant = 7
-  iexp = nexp
-  precision = 2
-  resolution = 10 ** -2
-  tiny = bfloat16(float.fromhex("0x1p-126"))
+bfloat16: type = xla_client.bfloat16
+_bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
 
 bool_ = np.bool_
-int_ = np.int64
-float_ = np.float64
+int_: np.dtype = np.int64  # type: ignore
+float_: np.dtype = np.float64  # type: ignore
 complex_ = np.complex128
 
 # TODO(phawkins): change the above defaults to:
@@ -66,6 +60,8 @@ complex_ = np.complex128
 # float_ = np.float32
 # complex_ = np.complex64
 
+# Trivial vectorspace datatype needed for tangent values of int/bool primals
+float0 = np.dtype([('float0', np.void, 0)])
 
 _dtype_to_32bit_dtype = {
     np.dtype('int64'): np.dtype('int32'),
@@ -76,7 +72,7 @@ _dtype_to_32bit_dtype = {
 
 @util.memoize
 def canonicalize_dtype(dtype):
-  """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
+  """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   if isinstance(dtype, str) and dtype == "bfloat16":
     dtype = bfloat16
   try:
@@ -84,14 +80,14 @@ def canonicalize_dtype(dtype):
   except TypeError as e:
     raise TypeError(f'dtype {dtype!r} not understood') from e
 
-  if FLAGS.jax_enable_x64:
+  if config.x64_enabled:
     return dtype
   else:
     return _dtype_to_32bit_dtype.get(dtype, dtype)
 
 
 # Default dtypes corresponding to Python scalars.
-python_scalar_dtypes = {
+python_scalar_dtypes : dict = {
   bool: np.dtype(bool_),
   int: np.dtype(int_),
   float: np.dtype(float_),
@@ -122,14 +118,51 @@ def coerce_to_array(x):
 
 iinfo = np.iinfo
 
-def finfo(dtype):
-  # Since NumPy doesn't consider bfloat16 a floating-point type, we have to
-  # provide an alternative implementation of finfo that does so.
-  if ((isinstance(dtype, str) and dtype == "bfloat16") or
-      np.result_type(dtype) == _bfloat16_dtype):
-    return _bfloat16_finfo
-  else:
-    return np.finfo(dtype)
+class finfo(np.finfo):
+  __doc__ = np.finfo.__doc__
+  _finfo_cache: Dict[np.dtype, np.finfo] = {}
+  @staticmethod
+  def _bfloat16_finfo():
+    def float_to_str(f):
+      return "%12.4e" % float(f)
+
+    bfloat16 = _bfloat16_dtype.type
+    tiny = float.fromhex("0x1p-126")
+    resolution = 0.01
+    eps = float.fromhex("0x1p-7")
+    epsneg = float.fromhex("0x1p-8")
+    max = float.fromhex("0x1.FEp127")
+
+    obj = object.__new__(np.finfo)
+    obj.dtype = _bfloat16_dtype
+    obj.bits = 16
+    obj.eps = bfloat16(eps)
+    obj.epsneg = bfloat16(epsneg)
+    obj.machep = -7
+    obj.negep = -8
+    obj.max = bfloat16(max)
+    obj.min = bfloat16(-max)
+    obj.nexp = 8
+    obj.nmant = 7
+    obj.iexp = obj.nexp
+    obj.precision = 2
+    obj.resolution = bfloat16(resolution)
+    obj.tiny = bfloat16(tiny)
+    obj.machar = None  # np.core.getlimits.MachArLike does not support bfloat16.
+
+    obj._str_tiny = float_to_str(tiny)
+    obj._str_max = float_to_str(max)
+    obj._str_epsneg = float_to_str(epsneg)
+    obj._str_eps = float_to_str(eps)
+    obj._str_resolution = float_to_str(resolution)
+    return obj
+
+  def __new__(cls, dtype):
+    if isinstance(dtype, str) and dtype == 'bfloat16' or dtype == _bfloat16_dtype:
+      if _bfloat16_dtype not in cls._finfo_cache:
+        cls._finfo_cache[_bfloat16_dtype] = cls._bfloat16_finfo()
+      return cls._finfo_cache[_bfloat16_dtype]
+    return super().__new__(cls, dtype)
 
 def _issubclass(a, b):
   """Determines if ``a`` is a subclass of ``b``.
@@ -144,8 +177,10 @@ def _issubclass(a, b):
 
 def issubdtype(a, b):
   if a == bfloat16:
-    return b in [bfloat16, _bfloat16_dtype, np.floating, np.inexact,
-                 np.number]
+    if isinstance(b, np.dtype):
+      return b == _bfloat16_dtype
+    else:
+      return b in [bfloat16, np.floating, np.inexact, np.number]
   if not _issubclass(b, np.generic):
     # Workaround for JAX scalar types. NumPy's issubdtype has a backward
     # compatibility behavior for the second argument of issubdtype that
@@ -157,9 +192,20 @@ def issubdtype(a, b):
 can_cast = np.can_cast
 issubsctype = np.issubsctype
 
+# Return the type holding the real part of the input type
+def dtype_real(typ):
+  if np.issubdtype(typ, np.complexfloating):
+    if typ == np.dtype('complex64'):
+      return np.dtype('float32')
+    elif typ == np.dtype('complex128'):
+      return np.dtype('float64')
+    else:
+      raise TypeError("Unknown complex floating type {}".format(typ))
+  else:
+    return typ
 
-# List of all valid JAX dtypes, in the order they appear in the type promotion
-# table.
+# Enumeration of all valid JAX types in order.
+_weak_types = [int, float, complex]
 _jax_types = [
   np.dtype('bool'),
   np.dtype('uint8'),
@@ -176,33 +222,75 @@ _jax_types = [
   np.dtype('float64'),
   np.dtype('complex64'),
   np.dtype('complex128'),
-]
+] + _weak_types  # type: ignore[operator]
 
-# Mapping from types to their type numbers.
-_jax_type_nums = {t: i for i, t in enumerate(_jax_types)}
+def _jax_type(value):
+  """Return the jax type for a value or type."""
+  # Note: `x in _weak_types` can return false positives due to dtype comparator overloading.
+  if any(value is typ for typ in _weak_types):
+    return value
+  dtype_ = dtype(value)
+  if is_weakly_typed(value):
+    pytype = type(dtype_.type(0).item())
+    if pytype in _weak_types:
+      return pytype
+  return dtype_
 
-def _make_type_promotion_table():
-  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8 = _jax_types
-  #  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8
-  return np.array([
-    [b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # b1
-    [u1, u1, u2, u4, u8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # u1
-    [u2, u2, u2, u4, u8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8],  # u2
-    [u4, u4, u4, u4, u8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8],  # u4
-    [u8, u8, u8, u8, u8, f8, f8, f8, f8, bf, f2, f4, f8, c4, c8],  # u8
-    [s1, s2, s4, s8, f8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # s1
-    [s2, s2, s4, s8, f8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # s2
-    [s4, s4, s4, s8, f8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8],  # s4
-    [s8, s8, s8, s8, f8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8],  # s8
-    [bf, bf, bf, bf, bf, bf, bf, bf, bf, bf, f4, f4, f8, c4, c8],  # bf
-    [f2, f2, f2, f2, f2, f2, f2, f2, f2, f4, f2, f4, f8, c4, c8],  # f2
-    [f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f8, c4, c8],  # f4
-    [f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, c8, c8],  # f8
-    [c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c8, c4, c8],  # c4
-    [c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8],  # c8
-  ])
+def _type_promotion_lattice():
+  """
+  Return the type promotion lattice in the form of a DAG.
+  This DAG maps each type to its immediately higher type on the lattice.
+  """
+  b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_ = _jax_types
+  return {
+    b1: [i_],
+    u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+    i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
+    f_: [bf, f2, c_], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
+    c_: [c4], c4: [c8], c8: [],
+  }
 
-_type_promotion_table = _make_type_promotion_table()
+def _make_lattice_upper_bounds():
+  lattice = _type_promotion_lattice()
+  upper_bounds = {node: {node} for node in lattice}
+  for n in lattice:
+    while True:
+      new_upper_bounds = set().union(*(lattice[b] for b in upper_bounds[n]))
+      if n in new_upper_bounds:
+        raise ValueError(f"cycle detected in type promotion lattice for node {n}")
+      if new_upper_bounds.issubset(upper_bounds[n]):
+        break
+      upper_bounds[n] |= new_upper_bounds
+  return upper_bounds
+_lattice_upper_bounds = _make_lattice_upper_bounds()
+
+@functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
+def _least_upper_bound(*nodes):
+  # This function computes the least upper bound of a set of nodes N within a partially
+  # ordered set defined by the lattice generated above.
+  # Given a partially ordered set S, let the set of upper bounds of n ∈ S be
+  #   UB(n) ≡ {m ∈ S | n ≤ m}
+  # Further, for a set of nodes N ⊆ S, let the set of common upper bounds be given by
+  #   CUB(N) ≡ {a ∈ S | ∀ b ∈ N: a ∈ UB(b)}
+  # Then the least upper bound of N is defined as
+  #   LUB(N) ≡ {c ∈ CUB(N) | ∀ d ∈ CUB(N), c ≤ d}
+  # The definition of an upper bound implies that c ≤ d if and only if d ∈ UB(c),
+  # so the LUB can be expressed:
+  #   LUB(N) = {c ∈ CUB(N) | ∀ d ∈ CUB(N): d ∈ UB(c)}
+  # or, equivalently:
+  #   LUB(N) = {c ∈ CUB(N) | CUB(N) ⊆ UB(c)}
+  # By definition, LUB(N) has a cardinality of 1 for a partially ordered set.
+  # Note a potential algorithmic shortcut: from the definition of CUB(N), we have
+  #   ∀ c ∈ N: CUB(N) ⊆ UB(c)
+  # So if N ∩ CUB(N) is nonempty, if follows that LUB(N) = N ∩ CUB(N).
+  N = set(nodes)
+  UB = _lattice_upper_bounds
+  CUB = set.intersection(*(UB[n] for n in N))
+  LUB = (CUB & N) or {c for c in CUB if CUB.issubset(UB[c])}
+  if len(LUB) == 1:
+    return LUB.pop()
+  else:
+    raise ValueError(f"{nodes} do not have a unique least upper bound.")
 
 def promote_types(a, b):
   """Returns the type to which a binary operation should cast its arguments.
@@ -216,14 +304,15 @@ def promote_types(a, b):
   Returns:
     A :class:`numpy.dtype` object.
   """
-  a = np.dtype(a)
-  b = np.dtype(b)
-  try:
-    return _type_promotion_table[_jax_type_nums[a], _jax_type_nums[b]]
-  except KeyError:
-    pass
-  raise TypeError("Invalid type promotion of {} and {}".format(a, b))
+  a = a if any(a is t for t in _weak_types) else np.dtype(a)
+  b = b if any(b is t for t in _weak_types) else np.dtype(b)
+  return np.dtype(_least_upper_bound(a, b))
 
+def is_weakly_typed(x):
+  try:
+    return x.aval.weak_type
+  except AttributeError:
+    return type(x) in _weak_types
 
 def is_python_scalar(x):
   try:
@@ -231,32 +320,18 @@ def is_python_scalar(x):
   except AttributeError:
     return type(x) in python_scalar_dtypes
 
-def _dtype_priority(dtype):
-  if issubdtype(dtype, np.bool_):
-    return 0
-  elif issubdtype(dtype, np.integer):
-    return 1
-  elif issubdtype(dtype, np.floating):
-    return 2
-  elif issubdtype(dtype, np.complexfloating):
-    return 3
-  else:
-    raise TypeError("Dtype {} is not supported by JAX".format(dtype))
-
 def dtype(x):
   if type(x) in python_scalar_dtypes:
     return python_scalar_dtypes[type(x)]
   return np.result_type(x)
 
+def _result_type_raw(*args):
+  if len(args) == 1:
+    return _jax_type(args[0])
+  return _least_upper_bound(*{_jax_type(arg) for arg in args})
+
 def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
-  # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
-  if len(args) < 2:
-    return dtype(args[0])
-  scalars = []
-  dtypes = []
-  for x in args:
-    (scalars if is_python_scalar(x) else dtypes).append(dtype(x))
-  array_priority = max(map(_dtype_priority, dtypes)) if dtypes else -1
-  dtypes += [x for x in scalars if _dtype_priority(x) > array_priority]
-  return canonicalize_dtype(functools.reduce(promote_types, dtypes))
+  if len(args) == 0:
+    raise ValueError("at least one array or dtype is required")
+  return canonicalize_dtype(_result_type_raw(*args))

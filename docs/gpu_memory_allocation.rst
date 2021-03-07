@@ -20,7 +20,6 @@ override the default behavior:
   amount preallocated can fix OOMs that occur when the JAX program starts.
 
 ``XLA_PYTHON_CLIENT_ALLOCATOR=platform``
-
   This makes JAX allocate exactly what is needed on demand, and deallocate
   memory that is no longer needed (note that this is the only configuration that
   will deallocate GPU memory, instead of reusing it). This is very slow, so is
@@ -55,7 +54,7 @@ Common causes of OOM failures
   in TF1, which should be set in a :code:`tf.ConfigProto` passed to
   :code:`tf.Session`. See
   `Using GPUs: Limiting GPU memory growth
-  <https://www.tensorflow.org/beta/guide/using_gpu#limiting_gpu_memory_growth>`_
+  <https://www.tensorflow.org/guide/gpu#limiting_gpu_memory_growth>`_
   for TF2).
 
 **Running JAX on the display GPU.**

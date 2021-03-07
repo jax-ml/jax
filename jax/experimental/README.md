@@ -28,7 +28,7 @@ pairs can be composed in series using `stax.serial` or in parallel using
 Here’s an example:
 
 ```python
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import random
 from jax.experimental import stax
 from jax.experimental.stax import Conv, Dense, MaxPool, Relu, Flatten, LogSoftmax
@@ -48,7 +48,7 @@ in_shape = (-1, 28, 28, 1)
 out_shape, net_params = net_init(rng, in_shape)
 
 # Apply network to dummy inputs
-inputs = np.zeros((128, 28, 28, 1))
+inputs = jnp.zeros((128, 28, 28, 1))
 predictions = net_apply(net_params, inputs)
 ```
 
@@ -74,7 +74,7 @@ from jax import jit, grad
 def loss(params, batch):
   inputs, targets = batch
   predictions = net_apply(params, inputs)
-  return np.sum((predictions - targets)**2)
+  return jnp.sum((predictions - targets)**2)
 
 # Use optimizers to set optimizer initialization and update functions
 opt_init, opt_update, get_params = optimizers.momentum(step_size=1e-3, mass=0.9)
@@ -87,7 +87,7 @@ def step(i, opt_state, batch):
   return opt_update(i, g, opt_state)
 
 # Dummy input data stream
-data_generator = ((np.zeros((128, 28, 28, 1)), np.zeros((128, 10)))
+data_generator = ((jnp.zeros((128, 28, 28, 1)), jnp.zeros((128, 10)))
                   for _ in range(10))
 
 # Optimize parameters in a loop

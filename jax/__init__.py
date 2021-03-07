@@ -12,18 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Set default logging level before any logging happens.
+import os as _os
+_os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
+del _os
+
 # flake8: noqa: F401
 from .config import config
 from .api import (
   ad,  # TODO(phawkins): update users to avoid this.
   argnums_partial,  # TODO(phawkins): update Haiku to not use this.
   checkpoint,
+  closure_convert,
   curry,  # TODO(phawkins): update users to avoid this.
   custom_ivjp,
   custom_gradient,
   custom_jvp,
   custom_vjp,
   custom_transforms,
+  default_backend,
   defjvp,
   defjvp_all,
   defvjp,
@@ -31,10 +38,13 @@ from .api import (
   device_count,
   device_get,
   device_put,
+  device_put_sharded,
+  device_put_replicated,
   devices,
   disable_jit,
   eval_shape,
   flatten_fun_nokwargs,  # TODO(phawkins): update users to avoid this.
+  float0,
   grad,
   hessian,
   host_count,
@@ -49,8 +59,10 @@ from .api import (
   local_device_count,
   local_devices,
   linearize,
+  linear_transpose,
   make_jaxpr,
   mask,
+  named_call,
   partial,  # TODO(phawkins): update callers to use functools.partial.
   pmap,
   pxla,  # TODO(phawkins): update users to avoid this.
@@ -58,7 +70,6 @@ from .api import (
   shapecheck,
   ShapedArray,
   ShapeDtypeStruct,
-  soft_pmap,
   # TODO(phawkins): hide tree* functions from jax, update callers to use
   # jax.tree_util.
   treedef_is_leaf,
@@ -75,18 +86,20 @@ from .api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation,
 )
+from .experimental.maps import soft_pmap
 from .version import __version__
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
+from . import errors
+from . import image
 from . import lax
 from . import nn
+from . import profiler
 from . import random
+from . import util
 
 def _init():
-  import os
-  os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
-
   from . import numpy # side-effecting import sets up operator overloads
 
 _init()

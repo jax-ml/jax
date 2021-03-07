@@ -1,0 +1,68 @@
+# Primitives with limited JAX support
+
+*Last generated on: {{generation_date}}* (YYYY-MM-DD)
+
+## Supported data types for primitives
+
+We use a set of {{nr_harnesses}} test harnesses to test
+the implementation of {{nr_primitives}} numeric JAX primitives.
+We consider a JAX primitive supported for a particular data
+type if it is supported on at least one device type.
+The following table shows the dtypes at which primitives
+are supported in JAX and at which dtypes they are not
+supported on any device.
+(In reality, this shows for each primitive what dtypes are not covered
+by the current test harnesses on any device.)
+
+The set of supported dtypes include 64-bit types
+(`float64`, `int64`, `uint64`, `complex128`) only if the
+flag `--jax_enable_x64` or the JAX_ENABLE_X64 environment
+variable are set.
+
+We use below the following abbreviations for sets of dtypes:
+
+  * `signed` = `int8`, `int16`, `int32`, `int64`
+  * `unsigned` = `uint8`, `uint16`, `uint32`, `uint64`
+  * `integer` = `signed`, `unsigned`
+  * `floating` = `float16`, `bfloat16`, `float32`, `float64`
+  * `complex` = `complex64`, `complex128`
+  * `inexact` = `floating`, `complex`
+  * `all` = `integer`, `inexact`, `bool`
+
+See the comment in `primitive_harness.py` for a description
+of test harnesses and their definitions.
+
+Note that automated tests will fail if new limitations appear, but
+they won't when limitations are fixed. If you see a limitation that
+you think it does not exist anymore, please ask for this file to
+be updated.
+
+{{primitive_coverage_table}}
+
+## Partially implemented data types for primitives
+
+In some cases, a primitive is supported in JAX at a given data type but
+it may be missing implementations for some of the devices.
+For example, the eigen decomposition (`lax.eig`) is implemented
+in JAX using custom kernels only on CPU and GPU. There is no
+TPU implementation. In other cases, there are either bugs or
+not-yet-implemented cases in the XLA compiler for different
+devices.
+
+The following table shows which of the supported data types
+are partially implemented for each primitive. This table already
+excludes the unsupported data types (previous table).
+
+In order to see the actual errors for all entries look through
+the logs of the `test_jax_implemented` from `jax_primitives_coverage_test.py`
+and search for "limitation".
+
+{{primitive_unimpl_table}}
+
+## Table generation
+
+To regenerate this table run (on a CPU machine):
+
+```
+  JAX_OUTPUT_LIMITATIONS_DOC=1 JAX_ENABLE_X64=1 python jax/experimental/jax2tf/tests/jax_primitives_coverage_test.py JaxPrimitiveTest.test_generate_primitives_coverage_doc
+```

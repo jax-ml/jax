@@ -119,20 +119,26 @@ shift_right_arithmetic = np.right_shift
 # TODO shift_right_logical
 
 def population_count(x):
+  assert np.issubdtype(x.dtype, np.integer)
+  dtype = x.dtype
+  iinfo = np.iinfo(x.dtype)
+  if np.iinfo(x.dtype).bits < 32:
+    assert iinfo.kind in ('i', 'u')
+    x = x.astype(np.uint32 if iinfo.kind == 'u' else np.int32)
+  if iinfo.kind == 'i':
+    x = x.view(f"uint{np.iinfo(x.dtype).bits}")
   assert x.dtype in (np.uint32, np.uint64)
   m = [
-      0x5555555555555555,  # binary: 0101...
-      0x3333333333333333,  # binary: 00110011..
-      0x0f0f0f0f0f0f0f0f,  # binary:  4 zeros,  4 ones ...
-      0x00ff00ff00ff00ff,  # binary:  8 zeros,  8 ones ...
-      0x0000ffff0000ffff,  # binary: 16 zeros, 16 ones ...
-      0x00000000ffffffff,  # binary: 32 zeros, 32 ones
+      np.uint64(0x5555555555555555),  # binary: 0101...
+      np.uint64(0x3333333333333333),  # binary: 00110011..
+      np.uint64(0x0f0f0f0f0f0f0f0f),  # binary:  4 zeros,  4 ones ...
+      np.uint64(0x00ff00ff00ff00ff),  # binary:  8 zeros,  8 ones ...
+      np.uint64(0x0000ffff0000ffff),  # binary: 16 zeros, 16 ones ...
+      np.uint64(0x00000000ffffffff),  # binary: 32 zeros, 32 ones
   ]
 
   if x.dtype == np.uint32:
     m = list(map(np.uint32, m[:-1]))
-  else:
-    m = list(map(np.uint64, m))
 
   x = (x & m[0]) + ((x >>  1) & m[0])  # put count of each  2 bits into those  2 bits
   x = (x & m[1]) + ((x >>  2) & m[1])  # put count of each  4 bits into those  4 bits
@@ -141,7 +147,7 @@ def population_count(x):
   x = (x & m[4]) + ((x >> 16) & m[4])  # put count of each 32 bits into those 32 bits
   if x.dtype == np.uint64:
     x = (x & m[5]) + ((x >> 32) & m[5])  # put count of each 64 bits into those 64 bits
-  return x
+  return x.astype(dtype)
 
 eq = np.equal
 ne = np.not_equal
@@ -287,10 +293,16 @@ def reduce(operand, init_value, computation, dimensions):  # pylint: disable=red
   return reducer(operand, tuple(dimensions)).astype(np.asarray(operand).dtype)
 
 def reduce_window(operand, init_value, computation, window_dimensions,
-                  window_strides, padding):
+                  window_strides, padding, base_dilation):
   op, dims, strides = operand, window_dimensions, window_strides
-  pads = padtype_to_pads(op.shape, dims, strides, padding)
-  view = _conv_view(op.reshape((1, 1) + op.shape), (1, 1) + dims, strides, pads,
+  if isinstance(padding, str):
+    pads = padtype_to_pads(op.shape, dims, strides, padding)
+  else:
+    pads = padding
+  op = op.reshape((1, 1) + op.shape)
+  if base_dilation:
+    op = _dilate(op, base_dilation, init_value)
+  view = _conv_view(op, (1, 1) + dims, strides, pads,
                     pad_value=init_value)[0]
   view = view.reshape(view.shape[1:1+len(dims)] + (-1,))
   reducer = _make_reducer(computation, init_value)
@@ -361,13 +373,13 @@ def _pad(arr, pads, pad_value):
                  for (lo, hi), dim in zip(pads, np.shape(arr)))
   return out[slices]
 
-def _dilate(operand, factors):
+def _dilate(operand, factors, fill_value=0):
   # this logic is like lax.pad, but with two leading dimensions, no edge
   # padding, and factors are at least 1 (interior padding is at least 0)
   outspace = np.add(operand.shape[2:],
                      np.multiply(np.subtract(factors, 1),
                                   np.subtract(operand.shape[2:], 1)))
-  out = np.zeros(operand.shape[:2] + tuple(outspace), operand.dtype)
+  out = np.full(operand.shape[:2] + tuple(outspace), fill_value, operand.dtype)
   lhs_slices = tuple(_slice(None, None, step) for step in factors)
   out[(_slice(None),) * 2 + lhs_slices] = operand
   return out

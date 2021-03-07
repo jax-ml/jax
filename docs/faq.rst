@@ -1,37 +1,16 @@
-JAX Frequently Asked Questions
-==============================
+JAX Frequently Asked Questions (FAQ)
+====================================
 
 .. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html
-.. comment Some links referenced here. Use JAX_sharp_bits_ (underscore at the end) to reference
+.. comment Some links referenced here. Use `JAX - The Sharp Bits`_ (underscore at the end) to reference
 
-
-.. _JAX_sharp_bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
-.. _How_JAX_primitives_work: https://jax.readthedocs.io/en/latest/notebooks/How_JAX_primitives_work.html
+.. _JAX - The Sharp Bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
 
 We are collecting here answers to frequently asked questions.
 Contributions welcome!
 
-Creating arrays with `jax.numpy.array` is slower than with `numpy.array`
-------------------------------------------------------------------------
-
-The following code is relatively fast when using NumPy, and slow when using
-JAX's NumPy::
-
-  import numpy as np
-  np.array([0] * int(1e6))
-
-The reason is that in NumPy the ``numpy.array`` function is implemented in C, while
-the :func:`jax.numpy.array` is implemented in Python, and it needs to iterate over a long
-list to convert each list element to an array element.
-
-An alternative would be to create the array with original NumPy and then convert
-it to a JAX array::
-
-  from jax import numpy as jnp
-  jnp.array(np.array([0] * int(1e6)))
-
-`jit` changes the behavior of my function
------------------------------------------
+``jit`` changes the behavior of my function
+--------------------------------------------
 
 If you have a Python function that changes behavior after using :func:`jax.jit`, perhaps
 your function uses global state, or has side-effects. In the following code, the
@@ -70,8 +49,39 @@ with the same first value of ``y``.
 
 Additional reading:
 
-  * JAX_sharp_bits_
+  * `JAX - The Sharp Bits`_
 
+.. _faq-slow-compile:
+
+``jit`` decorated function is very slow to compile
+--------------------------------------------------
+
+If your ``jit`` decorated function takes tens of seconds (or more!) to run the
+first time you call it, but executes quickly when called again, JAX is taking a
+long time to trace or compile your code.
+
+This is usually a symptom of calling your function generating a large amount of
+code in JAX's internal representation, typically because it makes heavy use of
+Python control flow such as ``for`` loop. For a handful of loop iterations
+Python is OK, but if you need _many_ loop iterations, you should rewrite your
+code to make use of JAX's
+`structured control flow primitives <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#Structured-control-flow-primitives>`_
+(such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
+still use ``jit`` decorated functions *inside* the loop).
+
+If you're not sure if this is the problem, you can try running
+:func:`jax.make_jaxpr` on your function. You can expect slow compilation if the
+output is many hundreds or thousands of lines long.
+
+Sometimes it isn't obvious how to rewrite your code to avoid Python loops
+because your code makes use of many arrays with different shapes. The
+recommended solution in this case is to make use of functions like
+:func:`jax.numpy.where` to do your computation on padded arrays with fixed
+shape. The JAX team is exploring a "masking" transformation to make such code
+easier to write.
+
+If your functions are slow to compile for another reason, please open an issue
+on GitHub.
 
 .. _faq-data-placement:
 
@@ -86,7 +96,10 @@ and 2) whether it is **committed** to the device or not (the data is sometimes
 referred to as being *sticky* to the device).
 
 By default, JAX arrays are placed uncommitted on the default device
-(``jax.devices()[0]``).
+(``jax.devices()[0]``), which is the first GPU by default. If no GPU is 
+present, ``jax.devices()[0]`` is the first CPU. The default device can 
+be set to "cpu" or "gpu" manually by setting the environment variable 
+``JAX_PLATFORM_NAME`` or the absl flag ``--jax_platform_name``.
 
 >>> from jax import numpy as jnp
 >>> print(jnp.ones(3).device_buffer.device())  # doctest: +SKIP
@@ -111,10 +124,15 @@ to more than one device will raise an error.
 You can also use :func:`jax.device_put` without a ``device`` parameter. If the data 
 is already on a device (committed or not), it's left as-is. If the data isn't on any 
 device—that is, it's a regular Python or NumPy value—it's placed uncommitted on the default 
-device. You can also use :func:`jax.device_put` without a `device` parameter. 
+device.
 
 Jitted functions behave like any other primitive operations—they will follow the 
 data and will show errors if invoked on data committed on more than one device.
+
+``jnp.device_put(jnp.zeros(...), jax.devices()[1])`` or similar will actually create the
+array of zeros on ``jax.devices()[1]``, instead of creating the array on the default
+device then moving it. This is thanks to some laziness in array creation, which holds
+for all the constant creation operations (``ones``, ``full``, ``eye``, etc).
 
 (As of April 2020, :func:`jax.jit` has a `device` parameter that affects the device 
 placement. That parameter is experimental, is likely to be removed or changed, 
@@ -124,55 +142,88 @@ For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
 `multi_device_test.py <https://github.com/google/jax/blob/master/tests/multi_device_test.py>`_.
 
+.. _faq-benchmark:
+
+Benchmarking JAX code
+---------------------
+
+You just ported a tricky function from NumPy/SciPy to JAX. Did that actuallly
+speed things up?
+
+Keep in mind these important differences from NumPy when measuring the
+speed of code using JAX:
+
+1. **JAX code is Just-In-Time (JIT) compiled.** Most code written in JAX can be
+   written in such a way that it supports JIT compilation, which can make it run
+   *much faster* (see `To JIT or not to JIT`_). To get maximium performance from
+   JAX, you should apply :func:`jax.jit` on your outer-most function calls.
+
+   Keep in mind that the first time you run JAX code, it will be slower because
+   it is being compiled. This is true even if you don't use ``jit`` in your own
+   code, because JAX's builtin functions are also JIT compiled.
+2. **JAX has asynchronous dispatch.** This means that you need to call
+   ``.block_until_ready()`` to ensure that computation has actually happened
+   (see :ref:`async-dispatch`).
+3. **JAX by default only uses 32-bit dtypes.** You may want to either explicitly
+   use 32-bit dtypes in NumPy or enable 64-bit dtypes in JAX (see
+   `Double (64 bit) precision`_) for a fair comparison.
+4. **Transferring data between CPUs and accelerators takes time.** If you only
+   want to measure the how long it takes to evaluate a function, you may want to
+   transfer data to the device on which you want to run it first (see
+   :ref:`faq-data-placement`).
+
+Here's an example of how to put together all these tricks into a microbenchmark
+for comparing JAX versus NumPy, making using of IPython's convenient
+`%time and %timeit magics`_::
+
+    import numpy as np
+    import jax.numpy as jnp
+    import jax
+
+    def f(x):  # function we're benchmarking (works in both NumPy & JAX)
+      return x.T @ (x - x.mean(axis=0))
+
+    x_np = np.ones((1000, 1000), dtype=np.float32)  # same as JAX default dtype
+    %timeit f(x_np)  # measure NumPy runtime
+
+    %time x_jax = jax.device_put(x_np)  # measure JAX device transfer time
+    f_jit = jax.jit(f)
+    %time f_jit(x_jax).block_until_ready()  # measure JAX compilation time
+    %timeit f_jit(x_jax).block_until_ready()  # measure JAX runtime
+
+When run with a GPU in Colab_, we see:
+
+- NumPy takes 16.2 ms per evaluation on the CPU
+- JAX takes 1.26 ms to copy the NumPy arrays onto the GPU
+- JAX takes 193 ms to compile the function
+- JAX takes 485 µs per evaluation on the GPU
+
+In this case, we see that once the data is transfered and the function is
+compiled, JAX on the GPU is about 30x faster for repeated evaluations.
+
+Is this a fair comparison? Maybe. The performance that ultimately matters is for
+running full applications, which inevitably include some amount of both data
+transfer and compilation. Also, we were careful to pick large enough arrays
+(1000x1000) and an intensive enough computation (the ``@`` operator is
+performing matrix-matrix multiplication) to amortize the increased overhead of
+JAX/accelerators vs NumPy/CPU. For example, if switch this example to use
+10x10 input instead, JAX/GPU runs 10x slower than NumPy/CPU (100 µs vs 10 µs).
+
+.. _To JIT or not to JIT: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
+.. _Double (64 bit) precision: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+.. _`%time and %timeit magics`: https://ipython.readthedocs.io/en/stable/interactive/magics.html#magic-time
+.. _Colab: https://colab.research.google.com/
+
 .. comment We refer to the anchor below in JAX error messages
 
-`Abstract tracer value encountered where concrete value is expected` error
---------------------------------------------------------------------------
+``Abstract tracer value encountered where concrete value is expected`` error
+----------------------------------------------------------------------------
+See :class:`jax.errors.ConcretizationTypeError`
 
-If you are getting an error that a library function is called with
-*"Abstract tracer value encountered where concrete value is expected"*, you may need to
-change how you invoke JAX transformations. Below is an example and a couple of possible 
-solutions, followed by the details of what is actually happening, if you are curious 
-or the simple solution does not work for you.
-
-Some library functions take arguments that specify shapes or axes,
-such as the second and third arguments for :func:`jax.numpy.split`::
-
-  # def np.split(arr, num_sections: Union[int, Sequence[int]], axis: int):
-  np.split(np.zeros(2), 2, 0)  # works
-
-If you try the following code::
-
-  jax.jit(np.split)(np.zeros(4), 2, 0)
-
-you will get the following error::
-
-    ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected (in jax.numpy.split argument 1).
-    Use transformation parameters such as `static_argnums` for `jit` to avoid tracing input values.
-    See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-where-concrete-value-is-expected-error`.
-    Encountered value: Traced<ShapedArray(int32[], weak_type=True):JaxprTrace(level=-1/1)>
-
-You must change the way you use :func:`jax.jit` to ensure that the ``num_sections``
-and ``axis`` arguments use their concrete values (``2`` and ``0`` respectively).
-The best mechanism is to use special transformation parameters
-to declare some arguments to be static, e.g., ``static_argnums`` for :func:`jax.jit`::
-
-  jax.jit(np.split, static_argnums=(1, 2))(np.zeros(4), 2, 0)
-
-An alternative is to apply the transformation to a closure
-that encapsulates the arguments to be protected, either manually as below
-or by using ``functools.partial``::
-
-  jax.jit(lambda arr: np.split(arr, 2, 0))(np.zeros(4))
-
-**Note a new closure is created at every invocation, which defeats the
-compilation caching mechanism, which is why static_argnums is preferred.**
-
-To understand more subtleties having to do with tracers vs. regular values, and
-concrete vs. abstract values, you may want to read `Different kinds of JAX values`_.
+.. _faq-different-kinds-of-jax-values:
 
 Different kinds of JAX values
-------------------------------
+-----------------------------
 
 In the process of transforming functions, JAX replaces some function
 arguments with special tracer values.
@@ -215,7 +266,7 @@ Most often values computed from tracer values are themselves tracer values.
 There are very few exceptions, when a computation can be entirely done
 using the abstract value carried by a tracer, in which case the result
 can be a regular value. For example, getting the shape of a tracer
-with ``ShapedArray`` abstract value. Another example, is when explicitly
+with ``ShapedArray`` abstract value. Another example is when explicitly
 casting a concrete tracer value to a regular type, e.g., ``int(x)`` or
 ``x.astype(float)``.
 Another such situation is for ``bool(x)``, which produces a Python bool when
@@ -277,7 +328,7 @@ that there is a ``np.where`` *inside* the partially-defined function, to ensure
 that the adjoint is always finite::
 
   def safe_for_grad_log(x):
-    return np.log(np.where(x > 0., x, 1.)
+    return np.log(np.where(x > 0., x, 1.))
 
   safe_for_grad_log(0.) ==> 0.  # Ok
   jax.grad(safe_for_grad_log)(0.)  ==> 0.  # Ok
@@ -293,20 +344,3 @@ Additional reading:
 
   * `Issue: gradients through np.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.
-
-Why do I get forward-mode differentiation error when I am trying to do reverse-mode differentiation?
------------------------------------------------------------------------------------------------------
-
-JAX implements reverse-mode differentiation as a composition of two operations:
-linearization and transposition. The linearization step (see :func:`jax.linearize`)
-uses the JVP rules to form the forward-computation of tangents along with the intermediate
-forward computations of intermediate values on which the tangents depend.
-The transposition step will turn the forward-computation of tangents
-into a reverse-mode computation.
-
-If the JVP rule is not implemented for a primitive, then neither the forward-mode
-nor the reverse-mode differentiation will work, but the error given will refer
-to the forward-mode because that is the one that fails.
-
-You can read more details at How_JAX_primitives_work_.
-

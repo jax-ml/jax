@@ -2,7 +2,7 @@ Internal APIs
 =============
 
 core
------
+----
 
 .. currentmodule:: jax.core
 .. automodule:: jax.core
@@ -11,4 +11,4 @@ core
   :toctree: _autosummary
 
    Jaxpr
-   TypedJaxpr
+   ClosedJaxpr

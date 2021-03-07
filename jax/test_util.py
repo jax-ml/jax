@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from contextlib import contextmanager
 import functools
 import re
 import os
+import textwrap
 from typing import Dict, Sequence, Union
 import unittest
 import warnings
 import zlib
 
+from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as np
@@ -29,10 +30,10 @@ import numpy.random as npr
 
 from . import api
 from . import core
-from . import dtypes
+from . import dtypes as _dtypes
 from . import lax
-from .config import flags, bool_env
-from .util import partial
+from .config import flags, bool_env, config
+from ._src.util import partial, prod
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla
@@ -54,16 +55,31 @@ flags.DEFINE_integer(
 flags.DEFINE_bool(
     'jax_skip_slow_tests',
     bool_env('JAX_SKIP_SLOW_TESTS', False),
-    help=
-    'Skip tests marked as slow (> 5 sec).'
+    help='Skip tests marked as slow (> 5 sec).'
+)
+
+flags.DEFINE_string(
+  'test_targets', '',
+  'Regular expression specifying which tests to run, called via re.match on '
+  'the test name. If empty or unspecified, run all tests.'
+)
+flags.DEFINE_string(
+  'exclude_test_targets', '',
+  'Regular expression specifying which tests NOT to run, called via re.match '
+  'on the test name. If empty or unspecified, run all tests.'
 )
 
 EPS = 1e-4
 
 def _dtype(x):
   return (getattr(x, 'dtype', None) or
-          np.dtype(dtypes.python_scalar_dtypes.get(type(x), None)) or
+          np.dtype(_dtypes.python_scalar_dtypes.get(type(x), None)) or
           np.asarray(x).dtype)
+
+
+def num_float_bits(dtype):
+  return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
+
 
 def is_sequence(x):
   try:
@@ -83,7 +99,7 @@ _default_tolerance = {
   np.dtype(np.uint16): 0,
   np.dtype(np.uint32): 0,
   np.dtype(np.uint64): 0,
-  np.dtype(dtypes.bfloat16): 1e-2,
+  np.dtype(_dtypes.bfloat16): 1e-2,
   np.dtype(np.float16): 1e-3,
   np.dtype(np.float32): 1e-6,
   np.dtype(np.float64): 1e-15,
@@ -100,7 +116,7 @@ def default_tolerance():
   return tol
 
 default_gradient_tolerance = {
-  np.dtype(dtypes.bfloat16): 1e-1,
+  np.dtype(_dtypes.bfloat16): 1e-1,
   np.dtype(np.float16): 1e-2,
   np.dtype(np.float32): 2e-3,
   np.dtype(np.float64): 1e-5,
@@ -108,20 +124,20 @@ default_gradient_tolerance = {
   np.dtype(np.complex128): 1e-5,
 }
 
-def _assert_numpy_allclose(a, b, atol=None, rtol=None):
-  a = a.astype(np.float32) if a.dtype == dtypes.bfloat16 else a
-  b = b.astype(np.float32) if b.dtype == dtypes.bfloat16 else b
+def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
+  a = a.astype(np.float32) if a.dtype == _dtypes.bfloat16 else a
+  b = b.astype(np.float32) if b.dtype == _dtypes.bfloat16 else b
   kw = {}
   if atol: kw["atol"] = atol
   if rtol: kw["rtol"] = rtol
-  np.testing.assert_allclose(a, b, **kw)
+  np.testing.assert_allclose(a, b, **kw, err_msg=err_msg)
 
 def tolerance(dtype, tol=None):
   tol = {} if tol is None else tol
   if not isinstance(tol, dict):
     return tol
   tol = {np.dtype(key): value for key, value in tol.items()}
-  dtype = dtypes.canonicalize_dtype(np.dtype(dtype))
+  dtype = _dtypes.canonicalize_dtype(np.dtype(dtype))
   return tol.get(dtype, default_tolerance()[dtype])
 
 def _normalize_tolerance(tol):
@@ -129,7 +145,7 @@ def _normalize_tolerance(tol):
   if isinstance(tol, dict):
     return {np.dtype(k): v for k, v in tol.items()}
   else:
-    return {k: tol for k in _default_tolerance.keys()}
+    return {k: tol for k in _default_tolerance}
 
 def join_tolerance(tol1, tol2):
   tol1 = _normalize_tolerance(tol1)
@@ -139,20 +155,30 @@ def join_tolerance(tol1, tol2):
     out[k] = max(v, tol1.get(k, 0))
   return out
 
-def _assert_numpy_close(a, b, atol=None, rtol=None):
+def _assert_numpy_close(a, b, atol=None, rtol=None, err_msg=''):
   assert a.shape == b.shape
   atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))
   rtol = max(tolerance(a.dtype, rtol), tolerance(b.dtype, rtol))
-  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
+  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
+                         err_msg=err_msg)
 
-
-def check_eq(xs, ys):
-  tree_all(tree_multimap(_assert_numpy_allclose, xs, ys))
-
-
-def check_close(xs, ys, atol=None, rtol=None):
-  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol)
+def check_eq(xs, ys, err_msg=''):
+  assert_close = partial(_assert_numpy_allclose, err_msg=err_msg)
   tree_all(tree_multimap(assert_close, xs, ys))
+
+def check_close(xs, ys, atol=None, rtol=None, err_msg=''):
+  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol,
+                         err_msg=err_msg)
+  tree_all(tree_multimap(assert_close, xs, ys))
+
+def _check_dtypes_match(xs, ys):
+  def _assert_dtypes_match(x, y):
+    if config.x64_enabled:
+      assert _dtype(x) == _dtype(y)
+    else:
+      assert (_dtypes.canonicalize_dtype(_dtype(x)) ==
+              _dtypes.canonicalize_dtype(_dtype(y)))
+  tree_all(tree_multimap(_assert_dtypes_match, xs, ys))
 
 
 def inner_prod(xs, ys):
@@ -161,8 +187,16 @@ def inner_prod(xs, ys):
   return tree_reduce(np.add, tree_multimap(contract, xs, ys))
 
 
+def _safe_subtract(x, y, *, dtype):
+  """Subtraction that with `inf - inf == 0` semantics."""
+  with np.errstate(invalid='ignore'):
+    return np.where(np.equal(x, y), np.array(0, dtype),
+                    np.subtract(x, y, dtype=dtype))
+
 add = partial(tree_multimap, lambda x, y: np.add(x, y, dtype=_dtype(x)))
 sub = partial(tree_multimap, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
+safe_sub = partial(tree_multimap,
+                   lambda x, y: _safe_subtract(x, y, dtype=_dtype(x)))
 conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
 
 def scalar_mul(xs, a):
@@ -173,7 +207,7 @@ def rand_like(rng, x):
   shape = np.shape(x)
   dtype = _dtype(x)
   randn = lambda: np.asarray(rng.randn(*shape), dtype=dtype)
-  if dtypes.issubdtype(dtype, np.complexfloating):
+  if _dtypes.issubdtype(dtype, np.complexfloating):
     return randn() + dtype.type(1.0j) * randn()
   else:
     return randn()
@@ -183,7 +217,7 @@ def numerical_jvp(f, primals, tangents, eps=EPS):
   delta = scalar_mul(tangents, eps)
   f_pos = f(*add(primals, delta))
   f_neg = f(*sub(primals, delta))
-  return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
+  return scalar_mul(safe_sub(f_pos, f_neg), 0.5 / eps)
 
 
 def _merge_tolerance(tol, default):
@@ -196,35 +230,43 @@ def _merge_tolerance(tol, default):
     out[np.dtype(k)] = v
   return out
 
-def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
+
+def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   rng = np.random.RandomState(0)
   tangent = tree_map(partial(rand_like, rng), args)
   v_out, t_out = f_jvp(args, tangent)
+  _check_dtypes_match(v_out, t_out)
   v_out_expected = f(*args)
+  _check_dtypes_match(v_out, v_out_expected)
   t_out_expected = numerical_jvp(f, args, tangent, eps=eps)
   # In principle we should expect exact equality of v_out and v_out_expected,
   # but due to nondeterminism especially on GPU (e.g., due to convolution
   # autotuning) we only require "close".
-  check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
-  check_close(t_out, t_out_expected, atol=atol, rtol=rtol)
+  check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} primal' if err_msg else 'primal')
+  check_close(t_out, t_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} tangent' if err_msg else 'tangent')
 
 
-def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
+def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   _rand_like = partial(rand_like, np.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)
-  check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
+  check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} primal' if err_msg else 'primal')
   tangent = tree_map(_rand_like, args)
   tangent_out = numerical_jvp(f, args, tangent, eps=eps)
   cotangent = tree_map(_rand_like, v_out)
   cotangent_out = conj(vjpfun(conj(cotangent)))
   ip = inner_prod(tangent, cotangent_out)
   ip_expected = inner_prod(tangent_out, cotangent)
-  check_close(ip, ip_expected, atol=atol, rtol=rtol)
+  check_close(ip, ip_expected, atol=atol, rtol=rtol,
+              err_msg=(f'{err_msg} cotangent projection'
+                       if err_msg else 'cotangent projection'))
 
 
 def check_grads(f, args, order,
@@ -253,19 +295,21 @@ def check_grads(f, args, order,
   _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
   _check_vjp = partial(check_vjp, atol=atol, rtol=rtol, eps=eps)
 
-  def _check_grads(f, args, order):
+  def _check_grads(f, args, order, err_msg=''):
     if "fwd" in modes:
-      _check_jvp(f, partial(api.jvp, f), args)
+      fwd_msg = f'JVP of {err_msg}' if err_msg else 'JVP'
+      _check_jvp(f, partial(api.jvp, f), args, err_msg=fwd_msg)
       if order > 1:
-        _check_grads(partial(api.jvp, f), (args, args), order - 1)
+        _check_grads(partial(api.jvp, f), (args, args), order - 1, fwd_msg)
 
     if "rev" in modes:
-      _check_vjp(f, partial(api.vjp, f), args)
+      rev_msg = f'VJP of {err_msg}' if err_msg else 'VJP'
+      _check_vjp(f, partial(api.vjp, f), args, err_msg=rev_msg)
       if order > 1:
         def f_vjp(*args):
           out_primal_py, vjp_py = api.vjp(f, *args)
           return vjp_py(out_primal_py)
-        _check_grads(f_vjp, args, order - 1)
+        _check_grads(f_vjp, args, order - 1, rev_msg)
 
   _check_grads(f, args, order)
 
@@ -309,6 +353,13 @@ def count_jit_and_pmap_compiles():
   finally:
     xla.jaxpr_subcomp = jaxpr_subcomp
 
+@contextmanager
+def assert_num_jit_and_pmap_compilations(times):
+  with count_jit_and_pmap_compiles() as count:
+    yield
+  if count[0] != times:
+    raise AssertionError(f"Expected exactly {times} XLA compilations, "
+                         f"but executed {count[0]}")
 
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
@@ -324,18 +375,22 @@ def if_device_under_test(device_type: Union[str, Sequence[str]],
 
 def supported_dtypes():
   if device_under_test() == "tpu":
-    return {np.bool_, np.int32, np.uint32, dtypes.bfloat16, np.float32,
-            np.complex64}
+    types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
+             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64}
   else:
-    return {np.bool_, np.int8, np.int16, np.int32, np.int64,
-            np.uint8, np.uint16, np.uint32, np.uint64,
-            dtypes.bfloat16, np.float16, np.float32, np.float64,
-            np.complex64, np.complex128}
+    types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
+             np.uint8, np.uint16, np.uint32, np.uint64,
+             _dtypes.bfloat16, np.float16, np.float32, np.float64,
+             np.complex64, np.complex128}
+  if not config.x64_enabled:
+    types -= {np.uint64, np.int64, np.float64, np.complex128}
+  return types
 
 def skip_if_unsupported_type(dtype):
-  if dtype not in supported_dtypes():
+  dtype = np.dtype(dtype)
+  if dtype.type not in supported_dtypes():
     raise unittest.SkipTest(
-      f"Type {dtype} not supported on {device_under_test()}")
+      f"Type {dtype.name} not supported on {device_under_test()}")
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
@@ -351,6 +406,23 @@ def skip_on_devices(*disabled_devices):
     return test_method_wrapper
   return skip
 
+def set_host_platform_device_count(nr_devices: int):
+  """Returns a closure that undoes the operation."""
+  prev_xla_flags = os.getenv("XLA_FLAGS")
+  flags_str = prev_xla_flags or ""
+  # Don't override user-specified device count, or other XLA flags.
+  if "xla_force_host_platform_device_count" not in flags_str:
+    os.environ["XLA_FLAGS"] = (flags_str +
+                               f" --xla_force_host_platform_device_count={nr_devices}")
+  # Clear any cached backends so new CPU backend will pick up the env var.
+  xla_bridge.get_backend.cache_clear()
+  def undo():
+    if prev_xla_flags is None:
+      del os.environ["XLA_FLAGS"]
+    else:
+      os.environ["XLA_FLAGS"] = prev_xla_flags
+    xla_bridge.get_backend.cache_clear()
+  return undo
 
 def skip_on_flag(flag_name, skip_value):
   """A decorator for test methods to skip the test when flags are set."""
@@ -389,6 +461,8 @@ def _dims_of_shape(shape):
     return shape
   elif isinstance(shape, ScalarShape):
     return ()
+  elif np.ndim(shape) == 0:
+    return (shape,)
   else:
     raise TypeError(type(shape))
 
@@ -403,6 +477,9 @@ def _cast_to_shape(value, shape, dtype):
     return np.asarray(value).item()
   elif type(shape) in (list, tuple):
     assert np.shape(value) == tuple(shape)
+    return value
+  elif np.ndim(shape) == 0:
+    assert np.shape(value) == (shape,)
     return value
   else:
     raise TypeError(type(shape))
@@ -451,7 +528,7 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
   r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
-  if dtypes.issubdtype(dtype, np.complexfloating):
+  if _dtypes.issubdtype(dtype, np.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
@@ -526,11 +603,11 @@ def rand_some_inf(rng):
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not dtypes.issubdtype(dtype, np.floating):
+    if not _dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if dtypes.issubdtype(dtype, np.complexfloating):
+    if _dtypes.issubdtype(dtype, np.complexfloating):
       base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
              np.array(1j, dtype) * rand(shape, base_dtype))
@@ -554,13 +631,13 @@ def rand_some_nan(rng):
 
   def rand(shape, dtype):
     """The random sampler function."""
-    if dtypes.issubdtype(dtype, np.complexfloating):
+    if _dtypes.issubdtype(dtype, np.complexfloating):
       base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
              np.array(1j, dtype) * rand(shape, base_dtype))
       return _cast_to_shape(out, shape, dtype)
 
-    if not dtypes.issubdtype(dtype, np.floating):
+    if not _dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
@@ -584,11 +661,11 @@ def rand_some_inf_and_nan(rng):
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not dtypes.issubdtype(dtype, np.floating):
+    if not _dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if dtypes.issubdtype(dtype, np.complexfloating):
+    if _dtypes.issubdtype(dtype, np.complexfloating):
       base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
              np.array(1j, dtype) * rand(shape, base_dtype))
@@ -628,12 +705,19 @@ def rand_some_zero(rng):
 
 def rand_int(rng, low=0, high=None):
   def fn(shape, dtype):
+    nonlocal high
+    if low == 0 and high is None:
+      if np.issubdtype(dtype, np.integer):
+        high = np.iinfo(dtype).max
+      else:
+        raise ValueError("rand_int requires an explicit `high` value for "
+                         "non-integer types.")
     return rng.randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
 def rand_unique_int(rng, high=None):
   def fn(shape, dtype):
-    return rng.choice(np.arange(high or np.prod(shape), dtype=dtype),
+    return rng.choice(np.arange(high or prod(shape), dtype=dtype),
                       size=shape, replace=False)
   return fn
 
@@ -657,16 +741,16 @@ def check_raises_regexp(thunk, err_type, pattern):
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
 
-def _iter_eqns(jaxpr):
+def iter_eqns(jaxpr):
   # TODO(necula): why doesn't this search in params?
   for eqn in jaxpr.eqns:
     yield eqn
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from _iter_eqns(subjaxpr)
+    yield from iter_eqns(subjaxpr)
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
-  precisions = [eqn.params['precision'] for eqn in _iter_eqns(jaxpr.jaxpr)
+  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
@@ -695,6 +779,20 @@ def cases_from_gens(*gens):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
 
 
+class JaxTestLoader(absltest.TestLoader):
+  def getTestCaseNames(self, testCaseClass):
+    names = super().getTestCaseNames(testCaseClass)
+    if FLAGS.test_targets:
+      pattern = re.compile(FLAGS.test_targets)
+      names = [name for name in names
+               if pattern.search(f"{testCaseClass.__name__}.{name}")]
+    if FLAGS.exclude_test_targets:
+      pattern = re.compile(FLAGS.exclude_test_targets)
+      names = [name for name in names
+               if not pattern.search(f"{testCaseClass.__name__}.{name}")]
+    return names
+
+
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
 
@@ -718,7 +816,7 @@ class JaxTestCase(parameterized.TestCase):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
       self.assertDtypesMatch(x, y)
-    np.testing.assert_equal(x, y)
+    np.testing.assert_array_equal(x, y)
 
   def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
                            rtol=None):
@@ -733,9 +831,9 @@ class JaxTestCase(parameterized.TestCase):
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
-    if not FLAGS.jax_enable_x64 and canonicalize_dtypes:
-      self.assertEqual(dtypes.canonicalize_dtype(_dtype(x)),
-                       dtypes.canonicalize_dtype(_dtype(y)))
+    if not config.x64_enabled and canonicalize_dtypes:
+      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x)),
+                       _dtypes.canonicalize_dtype(_dtype(y)))
     else:
       self.assertEqual(_dtype(x), _dtype(y))
 
@@ -767,7 +865,9 @@ class JaxTestCase(parameterized.TestCase):
       raise TypeError((type(x), type(y)))
 
   def assertMultiLineStrippedEqual(self, expected, what):
-    """Asserts two strings are equal, after stripping each line."""
+    """Asserts two strings are equal, after dedenting and stripping each line."""
+    expected = textwrap.dedent(expected)
+    what = textwrap.dedent(what)
     ignore_space_re = re.compile(r'\s*\n\s*')
     expected_clean = re.sub(ignore_space_re, '\n', expected.strip())
     what_clean = re.sub(ignore_space_re, '\n', what.strip())
@@ -831,8 +931,96 @@ class JaxTestCase(parameterized.TestCase):
                         canonicalize_dtypes=canonicalize_dtypes)
 
 
+class BufferDonationTestCase(JaxTestCase):
+  assertDeleted = lambda self, x: self._assertDeleted(x, True)
+  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
+
+  def _assertDeleted(self, x, deleted):
+    if hasattr(x, "device_buffer"):
+      self.assertEqual(x.device_buffer.is_deleted(), deleted)
+    else:
+      for buffer in x.device_buffers:
+        self.assertEqual(buffer.is_deleted(), deleted)
+
+
 @contextmanager
 def ignore_warning(**kw):
   with warnings.catch_warnings():
     warnings.filterwarnings("ignore", **kw)
     yield
+
+
+class _cached_property:
+  null = object()
+
+  def __init__(self, method):
+    self._method = method
+    self._value = self.null
+
+  def __get__(self, obj, cls):
+    if self._value is self.null:
+      self._value = self._method(obj)
+    return self._value
+
+
+class _LazyDtypes:
+  """A class that unifies lists of supported dtypes.
+
+  These could be module-level constants, but device_under_test() is not always
+  known at import time, so we need to define these lists lazily.
+  """
+  def supported(self, dtypes):
+    supported = supported_dtypes()
+    return type(dtypes)(d for d in dtypes if d in supported)
+
+  @_cached_property
+  def floating(self):
+    return self.supported([np.float32, np.float64])
+
+  @_cached_property
+  def all_floating(self):
+    return self.supported([_dtypes.bfloat16, np.float16, np.float32, np.float64])
+
+  @_cached_property
+  def integer(self):
+    return self.supported([np.int32, np.int64])
+
+  @_cached_property
+  def all_integer(self):
+    return self.supported([np.int8, np.int16, np.int32, np.int64])
+
+  @_cached_property
+  def unsigned(self):
+    return self.supported([np.uint32, np.uint64])
+
+  @_cached_property
+  def all_unsigned(self):
+    return self.supported([np.uint8, np.uint16, np.uint32, np.uint64])
+
+  @_cached_property
+  def complex(self):
+    return self.supported([np.complex64, np.complex128])
+
+  @_cached_property
+  def boolean(self):
+    return self.supported([np.bool_])
+
+  @_cached_property
+  def inexact(self):
+    return self.floating + self.complex
+
+  @_cached_property
+  def all_inexact(self):
+    return self.all_floating + self.complex
+
+  @_cached_property
+  def numeric(self):
+    return self.floating + self.integer + self.unsigned + self.complex
+
+  @_cached_property
+  def all(self):
+    return (self.all_floating + self.all_integer + self.all_unsigned +
+            self.complex + self.boolean)
+
+
+dtypes = _LazyDtypes()

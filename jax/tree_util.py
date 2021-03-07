@@ -31,7 +31,7 @@ The primary purpose of this module is to enable the interoperability between
 user defined data structures and JAX transformations (e.g. `jit`). This is not
 meant to be a general purpose tree-like data structure handling library.
 
-See the `JAX pytrees notebook <https://jax.readthedocs.io/en/latest/notebooks/JAX_pytrees.html>`_
+See the `JAX pytrees note <pytrees.html>`_
 for examples.
 """
 
@@ -39,22 +39,34 @@ for examples.
 import functools
 import collections
 import operator as op
+from typing import Any, Callable, Optional, Sequence, Tuple, Type, TypeVar, overload
 
 from .lib import pytree
 
-from .util import partial, safe_zip, unzip2
+from ._src.util import partial, safe_zip, unzip2
 
-def tree_flatten(tree):
+from ._src import traceback_util
+traceback_util.register_exclusion(__file__)
+
+T = TypeVar("T")
+U = TypeVar("U")
+
+def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Flattens a pytree.
 
   Args:
     tree: a pytree to flatten.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether
+      the flattening should traverse the current object, or if it should be
+      stopped immediately, with the whole subtree being treated as a leaf.
 
   Returns:
     A pair where the first element is a list of leaf values and the second
     element is a treedef representing the structure of the flattened tree.
   """
-  return pytree.flatten(tree)
+  return pytree.flatten(tree, is_leaf)
+
 
 def tree_unflatten(treedef, leaves):
   """Reconstructs a pytree from the treedef and the leaves.
@@ -109,17 +121,22 @@ def all_leaves(iterable):
   """
   return pytree.all_leaves(iterable)
 
-def register_pytree_node(nodetype, flatten_func, unflatten_func):
+# The auxiliary is hashable, but because mypy has poor support for Hashable, we
+# annotate it as Any.
+def register_pytree_node(nodetype: Type[T],
+                         flatten_func: Callable[[T], Tuple[Sequence[Any], Any]],
+                         unflatten_func: Callable[[Any, Sequence[Any]], T]):
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  See `example usage <https://jax.readthedocs.io/en/latest/notebooks/JAX_pytrees.html#Pytrees-are-extensible>`_.
+  See `example usage <pytrees.html>`_.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node.
     flatten_func: a function to be used during flattening, taking a value of
       type ``nodetype`` and returning a pair, with (1) an iterable for the
-      children to be flattened recursively, and (2) some auxiliary data to be
-      stored in the treedef and to be passed to the ``unflatten_func``.
+      children to be flattened recursively, and (2) some hashable auxiliary
+      data to be stored in the treedef and to be passed to the
+      ``unflatten_func``.
     unflatten_func: a function taking two arguments: the auxiliary data that was
       returned by ``flatten_func`` and stored in the treedef, and the
       unflattened children. The function should return an instance of
@@ -132,7 +149,7 @@ def register_pytree_node_class(cls):
   """Extends the set of types that are considered internal nodes in pytrees.
 
   This function is a thin wrapper around ``register_pytree_node``, and provides
-  a class-oriented interface:
+  a class-oriented interface::
 
     @register_pytree_node_class
     class Special:
@@ -148,22 +165,28 @@ def register_pytree_node_class(cls):
   register_pytree_node(cls, op.methodcaller('tree_flatten'), cls.tree_unflatten)
   return cls
 
-def tree_map(f, tree):
+def tree_map(f: Callable[[Any], Any], tree: Any,
+             is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
   """Maps a function over a pytree to produce a new pytree.
 
   Args:
     f: unary function to be applied at each leaf.
     tree: a pytree to be mapped over.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether
+      the flattening should traverse the current object, or if it should be
+      stopped immediately, with the whole subtree being treated as a leaf.
 
   Returns:
     A new pytree with the same structure as `tree` but with the value at each
     leaf given by ``f(x)`` where ``x`` is the value at the corresponding leaf in
     the input ``tree``.
   """
-  leaves, treedef = pytree.flatten(tree)
+  leaves, treedef = tree_flatten(tree, is_leaf)
   return treedef.unflatten(map(f, leaves))
 
-def tree_multimap(f, tree, *rest):
+def tree_multimap(f: Callable[..., Any], tree: Any, *rest: Any,
+                  is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
   """Maps a multi-input function over pytree args to produce a new pytree.
 
   Args:
@@ -173,6 +196,10 @@ def tree_multimap(f, tree, *rest):
       positional argument to ``f``.
     *rest: a tuple of pytrees, each of which has the same structure as tree or
       or has tree as a prefix.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether
+      the flattening should traverse the current object, or if it should be
+      stopped immediately, with the whole subtree being treated as a leaf.
 
   Returns:
     A new pytree with the same structure as ``tree`` but with the value at each
@@ -180,7 +207,7 @@ def tree_multimap(f, tree, *rest):
     leaf in ``tree`` and ``xs`` is the tuple of values at corresponding nodes in
     ``rest``.
   """
-  leaves, treedef = pytree.flatten(tree)
+  leaves, treedef = tree_flatten(tree, is_leaf)
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
@@ -194,12 +221,11 @@ def build_tree(treedef, xs):
 
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
   flat, treedef = tree_flatten(pytree_to_transpose)
-  expected_treedef = outer_treedef.compose(inner_treedef)
-  if treedef != expected_treedef:
-    raise TypeError("Mismatch\n{}\n != \n{}".format(treedef, expected_treedef))
-
   inner_size = inner_treedef.num_leaves
   outer_size = outer_treedef.num_leaves
+  if treedef.num_leaves != (inner_size * outer_size):
+    expected_treedef = outer_treedef.compose(inner_treedef)
+    raise TypeError(f"Mismatch\n{treedef}\n != \n{expected_treedef}")
   flat = iter(flat)
   lol = [[next(flat) for _ in range(inner_size)] for __ in range(outer_size)]
   transposed_lol = zip(*lol)
@@ -209,7 +235,7 @@ def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
 # TODO(mattjj): remove the Python-side registry when the C++-side registry is
 # sufficiently queryable that we can express _replace_nones. That may mean once
 # we have a flatten_one function.
-_RegistryEntry = collections.namedtuple("RegistryEntry", ["to_iter", "from_iter"])
+_RegistryEntry = collections.namedtuple("_RegistryEntry", ["to_iter", "from_iter"])
 _registry = {
     tuple: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: tuple(xs)),
     list: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: list(xs)),
@@ -236,7 +262,21 @@ def _replace_nones(sentinel, tree):
       return tree
 
 no_initializer = object()
-def tree_reduce(function, tree, initializer=no_initializer):
+
+@overload
+def tree_reduce(function: Callable[[T, Any], T],
+                tree: Any) -> T:
+    ...
+
+@overload
+def tree_reduce(function: Callable[[T, Any], T],
+                tree: Any,
+                initializer: T) -> T:
+    ...
+
+def tree_reduce(function: Callable[[T, Any], T],
+                tree: Any,
+                initializer: Any = no_initializer) -> T:
   if initializer is no_initializer:
     return functools.reduce(function, tree_leaves(tree))
   else:
@@ -264,6 +304,45 @@ class Partial(functools.partial):
 
   (You need to explicitly opt-in to this behavior because we didn't want to give
   functools.partial different semantics than normal function closures.)
+
+  For example, here is a basic usage of ``Partial`` in a manner similar to
+  ``functools.partial``:
+
+  >>> import jax.numpy as jnp
+  >>> add_one = Partial(jnp.add, 1)
+  >>> add_one(2)
+  DeviceArray(3, dtype=int32)
+
+  Pytree compatibility means that the resulting partial function can be passed
+  as an argument within transformed JAX functions, which is not possible with a
+  standard ``functools.partial`` function:
+
+  >>> from jax import jit
+  >>> @jit
+  ... def call_func(f, *args):
+  ...   return f(*args)
+  ...
+  >>> call_func(add_one, 2)
+  DeviceArray(3, dtype=int32)
+
+  Passing zero arguments to ``Partial`` effectively wraps the original function,
+  making it a valid argument in JAX transformed functions:
+
+  >>> call_func(Partial(jnp.add), 1, 2)
+  DeviceArray(3, dtype=int32)
+
+  Had we passed ``jnp.add`` to ``call_func`` directly, it would have resulted in a
+  ``TypeError``.
+
+  Note that if the result of ``Partial`` is used in the context where the
+  value is traced, it results in all bound arguments being traced when passed
+  to the partially-evaluated function:
+
+  >>> print_zero = Partial(print, 0)
+  >>> print_zero()
+  0
+  >>> call_func(print_zero)
+  Traced<ShapedArray(int32[], weak_type=True)>with<DynamicJaxprTrace(level=0/1)>
   """
 
 register_pytree_node(

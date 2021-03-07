@@ -1,16 +1,16 @@
-sphinx>=2.1
+# sphinx <4 required by myst-nb v0.12.0 (Feb 2021)
+# sphinx >=3 required by sphinx-autodoc-typehints v1.11.1 (Oct 2020)
+sphinx >=3, <4
 sphinx_rtd_theme
-jaxlib
-ipykernel
-nbsphinx
 sphinx-autodoc-typehints
-myst-parser[sphinx]
-# For host_callback.py
-msgpack
-# The next packages are for notebooks
+myst-nb
+
+# Packages used for CI tests.
+pytest
+pytest-xdist
+
+# Packages used for notebook execution
 matplotlib
 sklearn
-# For CI tests.
-pytest
-# Must install jax itself for notebook execution to work
-.
+jaxlib
+.  # install jax itself from current directory.

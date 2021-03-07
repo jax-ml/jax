@@ -28,9 +28,10 @@ from jax import jit, pmap, vjp
 from jax import lax
 from jax import test_util as jtu
 from jax import tree_util
+from jax.experimental import (sharded_jit, with_sharding_constraint,
+                              PartitionSpec as P)
 from jax.interpreters import pxla
-from jax.interpreters.sharded_jit import sharded_jit, with_sharding_constraint
-from jax.interpreters.sharded_jit import PartitionSpec as P
+from jax._src.util import prod
 import jax.numpy as jnp
 
 from jax.config import config
@@ -53,7 +54,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       return x + y
 
     shape = (8, 8)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     actual = f(x, x + 1)
     expected = x + (x + 1)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -72,7 +73,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       return a1 + a2 + b + c1 + c2 + c3
 
     def _make_arg(*shape):
-      return np.arange(np.prod(shape)).reshape(shape)
+      return np.arange(prod(shape)).reshape(shape)
 
     a = (_make_arg(4, 4), 1)
     b = _make_arg(4, 4)
@@ -102,7 +103,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       return x + 1, ((x + 2, x + 3), x + 4)
 
     shape = (4, 4)
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     in_parts = (P(2, 1),)
     out_parts = (P(2, 1), ((P(1, 2), None), P(2, 1)))
 
@@ -113,6 +114,24 @@ class ShardedJitTest(jtu.JaxTestCase):
     out_parts = None
     result = sharded_jit(f, in_parts, out_parts)(x)
     self.assertAllClose(result, expected, check_dtypes=False)
+
+  def testStaticArgnums(self):
+    if jax.device_count() < 2:
+      raise SkipTest
+
+    @partial(sharded_jit, in_parts=(P(2, 1),), out_parts=None, static_argnums=1)
+    def f(x, y):
+      return x + y()
+
+    shape = (8, 8)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    actual = f(x, lambda: 3)
+    expected = x + 3
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, pxla.ShardedDeviceArray)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertAllClose(actual.device_buffers[0].to_py(), expected,
+                        check_dtypes=False)
 
   def testAllArgsOutputsReplicated(self):
     @partial(sharded_jit, in_parts=None, out_parts=None)
@@ -134,15 +153,15 @@ class ShardedJitTest(jtu.JaxTestCase):
       return y * 2
 
     shape = (8, 8)
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     expected = (x + 1) * 2
 
     # Matching sharded_jit partitions
     actual = sharded_jit(f, in_parts=P(2,1), out_parts=P(2,1))(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertLen(actual.device_buffers, 2)
-    self.assertEqual(actual.device_buffers[0].shape().dimensions(), (4,8))
-    self.assertEqual(actual.device_buffers[1].shape().dimensions(), (4,8))
+    self.assertEqual(actual.device_buffers[0].xla_shape().dimensions(), (4, 8))
+    self.assertEqual(actual.device_buffers[1].xla_shape().dimensions(), (4, 8))
 
     # Mismatched sharded_jit partitions
     with self.assertRaisesRegex(
@@ -173,7 +192,7 @@ class ShardedJitTest(jtu.JaxTestCase):
                             lambda i: with_sharding_constraint(i + 1., P(2, 1)),
                             x)
 
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     expected = x + 10.
     actual = sharded_jit(f, in_parts=None, out_parts=None)(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -195,7 +214,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       return vjp_f(p)
 
     shape = (4, 4)
-    x = jnp.arange(jnp.prod(shape), dtype=jnp.float32).reshape(shape)
+    x = jnp.arange(prod(shape), dtype=jnp.float32).reshape(shape)
     actual = f(x)
     expected = expected_f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -222,7 +241,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       (y, z), token = lax.infeed(token, infeed_shapes, partitions=infeed_parts)
       return x @ y.T + z
 
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     y = x + 1
     shard_size = shape[0] // jax.local_device_count()
     y_shards = [y[i:i+shard_size] for i in range(0, shape[0], shard_size)]
@@ -235,6 +254,16 @@ class ShardedJitTest(jtu.JaxTestCase):
 
     expected = x @ y.T + z
     self.assertAllClose(result, expected, check_dtypes=False)
+
+  def testCompilationCache(self):
+    f = lambda x: x + 1
+    sharded_f = sharded_jit(f, in_parts=P(2), out_parts=P(2))
+    shape = (2,)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+
+    with jtu.assert_num_jit_and_pmap_compilations(1):
+      sharded_f(x)
+      sharded_f(x)
 
 
 # TODO(skye): add more error tests
@@ -303,7 +332,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     if num_shards > jax.local_device_count():
       raise SkipTest("requires %d devices" % num_shards)
 
-    x = np.arange(np.prod(shape, dtype=dtype)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     y = x + 1
     result = pmap(
         sharded_jit(f, in_parts=in_partitions, out_parts=out_partitions))(x, y)
@@ -395,7 +424,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
       return a1 + a2 + b + c1 + c2 + c3
 
     def _make_arg(*shape):
-      return np.arange(np.prod(shape)).reshape(shape)
+      return np.arange(prod(shape)).reshape(shape)
 
     a = (_make_arg(2, 4, 4), _make_arg(2))
     b = _make_arg(2, 4, 4)
@@ -419,7 +448,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
       return x + 1, ((x + 2, x + 3), x + 4)
 
     shape = (2, 4, 4)
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     in_parts = (P(2, 1),)
     out_parts = (P(2, 1), ((P(1, 2), None), P(2, 1)))
 
@@ -435,10 +464,10 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     num_args = 200
 
     def f(*args):
-      return jnp.sum(args)
+      return jnp.asarray(args).sum()
 
     shape = (2, 4, 4)
-    args = [np.arange(np.prod(shape)).reshape(shape)] * num_args
+    args = [np.arange(prod(shape)).reshape(shape)] * num_args
     in_partitions = (P(2, 1),) * num_args
     out_partitions = None
     result = pmap(sharded_jit(
@@ -463,7 +492,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
       return jnp.dot(x, x) * 2
 
     shape = (2, 8, 8)
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     result = pmap(f)(x)
     expected = pmap(expected_f)(x)
 
@@ -477,7 +506,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     in_partitions = (P(2, 1), None, None)
     out_partitions = P(2, 1)
     in_axes = (None, None, 0)
-    x = y = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = y = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     dummy = np.arange(replicas, dtype=np.float32) + 1
     num_shards = replicas * np.prod(in_partitions[0])
     if num_shards > jax.local_device_count():
@@ -494,4 +523,4 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())
