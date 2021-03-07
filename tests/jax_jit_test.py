@@ -27,10 +27,13 @@ import numpy as np
 
 
 # It covers all JAX numpy types types except bfloat16 and numpy array.
-# TODO(jblespiau): Add support for float0 and bfloat16 in the C++ path.
+# TODO(jblespiau): Add support for float0 in the C++ path.
+_EXCLUDED_TYPES = [np.ndarray]
+if jax.lib._xla_extension_version < 6:
+  _EXCLUDED_TYPES.append(jax.dtypes.bfloat16)
+
 _SCALAR_NUMPY_TYPES = [
-    x for x in jax.abstract_arrays.array_types
-    if x not in [np.ndarray, jax.dtypes.bfloat16]
+    x for x in jax.abstract_arrays.array_types if x not in _EXCLUDED_TYPES
 ]
 
 
@@ -44,9 +47,6 @@ class JaxJitTest(parameterized.TestCase):
     self.assertTrue(
         jaxlib.jax_jit._is_float0(np.zeros((5, 5), dtype=jax.float0)))
     self.assertFalse(jaxlib.jax_jit._is_float0(np.zeros((5, 5))))
-
-  def test_DtypeTo32BitDtype(self):
-    self.assertEqual(np.float32, jaxlib.jax_jit._DtypeTo32BitDtype(np.float64))
 
   @parameterized.parameters([jax.device_put, _cpp_device_put])
   def test_device_put_on_numpy_scalars(self, device_put_function):
@@ -140,7 +140,9 @@ class JaxJitTest(parameterized.TestCase):
 
   @unittest.skipIf(jax.lib._xla_extension_version < 3, "jaxlib too old")
   def test_convert_int_overflow(self):
-    with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
+    with self.assertRaisesRegex(
+        RuntimeError if jax.lib._xla_extension_version >= 6 else OverflowError,
+        "(Python int too large|Unable to convert Python scalar).*"):
       jaxlib.jax_jit.device_put(int(1e100), True, jax.devices()[0])
 
   def test_arg_signature_of_value(self):
