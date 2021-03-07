@@ -22,7 +22,7 @@ from . import dtypes
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure, treedef_children, treedef_is_leaf)
 from . import linear_util as lu
-from ._src.util import safe_map, WrapHashably, Hashable
+from ._src.util import safe_map, WrapHashably, Hashable, WrapKwArgs
 from .core import unit
 
 from ._src import traceback_util
@@ -110,7 +110,7 @@ def argnames_partial(f, dyn_argnames, kwargs):
   fixed_kwargs = tuple((k, unit if k in dyn_argnames else wrap_hashably(v))
                        for k, v in kwargs.items())
   dyn_kwargs = {k: kwargs[k] for k in dyn_argnames}
-  return _argnames_partial(f, WrapHashably(fixed_kwargs)), dyn_kwargs
+  return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
                            args: Tuple[Any]):
@@ -155,7 +155,7 @@ def argnames_partial_except(f: lu.WrappedFun, static_argnames: Tuple[str, ...],
       else:
         fixed_kwargs[k] = Hashable(arg)  # type: ignore
 
-  return _argnames_partial(f, WrapHashably(fixed_kwargs)), dyn_kwargs
+  return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 
 
 @lu.transformation
@@ -167,7 +167,7 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
   yield ans
 
 @lu.transformation
-def _argnames_partial(fixed_kwargs, *args, **dyn_kwargs):
+def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
   kwargs = {k: None if arg is unit else arg.val
             for k, arg in fixed_kwargs.val.items()}
   kwargs.update(dyn_kwargs)
