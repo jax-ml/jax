@@ -41,7 +41,7 @@ For an introduction to JAX, start at the
    :maxdepth: 1
    :caption: Notes
 
-   CHANGELOG
+   changelog
    faq
    errors
    jaxpr
