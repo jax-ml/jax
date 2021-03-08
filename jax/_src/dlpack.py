@@ -14,7 +14,6 @@
 
 from jax import core
 from jax import numpy as jnp
-from jax import lazy
 from jax.interpreters import xla
 from jax.lib import xla_client
 from jax.lib import xla_bridge
@@ -62,4 +61,4 @@ def from_dlpack(dlpack, backend=None):
   xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
-  return xla.make_device_array(aval, buf.device(), lazy.array(aval.shape), buf)  # pytype: disable=attribute-error
+  return xla.make_device_array(aval, buf.device(), None, buf)  # pytype: disable=attribute-error

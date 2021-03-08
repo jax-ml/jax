@@ -1320,15 +1320,14 @@ def _copy_device_array_to_device(x: Union[DeviceArrayProtocol, _DeviceArray], de
 def _force(x: DeviceArrayProtocol) -> DeviceArrayProtocol:
   if lazy.is_trivial(x._lazy_expr):
     return x
+  # force x on the device where it lives, but preserve stickiness on result
+  if x._device:
+    device = x._device
   else:
-    # force x on the device where it lives, but preserve stickiness on result
-    if x._device:
-      device = x._device
-    else:
-      device = x.device_buffer.device()
-    force_fun = _lazy_force_computation(x.aval, device, x._lazy_expr)
-    result = force_fun(x)
-    return make_device_array(x.aval, x._device, None, result)
+    device = x.device_buffer.device()
+  force_fun = _lazy_force_computation(x.aval, device, x._lazy_expr)
+  result = force_fun(x)
+  return make_device_array(x.aval, x._device, None, result)
 
 @cache()
 def _lazy_force_computation(aval: core.ShapedArray,

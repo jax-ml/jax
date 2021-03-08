@@ -18,7 +18,7 @@ import numpy as np
 
 from jax import test_util as jtu
 import jax.numpy as jnp
-from jax import core, jit, lax, lazy, make_jaxpr
+from jax import core, jit, lax, make_jaxpr
 from jax.interpreters import xla
 from jax.lib import xla_client
 xops = xla_client.ops
@@ -101,8 +101,8 @@ class ConcreteSparseArray(AbstractSparseArray):
 
 def sparse_array_result_handler(device, aval):
   def build_sparse_array(data_buf, indices_buf):
-    data = xla.make_device_array(aval.data_aval, device, lazy.array(aval.data_aval.shape), data_buf)
-    indices = xla.make_device_array(aval.indices_aval, device, lazy.array(aval.indices_aval.shape), indices_buf)
+    data = xla.make_device_array(aval.data_aval, device, None, data_buf)
+    indices = xla.make_device_array(aval.indices_aval, device, None, indices_buf)
     return SparseArray(aval, data, indices)
   return build_sparse_array
 

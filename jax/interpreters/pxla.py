@@ -44,7 +44,6 @@ import numpy as np
 from ..config import flags, config
 from .. import core
 from .. import linear_util as lu
-from .. import lazy
 from ..abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
 from .._src.util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
@@ -563,7 +562,7 @@ class ShardedDeviceArray(xla.DeviceArray):  # type: ignore
       if buf_idx is not None:
         buf = self.device_buffers[buf_idx]
         aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
-        return xla.make_device_array(aval, None, lazy.array(aval.shape), buf)
+        return xla.make_device_array(aval, None, None, buf)
     return xla.DeviceArray.__getitem__(self, idx)
 
 
