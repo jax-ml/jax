@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import operator
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Dict, Iterable, Tuple, Union
 
 import numpy as np
 
@@ -49,7 +49,7 @@ def _ensure_str(x: str) -> str:
     raise TypeError(f"argument is not a string: {x}")
   return x
 
-def _ensure_str_tuple(x: Union[str, Tuple[str, ...]]) -> Tuple[str, ...]:
+def _ensure_str_tuple(x: Union[str, Iterable[str]]) -> Tuple[str, ...]:
   """Convert x to a tuple of strings."""
   if isinstance(x, str):
     return (x,)
@@ -143,7 +143,7 @@ def argnames_partial_except(f: lu.WrappedFun, static_argnames: Tuple[str, ...],
   fixed_kwargs: Dict[str, Any] = {}
   for k, arg in kwargs.items():
     if k in dyn_kwargs:
-      fixed_kwargs = unit
+      fixed_kwargs[k] = unit
     else:
       try:
         hash(arg)

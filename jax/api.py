@@ -165,12 +165,12 @@ _thread_local_state = _ThreadLocalState()
 
 
 def jit(
-  fun: F,
-    static_argnums: Union[int, Iterable[int]] = None,
-    static_argnames: Union[str, Iterable[str]] = None,
-  device: Optional[xc.Device] = None,
-  backend: Optional[str] = None,
-  donate_argnums: Union[int, Iterable[int]] = (),
+    fun: F,
+    static_argnums: Union[int, Iterable[int]] = (),
+    static_argnames: Union[str, Iterable[str]] = (),
+    device: Optional[xc.Device] = None,
+    backend: Optional[str] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
 ) -> F:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -534,8 +534,8 @@ def _jit_is_disabled():
 
 
 def xla_computation(fun: Callable,
-                    static_argnums: Union[int, Iterable[int]] = None,
-                    static_argnames: Union[str, Iterable[str]] = None,
+                    static_argnums: Union[int, Iterable[int]] = (),
+                    static_argnames: Union[str, Iterable[str]] = (),
                     axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                     in_parts=None, out_parts=None,
                     backend: Optional[str] = None,
