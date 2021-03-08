@@ -17,6 +17,11 @@ import os as _os
 _os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
 del _os
 
+# Set Cloud TPU env vars if necessary before transitively loading C++ backend
+from .cloud_tpu_init import cloud_tpu_init as _cloud_tpu_init
+_cloud_tpu_init()
+del _cloud_tpu_init
+
 # flake8: noqa: F401
 from .config import config
 from .api import (
