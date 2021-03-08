@@ -117,9 +117,7 @@ def _check_callable(fun):
   if inspect.isgeneratorfunction(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
 
-
-def _is_possibly_positional(param: inspect.Parameter):
-  return param.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
+_POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 def _infer_argnums_and_argnames(
     fun: Callable,
@@ -136,7 +134,7 @@ def _infer_argnums_and_argnames(
     argnames = _ensure_str_tuple(argnames)
     argnums = tuple(
         i for i, (k, param) in enumerate(parameters.items())
-        if _is_possibly_positional(param) and k in argnames
+        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
     )
   elif argnames is None:
     assert argnums is not None
@@ -144,7 +142,7 @@ def _infer_argnums_and_argnames(
     argnums = _ensure_index_tuple(argnums)
     argnames = tuple(
         k for i, (k, param) in enumerate(parameters.items())
-        if _is_possibly_positional(param) and i in argnums
+        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
     )
   else:
     assert argnums is not None
@@ -166,8 +164,8 @@ _thread_local_state = _ThreadLocalState()
 
 def jit(
     fun: F,
-    static_argnums: Union[int, Iterable[int]] = (),
-    static_argnames: Union[str, Iterable[str]] = (),
+    static_argnums: Union[int, Iterable[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
@@ -232,7 +230,9 @@ def jit(
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
-  if FLAGS.experimental_cpp_jit and config.omnistaging_enabled:
+  # TODO(shoyer): fix C++ JIT to handle static_arnums and static_argnames
+  # consistently
+  if False:  # FLAGS.experimental_cpp_jit and config.omnistaging_enabled:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
                     donate_argnums)
   else:
@@ -242,8 +242,8 @@ def jit(
 
 def _python_jit(
     fun: F,
-    static_argnums: Union[int, Iterable[int]] = (),
-    static_argnames: Union[str, Iterable[str]] = (),
+    static_argnums: Union[int, Iterable[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = ()
@@ -265,17 +265,11 @@ def _python_jit(
                        f"donate_argnums={donate_argnums} but "
                        f"was called with only {len(args)} positional arguments.")
     f = lu.wrap_init(fun)
-    if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args)
-    else:
-      dyn_args = args
-    if static_argnames:
-      f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
-    else:
-      dyn_kwargs = kwargs
-    args_flat, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+    f, args = argnums_partial_except(f, static_argnums, args)
+    f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
+    args_flat, in_tree = tree_flatten((args, kwargs))
     if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
+      donated_invars = donation_vector(donate_argnums, args, kwargs)
     else:
       donated_invars = (False,) * len(args_flat)
     for arg in args_flat:
@@ -300,8 +294,8 @@ class _BackendAndDeviceInfo(NamedTuple):
 
 def _cpp_jit(
     fun: F,
-    static_argnums: Union[int, Iterable[int]] = (),
-    static_argnames: Union[str, Iterable[str]] = (),
+    static_argnums: Union[int, Iterable[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
@@ -335,17 +329,11 @@ def _cpp_jit(
              "was called with only {} positional arguments.")
       raise ValueError(msg.format(donate_argnums, len(args)))
     f = lu.wrap_init(fun)
-    if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args)
-    else:
-      dyn_args = args
-    if static_argnames:
-      f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
-    else:
-      dyn_kwargs = kwargs
-    args_flat, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+    f, args = argnums_partial_except(f, static_argnums, args)
+    f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
+    args_flat, in_tree = tree_flatten((args, kwargs))
     if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
+      donated_invars = donation_vector(donate_argnums, args, kwargs)
     else:
       donated_invars = (False,) * len(args_flat)
 
@@ -534,8 +522,8 @@ def _jit_is_disabled():
 
 
 def xla_computation(fun: Callable,
-                    static_argnums: Union[int, Iterable[int]] = (),
-                    static_argnames: Union[str, Iterable[str]] = (),
+                    static_argnums: Union[int, Iterable[int], None] = None,
+                    static_argnames: Union[str, Iterable[str], None] = None,
                     axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                     in_parts=None, out_parts=None,
                     backend: Optional[str] = None,
@@ -697,17 +685,11 @@ def xla_computation(fun: Callable,
           f"was called with only {len(args)} positional arguments."
       )
     f = lu.wrap_init(fun)
-    if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args)
-    else:
-      dyn_args = args
-    if static_argnames:
-      f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
-    else:
-      dyn_kwargs = kwargs
-    args_flat, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+    f, args = argnums_partial_except(f, static_argnums, args)
+    f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
+    args_flat, in_tree = tree_flatten((args, kwargs))
     if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
+      donated_invars = donation_vector(donate_argnums, args, kwargs)
     else:
       donated_invars = (False,) * len(args_flat)
 
@@ -2044,8 +2026,8 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
 
 
 def make_jaxpr(fun: Callable,
-               static_argnums: Union[int, Iterable[int]] = None,
-               static_argnames: Union[str, Iterable[str]] = None,
+               static_argnums: Union[int, Iterable[int], None] = None,
+               static_argnames: Union[str, Iterable[str], None] = None,
                axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                return_shape: bool = False,
                ) -> Callable[..., core.ClosedJaxpr]:
@@ -2117,10 +2099,8 @@ def make_jaxpr(fun: Callable,
   @api_boundary
   def jaxpr_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
-    if static_argnums:
-      wrapped, _ = argnums_partial_except(wrapped, static_argnums, args)
-    if static_argnames:
-      wrapped, _ = argnames_partial_except(wrapped, static_argnames, kwargs)
+    wrapped, _ = argnums_partial_except(wrapped, static_argnums, args)
+    wrapped, _ = argnames_partial_except(wrapped, static_argnames, kwargs)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_avals = map(shaped_abstractify, jax_args)
