@@ -17,7 +17,7 @@ kernelspec:
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/04-advanced-autodiff.ipynb)
 
-*Authors: TODO*
+*Authors: Vlatimir Mikulik & Matteo Hessel*
 
 Computing gradients is a critical part of modern machine learning methods. This section considers a few advanced topics in the areas of automatic differentiation as it relates to modern machine learning.
 

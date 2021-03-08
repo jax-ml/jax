@@ -17,7 +17,7 @@ kernelspec:
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/02-jitting.ipynb)
 
-*Authors: TODO*
+*Authors: Rosalia Schneider & Vladimir Mikulik*
 
 In this section, we will further explore how JAX works, and how we can make it performant.
 We will discuss the `jax.jit()` transform, which will perform *Just In Time* (JIT) compilation
