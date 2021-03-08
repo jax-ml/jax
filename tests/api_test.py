@@ -134,6 +134,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       pass
 
     argnums, argnames = api._infer_argnums_and_argnames(
+        f, argnums=None, argnames=None)
+    assert argnums == ()
+    assert argnames == ()
+
+    argnums, argnames = api._infer_argnums_and_argnames(
         f, argnums=0, argnames=None)
     assert argnums == (0,)
     assert argnames == ('x',)
@@ -142,6 +147,27 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         f, argnums=None, argnames='y')
     assert argnums == (1,)
     assert argnames == ('y',)
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        f, argnums=0, argnames='y')
+    assert argnums == (0,)
+    assert argnames == ('y',)
+
+    def g(x, y, *args):
+      pass
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        g, argnums=(1, 2), argnames=None)
+    assert argnums == (1, 2)
+    assert argnames == ('y',)
+
+    def h(x, y, **kwargs):
+      pass
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        h, argnums=None, argnames=('foo', 'bar'))
+    assert argnums == ()
+    assert argnames == ('foo', 'bar')
 
   def test_jit_static_args_and_kwargs(self):
 
