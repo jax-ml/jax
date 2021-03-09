@@ -48,7 +48,7 @@ case $2 in
     python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root"
     ;;
   nocuda)
-    python build.py --bazel_startup_options="--output_user_root=/build/root"
+    python build.py --enable_tpu --bazel_startup_options="--output_user_root=/build/root"
     ;;
   *)
     usage

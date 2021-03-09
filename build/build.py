@@ -271,9 +271,6 @@ build:short_logs --output_filter=DONT_MATCH_ANYTHING
 # Workaround for gcc 10+ warnings related to upb.
 # See https://github.com/tensorflow/tensorflow/issues/39467
 build:linux --copt=-Wno-stringop-truncation
-
-# Build with Cloud TPU support.
-build --define=with_tpu_support=true
 """
 
 
@@ -376,6 +373,10 @@ def main():
       help_str="Should we build with CUDA enabled? Requires CUDA and CuDNN.")
   add_boolean_argument(
       parser,
+      "enable_tpu",
+      help_str="Should we build with Cloud TPU support enabled?")
+  add_boolean_argument(
+      parser,
       "enable_rocm",
       help_str="Should we build with ROCm enabled?")
   parser.add_argument(
@@ -462,6 +463,8 @@ def main():
     if args.cudnn_version:
       print("CUDNN version: {}".format(args.cudnn_version))
 
+  print("TPU enabled: {}".format("yes" if args.enable_tpu else "no"))
+
   print("ROCm enabled: {}".format("yes" if args.enable_rocm else "no"))
   if args.enable_rocm:
     if rocm_toolkit_path:
@@ -499,6 +502,8 @@ def main():
   if args.enable_cuda:
     config_args += ["--config=cuda"]
     config_args += ["--define=xla_python_enable_gpu=true"]
+  if args.enable_tpu:
+    config_args += ["--define=with_tpu_support=true"]
   if args.enable_rocm:
     config_args += ["--config=rocm"]
     config_args += ["--config=nonccl"]
