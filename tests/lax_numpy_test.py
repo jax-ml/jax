@@ -1755,6 +1755,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(eqns[0].primitive, lax.integer_pow_p)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_x={}_y={}".format(x, y), "x": x, "y": y}
+      for x in [-1, 0, 1]
+      for y in [0, 32, 64, 128]))
+  def testIntegerPowerOverflow(self, x, y):
+    # Regression test for https://github.com/google/jax/issues/5987
+    args_maker = lambda: [x, y]
+    self._CheckAgainstNumpy(np.power, jnp.power, args_maker)
+    self._CompileAndCheck(jnp.power, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "shape": shape, "dtype": dtype, "axis": axis}
