@@ -5141,12 +5141,12 @@ def piecewise(x, condlist, funclist, *args, **kw):
     funclist = [0] + list(funclist)
   else:
     raise ValueError(f"with {nc} condition(s), either {nc} or {nc+1} functions are expected; got {nf}")
-  indices = argmax(cumsum(vstack([zeros_like(condlist[:1]), condlist]), 0), 0)
+  indices = argmax(cumsum(concatenate([zeros_like(condlist[:1]), condlist], 0), 0), 0)
   dtype = _dtype(x)
   def _call(f):
     return lambda x: f(x, *args, **kw).astype(dtype)
   def _const(v):
-    return lambda x: full_like(x, v)
+    return lambda x: array(v, dtype=dtype)
   funclist = [_call(f) if callable(f) else _const(f) for f in funclist]
   return vectorize(lax.switch, excluded=(1,))(indices, funclist, x)
 

@@ -1647,17 +1647,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "ncond": ncond, "nfunc": nfunc}
       for ncond in [1, 2, 3]
       for nfunc in [ncond, ncond + 1]
-      for shape in nonempty_nonscalar_array_shapes
+      for shape in all_shapes
       for dtype in all_dtypes))
   def testPiecewise(self, shape, dtype, ncond, nfunc):
     rng = jtu.rand_default(self.rng())
     rng_bool = jtu.rand_int(self.rng(), 0, 2)
     funclist = [lambda x: x - 1, 1, lambda x: x, 0][:nfunc]
-    args_maker = lambda: (rng(shape, dtype), list(rng_bool((ncond,) + shape, bool)))
+    args_maker = lambda: (rng(shape, dtype), [rng_bool(shape, bool) for i in range(ncond)])
     np_fun = partial(np.piecewise, funclist=funclist)
     jnp_fun = partial(jnp.piecewise, funclist=funclist)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
-    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+    # This is a higher-order function, so the cache miss check will fail.
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, check_cache_misses=False)
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
