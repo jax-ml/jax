@@ -967,6 +967,16 @@ class LaxRandomTest(jtu.JaxTestCase):
     with self.assertRaises(OverflowError):
       api.jit(random.PRNGKey)(seed)
 
+  def test_random_split_doesnt_device_put(self):
+    # TODO(mattjj): Enable this after fixing convert_element_type.
+    raise SkipTest("Broken by convert_element_type.")
+    key = random.PRNGKey(1)
+    with jtu.count_device_put() as count:
+      key, _ = random.split(key, 2)
+    self.assertEqual(count[0], 0)
+
+
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
