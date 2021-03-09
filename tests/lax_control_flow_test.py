@@ -335,8 +335,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.array([4, 3, 4, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
   def testWhileLoopAxisIndexBatched(self):
-    raise SkipTest("leaks axis_index tracer")
     def fun(x):
       return lax.while_loop(lambda x: x < lax.axis_index('i'), lambda x: x + 2, x)
 

@@ -1097,13 +1097,9 @@ def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
   # TODO(cjfj): Add reduce-scatter op to XLA?
   concat_axis = 0
-  return (lax_numpy.sum(
-      all_to_all(
-          cts,
-          axis_name=axis_name,
-          split_axis=all_gather_dimension,
-          concat_axis=concat_axis,
-          axis_index_groups=axis_index_groups),
+  return (lax_numpy.sum(all_to_all(
+      cts, axis_name=axis_name, split_axis=all_gather_dimension,
+      concat_axis=concat_axis, axis_index_groups=axis_index_groups),
       axis=concat_axis),)
 
 def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
@@ -1162,26 +1158,30 @@ core.axis_substitution_rules[axis_index_p] = partial(_subst_all_names_in_param, 
 # wants to bind an axis name has to additionally implement `process_axis_index`
 # and put its main trace on the axis env stack.
 def _axis_index_bind(*, axis_name):
-  if not isinstance(axis_name, (tuple, list)):
-    axis_name = (axis_name,)
-  inner_size = 1
-  index = 0
-  for name in reversed(axis_name):
+  def name_idx(name):
     frame = core.axis_frame(name)
-    if frame.main_trace is not None:
-      trace = frame.main_trace.with_cur_sublevel()
-      name_idx = trace.process_axis_index(frame)
+    dynamic = core.thread_local_state.trace_state.trace_stack.dynamic
+    if (frame.main_trace is None or dynamic.level > frame.main_trace.level):
+      return core.Primitive.bind(axis_index_p, axis_name=name)
     else:
-      name_idx = core.Primitive.bind(axis_index_p, axis_name=name)
-    index += name_idx * inner_size
-    inner_size *= psum(1, name)
-  return index
+      trace = frame.main_trace.with_cur_sublevel()
+      return trace.process_axis_index(frame)
+
+  if not isinstance(axis_name, (tuple, list)):
+    return name_idx(axis_name)
+  else:
+    inner_size = 1
+    index = 0
+    for name in reversed(axis_name):
+      index += name_idx(name) * inner_size
+      inner_size *= psum(1, name)
+    return index
 axis_index_p.def_custom_bind(_axis_index_bind)
 
-def _process_axis_index(self, frame):
+def _vmap_process_axis_index(self, frame):
   assert frame.size is not None
-  return batching.BatchTracer(self, lax_numpy.arange(frame.size, dtype=np.int32), 0)
-batching.BatchTrace.process_axis_index = _process_axis_index  # type: ignore
+  return batching.BatchTracer(self, lax.iota(np.int32, frame.size), 0)
+batching.BatchTrace.process_axis_index = _vmap_process_axis_index  # type: ignore
 
 
 pdot_p = core.Primitive('pdot')
