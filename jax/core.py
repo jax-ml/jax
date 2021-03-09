@@ -1698,7 +1698,8 @@ def check_map(prim, in_avals, params):
   mapped_avals = [mapped_aval(axis_size, in_axis, aval)
                   if in_axis is not None else aval
                   for aval, in_axis in zip(in_avals, in_axes)]
-  _check_jaxpr(call_jaxpr, mapped_avals)
+  with extend_axis_env(params['axis_name'], axis_size, None):
+    _check_jaxpr(call_jaxpr, mapped_avals)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [unmapped_aval(axis_size, out_axis, aval) if out_axis is not None else aval
