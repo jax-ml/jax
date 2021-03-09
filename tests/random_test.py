@@ -538,6 +538,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     x = random.poisson(key, np.array([2.0, 20.0]), shape=(3, 2))
     assert x.shape == (3, 2)
 
+  def testPoissonZeros(self):
+    key = random.PRNGKey(0)
+    lam = jnp.concatenate([jnp.zeros(10), 20 * jnp.ones(10)])
+    samples = random.poisson(key, lam, shape=(2, 20))
+    self.assertArraysEqual(samples[:, :10], jnp.zeros_like(samples[:, :10]))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in jtu.dtypes.floating))

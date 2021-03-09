@@ -1173,11 +1173,12 @@ def _poisson(key, lam, shape, dtype):
   # λ -> ∞, so pick some arbitrary large value.
   lam_rejection = lax.select(use_knuth, lax.full_like(lam, 1e5), lam)
   max_iters = dtype.type(jnp.iinfo(dtype).max)  # insanely conservative
-  return lax.select(
-      use_knuth,
-      _poisson_knuth(key, lam_knuth, shape, dtype, max_iters),
-      _poisson_rejection(key, lam_rejection, shape, dtype, max_iters),
+  result = lax.select(
+    use_knuth,
+    _poisson_knuth(key, lam_knuth, shape, dtype, max_iters),
+    _poisson_rejection(key, lam_rejection, shape, dtype, max_iters),
   )
+  return lax.select(lam == 0, jnp.zeros_like(result), result)
 
 
 def poisson(key, lam, shape=(), dtype=dtypes.int_):
