@@ -101,6 +101,63 @@ class CallbackTest(jtu.JaxTestCase):
         rewrite(f, {})(x),
         jnp.array([2.0, 4.0]))
 
+  def testRewriteThroughScan(self):
+    def f(xs):
+      def body(carry, x):
+        carry = carry * 2.
+        return carry, x - 2.
+      return lax.scan(body, 1., xs)
+
+    xs = jnp.arange(4.)
+    carry, ys = f(xs)
+    self.assertAllClose(carry, 16.)
+    self.assertAllClose(ys, jnp.arange(4.) - 2.)
+
+    rewrites = {
+        lax.mul_p: lambda x, y: x + y,
+        lax.sub_p: lambda x, y: x / y
+    }
+    carry, ys = rewrite(f, rewrites)(xs)
+    self.assertAllClose(carry, 1. + 8.)
+    self.assertAllClose(ys, jnp.arange(4.) / 2.)
+
+
+  def testRewriteThroughWhile(self):
+    def f(x):
+      def cond(x):
+        return x < 5
+      def body(x):
+        return x + 1
+      return lax.while_loop(cond, body, x)
+
+    x = 0
+    self.assertAllClose(f(x), 5)
+
+    rewrites = {
+        lax.add_p: lambda x, y: x + y + 100,
+    }
+    self.assertAllClose(rewrite(f, rewrites)(x), 101)
+
+    rewrites = {
+        lax.lt_p: lambda x, y: x < y + 5
+    }
+    self.assertAllClose(rewrite(f, rewrites)(x), 10)
+
+
+  def testRewriteThroughForLoop(self):
+    def f(x):
+      def body(i, x):
+        return x * i
+      return lax.fori_loop(1, 5, body, x)
+
+    x = 1
+    self.assertAllClose(f(x), 24)
+
+    rewrites = {
+        lax.mul_p: lambda x, y: x + y
+    }
+    self.assertAllClose(rewrite(f, rewrites)(x), 11)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
