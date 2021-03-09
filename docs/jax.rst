@@ -21,6 +21,8 @@ Subpackages
     jax.dlpack
     jax.profiler
 
+.. _jax-jit:
+
 Just-in-time compilation (:code:`jit`)
 --------------------------------------
 
@@ -36,6 +38,8 @@ Just-in-time compilation (:code:`jit`)
     device_put_sharded
     default_backend
     named_call
+
+.. _jax-grad:
 
 Automatic differentiation
 -------------------------

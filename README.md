@@ -20,8 +20,7 @@
 
 ## What is JAX?
 
-JAX is [Autograd](https://github.com/hips/autograd) and
-[XLA](https://www.tensorflow.org/xla),
+JAX is [Autograd](https://github.com/hips/autograd) and [XLA](https://www.tensorflow.org/xla),
 brought together for high-performance machine learning research.
 
 With its updated version of [Autograd](https://github.com/hips/autograd),
@@ -32,8 +31,7 @@ derivatives. It supports reverse-mode differentiation (a.k.a. backpropagation)
 via [`grad`](#automatic-differentiation-with-grad) as well as forward-mode differentiation,
 and the two can be composed arbitrarily to any order.
 
-What’s new is that JAX uses
-[XLA](https://www.tensorflow.org/xla)
+What’s new is that JAX uses [XLA](https://www.tensorflow.org/xla)
 to compile and run your NumPy programs on GPUs and TPUs. Compilation happens
 under the hood by default, with library calls getting just-in-time compiled and
 executed. But JAX also lets you just-in-time compile your own Python functions
@@ -220,15 +218,15 @@ function:
 ```python
 def predict(params, input_vec):
   assert input_vec.ndim == 1
-  activations = inputs
+  activations = input_vec
   for W, b in params:
-    outputs = jnp.dot(W, activations) + b  # `input_vec` on the right-hand side!
+    outputs = jnp.dot(W, activations) + b  # `activations` on the right-hand side!
     activations = jnp.tanh(outputs)
   return outputs
 ```
 
-We often instead write `jnp.dot(inputs, W)` to allow for a batch dimension on the
-left side of `inputs`, but we’ve written this particular prediction function to
+We often instead write `jnp.dot(activations, W)` to allow for a batch dimension on the
+left side of `activations`, but we’ve written this particular prediction function to
 apply only to single input vectors. If we wanted to apply this function to a
 batch of inputs at once, semantically we could just write
 

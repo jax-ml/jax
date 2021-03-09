@@ -163,6 +163,8 @@ Custom gradient operators
     custom_linear_solve
     custom_root
 
+.. _jax-parallel-operators:
+
 Parallel operators
 ------------------
 

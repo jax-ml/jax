@@ -1,11 +1,9 @@
 JAX reference documentation
 ===========================
 
-Composable transformations of Python+NumPy programs: differentiate, vectorize,
-JIT to GPU/TPU, and more.
-
-For an introduction to JAX, start at the
-`JAX GitHub page <https://github.com/google/jax>`_.
+JAX is Autograd_ and XLA_, brought together for high-performance numerical computing and machine learning research.
+It provides composable transformations of Python+NumPy programs: differentiate, vectorize,
+parallelize, Just-In-Time compile to GPU/TPU, and more.
 
 .. toctree::
    :maxdepth: 1
@@ -22,9 +20,23 @@ For an introduction to JAX, start at the
 
 .. toctree::
    :maxdepth: 1
+   :caption: Reference Documentation
+
+   faq
+   transformations
+   async_dispatch
+   jaxpr
+   notebooks/convolutions
+   pytrees
+   type_promotion
+   errors
+   glossary
+   changelog
+
+.. toctree::
+   :maxdepth: 1
    :caption: Advanced JAX Tutorials
 
-   notebooks/convolutions
    notebooks/autodiff_cookbook
    notebooks/vmapped_log_probs
    notebooks/neural_network_with_tfds_data
@@ -36,25 +48,16 @@ For an introduction to JAX, start at the
    notebooks/maml
    notebooks/score_matching
 
-
 .. toctree::
    :maxdepth: 1
    :caption: Notes
 
-   changelog
-   faq
-   errors
-   jaxpr
-   async_dispatch
    concurrency
    gpu_memory_allocation
    profiling
    device_memory_profiling
-   pytrees
    rank_promotion_warning
-   type_promotion
    custom_vjp_update
-   glossary
 
 .. toctree::
    :maxdepth: 2
@@ -77,3 +80,7 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
+
+
+.. _Autograd: https://github.com/hips/autograd
+.. _XLA: https://www.tensorflow.org/xla
