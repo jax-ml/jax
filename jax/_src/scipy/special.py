@@ -156,13 +156,14 @@ def entr(x):
 @_wraps(osp_special.multigammaln, update_doc=False)
 def multigammaln(a, d):
   d = core.concrete_or_error(int, d, "d argument of multigammaln")
-  a, d = _promote_args_inexact("multigammaln", a, d)
+  a, d_ = _promote_args_inexact("multigammaln", a, d)
 
-  constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d),
-                             lax.sub(d, _constant_like(a, 1))),
+  constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d_),
+                             lax.sub(d_, _constant_like(a, 1))),
                      lax.log(_constant_like(a, np.pi)))
   res = jnp.sum(gammaln(jnp.expand_dims(a, axis=-1) -
-                        lax.div(jnp.arange(d), _constant_like(a, 2))),
+                        lax.div(jnp.arange(d, dtype=d_.dtype),
+                                _constant_like(a, 2))),
                axis=-1)
   return res + constant
 
