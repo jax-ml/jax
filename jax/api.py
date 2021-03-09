@@ -2244,10 +2244,11 @@ def _valid_jaxtype(arg):
 
 
 class ShapeDtypeStruct:
-  __slots__ = ["shape", "dtype"]
-  def __init__(self, shape, dtype):
+  __slots__ = ["shape", "dtype", "named_shape"]
+  def __init__(self, shape, dtype, named_shape={}):
     self.shape = shape
     self.dtype = np.dtype(dtype)
+    self.named_shape = named_shape
 
   size = property(lambda self: prod(self.shape))
   ndim = property(lambda self: len(self.shape))
@@ -2259,7 +2260,8 @@ class ShapeDtypeStruct:
       raise TypeError("len() of unsized object") from e # same as numpy error
 
   def __repr__(self):
-    return f"{type(self).__name__}(shape={self.shape}, dtype={self.dtype.name})"
+    ns = f", named_shape={self.named_shape}" if self.named_shape else ""
+    return f"{type(self).__name__}(shape={self.shape}, dtype={self.dtype.name}{ns})"
 
   __str__ = __repr__
 
@@ -2267,10 +2269,11 @@ class ShapeDtypeStruct:
     if not isinstance(other, ShapeDtypeStruct):
       return False
     else:
-      return (other.shape, other.dtype) == (self.shape, self.dtype)
+      return (other.shape, other.dtype, other.named_shape) == (
+          self.shape, self.dtype, self.named_shape)
 
   def __hash__(self):
-    return hash((self.shape, self.dtype))
+    return hash((self.shape, self.dtype, self.named_shape))
 
 def eval_shape(fun: Callable, *args, **kwargs):
   """Compute the shape/dtype of ``fun`` without any FLOPs.
@@ -2336,7 +2339,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   wrapped_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   out = pe.abstract_eval_fun(wrapped_fun.call_wrapped,
                              *map(shaped_abstractify, args_flat))
-  out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
+  out = [ShapeDtypeStruct(x.shape, x.dtype, x.named_shape) for x in out]
   return tree_unflatten(out_tree(), out)
 
 
