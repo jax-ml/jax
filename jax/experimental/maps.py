@@ -535,7 +535,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
   with core.extend_axis_env_nd(axis_sizes.items()):
     jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
   out_axes = out_axes_thunk()
-  jaxpr = subst_jaxpr_axis_names(jaxpr, plan.axis_subst)
+  jaxpr = core.subst_axis_names_jaxpr(jaxpr, plan.axis_subst)
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
@@ -563,8 +563,12 @@ def make_xmap_callable(fun: lu.WrappedFun,
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
   physical_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
-  axis_subst: Dict[AxisName, Tuple[ResourceAxisName, ...]]
+  axis_subst_dict: Dict[AxisName, Tuple[ResourceAxisName, ...]]
   axis_vmap_size: Dict[AxisName, Optional[int]]
+
+  @property
+  def axis_subst(self) -> core.AxisSubst:
+    return lambda name: self.axis_subst_dict.get(name, (name,))
 
   @classmethod
   def from_axis_resources(cls,
@@ -574,7 +578,7 @@ class EvaluationPlan(NamedTuple):
     # TODO: Support sequential resources
     physical_axis_resources = axis_resources  # NB: We only support physical resources at the moment
     resource_shape = resource_env.shape
-    axis_subst = dict(axis_resources)
+    axis_subst_dict = dict(axis_resources)
     axis_vmap_size: Dict[AxisName, Optional[int]] = {}
     for naxis, raxes in axis_resources.items():
       num_resources = int(np.prod([resource_shape[axes] for axes in raxes], dtype=np.int64))
@@ -587,13 +591,13 @@ class EvaluationPlan(NamedTuple):
       # when every resource gets chunks of values.
       if not raxes or tile_size > 1:
         axis_vmap_size[naxis] = tile_size
-        axis_subst[naxis] += (fresh_resource_name(naxis),)
+        axis_subst_dict[naxis] += (fresh_resource_name(naxis),)
       else:
         axis_vmap_size[naxis] = None
-    return cls(physical_axis_resources, axis_subst, axis_vmap_size)
+    return cls(physical_axis_resources, axis_subst_dict, axis_vmap_size)
 
   def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
-    for naxis, raxes in self.axis_subst.items():
+    for naxis, raxes in self.axis_subst_dict.items():
       tile_size = self.axis_vmap_size[naxis]
       if tile_size is None:
         continue
@@ -642,6 +646,13 @@ core.EvalTrace.process_xmap = core.EvalTrace.process_call  # type: ignore
 def _process_xmap_default(self, call_primitive, f, tracers, params):
   raise NotImplementedError(f"{type(self)} must override process_xmap to handle xmap")
 core.Trace.process_xmap = _process_xmap_default  # type: ignore
+
+def _xmap_axis_subst(params, subst):
+  def shadowed_subst(name):
+    return (name,) if name in params['axis_sizes'] else subst(name)
+  new_jaxpr = core.subst_axis_names_jaxpr(params['call_jaxpr'], shadowed_subst)
+  return dict(params, call_jaxpr=new_jaxpr)
+core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
 
 
 # This is DynamicJaxprTrace.process_map with some very minor modifications
@@ -747,7 +758,7 @@ def _xmap_translation_rule_replica(c, axis_env,
                  in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
   # We have to substitute before tracing, because we want the vectorized
   # axes to be used in the jaxpr.
-  resource_call_jaxpr = subst_jaxpr_axis_names(call_jaxpr, plan.axis_subst)
+  resource_call_jaxpr = core.subst_axis_names_jaxpr(call_jaxpr, plan.axis_subst)
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
   f = plan.vectorize(f, in_axes, out_axes)
@@ -922,7 +933,7 @@ def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
   yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
 
 
-def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
+def _jaxpr_resources(jaxpr: core.Jaxpr, resource_env) -> Set[ResourceAxisName]:
   used_resources = set()
   for eqn in jaxpr.eqns:
     if eqn.primitive is xmap_p:
@@ -935,36 +946,6 @@ def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
     for update in updates:
       used_resources |= update
   return used_resources
-
-def subst_jaxpr_axis_names(jaxpr, axis_subst: Dict[AxisName, Tuple[AxisName]]):
-  eqns = [subst_eqn_axis_names(eqn, axis_subst) for eqn in jaxpr.eqns]
-  return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, eqns)
-
-def subst_eqn_axis_names(eqn, axis_subst: Dict[AxisName, Tuple[AxisName]]):
-  # TODO: Support custom_vjp, custom_jvp
-  if eqn.primitive is xmap_p:
-    shadowed_axes = set(eqn.params['axis_sizes']) & set(axis_subst)
-    if shadowed_axes:
-      shadowed_subst = dict(axis_subst)
-      for saxis in shadowed_axes:
-        del shadowed_subst[saxis]
-    else:
-      shadowed_subst = axis_subst
-    new_call_jaxpr = subst_jaxpr_axis_names(eqn.params['call_jaxpr'], shadowed_subst)
-    return eqn._replace(params=dict(eqn.params, call_jaxpr=new_call_jaxpr))
-  if isinstance(eqn.primitive, (core.CallPrimitive, core.MapPrimitive)):
-    bound_name = eqn.params.get('axis_name', None)
-    if bound_name in axis_subst:  # Check for shadowing
-      sub_subst = dict(axis_subst)
-      del sub_subst[bound_name]
-    else:
-      sub_subst = axis_subst
-    new_call_jaxpr = subst_jaxpr_axis_names(eqn.params['call_jaxpr'], sub_subst)
-    return eqn._replace(params=dict(eqn.params, call_jaxpr=new_call_jaxpr))
-  new_params = core.subst_axis_names(eqn.primitive, eqn.params,
-                                     lambda name: axis_subst.get(name, (name,)))
-  return eqn if new_params is eqn.params else eqn._replace(params=new_params)
-
 
 # -------- soft_pmap --------
 

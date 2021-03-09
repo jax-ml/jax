@@ -437,6 +437,12 @@ class XMapTest(XMapTestCase):
     self.assertNotDeleted(y)
     self.assertDeleted(x)
 
+  @ignore_xmap_warning()
+  def testControlFlow(self):
+    x = jnp.arange(5)
+    xmap(lambda x: lax.fori_loop(0, 10, lambda _, x: lax.psum(x, 'i'), x),
+         in_axes=['i', ...], out_axes=['i', ...])(x)
+
   @with_and_without_mesh
   @ignore_xmap_warning()
   def testAxisSizes(self, mesh, axis_resources):

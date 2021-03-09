@@ -1529,7 +1529,31 @@ def used_axis_names(primitive: Primitive, params: ParamDict) -> Set[AxisName]:
 def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst) -> ParamDict:
   if primitive in axis_substitution_rules:
     return axis_substitution_rules[primitive](params, subst)
-  return params
+  # Default implementation: substitute names in all jaxpr parameters
+  if isinstance(primitive, MapPrimitive):
+    def shadowed_subst(name):
+      return (name,) if name == params['axis_name'] else subst(name)
+  else:
+    shadowed_subst = subst
+  jaxpr_params = [(n, v) for n, v in params.items() if isinstance(v, (Jaxpr, ClosedJaxpr))]
+  if not jaxpr_params:
+    return params
+  new_params = dict(params)
+  for name, jaxpr in jaxpr_params:
+    new_params[name] = subst_axis_names_jaxpr(jaxpr, shadowed_subst)
+  return new_params
+
+def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
+  consts = None
+  if isinstance(jaxpr, ClosedJaxpr):
+    consts = jaxpr.consts
+    jaxpr = jaxpr.jaxpr
+  eqns = [eqn._replace(params=subst_axis_names(eqn.primitive, eqn.params, subst))
+          for eqn in jaxpr.eqns]
+  new_jaxpr = Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, eqns)
+  if consts is not None:
+    return ClosedJaxpr(new_jaxpr, consts)
+  return new_jaxpr
 
 axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst], ParamDict]] = {}
 
