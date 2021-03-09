@@ -318,11 +318,12 @@ def _cpp_jit(
         execute.func is xla._execute_compiled and  # not trivial, not pmap
         # Not supported: ShardedDeviceArray
         all(xla.type_is_device_array(x) for x in out_flat) and
-        # TODO(mattjj): Add support for lazy-expression.
+        # TODO(phawkins): remove this condition when jaxlib 0.1.63 is the
+        # minimum.
         # If the input is a DeviceArray, then it should have a trivial LazyExpr.
-        all(
+        (lib._xla_extension_version >= 7 or all(
             type(x) is not xla.DeviceArray or xla.lazy.is_trivial(x._lazy_expr)
-            for x in args_flat))
+            for x in args_flat)))
 
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
