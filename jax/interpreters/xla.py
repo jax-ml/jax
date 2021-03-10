@@ -744,7 +744,7 @@ def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
   for arg_index, arg in enumerate(xla_args):
     if donated_args[arg_index]:
       for param_index, element in flatten_shape(c.GetShape(arg)):
-        key = (element.dimensions(), element.numpy_dtype())
+        key = (element.dimensions(), element.xla_element_type())
         if tuple_args:
           param_number = 0
           param_index = (arg_index,) + tuple(param_index)
@@ -756,7 +756,7 @@ def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
   # Consume donations for outputs.
   out_donated_args = list(donated_args)
   for output_index, element in flatten_shape(c.GetShape(out_tuple)):
-    key = (element.dimensions(), element.numpy_dtype())
+    key = (element.dimensions(), element.xla_element_type())
     if donations.get(key, ()):
       param_number, param_index, arg_index = donations[key].popleft()
       out_donated_args[arg_index] = False

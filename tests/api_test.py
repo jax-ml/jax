@@ -2216,6 +2216,10 @@ class APITest(jtu.JaxTestCase):
     # Should not crash.
     vjp_fun(arr)
 
+  def test_jit_returning_token(self):
+    x = jax.jit(jax.lax.create_token)(1.0)
+    self.assertIsInstance(x, jax.interpreters.xla.Token)
+
   def test_leak_checker_catches_a_jit_leak(self):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
