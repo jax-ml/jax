@@ -15,6 +15,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
 * Breaking changes:
 
+## jaxlib 0.1.63 (Unreleased)
+
 ## jax 0.2.10 (March 5 2021)
 
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.9...jax-v0.2.10).
@@ -46,7 +48,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     {func}`jax.numpy.repeat`, {func}`jax.numpy.reshape`.
     In general, {mod}`jax.numpy` functions should be used with scalars or array arguments.
 
-## jaxlib 0.1.62 (Unreleased)
+## jaxlib 0.1.62 (March 9 2021)
 
 * New features:
   * jaxlib wheels are now built to require AVX instructions on x86-64 machines
@@ -571,7 +573,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   >   > * Forward-mode automatic differentiation (`jvp`) of while loop
   >   ({jax-issue}`#1980`)
   > * New NumPy and SciPy functions:
-  >   
+  >
   >   * {py:func}`jax.numpy.fft.fft2`
   >   * {py:func}`jax.numpy.fft.ifft2`
   >   * {py:func}`jax.numpy.fft.rfft`
@@ -592,5 +594,3 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 * With the Python 3 upgrade, JAX no longer depends on `fastcache`, which should
   help with installation.
-
-
