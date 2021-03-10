@@ -24,6 +24,7 @@ import numpy as np
 
 import jax
 from jax import dtypes
+from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.interpreters import xla
@@ -222,6 +223,15 @@ class TestPromotionTables(jtu.JaxTestCase):
     except TypeError:
       val = jaxtype.type(0)
     self.assertIs(dtypes._jax_type(val), jaxtype)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_dtype={}".format(dtype), "dtype": dtype}
+     for dtype in ['float16', 'int16', 'uint16', 'bool'])
+  def testUnaryResultType(self, dtype):
+    # Regression test for special case of dtypes.result_type.
+    # Previously this would return dtypes.result_type(int).
+    x = lax.convert_element_type(2, dtype, weak_type=False)
+    self.assertEqual(dtypes.result_type(x), dtype)
 
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")

@@ -225,7 +225,12 @@ _jax_types = [
 ] + _weak_types  # type: ignore[operator]
 
 def _jax_type(value):
-  """Return the jax type for a value or type."""
+  """Return the jax type for a value or type.
+
+  The JAX type is one of the entries in the _jax_types array above; either:
+  - a numpy dtype, indicating weak_type=False
+  - a Python type (int, float, or complex), indicating that weak_type=True
+  """
   # Note: `x in _weak_types` can return false positives due to dtype comparator overloading.
   if any(value is typ for typ in _weak_types):
     return value
@@ -326,6 +331,11 @@ def dtype(x):
   return np.result_type(x)
 
 def _result_type_raw(*args):
+  """
+  Returns either
+  - a numpy dtype, indicating weak_type=False
+  - a Python type (int, float, complex), indicating weak_type=True
+  """
   if len(args) == 1:
     return _jax_type(args[0])
   return _least_upper_bound(*{_jax_type(arg) for arg in args})
@@ -334,4 +344,9 @@ def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
-  return canonicalize_dtype(_result_type_raw(*args))
+  elif len(args) == 1:
+    # Avoid _result_type_raw() for single argument, because weak types
+    # need not be considered for this case.
+    return canonicalize_dtype(dtype(args[0]))
+  else:
+    return canonicalize_dtype(_result_type_raw(*args))
