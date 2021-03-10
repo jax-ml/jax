@@ -33,7 +33,6 @@ from jax import api
 from jax import api_util
 from jax import linear_util as lu
 from jax import dtypes
-from jax import lazy
 from jax import tree_util
 from jax.config import flags, config
 from jax.core import (Primitive, _canonicalize_dimension, UnshapedArray,
@@ -3313,21 +3312,6 @@ broadcast_p = standard_primitive(
 ad.deflinear2(broadcast_p, lambda t, _, sizes: [_reduce_sum(t, range(len(sizes)))])
 batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
-def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
-  if type(operand) is np.ndarray:
-    operand = _device_put_raw(operand)
-  if xla.type_is_device_array(operand) and np.all(
-      np.equal(operand.shape, np.take(shape, broadcast_dimensions))):
-    shape = _broadcast_in_dim_shape_rule(
-      operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
-    aval = ShapedArray(shape, _dtype(operand), weak_type=dtypes.is_weakly_typed(operand))
-    lazy_expr = operand._lazy_expr or lazy.array(operand.shape)
-    lazy_expr = lazy.broadcast(lazy_expr, shape, broadcast_dimensions)
-    return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
-  else:
-    return xla.apply_primitive(broadcast_in_dim_p, operand, shape=shape,
-                               broadcast_dimensions=broadcast_dimensions)
-
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
   _check_shapelike('broadcast_in_dim', 'shape', shape)
   _check_shapelike('broadcast_in_dim', 'broadcast_dimensions',
@@ -3380,7 +3364,6 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *, shape,
 
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
-broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear2(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 
@@ -3628,19 +3611,6 @@ def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
   return broadcast_in_dim(array, result_shape, broadcast_dims)
 
 
-# We have a nonstandard reshape impl so that we can be lazy about data movement.
-def _reshape_impl(operand, *, new_sizes, dimensions):
-  old_sizes = np.shape(operand)
-  if xla.type_is_device_array(operand) and dimensions is None:
-    bcast_dims = _is_singleton_reshape(old_sizes, new_sizes)
-    if bcast_dims is not None:
-      aval = ShapedArray(new_sizes, operand.dtype)
-      lazy_expr = operand._lazy_expr or lazy.array(operand.shape)
-      lazy_expr = lazy.broadcast(lazy_expr, new_sizes, bcast_dims)
-      return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
-  return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
-                             dimensions=dimensions)
-
 def _is_singleton_reshape(old, new):
   # A singleton reshape is one where only singleton dimensions are added. We
   # want to detect them because they can be expressed as (lazy) broadcasts.
@@ -3720,7 +3690,6 @@ def _reshape_masking_rule(padded_args, logical_shapes, polymorphic_shapes,
 
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
-reshape_p.def_impl(_reshape_impl)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
 masking.masking_rules[reshape_p] = _reshape_masking_rule
@@ -3747,15 +3716,6 @@ ad.deflinear2(rev_p, lambda t, _, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 
-def _transpose_impl(operand, *, permutation):
-  if xla.type_is_device_array(operand):
-    lazy_expr = operand._lazy_expr or lazy.array(operand.shape)
-    lazy_expr = lazy.transpose(lazy_expr, permutation)
-    aval = ShapedArray(lazy_expr.shape, operand.dtype)
-    return xla._DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
-  else:
-    return xla.apply_primitive(transpose_p, operand, permutation=permutation)
-
 def _transpose_shape_rule(operand, *, permutation):
   if not isinstance(permutation, (tuple, list, np.ndarray)):
     msg = "transpose permutation must be a tuple/list/ndarray, got {}."
@@ -3777,7 +3737,6 @@ def _transpose_masking_rule(padded_vals, logical_shapes, permutation):
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
-transpose_p.def_impl(_transpose_impl)
 ad.deflinear2(transpose_p,
               lambda t, _, permutation: [transpose(t, np.argsort(permutation))])  # type: ignore[arg-type]
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule

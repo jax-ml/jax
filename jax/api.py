@@ -317,23 +317,17 @@ def _cpp_jit(
         execute is not None and
         execute.func is xla._execute_compiled and  # not trivial, not pmap
         # Not supported: ShardedDeviceArray
-        all(xla.type_is_device_array(x) for x in out_flat) and
-        # TODO(mattjj): Add support for lazy-expression.
-        # If the input is a DeviceArray, then it should have a trivial LazyExpr.
-        all(
-            type(x) is not xla.DeviceArray or xla.lazy.is_trivial(x._lazy_expr)
-            for x in args_flat))
+        all(xla.type_is_device_array(x) for x in out_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       xla_executable, _, result_handlers = execute.args
       sticky_device = None
       avals = []
-      lazy_exprs = []
+      lazy_exprs = [None] * len(result_handlers)
       for result_handler in result_handlers:
-        aval, sticky_device, lazy_expr = result_handler.args
+        aval, sticky_device = result_handler.args
         avals.append(aval)
-        lazy_exprs.append(lazy_expr)
       assert len(avals) == len(out_flat)
       fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals, lazy_exprs)
     else:
