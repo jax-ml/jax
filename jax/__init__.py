@@ -17,6 +17,18 @@ import os as _os
 _os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
 del _os
 
+# Set Cloud TPU env vars if necessary before transitively loading C++ backend
+from .cloud_tpu_init import cloud_tpu_init as _cloud_tpu_init
+try:
+  _cloud_tpu_init()
+except Exception as exc:
+  # Defensively swallow any exceptions to avoid making jax unimportable
+  from warnings import warn as _warn
+  _warn(f"cloud_tpu_init failed: {repr(exc)}\n This a JAX bug; please report "
+        f"an issue at https://github.com/google/jax/issues")
+  del _warn
+del _cloud_tpu_init
+
 # flake8: noqa: F401
 from .config import config
 from .api import (
