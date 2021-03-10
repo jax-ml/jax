@@ -335,6 +335,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.array([4, 3, 4, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
+  def testWhileLoopAxisIndexBatched(self):
+    def fun(x):
+      return lax.while_loop(lambda x: x < lax.axis_index('i'), lambda x: x + 2, x)
+
+    ans = api.vmap(fun, axis_name='i')(np.array([0, 0, 0, 0]))
+    expected = np.array([0, 2, 2, 4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    fun = api.jit(fun)
+    ans = api.vmap(fun, axis_name='i')(np.array([0, 0, 0, 0]))
+    expected = np.array([0, 2, 2, 4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testWhileLoopCondConstsBatched(self):
     def fun(x, y):
       return lax.while_loop(lambda x: x < y, lambda x: x + 2, x)

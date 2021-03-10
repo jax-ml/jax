@@ -625,10 +625,18 @@ def _allreduce_impl(pos_reducer, *args, axes, axis_index_groups):
   return [pos_reducer(arg, axes) for arg in args]
 
 def _allreduce_abstract_eval(*args, axes, axis_index_groups):
+  # TODO(frostig,mattjj,jekbradbury): maybe check aval names here
   pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
+  named_shapes = [arg.named_shape for arg in args]
+  if axis_index_groups is None:
+    named_axes = set(axis for axis in axes if not isinstance(axis, int))
+    named_shapes = [{name: size for name, size in arg.named_shape.items()
+                     if name not in named_axes} for arg in args]
+  else:
+    assert len(pos_axes) == 0
   return [ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
-                      arg.dtype)
-          for arg in args]
+                      arg.dtype, named_shape=named_shape)
+          for arg, named_shape in zip(args, named_shapes)]
 
 def _allreduce_translation_rule(prim, pos_prim, c, *args, axes, axis_index_groups,
                                 axis_env, platform):
@@ -1082,18 +1090,16 @@ def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_
   x_aval = raise_to_shaped(x)
   new_shape = list(x_aval.shape)
   new_shape.insert(all_gather_dimension, axis_size)
-  return x_aval.update(shape=new_shape)
+  new_named_shape = {name: size for name, size in x_aval.named_shape.items()
+                     if name != axis_name}
+  return x_aval.update(shape=new_shape, named_shape=new_named_shape)
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
   # TODO(cjfj): Add reduce-scatter op to XLA?
   concat_axis = 0
-  return (lax_numpy.sum(
-      all_to_all(
-          cts,
-          axis_name=axis_name,
-          split_axis=all_gather_dimension,
-          concat_axis=concat_axis,
-          axis_index_groups=axis_index_groups),
+  return (lax_numpy.sum(all_to_all(
+      cts, axis_name=axis_name, split_axis=all_gather_dimension,
+      concat_axis=concat_axis, axis_index_groups=axis_index_groups),
       axis=concat_axis),)
 
 def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
@@ -1137,10 +1143,13 @@ def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
   return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
+def _axis_index_abstract_eval(*, axis_name):
+  frame = core.axis_frame(axis_name)
+  return ShapedArray((), np.int32, named_shape={axis_name: frame.size})
+
 axis_index_p = core.Primitive('axis_index')
 xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
-axis_index_p.def_abstract_eval(
-    lambda *args, **params: ShapedArray((), np.int32))
+axis_index_p.def_abstract_eval(_axis_index_abstract_eval)
 pxla.multi_host_supported_collectives.add(axis_index_p)
 core.axis_substitution_rules[axis_index_p] = partial(_subst_all_names_in_param, 'axis_name')
 
@@ -1149,26 +1158,30 @@ core.axis_substitution_rules[axis_index_p] = partial(_subst_all_names_in_param, 
 # wants to bind an axis name has to additionally implement `process_axis_index`
 # and put its main trace on the axis env stack.
 def _axis_index_bind(*, axis_name):
-  if not isinstance(axis_name, (tuple, list)):
-    axis_name = (axis_name,)
-  inner_size = 1
-  index = 0
-  for name in reversed(axis_name):
+  def name_idx(name):
     frame = core.axis_frame(name)
-    if frame.main_trace is not None:
-      trace = frame.main_trace.with_cur_sublevel()
-      name_idx = trace.process_axis_index(frame)
+    dynamic = core.thread_local_state.trace_state.trace_stack.dynamic
+    if (frame.main_trace is None or dynamic.level > frame.main_trace.level):
+      return core.Primitive.bind(axis_index_p, axis_name=name)
     else:
-      name_idx = core.Primitive.bind(axis_index_p, axis_name=name)
-    index += name_idx * inner_size
-    inner_size *= psum(1, name)
-  return index
+      trace = frame.main_trace.with_cur_sublevel()
+      return trace.process_axis_index(frame)
+
+  if not isinstance(axis_name, (tuple, list)):
+    return name_idx(axis_name)
+  else:
+    inner_size = 1
+    index = 0
+    for name in reversed(axis_name):
+      index += name_idx(name) * inner_size
+      inner_size *= psum(1, name)
+    return index
 axis_index_p.def_custom_bind(_axis_index_bind)
 
-def _process_axis_index(self, frame):
+def _vmap_process_axis_index(self, frame):
   assert frame.size is not None
-  return batching.BatchTracer(self, lax_numpy.arange(frame.size, dtype=np.int32), 0)
-batching.BatchTrace.process_axis_index = _process_axis_index  # type: ignore
+  return batching.BatchTracer(self, lax.iota(np.int32, frame.size), 0)
+batching.BatchTrace.process_axis_index = _vmap_process_axis_index  # type: ignore
 
 
 pdot_p = core.Primitive('pdot')
@@ -1181,11 +1194,15 @@ def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch):
 
 @pdot_p.def_abstract_eval
 def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch):
-  # TODO: avals with names, check inputs are mapped along axis_name, eliminate
+  # TODO(frostig,mattjj,jekbradbury): check inputs have given axis names?
   if not len(set(axis_name)) == len(axis_name): raise ValueError
-  return lax.dot_general_p.abstract_eval(
+  pos_aval = lax.dot_general_p.abstract_eval(
       x, y, dimension_numbers=[pos_contract, pos_batch],
       precision=None, preferred_element_type=None)
+  named_shape = {name: size
+                 for aval in (x, y) for name, size in aval.named_shape.items()
+                 if name not in axis_name}
+  return pos_aval.update(named_shape=named_shape)
 
 def _pdot_vmap_collective_rule(frame, vals_in, dims_in, *, axis_name,
                                pos_contract, pos_batch):
@@ -1337,7 +1354,8 @@ def omnistaging_disabler() -> None:
     nreps = dynamic_axis_env.nreps
     trace = frame.pmap_trace
 
-    out_aval = ShapedArray((), np.int32)
+    out_aval = _axis_index_abstract_eval(
+        nreps=nreps, sizes=sizes, axis_name=axis_name)
     out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
     eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
                             dict(nreps=nreps, sizes=sizes, axis_name=axis_name),
@@ -1352,7 +1370,9 @@ def omnistaging_disabler() -> None:
     unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
     return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
+  def _axis_index_abstract_eval(*, nreps, sizes, axis_name):
+    return ShapedArray((), np.int32, named_shape={axis_name: sizes[-1]})
+
   axis_index_p.def_custom_bind(_axis_index_bind)
-  axis_index_p.def_abstract_eval(
-      lambda *args, **params: ShapedArray((), np.int32))
+  axis_index_p.def_abstract_eval(_axis_index_abstract_eval)
   xla.translations[axis_index_p] = _axis_index_translation_rule
