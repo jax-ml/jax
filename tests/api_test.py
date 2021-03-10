@@ -2152,23 +2152,15 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f()
 
-  # TODO(jakevdp): re-enable this if possible.
-  @unittest.skipIf(True, "broken by convert_element_type change.")
   def test_xla_computation_zeros_doesnt_device_put(self):
+    raise unittest.SkipTest("broken test")  # TODO(mattjj): fix
+
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test is omnistaging-specific")
 
-    count = 0
-    def device_put_and_count(*args, **kwargs):
-      nonlocal count
-      count += 1
-      return orig_device_put(*args, **kwargs)
-    orig_device_put, xla.device_put = xla.device_put, device_put_and_count
-    try:
+    with jtu.count_device_put() as count:
       api.xla_computation(lambda: jnp.zeros(3))()
-    finally:
-      xla.device_put = orig_device_put
-    self.assertEqual(count, 0)
+    self.assertEqual(count[0], 0)
 
   def test_join_concrete_arrays_with_omnistaging(self):
     # https://github.com/google/jax/issues/4622

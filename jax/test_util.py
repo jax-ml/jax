@@ -315,6 +315,22 @@ def check_grads(f, args, order,
 
 
 @contextmanager
+def count_device_put():
+  device_put = xla.device_put
+  count = [0]
+
+  def device_put_and_count(*args, **kwargs):
+    count[0] += 1
+    return device_put(*args, **kwargs)
+
+  xla.device_put = device_put_and_count
+  try:
+    yield count
+  finally:
+    xla.device_put = device_put
+
+
+@contextmanager
 def count_primitive_compiles():
   xla.xla_primitive_callable.cache_clear()
 
