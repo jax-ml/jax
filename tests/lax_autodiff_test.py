@@ -675,16 +675,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
             [(4, 6)],
             [(2, 1), (1, 2)],
             [(1, 1), (2, 1), (1, 2)],
-            # TODO(b/161704903): explicit paddings segfault on CPU.
-            ["VALID", "SAME"], #, [(0, 3), (1, 2)]],
+            ["VALID", "SAME", [(0, 3), (1, 2)]],
             [(1, 1)] + ([(2, 3)] if op is lax.add else []),
             [(1, 1)] + ([(1, 2)] if op is lax.add else [])),
           itertools.product(
             [(3, 2, 4, 6)],
             [(1, 1, 2, 1), (2, 1, 2, 1)],
             [(1, 2, 2, 1), (1, 1, 1, 1)],
-            # TODO(b/161704903): explicit paddings segfault on CPU.
-            ["VALID", "SAME"], # [(0, 1), (1, 0), (2, 3), (0, 2)]],
+            ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
             [(1, 1, 1, 1)] + ([(2, 1, 3, 2)] if op is lax.add else []),
             [(1, 1, 1, 1)] + ([(1, 2, 2, 1)] if op is lax.add else []))))
       for dtype in dtypes))
@@ -702,7 +700,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # depends on FLAGS for the device under test.
     # TODO(b/31565929): enable when fixed.
     if jtu.device_under_test() == "tpu" and op is not lax.add:
-      if len(shape) != 4 or dims != (1, 1, 2, 1):
+      if (len(shape) != 4 or dims != (1, 1, 2, 1)
+          or not isinstance(padding, str)):
         raise SkipTest("Only R4 SelectAndScatter implemented on TPU")
 
       # TODO(b/73062247): need variadic reduce-window for better precision.
