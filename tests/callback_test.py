@@ -21,6 +21,7 @@ from jax.experimental.callback import find_by_value, rewrite, FoundValue
 import jax.numpy as jnp
 from jax import lax
 from jax import jit
+from jax import grad
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -157,6 +158,136 @@ class CallbackTest(jtu.JaxTestCase):
         lax.mul_p: lambda x, y: x + y
     }
     self.assertAllClose(rewrite(f, rewrites)(x), 11)
+
+  def testRewriteThroughCustomVJP(self):
+
+    @jax.custom_gradient
+    def f(x):
+      return x * 2, lambda g: g + x
+
+    x = 2.
+    self.assertAllClose(f(x), 4.)
+    self.assertAllClose(grad(f)(x), 3.)
+
+    rewrites = {
+        lax.mul_p: lambda x, y: x / y
+    }
+    g = rewrite(f, rewrites)
+
+    self.assertAllClose(g(x), 1.)
+    self.assertAllClose(grad(g)(x), 3.)
+
+    rewrites = {
+        lax.add_p: lambda x, y: x - y
+    }
+    g = rewrite(f, rewrites)
+
+    self.assertAllClose(g(x), 4.)
+    self.assertAllClose(grad(g)(x), -1.)
+
+  def testRewriteThroughCustomVJPInScan(self):
+
+    @jax.custom_gradient
+    def foo(x):
+      return x * 2, lambda g: g + x
+
+    def f(x):
+      out, _ = lax.scan(lambda c, _: (foo(c), None), x, None, length=1)
+      return out
+
+    x = 2.
+    self.assertAllClose(f(x), 4.)
+    self.assertAllClose(grad(f)(x), 3.)
+
+    rewrites = {
+        lax.mul_p: lambda x, y: x / y
+    }
+    g = rewrite(f, rewrites)
+
+    self.assertAllClose(g(x), 1.)
+    self.assertAllClose(grad(g)(x), 3.)
+
+    rewrites = {
+        lax.add_p: lambda x, y: x * y
+    }
+    g = rewrite(f, rewrites)
+
+    self.assertAllClose(g(x), 4.)
+    self.assertAllClose(grad(g)(x), 2.)
+
+  def testRewriteThroughCustomJVP(self):
+
+    @jax.custom_jvp
+    def f(x):
+      return x + 2
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      d, = tangents
+      return f(x), x * d
+
+    x = 2.
+    self.assertAllClose(f(x), 4.)
+    f_primal, jvp = jax.jvp(f, (x,), (1.,))
+    self.assertAllClose(f_primal, 4.)
+    self.assertAllClose(jvp, 2.)
+    self.assertAllClose(grad(f)(x), 2.)
+
+    rewrites = {
+        lax.add_p: lambda x, y: x - y
+    }
+    g = rewrite(f, rewrites)
+
+    self.assertAllClose(g(x), 0.)
+    g_primal, jvp = jax.jvp(g, (x,), (1.,))
+    self.assertAllClose(g_primal, 0.)
+    self.assertAllClose(jvp, 2.)
+    self.assertAllClose(grad(g)(x), 2.)
+
+  def testRewriteThroughCustomJVPInScan(self):
+
+    @jax.custom_jvp
+    def foo(x):
+      return x + 2
+
+    @foo.defjvp
+    def foo_jvp(primals, tangents):
+      x, = primals
+      d, = tangents
+      return f(x), x * d
+    def f(x):
+      out, _ = lax.scan(lambda c, _: (foo(c), None), x, None, length=1)
+      return out
+
+    x = 2.
+    self.assertAllClose(f(x), 4.)
+    f_primal, jvp = jax.jvp(f, (x,), (1.,))
+    self.assertAllClose(f_primal, 4.)
+    self.assertAllClose(jvp, 2.)
+    self.assertAllClose(grad(f)(x), 2.)
+
+    rewrites = {
+        lax.add_p: lambda x, y: x - y
+    }
+    g = rewrite(f, rewrites)
+
+    self.assertAllClose(g(x), 0.)
+    g_primal, jvp = jax.jvp(g, (x,), (1.,))
+    self.assertAllClose(g_primal, 0.)
+    self.assertAllClose(jvp, 2.)
+    self.assertAllClose(grad(g)(x), 2.)
+
+    rewrites = {
+        lax.mul_p: lambda x, y: x + y
+    }
+    g = rewrite(f, rewrites)
+
+    self.assertAllClose(g(x), 4.)
+    g_primal, jvp = jax.jvp(g, (x,), (1.,))
+    self.assertAllClose(g_primal, 4.)
+    self.assertAllClose(jvp, 3.)
+    self.assertAllClose(grad(g)(x), 1.)
 
 
 if __name__ == "__main__":
