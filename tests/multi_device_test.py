@@ -163,7 +163,6 @@ class MultiDeviceTest(jtu.JaxTestCase):
     y = jax.device_put(x, device=devices[1])
     self.assert_committed_to_device(y, devices[1])
 
-    # test device_put on lazy values
     x = jax.device_put(jnp.zeros(2), device=devices[0])
     self.assert_committed_to_device(x, devices[0])
 
