@@ -2135,7 +2135,7 @@ class APITest(jtu.JaxTestCase):
       f()
 
   def test_xla_computation_zeros_doesnt_device_put(self):
-    raise SkipTest("broken test")  # TODO(mattjj): fix
+    raise unittest.SkipTest("broken test")  # TODO(mattjj): fix
 
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test is omnistaging-specific")
