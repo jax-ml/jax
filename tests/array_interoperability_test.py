@@ -19,6 +19,7 @@ from absl.testing import absltest, parameterized
 import jax
 from jax.config import config
 import jax.dlpack
+from jax.lib import xla_bridge, xla_client
 import jax.numpy as jnp
 from jax import test_util as jtu
 
@@ -151,6 +152,20 @@ class DLPackTest(jtu.JaxTestCase):
     dlpack = torch.utils.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
     self.assertAllClose(np, y)
+
+  @unittest.skipIf(not torch, "Test requires PyTorch")
+  def testTorchToJaxFailure(self):
+    x = torch.arange(6).reshape((2, 3))
+    y = torch.utils.dlpack.to_dlpack(x[:, :2])
+
+    backend = xla_bridge.get_backend()
+    client = getattr(backend, "client", backend)
+
+    regex_str = (r'Unimplemented: Only DLPack tensors with trivial \(compact\) '
+                 r'striding are supported')
+    with self.assertRaisesRegex(RuntimeError, regex_str):
+      xla_client._xla.dlpack_managed_tensor_to_buffer(
+          y, client)
 
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name": "_{}".format(
