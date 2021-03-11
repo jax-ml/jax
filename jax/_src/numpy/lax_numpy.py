@@ -30,7 +30,7 @@ import collections.abc
 import operator
 import os
 import types
-from typing import Sequence, FrozenSet, Optional, Tuple, Union, cast
+from typing import Any, Sequence, FrozenSet, Optional, Tuple, Union, cast
 from textwrap import dedent as _dedent
 import warnings
 
@@ -1301,6 +1301,22 @@ def _reshape(a, *args, order="C"):
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError("Unexpected value for 'order' argument: {}.".format(order))
+
+def _ensure_index_tuple(x: Any) -> Tuple[int, ...]:
+  """Convert x to a tuple of indices."""
+  try:
+    return (operator.index(x),)
+  except TypeError:
+    return tuple(map(operator.index, x))
+
+def _transpose(a, *args):
+  if not args:
+    axis = None
+  elif len(args) == 1:
+    axis = args[0] if args[0] is None else _ensure_index_tuple(args[0])
+  else:
+    axis = _ensure_index_tuple(args)
+  return transpose(a, axis)
 
 @_wraps(np.ravel)
 def ravel(a, order="C"):
@@ -5334,7 +5350,7 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
 _diff_methods = ["clip", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "tile", "trace", "transpose", "var"]
+                 "swapaxes", "take", "tile", "trace", "var"]
 
 # These methods are mentioned explicitly by nondiff_methods, so we create
 # _not_implemented implementations of them here rather than in __init__.py.
@@ -5351,6 +5367,7 @@ for operator_name, function in _operators.items():
 for method_name in _nondiff_methods + _diff_methods:
   setattr(ShapedArray, method_name, core.aval_method(globals()[method_name]))
 setattr(ShapedArray, "reshape", core.aval_method(_reshape))
+setattr(ShapedArray, "transpose", core.aval_method(_transpose))
 setattr(ShapedArray, "flatten", core.aval_method(ravel))
 setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "real", core.aval_property(real))
@@ -5368,6 +5385,7 @@ for device_array in [DeviceArray]:
   for method_name in _nondiff_methods + _diff_methods:
     setattr(device_array, method_name, globals()[method_name])
   setattr(device_array, "reshape", _reshape)
+  setattr(device_array, "transpose", _transpose)
   setattr(device_array, "flatten", ravel)
   setattr(device_array, "T", property(transpose))
   setattr(device_array, "real", property(real))

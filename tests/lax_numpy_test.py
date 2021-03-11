@@ -1662,6 +1662,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "{}_perm={}_{}".format(
+      jtu.format_shape_dtype_string(shape, dtype), perm, arg_type),
+     "dtype": dtype, "shape": shape, "perm": perm, "arg_type": arg_type}
+    for dtype in default_dtypes
+    for shape in array_shapes
+    for arg_type in ["splat", "value"]
+    for perm in [None, tuple(np.random.RandomState(0).permutation(np.zeros(shape).ndim))]))
+  def testTransposeTuple(self, shape, dtype, perm, arg_type):
+    rng = jtu.rand_some_zero(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    if arg_type == "value":
+      np_fun = lambda x: x.transpose(perm)
+      jnp_fun = lambda x: jnp.array(x).transpose(perm)
+    else:
+      np_fun = lambda x: x.transpose(*(perm or ()))
+      jnp_fun = lambda x: jnp.array(x).transpose(*(perm or ()))
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "{}_trim={}".format(
       jtu.format_shape_dtype_string(a_shape, dtype), trim),
      "dtype": dtype, "a_shape": a_shape, "trim": trim}
