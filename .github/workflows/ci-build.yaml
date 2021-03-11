@@ -13,6 +13,7 @@ on:
 jobs:
   lint_and_typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Cancel previous
         uses: styfle/cancel-workflow-action@0.8.0
@@ -29,6 +30,7 @@ jobs:
   build:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       matrix:
         include:
@@ -108,6 +110,7 @@ jobs:
 
   documentation:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     strategy:
       matrix:
         python-version: [3.7]
