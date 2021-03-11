@@ -1639,7 +1639,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   out_extensive = [next(out_extensive_iter) if i is None
                    else _maybe_device_put(tracers[i].pval[1]) if tracers[i].is_known()
                    else tracers[i] for i in fwd_extensive]
-  assert all(a == core.raise_to_shaped(core.get_aval(out))
+  assert all(a.strip_named_shape() == core.raise_to_shaped(
+                 core.get_aval(out)).strip_named_shape()
              for a, out in zip(extensive_avals, out_extensive))
   out_flat = out_carry + out_extensive
 
