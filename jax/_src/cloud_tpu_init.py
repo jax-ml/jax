@@ -31,6 +31,8 @@ def cloud_tpu_init():
   if not _running_in_cloud_tpu_vm():
     return
 
+  os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
+
   # If the user has set any topology-related env vars, don't set any
   # automatically.
   if any([
