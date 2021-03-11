@@ -107,14 +107,25 @@ def scalar_type_of(x):
   else:
     raise TypeError("Invalid scalar value {}".format(x))
 
-def coerce_to_array(x):
+def coerce_to_array(x, dtype=None, ndmin=0, copy=True):
   """Coerces a scalar or NumPy array to an np.array.
 
   Handles Python scalar type promotion according to JAX's rules, not NumPy's
   rules.
+
+  Raises:
+    OverflowError, if dtype is not specified and x is an integer that is not representable
+      by the default integer dtype.
   """
-  dtype = python_scalar_dtypes.get(type(x), None)
-  return np.array(x, dtype) if dtype else np.array(x)
+  no_dtype = dtype is None
+  dtype = dtype or python_scalar_dtypes.get(type(x), None)
+  if dtype is not None:
+    dtype = canonicalize_dtype(dtype)
+  if no_dtype and type(x) is int:
+    info = np.iinfo(dtype)
+    if not info.min <= x <= info.max:
+      raise OverflowError(f"Python int {x} too large to convert to {dtype}")
+  return np.array(x, dtype=dtype, ndmin=ndmin, copy=copy)
 
 iinfo = np.iinfo
 

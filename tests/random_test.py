@@ -26,6 +26,7 @@ import scipy.stats
 
 from jax import api
 from jax import core
+from jax import dtypes
 from jax import grad
 from jax import lax
 from jax import numpy as jnp
@@ -930,12 +931,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
       {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
       {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
-      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
-      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
       {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
       {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
       {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
       {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
     ]
@@ -954,7 +951,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for type in ["int", "np.array", "jnp.array"]
       for seed in [-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)]))
   def test_prng_jit_invariance(self, seed, type):
-    if type == "int" and seed == (1 << 64) - 1:
+    if type != "np.array" and seed > jnp.iinfo(dtypes.canonicalize_dtype(int)).max:
       self.skipTest("Expected failure: Python int too large.")
     type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
     args_maker = lambda: [type(seed)]

@@ -55,11 +55,10 @@ def PRNGKey(seed: int) -> jnp.ndarray:
   if not np.issubdtype(np.result_type(seed), np.integer):
     raise TypeError(f"PRNGKey seed must be an integer; got {seed!r}")
 
-  # Explicitly cast to int64 for JIT invariance of behavior on large ints.
+  # Explicitly cast Python integers to np.int64 to prevent overflow error for
+  # large Python ints in X32 mode.
   if isinstance(seed, int):
     seed = np.int64(seed)  # type: ignore[assignment]
-  # Converting to jnp.array may truncate bits when jax_enable_x64=False, but this
-  # is necessary for the sake of JIT invariance of the result for such values.
   seed = jnp.asarray(seed)
 
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
@@ -270,12 +269,16 @@ def fold_in(key, data):
 
   Args:
     key: a PRNGKey (an array with shape (2,) and dtype uint32).
-    data: a 32bit integer representing data to be folded in to the key.
+    data: a 64-bit or 32-bit integer representing data to be folded in to the key.
 
   Returns:
     A new PRNGKey that is a deterministic function of the inputs and is
     statistically safe for producing a stream of new pseudo-random values.
   """
+  # Explicitly cast Python integers to np.int64 to prevent overflow error for
+  # large Python ints in X32 mode.
+  if isinstance(data, int):
+    data = np.int64(data)
   return _fold_in(key, data)
 
 @jit

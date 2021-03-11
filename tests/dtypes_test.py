@@ -71,6 +71,25 @@ def identity(x):
 
 class DtypesTest(jtu.JaxTestCase):
 
+  def test_array_overflow(self):
+    dtype = dtypes.canonicalize_dtype(int)
+
+    underflow = jnp.iinfo(dtype).min - 1
+    with self.assertRaises(OverflowError):
+      jnp.array(underflow)
+    with self.assertRaises(OverflowError):
+      jax.jit(lambda x: x)(underflow)
+    if not config.x64_enabled:
+      self.assertEqual(jnp.array(underflow, dtype=dtype), np.array(underflow))
+
+    overflow = jnp.iinfo(dtype).max + 1
+    with self.assertRaises(OverflowError):
+      jnp.array(overflow)
+    with self.assertRaises(OverflowError):
+      jax.jit(lambda x: x)(overflow)
+    if not config.x64_enabled:
+      self.assertEqual(jnp.array(overflow, dtype=dtype), np.array(overflow))
+
   def test_canonicalize_type(self):
     expected = {
         True: _EXPECTED_CANONICALIZE_X64,

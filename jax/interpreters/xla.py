@@ -160,8 +160,12 @@ def _canonicalize_ndarray_dtype(x):
   return np.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
 
 def _canonicalize_python_scalar_dtype(typ, x):
-  return np.asarray(
-      x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
+  dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ])
+  if np.issubdtype(dtype, np.integer):
+    info = np.iinfo(dtype)
+    if not info.min <= x <= info.max:
+      raise OverflowError(f"Python int {x} too large to convert to {dtype}")
+  return np.asarray(x, dtype=dtype)
 
 canonicalize_dtype_handlers: Dict[Any, Callable] = {core.Unit: identity}
 canonicalize_dtype_handlers.update(
