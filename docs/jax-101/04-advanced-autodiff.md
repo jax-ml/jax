@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "kORMl5KmfByI"}
 
-# Advanced Auomatic Differentiation in JAX
+# Advanced Automatic Differentiation in JAX
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/04-advanced-autodiff.ipynb)
 
