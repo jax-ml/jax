@@ -94,7 +94,7 @@ def argnums_partial(f, dyn_argnums, args):
 
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
-                           args: Tuple[Any]):
+                           args: Tuple[Any, ...]):
   """Version of ``argnums_partial`` that checks hashability of static_argnums."""
   dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
   dyn_args = tuple(args[i] for i in dyn_argnums)

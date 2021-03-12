@@ -92,8 +92,8 @@ F = TypeVar("F", bound=Callable)
 T = TypeVar("T")
 U = TypeVar("U")
 
-map = safe_map
-zip = safe_zip
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
@@ -467,6 +467,81 @@ def disable_jit():
 
 def _jit_is_disabled():
   return _thread_local_state.jit_is_disabled or config.read("jax_disable_jit")
+
+
+def compile_for_args(
+    fun: F,
+    *example_args,
+    static_argnums: Union[int, Iterable[int]] = (),
+    device: Optional[xc.Device] = None,
+    backend: Optional[str] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
+) -> F:
+  # TODO(frostig,zhangqiaorjc): This mimicks the _python_jit path of
+  # jax.jit, not the experimental _cpp_jit, and may some day need to
+  # be updated accordingly.
+
+  # TODO(frostig,zhangqiaorjc): We want to accept inputs more abstract
+  # than all-concrete example arguments. For dynamic arguments, we
+  # only need shape/dtype info, in principle. For static arguments, we
+  # need concrete values. This might require changes down through
+  # xla._xla_callable.
+
+  if donate_argnums != ():
+    # TODO(frostig,zhangqiaorjc): handle donate_argnums?
+    raise NotImplementedError
+
+  _check_callable(fun)
+  static_argnums = _ensure_index_tuple(static_argnums)
+
+  f = lu.wrap_init(fun)
+  if static_argnums:
+    f, ex_dyn_args = argnums_partial_except(f, static_argnums, example_args)
+  else:
+    ex_dyn_args = example_args
+
+  # TODO(frostig,zhangqiaorjc): handle keyword args?
+  ex_args_flat, ex_in_tree = tree_flatten((ex_dyn_args, {}))
+  ex_donated_invars = (False,) * len(ex_args_flat)
+  for arg in ex_args_flat:
+    _check_arg(arg)
+  flat_fun, ex_out_tree = flatten_fun(f, ex_in_tree)
+
+  ex_args_flat_specs = unsafe_map(xla.arg_spec, ex_args_flat)
+  compiled_fun = xla._xla_callable(
+      flat_fun, device, backend, flat_fun.__name__, ex_donated_invars,
+      *ex_args_flat_specs)
+
+  @wraps(fun)
+  @api_boundary
+  def f_compiled(*args):
+    if max(static_argnums, default=-1) >= len(args):
+      raise ValueError(f"jitted function has static_argnums={static_argnums}, "
+                       f"called with only {len(args)} positional arguments.")
+    if static_argnums:
+      f, dyn_args = argnums_partial_except(f, static_argnums, args)
+    else:
+      dyn_args = args
+    args_flat, in_tree = tree_flatten((dyn_args, {}))
+    for arg in args_flat:
+      _check_arg(arg)
+
+    # TODO(frostig,zhangqiaorjc): also check leaf-level arguments/avals
+    if in_tree != ex_in_tree:
+      raise TypeError(
+          f'function compiled for {ex_in_tree}, called with {in_tree}')
+
+    # TODO(frostig,zhangqiaorjc): This won't interact well in
+    # composition with other transformations, and in particular is
+    # invalid under a `jit`. What we might like to do is bind a new
+    # call-like primitive with a custom-set call jaxpr. We want an
+    # impl rule that calls `compiled_fun`, but a translation rule that
+    # draws on the `flat_fun` jaxpr instead. We can provide both here.
+    out = compiled_fun(*args_flat)
+
+    return tree_unflatten(ex_out_tree(), out)
+
+  return f_compiled
 
 
 def xla_computation(fun: Callable,
