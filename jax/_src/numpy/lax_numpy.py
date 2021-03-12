@@ -2015,15 +2015,15 @@ def min(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 
 @_wraps(np.all)
 def all(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
-        keepdims=None):
+        keepdims=None, *, where=None):
   return _reduction(a, "all", np.all, lax.bitwise_and, True, preproc=_cast_to_bool,
-                    axis=axis, out=out, keepdims=keepdims)
+                    axis=axis, out=out, keepdims=keepdims, where_=where)
 
 @_wraps(np.any)
 def any(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
-        keepdims=None):
+        keepdims=None, *, where=None):
   return _reduction(a, "any", np.any, lax.bitwise_or, False, preproc=_cast_to_bool,
-                    axis=axis, out=out, keepdims=keepdims)
+                    axis=axis, out=out, keepdims=keepdims, where_=where)
 
 product = prod
 amin = min
@@ -2042,16 +2042,20 @@ def _axis_size(a, axis):
 
 @_wraps(np.mean)
 def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-         out=None, keepdims=False):
+         out=None, keepdims=False, *, where=None):
   _check_arraylike("mean", a)
   lax._check_user_dtype_supported(dtype, "mean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.mean is not supported.")
 
-  if axis is None:
-    normalizer = size(a)
+  if where is None:
+    if axis is None:
+      normalizer = size(a)
+    else:
+      normalizer = _axis_size(a, axis)
   else:
-    normalizer = _axis_size(a, axis)
+    normalizer = sum(broadcast_to(where, a.shape), axis, dtype=dtype, keepdims=keepdims)
+
   if dtype is None:
     if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
       dtype = float_
@@ -2060,7 +2064,7 @@ def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   dtype = dtypes.canonicalize_dtype(dtype)
 
   return lax.div(
-      sum(a, axis, dtype=dtype, keepdims=keepdims),
+      sum(a, axis, dtype=dtype, keepdims=keepdims, where=where),
       lax.convert_element_type(normalizer, dtype))
 
 @_wraps(np.average)
@@ -2115,27 +2119,30 @@ def average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
 
 @_wraps(np.var)
 def var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-        out=None, ddof=0, keepdims=False):
+        out=None, ddof=0, keepdims=False, *, where=None):
   _check_arraylike("var", a)
   lax._check_user_dtype_supported(dtype, "var")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
   a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
-  a_mean = mean(a, axis, dtype=a_dtype, keepdims=True)
+  a_mean = mean(a, axis, dtype=a_dtype, keepdims=True, where=where)
   centered = a - a_mean
   if issubdtype(centered.dtype, complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
   else:
     centered = lax.square(centered)
 
-  if axis is None:
-    normalizer = size(a)
+  if where is None:
+    if axis is None:
+      normalizer = size(a)
+    else:
+      normalizer = _axis_size(a, axis)
   else:
-    normalizer = _axis_size(a, axis)
+    normalizer = sum(broadcast_to(where, a.shape), axis, dtype=dtype, keepdims=keepdims)
   normalizer = normalizer - ddof
 
-  result = sum(centered, axis, keepdims=keepdims)
+  result = sum(centered, axis, keepdims=keepdims, where=where)
   out = lax.div(result, lax.convert_element_type(normalizer, result.dtype))
   return lax.convert_element_type(out, dtype)
 
@@ -2162,12 +2169,12 @@ def _var_promote_types(a_dtype, dtype):
 
 @_wraps(np.std)
 def std(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-        out=None, ddof=0, keepdims=False):
+        out=None, ddof=0, keepdims=False, *, where=None):
   _check_arraylike("std", a)
   lax._check_user_dtype_supported(dtype, "std")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
-  return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
+  return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
 
 
 @_wraps(np.ptp)

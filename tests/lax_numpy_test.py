@@ -351,6 +351,17 @@ JAX_REDUCER_INITIAL_RECORDS = [
     op_record("min", 1, all_dtypes, all_shapes, jtu.rand_default, []),
 ]
 
+JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
+    op_record("all", 1, bool_dtypes, all_shapes, jtu.rand_some_zero, []),
+    op_record("any", 1, bool_dtypes, all_shapes, jtu.rand_some_zero, []),
+    op_record("mean", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True),
+    op_record("var", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True),
+    op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
+              inexact=True),
+]
+
 JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("all", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
     op_record("any", 1, all_dtypes, all_shapes, jtu.rand_some_zero, []),
@@ -851,6 +862,48 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @unittest.skipIf(numpy_version < (1, 20), "where parameter not supported in older numpy")
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+    jtu.cases_from_list(
+      {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_whereshape={}".format(
+        rec.test_name.capitalize(),
+        jtu.format_shape_dtype_string(shape, dtype), axis, keepdims,
+        jtu.format_shape_dtype_string(whereshape, bool)),
+        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
+        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name), "whereshape": whereshape,
+        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+      for shape in rec.shapes for dtype in rec.dtypes
+      for whereshape in _compatible_shapes(shape)
+      for axis in list(range(-len(shape), len(shape))) + [None]
+      for keepdims in [False, True])
+    for rec in JAX_REDUCER_WHERE_NO_INITIAL_RECORDS))
+  def testReducerWhereNoInitial(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+                                keepdims, inexact, whereshape):
+    rng = rng_factory(self.rng())
+    is_bf16_nan_test = dtype == jnp.bfloat16
+    # Do not pass where via args_maker as that is incompatible with _promote_like_jnp.
+    where = jtu.rand_bool(self.rng())(whereshape, np.bool_)
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom <= 0 for slice.*")
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Mean of empty slice.*")
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="invalid value encountered in true_divide*")
+    def np_fun(x):
+      x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
+      res = np_op(x_cast, axis, keepdims=keepdims, where=where)
+      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
+      return res
+
+    np_fun = _promote_like_jnp(np_fun, inexact)
+    np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
+    jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, where=where)
+    jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
+    args_maker = lambda: [rng(shape, dtype)]
+    if numpy_version >= (1, 20, 2) or np_op.__name__ in ("all", "any"):
+        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
