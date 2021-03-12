@@ -19,11 +19,11 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 def repo():
     http_archive(
         name = "pocketfft",
-        sha256 = "bba6962b9f71a220b4873549bad5e6e5a2630bc465e3f9a9822c4ab2418709a7",
-        strip_prefix = "pocketfft-53e9dd4d12f986207c96d97c5183f5a72239c76e",
+        sha256 = "66eda977b195965d27aeb9d74f46e0029a6a02e75fbbc47bb554aad68615a260",
+        strip_prefix = "pocketfft-f800d91ba695b6e19ae2687dd60366900b928002",
         urls = [
-            "https://gitlab.mpcdf.mpg.de/mtr/pocketfft/-/archive/53e9dd4d12f986207c96d97c5183f5a72239c76e/pocketfft-53e9dd4d12f986207c96d97c5183f5a72239c76e.tar.gz",
-            "https://storage.googleapis.com/jax-releases/mirror/pocketfft/pocketfft-53e9dd4d12f986207c96d97c5183f5a72239c76e.tar.gz",
+            "https://gitlab.mpcdf.mpg.de/mtr/pocketfft/-/archive/f800d91ba695b6e19ae2687dd60366900b928002/pocketfft-f800d91ba695b6e19ae2687dd60366900b928002.tar.gz",
+            "https://storage.googleapis.com/jax-releases/mirror/pocketfft/pocketfft-f800d91ba695b6e19ae2687dd60366900b928002.tar.gz",
         ],
         build_file = "@//third_party/pocketfft:BUILD.bazel",
     )
