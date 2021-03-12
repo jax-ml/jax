@@ -20,7 +20,7 @@ XLA. There are also a handful of related casting utilities.
 """
 
 
-from functools import partial
+from functools import partial, lru_cache
 import os
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -144,7 +144,9 @@ register_backend('xla', _get_local_backend)
 _tpu_backend = None
 
 def _get_tpu_driver_backend(platform):
-  del platform
+  if platform == "cpu":
+    return _get_local_backend("cpu")
+
   global _tpu_backend
   if _tpu_backend is None:
     backend_target = FLAGS.jax_backend_target
@@ -161,7 +163,7 @@ if tpu_client:
 
 _backend_lock = threading.Lock()
 
-@util.memoize
+@lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
 def get_backend(platform=None):
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
@@ -228,6 +230,11 @@ def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
   return get_backend(backend).devices()
 
 
+def default_backend() -> str:
+  """Returns the platform name of the default XLA backend."""
+  return get_backend(None).platform
+
+
 def local_devices(host_id: Optional[int] = None,
                   backend: Optional[str] = None) -> List[xla_client.Device]:
   """Like :py:func:`jax.devices`, but only returns devices local to a given host.
@@ -282,7 +289,7 @@ def host_count(backend: Optional[str] = None) -> int:
 
 @util.memoize
 def dtype_to_etype(dtype):
-  """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
+  """Convert from dtype to canonical etype (reading config.x64_enabled)."""
   return xla_client.dtype_to_etype(dtypes.canonicalize_dtype(dtype))
 
 
@@ -426,7 +433,7 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
   """
   # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
   if dtypes.result_type(val) == dtypes.float0:
-    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool))
+    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool_))
   elif np.any(np.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))

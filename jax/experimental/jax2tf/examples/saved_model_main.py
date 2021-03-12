@@ -56,7 +56,7 @@ flags.DEFINE_boolean(
     "Train and save a new model. Otherwise, use an existing SavedModel.")
 flags.DEFINE_boolean(
     "compile_model", True,
-    "Enable TensorFlow experimental_compiler for the SavedModel. This is "
+    "Enable TensorFlow jit_compiler for the SavedModel. This is "
     "necessary if you want to use the model for TensorFlow serving.")
 flags.DEFINE_boolean("show_model", True, "Show details of saved SavedModel.")
 flags.DEFINE_boolean(

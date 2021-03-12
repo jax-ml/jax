@@ -17,13 +17,13 @@
 
 __all__ = [
   'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
-  'pytree', 'tpu_client', 'version', 'xla_client'
+  'pocketfft', 'pytree', 'tpu_client', 'version', 'xla_client'
 ]
 
 import jaxlib
 
 # Must be kept in sync with the jaxlib version in build/test-requirements.txt
-_minimum_jaxlib_version = (0, 1, 55)
+_minimum_jaxlib_version = (0, 1, 60)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
@@ -52,14 +52,15 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-if version <  (0, 1, 53):
-  from jaxlib import pytree  # pytype: disable=import-error
-else:
-  pytree = xla_client._xla.pytree
-  jax_jit = xla_client._xla.jax_jit
+from jaxlib import pocketfft
+
+xla_extension = xla_client._xla
+pytree = xla_client._xla.pytree
+jax_jit = xla_client._xla.jax_jit
+pmap_lib = xla_client._xla.pmap_lib
 
 try:
-  from jaxlib import cusolver
+  from jaxlib import cusolver  # pytype: disable=import-error
 except ImportError:
   cusolver = None
 
@@ -69,7 +70,7 @@ except ImportError:
   rocsolver = None
 
 try:
-  from jaxlib import cuda_prng
+  from jaxlib import cuda_prng  # pytype: disable=import-error
 except ImportError:
   cuda_prng = None
 
@@ -83,10 +84,3 @@ try:
   from jaxlib import tpu_client  # pytype: disable=import-error
 except:
   tpu_client = None
-
-# TODO(phawkins): Make this import unconditional once the minimum jaxlib version
-# is 0.1.57 or greater.
-try:
-  from jaxlib import pocketfft  # pytype: disable=import-error
-except:
-  pocketfft = None

@@ -335,6 +335,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.array([4, 3, 4, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
+  def testWhileLoopAxisIndexBatched(self):
+    def fun(x):
+      return lax.while_loop(lambda x: x < lax.axis_index('i'), lambda x: x + 2, x)
+
+    ans = api.vmap(fun, axis_name='i')(np.array([0, 0, 0, 0]))
+    expected = np.array([0, 2, 2, 4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    fun = api.jit(fun)
+    ans = api.vmap(fun, axis_name='i')(np.array([0, 0, 0, 0]))
+    expected = np.array([0, 2, 2, 4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testWhileLoopCondConstsBatched(self):
     def fun(x, y):
       return lax.while_loop(lambda x: x < y, lambda x: x + 2, x)
@@ -695,10 +709,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("Pred type must be either boolean or number, got <function")):
       lax.cond(lambda x: True, lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("Pred type must be either boolean or number, got foo.")):
+        re.escape("Pred must be a scalar, got foo of type <class 'str'>")):
       lax.cond("foo", lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("Pred must be a scalar, got (1.0, 1.0) of shape (2,).")):
+        re.escape("Pred must be a scalar, got (1.0, 1.0) of type <class 'tuple'>")):
       lax.cond((1., 1.), lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
         re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
@@ -981,6 +995,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
     jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
+
+  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
+  def testCondGradVmapNan(self):
+    eps = 1e-3
+
+    def safe1(x):
+      return lax.cond(x < eps, lambda _: eps, lambda _: jnp.sqrt(x), ())
+
+    out = api.grad(lambda x: api.vmap(safe1)(x).sum())(np.zeros(10))
+    self.assertFalse(np.isnan(out).any())
 
   def testSwitchGrad(self):
     branches = [lambda x: 3. * x,
@@ -2555,6 +2579,36 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(
       scan_v(jnp.ones([1]), jnp.arange(5).reshape((1, 5))),
       (jnp.array([1.]), jnp.array([[0., 1., 2., 3., 4.]])))
+
+  def test_xla_cpu_gpu_loop_cond_bug(self):
+    # https://github.com/google/jax/issues/5900
+    if jax.lib.version < (0, 1, 62):
+      raise SkipTest("test is broken on jaxlib==0.1.61 and 0.1.60")
+
+    def deriv(f):
+      return lambda x, *args: jax.linearize(lambda x: f(x, *args), x)[1](1.0)
+
+    def _while_loop(cond_fun, body_fun, init_val, max_iter):
+      def _iter(val):
+        next_val = body_fun(val)
+        next_cond = True
+        return next_val, next_cond
+
+      def _fun(tup, _):
+        val, cond = tup
+        return jax.lax.cond(cond, _iter, lambda x: (x, False), val), _
+
+      init = (init_val, cond_fun(init_val))
+      return jax.lax.scan(_fun, init, None, length=max_iter)[0][0]
+
+    def my_pow(x, y):
+      def body_fun(val):
+        return val * x
+      def cond_fun(val):
+        return True
+      return _while_loop(cond_fun, body_fun, 1.0, y)
+
+    self.assertAllClose(deriv(my_pow)(3.0, 1), 1.0, check_dtypes=False)
 
 
 if __name__ == '__main__':

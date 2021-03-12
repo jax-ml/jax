@@ -15,8 +15,12 @@
 import operator
 from typing import Any, Tuple, Union
 
+import numpy as np
+
+from . import core
+from . import dtypes
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
-                        tree_structure)
+                        tree_structure, treedef_children, treedef_is_leaf)
 from . import linear_util as lu
 from ._src.util import safe_map, WrapHashably, Hashable
 from .core import unit
@@ -71,7 +75,11 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
 @lu.transformation_with_aux
 def flatten_fun_nokwargs2(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
-  ans, aux = yield py_args, {}
+  pair = yield py_args, {}
+  if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+    raise TypeError("expected function with aux output to return a two-element "
+                    f"tuple, but got type {type(pair)} with value {repr(pair)}")
+  ans, aux = pair
   ans_flat, ans_tree = tree_flatten(ans)
   aux_flat, aux_tree = tree_flatten(aux)
   yield (ans_flat, aux_flat), (ans_tree, aux_tree)
@@ -166,7 +174,7 @@ def wrap_hashably(arg):
   else:
     return Hashable(arg)
 
-def flatten_axes(name, treedef, axis_tree):
+def flatten_axes(name, treedef, axis_tree, *, kws=False):
   # given an axis spec tree axis_tree (a pytree with integers and Nones at the
   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
   # the given treedef, build a complete axis spec tree with the same structure
@@ -179,9 +187,32 @@ def flatten_axes(name, treedef, axis_tree):
   try:
     tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
   except ValueError:
+    if kws:
+      # if keyword arguments are included in the tree, we make adapt the error
+      # message only to be about the positional arguments
+      treedef, leaf = treedef_children(treedef)
+      assert treedef_is_leaf(leaf)
+      axis_tree, _ = axis_tree
     raise ValueError(f"{name} specification must be a tree prefix of the "
                      f"corresponding value, got specification {axis_tree} "
                      f"for value tree {treedef}.") from None
   axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes
+
+def _dtype(x):
+  try:
+    return dtypes.result_type(x)
+  except ValueError:
+    return dtypes.result_type(getattr(x, 'dtype'))
+
+def shaped_abstractify(x):
+  try:
+    return core.raise_to_shaped(core.get_aval(x))
+  except TypeError:
+    pass
+
+  weak_type = getattr(x, 'weak_type', False)
+  named_shape = getattr(x, 'named_shape', {})
+  return core.ShapedArray(np.shape(x), _dtype(x), weak_type=weak_type,
+                          named_shape=named_shape)

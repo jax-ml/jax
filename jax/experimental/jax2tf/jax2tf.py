@@ -34,7 +34,6 @@ from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
-from jax._src.lax import parallel as lax_parallel
 import jax._src.random
 from jax.lib import xla_bridge as xb
 
@@ -45,8 +44,10 @@ import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
+from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # type: ignore[import]
+# pylint: enable=g-direct-tensorflow-import
 
-from jaxlib import xla_client
+from jax.lib import xla_client
 
 
 # The scope name need to be a valid TensorFlow name. See
@@ -192,14 +193,22 @@ def convert(fun: Callable, *,
         raise ValueError("convert must be used outside all JAX transformations."
                          + f"Trace state: {core.thread_local_state.trace_state}")
 
-    # This function may take pytrees of TfVals. We can only set
-    # tf.custom_gradient on functions that take a flat argument list.
-    args_flat, in_tree = tree_util.tree_flatten((args, {}))
-    for a in args_flat:
+    def check_arg(a):
       if not _is_tfval(a):
         msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
                "be NumPy array, scalar, tf.Variable, or tf.Tensor")
         raise TypeError(msg)
+    tree_util.tree_map(check_arg, args)
+
+    # Name input tensors
+    args = tuple(
+        tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"), a)  # type: ignore
+        for i, a in enumerate(args))
+
+    # This function may take pytrees of TfVals. We can only set
+    # tf.custom_gradient on functions that take a flat argument list.
+    args_flat, in_tree = tree_util.tree_flatten((args, {}))
+
     if in_shapes is None:
       in_shapes_ = (None,) * len(args)
     else:
@@ -249,8 +258,9 @@ def convert(fun: Callable, *,
         vjp_in_shapes = [args_in_shapes, out_cts_in_shapes]
       out_cts = tree_util.tree_unflatten(out_tree_thunk(), out_cts_flat)
       # TODO: enable higher-order gradients
-      in_cts = convert(fun_vjp_jax, with_gradient=False,
-                       in_shapes=vjp_in_shapes)(args, out_cts)
+      with tf.name_scope("jax2tf_vjp"):
+        in_cts = convert(fun_vjp_jax, with_gradient=False,
+                         in_shapes=vjp_in_shapes)(args, out_cts)
       return in_cts
 
     try:
@@ -277,6 +287,7 @@ def convert(fun: Callable, *,
     finally:
       _shape_env = {}
 
+    out_flat = [tf.identity(x, "jax2tf_out") for x in out_flat]
     out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
     return out
 
@@ -744,6 +755,8 @@ class TensorFlowTrace(core.Trace):
       with tf.name_scope(_sanitize_scope_name(params["name"])):
         vals_out: Sequence[Tuple[TfVal,
                                  core.AbstractValue]] = f.call_wrapped(*vals)
+    elif call_primitive == sharded_jit.sharded_call_p:
+      vals_out = _sharded_call(f, vals, **params)
     else:
       vals_out = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
@@ -800,15 +813,13 @@ class TensorFlowTrace(core.Trace):
         raise NotImplementedError(msg.format(p)) from err
 
 def to_tf_dtype(jax_dtype):
-  if jax_dtype == jnp.bfloat16:
-    return tf.bfloat16
-  elif jax_dtype == dtypes.float0:
+  if jax_dtype == dtypes.float0:
     return tf.float32
   else:
     return tf.dtypes.as_dtype(jax_dtype)
 
 def to_jax_dtype(tf_dtype):
-  return jnp.bfloat16 if tf_dtype == tf.bfloat16 else tf_dtype.as_numpy_dtype
+  return tf_dtype.as_numpy_dtype
 
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
@@ -819,20 +830,19 @@ for unexpected in xla.call_translations: # Call primitives are inlined
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  lax.reduce_p, lax.rng_uniform_p,
+  "reduce", "rng_uniform",
 
-  lax.igamma_grad_a_p,
-  lax.random_gamma_grad_p,
+  "igamma_grad_a",
+  "random_gamma_grad",
 
   # Not high priority?
-  lax.after_all_p, lax_parallel.all_to_all_p, lax.create_token_p,
-  lax.infeed_p, lax.outfeed_p, lax_parallel.pmax_p,
-  lax_parallel.pmin_p, lax_parallel.ppermute_p, lax_parallel.psum_p,
-  lax_parallel.axis_index_p, lax_parallel.pdot_p,
+  "after_all", "all_to_all", "create_token",
+  "infeed", "outfeed", "pmax_p",
+  "pmin", "ppermute", "psum", "pmax", "pgather",
+  "axis_index", "pdot", "all_gather",
 
-  pxla.xla_pmap_p,
-
-  sharded_jit.sharding_constraint_p
+  "xla_pmap",
+  "call_tf",
 ]
 
 try:
@@ -841,7 +851,11 @@ except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
-tf_impl[ad_util.add_jaxvals_p] = tf.math.add
+
+def _add(x: TfVal, y: TfVal) -> TfVal:
+  return tf.raw_ops.AddV2(x=x, y=y)
+
+tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[xla.device_put_p] = lambda x, device=None: x
 
 tf_impl[lax.neg_p] = tf.math.negative
@@ -922,7 +936,7 @@ tf_impl[lax.conj_p] = _conj
 tf_impl[lax.real_p] = tf.math.real
 tf_impl[lax.imag_p] = tf.math.imag
 
-tf_impl[lax.add_p] = tf.math.add
+tf_impl[lax.add_p] = _add
 tf_impl[lax.sub_p] = tf.math.subtract
 tf_impl[lax.mul_p] = tf.math.multiply
 
@@ -942,8 +956,9 @@ tf_impl[lax.iota_p] = _iota
 def _div(lhs, rhs):
   if lhs.dtype.is_integer:
     quotient = tf.math.floordiv(lhs, rhs)
-    select = tf.math.logical_and(tf.math.sign(lhs) != tf.math.sign(rhs),
-                                 tf.math.floormod(lhs, rhs) != 0)
+    select = tf.math.logical_and(
+        tf.not_equal(tf.math.sign(lhs), tf.math.sign(rhs)),
+        tf.not_equal(tf.math.floormod(lhs, rhs), 0))
     return tf.where(select, quotient + 1, quotient)
   else:
     return tf.math.truediv(lhs, rhs)
@@ -1091,7 +1106,7 @@ tf_impl[lax.lt_p] = tf.math.less
 
 tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
-def _convert_element_type(operand, *, new_dtype):
+def _convert_element_type(operand, *, new_dtype, weak_type=False):
   old_dtype = operand.dtype.as_numpy_dtype
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
@@ -1285,9 +1300,10 @@ def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
 tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
-def _dot_general(lhs, rhs, dimension_numbers, precision):
+def _dot_general(lhs, rhs, dimension_numbers, precision, preferred_element_type):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
   del precision
+  del preferred_element_type
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_dim, rhs_dim = len(lhs.shape), len(rhs.shape)
   # This condition ensures that:
@@ -1453,7 +1469,7 @@ tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
 tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
 
 
-_add_fn = tf.function(tf.math.add, autograph=False)
+_add_fn = tf.function(_add, autograph=False)
 _ge_fn = tf.function(tf.math.greater_equal, autograph=False)
 
 def _select_and_gather_add(tangents: TfVal,
@@ -1717,7 +1733,7 @@ def _get_min_identity(tf_dtype):
 
 # pylint: disable=protected-access
 tf_impl_with_avals[lax.reduce_window_sum_p] = (
-    functools.partial(_specialized_reduce_window, tf.math.add, lambda x: 0,
+    functools.partial(_specialized_reduce_window, _add, lambda x: 0,
                       name="reduce_window_sum"))
 tf_impl_with_avals[lax.reduce_window_min_p] = (
     functools.partial(_specialized_reduce_window, tf.math.minimum,
@@ -1775,18 +1791,10 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
 tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
-  # We use the random._threefry2x32_lowering, but since add is not implemented
-  # for uint32, we cast to int32 and back.
-  args_cast = tuple([tf.cast(a, tf.int32) for a in args])
-  _in_avals_cast = tuple(core.ShapedArray(in_aval.shape, np.int32)
-                         for in_aval in _in_avals)
-  _out_aval_cast = tuple(core.ShapedArray(out_aval.shape, np.int32)
-                         for out_aval in _out_aval)
   res = _convert_jax_impl(
     functools.partial(jax._src.random._threefry2x32_lowering,
                       use_rolled_loops=False),
-    multiple_results=True)(*args_cast, _in_avals=_in_avals_cast, _out_aval=_out_aval_cast)
-  res = tuple([tf.cast(r, tf.uint32) for r in res])
+    multiple_results=True)(*args, _in_avals=_in_avals, _out_aval=_out_aval)
   return res
 tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 
@@ -1832,7 +1840,7 @@ def _dynamic_slice(operand, *start_indices, slice_sizes):
   # Here we could use tf.slice. Similarly, for lax.gather we can sometimes use
   # tf.gather. But those have different semantics for index-out-of-bounds than
   # JAX (and XLA). We have tried to force compilation, by wrapping into
-  # tf.xla.experimental.compile, or tf.function(experimental_compile=True), but
+  # tf.xla.experimental.compile, or tf.function(jit_compile=True), but
   # those solutions are brittle because they do not work when nested into an
   # outer compilation (see b/162814494 and b/163006262). They also do not
   # survive well being put in a SavedModel. Hence, we now use TFXLA slicing
@@ -2189,6 +2197,60 @@ def _custom_lin(*args: TfVal, **_) -> Sequence[TfVal]:
                   "function.")
 
 tf_impl[ad.custom_lin_p] = _custom_lin
+
+
+def split_to_logical_devices(
+    tensor: TfVal,
+    partition_dimensions: pxla.PartitionsOrReplicated):
+  """Like TPUMPStrategy.experimental_split_to_logical_devices.
+
+  For jax2tf purposes we want to avoid needing to thread the `strategy` object
+  through the generated computation. It seems that the original function needs
+  the strategy object only for error checking, which we assume is done upstream
+  by JAX.
+
+  Args:
+    tensor: Input tensor to annotate.
+    partition_dimensions: A list of integers, with one integer per tensor
+      dimension, specifying in how many parts the dimension should be split. The
+      product of integers must equal the number of devices per replica.
+    use_sharding_op: whether to use a sharding op, or not.
+
+  Returns:
+    an annotated tensor.
+  """
+  # This corresponds to the sharding annotations in
+  # xla_bridge._sharding_to_proto.
+  if partition_dimensions is None:
+    return xla_sharding.replicate(tensor, use_sharding_op=True)
+  num_partition_splits = np.prod(partition_dimensions)
+  tile_assignment = np.arange(num_partition_splits).reshape(
+      partition_dimensions)
+  return xla_sharding.tile(tensor, tile_assignment, use_sharding_op=True)
+
+
+def _sharded_call(f: lu.WrappedFun, vals: Sequence[TfVal],
+                  in_parts: Sequence[pxla.PartitionsOrReplicated],
+                  out_parts_thunk,
+                  **_) -> Sequence[Tuple[TfVal, core.AbstractValue]]:
+  sharded_vals = util.safe_map(split_to_logical_devices, vals, in_parts)
+  vals_out = f.call_wrapped(*sharded_vals)
+  out_parts_flat = out_parts_thunk()
+  assert len(out_parts_flat) == len(vals_out), f"expected {len(out_parts_flat)} == {len(vals_out)}"
+  sharded_vals_out = [
+      (split_to_logical_devices(val, val_part), val_aval)
+      for (val, val_aval), val_part in util.safe_zip(vals_out, out_parts_flat)
+  ]
+  return sharded_vals_out
+
+
+def _sharding_constraint(arg: TfVal, *,
+                         partitions: pxla.PartitionsOrReplicated):
+  return split_to_logical_devices(arg, partitions)
+
+
+tf_impl[sharded_jit.sharding_constraint_p] = _sharding_constraint
+
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""

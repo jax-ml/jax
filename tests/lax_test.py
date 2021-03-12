@@ -16,6 +16,7 @@
 import collections
 from functools import partial
 import itertools
+import operator
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -41,7 +42,6 @@ from jax._src.lax.lax import _device_put_raw
 
 from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 
 ### lax tests
@@ -194,7 +194,7 @@ class LaxTest(jtu.JaxTestCase):
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
-    if (not FLAGS.jax_enable_x64 and op_name == "nextafter"
+    if (not config.x64_enabled and op_name == "nextafter"
         and dtype == np.float64):
       raise SkipTest("64-bit mode disabled")
     rng = rng_factory(self.rng())
@@ -206,16 +206,22 @@ class LaxTest(jtu.JaxTestCase):
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_from_dtype={}_to_dtype={}".format(
-          from_dtype, to_dtype),
-       "from_dtype": from_dtype, "to_dtype": to_dtype}
+      {"testcase_name": "_from_dtype={}_to_dtype={}_weak_type={}".format(
+          from_dtype, to_dtype, weak_type),
+       "from_dtype": from_dtype, "to_dtype": to_dtype, "weak_type": weak_type}
       for from_dtype, to_dtype in itertools.product(
-          [np.float32, np.int32, "float32", "int32"], repeat=2)))
-  def testConvertElementType(self, from_dtype, to_dtype):
+          [None, np.float32, np.int32, "float32", "int32"], repeat=2)
+      for weak_type in [True, False]))
+  def testConvertElementType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax.convert_element_type(x, to_dtype)
+    op = lambda x: lax.convert_element_type(x, to_dtype, weak_type)
     self._CompileAndCheck(op, args_maker)
+
+    x = rng((1,), from_dtype)
+    out = op(x)
+    self.assertEqual(out.dtype, dtypes.canonicalize_dtype(to_dtype or x.dtype))
+    self.assertEqual(out.aval.weak_type, weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_from_dtype={}_to_dtype={}"
@@ -254,6 +260,23 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x: lax.bitcast_convert_type(x, to_dtype)
     numpy_op = lambda x: lax_reference.bitcast_convert_type(x, to_dtype)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_from_dtype={}_to_dtype={}_weak_type={}"
+       .format(from_dtype, to_dtype, weak_type),
+       "from_dtype": from_dtype, "to_dtype": to_dtype, "weak_type": weak_type}
+      for from_dtype, to_dtype in itertools.product(
+          [np.float32, np.int32, "float32", "int32"], repeat=2)
+      for weak_type in [True, False]))
+  def testBitcastConvertWeakType(self, from_dtype, to_dtype, weak_type):
+    rng = jtu.rand_default(self.rng())
+    x_in = lax.convert_element_type(rng((2, 3), from_dtype), weak_type=weak_type)
+    op = lambda x: lax.bitcast_convert_type(x, to_dtype)
+    self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
+    x_out = op(x_in)
+    self.assertEqual(dtypes.is_weakly_typed(x_out), False)
+    x_out_jit = api.jit(op)(x_in)
+    self.assertEqual(dtypes.is_weakly_typed(x_out_jit), False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_min_shape={}_operand_shape={}_max_shape={}".format(
@@ -878,6 +901,44 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(lax.dot, precision=precision), args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_lhs_shape={}_rhs_shape={}_preferred_element_type={}".format(
+          jtu.format_shape_dtype_string(lhs_shape, dtype),
+          jtu.format_shape_dtype_string(rhs_shape, dtype),
+          jtu.format_shape_dtype_string((), preferred_element_type)
+          ),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype, "preferred_element_type": preferred_element_type
+     }
+      for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
+      # We check cases where the preferred type is at least as wide as the input
+      # type and where both are either both floating-point or both integral,
+      # which are the only supported configurations.
+      for dtype, preferred_element_type in [
+        (np.float16, np.float16), (np.float16, np.float32), (np.float16, np.float64),
+        (dtypes.bfloat16, dtypes.bfloat16), (dtypes.bfloat16, np.float32),
+        (dtypes.bfloat16, np.float64), (np.float32, np.float32), (np.float32, np.float64),
+        (np.float64, np.float64), (np.int8, np.int8), (np.int8, np.int16), (np.int8, np.int32),
+        (np.int8, np.int64), (np.int16, np.int16), (np.int16, np.int32), (np.int16, np.int64),
+        (np.int32, np.int32), (np.int32, np.int64), (np.int64, np.int64)]))
+  def testDotPreferredElement(self, lhs_shape, rhs_shape, dtype, preferred_element_type):
+    if (not config.x64_enabled and
+       (dtype == np.float64 or preferred_element_type == np.float64
+        or dtype == np.int64 or preferred_element_type == np.int64)):
+      raise SkipTest("64-bit mode disabled")
+    rng = jtu.rand_default(self.rng())
+    x = rng(lhs_shape, dtype)
+    y = rng(rhs_shape, dtype)
+    # We first compute the dot when both inputs are a lower-precision type and
+    # preferred_element_type is a higher-precision type. We then compute results
+    # where the inputs are first upcast to the higher-precision type and no
+    # `preferred_element_type` is given. We expect the result to be extremely
+    # similar given the semantics of `preferred_element_type`.
+    result_with_preferred_type = lax.dot(x, y, preferred_element_type=preferred_element_type)
+    result_with_upcast_inputs = lax.dot(
+      x.astype(preferred_element_type),
+      y.astype(preferred_element_type))
+    self.assertArraysAllClose(result_with_preferred_type, result_with_upcast_inputs)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}".format(
           jtu.format_shape_dtype_string(lhs_shape, dtype),
           jtu.format_shape_dtype_string(rhs_shape, dtype)),
@@ -1465,6 +1526,24 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}.{}_arr_weak_type={}_init_weak_type={}"
+       .format(op_namespace.__name__, op, arr_weak_type, init_weak_type),
+       "op": op, "op_namespace": op_namespace, "arr_weak_type": arr_weak_type, "init_weak_type": init_weak_type}
+      for op in ["add", "mul"]
+      for op_namespace in [lax, operator]
+      for arr_weak_type in [True, False]
+      for init_weak_type in [True, False]))
+  def testReduceWeakType(self, op_namespace, op, arr_weak_type, init_weak_type):
+    op = getattr(op_namespace, op)
+    arr = lax.convert_element_type(np.arange(10), np.int32, weak_type=arr_weak_type)
+    init = lax.convert_element_type(1, np.int32, weak_type=init_weak_type)
+    fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
+    out = fun(arr, init)
+    self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)
+    out_jit = api.jit(fun)(arr, init)
+    self.assertEqual(dtypes.is_weakly_typed(out_jit), arr_weak_type and init_weak_type)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
                          "_basedilation={}_windowdilation={}")
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype),
@@ -1532,6 +1611,15 @@ class LaxTest(jtu.JaxTestCase):
     for failure_fun in [empty_window_test, zero_stride_test]:
       with self.assertRaisesRegex(TypeError, "must have every element be"):
         failure_fun()
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Invalid return type from reduction function: <class 'list'>\n"
+        "Reduction functions should only return an array.\n"
+        "Full return value: .*"):
+      return lax.reduce_window(
+          np.ones((1,)), 0., lambda x, y: [x + y],
+          padding='VALID', window_dimensions=(1,), window_strides=(1,))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": (f"_shape={shape}_windowdimensions={window_dimensions}"
@@ -2184,7 +2272,8 @@ class LaxTest(jtu.JaxTestCase):
     operands = {'x': np.ones(5)}
     bad_init_values = {'x': np.ones(5)}
 
-    with self.assertRaisesRegex(ValueError, 'Found non-scalar init_value'):
+    with self.assertRaisesRegex(ValueError,
+                                'reduce found non-scalar initial value'):
       lax.reduce(operands, bad_init_values,
                  lambda x, y: dict(x=x['x'] + y['x']), [0])
 
@@ -2319,6 +2408,73 @@ class LazyConstantTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
                                 "index_dtype must be an integer type"):
       jax_fn(np.ones((2, 2)), axis=0, index_dtype=index_dtype)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_fn={}_weaktype={}".format(jax_fn.__name__, weak_type),
+       "jax_fn": jax_fn, "weak_type": weak_type}
+      for jax_fn in [lax.argmin, lax.argmax]
+      for weak_type in [True, False]))
+  def testArgMinMaxWeakType(self, jax_fn, weak_type):
+    op = lambda x: jax_fn(x, axis=0, index_dtype=np.int32)
+    x_in = lax.convert_element_type(np.ones((2, 2)), weak_type=weak_type)
+    self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
+    x_out = op(x_in)
+    self.assertEqual(dtypes.is_weakly_typed(x_out), False)
+    x_out_jit = api.jit(op)(x_in)
+    self.assertEqual(dtypes.is_weakly_typed(x_out_jit), False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": "_{}".format(rec.op),
+         "op_name": rec.op, "rec_dtypes": rec.dtypes}
+      for rec in LAX_OPS if rec.nargs == 1))
+  def testUnaryWeakTypes(self, op_name, rec_dtypes):
+    """Test that all lax unary ops propagate weak_type information appropriately."""
+    # Find a valid dtype for the function.
+    for dtype in [np.float_, np.int_, np.complex_, np.bool_]:
+      dtype = dtypes.canonicalize_dtype(dtype)
+      if dtype in rec_dtypes:
+        py_val = dtype.type(1).item()
+        lax_val = lax.full((), py_val, dtype)
+        break
+    else:
+      raise ValueError("no available dtypes")
+
+    op = getattr(lax, op_name)
+    py_op = op(py_val)
+    lax_op = op(lax_val)
+
+    self.assertAllClose(py_op, lax_op, check_dtypes=True)
+    self.assertTrue(py_op.aval.weak_type)
+    self.assertFalse(lax_op.aval.weak_type)
+
+  def testCumsumLengthOne(self):
+    # regression test for issue 4672
+    x = lax.full((1,), 1)
+    out = lax.cumsum(x)
+    self.assertArraysEqual(out, x)
+
+
+class LaxNamedShapeTest(jtu.JaxTestCase):
+
+  def test_abstract_eval(self):
+    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
+    out = lax.sin_p.abstract_eval(aval1)
+    self.assertEqual(out, aval1)
+
+    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
+    aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
+    expected = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
+    out = lax.add_p.abstract_eval(aval1, aval2)
+    self.assertEqual(out, expected)
+
+  def test_abstract_eval_collective(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("test requires omnistaging")
+    with core.extend_axis_env('i', 10, None):
+      aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
+      expected = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
+      out, = lax.psum_p.abstract_eval(aval1, axes=('i',), axis_index_groups=None)
+      self.assertEqual(out, expected)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

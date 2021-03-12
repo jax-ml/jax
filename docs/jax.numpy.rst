@@ -283,6 +283,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     piecewise
     polyadd
     polyder
+    polyint
     polymul
     polysub
     polyval
@@ -317,6 +318,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     select
     set_printoptions
     setdiff1d
+    setxor1d
     shape
     sign
     signbit
@@ -362,6 +364,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     uint64
     uint8
     unique
+    union1d
     unpackbits
     unravel_index
     unsignedinteger

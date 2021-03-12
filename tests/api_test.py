@@ -34,7 +34,7 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import api, core, lax, lax_reference, lazy
+from jax import api, core, lax
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
@@ -43,7 +43,6 @@ from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
-from jax.lib import version
 import jax._src.util
 
 from jax.config import config
@@ -51,7 +50,7 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-class CPPJitTest(jtu.JaxTestCase):
+class CPPJitTest(jtu.BufferDonationTestCase):
   """Shared tests between the Python and the C++ jax,jit implementations.
 
   Because the Python implementation supports more features, we need to have the
@@ -65,11 +64,7 @@ class CPPJitTest(jtu.JaxTestCase):
     # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
     # This is in the future, because we are making a breaking change to
     # Tensorflow.
-    if version <= (0, 1, 55):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
-    else:
-      return jax.api._cpp_jit
+    return jax.api._cpp_jit
 
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
@@ -135,9 +130,6 @@ class CPPJitTest(jtu.JaxTestCase):
     assert len(side) == 3
 
   def test_static_args_equality(self):
-    if version < (0, 1, 57):
-      raise unittest.SkipTest("this test requires a newest jaxlib")
-
     class A():
 
       def __hash__(self):
@@ -193,7 +185,7 @@ class CPPJitTest(jtu.JaxTestCase):
     assert len(side) == 2  # but should still cache
 
     f(one, two, z=np.zeros(3))  # doesn't crash
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       # In the above call, three is of a new type (int64), thus it should
       # trigger a new compilation.
       assert len(side) == 3
@@ -216,15 +208,6 @@ class CPPJitTest(jtu.JaxTestCase):
     self.assertEqual(f(list(range(500))), sum(range(500)))
 
   # Jit and Donate arguments
-  assertDeleted = lambda self, x: self._assertDeleted(x, True)
-  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
-
-  def _assertDeleted(self, x, deleted):
-    if hasattr(x, "device_buffer"):
-      self.assertEqual(x.device_buffer.is_deleted(), deleted)
-    else:
-      for buffer in x.device_buffers:
-        self.assertEqual(buffer.is_deleted(), deleted)
 
   def test_jit_donate_argnums_warning_raised(self):
     x = jnp.array([1.0, 2.0], jnp.float32)
@@ -320,9 +303,6 @@ class CPPJitTest(jtu.JaxTestCase):
     assert len(effects) == 3
 
   def test_static_argnum_errors_on_keyword_arguments(self):
-    if version < (0, 1, 58):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
     f = self.jit(lambda x: x, static_argnums=0)
     msg = ("jitted function has static_argnums=(0,), donate_argnums=() but was "
            "called with only 0 positional arguments.")
@@ -440,10 +420,6 @@ class CPPJitTest(jtu.JaxTestCase):
       jitted_f(1, np.asarray(1))
 
   def test_cpp_jit_raises_on_non_hashable_static_argnum(self):
-    if version < (0, 1, 57):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
-
     if self.jit != jax.api._cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
@@ -474,9 +450,6 @@ class CPPJitTest(jtu.JaxTestCase):
       jitted_f(1, HashableWithoutEq())
 
   def test_cpp_jitted_function_returns_PyBuffer(self):
-    if version < (0, 1, 58):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
     if self.jit != jax.api._cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
@@ -523,6 +496,19 @@ class CPPJitTest(jtu.JaxTestCase):
     init()
     self.jit(init)()
     self.assertIsInstance(key_list[0], core.Tracer)
+
+  def test_jit_wrapped_attributes(self):
+    def f(x: int) -> int:
+      """docstring of f."""
+      return x + 1
+    f.some_value = 4
+    jf = self.jit(f)
+    for attr in ["doc", "name", "module", "qualname", "annotations"]:
+      self.assertEqual(
+        {attr: getattr(f, f"__{attr}__")},
+        {attr: getattr(jf, f"__{attr}__")})
+    self.assertEqual(f.some_value, jf.some_value)
+
 
 class PythonJitTest(CPPJitTest):
 
@@ -664,6 +650,17 @@ class APITest(jtu.JaxTestCase):
                                 "Abstract tracer value"):
       jit(f)(1)
 
+  def test_list_index_err(self):
+    L = [1, 2, 3]
+    def f(n):
+      return L[n]
+
+    assert jit(f, static_argnums=(0,))(0) == L[0]
+    self.assertRaisesRegex(
+        TypeError,
+        r"The __index__\(\) method was called on the JAX Tracer object.*",
+        lambda: jit(f)(0))
+
   def test_range_err(self):
     def f(x, n):
       for i in range(n):
@@ -673,17 +670,22 @@ class APITest(jtu.JaxTestCase):
     assert jit(f, static_argnums=(1,))(0, 5) == 10
     self.assertRaisesRegex(
         TypeError,
-        "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
-        "|Abstract value passed to .*)",
+        r"The __index__\(\) method was called on the JAX Tracer object.*",
         lambda: jit(f)(0, 5))
 
+  def test_cast_int(self):
+    f = lambda x: int(x)
+    self.assertRaisesRegex(
+        TypeError,
+        "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
+        "|Abstract tracer value encountered where concrete value is expected.*)", lambda: jit(f)(0))
+
   def test_casts(self):
-    for castfun in [hex, oct, int]:
+    for castfun in [hex, oct]:
       f = lambda x: castfun(x)
       self.assertRaisesRegex(
           TypeError,
-          "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
-          "|Abstract tracer value encountered where concrete value is expected.*)", lambda: jit(f)(0))
+          r"The __index__\(\) method was called on the JAX Tracer object.*", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')
@@ -890,6 +892,16 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(g, grad(lambda x: x**3)(3.))
     self.assertAllClose(aux, [9.], check_dtypes=False)
 
+  def test_grad_and_aux_error(self):
+    with self.assertRaisesRegex(TypeError, "two-element tuple"):
+      grad(lambda x: (1, 2, 3), has_aux=True)(1.)
+
+    with self.assertRaisesRegex(TypeError, "two-element tuple"):
+      grad(lambda x: x, has_aux=True)(1.)
+
+    with self.assertRaisesRegex(TypeError, "two-element tuple"):
+      grad(lambda x: (x,), has_aux=True)(1.)
+
   def test_grad_and_aux_nested(self):
     def f(x):
       g, aux = grad(lambda x: (x**3, [x**3]), has_aux=True)(x)
@@ -947,6 +959,20 @@ class APITest(jtu.JaxTestCase):
       TypeError,
       "primal and tangent arguments to jax.jvp do not match.",
       lambda: api.jvp(lambda x: -x, (np.float16(2),), (np.float32(4),)))
+    # If primals and tangents are not of the same shape then raise error
+    fun = lambda x: x+1
+    with self.assertRaisesRegex(
+      ValueError, "jvp called with different primal and tangent shapes"):
+      api.jvp(fun, (jnp.array([1.,2.,3.]),), (jnp.array([1.,2.,3.,4.]),))
+    with self.assertRaisesRegex(
+      ValueError, "jvp called with different primal and tangent shapes"):
+      api.jvp(fun, (jnp.float32(10.),), (jnp.array([1.,2.,3.], dtype=jnp.float32),))
+    with self.assertRaisesRegex(
+      ValueError, "jvp called with different primal and tangent shapes"):
+      api.jvp(fun, (jnp.array([1.,2.,3.], dtype=jnp.float32),), (jnp.float32(20.),))
+    with self.assertRaisesRegex(
+      ValueError, "jvp called with different primal and tangent shapes"):
+      api.jvp(fun, (jnp.array([1.,2.,3.]),), (20.,))
 
   def test_jvp_non_tuple_arguments(self):
     def f(x, y): return x + y
@@ -1221,6 +1247,35 @@ class APITest(jtu.JaxTestCase):
     out_shape = api.eval_shape(fun, A, b, x)
 
     self.assertEqual(out_shape.shape, (3, 5))
+
+  def test_eval_shape_duck_typing2(self):
+    # https://github.com/google/jax/issues/5683
+    class EasyDict(dict):
+      def __init__(self, *args, **kwargs):
+          super().__init__(*args, **kwargs)
+          self.__dict__ = self
+
+    x = EasyDict(shape=(3,), dtype=np.dtype('float32'))
+    out_shape = api.eval_shape(lambda x: x, x)  # doesn't crash
+    self.assertEqual(out_shape.shape, (3,))
+
+  def test_eval_shape_names(self):
+    def fun(x, y):
+      return lax.psum(x, 'i') + y
+
+    class MyArgArray(object):
+      def __init__(self, shape, dtype, named_shape):
+        self.shape = shape
+        self.dtype = dtype
+        self.named_shape = named_shape
+
+    x = MyArgArray((3, 2), jnp.float32, {'i': 10})
+    y = MyArgArray((3, 2), jnp.float32, {'j': 5})
+    with core.extend_axis_env('i', 10, None):
+      with core.extend_axis_env('j', 5, None):
+        out_shape = api.eval_shape(fun, x, y)
+
+    self.assertEqual(out_shape.named_shape, {'j': 5})
 
   def test_issue_871(self):
     T = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
@@ -1549,6 +1604,7 @@ class APITest(jtu.JaxTestCase):
     api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
 
   @jtu.skip_on_devices("cpu", "gpu")
+  @jtu.ignore_warning(message="Some donated buffers were not usable")
   def test_xla_computation_donate_argnums(self):
     api.xla_computation(lambda x: None, donate_argnums=(0,))(3)  # doesn't crash
 
@@ -1568,7 +1624,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_dtype_warning(self):
     # cf. issue #1230
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       raise unittest.SkipTest("test only applies when x64 is disabled")
 
     def check_warning(warn, nowarn):
@@ -1896,9 +1952,9 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
     subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
-    self.assertLen(inner_jaxpr.eqns, 2)
-    self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
-    self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
+    self.assertLen(inner_jaxpr.eqns, 2 if config.omnistaging_enabled else 3)
+    self.assertEqual(inner_jaxpr.eqns[-2].primitive.name, 'mul')
+    self.assertEqual(inner_jaxpr.eqns[-1].primitive.name, 'add')
 
   def test_primitive_compilation_cache(self):
     with jtu.count_primitive_compiles() as count:
@@ -1997,7 +2053,7 @@ class APITest(jtu.JaxTestCase):
       lax.scan(f, None, None, length=2)
 
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "tracer created on line"):
+                                "was created on line"):
       g()
 
   def test_escaped_tracer_omnistaging_top_trace(self):
@@ -2014,7 +2070,7 @@ class APITest(jtu.JaxTestCase):
     lax.scan(f, None, None, length=2)  # leaked a tracer! (of level 1!)
 
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "tracer created on line"):
+                                "was created on line"):
       # The following call will try and raise the ones array to the count tracer
       # level, which is no longer live.
       jax.jit(jnp.add)(jnp.ones(()), count)
@@ -2096,23 +2152,15 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f()
 
-  # TODO(jakevdp): re-enable this if possible.
-  @unittest.skipIf(True, "broken by convert_element_type change.")
   def test_xla_computation_zeros_doesnt_device_put(self):
+    raise unittest.SkipTest("broken test")  # TODO(mattjj): fix
+
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test is omnistaging-specific")
 
-    count = 0
-    def device_put_and_count(*args, **kwargs):
-      nonlocal count
-      count += 1
-      return orig_device_put(*args, **kwargs)
-    orig_device_put, xla.device_put = xla.device_put, device_put_and_count
-    try:
+    with jtu.count_device_put() as count:
       api.xla_computation(lambda: jnp.zeros(3))()
-    finally:
-      xla.device_put = orig_device_put
-    self.assertEqual(count, 0)
+    self.assertEqual(count[0], 0)
 
   def test_join_concrete_arrays_with_omnistaging(self):
     # https://github.com/google/jax/issues/4622
@@ -2145,6 +2193,172 @@ class APITest(jtu.JaxTestCase):
     _, f_jvp = api.linearize(f, np.ones(2, np.int32))
     with self.assertRaisesRegex(ValueError, "tangent values inconsistent"):
       f_jvp(np.ones(2, np.int32))
+
+  def test_grad_of_token_consuming_primitive(self):
+    # https://github.com/google/jax/issues/5463
+    tokentest_p = core.Primitive("tokentest")
+    tokentest_p.def_impl(partial(xla.apply_primitive, tokentest_p))
+    tokentest_p.def_abstract_eval(lambda x, y: x)
+    xla.translations[tokentest_p] = lambda c, x, y:  x
+    ad.defjvp(tokentest_p, (lambda g, x, token: x), None)
+
+    token = jax.lax.create_token(123)
+    arr = jnp.ones((3, 2))
+    res, vjp_fun = jax.vjp(lambda x: tokentest_p.bind(x, token), arr)
+    # Should not crash.
+    vjp_fun(arr)
+
+  def test_jit_returning_token(self):
+    x = jax.jit(jax.lax.create_token)(1.0)
+    self.assertIsInstance(x, jax.interpreters.xla.Token)
+
+  def test_leak_checker_catches_a_jit_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      lst = []
+
+      @jit
+      def f(x):
+        lst.append(x)
+        return x
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+        f(3)
+
+  def test_leak_checker_catches_a_pmap_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      lst = []
+
+      @api.pmap
+      def f(x):
+        lst.append(x)
+        return x
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+        f(np.ones(1))
+
+  def test_leak_checker_catches_a_grad_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      lst = []
+
+      def f(x):
+        lst.append(x)
+        return x
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+        api.grad(f)(3.)
+
+  def test_leak_checker_avoids_false_positives(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      @jit
+      def f(x):
+        return x
+      f(3)  # doesn't crash
+      api.vmap(f)(np.arange(3))  # doesn't crash
+      api.grad(f)(3.)  # doesn't crash
+
+      @api.pmap
+      def f(x):
+        return x
+      f(np.ones(1))  # doesn't crash
+      api.vmap(f)(np.ones((1, 1)))  # doesn't crash
+
+  def test_leak_checker_catches_a_scan_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      lst = []
+
+      to_scan = lambda c, x: (lst.append(c) or jnp.sin(c), None)
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+        lax.scan(to_scan, 1., np.arange(3.))
+
+  def test_leak_checker_avoids_false_positives_scan(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      to_scan = lambda c, x: (jnp.sin(c), None)
+      lax.scan(to_scan, 1., np.arange(3.))  # doesn't crash
+
+  def test_leak_checker_avoids_false_positives_scan_jvp(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      to_scan = lambda c, x: (c, None)
+
+      def f(x):
+        lax.scan(to_scan, x, None, length=1)
+      api.jvp(f, (3.,), (1.,))  # doesn't crash
+
+  def test_leak_checker_avoids_false_positives_scan_vmap(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      to_scan = lambda c, _: (1., None)
+
+      @api.vmap
+      def f(x):
+        lax.scan(to_scan, x, None, length=1)
+      f(np.arange(5.))  # doesn't crash
+
+  def test_leak_checker_avoids_false_positives_scan_vmap_2(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      to_scan = lambda c, _: (c, None)
+
+      @api.vmap
+      def f(x):
+        lax.scan(to_scan, x, None, length=1)
+      f(np.arange(5.))  # doesn't crash
+
+  def test_default_backend(self):
+    first_local_device = api.local_devices()[0]
+    self.assertEqual(first_local_device.platform, api.default_backend())
+
+  def test_dunder_jax_array(self):
+    # https://github.com/google/jax/pull/4725
+
+    class AlexArray:
+      def __init__(self, jax_val):
+        self.jax_val = jax_val
+      def __jax_array__(self):
+        return self.jax_val
+      dtype = property(lambda self: self.jax_val.dtype)
+      shape = property(lambda self: self.jax_val.shape)
+
+    x = AlexArray(jnp.array([1., 2., 3.]))
+    y = jnp.sin(x)
+    self.assertAllClose(y, jnp.sin(jnp.array([1., 2., 3.])))
+    y = api.grad(api.jit(lambda x: jnp.sin(x).sum()))(x)
+    self.assertAllClose(y, jnp.cos(jnp.array([1., 2., 3.])))
+
+    x = AlexArray(jnp.array([[1., 2., 3.]]))
+    y = api.pmap(jnp.sin)(x)
+    self.assertAllClose(y, jnp.sin(jnp.array([[1., 2., 3.]])))
+
+    x = jnp.array(1)
+    a = AlexArray(x)
+    for f in [jnp.isscalar, jnp.size, jnp.shape, jnp.dtype]:
+      self.assertEqual(f(x), f(a))
+
 
 
 class RematTest(jtu.JaxTestCase):
@@ -2554,6 +2768,12 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
     self.assertLen(jaxpr.jaxpr.constvars, 0)
 
+  def test_abstract_inputs(self):
+    jaxpr = api.make_jaxpr(lambda x: x + 2.)(
+        types.SimpleNamespace(shape=(), dtype=np.float32))
+    self.assertEqual(jaxpr.in_avals[0].shape, ())
+    self.assertEqual(jaxpr.in_avals[0].dtype, np.float32)
+
   def test_const(self):
     def fun(x):
       return (x, 1., np.zeros(1))
@@ -2587,7 +2807,8 @@ class JaxprTest(jtu.JaxTestCase):
         let b = ge a 0.0
             c = add a 1.0
             d = add a 2.0
-            e = convert_element_type[ new_dtype=int32 ] b
+            e = convert_element_type[ new_dtype=int32
+                                      weak_type=False ] b
             f = cond[ branches=( { lambda  ; e_ a b c.
                                    let d = sub c a
                                    in (d,) }
@@ -2595,24 +2816,29 @@ class JaxprTest(jtu.JaxTestCase):
                                    let d = add b a
                                    in (d,) } )
                       linear=(False, False, False, False) ] e a a c d
-      in (f,) }
-      """
+        in (f,) }
+        """
     else:
       expected = """
       { lambda  ; a.
         let b = ge a 0.0
-            c = convert_element_type[ new_dtype=int32 ] b
-            d = add a 1.0
-            e = add a 2.0
-            f = cond[ branches=( { lambda  ; e_ c a b.
+            c = convert_element_type[ new_dtype=int32
+                                      weak_type=False ] b
+            d = convert_element_type[ new_dtype=float32
+                                      weak_type=False ] a
+            e = convert_element_type[ new_dtype=float32
+                                      weak_type=False ] a
+            f = add a 1.0
+            g = add a 2.0
+            h = cond[ branches=( { lambda  ; e_ c a b.
                                    let d = sub b c
                                    in (d,) }
                                  { lambda  ; c f_ a b.
                                    let d = add a c
                                    in (d,) } )
-                      linear=(False, False, False, False) ] c a a d e
-        in (f,) }
-        """
+                      linear=(False, False, False, False) ] c d e f g
+        in (h,) }
+      """
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
@@ -2630,186 +2856,28 @@ class JaxprTest(jtu.JaxTestCase):
                 api.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32))
     self.assertEqual(shape_tree, expected)
 
+  def test_make_jaxpr_axis_env(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
 
-class LazyTest(jtu.JaxTestCase):
-
-  @contextmanager
-  def count_compiles(self):
-
-    make_computation_builder = xb.make_computation_builder
-    count = [0]
-
-    def make_computation_builder_and_count(*args, **kwargs):
-      count[0] += 1
-      return make_computation_builder(*args, **kwargs)
-
-    xb.make_computation_builder = make_computation_builder_and_count
-    try:
-      yield count
-    finally:
-      xb.make_computation_builder = make_computation_builder
-
-  @jtu.skip_on_devices("tpu")
-  def test_lazy_jit_closed_over_values(self):
-    if not core.skip_checks:
-      raise unittest.SkipTest("oom test skipped when core.skip_checks is False")
-
-    y = jnp.arange(int(1e12))  # will likely oom if materialized
-    ans = jit(lambda x: (x + y)[1])(1)
-    self.assertEqual(ans, 2)
-
-  def test_jit_forces_arguments(self):
-
-    @api.jit
     def f(x):
-      assert python_should_be_executing
-      return jnp.sum(x)
+      return x - lax.psum(x, 'i')
+    jaxpr = api.make_jaxpr(f, axis_env=[('i', 4)])(2)
+    self.assertIn('psum', str(jaxpr))
 
-    x = jnp.zeros(10, dtype=jnp.int32)
-    assert not lazy.is_trivial(x._lazy_expr)
+  def test_make_jaxpr_named(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
 
-    python_should_be_executing = True
-    _ = f(x)
+    def f(x):
+      return x - lax.psum(x, 'i')
 
-    python_should_be_executing = False  # should not recompile
-    x = np.zeros(10, dtype=np.int32)
-    _ = f(x)
+    x = types.SimpleNamespace(
+        shape=(2, 3), dtype=jnp.float32, named_shape={'i': 10})
+    jaxpr = api.make_jaxpr(f, axis_env=[('i', 10)])(x)
+    named_shapes = [v.aval.named_shape for v in jaxpr.jaxpr.eqns[1].invars]
+    self.assertEqual(named_shapes, [{'i': 10}, {}])
 
-  @parameterized.parameters(jtu.cases_from_list(range(10000)))
-  def test_random_lazy_program(self, seed):
-
-    def random_array(rng):
-      kind = rng.choice(['arr', 'iota', 'eye', 'tri'])
-      if kind == 'arr':
-        dtype = [np.float32, np.int32][rng.choice(2)]
-        dim = rng.randint(4)
-        shape = rng.randint(4, size=dim)
-        np_x = np.asarray(rng.randn(*shape), dtype=dtype)
-        jax_x = jnp.array(np_x, dtype=dtype)
-      elif kind == 'iota':
-        dtype = [np.float32, np.int32][rng.choice(2)]
-        size = rng.randint(5)
-        np_x = np.arange(size, dtype=dtype)
-        jax_x = lax.iota(dtype, size)
-      elif kind == 'eye':
-        dtype = [np.float32, np.int32][rng.choice(2)]
-        N = rng.randint(2, 5)
-        M = None if rng.rand() < 0.5 else rng.randint(2, 5)
-        k = rng.choice([-1, 0, 1])
-        np_x = np.eye(N, M, k, dtype=dtype)
-        jax_x = jnp.eye(N, M, k, dtype=dtype)
-      elif kind == 'tri':
-        dtype = [np.float32, np.int32][rng.choice(2)]
-        N = rng.randint(2, 5)
-        M = None if rng.rand() < 0.5 else rng.randint(2, 5)
-        k = rng.choice([-1, 0, 1])
-        np_x = np.tri(N, M, k, dtype=dtype)
-        jax_x = jnp.tri(N, M, k, dtype=dtype)
-      else:
-        assert False
-      assert type(np_x) is np.ndarray and xla.type_is_device_array(jax_x)
-      return np_x, jax_x
-
-    def random_op(rng, shape):
-      kind = rng.choice(['transpose', 'broadcast', 'reshape'])
-      if kind == 'transpose':
-        perm = tuple(rng.permutation(len(shape)))
-        return Op(partial(np.transpose, axes=perm),
-                  partial(lax.transpose, permutation=perm))
-      elif kind == 'broadcast':
-        n = rng.randint(1, 3)
-        new_sizes = rng.randint(1, 4, size=n)
-        new_ndim  = n + len(shape)
-        bcast_dims = tuple(sorted(rng.permutation(new_ndim)[:len(shape)]))
-        shape_iter = iter(shape)
-        new_sizes = iter(rng.randint(1, 4, size=n))
-        new_shape = [next(shape_iter) if i in  bcast_dims else next(new_sizes)
-                    for i in range(new_ndim)]
-        return Op(partial(lax_reference.broadcast_in_dim, shape=new_shape,
-                          broadcast_dimensions=bcast_dims),
-                  partial(lax.broadcast_in_dim, shape=new_shape,
-                          broadcast_dimensions=bcast_dims))
-      elif kind == 'reshape':
-        new_shape = list(shape)
-        for _ in range(rng.randint(1, 3)):
-          loc = len(new_shape) and rng.randint(len(new_shape))
-          new_shape.insert(loc, 1)
-        new_shape = tuple(new_shape)
-        return Op(partial(np.reshape, newshape=new_shape),
-                  partial(lax.reshape, new_sizes=new_shape))
-      else:
-        assert False
-    Op = collections.namedtuple('Op', ['np_fn', 'jax_fn'])
-
-    rng = np.random.RandomState(seed)
-    np_x, jax_x = _, orig_x = random_array(rng)
-    ops = []
-    with jtu.count_primitive_compiles() as count:
-      for _ in range(rng.randint(5)):
-        op = random_op(rng, np.shape(np_x))
-        np_x = op.np_fn(np_x)
-        jax_x = op.jax_fn(jax_x)
-        ops.append(op)
-    self.assertEqual(count[0], 0)
-
-    kind = rng.choice(['closure', 'npy_value', 'force', 'add'])
-    if kind == 'closure':
-      result = api.jit(lambda x: x + jax_x)(0)
-      self.assertAllClose(np_x, result, check_dtypes=False)
-    elif kind == 'npy_value':
-      self.assertAllClose(np_x, jax_x, check_dtypes=False)
-    elif kind == 'force':
-      result = xla._force(jax_x)
-      self.assertAllClose(np_x, result, check_dtypes=False)
-    elif kind == 'add':
-      result = jax_x + np.zeros(jax_x.shape, dtype=jax_x.dtype)
-      self.assertAllClose(np_x, result, check_dtypes=False)
-    else:
-      assert False
-
-    @jit
-    def apply_ops(x):
-      for op in ops:
-        x = op.jax_fn(x)
-      return x
-
-    jit_result = apply_ops(orig_x)
-    self.assertAllClose(jit_result, np_x, check_dtypes=False)
-
-    @jit
-    def apply_ops_closure():
-      x = orig_x
-      for op in ops:
-        x = op.jax_fn(x)
-      return x
-
-    jit_result = apply_ops_closure()
-    self.assertAllClose(jit_result, np_x, check_dtypes=False)
-
-  def test_constant_forcing_computations_cached(self):
-    # from https://github.com/google/jax/issues/1909
-    xla._lazy_force_computation.cache_clear()  # clear force compile cache
-    big_lazy_x = np.ones((api.device_count(), 100))
-    f = api.pmap(lambda x: 2 * x)
-    _ = f(big_lazy_x)
-
-    with self.count_compiles() as count:
-      _ = f(big_lazy_x)
-    self.assertEqual(count[0], 0)
-
-  def test_zeros_ones_compilation(self):
-    w = jnp.ones(3) + jnp.ones(3)  # ensure + has a cache entry
-    w.block_until_ready()
-
-    xla._lazy_force_computation.cache_clear()  # clear force compile cache
-
-    with self.count_compiles() as count:
-      x = jnp.ones(3) + jnp.zeros(3)
-      y = jnp.ones(3) + jnp.ones(3)
-
-    self.assertEqual(1, count[0])
-    self.assertAllClose(x, np.ones(3), check_dtypes=False)
-    self.assertAllClose(y, np.ones(3) + np.ones(3), check_dtypes=False)
 
 class CustomJVPTest(jtu.JaxTestCase):
 
@@ -3866,6 +3934,47 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = jnp.cos(3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_closed_over_tracer2(self):
+    def outer(x):
+      @api.custom_vjp
+      def f(y):
+        return x * y
+      def f_fwd(y):
+        return f(y), jnp.cos(y)
+      def f_rev(cos_y, g):
+        return (cos_y * g,)
+      f.defvjp(f_fwd, f_rev)
+      return f
+
+    @api.vmap
+    def g(x):
+      return outer(x)(3.)
+
+    ans = g(np.arange(3.))
+    expected = np.arange(3.) * 3
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_closed_over_tracer3(self):
+    def outer(x):
+      @api.custom_vjp
+      def f(y):
+        return x * y
+      def f_fwd(y):
+        return f(y), (x, jnp.cos(y))
+      def f_rev(res, g):
+        x, cos_y = res
+        return (cos_y * g * x,)
+      f.defvjp(f_fwd, f_rev)
+      return api.grad(f)
+
+    @api.vmap
+    def g(x):
+      return outer(x)(3.)
+
+    ans = g(np.arange(3.))
+    expected = np.cos(3.) * np.arange(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_nondiff_arg_tracer_error(self):
     # This is similar to the old (now skipped) test_nondiff_arg_tracer, except
     # we're testing for the error message that that usage pattern now raises.
@@ -3934,6 +4043,21 @@ class CustomVJPTest(jtu.JaxTestCase):
                 tree_util.tree_structure((1,)))
         ),
         lambda: api.grad(f)(2.))
+
+  def test_vjp_bwd_returns_non_tuple_error(self):
+    @api.custom_vjp
+    def f(x):
+      return x
+
+    def foo_fwd(x):
+      return x, None
+
+    def foo_bwd(_, g):
+      return 2. * g  # Should be a tuple
+
+    f.defvjp(foo_fwd, foo_bwd)
+    with self.assertRaisesRegex(TypeError, "Custom VJP rule .* must produce a tuple"):
+      api.grad(f)(3.)
 
   def test_issue2511(self):
     arr = jnp.ones((5, 2, 2))
@@ -4350,6 +4474,15 @@ class CustomVJPTest(jtu.JaxTestCase):
         api.grad(lambda x: jnp.sum(jnp.sin(x)))(jnp.arange(3.)) * jnp.array([3., 4., 5.]),
         check_dtypes=False)
 
+  def test_custom_gradient_can_return_singleton_value_in_vjp(self):
+    @api.custom_gradient
+    def f(x):
+      return x ** 2, lambda g: g * x
+
+    self.assertAllClose(f(3.), 9., check_dtypes=False)
+    self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
+    self.assertAllClose(api.grad(api.grad(f))(3.), 1., check_dtypes=False)
+
   def test_closure_convert(self):
     def minimize(objective_fn, x0):
       converted_fn, aux_args = api.closure_convert(objective_fn, x0)
@@ -4385,6 +4518,118 @@ class CustomVJPTest(jtu.JaxTestCase):
     g_c, g_x = api.grad(solve, argnums=(0, 1))(c, x)
     self.assertAllClose(g_c, 42. * jnp.ones(2), check_dtypes=False)
     self.assertAllClose(g_x, 17. * jnp.ones(2), check_dtypes=False)
+
+
+class CustomTransposeTest(jtu.JaxTestCase):
+
+  def transpose(self, f, x_example):
+    def transposed(y):
+      x, = api.linear_transpose(f, x_example)(y)
+      return x
+    return transposed
+
+  def test_linear_call(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return t / r
+      return x + api.linear_call(fn, tp, y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), f_ref(x, y))
+
+    f1     = lambda x: f(x, y)
+    f1_ref = lambda x: f_ref(x, y)
+    self.assertAllClose(self.transpose(f1,     x)(x),
+                        self.transpose(f1_ref, x)(x))
+
+  def test_linear_call_incorrect_transpose(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return t / (2. * r)  # nb: not the true transpose
+      return x + api.linear_call(fn, tp, y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), f_ref(x, y))
+
+    f1     = lambda x: f(x, y)
+    f1_ref = lambda x: f_ref(x, 2. * y)  # nb: double the reference divisor
+    self.assertAllClose(self.transpose(f1,     x)(x),
+                        self.transpose(f1_ref, x)(x))
+
+  def test_linear_call_transpose_transpose_transpose(self):
+    def fn(r, x): return x / r
+    def tp(r, t): return t / (2. * r)  # nb: untrue transpose
+    def f_(x, y):
+      return x + api.linear_call(fn, tp, y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    f = lambda x: f_(x, y)
+    ft   = self.transpose(f,   x)
+    ftt  = self.transpose(ft,  x)
+    fttt = self.transpose(ftt, x)
+    self.assertAllClose(ft(x), x + tp(y, x))
+    self.assertAllClose(f(x),  ftt(x))
+    self.assertAllClose(ft(x), fttt(x))
+
+  def test_linear_call_scalar_to_vector(self):
+    def f(c, x):
+      def fn(_, x):
+        return [x, x]
+
+      def tp(_, t):
+        t1, t2 = t
+        return t1 + t2
+
+      return api.linear_call(fn, tp, (), c * x)
+
+    def f_ref(c, x):
+      return [c * x, c * x]
+
+    c, x = 2., 3.
+    t = [4., 5.]
+    self.assertAllClose(f(c, x), f_ref(c, x))
+    self.assertAllClose(self.transpose(partial(f,     c), x)(t),
+                        self.transpose(partial(f_ref, c), x)(t))
+
+  def test_linear_call_nested(self):
+    # identity function with an untrue transpose of 0
+    def id_(x):
+      def f(_, x): return x
+      def t(_, t): return 0.
+      return api.linear_call(f, t, (), x)
+
+    # identity function with an untrue transpose of 7, and where both
+    # forward and transpose have custom transpositions that should
+    # never end up invoked.
+    def f(x):
+      def f_(_, x): return id_(x)
+      def t_(_, t): return id_(7.)
+      return api.linear_call(f_, t_, (), x)
+
+    x = 5.
+    id_t  = self.transpose(id_,  x)
+    id_tt = self.transpose(id_t, x)
+    ft   = self.transpose(f,    x)
+    ftt  = self.transpose(ft,   x)
+    fttt = self.transpose(ftt,  x)
+
+    self.assertAllClose(id_(x),   x)
+    self.assertAllClose(id_t(x),  0.)
+    self.assertAllClose(id_tt(x), x)
+
+    self.assertAllClose(f(x),    x)
+    self.assertAllClose(ft(x),   7.)
+    self.assertAllClose(ftt(x),  x)
+    self.assertAllClose(fttt(x), 7.)
 
 
 class InvertibleADTest(jtu.JaxTestCase):
@@ -4703,7 +4948,7 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     print(gf(a, b))  # doesn't crash
 
 
-class BufferDonationTest(jtu.JaxTestCase):
+class BufferDonationTest(jtu.BufferDonationTestCase):
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_pmap_donate_argnums_invalidates_input(self):
@@ -4723,16 +4968,6 @@ class BufferDonationTest(jtu.JaxTestCase):
     #   pmap_fun(a)
 
     pmap_fun(a)  # doesn't crash
-
-  assertDeleted = lambda self, x: self._assertDeleted(x, True)
-  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
-
-  def _assertDeleted(self, x, deleted):
-    if hasattr(x, "device_buffer"):
-      self.assertEqual(x.device_buffer.is_deleted(), deleted)
-    else:
-      for buffer in x.device_buffers:
-        self.assertEqual(buffer.is_deleted(), deleted)
 
 
 class NamedCallTest(jtu.JaxTestCase):

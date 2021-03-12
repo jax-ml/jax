@@ -77,8 +77,8 @@ Example Usage:
     opt_state = opt_update(step, grads, opt_state)
     return value, opt_state
 
-  for step in range(num_steps):
-    value, opt_state = step(step, opt_state)
+  for i in range(num_steps):
+    value, opt_state = step(i, opt_state)
 """
 
 from typing import Any, Callable, NamedTuple, Tuple, Union

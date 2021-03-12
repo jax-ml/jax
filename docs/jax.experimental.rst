@@ -9,8 +9,11 @@ jax.experimental package
 
     jax.experimental.host_callback
     jax.experimental.loops
+    jax.experimental.maps
     jax.experimental.optimizers
-    jax.experimental.optix
     jax.experimental.stax
 
 .. automodule:: jax.experimental
+
+.. autofunction:: enable_x64
+.. autofunction:: disable_x64

@@ -37,7 +37,6 @@ import jax._src.random
 
 from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex
@@ -156,7 +155,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
       bits64 = jax._src.random._random_bits(key, 64, (3,))
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
     else:
@@ -397,7 +396,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for b in [0.2, 5.]
       for dtype in [np.float64]))  # NOTE: KS test fails with float32
   def testBeta(self, a, b, dtype):
-    if not FLAGS.jax_enable_x64:
+    if not config.x64_enabled:
       raise SkipTest("skip test except on X64")
     key = random.PRNGKey(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
@@ -538,6 +537,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     x = random.poisson(key, np.array([2.0, 20.0]), shape=(3, 2))
     assert x.shape == (3, 2)
+
+  def testPoissonZeros(self):
+    key = random.PRNGKey(0)
+    lam = jnp.concatenate([jnp.zeros(10), 20 * jnp.ones(10)])
+    samples = random.poisson(key, lam, shape=(2, 20))
+    self.assertArraysEqual(samples[:, :10], jnp.zeros_like(samples[:, :10]))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
@@ -728,7 +733,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testIssue756(self):
     key = random.PRNGKey(0)
     w = random.normal(key, ())
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       self.assertEqual(np.result_type(w), np.float64)
     else:
       self.assertEqual(np.result_type(w), np.float32)
@@ -751,7 +756,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Test to ensure consistent random values between JAX versions
     k = random.PRNGKey(0)
 
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
         self.assertAllClose(
             random.randint(k, (3, 3), 0, 8),
             np.array([[7, 2, 6],
@@ -902,6 +907,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       random.choice(key, 5, 2, replace=True)
 
   def test_eval_shape_big_random_array(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("after deleting lazy constants, requires omnistaging")
     def f(x):
       return random.normal(random.PRNGKey(x), (int(1e12),))
     with core.skipping_checks():  # check_jaxpr will materialize array
@@ -917,20 +924,20 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
       {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
       {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
-      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
-      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
+      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
       {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
       {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
-      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
-      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
+      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
       {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
       {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
       {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
       {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
     ]
   ))
   def test_prng_seeds_and_keys(self, seed, type, jit, key):
@@ -959,6 +966,20 @@ class LaxRandomTest(jtu.JaxTestCase):
       random.PRNGKey(seed)
     with self.assertRaises(OverflowError):
       api.jit(random.PRNGKey)(seed)
+
+  def test_random_split_doesnt_device_put_during_tracing(self):
+    raise SkipTest("broken test")  # TODO(mattjj): fix
+
+    if not config.omnistaging_enabled:
+      raise SkipTest("test is omnistaging-specific")
+
+    key = random.PRNGKey(1)
+    with jtu.count_device_put() as count:
+      api.jit(random.split)(key)
+      key, _ = random.split(key, 2)
+    self.assertEqual(count[0], 1)  # 1 for the argument device_put call
+
+
 
 
 if __name__ == "__main__":

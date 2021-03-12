@@ -369,13 +369,13 @@ class LaxVmapTest(jtu.JaxTestCase):
        .format(jtu.format_shape_dtype_string(shape, dtype), pads, bdims),
        "shape": shape, "dtype": dtype, "pads": pads, "bdims": bdims}
       for shape in [(2, 3)]
-      for bdims in all_bdims(shape)
+      for bdims in all_bdims(shape, ())
       for dtype in default_dtypes
       for pads in [[(1, 2, 1), (0, 1, 0)]]))
   def testPad(self, shape, dtype, pads, bdims):
     rng = jtu.rand_small(self.rng())
-    fun = lambda operand: lax.pad(operand, np.array(0, dtype), pads)
-    self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
+    fun = lambda operand, padding: lax.pad(operand, padding, pads)
+    self._CheckBatching(fun, 5, bdims, (shape, ()), (dtype, dtype), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}_bdims={}".format(
@@ -675,7 +675,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     fun = partial(lax.scatter_add, dimension_numbers=dnums)
     self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape, update_shape],
                         [dtype, idxs.dtype, dtype], jtu.rand_default(self.rng()),
-                        rtol={np.float16: 5e-3})
+                        rtol={np.float16: 5e-3, dtypes.bfloat16: 3e-2})
 
   def testShapeUsesBuiltinInt(self):
     x = lax.iota(np.int32, 3) + 1

@@ -23,11 +23,13 @@
 from distutils.util import strtobool
 import functools
 import os
+from typing import Dict
 
 import numpy as np
 
 from ._src import util
-from .config import flags
+from .config import flags, config
+from . import lib
 from .lib import xla_client
 
 from ._src import traceback_util
@@ -37,31 +39,20 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_enable_x64',
                   strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
                   'Enable 64-bit types to be used.')
+# TODO(jblespiau): Remove the `if` when jaxlib 0.1.62 is the minimal version.
+if lib._xla_extension_version >= 5:
+  lib.jax_jit.set_enable_x64_cpp_flag(
+      strtobool(os.getenv('JAX_ENABLE_X64', 'False')))
 
 # bfloat16 support
-bfloat16 = xla_client.bfloat16
-_bfloat16_dtype = np.dtype(bfloat16)
-
-class _bfloat16_finfo(object):
-  bits = 16
-  eps = bfloat16(float.fromhex("0x1p-7"))
-  epsneg = bfloat16(float.fromhex("0x1p-8"))
-  machep = -7
-  negep = -8
-  max = bfloat16(float.fromhex("0x1.FEp127"))
-  min = -max
-  nexp = 8
-  nmant = 7
-  iexp = nexp
-  precision = 2
-  resolution = 10 ** -2
-  tiny = bfloat16(float.fromhex("0x1p-126"))
+bfloat16: type = xla_client.bfloat16
+_bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
 
 bool_ = np.bool_
-int_ = np.int64
-float_ = np.float64
+int_: np.dtype = np.int64  # type: ignore
+float_: np.dtype = np.float64  # type: ignore
 complex_ = np.complex128
 
 # TODO(phawkins): change the above defaults to:
@@ -81,7 +72,7 @@ _dtype_to_32bit_dtype = {
 
 @util.memoize
 def canonicalize_dtype(dtype):
-  """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
+  """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   if isinstance(dtype, str) and dtype == "bfloat16":
     dtype = bfloat16
   try:
@@ -89,19 +80,18 @@ def canonicalize_dtype(dtype):
   except TypeError as e:
     raise TypeError(f'dtype {dtype!r} not understood') from e
 
-  if FLAGS.jax_enable_x64:
+  if config.x64_enabled:
     return dtype
   else:
     return _dtype_to_32bit_dtype.get(dtype, dtype)
 
 
 # Default dtypes corresponding to Python scalars.
-python_scalar_dtypes = {
+python_scalar_dtypes : dict = {
   bool: np.dtype(bool_),
   int: np.dtype(int_),
   float: np.dtype(float_),
   complex: np.dtype(complex_),
-  float0: float0
 }
 
 def scalar_type_of(x):
@@ -128,14 +118,51 @@ def coerce_to_array(x):
 
 iinfo = np.iinfo
 
-def finfo(dtype):
-  # Since NumPy doesn't consider bfloat16 a floating-point type, we have to
-  # provide an alternative implementation of finfo that does so.
-  if ((isinstance(dtype, str) and dtype == "bfloat16") or
-      np.result_type(dtype) == _bfloat16_dtype):
-    return _bfloat16_finfo
-  else:
-    return np.finfo(dtype)
+class finfo(np.finfo):
+  __doc__ = np.finfo.__doc__
+  _finfo_cache: Dict[np.dtype, np.finfo] = {}
+  @staticmethod
+  def _bfloat16_finfo():
+    def float_to_str(f):
+      return "%12.4e" % float(f)
+
+    bfloat16 = _bfloat16_dtype.type
+    tiny = float.fromhex("0x1p-126")
+    resolution = 0.01
+    eps = float.fromhex("0x1p-7")
+    epsneg = float.fromhex("0x1p-8")
+    max = float.fromhex("0x1.FEp127")
+
+    obj = object.__new__(np.finfo)
+    obj.dtype = _bfloat16_dtype
+    obj.bits = 16
+    obj.eps = bfloat16(eps)
+    obj.epsneg = bfloat16(epsneg)
+    obj.machep = -7
+    obj.negep = -8
+    obj.max = bfloat16(max)
+    obj.min = bfloat16(-max)
+    obj.nexp = 8
+    obj.nmant = 7
+    obj.iexp = obj.nexp
+    obj.precision = 2
+    obj.resolution = bfloat16(resolution)
+    obj.tiny = bfloat16(tiny)
+    obj.machar = None  # np.core.getlimits.MachArLike does not support bfloat16.
+
+    obj._str_tiny = float_to_str(tiny)
+    obj._str_max = float_to_str(max)
+    obj._str_epsneg = float_to_str(epsneg)
+    obj._str_eps = float_to_str(eps)
+    obj._str_resolution = float_to_str(resolution)
+    return obj
+
+  def __new__(cls, dtype):
+    if isinstance(dtype, str) and dtype == 'bfloat16' or dtype == _bfloat16_dtype:
+      if _bfloat16_dtype not in cls._finfo_cache:
+        cls._finfo_cache[_bfloat16_dtype] = cls._bfloat16_finfo()
+      return cls._finfo_cache[_bfloat16_dtype]
+    return super().__new__(cls, dtype)
 
 def _issubclass(a, b):
   """Determines if ``a`` is a subclass of ``b``.
@@ -195,7 +222,7 @@ _jax_types = [
   np.dtype('float64'),
   np.dtype('complex64'),
   np.dtype('complex128'),
-] + _weak_types
+] + _weak_types  # type: ignore[operator]
 
 def _jax_type(value):
   """Return the jax type for a value or type."""
@@ -237,7 +264,7 @@ def _make_lattice_upper_bounds():
   return upper_bounds
 _lattice_upper_bounds = _make_lattice_upper_bounds()
 
-@functools.lru_cache(512)
+@functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
 def _least_upper_bound(*nodes):
   # This function computes the least upper bound of a set of nodes N within a partially
   # ordered set defined by the lattice generated above.
@@ -298,10 +325,13 @@ def dtype(x):
     return python_scalar_dtypes[type(x)]
   return np.result_type(x)
 
+def _result_type_raw(*args):
+  if len(args) == 1:
+    return _jax_type(args[0])
+  return _least_upper_bound(*{_jax_type(arg) for arg in args})
+
 def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
-   # TODO(jakevdp): propagate weak_type to the result.
-  if len(args) < 2:
-    return canonicalize_dtype(dtype(args[0]))
-  # TODO(jakevdp): propagate weak_type to the result when necessary.
-  return canonicalize_dtype(_least_upper_bound(*{_jax_type(arg) for arg in args}))
+  if len(args) == 0:
+    raise ValueError("at least one array or dtype is required")
+  return canonicalize_dtype(_result_type_raw(*args))

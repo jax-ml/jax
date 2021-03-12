@@ -32,7 +32,7 @@ from . import api
 from . import core
 from . import dtypes as _dtypes
 from . import lax
-from .config import flags, bool_env
+from .config import flags, bool_env, config
 from ._src.util import partial, prod
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
@@ -124,13 +124,13 @@ default_gradient_tolerance = {
   np.dtype(np.complex128): 1e-5,
 }
 
-def _assert_numpy_allclose(a, b, atol=None, rtol=None):
+def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
   a = a.astype(np.float32) if a.dtype == _dtypes.bfloat16 else a
   b = b.astype(np.float32) if b.dtype == _dtypes.bfloat16 else b
   kw = {}
   if atol: kw["atol"] = atol
   if rtol: kw["rtol"] = rtol
-  np.testing.assert_allclose(a, b, **kw)
+  np.testing.assert_allclose(a, b, **kw, err_msg=err_msg)
 
 def tolerance(dtype, tol=None):
   tol = {} if tol is None else tol
@@ -155,24 +155,25 @@ def join_tolerance(tol1, tol2):
     out[k] = max(v, tol1.get(k, 0))
   return out
 
-def _assert_numpy_close(a, b, atol=None, rtol=None):
+def _assert_numpy_close(a, b, atol=None, rtol=None, err_msg=''):
   assert a.shape == b.shape
   atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))
   rtol = max(tolerance(a.dtype, rtol), tolerance(b.dtype, rtol))
-  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
+  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
+                         err_msg=err_msg)
 
+def check_eq(xs, ys, err_msg=''):
+  assert_close = partial(_assert_numpy_allclose, err_msg=err_msg)
+  tree_all(tree_multimap(assert_close, xs, ys))
 
-def check_eq(xs, ys):
-  tree_all(tree_multimap(_assert_numpy_allclose, xs, ys))
-
-
-def check_close(xs, ys, atol=None, rtol=None):
-  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol)
+def check_close(xs, ys, atol=None, rtol=None, err_msg=''):
+  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol,
+                         err_msg=err_msg)
   tree_all(tree_multimap(assert_close, xs, ys))
 
 def _check_dtypes_match(xs, ys):
   def _assert_dtypes_match(x, y):
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       assert _dtype(x) == _dtype(y)
     else:
       assert (_dtypes.canonicalize_dtype(_dtype(x)) ==
@@ -229,7 +230,8 @@ def _merge_tolerance(tol, default):
     out[np.dtype(k)] = v
   return out
 
-def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
+
+def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   rng = np.random.RandomState(0)
@@ -242,24 +244,29 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
   # In principle we should expect exact equality of v_out and v_out_expected,
   # but due to nondeterminism especially on GPU (e.g., due to convolution
   # autotuning) we only require "close".
-  check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
-  check_close(t_out, t_out_expected, atol=atol, rtol=rtol)
+  check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} primal' if err_msg else 'primal')
+  check_close(t_out, t_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} tangent' if err_msg else 'tangent')
 
 
-def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
+def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   _rand_like = partial(rand_like, np.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)
-  check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
+  check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} primal' if err_msg else 'primal')
   tangent = tree_map(_rand_like, args)
   tangent_out = numerical_jvp(f, args, tangent, eps=eps)
   cotangent = tree_map(_rand_like, v_out)
   cotangent_out = conj(vjpfun(conj(cotangent)))
   ip = inner_prod(tangent, cotangent_out)
   ip_expected = inner_prod(tangent_out, cotangent)
-  check_close(ip, ip_expected, atol=atol, rtol=rtol)
+  check_close(ip, ip_expected, atol=atol, rtol=rtol,
+              err_msg=(f'{err_msg} cotangent projection'
+                       if err_msg else 'cotangent projection'))
 
 
 def check_grads(f, args, order,
@@ -288,21 +295,39 @@ def check_grads(f, args, order,
   _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
   _check_vjp = partial(check_vjp, atol=atol, rtol=rtol, eps=eps)
 
-  def _check_grads(f, args, order):
+  def _check_grads(f, args, order, err_msg=''):
     if "fwd" in modes:
-      _check_jvp(f, partial(api.jvp, f), args)
+      fwd_msg = f'JVP of {err_msg}' if err_msg else 'JVP'
+      _check_jvp(f, partial(api.jvp, f), args, err_msg=fwd_msg)
       if order > 1:
-        _check_grads(partial(api.jvp, f), (args, args), order - 1)
+        _check_grads(partial(api.jvp, f), (args, args), order - 1, fwd_msg)
 
     if "rev" in modes:
-      _check_vjp(f, partial(api.vjp, f), args)
+      rev_msg = f'VJP of {err_msg}' if err_msg else 'VJP'
+      _check_vjp(f, partial(api.vjp, f), args, err_msg=rev_msg)
       if order > 1:
         def f_vjp(*args):
           out_primal_py, vjp_py = api.vjp(f, *args)
           return vjp_py(out_primal_py)
-        _check_grads(f_vjp, args, order - 1)
+        _check_grads(f_vjp, args, order - 1, rev_msg)
 
   _check_grads(f, args, order)
+
+
+@contextmanager
+def count_device_put():
+  device_put = xla.device_put
+  count = [0]
+
+  def device_put_and_count(*args, **kwargs):
+    count[0] += 1
+    return device_put(*args, **kwargs)
+
+  xla.device_put = device_put_and_count
+  try:
+    yield count
+  finally:
+    xla.device_put = device_put
 
 
 @contextmanager
@@ -373,7 +398,7 @@ def supported_dtypes():
              np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128}
-  if not FLAGS.jax_enable_x64:
+  if not config.x64_enabled:
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
 
@@ -452,6 +477,8 @@ def _dims_of_shape(shape):
     return shape
   elif isinstance(shape, ScalarShape):
     return ()
+  elif np.ndim(shape) == 0:
+    return (shape,)
   else:
     raise TypeError(type(shape))
 
@@ -466,6 +493,9 @@ def _cast_to_shape(value, shape, dtype):
     return np.asarray(value).item()
   elif type(shape) in (list, tuple):
     assert np.shape(value) == tuple(shape)
+    return value
+  elif np.ndim(shape) == 0:
+    assert np.shape(value) == (shape,)
     return value
   else:
     raise TypeError(type(shape))
@@ -817,7 +847,7 @@ class JaxTestCase(parameterized.TestCase):
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
-    if not FLAGS.jax_enable_x64 and canonicalize_dtypes:
+    if not config.x64_enabled and canonicalize_dtypes:
       self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x)),
                        _dtypes.canonicalize_dtype(_dtype(y)))
     else:
@@ -861,7 +891,7 @@ class JaxTestCase(parameterized.TestCase):
                               msg="Found\n{}\nExpecting\n{}".format(what, expected))
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True,
-                       rtol=None, atol=None):
+                       rtol=None, atol=None, check_cache_misses=True):
     """Helper method for running JAX compilation and allclose assertions."""
     args = args_maker()
 
@@ -878,10 +908,11 @@ class JaxTestCase(parameterized.TestCase):
 
     cache_misses = xla.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
-    self.assertEqual(
-        cache_misses, xla.xla_primitive_callable.cache_info().misses,
-        "Compilation detected during second call of {} in op-by-op "
-        "mode.".format(fun))
+    if check_cache_misses:
+      self.assertEqual(
+          cache_misses, xla.xla_primitive_callable.cache_info().misses,
+          "Compilation detected during second call of {} in op-by-op "
+          "mode.".format(fun))
 
     cfun = api.jit(wrapped_fun)
     python_should_be_executing = True
@@ -915,6 +946,18 @@ class JaxTestCase(parameterized.TestCase):
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol,
                         canonicalize_dtypes=canonicalize_dtypes)
+
+
+class BufferDonationTestCase(JaxTestCase):
+  assertDeleted = lambda self, x: self._assertDeleted(x, True)
+  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
+
+  def _assertDeleted(self, x, deleted):
+    if hasattr(x, "device_buffer"):
+      self.assertEqual(x.device_buffer.is_deleted(), deleted)
+    else:
+      for buffer in x.device_buffers:
+        self.assertEqual(buffer.is_deleted(), deleted)
 
 
 @contextmanager

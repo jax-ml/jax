@@ -34,7 +34,6 @@ from jax._src import util
 
 from jax.config import config
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 # We disable the whitespace continuation check in this file because otherwise it
 # makes the test name formatting unwieldy.
@@ -54,7 +53,7 @@ IndexSpec = collections.namedtuple("IndexTest", ["shape", "indexer"])
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   # TODO(mattjj,dougalm): add higher-order check
-  default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
+  default_tol = 1e-6 if config.x64_enabled else 1e-2
   atol = atol or default_tol
   rtol = rtol or default_tol
   eps = eps or default_tol
@@ -1052,14 +1051,14 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     # that will be wrapped with the `mod`.
     segment_ids = jnp.array([0, 4, 8, 1, 2, -6, -1, 3])
     ans = ops.segment_sum(data, segment_ids, num_segments=4)
-    expected = jnp.array([13, 2, 7, 4])
+    expected = jnp.array([5, 2, 3, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     # test with negative segment ids and without without explicit num_segments
     # such as num_segments is defined by the smaller index.
     segment_ids = jnp.array([3, 3, 3, 4, 5, 5, -7, -6])
     ans = ops.segment_sum(data, segment_ids)
-    expected = jnp.array([1, 3, 0, 13, 2, 7, 0])
+    expected = jnp.array([0, 0, 0, 13, 2, 7])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testIndexDtypeError(self):

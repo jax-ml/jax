@@ -35,7 +35,7 @@ from jax._src.numpy.lax_numpy import (
     empty_like, equal, euler_gamma, exp, exp2, expand_dims, expm1, extract, eye,
     fabs, finfo, fix, flatnonzero, flexible, flip, fliplr, flipud, float16, float32,
     float64, float_, float_power, floating, floor, floor_divide, fmax, fmin,
-    fmod, frexp, full, full_like, function, gcd, geomspace, gradient, greater,
+    fmod, frexp, full, full_like, gcd, geomspace, gradient, greater,
     greater_equal, hamming, hanning, heaviside, histogram, histogram_bin_edges, histogram2d, histogramdd,
     hsplit, hstack, hypot, i0, identity, iinfo, imag,
     indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer, 
@@ -51,16 +51,16 @@ from jax._src.numpy.lax_numpy import (
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,
     negative, newaxis, nextafter, nonzero, not_equal, number, numpy_version,
     object_, ones, ones_like, operator_name, outer, packbits, pad, percentile,
-    pi, piecewise, polyadd, polyder, polymul, polysub, polyval, positive, power,
+    pi, piecewise, polyadd, polyder, polyint, polymul, polysub, polyval, positive, power,
     prod, product, promote_types, ptp, quantile,
     rad2deg, radians, ravel, ravel_multi_index, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
-    save, savez, searchsorted, select, set_printoptions, setdiff1d, shape, sign, signbit,
+    save, savez, searchsorted, select, set_printoptions, setdiff1d, setxor1d, shape, sign, signbit,
     signedinteger, sin, sinc, single, sinh, size, sometrue, sort, sort_complex, split, sqrt,
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,
     trim_zeros, triu, triu_indices, triu_indices_from, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
-    unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
+    union1d, unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
     vstack, where, zeros, zeros_like, _NOT_IMPLEMENTED)
 
 from jax._src.numpy.polynomial import roots

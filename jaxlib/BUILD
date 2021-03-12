@@ -14,12 +14,16 @@
 
 # JAX is Autograd and XLA
 
-load("@org_tensorflow//tensorflow/core/platform/default:build_config.bzl", "pyx_library")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
-load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda_is_configured")
-load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
-load("@flatbuffers//:build_defs.bzl", "flatbuffer_cc_library", "flatbuffer_py_library")
+load(
+    "//jax:jax.bzl",
+    "cuda_library",
+    "flatbuffer_cc_library",
+    "flatbuffer_py_library",
+    "if_cuda_is_configured",
+    "if_rocm_is_configured",
+    "pybind_extension",
+    "pyx_library",
+)
 
 licenses(["notice"])
 
@@ -62,7 +66,8 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -221,6 +226,7 @@ pybind_extension(
     ],
 )
 
+# AMD GPU support (ROCm)
 pybind_extension(
     name = "rocblas_kernels",
     srcs = ["rocblas.cc"],
@@ -243,7 +249,9 @@ pybind_extension(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:rocblas",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocsolver",
         "@pybind11",
     ],
 )

@@ -1,15 +1,41 @@
-# JAX to TensorFlow converter (jax2tf)
+# JAX and TensorFlow interoperation (jax2tf/call_tf)
 
-This package provides an experimental JAX converter that can take a function
+This package provides experimental support for interoperation between JAX and TensorFlow.
+There are two interoperation directions: 
+
+- `jax2tf.convert`: using JAX functions in a TensorFlow context, e.g., 
+for eager or graph execution, or for saving as a SavedModel; and 
+- `call_tf`: using TensorFlow  functions in a JAX context, e.g., to use a
+TensorFlow library or a SavedModel. 
+
+The `jax2tf.convert` mechanism can wrap a function
 written in JAX, possibly including JAX transformations, and turn it into
 a function that uses only TensorFlow operations. The converted function
-can be used in a TensorFlow context and will behave as if it was written in TensorFlow.
+can be called or traced from TensorFlow and will behave as if it was written in TensorFlow.
 In practice this means that you can take some code written in JAX and execute it using
 TensorFlow eager mode, or stage it out as a TensorFlow graph, even save it
-as a SavedModel for use with TensorFlow tools such as serving stack,
+as a SavedModel for archival, or for use with TensorFlow tools such as serving stack,
 or TensorFlow Hub.
 
-We describe below some general concepts and capabilities.
+This package also contains the `call_tf` mechanism to call TensorFlow functions
+from JAX. These functions can be called in JAX's op-by-op execution mode,
+in which case the callee is executed in eager mode, or in JAX's jit (staged) context,
+in which case the callee is compiled to XLA and embedded in JAX's staged XLA. 
+
+Both interoperation directions rely on the ability of 
+TensorFlow to use the XLA compiler (`tf.function(jit_compile=True)`). For the 
+`jax2tf.convert` direction the JIT compilation of the resulting TensorFlow code ensures
+that the performance characteristics of the code match those of the JAX source.
+For the `call_tf` direction, JIT compilation is an essential part of the implementation 
+mechanism. Only TensorFlow functions that can be JIT-compiled can be called from 
+JAX. Since the TensorFlow functions that are produced by `jax2tf.convert` can 
+be JIT-compiled by design, we can round-trip from JAX to TensorFlow 
+(e.g., a SavedModel) and back. 
+
+We describe below some general concepts and capabilities, first for 
+`jax2tf.convert` and [later](#calling-tensorflow-functions-from-jax)
+for `call_tf`.
+
 More involved examples, including using jax2tf with
 Flax models and their use with TensorFlow Hub and Keras, are described in the
 [examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
@@ -74,7 +100,7 @@ Just like for regular TensorFlow functions, it is possible to include in the
 SavedModel multiple versions of a function for different input shapes, by
 "warming up" the function on different input shapes:
 
-```
+```python
 my_model.f = tf.function(jax2tf.convert(f_jax), autograph=False)
 my_model.f(tf.ones([1, 28, 28]))  # a batch size of 1
 my_model.f(tf.ones([16, 28, 28]))  # a batch size of 16
@@ -126,7 +152,7 @@ for CUDA. One must be mindful to install a version of CUDA that is compatible
 with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
 [TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
 
-As of today, the tests are run using `tf_nightly==2.5.0-dev20210107`.
+As of today, the tests are run using `tf_nightly==2.5.0-dev20210223`.
 
 ## Caveats
 
@@ -230,3 +256,123 @@ during conversion we try to generate one TensorFlow op for one JAX primitive.
 We expect that the lowering that XLA does is similar to that done by JAX
 before conversion. (This is a hypothesis, we have not verified it extensively.)
 
+# Calling TensorFlow functions from JAX
+
+The function ```call_tf``` allows JAX to call
+TensorFlow functions. These functions can be called anywhere in a JAX
+computation, including in staging contexts ``jax.jit``, ``jax.pmap``, ``jax.xmap``,
+or inside JAX's control-flow primitives. In non-staging contexts, 
+the TensorFlow function is called in eager mode.
+For now, only reverse-mode autodiff is supported for these functions
+(no forward-mode autodiff, nor ``vmap``).
+
+For example, to computing ``sin(cos(1.))`` with ``sin`` done in JAX and ``cos`` in TF:
+
+```python
+  from jax.experimental import jax2tf
+
+  # This is a TF function. It will be called with TensorFlow-compatible arguments,
+  # such as `numpy.ndarray`, `tf.Tensor` or `tf.Variable`, or a pytree thereof.
+  # It should return a similar result. This function will be called using
+  # TensorFlow eager mode if called from outside JAX staged contexts (`jit`,
+  # `pmap`, or control-flow primitives), and will be called using TensorFlow
+  # graph mode otherwise. In the latter case, the function must be compileable
+  # with XLA (`tf.function(func, jit_compile=True)`)
+  def cos_tf(x):
+    return tf.math.cos(x)
+
+  # Compute cos with TF and sin with JAX
+  def cos_tf_sin_jax(x):
+    return jax.numpy.sin(jax2tf.call_tf(cos_tf)(x))
+
+  # Calls `cos_tf` in TF eager mode
+  x = np.float32(1.)
+  cos_tf_sin_jax(x)
+
+  # Compiles `cos_tf` using TF and embeds the XLA computation into the JAX
+  # XLA computation (containing `sin`). The XLA compiler may even be able to
+  # fuse through JAX-TF computations.
+  jax.jit(cos_tf_sin_jax)(x)
+
+  # Uses TF gradient for `cos_tf` and JAX gradient for `sin`
+  jax.grad(cos_tf_sin_jax)(x)
+```
+
+If you inspect the generated HLO for ``cos_tf_sin_jax`` you will see that the
+main JAX computation (``ENTRY xla_computation_cos_tf_sin_jax``) makes a call to
+the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_tf``:
+
+```
+    HloModule xla_computation_cos_tf_sin_jax.18
+
+    a_inference_cos_tf_68__.4 {
+      arg0.5 = f32[] parameter(0), parameter_replication={false}
+      reshape.6 = f32[] reshape(arg0.5)
+      cosine.7 = f32[] cosine(reshape.6)
+      reshape.8 = f32[] reshape(cosine.7)
+      tuple.9 = (f32[]) tuple(reshape.8)
+      ROOT get-tuple-element.10 = f32[] get-tuple-element(tuple.9), index=0
+    }
+
+    ENTRY xla_computation_cos_tf_sin_jax.18 {
+      constant.2 = pred[] constant(false)
+      constant.3 = pred[] constant(false)
+      parameter.1 = f32[] parameter(0)
+      call.11 = f32[] call(parameter.1), to_apply=a_inference_cos_tf_68__.4
+      tuple.12 = (f32[]) tuple(call.11)
+      get-tuple-element.13 = f32[] get-tuple-element(tuple.12), index=0
+      tuple.14 = (f32[]) tuple(get-tuple-element.13)
+      get-tuple-element.15 = f32[] get-tuple-element(tuple.14), index=0
+      sine.16 = f32[] sine(get-tuple-element.15)
+      ROOT tuple.17 = (f32[]) tuple(sine.16)
+    }
+
+```
+
+## Notes:
+
+  * The TF function must be compileable (`tf.function(func, jit_compile=True`)
+    when used in a JAX staging context. 
+  * All the metadata inserted by TF during tracing and compilation, e.g.,
+    source location information and op names, is carried through to the
+    JAX XLA computation.
+  * The TF custom gradients are respected, since it is TF that generates the
+    gradient computation.
+  * In op-by-op mode, when we call TensorFlow in eager mode, we use 
+    DLPack to try to avoid copying the data. This works for CPU (for
+    DeviceArray data or for np.ndarray that are aligned on 16-byte
+    boundaries) and on GPU (for DeviceArray). 
+    The zero-copy does not yet work on TPU.   
+  * ``call_tf`` works best with pure TF functions that do not capture
+    ``tf.Variable``s or tensors from the environment, and all such
+    context is passed explicitly through arguments, and if variables
+    are modified, the resulting values are passed out through results.
+    There is a best-effort mechanism that can handle these situations,
+    except in the case of a function that modifies ``tf.Variable``s
+    and is used in a JAX jitted context. Calling the ``inpure_func_tf``
+    will give an error:
+
+```python
+       var1 = tf.Variable(1.)
+       def impure_func_tf(x):
+         var1.write(11.)  # BAD: should not write to variables
+         return x + var1
+       jax2tf.call_tf(impure_func_tf)(tf.constant(2.))  # Works in eager mode
+       jax.jit(jax2tf.call_tf(impure_func_tf))(tf.constant(2.))  # Fails in jit mode
+```
+
+   The error can be avoided by passing the variable explicitly:
+
+```python
+       def pure_func_tf(x, var1)
+          new_var1 = 11.
+          return x + new_var1, new_var1
+```
+    
+   This use case is likely to be revisited. 
+
+## TODO
+
+  * Ensure that there is no array copy through the host when running in eager
+    mode (JAX op-by-op).
+  * Show how use ``call_tf`` to load a SavedModel into JAX.   

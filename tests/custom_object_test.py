@@ -18,7 +18,7 @@ import numpy as np
 
 from jax import test_util as jtu
 import jax.numpy as jnp
-from jax import core, jit, lax, lazy, make_jaxpr
+from jax import core, jit, lax, make_jaxpr
 from jax.interpreters import xla
 from jax.lib import xla_client
 xops = xla_client.ops
@@ -59,12 +59,34 @@ class AbstractSparseArray(core.ShapedArray):
   __slots__ = ['index_dtype', 'nnz', 'data_aval', 'indices_aval']
   _num_buffers = 2
 
-  def __init__(self, shape, dtype, index_dtype, nnz):
+  def __init__(self, shape, dtype, index_dtype, nnz, weak_type=False,
+               named_shape={}):
     super(AbstractSparseArray, self).__init__(shape, dtype)
     self.index_dtype = index_dtype
     self.nnz = nnz
-    self.data_aval = core.ShapedArray((nnz,), dtype)
-    self.indices_aval = core.ShapedArray((nnz, len(shape)), index_dtype)
+    self.data_aval = core.ShapedArray((nnz,), dtype, weak_type, named_shape)
+    self.indices_aval = core.ShapedArray((nnz, len(shape)), index_dtype,
+                                         named_shape)
+
+  def update(self, shape=None, dtype=None, index_dtype=None, nnz=None,
+             weak_type=None, named_shape=None):
+    if shape is None:
+      shape = self.shape
+    if dtype is None:
+      dtype = self.dtype
+    if index_dtype is None:
+      index_dtype = self.dtype
+    if nnz is None:
+      nnz = self.nnz
+    if weak_type is None:
+      weak_type = self.weak_type
+    if named_shape is None:
+      named_shape = self.named_shape
+    return AbstractSparseArray(
+        shape, dtype, index_dtype, nnz, weak_type, named_shape)
+
+  def strip_weak_type(self):
+    return self
 
   @core.aval_property
   def data(self):
@@ -79,8 +101,8 @@ class ConcreteSparseArray(AbstractSparseArray):
 
 def sparse_array_result_handler(device, aval):
   def build_sparse_array(data_buf, indices_buf):
-    data = xla.make_device_array(aval.data_aval, device, lazy.array(aval.data_aval.shape), data_buf)
-    indices = xla.make_device_array(aval.indices_aval, device, lazy.array(aval.indices_aval.shape), indices_buf)
+    data = xla.make_device_array(aval.data_aval, device, data_buf)
+    indices = xla.make_device_array(aval.indices_aval, device, indices_buf)
     return SparseArray(aval, data, indices)
   return build_sparse_array
 

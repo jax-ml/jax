@@ -13,37 +13,18 @@ on:
 jobs:
   lint_and_typecheck:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [3.7]
-
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip
-        echo "::set-output name=dir::$(pip cache dir)"
-    - name: pip cache
-      uses: actions/cache@v2
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-    - name: Install dependencies
-      run: |
-        pip install -r build/test-requirements.txt
-    - name: Lint with flake8
-      run: |
-        flake8 .
-    - name: Type check with mypy
-      run: |
-        mypy jax
+      - name: Cancel previous
+        uses: styfle/cancel-workflow-action@0.8.0
+        with:
+          access_token: ${{ github.token }}
+        if: ${{github.ref != 'refs/head/master'}}
+      - uses: actions/checkout@v2
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+      - uses: pre-commit/action@v2.0.0
 
   build:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
@@ -58,21 +39,22 @@ jobs:
             enable-omnistaging: 1
             package-overrides: "none"
             num_generated_cases: 25
-          - name-prefix: "with numpy-dispatch"
-            python-version: 3.7
-            os: ubuntu-latest
-            enable-x64: 1
-            enable-omnistaging: 1
-            # Test experimental NumPy dispatch
-            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
-            num_generated_cases: 10
-          - name-prefix: "with internal numpy"
+# TODO: re-enable this for numpy 1.20
+#          - name-prefix: "with numpy-dispatch"
+#            python-version: 3.7
+#            os: ubuntu-latest
+#            enable-x64: 1
+#            enable-omnistaging: 1
+#            # Test experimental NumPy dispatch
+#            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
+#            num_generated_cases: 10
+          - name-prefix: "with internal numpy/scipy"
             python-version: 3.6
             os: ubuntu-latest
             enable-x64: 1
             enable-omnistaging: 1
             # Test with numpy version that matches Google-internal version
-            package-overrides: "numpy==1.16.4"
+            package-overrides: "numpy==1.16.4 scipy==1.2.1"
             num_generated_cases: 10
           - name-prefix: "without omnistaging"
             python-version: 3.7
@@ -82,6 +64,11 @@ jobs:
             package-overrides: "none"
             num_generated_cases: 8
     steps:
+    - name: Cancel previous
+      uses: styfle/cancel-workflow-action@0.7.0
+      with:
+        access_token: ${{ github.token }}
+      if: ${{github.ref != 'refs/head/master'}}
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v2
@@ -125,6 +112,11 @@ jobs:
       matrix:
         python-version: [3.7]
     steps:
+    - name: Cancel previous
+      uses: styfle/cancel-workflow-action@0.7.0
+      with:
+        access_token: ${{ github.token }}
+      if: ${{github.ref != 'refs/head/master'}}
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v2
@@ -144,9 +136,8 @@ jobs:
           ${{ runner.os }}-pip-
     - name: Install dependencies
       run: |
-        sudo apt install -y pandoc
         pip install -r docs/requirements.txt
     - name: Test documentation
       run: |
         pytest -n 1 docs
-        pytest -n 1 --doctest-modules jax/api.py
+        pytest -n 1 --doctest-modules jax/api.py jax/_src/errors.py

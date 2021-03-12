@@ -18,7 +18,7 @@ from functools import partial
 import numpy as np
 
 from jax.api import jit, linear_transpose, ShapeDtypeStruct
-from jax.core import Primitive, ShapedArray
+from jax.core import Primitive
 from jax.interpreters import xla
 from jax._src.util import prod
 from jax import dtypes, lax
@@ -73,7 +73,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
   else:
     shape = x.shape
     dtype = x.dtype
-  return ShapedArray(shape, dtype)
+  return x.update(shape=shape, dtype=dtype)
 
 def fft_translation_rule(c, x, fft_type, fft_lengths):
   return xops.Fft(x, fft_type, fft_lengths)

@@ -23,7 +23,7 @@ import inspect
 import itertools
 import operator
 import os
-from typing import Any, Callable, Sequence, TypeVar
+from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
 
@@ -44,6 +44,7 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
+from jax._src.traceback_util import api_boundary
 from jax._src.util import (partial, unzip2, unzip3, unzip4, safe_map, safe_zip,
                            split_list, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
@@ -108,12 +109,6 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
 def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
-def _disable_jit_impl(prim, interp, *args, **kwargs):
-  if jax.api._jit_is_disabled():
-    return interp(*args, **kwargs)
-  else:
-    return xla.apply_primitive(prim, *args, **kwargs)
-
 def _typecheck_param(prim, param, name, msg_required, pred):
   msg = (f'invalid {prim} param {name} of type {type(param).__name__}, '
          f'{msg_required} required:')
@@ -143,6 +138,7 @@ def _fori_scan_body_fun(body_fun):
     return (lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)), None
   return scanned_fun
 
+@api_boundary
 def fori_loop(lower, upper, body_fun, init_val):
   """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
 
@@ -209,6 +205,7 @@ def fori_loop(lower, upper, body_fun, init_val):
   return result
 
 
+@api_boundary
 def while_loop(cond_fun: Callable[[T], bool],
                body_fun: Callable[[T], T],
                init_val: T) -> T:
@@ -274,7 +271,9 @@ def while_loop(cond_fun: Callable[[T], bool],
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals[0].strip_weak_type() != ShapedArray((), np.bool_):
+    pred_aval = cond_jaxpr.out_avals[0]
+    if (not isinstance(pred_aval, ShapedArray)
+        or pred_aval.strip_weak_type().strip_named_shape() != ShapedArray((), np.bool_)):
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
     return init_vals, init_avals, body_jaxpr, in_tree, cond_jaxpr, cond_consts, body_consts, body_tree
@@ -555,6 +554,7 @@ batching.initial_style_batchers[while_p] = _while_loop_batching_rule
 
 ### cond and switch
 
+@api_boundary
 def switch(index, branches: Sequence[Callable], operand):
   """Apply exactly one of ``branches`` given by ``index``.
 
@@ -566,7 +566,7 @@ def switch(index, branches: Sequence[Callable], operand):
       index = clamp(0, index, len(branches) - 1)
       return branches[index](operand)
 
-  Arguments:
+  Args:
     index: Integer scalar type, indicating which branch function to apply.
     branches: Sequence of functions (A -> B) to be applied based on `index`.
     operand: Operand (A) input to whichever branch is applied.
@@ -619,7 +619,7 @@ def switch(index, branches: Sequence[Callable], operand):
   return tree_unflatten(out_trees[0], out)
 
 
-def cond(*args, **kwargs):
+def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   ``cond()`` has equivalent semantics to this Python implementation::
@@ -643,7 +643,7 @@ def cond(*args, **kwargs):
         operand=None)
 
 
-  Arguments:
+  Args:
     pred: Boolean scalar type, indicating which branch function to apply.
     true_fun: Function (A -> B), to be applied if ``pred`` is True.
     false_fun: Function (A -> B), to be applied if ``pred`` is False.
@@ -657,20 +657,11 @@ def cond(*args, **kwargs):
     pytree (nested Python tuple/list/dict) thereof.
   """
 
-  # detect an attempt to call the former, deprecated cond
-  try:
-    ba = inspect.signature(_cond_with_per_branch_args).bind(*args, **kwargs)
-  except TypeError:
-    pass
-  else:
-    return _cond_with_per_branch_args(*ba.args)
-
-  return _cond(*args, **kwargs)
-
-def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
-  if len(np.shape(pred)) != 0:
+  if isinstance(pred, Sequence) or np.ndim(pred) != 0:
     raise TypeError(
-        f"Pred must be a scalar, got {pred} of shape {np.shape(pred)}.")
+        f"Pred must be a scalar, got {pred} of " +
+        (f"type {type(pred)}" if isinstance(pred, Sequence)
+         else f"shape {np.shape(pred)}."))
 
   try:
     pred_dtype = dtypes.result_type(pred)
@@ -710,6 +701,19 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
       index, *consts, *ops,
       branches=(false_jaxpr, true_jaxpr), linear=linear)
   return tree_unflatten(out_tree, out)
+
+@api_boundary
+@functools.wraps(_cond)
+def cond(*args, **kwargs):
+  # detect an attempt to call the former, deprecated cond
+  try:
+    ba = inspect.signature(_cond_with_per_branch_args).bind(*args, **kwargs)
+  except TypeError:
+    pass
+  else:
+    return _cond_with_per_branch_args(*ba.args)
+
+  return _cond(*args, **kwargs)
 
 def _cond_with_per_branch_args(pred,
                                true_operand, true_fun: Callable,
@@ -758,47 +762,58 @@ def _select_tree(indices, branch_vals):
   assert len(branch_vals) > 0
   if len(branch_vals) == 1:
     return branch_vals[0]
-  mid = len(branch_vals) // 2
-  mid = np.array(mid, dtypes.canonicalize_dtype(lax.dtype(indices)))
-  return lax.select(lax.lt(indices, mid),
-                    _select_tree(indices, branch_vals[:mid]),
-                    _select_tree(indices - mid, branch_vals[mid:]))
+  mid = lax._const(indices, len(branch_vals) // 2)
+  return _bcast_select(lax.lt(indices, mid),
+                       _select_tree(indices, branch_vals[:mid]),
+                       _select_tree(indices - mid, branch_vals[mid:]))
 
-def _cond_index_bcast_and_select_tree(indices, branch_vals):
-  if all(core.get_aval(x) is core.abstract_unit for x in branch_vals):
-    return branch_vals[0]
-  else:
-    bcast_indices = lax.broadcast_in_dim(
-        indices, np.shape(branch_vals[0]), list(range(np.ndim(indices))))
-    return _select_tree(bcast_indices, branch_vals)
+def _bcast_select(pred, on_true, on_false):
+  if np.ndim(pred) != np.ndim(on_true):
+    idx = list(range(np.ndim(pred)))
+    pred = lax.broadcast_in_dim(pred, np.shape(on_true), idx)
+  return lax.select(pred, on_true, on_false)
 
 def _cond_batching_rule(args, dims, axis_name, branches, linear):
-  # TODO: maybe avoid moving arg axes to front if we're promoting to select?
   size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
-  args = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
-          else x for x, d in zip(args, dims)]
-  orig_bat = [d is not batching.not_mapped for d in dims]
-  del dims
   index, *ops = args
-  index_bat, *bat = orig_bat
+  index_dim, *op_dims = dims
 
-  branches_out_bat = [batching.batch_jaxpr(jaxpr, size, bat, False, axis_name)[1]
-                      for jaxpr in branches]
-  out_bat = [any(bat) for bat in zip(*branches_out_bat)]
+  if index_dim is not batching.not_mapped:
+    # Convert to a lax.select. While we could get away with not broadcasting
+    # some operands yet, because all outputs must be broadcast together anyway
+    # for the select we broadcast the input operands for simplicity and leave
+    # optimizations to XLA.
+    # TODO(mattjj,frostig): assumes branches are side-effect-free, revise!
+    index, *ops = [batching.bdim_at_front(x, d, size) for x, d in zip(args, dims)]
 
-  branches_batched = tuple(batching.batch_jaxpr(jaxpr, size, bat, out_bat, axis_name)[0]
-                           for jaxpr in branches)
+    branches_batched = [
+        batching.batch_jaxpr(jaxpr, size, [True] * len(ops), True, axis_name)[0]
+        for jaxpr in branches]
 
-  if index_bat:
     branch_outs = []
-    for jaxpr in branches_batched:
-      out = core.jaxpr_as_fun(jaxpr)(*ops)
-      out = [batching.broadcast(x, size, 0) if not b else x
-             for x, b in zip(out, out_bat)]
-      branch_outs.append(out)
-    return [_cond_index_bcast_and_select_tree(index, outs)
-            for outs in zip(*branch_outs)], [0] * len(branch_outs[0])
+    for i, jaxpr in enumerate(branches_batched):
+      # Perform a select on the inputs for safety of reverse-mode autodiff; see
+      # https://github.com/google/jax/issues/1052
+      ops_ = [_bcast_select(lax.eq(index, lax._const(index, i)),
+                            x, lax.stop_gradient(x))
+              if x is not core.unit else x for x in ops]
+      branch_outs.append(core.jaxpr_as_fun(jaxpr)(*ops_))
+    out = [_select_tree(index, outs) if outs[0] is not core.unit else outs[0]
+           for outs in zip(*branch_outs)]
+    return out, [0] * len(branch_outs[0])
   else:
+    ops_bat = [d is not batching.not_mapped for d in op_dims]
+    ops = [batching.moveaxis(x, d, 0) if b else x
+           for b, x, d in zip(ops_bat, ops, op_dims)]
+
+    branches_out_bat = [
+        batching.batch_jaxpr(jaxpr, size, ops_bat, False, axis_name)[1]
+        for jaxpr in branches]
+    out_bat = [any(bat) for bat in zip(*branches_out_bat)]
+    branches_batched = tuple(
+        batching.batch_jaxpr(jaxpr, size, ops_bat, out_bat, axis_name)[0]
+        for jaxpr in branches)
+
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
     out = cond_p.bind(
         index, *ops, branches=branches_batched, linear=linear)
@@ -1120,7 +1135,17 @@ core.custom_typechecks[cond_p] = _cond_typecheck
 
 ### scan
 
-def scan(f, init, xs, length=None, reverse=False, unroll=1):
+Carry = TypeVar('Carry')
+X = TypeVar('X')
+Y = TypeVar('Y')
+
+@api_boundary
+def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
+         init: Carry,
+         xs: X,
+         length: Optional[int] = None,
+         reverse: bool = False,
+         unroll: int = 1) -> Tuple[Carry, Y]:
   """Scan a function over leading array axes while carrying along state.
 
   The type signature in brief is
@@ -1229,8 +1254,8 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
       ys.append(y)
     stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
                             else jax.numpy.stack((y, *ys)))
-    ys = tree_multimap(stack, *maybe_reversed(ys))
-    return carry, ys
+    stacked_y = tree_multimap(stack, *maybe_reversed(ys))
+    return carry, stacked_y
 
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
   x_dtypes = [x.dtype for x in xs_flat]
@@ -1456,15 +1481,14 @@ def _prepend_dim_to_aval(sz, aval):
   if aval is core.abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
-    return ShapedArray((sz, *aval.shape), aval.dtype)
+    return aval.update(shape=(sz, *aval.shape), weak_type=False)
   else:
     raise TypeError(f'Prepending dim {sz} to aval {aval}')
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll):
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_avals = [ShapedArray((length,) + aval.shape, aval.dtype)
-              if aval is not core.abstract_unit else aval for aval in y_avals]
+  ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   return carry_avals + ys_avals
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
@@ -1615,7 +1639,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   out_extensive = [next(out_extensive_iter) if i is None
                    else _maybe_device_put(tracers[i].pval[1]) if tracers[i].is_known()
                    else tracers[i] for i in fwd_extensive]
-  assert all(a == core.raise_to_shaped(core.get_aval(out))
+  assert all(a.strip_named_shape() == core.raise_to_shaped(
+                 core.get_aval(out)).strip_named_shape()
              for a, out in zip(extensive_avals, out_extensive))
   out_flat = out_carry + out_extensive
 
@@ -1625,7 +1650,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   new_tracers = [trace.instantiate_const(t) if uk else trace.new_instantiated_literal(core.unit)
                  for uk, t in zip(unknowns, tracers)]
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_avals = _map(partial(_promote_aval_rank, length), y_avals)
+  ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   out_avals = carry_avals + ys_avals
   out_pvs = [aval if uk else None for aval, uk in zip(out_avals, out_uk)]
 
@@ -1653,12 +1678,6 @@ def _maybe_device_put(x):
   else:
     return x
 
-def _promote_aval_rank(sz, aval):
-  if aval is core.abstract_unit:
-    return core.abstract_unit
-  else:
-    return ShapedArray((sz,) + aval.shape, aval.dtype)
-
 def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
                     linear, unroll):
   # we've only implemented transposing scans with specific lin/nonlin patterns
@@ -1679,7 +1698,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
   assert not any(ad.is_undefined_primal(r) for r in eres)
 
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_avals = _map(partial(_promote_aval_rank, length), y_avals)
+  ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   ct_carry, ct_ys = split_list(cts, [num_carry])
   ct_carry = _map(ad.instantiate_zeros_aval, carry_avals, ct_carry)
   ct_ys = _map(ad.instantiate_zeros_aval, ys_avals, ct_ys)
@@ -1878,6 +1897,7 @@ masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 
 
+@api_boundary
 def map(f, xs):
   """Map a function over leading array axes.
 
@@ -1995,6 +2015,7 @@ def _split_root_args(args, const_lengths):
   return _RootTuple(*params_list[:-1]), params_list[-1]
 
 
+@api_boundary
 def custom_root(f, initial_guess, solve, tangent_solve):
   """Differentiably solve for a roots of a function.
 
@@ -2128,6 +2149,7 @@ def _check_shapes(func_name, expected_name, actual, expected):
         f"got {actual_shapes} and {expected_shapes}")
 
 
+@api_boundary
 def custom_linear_solve(
     matvec, b, solve, transpose_solve=None, symmetric=False):
   """Perform a matrix-free linear solve with implicitly defined gradients.
@@ -2367,6 +2389,7 @@ def _interleave(a, b, axis):
   return lax.add(lax.pad(a, lax._const(a, 0), a_pad),
                  lax.pad(b, lax._const(b, 0), b_pad))
 
+@api_boundary
 def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   """Performs a scan with an associative binary operation, in parallel.
 

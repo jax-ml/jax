@@ -47,6 +47,7 @@ jax.scipy.optimize
   :toctree: _autosummary
 
    minimize
+   OptimizeResults
 
 jax.scipy.signal
 ----------------
@@ -110,7 +111,7 @@ jax.scipy.stats
 ---------------
 
 jax.scipy.stats.bernoulli
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.bernoulli
 
 .. autosummary::
@@ -129,8 +130,18 @@ jax.scipy.stats.beta
    logpdf
    pdf
 
+jax.scipy.stats.betabinom
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.betabinom
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpmf
+   pmf
+
 jax.scipy.stats.cauchy
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.cauchy
 
 .. autosummary::
@@ -139,9 +150,20 @@ jax.scipy.stats.cauchy
    logpdf
    pdf
 
+jax.scipy.stats.chi2
+~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.chi2
+
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
+
+
 
 jax.scipy.stats.dirichlet
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.dirichlet
 
 .. autosummary::
@@ -202,7 +224,7 @@ jax.scipy.stats.logistic
    sf
 
 jax.scipy.stats.multivariate_normal
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.multivariate_normal
 .. autosummary::
   :toctree: _autosummary
@@ -223,7 +245,7 @@ jax.scipy.stats.norm
    ppf
 
 jax.scipy.stats.pareto
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.pareto
 .. autosummary::
   :toctree: _autosummary
@@ -241,7 +263,7 @@ jax.scipy.stats.poisson
    pmf
 
 jax.scipy.stats.t
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.t
 .. autosummary::
   :toctree: _autosummary

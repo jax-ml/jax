@@ -292,22 +292,22 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
             _Shape.array_shape(dtype, batch_dims + (n, n), matrix_layout),
             # buffers[4] (vt; actually u)
             _Shape.array_shape(dtype, batch_dims + (m, m), matrix_layout),
-            _Shape.array_shape(singular_vals_dtype, (min(m, n) - 1,),
-                               (0,)),  # buffers[5] (e)
             _Shape.array_shape(np.dtype(np.int32), batch_dims,
-                               scalar_layout),  # buffers[6] (info)
+                               scalar_layout),  # buffers[5] (info)
+            _Shape.array_shape(singular_vals_dtype, batch_dims + (min(m, n) - 1,),
+                               vector_layout),  # buffers[6] (e)
             _Shape.array_shape(np.dtype(np.int8), (lwork,),
                                (0,)),  # buffers[7] (a batch pointers)
         )),
         operand_shapes_with_layout=(
             _Shape.array_shape(dtype, batch_dims + (m, n),
-                               matrix_layout),  # a (buffers[0]))
+                               matrix_layout),  # buffers[0] (a, IN)
         ),
         opaque=opaque)
     s = _ops.GetTupleElement(out, 1)
     vt = _ops.GetTupleElement(out, 2)
     u = _ops.GetTupleElement(out, 3)
-    info = _ops.GetTupleElement(out, 5)
+    info = _ops.GetTupleElement(out, 4)
   else:
     lwork, opaque = rocsolver_kernels.build_gesvd_descriptor(np.dtype(dtype), b, m, n,
                                                              compute_uv, full_matrices)
@@ -327,10 +327,10 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
                                matrix_layout),  # buffers[3] (u)
             _Shape.array_shape(dtype, batch_dims + (n, n),
                                matrix_layout),  # buffers[4] (vt)
-            _Shape.array_shape(singular_vals_dtype, (min(m, n) - 1,),
-                               (0,)),  # buffers[5] (e)
             _Shape.array_shape(np.dtype(np.int32), batch_dims,
-                               scalar_layout),  # buffers[6] (info)
+                               scalar_layout),  # buffers[5] (info)
+            _Shape.array_shape(singular_vals_dtype, batch_dims + (min(m, n) - 1,),
+                               vector_layout),  # buffers[6] (e)
             _Shape.array_shape(np.dtype(np.int8), (lwork,),
                                (0,)),  # buffers[7] (a batch pointers)
         )),
@@ -342,7 +342,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     s = _ops.GetTupleElement(out, 1)
     u = _ops.GetTupleElement(out, 2)
     vt = _ops.GetTupleElement(out, 3)
-    info = _ops.GetTupleElement(out, 5)
+    info = _ops.GetTupleElement(out, 4)
   if not full_matrices:
     u = _ops.Slice(u, (0,) * len(dims), batch_dims + (m, min(m, n)), (1,) * len(dims))
     vt = _ops.Slice(vt, (0,) * len(dims), batch_dims + (min(m, n), n), (1,) * len(dims))

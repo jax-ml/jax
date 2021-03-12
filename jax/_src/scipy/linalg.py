@@ -245,8 +245,9 @@ number of squarings required is more than ``max_squarings``.
 
 The number of required squarings = max(0, ceil(log2(norm(A)) - c)
 where norm() denotes the L1 norm, and
-  c=2.42 for float64 or complex128,
-  c=1.97 for float32 or complex64
+
+- c=2.42 for float64 or complex128,
+- c=1.97 for float32 or complex64
 """)
 
 @_wraps(scipy.linalg.expm, lax_description=_expm_description)

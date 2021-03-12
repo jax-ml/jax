@@ -114,7 +114,7 @@ def verify_mac_libraries_dont_reference_chkstack():
   nm = subprocess.run(
     ["nm", "-g",
      r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so")
-    ], capture_output=True, text=True)
+     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
   if nm.returncode != 0:
     raise RuntimeError(f"nm process failed: {nm.stdout} {nm.stderr}")
   if "____chkstk_darwin" in nm.stdout:
@@ -186,7 +186,7 @@ def build_wheel(sources_path, output_path):
   for wheel in glob.glob(os.path.join(sources_path, "dist", "*.whl")):
     output_file = os.path.join(output_path, os.path.basename(wheel))
     sys.stderr.write(f"Output wheel: {output_file}\n\n")
-    sys.stderr.write(f"To install the newly-built jaxlib wheel, run:\n")
+    sys.stderr.write("To install the newly-built jaxlib wheel, run:\n")
     sys.stderr.write(f"  pip install {output_file}\n\n")
     shutil.copy(wheel, output_path)
 

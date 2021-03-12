@@ -65,12 +65,13 @@ from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
+from jax.experimental import jax2tf
 from jax.interpreters import xla
 
 import numpy as np
+import tensorflow as tf
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -95,6 +96,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # test will be called "test_prim_xxx_..." and the custom parameters for
   # the test are defined in the class method "jax2tf_limitations.Jax2TfLimitation.xxx".
   # See more details in the comment at top of file and in Jax2TfLimitation class.
+  # If you want to run this test for only one harness, add parameter
+  # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses, include_jax_unimpl=False,
       )
@@ -129,7 +132,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO: remove tie_in once omnistaging is on by default
       if p.name == "axis_index" or p.name == "tie_in":
         continue
-      if p in tf_not_yet_impl:
+      if p.name in tf_not_yet_impl:
         self.assertNotIn(
             p, tf_impl)  # Should not be in both tf_impl and tf_not_yet_impl
       else:
@@ -143,7 +146,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     harnesses = [
         h for h in primitive_harness.all_harnesses
-        if h.filter(h, include_jax_unimpl=False)
+        if h.filter(h, include_jax_unimpl=True)
     ]
     print(f"Found {len(harnesses)} test harnesses that work in JAX")
 
@@ -152,6 +155,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
               tuple([np.dtype(d).name for d in l.dtypes]), l.modes)
 
     unique_limitations: Dict[Any, Tuple[primitive_harness.Harness, Jax2TfLimitation]] = {}
+    for h in harnesses:
+      for l in h.jax_unimplemented:
+        if l.enabled:
+          # Fake a Jax2TFLimitation from the Limitation
+          tfl = Jax2TfLimitation(description="Not implemented in JAX: " + l.description,
+                                 devices = l.devices,
+                                 dtypes = l.dtypes,
+                                 expect_tf_error = False,
+                                 skip_tf_run = True)
+          unique_limitations[hash(unique_hash(h, tfl))] = (h, tfl)
     for h in harnesses:
       for l in Jax2TfLimitation.limitations_for_harness(h):
         unique_limitations[hash(unique_hash(h, l))] = (h, l)
@@ -194,7 +207,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     # The CPU has more supported types, and harnesses
     self.assertEqual("cpu", jtu.device_under_test())
     self.assertTrue(
-        FLAGS.jax_enable_x64,
+        config.x64_enabled,
         "Documentation generation must be run with JAX_ENABLE_X64=1")
 
     with open(
@@ -230,6 +243,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         x = np.array([1, 2], dtype=x_dtype)
         y = np.array([3, 4], dtype=y_dtype)
         self.ConvertAndCompare(f_jax, x, y)
+
+  def test_integer_div(self):
+    x = jnp.array([-4, -3, -1, 0, 1, 3, 6])
+    y = np.int32(3)
+    self.ConvertAndCompare(jnp.floor_divide, x, y)
+    expected = jnp.floor_divide(x, y)
+    # Try it with TF 1 as well (#5831)
+    with tf.compat.v1.Session() as sess:
+      tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
+      self.assertAllClose(expected, tf1_res)
 
   def test_disable_xla(self):
 

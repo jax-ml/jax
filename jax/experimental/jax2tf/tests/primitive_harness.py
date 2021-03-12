@@ -54,14 +54,14 @@ from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow
 from jax.interpreters import xla
 
-from jaxlib import xla_client
+from jax.lib import xla_client
 
 import numpy as np
 
 FLAGS = config.FLAGS
 
 Rng = Any  # A random number generator
-DType = np.dtype
+DType = Any
 
 class RandArg(NamedTuple):
   """Descriptor for a randomly generated argument.
@@ -293,8 +293,9 @@ class Limitation:
       description: str,
       *,
       enabled: bool = True,
-      devices: Sequence[str] = ("cpu", "gpu", "tpu"),
-      dtypes: Sequence[DType] = (),
+      devices: Union[str, Sequence[str]] = ("cpu", "gpu", "tpu"),
+      dtypes: Union[DType, Sequence[DType]] = (),
+      skip_run: bool = False,
   ):
     """Args:
       description: text to augment the harness group name with the description
@@ -310,6 +311,7 @@ class Limitation:
     """
     assert isinstance(description, str), f"{description}"
     self.description = description
+    self.skip_run = skip_run
     if isinstance(devices, str):
       devices = (devices,)
     else:
@@ -324,7 +326,8 @@ class Limitation:
 
   def __str__(self):
     return (f"\"{self.description}\" devices={self.devices} "
-            f"dtypes={[np.dtype(dt).name for dt in self.dtypes]}")
+            f"dtypes={[np.dtype(dt).name for dt in self.dtypes]}" +
+            (" (skip_run) " if self.skip_run else ""))
   __repr__ = __str__
 
   def filter(self,
@@ -472,7 +475,7 @@ def _make_convert_element_type_harness(name,
   define(
     "convert_element_type",
     f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_olddtype={jtu.dtype_str(dtype)}_newdtype={jtu.dtype_str(new_dtype)}",
-    lambda arg: (lax.convert_element_type_p.bind(arg, new_dtype=new_dtype)),
+    lambda arg: (lax.convert_element_type_p.bind(arg, new_dtype=new_dtype, weak_type=False)),
     [RandArg(shape, dtype)],
     shape=shape,
     dtype=dtype,
@@ -505,12 +508,12 @@ def _make_integer_pow_harness(name, *, shape=(20, 30), dtype=np.int32, y=3):
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
   # Validate dtypes and y values
   _make_integer_pow_harness("dtypes", dtype=dtype)
-  # Validate overflow behavior by dtype
-  _make_integer_pow_harness("overflow", y=1000, dtype=dtype)
+  # Validate overflow behavior by dtype. 127
+  _make_integer_pow_harness("overflow", y=127, dtype=dtype)
 
 for dtype in jtu.dtypes.all_inexact:
   # Validate negative y by dtype
-  _make_integer_pow_harness("negative_exp", y=-1000, dtype=dtype)
+  _make_integer_pow_harness("negative_exp", y=-127, dtype=dtype)
 
 
 def _make_pow_harness(name,
@@ -945,28 +948,15 @@ _make_binary_elementwise_harnesses(
 
 _make_binary_elementwise_harnesses(
   prim=lax.igamma_p,
-  dtypes=jtu.dtypes.all_floating,
-  jax_unimplemented=lambda *_, dtype, **kwargs: [
-    Limitation(
-      "XLA internal error", dtypes=[np.float16, dtypes.bfloat16]),
-  ])
+  dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
   prim=lax.igammac_p,
-  dtypes=jtu.dtypes.all_floating,
-  jax_unimplemented=lambda *_, dtype, **kwargs: [
-    Limitation(
-      "XLA internal error", dtypes=[np.float16, dtypes.bfloat16]),
-  ])
+  dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
   prim=lax.nextafter_p,
-  dtypes=jtu.dtypes.all_floating,
-  jax_unimplemented=lambda *_, shapes, **params: [
-    Limitation(
-      "XLA internal error, implicit broadcasting not implemented",
-      enabled=(shapes[0] != shapes[1]))
-  ])
+  dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
   prim=lax.and_p,
@@ -1197,7 +1187,8 @@ def _make_scatter_harness(name,
     ],
     jax_unimplemented=[
       Limitation(
-        "unimplemented", devices="tpu", dtypes=np.complex64)
+        "unimplemented", devices="tpu", dtypes=np.complex64,
+        enabled=(f_lax in [lax.scatter_max, lax.scatter_min]))
     ],
     f_lax=f_lax,
     shape=shape,
@@ -1536,12 +1527,6 @@ def _make_fft_harness(name,
     [RandArg(shape, dtype),
      StaticArg(fft_type),
      StaticArg(fft_lengths)],
-    jax_unimplemented=[
-      Limitation(
-        "only 1D FFT is currently supported b/140351181.",
-        devices="tpu",
-        enabled=len(fft_lengths) > 1),
-    ],
     rng_factory=_fft_rng_factory(dtype),
     shape=shape,
     dtype=dtype,
@@ -1668,9 +1653,8 @@ for dtype in jtu.dtypes.all_inexact:
             devices="tpu",
             dtypes=[np.complex64, np.complex128]),
           Limitation(
-            "unimplemented", devices="cpu", dtypes=[np.float16]),
-          Limitation(
-            "unimplemented", devices="gpu", dtypes=[np.float16]),
+            "unimplemented", devices=("cpu", "gpu"),
+            dtypes=[np.float16, dtypes.bfloat16]),
         ],
         shape=shape,
         dtype=dtype,

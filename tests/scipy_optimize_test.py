@@ -94,6 +94,13 @@ class TestBFGS(jtu.JaxTestCase):
     results = jax.scipy.optimize.minimize(f, jnp.ones(n), method='BFGS')
     self.assertAllClose(results.x, jnp.zeros(n), atol=1e-6, rtol=1e-6)
 
+  def test_args_must_be_tuple(self):
+    A = jnp.eye(2) * 1e4
+    def f(x):
+      return jnp.mean((A @ x) ** 2)
+    with self.assertRaisesRegex(TypeError, "args .* must be a tuple"):
+      jax.scipy.optimize.minimize(f, jnp.ones(2), args=45, method='BFGS')
+
 
 if __name__ == "__main__":
   absltest.main()

@@ -18,7 +18,7 @@ import numpy as np
 import itertools as it
 from collections import OrderedDict
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
-                    NamedTuple, Union)
+                    NamedTuple, Union, Sequence)
 from warnings import warn
 from functools import wraps, partial
 
@@ -26,14 +26,17 @@ from .. import numpy as jnp
 from .. import core
 from .. import linear_util as lu
 from ..api import _check_callable, _check_arg
-from ..tree_util import tree_flatten, tree_unflatten, all_leaves
-from ..api_util import flatten_fun_nokwargs, flatten_axes
+from ..tree_util import (tree_flatten, tree_unflatten, all_leaves,
+                         _replace_nones, tree_map, tree_leaves)
+from ..api_util import (flatten_fun_nokwargs, flatten_axes, _ensure_index_tuple,
+                        donation_vector)
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
 from ..interpreters import xla
+from ..interpreters import batching
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from .._src.util import safe_map, safe_zip, HashableFunction
+from .._src.util import safe_map, safe_zip, HashableFunction, as_hashable_function, unzip2
 from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
@@ -110,13 +113,39 @@ class ResourceEnv:
   def __hash__(self):
     return hash(self.physical_mesh)
 
+  def __repr__(self):
+    return f"ResourceEnv({self.physical_mesh!r})"
+
 thread_resources = threading.local()
 thread_resources.env = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
 @contextlib.contextmanager
-def mesh(*args, **kwargs):
+def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
+  """Declare the hardware resources available in scope of this manager.
+
+  In particular, all ``axis_names`` become valid resource names inside the
+  managed block and can be used e.g. in the ``axis_resources`` argument of
+  :py:func:`xmap`.
+
+  Args:
+    devices: A NumPy ndarray object containing JAX device objects (as
+      obtained e.g. from :py:func:`jax.devices`).
+    axis_names: A sequence of resource axis names to be assigned to the
+      dimensions of the ``devices`` argument. Its length should match the
+      rank of ``devices``.
+
+  Example::
+
+    devices = np.array(jax.devices())[:4].reshape((2, 2))
+    with mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
+      distributed_out = xmap(
+        jnp.vdot,
+        in_axes=({0: 'left', 1: 'right'}),
+        out_axes=['left', 'right', ...],
+        axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
+  """
   old_env = thread_resources.env
-  thread_resources.env = ResourceEnv(Mesh(*args, **kwargs))
+  thread_resources.env = ResourceEnv(Mesh(devices, axis_names))
   try:
     yield
   finally:
@@ -141,30 +170,59 @@ def fresh_resource_name(tag=None):
   finally:
     _next_resource_id += 1
 
+
 # This is really a Dict[AxisName, int], but we don't define a
 # pytree instance for it, so that it is treated as a leaf.
 class AxisNamePos(FrozenDict):
-  pass
+  user_repr: str
+  expected_rank: Optional[int] = None
+
+  def __init__(self, *args, user_repr, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.user_repr = user_repr
+
+class AxisNamePosWithRank(AxisNamePos):
+  def __init__(self, *args, expected_rank, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.expected_rank = expected_rank
+
+
+# str(...) == 'Ellipsis' which is really annoying
+class DotDotDotRepr:
+  def __repr__(self): return '...'
+
 
 def _parse_entry(arg_name, entry):
   # Dictionaries mapping axis names to positional axes
   if isinstance(entry, dict) and all(isinstance(v, int) for v in entry.keys()):
-    result = AxisNamePos((name, axis) for axis, name in entry.items())
+    result = AxisNamePos(((name, axis) for axis, name in entry.items()),
+                         user_repr=str(entry))
     num_mapped_dims = len(entry)
-  # Non-empty lists or tuples that terminate with an ellipsis
-  elif isinstance(entry, (tuple, list)) and entry and entry[-1] == ...:
-    result = AxisNamePos((name, axis) for axis, name in enumerate(entry[:-1])
-                         if name is not None)
-    num_mapped_dims = sum(name is not None for name in entry[:-1])
+  # Non-empty lists or tuples that optionally terminate with an ellipsis
+  elif isinstance(entry, (tuple, list)):
+    if entry and entry[-1] == ...:
+      constr = AxisNamePos
+      entry = entry[:-1]
+      user_repr = str(entry + [DotDotDotRepr()])
+    else:
+      constr = partial(AxisNamePosWithRank, expected_rank=len(entry))
+      user_repr = str(entry)
+    result = constr(((name, axis) for axis, name in enumerate(entry)
+                     if name is not None),
+                    user_repr=user_repr)
+    num_mapped_dims = sum(name is not None for name in entry)
   else:
     raise TypeError(f"""\
 Value mapping specification in xmap {arg_name} pytree can be either:
-- lists of axis names, ending with ellipsis (...)
+- lists of axis names (possibly ending with the ellipsis object: ...)
 - dictionaries that map axis names to positional axes (integers)
 but got: {entry}""")
   if len(result) != num_mapped_dims:
     raise ValueError(f"Named axes should be unique within each {arg_name} argument "
                      f"specification, but one them is: {entry}")
+  for axis in result.values():
+    if axis < 0:
+      raise ValueError(f"xmap doesn't support negative axes in {arg_name}")
   return result
 
 def _is_axes_leaf(entry):
@@ -180,54 +238,224 @@ def _prepare_axes(axes, arg_name):
   entries = map(partial(_parse_entry, arg_name), entries)
   return tree_unflatten(treedef, entries), entries
 
+
 # TODO: Some syntactic sugar to make the API more usable in a single-axis case?
 # TODO: Are the resource axes scoped lexically or dynamically? Dynamically for now!
 def xmap(fun: Callable,
          in_axes,
          out_axes,
+         *,
+         axis_sizes: Dict[AxisName, int] = {},
          axis_resources: Dict[AxisName, Union[ResourceAxisName, Tuple[ResourceAxisName, ...]]] = {},
+         donate_argnums: Union[int, Sequence[int]] = (),
          backend: Optional[str] = None):
+  """Assign a positional signature to a program that uses named array axes.
+
+  .. warning::
+    This is an experimental feature and the details can change at
+    any time. Use at your own risk!
+
+  .. warning::
+    This docstring is aspirational. Not all features of the named axis
+    programming model have been implemented just yet.
+
+  The usual programming model of JAX (or really NumPy) associates each array
+  with two pieces of metadata describing its type: the element type (``dtype``)
+  and the ``shape``. :py:func:`xmap` extends this model by adding support for
+  *named axes*.  In particular, each array used in a function wrapped by
+  :py:func:`xmap` can additionally have a non-empty ``named_shape`` attribute,
+  which can be used to query the set of named axes (introduced by
+  :py:func:`xmap`) appearing in that value along with their shapes.
+  Furthermore, in most places where positional axis indices are allowed (for
+  example the `axes` arguments in :py:func:`sum`), bound axis names are also
+  accepted. The :py:func:`einsum` language is extended inside :py:func:`xmap`
+  to additionally allow contractions that involve named axes.  Broadcasting of
+  named axes happens *by name*, i.e. all axes with equal names are expected to
+  have equal shapes in all arguments of a broadcasting operation, while the
+  result has a (set) union of all named axes.  The positional semantics of the
+  program remain unchanged, and broadcasting still implicitly right-aligns
+  positional axes for unification. For an extended description of the
+  :py:func:`xmap` programming model, please refer to ... (a link to a
+  non-existent detailed tutorial!).
+
+  Note that since all top-level JAX expressions are interpreted in the NumPy
+  programming model, :py:func:`xmap` can also be seen as an adapter that
+  converts a function that uses named axes (including in arguments and returned
+  values) into one that takes and returns values that only have positional
+  axes.
+
+  The default lowering strategy of :py:func:`xmap` converts all named axes into
+  positional axes, working similarly to multiple applications of
+  :py:func:`vmap`. However, this behavior can be further customized by the
+  ``axis_resources`` argument.  When specified, each axis introduced by
+  :py:func:`xmap` can be assigned to one or more *resource axes*. Those include
+  the axes of the hardware mesh, as defined by the :py:func:`mesh` context
+  manager. Each value that has a named axis in its ``named_shape`` will be
+  partitioned over all mesh axes that axis is assigned to. Hence,
+  :py:func:`xmap` can be seen as an alternative to :py:func:`pmap` that also
+  exposes a way to automatically partition the computation over multiple
+  devices.
+
+  .. warning::
+    While it is possible to assign multiple axis names to a single resource axis,
+    care has to be taken to ensure that none of those named axes co-occur in a
+    ``named_shape`` of any value in the named program. At the moment this is
+    **completely unchecked** and will result in **undefined behavior**. Final
+    release of :py:func:`xmap` will enforce this invariant, but it is work
+    in progress.
+
+    Note that you do not have to worry about any of this for as long as no
+    resource axis is repeated in ``axis_resources.values()``.
+
+  Note that any assignment of ``axis_resources`` doesn't ever change the
+  results of the computation, but only how it is carried out (e.g. how many
+  devices are used).  This makes it easy to try out various ways of
+  partitioning a single program in many distributed scenarions (both small- and
+  large-scale), to maximize the performance.  As such, :py:func:`xmap` can be
+  seen as a way to seamlessly interpolate between :py:func:`vmap` and
+  :py:func:`pmap`-style execution.
+
+  Args:
+    fun: Function that uses named axes. Its arguments and return
+      value should be arrays, scalars, or (nested) standard Python containers
+      (tuple/list/dict) thereof (in general: valid pytrees).
+    in_axes: A Python object with the same container (pytree) structure as the
+      signature of arguments to ``fun``, but with a positional-to-named axis
+      mapping in place of every array argument. The valid positional-to-named
+      mappings are: (1) a ``Dict[int, AxisName]`` specifying that a positional
+      dimensions given by dictionary keys are to be converted to named axes
+      of given names (2) a list of axis names that ends with the Ellipsis object
+      (``...``) in which case a number of leading positional axes of the argument
+      will be converted into named axes inside the function. Note that ``in_axes``
+      can also be a prefix of the argument container structure, in which case the
+      mapping is repeated for all arrays in the collapsed subtree.
+    out_axes: A Python object with the same container (pytree) structure as the
+      returns of ``fun``, but with a positional-to-named axis mapping in place
+      of every returned array. The valid positional-to-named mappings are the same
+      as in ``in_axes``. Note that ``out_axes`` can also be a prefix of the return
+      container structure, in which case the mapping is repeated for all arrays
+      in the collapsed subtree.
+    axis_sizes: A dict mapping axis names to their sizes. All axes defined by xmap
+      have to appear either in ``in_axes`` or ``axis_sizes``. Sizes of axes
+      that appear in ``in_axes`` are inferred from arguments whenever possible.
+    axis_resources: A dictionary mapping the axes introduced in this
+      :py:func:`xmap` to one or more resource axes. Any array that has in its
+      shape an axis with some resources assigned will be partitioned over the
+      resources associated with the respective resource axes.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the XLA backend. 'cpu', 'gpu', or 'tpu'.
+
+  Returns:
+    A version of ``fun`` that takes in arrays with positional axes in place of
+    named axes bound in this :py:func:`xmap` call, and results with all named
+    axes converted to positional axes. If ``axis_resources`` is specified,
+    ``fun`` can additionally execute in parallel on multiple devices.
+
+  For example, :py:func:`xmap` makes it very easy to convert a function that
+  computes the vector inner product (such as :py:func:`jax.numpy.vdot`) into
+  one that computes a matrix multiplication:
+
+  >>> import jax.numpy as jnp
+  >>> x = jnp.arange(10).reshape((2, 5))
+  >>> xmap(jnp.vdot,
+  ...      in_axes=({0: 'left'}, {1: 'right'}),
+  ...      out_axes=['left', 'right', ...])(x, x.T)
+  [[ 2,  3],
+   [ 6, 11]]
+
+  Note that the contraction in the program is performed over the positional axes,
+  while named axes are just a convenient way to achieve batching. While this
+  might seem like a silly example at first, it might turn out to be useful in
+  practice, since with conjuction with ``axis_resources`` this makes it possible
+  to implement a distributed matrix-multiplication in just a few lines of code::
+
+    devices = np.array(jax.devices())[:4].reshape((2, 2))
+    with mesh(devices, ('x', 'y')):  # declare a 2D mesh with axes 'x' and 'y'
+      distributed_out = xmap(
+        jnp.vdot,
+        in_axes=({0: 'left'}, {1: 'right'}),
+        out_axes=['left', 'right', ...],
+        axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
+
+  Still, the above examples are quite simple. After all, the xmapped
+  computation was a simple NumPy function that didn't use the axis names at all!
+  So, let's explore a slightly larger example which is linear regression::
+
+    def regression_loss(x, y, w, b):
+      # Contract over in_features. Batch and out_features are present in
+      # both inputs and output, so they don't need to be mentioned
+      y_pred = jnp.einsum('{in_features},{in_features}->{}', x, w) + b
+      error = jnp.sum((y - y_pred) ** 2, axis='out_features')
+      return jnp.mean(error, axis='batch')
+
+    xmap(regression_loss,
+         in_axes=(['batch', 'in_features', ...],
+                  ['batch', 'out_features', ...],
+                  ['in_features', 'out_features', ...],
+                  ['out_features', ...]),
+         out_axes={})  # Loss is reduced over all axes, including batch!
+
+  .. note::
+    When using ``axis_resources`` along with a mesh that is controled by
+    multiple JAX hosts, keep in mind that in any given process :py:func:`xmap`
+    only expects the data slice that corresponds to its local devices to be
+    specified. This is in line with the current multi-host :py:func:`pmap`
+    programming model.
+  """
   warn("xmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
-
 
   # To be a tree prefix of the positional args tuple, in_axes can never be a
   # list: if in_axes is not a leaf, it must be a tuple of trees. However,
   # in cases like these users expect tuples and lists to be treated
   # essentially interchangeably, so we canonicalize lists to tuples here
   # rather than raising an error. https://github.com/google/jax/issues/2367
-  if isinstance(in_axes, list):
+  if isinstance(in_axes, list) and not _is_axes_leaf(in_axes):
     in_axes = tuple(in_axes)
-  if isinstance(out_axes, list):
+  if isinstance(out_axes, list) and not _is_axes_leaf(out_axes):
     out_axes = tuple(out_axes)
 
-  in_axes, in_axes_entries = _prepare_axes(in_axes, "in_axes")
-  out_axes, out_axes_entries = _prepare_axes(out_axes, "out_axes")
+  if in_axes == ():  # Allow empty argument lists
+    in_axes, in_axes_entries = (), []
+  else:
+    in_axes, in_axes_entries = _prepare_axes(in_axes, "in_axes")
+  if out_axes == ():
+    raise ValueError("xmapped functions cannot have no return values")
+  else:
+    out_axes, out_axes_entries = _prepare_axes(out_axes, "out_axes")
 
+  axis_sizes_names = set(axis_sizes.keys())
   in_axes_names = set(it.chain(*(spec.keys() for spec in in_axes_entries)))
+  defined_names = axis_sizes_names | in_axes_names
   out_axes_names = set(it.chain(*(spec.keys() for spec in out_axes_entries)))
   normalized_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]] = \
       {axis: (resources if isinstance(resources, tuple) else (resources,))
        for axis, resources in axis_resources.items()}
-  for axis in in_axes_names:
+  for axis in defined_names:
     normalized_axis_resources.setdefault(axis, ())
   frozen_axis_resources = FrozenDict(normalized_axis_resources)
   necessary_resources = set(it.chain(*frozen_axis_resources.values()))
 
   axes_with_resources = set(frozen_axis_resources.keys())
-  if axes_with_resources > in_axes_names:
+  if axes_with_resources > defined_names:
     raise ValueError(f"All axes that were assigned resources have to appear in "
-                     f"in_axes, but the following are missing: "
-                     f"{axes_with_resources - in_axes_names}")
-  if out_axes_names > in_axes_names:
+                     f"in_axes or axis_sizes, but the following are missing: "
+                     f"{axes_with_resources - defined_names}")
+  if out_axes_names > defined_names:
     raise ValueError(f"All axis names appearing in out_axes must also appear in "
-                     f"in_axes, but the following are missing: "
-                     f"{out_axes_names - in_axes_names}")
+                     f"in_axes or axis_sizes, but the following are missing: "
+                     f"{out_axes_names - defined_names}")
 
   for axis, resources in frozen_axis_resources.items():
     if len(set(resources)) != len(resources):
       raise ValueError(f"Resource assignment of a single axis must be a tuple of "
                        f"distinct resources, but specified {resources} for axis {axis}")
+
+  donate_argnums = _ensure_index_tuple(donate_argnums)
+
+  # A little performance optimization to avoid iterating over all args unnecessarily
+  has_input_rank_assertions = any(spec.expected_rank is not None for spec in in_axes_entries)
+  has_output_rank_assertions = any(spec.expected_rank is not None for spec in out_axes_entries)
 
   @wraps(fun)
   def fun_mapped(*args):
@@ -243,39 +471,62 @@ def xmap(fun: Callable,
     args_flat, in_tree = tree_flatten(args)
     for arg in args_flat: _check_arg(arg)
     fun_flat, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    if donate_argnums:
+      donated_invars = donation_vector(donate_argnums, args, ())
+    else:
+      donated_invars = (False,) * len(args_flat)
     # TODO: Check that:
     #         - two axes mapped to the same resource never coincide (even inside f)
     in_axes_flat = flatten_axes("xmap in_axes", in_tree, in_axes)
     out_axes_thunk = HashableFunction(
       lambda: tuple(flatten_axes("xmap out_axes", out_tree(), out_axes)),
       closure=out_axes)
-    axis_sizes = _get_axis_sizes(args_flat, in_axes_flat)
+    frozen_axis_sizes = FrozenDict(_get_axis_sizes(args_flat, in_axes_flat, axis_sizes))
+    missing_sizes = defined_names - set(frozen_axis_sizes.keys())
+    if missing_sizes:
+      raise ValueError(f"Failed to infer size of axes: {', '.join(unsafe_map(str, missing_sizes))}. "
+                       f"You've probably passed in empty containers in place of arguments that had "
+                       f"those axes in their in_axes. Provide the sizes of missing axes explicitly "
+                       f"via axis_sizes to fix this error.")
+    if has_input_rank_assertions:
+      for arg, spec in zip(args_flat, in_axes_flat):
+        if spec.expected_rank is not None and spec.expected_rank != arg.ndim:
+          raise ValueError(f"xmap argument has an in_axes specification of {spec.user_repr}, "
+                           f"which asserts that it should be of rank {spec.expected_rank}, "
+                           f"but the argument has rank {arg.ndim} (and shape {arg.shape})")
     out_flat = xmap_p.bind(
       fun_flat, *args_flat,
-      name=fun.__name__,
+      name=getattr(fun, '__name__', '<unnamed function>'),
       in_axes=tuple(in_axes_flat),
       out_axes_thunk=out_axes_thunk,
-      axis_sizes=FrozenDict(axis_sizes),
+      donated_invars=donated_invars,
+      axis_sizes=frozen_axis_sizes,
       axis_resources=frozen_axis_resources,
       resource_env=resource_env,
       backend=backend)
+    if has_output_rank_assertions:
+      for out, spec in zip(out_flat, out_axes_thunk()):
+        if spec.expected_rank is not None and spec.expected_rank != out.ndim:
+          raise ValueError(f"xmap output has an out_axes specification of {spec.user_repr}, "
+                           f"which asserts that it should be of rank {spec.expected_rank}, "
+                           f"but the output has rank {out.ndim} (and shape {out.shape})")
     return tree_unflatten(out_tree(), out_flat)
 
   return fun_mapped
 
-def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, axis_sizes,
-              axis_resources, resource_env, backend):
+def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_invars,
+              axis_sizes, axis_resources, resource_env, backend):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  return make_xmap_callable(fun, name, in_axes, out_axes_thunk, axis_sizes,
+  return make_xmap_callable(fun, name, in_axes, out_axes_thunk, donated_invars, axis_sizes,
                             axis_resources, resource_env, backend, *in_avals)(*args)
 
 @lu.cache
 def make_xmap_callable(fun: lu.WrappedFun,
                        name,
-                       in_axes, out_axes_thunk, axis_sizes,
-                       axis_resources, resource_env, backend,
+                       in_axes, out_axes_thunk, donated_invars,
+                       axis_sizes, axis_resources, resource_env, backend,
                        *in_avals):
-  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env)
+  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env, axis_sizes)
 
   # TODO: Making axis substitution final style would allow us to avoid
   #       tracing to jaxpr here
@@ -284,7 +535,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
   with core.extend_axis_env_nd(axis_sizes.items()):
     jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
   out_axes = out_axes_thunk()
-  jaxpr = subst_axis_names(jaxpr, plan.axis_subst)
+  jaxpr = core.subst_axis_names_jaxpr(jaxpr, plan.axis_subst)
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
@@ -295,35 +546,65 @@ def make_xmap_callable(fun: lu.WrappedFun,
   if used_mesh_axes:
     submesh = resource_env.physical_mesh[sorted(used_mesh_axes, key=str)]
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
-    return pxla.mesh_tiled_callable(f,
-                                    name,
-                                    backend,
-                                    submesh,
-                                    mesh_in_axes,
-                                    mesh_out_axes,
-                                    EXPERIMENTAL_SPMD_LOWERING,
-                                    *in_avals)
+    return pxla.mesh_callable(f,
+                              name,
+                              backend,
+                              submesh,
+                              mesh_in_axes,
+                              lambda: mesh_out_axes,
+                              donated_invars,
+                              EXPERIMENTAL_SPMD_LOWERING,
+                              *in_avals,
+                              tile_by_mesh_axes=True)
   else:
-    return f.call_wrapped
+    return xla._xla_callable(f, None, backend, name, donated_invars,
+                             *((a, None) for a in in_avals))
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
   physical_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
-  axis_subst: Dict[AxisName, Tuple[ResourceAxisName, ...]]
+  axis_subst_dict: Dict[AxisName, Tuple[ResourceAxisName, ...]]
+  axis_vmap_size: Dict[AxisName, Optional[int]]
+
+  @property
+  def axis_subst(self) -> core.AxisSubst:
+    return lambda name: self.axis_subst_dict.get(name, (name,))
 
   @classmethod
-  def from_axis_resources(cls, axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]], resource_env):
+  def from_axis_resources(cls,
+                          axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]],
+                          resource_env: ResourceEnv,
+                          axis_sizes: Dict[AxisName, int]):
     # TODO: Support sequential resources
     physical_axis_resources = axis_resources  # NB: We only support physical resources at the moment
-    axis_subst = {name: axes + (fresh_resource_name(name),) for name, axes in axis_resources.items()}
-    return cls(physical_axis_resources, axis_subst)
+    resource_shape = resource_env.shape
+    axis_subst_dict = dict(axis_resources)
+    axis_vmap_size: Dict[AxisName, Optional[int]] = {}
+    for naxis, raxes in axis_resources.items():
+      num_resources = int(np.prod([resource_shape[axes] for axes in raxes], dtype=np.int64))
+      if axis_sizes[naxis] % num_resources != 0:
+        raise ValueError(f"Size of axis {naxis} ({axis_sizes[naxis]}) is not divisible "
+                         f"by the total number of resources assigned to this axis ({raxes}, "
+                         f"{num_resources} in total)")
+      tile_size = axis_sizes[naxis] // num_resources
+      # We have to vmap when there are no resources (to handle the axis name!) or
+      # when every resource gets chunks of values.
+      if not raxes or tile_size > 1:
+        axis_vmap_size[naxis] = tile_size
+        axis_subst_dict[naxis] += (fresh_resource_name(naxis),)
+      else:
+        axis_vmap_size[naxis] = None
+    return cls(physical_axis_resources, axis_subst_dict, axis_vmap_size)
 
   def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
-    for naxis, raxes in self.axis_subst.items():
+    for naxis, raxes in self.axis_subst_dict.items():
+      tile_size = self.axis_vmap_size[naxis]
+      if tile_size is None:
+        continue
       vaxis = raxes[-1]
       map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
-      f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=vaxis)
+      f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=tile_size, axis_name=vaxis)
     return f
 
   def to_mesh_axes(self, in_axes, out_axes):
@@ -366,6 +647,13 @@ def _process_xmap_default(self, call_primitive, f, tracers, params):
   raise NotImplementedError(f"{type(self)} must override process_xmap to handle xmap")
 core.Trace.process_xmap = _process_xmap_default  # type: ignore
 
+def _xmap_axis_subst(params, subst):
+  def shadowed_subst(name):
+    return (name,) if name in params['axis_sizes'] else subst(name)
+  new_jaxpr = core.subst_axis_names_jaxpr(params['call_jaxpr'], shadowed_subst)
+  return dict(params, call_jaxpr=new_jaxpr)
+core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
+
 
 # This is DynamicJaxprTrace.process_map with some very minor modifications
 def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
@@ -401,6 +689,47 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   return out_tracers
 pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore
 
+def _batch_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params):
+  not_mapped = batching.not_mapped
+  vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+  assert primitive is xmap_p
+  if all(dim is not_mapped for dim in dims):
+    return primitive.bind(f, *vals, **params)
+  else:
+    assert len({x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}) == 1
+    def fmap_dims(axes, f):
+      return AxisNamePos(((name, f(axis)) for name, axis in axes.items()),
+                         user_repr=axes.user_repr)
+    new_in_axes = tuple(
+      fmap_dims(in_axes, lambda a: a + (d is not not_mapped and d <= a))
+      for d, in_axes in zip(dims, params['in_axes']))
+    mapped_dims_in = tuple(
+      d if d is not_mapped else d - sum(a < d for a in in_axis.values())
+      for d, in_axis in zip(dims, params['in_axes']))
+    f, mapped_dims_out = batching.batch_subtrace(f, self.main, mapped_dims_in)
+    out_axes_thunk = params['out_axes_thunk']
+    def axis_after_insertion(axis, inserted_named_axes):
+      for inserted_axis in sorted(inserted_named_axes.values()):
+        if inserted_axis >= axis:
+          break
+        axis += 1
+      return axis
+    # NOTE: This assumes that the choice of the dimensions over which outputs
+    #       are batched is entirely dependent on the function and not e.g. on the
+    #       data or its shapes.
+    @as_hashable_function(closure=out_axes_thunk)
+    def new_out_axes_thunk():
+      return tuple(
+        out_axes if d is not_mapped else
+        fmap_dims(out_axes, lambda a, nd=axis_after_insertion(d, out_axes): a + (nd <= a))
+        for out_axes, d in zip(out_axes_thunk(), mapped_dims_out()))
+    new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
+    vals_out = primitive.bind(f, *vals, **new_params)
+    dims_out = tuple(d if d is not_mapped else axis_after_insertion(d, out_axes)
+                     for d, out_axes in zip(mapped_dims_out(), out_axes_thunk()))
+    return [batching.BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
+batching.BatchTrace.process_xmap = _batch_trace_process_xmap  # type: ignore
+
 
 # -------- nested xmap handling --------
 
@@ -414,24 +743,28 @@ xla.call_translations[xmap_p] = _xmap_translation_rule
 def _xmap_translation_rule_replica(c, axis_env,
                                    in_nodes, name_stack, *,
                                    call_jaxpr, name,
-                                   in_axes, out_axes, axis_sizes,
-                                   axis_resources, resource_env, backend):
-  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env)
+                                   in_axes, out_axes, donated_invars,
+                                   axis_sizes, axis_resources, resource_env, backend):
+  plan = EvaluationPlan.from_axis_resources(axis_resources, resource_env, axis_sizes)
 
   local_mesh = resource_env.physical_mesh.local_mesh
   local_mesh_shape = local_mesh.shape
   mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
-  raise NotImplementedError("TODO: Substitute axis names!")
 
-  assert type(call_jaxpr) is core.Jaxpr
   local_avals = [pxla.tile_aval_nd(
                     local_mesh_shape, aval_mesh_in_axes,
                     _insert_aval_axes(v.aval, aval_in_axes, axis_sizes))
                  for v, aval_in_axes, aval_mesh_in_axes
                  in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
-  f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(call_jaxpr, ())))
+  # We have to substitute before tracing, because we want the vectorized
+  # axes to be used in the jaxpr.
+  resource_call_jaxpr = core.subst_axis_names_jaxpr(call_jaxpr, plan.axis_subst)
+  f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
   f = plan.vectorize(f, in_axes, out_axes)
+  # NOTE: We don't extend the resource env with the mesh shape, because those
+  #       resources are already in scope! It's the outermost xmap that introduces
+  #       them!
   vectorized_jaxpr, _, consts = pe.trace_to_jaxpr_final(f, local_avals)
   assert not consts
 
@@ -440,12 +773,14 @@ def _xmap_translation_rule_replica(c, axis_env,
     if v.aval is not core.abstract_unit else in_node
     for v, in_node, arg_in_axes in zip(call_jaxpr.invars, in_nodes, mesh_in_axes))
 
+  # NOTE: We don't extend the resource env with the mesh shape, because those
+  #       resources are already in scope! It's the outermost xmap that introduces
+  #       them!
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  with core.extend_axis_env_nd(axis_sizes.items()):
-    tiled_outs = xla.jaxpr_subcomp(
-        c, vectorized_jaxpr, backend, axis_env, (),
-        xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')), *tiled_ins)
+  tiled_outs = xla.jaxpr_subcomp(
+      c, vectorized_jaxpr, backend, axis_env, (),
+      xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')), *tiled_ins)
 
   outs = [_xla_untile(c, axis_env, tiled_out, ans_out_axes, local_mesh_shape, backend)
           if v.aval is not core.abstract_unit else tiled_out
@@ -454,25 +789,34 @@ def _xmap_translation_rule_replica(c, axis_env,
 
   return xops.Tuple(c, outs)
 
+def _xla_tile_base_indices(c, axis_env, tile_shape, axes, axis_sizes):
+  zero = xb.constant(c, np.zeros((), dtype=np.int32))
+  linear_idxs = [zero] * len(tile_shape)
+  strides = [1] * len(tile_shape)
+  for name, axis in reversed(axes.items()):
+    axis_index = _axis_index_translation_rule(
+        c, axis_name=name, axis_env=axis_env, platform=None)
+    stride_c = xb.constant(c, np.array(strides[axis], np.int32))
+    if linear_idxs[axis] is zero and strides[axis] == 1:
+      linear_idxs[axis] = axis_index
+    else:
+      linear_idxs[axis] = xops.Add(linear_idxs[axis], xops.Mul(axis_index, stride_c))
+    strides[axis] *= axis_sizes[name]
+  return [zero if linear_idx is zero else
+          xops.Mul(linear_idx, xb.constant(c, np.array(tile_dim_size, np.int32)))
+          for linear_idx, tile_dim_size in zip(linear_idxs, tile_shape)]
+
 def _xla_tile(c, axis_env, x, in_axes, axis_sizes):
   if not in_axes:
     return x
   shape = list(c.get_shape(x).dimensions())
-  zero = xb.constant(c, np.zeros((), dtype=np.int32))
-  start_idxs = [zero] * len(shape)
-  tiled_shape = list(shape)
+  tile_shape = list(shape)
   for name, axis in in_axes.items():
     axis_size = axis_sizes[name]
-
-    assert tiled_shape[axis] % axis_size == 0
-    tiled_shape[axis] //= axis_size
-
-    axis_size_c = xb.constant(c, np.array(axis_size, np.int32))
-    assert start_idxs[axis] is zero  # TODO(apaszke): tiling over multiple mesh axes
-    axis_index = _axis_index_translation_rule(
-        c, axis_name=name, axis_env=axis_env, platform=None)
-    start_idxs[axis] = xops.Mul(axis_index, axis_size_c)
-  return xops.DynamicSlice(x, start_idxs, tiled_shape)
+    assert tile_shape[axis] % axis_size == 0
+    tile_shape[axis] //= axis_size
+  base_idxs = _xla_tile_base_indices(c, axis_env, tile_shape, in_axes, axis_sizes)
+  return xops.DynamicSlice(x, base_idxs, tile_shape)
 
 # TODO(b/110096942): more efficient gather
 def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
@@ -484,23 +828,14 @@ def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
   if convert_bool:
     x = xops.ConvertElementType(x, xb.dtype_to_etype(np.float32))
 
-  untiled_shape = list(xla_shape.dimensions())
-  zero_idx = xb.constant(c, np.zeros((), dtype=np.int32))
-  start_idxs = [zero_idx] * len(untiled_shape)
+  tile_shape = list(xla_shape.dimensions())
+  shape = list(tile_shape)
   for name, axis in out_axes.items():
-    axis_size = axis_sizes[name]
+    shape[axis] *= axis_sizes[name]
+  base_idxs = _xla_tile_base_indices(c, axis_env, tile_shape, out_axes, axis_sizes)
 
-    untiled_shape[axis] *= axis_size
-
-    axis_size_c = xb.constant(c, np.array(axis_size, np.int32))
-    assert start_idxs[axis] is zero_idx  # TODO(apaszke): tiling over multiple mesh axes
-    axis_index = _axis_index_translation_rule(
-        c, axis_name=name, axis_env=axis_env, platform=None)
-    start_idxs[axis] = xops.Mul(axis_index, axis_size_c)
-
-  zero = xb.constant(c, np.array(0, x_dtype))
-  padded = xops.Broadcast(zero, untiled_shape)
-  padded = xops.DynamicUpdateSlice(padded, x, start_idxs)
+  padded = xops.Broadcast(xb.constant(c, np.array(0, x_dtype)), shape)
+  padded = xops.DynamicUpdateSlice(padded, x, base_idxs)
   replica_groups_protos = xc.make_replica_groups(
     xla.axis_groups(axis_env, tuple(out_axes.keys())))
   out = xops.CrossReplicaSum(padded, replica_groups_protos)
@@ -514,12 +849,12 @@ def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
 def _xmap_translation_rule_spmd(c, axis_env,
                                 in_nodes, name_stack, *,
                                 call_jaxpr, name,
-                                in_axes, out_axes, axis_sizes,
-                                axis_resources, resource_env, backend):
-  # TODO(apaszke): This is quite difficult to implement given the current lowering
-  #                in mesh_tiled_callable. There, we vmap the mapped axes, but we
-  #                have no idea which positional axes they end up being in this
-  #                translation rule!
+                                in_axes, out_axes, donated_invars,
+                                axis_sizes, axis_resources, resource_env, backend):
+  # TODO(apaszke): This is quite difficult to implement given the current
+  #                lowering in mesh_callable. There, we vmap the mapped axes,
+  #                but we have no idea which positional axes they end up being
+  #                in this translation rule!
   raise NotImplementedError
 
 
@@ -530,25 +865,36 @@ def _delete_aval_axes(aval, axes: AxisNamePos):
   shape = list(aval.shape)
   for i in sorted(axes.values(), reverse=True):
     del shape[i]
-  return core.ShapedArray(tuple(shape), aval.dtype)
+  return aval.update(shape=tuple(shape))
 
 def _insert_aval_axes(aval, axes: AxisNamePos, axis_sizes):
   assert isinstance(aval, core.ShapedArray)
   shape = list(aval.shape)
-  for name, axis in sorted(axes.items()):
+  for name, axis in sorted(axes.items(), key=lambda x: x[1]):
     shape.insert(axis, axis_sizes[name])
-  return core.ShapedArray(tuple(shape), aval.dtype)
+  return aval.update(shape=tuple(shape))
 
 
-# TODO: pmap has some very fancy error messages for this function!
-def _get_axis_sizes(args_flat: Iterable[Any], in_axes_flat: Iterable[AxisNamePos]):
-  axis_sizes: Dict[AxisName, int] = {}
+def _get_axis_sizes(args_flat: Iterable[Any],
+                    in_axes_flat: Iterable[AxisNamePos],
+                    axis_sizes: Dict[AxisName, int]):
+  axis_sizes = dict(axis_sizes)
   for arg, in_axes in zip(args_flat, in_axes_flat):
     for name, dim in in_axes.items():
-      if name in axis_sizes:
-        assert axis_sizes[name] == arg.shape[dim]
+      if name in axis_sizes and axis_sizes[name] != arg.shape[dim]:
+        raise ValueError(f"The size of axis {name} was previously inferred to be "
+                         f"{axis_sizes[name]}, but found an argument of shape {arg.shape} "
+                         f"with in_axes specification {in_axes.user_repr}. Shape mismatch "
+                         f"occurs in dimension {dim}: {arg.shape[dim]} != {axis_sizes[name]}")
       else:
-        axis_sizes[name] = arg.shape[dim]
+        try:
+          axis_sizes[name] = arg.shape[dim]
+        except IndexError:
+          # TODO(apaszke): Handle negative indices. Check for overlap too!
+          raise ValueError(f"One of xmap arguments has an in_axes specification of "
+                           f"{in_axes.user_repr}, which implies that it has at least "
+                           f"{max(in_axes.values()) + 1} dimensions, but the argument "
+                           f"has rank {arg.ndim}")
   return axis_sizes
 
 
@@ -570,16 +916,24 @@ def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
     return arg
 
   def _unsqueeze_mapped_axes(out, axes: AxisNamePos):
-    for dim in sorted(axes.values()):
-      out = jnp.expand_dims(out, dim)
-    return out
+    try:
+      return jnp.expand_dims(out, tuple(axes.values()))
+    except ValueError as e:
+      # Improve the axis out of bounds errors
+      # TODO(apaszke): Handle negative indices. Check for overlap too!
+      if e.args[0].startswith('axis') and 'out of bounds' in e.args[0]:
+        raise ValueError(f"One of xmap outputs has an out_axes specification of "
+                         f"{axes.user_repr}, which requires the result of the xmapped "
+                         f"function to have at least {max(axes.values()) - len(axes) + 1} "
+                         f"positional dimensions, but it only has {out.ndim}")
+      raise
 
   squeezed_args = map(_squeeze_mapped_axes, flat_args, flat_in_axes)
   flat_outputs = yield squeezed_args, {}
   yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
 
 
-def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
+def _jaxpr_resources(jaxpr: core.Jaxpr, resource_env) -> Set[ResourceAxisName]:
   used_resources = set()
   for eqn in jaxpr.eqns:
     if eqn.primitive is xmap_p:
@@ -593,25 +947,25 @@ def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
       used_resources |= update
   return used_resources
 
-def subst_axis_names(jaxpr, axis_subst: Dict[AxisName, Tuple[AxisName]]):
-  eqns = [subst_eqn_axis_names(eqn, axis_subst) for eqn in jaxpr.eqns]
-  return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, eqns)
+# -------- soft_pmap --------
 
-def subst_eqn_axis_names(eqn, axis_subst: Dict[AxisName, Tuple[AxisName]]):
-  # TODO: Support custom_vjp, custom_jvp
-  if isinstance(eqn.primitive, (core.CallPrimitive, core.MapPrimitive)):
-    bound_name = eqn.params.get('axis_name', None)
-    if bound_name in axis_subst:  # Check for shadowing
-      sub_subst = dict(axis_subst)
-      del sub_subst[bound_name]
-    else:
-      sub_subst = axis_subst
-    new_call_jaxpr = subst_axis_names(eqn.params['call_jaxpr'], sub_subst)
-    return eqn._replace(params=dict(eqn.params, call_jaxpr=new_call_jaxpr))
-  if 'axis_name' not in eqn.params:
-    return eqn
-  axis_names = eqn.params['axis_name']
-  if not isinstance(axis_names, (tuple, list)):
-    axis_names = (axis_names,)
-  new_axis_names = sum((axis_subst.get(name, (name,)) for name in axis_names), ())
-  return eqn._replace(params=dict(eqn.params, axis_name=new_axis_names))
+def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
+              ) -> Callable:
+  warn("soft_pmap is an experimental feature and probably has bugs!")
+  _check_callable(fun)
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
+
+  if any(axis != 0 for axis in tree_leaves(in_axes)):
+    raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")
+  proxy = object()
+  in_axes = _replace_nones(proxy, in_axes)
+  in_axes = tree_map(lambda i: {i: axis_name} if i is not proxy else {}, in_axes)
+
+
+  @wraps(fun)
+  def f_pmapped(*args, **kwargs):
+    mesh_devices = np.array(xb.local_devices())
+    with mesh(mesh_devices, ['devices']):
+      return xmap(fun, in_axes=in_axes, out_axes={0: axis_name},
+                  axis_resources={axis_name: 'devices'})(*args, **kwargs)
+  return f_pmapped

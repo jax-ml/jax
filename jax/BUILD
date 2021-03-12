@@ -14,13 +14,13 @@
 
 # JAX is Autograd and XLA
 
-pytype_library = py_library
+load("//jax:jax.bzl", "pytype_library")
 
 licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
 
-# top-level EF placeholder
+exports_files(["LICENSE"])
 
 pytype_library(
     name = "jax",
@@ -42,7 +42,7 @@ pytype_library(
             "*_test.py",
             "**/*_test.py",
         ],
-    ),
+    ) + ["experimental/maps.py"],  # until xmap is moved out of experimental
     srcs_version = "PY3",
     deps = [
         "//third_party/py/jax/jaxlib:_pocketfft",
@@ -52,7 +52,10 @@ pytype_library(
 
 pytype_library(
     name = "experimental",
-    srcs = ["experimental/__init__.py"],
+    srcs = [
+        "experimental/__init__.py",
+        "experimental/x64_context.py",
+    ],
     srcs_version = "PY3",
     deps = [":jax"],
 )
@@ -100,6 +103,13 @@ pytype_library(
 )
 
 pytype_library(
+    name = "pjit",
+    srcs = ["experimental/pjit.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
     name = "jet",
     srcs = ["experimental/jet.py"],
     srcs_version = "PY3",
@@ -120,4 +130,11 @@ pytype_library(
     deps = [
         ":jax",
     ],
+)
+
+pytype_library(
+    name = "djax",
+    srcs = ["experimental/djax.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
 )

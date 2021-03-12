@@ -50,7 +50,7 @@ To achieve this you should extract a pair from your trained model:
 
 If you are using Flax, then the recipe to obtain this pair is as follows:
 
-  ```
+  ```python
   class MyModel(nn.Module):
      ...
 
@@ -70,7 +70,7 @@ and the same strategy should work for other neural-network libraries for JAX.
 If your Flax model takes multiple inputs, then you need to change the last
 line above to:
 
-  ```
+  ```python
   predict_fn = lambda params, input: model.apply({"params": params}, *input)
   ```
 
@@ -81,7 +81,7 @@ You can control which parameters you want to save as variables, and
 which you want to embed in the computation graph. For example, to 
 embed all parameters in the graph:
 
-  ```
+  ```python
   params = ()
   predict_fn = lambda _, input: model.apply({"params": optimizer.target}, input)
   ```
@@ -97,7 +97,7 @@ the compiler to generate faster code by constant-folding some computations.)
 
 If you are using Haiku, then the recipe is along these lines:
 
-  ```
+  ```python
   model_fn = ...define your Haiku model...
   net = hk.transform(model_fn)  # get a pair of init and apply functions
   params = ... train your model starting from net.init() ...

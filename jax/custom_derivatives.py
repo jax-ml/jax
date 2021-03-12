@@ -21,7 +21,8 @@ from typing import Callable, Sequence, Tuple, Any
 from . import core
 from . import dtypes
 from . import linear_util as lu
-from .tree_util import (tree_flatten, tree_unflatten, tree_map, tree_multimap,
+from .tree_util import (tree_flatten, tree_unflatten, tree_map,
+                        tree_multimap, treedef_is_leaf, treedef_tuple,
                         register_pytree_node_class)
 from ._src.util import cache, safe_zip, safe_map, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
@@ -54,6 +55,9 @@ def _resolve_kwargs(fun, args, kwargs):
 def _initial_style_jaxpr(fun, in_avals):
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   return jaxpr, consts
+
+def _close_jaxpr(jaxpr):
+  return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
 def _initial_style_staging() -> bool:
   return core.thread_local_state.trace_state.initial_style
@@ -545,12 +549,14 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
   # corresponding subtree of in_tree and with leaves of a non-pytree sentinel
   # object, to be replaced with Nones in the final returned result.
   zero = object()  # non-pytree sentinel to replace Nones in py_cts_in
-  py_cts_in_ = tuple(zero if ct is None else ct for ct in py_cts_in)
   dummy = tree_unflatten(in_tree, [object()] * in_tree.num_leaves)
   cts_in_flat = []
   append_cts = lambda x, d: cts_in_flat.extend([x] * len(tree_flatten(d)[0]))
   try:
-    tree_multimap(append_cts, py_cts_in_, dummy)
+    if not isinstance(py_cts_in, tuple):
+      raise ValueError
+    tree_multimap(append_cts,
+                  tuple(zero if ct is None else ct for ct in py_cts_in), dummy)
   except ValueError:
     _, in_tree2 = tree_flatten(py_cts_in)
     msg = ("Custom VJP rule must produce an output with the same container "
@@ -627,13 +633,14 @@ def _custom_vjp_call_jaxpr_vmap(
     args, in_dims, axis_name, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
-  size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
+  axis_size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
 
   in_batched = [d is not not_mapped for d in in_dims]
   _, args_batched = split_list(in_batched, [num_consts])
-  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False, axis_name)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
+      fun_jaxpr, axis_size, in_batched, False, axis_name)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
@@ -641,15 +648,14 @@ def _custom_vjp_call_jaxpr_vmap(
   def batched_fwd_jaxpr_thunk():
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk())  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
-        fwd_jaxpr, size, args_batched, False, axis_name)
+        fwd_jaxpr, axis_size, args_batched, False, axis_name)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     return batched_fwd_jaxpr.jaxpr, batched_fwd_jaxpr.consts
 
   fwd_args_batched = [0 if b else not_mapped for b in args_batched]
   fwd_out_dims = lambda: out_dims2[0]
-  # TODO(mattjj,apaszke): Support collectives in custom_vjp?
-  batched_bwd = batching.batch_fun(bwd, fwd_out_dims, fwd_args_batched,
-                                   axis_name='__unused_axis_name', sum_match=True)
+  batched_bwd = batching.batch(bwd, axis_name, axis_size, fwd_out_dims,
+                               fwd_args_batched)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
@@ -818,7 +824,10 @@ def custom_gradient(fun):
     cts_flat, out_tree_ = tree_flatten((cts,))
     if out_tree != out_tree_: raise TypeError(f'{out_tree}\n!=\n{out_tree_}')
     cts_out = core.eval_jaxpr(jaxpr, consts, *cts_flat)
-    return tree_unflatten(in_tree, cts_out)
+    cts_out = tree_unflatten(in_tree, cts_out)
+    if treedef_is_leaf(in_tree):
+      cts_out = (cts_out,)
+    return cts_out
 
   wrapped_fun.defvjp(fwd, bwd)
   return wrapped_fun
@@ -896,10 +905,18 @@ def closure_convert(fun, *example_args):
       ``fun``. This type-specialized form of ``fun`` is the function
       that will be closure converted.
 
+  Returns:
+    A pair comprising (i) a Python callable, accepting the same
+    arguments as ``fun`` followed by arguments corresponding to the
+    values hoisted from its closure, and (ii) a list of values hoisted
+    from the closure.
   """
   flat_args, in_tree = tree_flatten(example_args)
   in_avals = tuple(map(abstractify, flat_args))
-  return _closure_convert_for_avals(fun, in_tree, in_avals)
+  if core.debug_state.check_leaks:
+    return _closure_convert_for_avals.__wrapped__(fun, in_tree, in_avals)
+  else:
+    return _closure_convert_for_avals(fun, in_tree, in_avals)
 
 @cache()
 def _closure_convert_for_avals(fun, in_tree, in_avals):
@@ -916,7 +933,7 @@ def _closure_convert_for_avals(fun, in_tree, in_avals):
 
   # We only want to closure convert for constants with respect to which we're
   # differentiating. As a proxy for that, we hoist consts with float dtype.
-  # TODO(mattjj): revise this approach
+  # TODO(frostig,mattjj): revise this approach
   from .numpy import inexact
   is_float = lambda c: dtypes.issubdtype(dtypes.dtype(c), inexact)
   (closure_consts, hoisted_consts), merge = partition_list(is_float, consts)
@@ -943,3 +960,166 @@ def partition_list(choice, lst):
 
 def abstractify(x):
   return core.raise_to_shaped(core.get_aval(x))
+
+
+### Custom transposition
+
+def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
+                linear_args):
+  """Call a linear function, with a custom implementation for its transpose.
+
+  The type signatures of ``fun`` and ``fun_transpose`` are:
+
+  .. code-block:: haskell
+
+    fun           :: r -> a -o b
+    fun_transpose :: r -> b -o a
+
+  where the ``-o`` arrow indicates a linear function, ``r`` is the
+  residual input type and ``a`` is the linear input type.
+
+  The functions ``fun`` and ``fun_transpose`` are coupled as
+  transposes of one another. Specifically, the transpose of a
+  ``linear_call`` primitive is another ``linear_call`` to
+  ``fun_transpose``, with ``fun`` as its custom transposition.
+
+  For example, if::
+
+    def f(r, x):
+      return x / r
+
+    def t(r, t):
+      return t / r
+
+    def div_add(denom, x):
+      return x + linear_call(f, t, denom, x)
+
+    def transpose(f, x_example):
+      def transposed(y):
+        x, = jax.linear_transpose(f, x_example)(y)
+        return x
+      return transposed
+
+  Then:
+
+  >>> div_add(9., 3.)
+  12.0
+  >>> transpose(partial(div_add, 3.), 1.)(18.)  # custom
+  24.0
+  >>> transpose(lambda x: x + x / 3., 1.)(18.)  # reference
+  24.0
+
+  The above definition of ``f`` illustrates the purpose of a residual
+  argument: division is linear in one of its inputs (the dividend
+  ``x``) but not the other (the divisor ``r``).
+
+  As another example, if::
+
+    def custom_id(x):
+      def f(_, x): return x
+      def t(_, t): return 7.
+      return linear_call(f, t, (), x)
+
+  Then:
+
+  >>> custom_id(1.)
+  1.0
+  >>> transpose(custom_id, 1.)(1.)
+  7.0
+  >>> transpose(transpose(custom_id, 1.), 1.)(1.)
+  1.0
+  >>> transpose(transpose(transpose(custom_id, 1.), 1.), 1.)(1.)
+  7.0
+
+  Args:
+    fun: a Python callable specifying a linear function. It should
+      take two arguments: one of "residual" inputs (type ``r``),
+      i.e. inputs in which the function is not necessarly linear, and
+      one of "linear" inputs (type ``a``).  It should return output
+      whose components are linear in the linear input (type ``b``).
+    fun_transpose: a Python callable specifying a structurally linear
+      function that is the transpose of ``fun`` with respect to its
+      linear inputs. Its first argument is the same residual inputs
+      (``r``) as ``fun``. Its second argument is of type
+      ``b``. Finally, its output is of type ``a`` and each of its
+      component are linear in its second argument (the ``b`` inputs).
+    residual_args: Argument in which ``fun`` and ``fun_transpose`` are
+      not necessarily linear. Not involved in transposition.
+    linear_args: Argument in which ``fun`` and ``fun_transpose`` are
+      linear and with respect to which the two are transposes.
+
+  Returns:
+    The call result, i.e. ``fun(residual_args, linear_args)``.
+
+  """
+  operands_res, res_tree = tree_flatten(residual_args)
+  operands_lin, lin_tree = tree_flatten(linear_args)
+
+  f_in_tree = treedef_tuple((res_tree, lin_tree))
+  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), f_in_tree)
+
+  res_avals = map(abstractify, operands_res)
+  lin_avals = map(abstractify, operands_lin)
+  f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
+  f_jaxpr = _close_jaxpr(f_jaxpr)
+  out_avals = map(core.raise_to_shaped, f_jaxpr.out_avals)
+
+  t_in_tree = treedef_tuple((res_tree, out_tree()))
+  t, t_out_tree = flatten_fun_nokwargs(lu.wrap_init(fun_transpose), t_in_tree)
+
+  t_jaxpr, t_consts = _initial_style_jaxpr(t, (*res_avals, *out_avals))
+  t_jaxpr = _close_jaxpr(t_jaxpr)
+
+  if t_out_tree() != lin_tree:
+    raise TypeError(
+        'transpose output pytree structure must match that of linear inputs, '
+        f'got output structure {t_out_tree()} '
+        f'and input structure {lin_tree}.')
+
+  out = linear_call_p.bind(*f_consts, *t_consts, *operands_res, *operands_lin,
+                           callee=f_jaxpr,
+                           transpose=t_jaxpr,
+                           num_callee_consts=len(f_consts),
+                           num_transpose_consts=len(t_consts),
+                           num_res=len(operands_res))
+
+  return tree_unflatten(out_tree(), out)
+
+def _linear_call_impl(*args, callee, transpose, num_callee_consts,
+                      num_transpose_consts, num_res):
+  del transpose
+  consts, _, operands_res, operands_lin = split_list(
+      args, [num_callee_consts, num_transpose_consts, num_res])
+  return core.eval_jaxpr(callee.jaxpr, (), *consts, *operands_res, *operands_lin)
+
+def _linear_call_transpose_rule(cts, *args, callee, transpose,
+                                num_callee_consts,
+                                num_transpose_consts, num_res):
+  f_consts, t_consts, operands_res, operands_lin = split_list(
+      args, [num_callee_consts, num_transpose_consts, num_res])
+  _, _, cts_avals = split_list(
+      transpose.in_avals, [num_transpose_consts, num_res])
+
+  assert all(ad.is_undefined_primal(x)     for x in operands_lin)
+  assert all(not ad.is_undefined_primal(x) for x in operands_res)
+
+  cts = [zeros_like_aval(a) if type(ct) is Zero else ct
+         for ct, a in zip(cts, cts_avals)]
+
+  cts_out = linear_call_p.bind(*t_consts, *f_consts, *operands_res, *cts,
+                               callee=transpose,
+                               transpose=callee,
+                               num_callee_consts=len(t_consts),
+                               num_transpose_consts=len(f_consts),
+                               num_res=len(operands_res))
+
+  return [None] * (num_callee_consts + num_transpose_consts + num_res) + cts_out
+
+def _linear_call_abstract_eval(*args, **kwargs):
+  return map(core.raise_to_shaped, kwargs['callee'].out_avals)
+
+linear_call_p = core.Primitive('linear_call')
+linear_call_p.multiple_results = True
+linear_call_p.def_impl(_linear_call_impl)
+linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
+ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule

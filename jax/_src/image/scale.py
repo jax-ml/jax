@@ -145,8 +145,10 @@ def scale_and_translate(image, shape: Sequence[int],
   Generates a new image of shape 'shape' by resampling from the input image
   using the sampling method corresponding to method. For 2D images, this
   operation transforms a location in the input images, (x, y), to a location
-  in the output image according to:
+  in the output image according to::
+
     (x * scale[1] + translation[1], y * scale[0] + translation[0])
+
   (Note the _inverse_ warp is used to generate the sample locations.)
   Assumes half-centered pixels, i.e the pixel at integer location row,col has
   coordinates y, x = row + 0.5, col + 0.5.

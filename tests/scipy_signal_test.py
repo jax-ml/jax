@@ -82,8 +82,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
     tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-14}
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_type={}_bp={}".format(

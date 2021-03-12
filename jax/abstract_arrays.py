@@ -76,4 +76,4 @@ for t in dtypes.python_scalar_dtypes:
   core.pytype_aval_mappings[t] = partial(_make_concrete_python_scalar, t)
   ad_util.jaxval_zeros_likers[t] = partial(_zeros_like_python_scalar, t)
 
-core.literalable_types.update(dtypes.python_scalar_dtypes.keys())
+core.literalable_types.update(dtypes.python_scalar_dtypes.keys())  # type: ignore

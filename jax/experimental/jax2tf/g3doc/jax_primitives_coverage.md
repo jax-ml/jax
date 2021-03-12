@@ -1,10 +1,10 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2020-12-31* (YYYY-MM-DD)
+*Last generated on: 2021-03-03* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2305 test harnesses to test
+We use a set of 2313 test harnesses to test
 the implementation of 122 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
@@ -31,6 +31,11 @@ We use below the following abbreviations for sets of dtypes:
 
 See the comment in `primitive_harness.py` for a description
 of test harnesses and their definitions.
+
+Note that automated tests will fail if new limitations appear, but
+they won't when limitations are fixed. If you see a limitation that
+you think it does not exist anymore, please ask for this file to
+be updated.
 
 
 | Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
@@ -143,7 +148,7 @@ of test harnesses and their definitions.
 | sin | 6 | inexact | bool, integer |
 | sinh | 6 | inexact | bool, integer |
 | slice | 24 | all |  |
-| sort | 21 | all |  |
+| sort | 29 | all |  |
 | sqrt | 6 | inexact | bool, integer |
 | squeeze | 23 | all |  |
 | stop_gradient | 15 | all |  |
@@ -186,21 +191,14 @@ and search for "limitation".
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|
 |eigh|complex eigh not supported |complex|tpu|
-|eigh|unimplemented|float16|cpu|
-|eigh|unimplemented|float16|gpu|
-|fft|only 1D FFT is currently supported b/140351181.|all|tpu|
-|igamma|XLA internal error|bfloat16, float16|cpu, gpu, tpu|
-|igammac|XLA internal error|bfloat16, float16|cpu, gpu, tpu|
+|eigh|unimplemented|bfloat16, float16|cpu, gpu|
 |lu|unimplemented|bfloat16, float16|cpu, gpu, tpu|
-|nextafter|XLA internal error, implicit broadcasting not implemented|all|cpu, gpu, tpu|
 |qr|unimplemented|bfloat16, float16|cpu, gpu|
 |reduce_window_max|unimplemented in XLA|complex64|tpu|
 |reduce_window_min|unimplemented in XLA|complex64|tpu|
 |reduce_window_mul|unimplemented in XLA|complex64|tpu|
-|scatter_add|unimplemented|complex64|tpu|
 |scatter_max|unimplemented|complex64|tpu|
 |scatter_min|unimplemented|complex64|tpu|
-|scatter_mul|unimplemented|complex64|tpu|
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|
 |svd|complex not implemented. Works in JAX for CPU and GPU with custom kernels|complex|tpu|
 |svd|unimplemented|bfloat16, float16|cpu, gpu|

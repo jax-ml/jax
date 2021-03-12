@@ -1,5 +1,5 @@
 jax.lax package
-================
+===============
 
 .. automodule:: jax.lax
 
@@ -137,6 +137,7 @@ Operators
     top_k
     transpose
 
+.. _lax-control-flow:
 
 Control flow operators
 ----------------------
@@ -161,6 +162,8 @@ Custom gradient operators
     stop_gradient
     custom_linear_solve
     custom_root
+
+.. _jax-parallel-operators:
 
 Parallel operators
 ------------------
@@ -200,7 +203,7 @@ Linear algebra operators (jax.lax.linalg)
 Argument classes
 ----------------
 
-.. automodule:: jax.lax
+.. currentmodule:: jax.lax
 
 .. autoclass:: ConvDimensionNumbers
 .. autoclass:: GatherDimensionNumbers

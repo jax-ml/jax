@@ -14,32 +14,31 @@
 
 import contextlib
 import logging
-import numpy as np
+
 from typing import Any, Callable, List, Optional, Sequence
-import tensorflow as tf  # type: ignore[import]
+
 
 import jax
-from jax.config import config
 from jax import dtypes
-from jax.experimental import jax2tf
-from jax.interpreters import masking
+from jax import numpy as jnp
 from jax import test_util as jtu
 from jax import tree_util
-from jax import numpy as jnp
 
+from jax.config import config
+from jax.experimental import jax2tf
+from jax.interpreters import masking
+import numpy as np
+import tensorflow as tf  # type: ignore[import]
 
 DType = Any
 
 def _make_tf_args(args):
-
-  def _convert_if_bfloat16(v):
+  def _convert_to_tensor(v):
     if hasattr(v, "dtype"):
-      return tf.convert_to_tensor(
-          np.array(v, jnp.float32) if v.dtype == jnp.bfloat16 else v,
-          jax2tf.jax2tf.to_tf_dtype(v.dtype))
+      tf.convert_to_tensor(v)
     return v
 
-  return tf.nest.map_structure(_convert_if_bfloat16, args)
+  return tf.nest.map_structure(_convert_to_tensor, args)
 
 
 def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
@@ -64,7 +63,7 @@ def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
     return tf.function(
         func_tf,
         autograph=False,
-        experimental_compile=True,
+        jit_compile=True,
         input_signature=_make_tf_input_signature(*tf_args))(
             *tf_args)  # COMPILED
   else:
@@ -77,18 +76,15 @@ class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     # Ensure that all TF ops are created on the proper device (TPU or GPU or CPU)
-    # TODO(necula): why doesn't TF do this automatically?
     tf_preferred_devices = (
         tf.config.list_logical_devices("TPU") +
         tf.config.list_logical_devices("GPU") +
         tf.config.list_logical_devices())
     self.tf_default_device = tf_preferred_devices[0]
     logging.info(f"Running jax2tf converted code on {self.tf_default_device}.")
-    if jtu.device_under_test() != "gpu":
-      # TODO(necula): Change the build flags to ensure the GPU is seen by TF
-      # It seems that we need --config=cuda build flag for this to work?
-      self.assertEqual(jtu.device_under_test().upper(),
-                       self.tf_default_device.device_type)
+    # We need --config=cuda build flag for TF to see the GPUs
+    self.assertEqual(jtu.device_under_test().upper(),
+                     self.tf_default_device.device_type)
 
     with contextlib.ExitStack() as stack:
       stack.enter_context(tf.device(self.tf_default_device))
@@ -100,7 +96,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     def to_numpy_dtype(dt):
       return dt if isinstance(dt, np.dtype) else dt.as_numpy_dtype
 
-    if not config.FLAGS.jax_enable_x64 and canonicalize_dtypes:
+    if not config.x64_enabled and canonicalize_dtypes:
       self.assertEqual(
           dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(x))),
           dtypes.canonicalize_dtype(to_numpy_dtype(jtu._dtype(y))))
@@ -117,7 +113,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     It compares the result of JAX, TF ("eager" mode),
     TF with tf.function ("graph" mode), and TF with
-    tf.function(experimental_compile=True) ("compiled" mode). In each mode,
+    tf.function(jit_compile=True) ("compiled" mode). In each mode,
     either we expect to encounter a known limitation, or the value should
     match the value from the JAX execution.
 
@@ -143,10 +139,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       def log_message(extra):
         return f"[{self._testMethodName}] mode={mode}: {extra}"
 
-      dut = jtu.device_under_test()
-      # For TPU all modes should behave like the compiled one
-      lookup_mode = mode if dut != "tpu" else "compiled"
-      jax2tf_limits = tuple(filter(lambda l: l.filter(mode=lookup_mode), limitations))
+      jax2tf_limits = tuple(filter(lambda l: l.filter(mode=mode), limitations))
 
       skip_tf_run = [l for l in jax2tf_limits if l.skip_tf_run]
       if skip_tf_run:
@@ -207,7 +200,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
              "successful modes:\n" + "\n".join(unexpected_successes))
       logging.warning(msg)
       # Uncomment the below if you want to see warnings as failures
-      #self.assertEmpty(msg)
+      # self.assertEmpty(msg)
     return result_jax, result_tf
 
   def TransformConvertAndCompare(self, func: Callable, arg,

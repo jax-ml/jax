@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple, Union
 
 from absl import logging
 import numpy as np
@@ -27,7 +27,7 @@ from . import xla
 from .. import linear_util as lu
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..api_util import flatten_axes, flatten_fun
+from ..api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index_tuple
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
                          HashableFunction)
@@ -47,19 +47,11 @@ result_to_populate = ResultToPopulate()
 
 
 def _avals_to_results_handler(nrep, npart, partitions, out_avals):
-  nouts = len(out_avals)
   handlers = [_aval_to_result_handler(npart, parts, out_aval)
               for parts, out_aval in safe_zip(partitions, out_avals)]
 
   def handler(out_bufs):
-    assert nrep * npart == len(out_bufs)
-    buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
-    for r, tuple_buf in enumerate(out_bufs):
-      for i, buf in enumerate(tuple_buf):
-        buffers[i][r] = buf
-    assert not any(buf is result_to_populate for bufs in buffers
-                  for buf in bufs)
-    return [h(bufs) for h, bufs in zip(handlers, buffers)]
+    return [h(bufs) for h, bufs in zip(handlers, out_bufs)]
 
   return handler
 
@@ -228,7 +220,7 @@ def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.execute_on_local_devices(list(input_bufs))
+  out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
   return out_handler(out_bufs)
 
 
@@ -273,7 +265,9 @@ class PartitionSpec(tuple):
 
 def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
                 local_in_parts=None, local_out_parts=None,
-                local_num_partitions=None):
+                local_num_partitions=None,
+                static_argnums: Union[int, Iterable[int]] = (),
+):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
   WARNING: this feature is still under active development! It may not work well,
@@ -296,19 +290,24 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
 
   Args:
     fun: Function to be jitted.
-    in_parts: The input partitions, i.e. how each argument to ``fun`` should be
+    in_parts: Specifications for how each argument to ``fun`` should be
       partitioned or replicated. This should be a PartitionSpec indicating into
-      how many partitions each dimension should be sharded, None indicating
+      how many partitions each dimension should be sharded, ``None`` indicating
       replication, or (nested) standard Python containers thereof. For example,
       ``in_parts=PartitionSpec(2,1)`` means all arguments should be partitioned
       over two devices across the first dimension;
       ``in_parts=(PartitionSpec(2,2), PartitionSpec(4,1), None)`` means the
-      first argument should be partitioned over four devices by splitting the
-      first two dimensions in half, the second argument should be partitioned
-      over the four devices across the first dimension, and the third argument
-      is replicated across the four devices. All PartitionSpecs in a given
-      ``sharded_jit`` call must correspond to the same total number of
-      partitions, i.e. the product of all PartitionSpecs must be equal.
+      first argument should be partitioned over four devices by splitting both
+      of its dimensions in half, the second argument should be partitioned over
+      the four devices across the first dimension, and the third argument is
+      replicated across the four devices.
+
+      All PartitionSpecs in a given ``sharded_jit`` call must correspond to the
+      same total number of partitions, i.e. the product of all PartitionSpecs
+      must be equal, and the number of dimensions in the PartitionSpec
+      corresponding to an array ``a`` should equal ``a.ndim``. Arguments marked
+      as static using ``static_argnums`` (see below) do not require a
+      PartitionSpec.
     out_parts: The output partitions, i.e. how each output of ``fun`` should be
       partitioned or replicated. This follows the same convention as
      ``in_parts``.
@@ -329,6 +328,17 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
     local_num_partitions: Optional. Explicitly specifies the numbers of local
       devices to partitions across in a multi-process setting. This API is
       likely to change in the future.
+    static_argnums: An int or collection of ints specifying which positional
+      arguments to treat as static (compile-time constant). Operations that only
+      depend on static arguments will be constant-folded. Calling the jitted
+      function with different values for these constants will trigger
+      recompilation. If the jitted function is called with fewer positional
+      arguments than indicated by ``static_argnums`` then an error is raised.
+      Each of the static arguments will be broadcasted to all devices, and
+      cannot be partitioned - these arguments will be removed from the *args
+      list before matching each remaining argument with its corresponding
+      PartitionSpec. Arguments that are not arrays or containers thereof must
+      be marked as static. Defaults to ``()``.
 
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
@@ -343,11 +353,24 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
   else:
     local_nparts = pxla.get_num_partitions(local_in_parts, local_out_parts)
 
+  static_argnums = _ensure_index_tuple(static_argnums)
+
   @wraps(fun)
   def wrapped(*args, **kwargs):
     if kwargs:
       raise NotImplementedError("sharded_jit over kwargs not yet supported")
+
     f = lu.wrap_init(fun)
+    if static_argnums:
+      if max(static_argnums) >= len(args):
+        raise ValueError(
+            f"jitted function has static_argnums={static_argnums}"
+            f" but was called with only {len(args)} positional "
+            f"argument{'s' if len(args) > 1 else ''}. "
+            "All static broadcasted arguments must be passed positionally.")
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      f, args = argnums_partial(f, dyn_argnums, args)
+
     args_flat, in_tree = tree_flatten((args, kwargs))
     in_parts_flat = tuple(flatten_axes("sharded_jit in_parts",
                                        in_tree.children()[0], in_parts))
@@ -450,19 +473,11 @@ def omnistaging_disabler() -> None:
   global _pvals_to_results_handler, _pval_to_result_handler
 
   def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
-    nouts = len(out_pvals)
     handlers = [_pval_to_result_handler(npart, parts, out_pval)
                 for parts, out_pval in safe_zip(partitions, out_pvals)]  # type: ignore
 
     def handler(out_bufs):
-      assert nrep * npart == len(out_bufs)
-      buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
-      for r, tuple_buf in enumerate(out_bufs):
-        for i, buf in enumerate(tuple_buf):
-          buffers[i][r] = buf
-      assert not any(buf is result_to_populate for bufs in buffers
-                    for buf in bufs)
-      return [h(bufs) for h, bufs in zip(handlers, buffers)]
+      return [h(bufs) for h, bufs in zip(handlers, out_bufs)]
 
     return handler
 

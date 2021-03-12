@@ -26,6 +26,7 @@ setup(
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
+    package_data={'jax': ['py.typed']},
     python_requires='>=3.6',
     install_requires=[
         'numpy >=1.12',

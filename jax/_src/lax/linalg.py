@@ -26,7 +26,7 @@ from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax._src.util import partial, prod
-from jax.core import Primitive, ShapedArray
+from jax.core import Primitive, ShapedArray, raise_to_shaped
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype, _broadcasting_select)
@@ -371,8 +371,8 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
     n = operand.shape[-1]
     dtype = np.complex64 if dtypes.finfo(operand.dtype).bits == 32 else np.complex128
     dtype = dtypes.canonicalize_dtype(dtype)
-    vl = vr = ShapedArray(batch_dims + (n, n), dtype)
-    w = ShapedArray(batch_dims + (n,), dtype)
+    vl = vr = operand.update(shape=batch_dims + (n, n), dtype=dtype)
+    w = operand.update(shape=batch_dims + (n,), dtype=dtype)
   else:
     raise NotImplementedError
 
@@ -470,9 +470,9 @@ def eigh_abstract_eval(operand, lower):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    v = ShapedArray(batch_dims + (n, n), operand.dtype)
-    w = ShapedArray(batch_dims + (n,),
-                    lax_internal._complex_basetype(operand.dtype))
+    v = operand.update(shape=batch_dims + (n, n))
+    w = operand.update(shape=batch_dims + (n,),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
   return v, w
@@ -487,6 +487,14 @@ def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
   return xops.Tuple(c, [v, w])
+
+def _eigh_tpu_translation_rule(c, operand, lower):
+  # Fail gracefully for complex dtype (unsupported on TPU).
+  shape = c.get_shape(operand)
+  dtype = shape.element_type().type
+  if np.issubdtype(dtype, np.complexfloating):
+    raise NotImplementedError("eigh is not implemented on TPU for complex inputs.")
+  return eigh_translation_rule(c, operand, lower)
 
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
@@ -541,6 +549,8 @@ if cusolver is not None:
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][eigh_p] = partial(
     _eigh_cpu_gpu_translation_rule, rocsolver.syevd)
+
+xla.backend_specific_translations['tpu'][eigh_p] = _eigh_tpu_translation_rule
 
 
 triangular_solve_dtype_rule = partial(
@@ -809,6 +819,7 @@ def _lu_impl(operand):
   return lu, pivot, perm
 
 def _lu_abstract_eval(operand):
+  operand = raise_to_shaped(operand)
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to LU decomposition must have ndims >= 2")
@@ -816,8 +827,8 @@ def _lu_abstract_eval(operand):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    pivot = ShapedArray(batch_dims + (min(m, n),), jnp.int32)
-    perm = ShapedArray(batch_dims + (m,), jnp.int32)
+    pivot = operand.update(shape=batch_dims + (min(m, n),), dtype=jnp.int32)
+    perm = operand.update(shape=batch_dims + (m,), dtype=jnp.int32)
   else:
     pivot = operand
     perm = operand
@@ -1032,8 +1043,8 @@ def qr_abstract_eval(operand, full_matrices):
     m = operand.shape[-2]
     n = operand.shape[-1]
     k = m if full_matrices else min(m, n)
-    q = ShapedArray(batch_dims + (m, k), operand.dtype)
-    r = ShapedArray(batch_dims + (k, n), operand.dtype)
+    q = operand.update(shape=batch_dims + (m, k))
+    r = operand.update(shape=batch_dims + (k, n))
   else:
     q = operand
     r = operand
@@ -1128,6 +1139,10 @@ def svd_impl(operand, full_matrices, compute_uv):
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   shape = c.get_shape(operand).dimensions()
   m, n = shape[-2:]
+  if m == 0 or n == 0:
+    return xla.lower_fun(_empty_svd, multiple_results=True)(
+      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
   u, s, v = xops.SVD(operand)
   permutation = list(range(len(shape)))
   permutation[-1], permutation[-2] = permutation[-2], permutation[-1]
@@ -1150,11 +1165,11 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    s = ShapedArray(batch_dims + (min(m, n),),
-                    lax_internal._complex_basetype(operand.dtype))
+    s = operand.update(shape=batch_dims + (min(m, n),),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
     if compute_uv:
-      u = ShapedArray(batch_dims + (m, m if full_matrices else min(m, n)), operand.dtype)
-      vt = ShapedArray(batch_dims + (n if full_matrices else min(m, n), n), operand.dtype)
+      u = operand.update(shape=batch_dims + (m, m if full_matrices else min(m, n)))
+      vt = operand.update(shape=batch_dims + (n if full_matrices else min(m, n), n))
       return s, u, vt
     else:
       return s,
@@ -1171,7 +1186,6 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
     raise NotImplementedError(
       "Singular value decomposition JVP not implemented for full matrices")
 
-  k = s.shape[-1]
   Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
   dS = jnp.matmul(jnp.matmul(Ut, dA), V)
@@ -1180,44 +1194,66 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   if not compute_uv:
     return (s,), (ds,)
 
-  F = 1 / (jnp.square(s_dim) - jnp.square(_T(s_dim)) + jnp.eye(k, dtype=A.dtype))
-  F = F - jnp.eye(k, dtype=A.dtype)
-  dSS = s_dim * dS
-  SdS = _T(s_dim) * dS
-  dU = jnp.matmul(U, F * (dSS + _T(dSS)))
-  dV = jnp.matmul(V, F * (SdS + _T(SdS)))
+  s_diffs = jnp.square(s_dim) - jnp.square(_T(s_dim))
+  s_diffs_zeros = jnp.eye(s.shape[-1], dtype=A.dtype)  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
+  F = 1 / (s_diffs + s_diffs_zeros) - s_diffs_zeros
+  dSS = s_dim * dS  # dS.dot(jnp.diag(s))
+  SdS = _T(s_dim) * dS  # jnp.diag(s).dot(dS)
+
+  s_zeros = jnp.ones((), dtype=A.dtype) * (s == 0.)
+  s_inv = 1 / (s + s_zeros) - s_zeros
+  s_inv_mat = jnp.vectorize(jnp.diag, signature='(k)->(k,k)')(s_inv)
+  dUdV_diag = .5 * (dS - _H(dS)) * s_inv_mat
+  dU = jnp.matmul(U, F * (dSS + _H(dSS)) + dUdV_diag)
+  dV = jnp.matmul(V, F * (SdS + _H(SdS)))
 
   m, n = A.shape[-2:]
   if m > n:
     dU = dU + jnp.matmul(jnp.eye(m, dtype=A.dtype) - jnp.matmul(U, Ut), jnp.matmul(dA, V)) / s_dim
   if n > m:
     dV = dV + jnp.matmul(jnp.eye(n, dtype=A.dtype) - jnp.matmul(V, Vt), jnp.matmul(_H(dA), U)) / s_dim
-  return (s, U, Vt), (ds, dU, _T(dV))
+
+  return (s, U, Vt), (ds, dU, _H(dV))
+
+def _empty_svd(a, *, full_matrices, compute_uv):
+  batch_shape = a.shape[:-2]
+  m, n = a.shape[-2:]
+  s = jnp.empty(batch_shape + (0,), dtype=lax_internal._complex_basetype(a.dtype))
+  if not compute_uv:
+    return (s,)
+  if full_matrices:
+    size = max(m, n)
+    u = jnp.broadcast_to(jnp.eye(size, dtype=a.dtype), batch_shape + (size, size))
+  else:
+    u = jnp.empty(batch_shape + (m, n), dtype=a.dtype)
+  v = jnp.empty(batch_shape + (0, 0), dtype=a.dtype)
+  if m < n:
+    u, v = v, u
+  return s, u, v
 
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
+  shape = c.get_shape(operand).dimensions()
+  m, n = shape[-2:]
+  batch_dims = shape[:-2]
 
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
+  if m == 0 or n == 0:
+    return xla.lower_fun(_empty_svd, multiple_results=True)(
+      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
   s, u, vt, info = gesvd_impl(c, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
-  if info is not None:
-    ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
-    s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
-                             _nan_like(c, s))
-  else:
-    pass # rocsolver does not return info
+  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
+                           _nan_like(c, s))
 
   result = [s]
 
   if compute_uv:
-    if info is not None:
-      u = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), u,
-                               _nan_like(c, u))
-      vt = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vt,
-                                _nan_like(c, vt))
-    else:
-      pass # rocsolver does not return info
+    u = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), u,
+                             _nan_like(c, u))
+    vt = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vt,
+                              _nan_like(c, vt))
     result += [u, vt]
 
   return xops.Tuple(c, result)
