@@ -18,9 +18,11 @@ from absl.testing import absltest
 
 import jax
 import numpy as np
+from unittest import SkipTest
 
 from jax import test_util as jtu
 from jax import numpy as jnp
+from jax.experimental import pjit
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -49,6 +51,12 @@ class DebugNaNsTest(jtu.JaxTestCase):
     ans = jax.jit(jnp.tanh)(A)
     ans.block_until_ready()
 
+  def testJitComputationNaN(self):
+    A = jnp.array(0.)
+    with self.assertRaises(FloatingPointError):
+      ans = jax.jit(lambda x: 0. / x)(A)
+      ans.block_until_ready()
+
   def testSingleResultPrimitiveNaN(self):
     A = jnp.array(0.)
     with self.assertRaises(FloatingPointError):
@@ -71,6 +79,67 @@ class DebugNaNsTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(FloatingPointError, msg):
         f(1)
 
+  def testPmap(self):
+    f = jax.pmap(lambda x: 0. / x)
+
+    with self.assertRaisesRegex(
+        FloatingPointError,
+        r"invalid value \(nan\) encountered in parallel computation"):
+      ans = f(jnp.array([0.]))
+      ans.block_until_ready()
+
+    if jax.device_count() >= 2:
+      with self.assertRaisesRegex(
+          FloatingPointError,
+          r"invalid value \(nan\) encountered in parallel computation"):
+        ans = f(jnp.array([1., 0.]))
+        ans.block_until_ready()
+
+  def testPmapNoNaN(self):
+    ans = jax.pmap(lambda x: 0. / x)(jnp.array([1.]))
+    ans.block_until_ready()
+
+  @jtu.ignore_warning(message=".*is an experimental.*")
+  def testXmap(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("xmap requires omnistaging")
+
+    f = jax.experimental.maps.xmap(
+        lambda x: 0. / x,
+        in_axes=['i'],
+        out_axes=['i'],
+        axis_resources={'i': 'x'})
+
+    with jax.experimental.maps.mesh(np.array(jax.local_devices()[:1]), ('x',)):
+      with self.assertRaisesRegex(
+          FloatingPointError,
+          r"invalid value \(nan\) encountered in parallel computation"):
+        ans = f(jnp.array([0.]))
+        ans.block_until_ready()
+
+    if jax.device_count() >= 2:
+      with jax.experimental.maps.mesh(np.array(jax.local_devices()[:2]), ('x',)):
+        with self.assertRaises(FloatingPointError):
+          ans = f(jnp.array([1., 0.]))
+          ans.block_until_ready()
+
+  @jtu.ignore_warning(message=".*is an experimental.*")
+  @jtu.skip_on_devices("cpu", "gpu")
+  def testPjit(self):
+    if jax.device_count() < 2:
+      raise SkipTest("test requires >=2 devices")
+
+    p = jax.experimental.PartitionSpec('x')
+    f = pjit.pjit(lambda x: 0. / x,
+                  in_axis_resources=p,
+                  out_axis_resources=p)
+
+    with jax.experimental.maps.mesh(np.array(jax.local_devices()[:2]), ('x',)):
+      with self.assertRaises(FloatingPointError):
+        ans = f(jnp.array([0., 1.]))
+        ans.block_until_ready()
+
+  # TODO(skye): add parallel inf tests, ideally by factoring out test logic
 
 class DebugInfsTest(jtu.JaxTestCase):
 

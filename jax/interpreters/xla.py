@@ -357,7 +357,7 @@ def _execute_compiled_primitive(prim, compiled, result_handler, *args):
   device, = compiled.local_devices()
   input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
   out_bufs = compiled.execute(input_bufs)
-  check_special(prim, out_bufs)
+  check_special(prim.name, out_bufs)
   return result_handler(*out_bufs)
 
 def _execute_replicated_primitive(prim, compiled, result_handler, *args):
@@ -370,11 +370,13 @@ def _execute_replicated_primitive(prim, compiled, result_handler, *args):
   ]
   return result_handler(*out_bufs)
 
+def needs_check_special():
+  return FLAGS.jax_debug_infs or FLAGS.jax_debug_nans
 
-def check_special(prim, bufs):
-  if FLAGS.jax_debug_infs or FLAGS.jax_debug_nans:
+def check_special(name, bufs):
+  if needs_check_special():
     for buf in bufs:
-      _check_special(prim.name, buf.xla_shape(), buf)
+      _check_special(name, buf.xla_shape(), buf)
 
 def _check_special(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
@@ -845,7 +847,7 @@ def _execute_compiled(compiled: XlaExecutable, avals, handlers, *args):
   device, = compiled.local_devices()
   input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
   out_bufs = compiled.execute(input_bufs)
-  check_special(xla_call_p, out_bufs)
+  check_special(xla_call_p.name, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
 def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
@@ -856,7 +858,7 @@ def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
       buf[0] for buf in compiled.execute_sharded_on_local_devices(
           list(zip(*input_bufs)))
   ]
-  check_special(xla_call_p, out_bufs)
+  check_special(xla_call_p.name, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers, *args):
