@@ -469,11 +469,12 @@ models and reinforcement learning. Finally,
 [Objax](https://github.com/google/objax) is a minimalist object-oriented
 framework with a PyTorch-like interface.
 
-DeepMind has open-sourced an ecosystem of libraries around JAX including
-[Haiku](https://github.com/deepmind/dm-haiku) for neural network modules,
-[Optax](https://github.com/deepmind/optax) for gradient processing and
-optimization, [RLax](https://github.com/deepmind/rlax) for RL algorithms, and
-[chex](https://github.com/deepmind/chex) for reliable code and testing.
+DeepMind has open-sourced an
+[ecosystem of libraries around JAX](https://deepmind.com/blog/article/using-jax-to-accelerate-our-research) including [Haiku](https://github.com/deepmind/dm-haiku) for neural
+network modules, [Optax](https://github.com/deepmind/optax) for gradient
+processing and optimization, [RLax](https://github.com/deepmind/rlax) for RL
+algorithms, and [chex](https://github.com/deepmind/chex) for reliable code and
+testing.
 
 ## Citing JAX
 
