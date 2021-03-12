@@ -474,7 +474,7 @@ DeepMind has open-sourced an
 network modules, [Optax](https://github.com/deepmind/optax) for gradient
 processing and optimization, [RLax](https://github.com/deepmind/rlax) for RL
 algorithms, and [chex](https://github.com/deepmind/chex) for reliable code and
-testing.
+testing. (Watch the NeurIPS 2020 JAX Ecosystem at DeepMind talk [here](https://www.youtube.com/watch?v=iDxJxIyzSiM))
 
 ## Citing JAX
 
