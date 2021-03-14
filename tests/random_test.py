@@ -223,6 +223,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(jnp.real(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
       self._CheckKolmogorovSmirnovCDF(jnp.imag(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
+      self.assertEqual(dtype, samples.dtype)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}

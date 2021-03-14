@@ -634,7 +634,7 @@ def _normal(key, shape, dtype) -> jnp.ndarray:
     dtype = dtypes.dtype_real(dtype)
     _re = _normal_real(key_re, shape, dtype)
     _im = _normal_real(key_im, shape, dtype)
-    return 1 / sqrt2 * (_re + 1j * _im)
+    return (_re + 1j * _im) / sqrt2
   else:
     return _normal_real(key, shape, dtype) # type: ignore
 
