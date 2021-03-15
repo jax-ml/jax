@@ -5,7 +5,7 @@
 # JAX: Autograd and XLA
 
 [![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)](https://github.com/google/jax/actions)
-[![Coverage](https://badgen.net/codecov/c/github/google/flax)](https://codecov.io/github/google/flax)
+[![Coverage](https://badgen.net/codecov/c/github/google/jax)](https://codecov.io/github/google/jax)
 [![PyPI version](https://img.shields.io/pypi/v/jax)](https://pypi.org/project/jax/)
 
 [**Quickstart**](#quickstart-colab-in-the-cloud)
