@@ -922,27 +922,27 @@ There are a few ways to do this:
 
 2. You can manually set the `jax_enable_x64` configuration flag at startup:
 
-```
-# again, this only works on startup!
-from jax.config import config
-config.update("jax_enable_x64", True)
-```
+   ```python
+   # again, this only works on startup!
+   from jax.config import config
+   config.update("jax_enable_x64", True)
+   ```
 
 3. You can parse command-line flags with `absl.app.run(main)`
 
-```
-from jax.config import config
-config.config_with_absl()
-```
+   ```python
+   from jax.config import config
+   config.config_with_absl()
+   ```
 
 4. If you want JAX to run absl parsing for you, i.e. you don't want to do `absl.app.run(main)`, you can instead use
 
-```
-from jax.config import config
-if __name__ == '__main__':
-  # calls config.config_with_absl() *and* runs absl parsing
-  config.parse_flags_with_absl()
-```
+   ```python
+   from jax.config import config
+   if __name__ == '__main__':
+     # calls config.config_with_absl() *and* runs absl parsing
+     config.parse_flags_with_absl()
+   ```
 
 Note that #2-#4 work for _any_ of JAX's configuration options.
 
