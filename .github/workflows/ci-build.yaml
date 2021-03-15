@@ -105,7 +105,11 @@ jobs:
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_OMNISTAGING=$JAX_OMNISTAGING"
-        pytest -n auto tests examples
+        pytest -n auto tests examples --cov=jax --cov-report=xml --cov-report=term --cov-config=setup.cfg
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v1
+      with:
+        file: ./coverage.xml
 
 
   documentation:
