@@ -157,5 +157,17 @@ class X64ContextTests(jtu.JaxTestCase):
       for _ in range(2):
         f()
 
+  def test_convert_element_type(self):
+    # Regression test for part of https://github.com/google/jax/issues/5982
+    with enable_x64():
+      x = jnp.int64(1)
+    self.assertEqual(x.dtype, jnp.int64)
+
+    y = x.astype(jnp.int32)
+    self.assertEqual(y.dtype, jnp.int32)
+
+    z = api.jit(lambda x: x.astype(jnp.int32))(x)
+    self.assertEqual(z.dtype, jnp.int32)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

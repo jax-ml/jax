@@ -1535,8 +1535,8 @@ class LaxTest(jtu.JaxTestCase):
       for init_weak_type in [True, False]))
   def testReduceWeakType(self, op_namespace, op, arr_weak_type, init_weak_type):
     op = getattr(op_namespace, op)
-    arr = lax.convert_element_type(np.arange(10), np.int32, weak_type=arr_weak_type)
-    init = lax.convert_element_type(1, np.int32, weak_type=init_weak_type)
+    arr = lax.convert_element_type(np.arange(10), int, weak_type=arr_weak_type)
+    init = lax.convert_element_type(1, int, weak_type=init_weak_type)
     fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
     out = fun(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)

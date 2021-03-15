@@ -421,13 +421,16 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
   Returns:
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
-  new_dtype = dtypes.canonicalize_dtype(new_dtype or _dtype(operand))
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
-  new_weak_type = bool(weak_type)
 
-  old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
+  # Note: don't canonicalize old_dtype because x64 context might
+  # cause un-canonicalized operands to be passed in.
+  old_dtype = np.result_type(operand)
   old_weak_type = dtypes.is_weakly_typed(operand)
+
+  new_dtype = dtypes.canonicalize_dtype(new_dtype or old_dtype)
+  new_weak_type = bool(weak_type)
 
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
