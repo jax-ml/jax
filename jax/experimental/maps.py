@@ -635,12 +635,11 @@ def make_xmap_callable(fun: lu.WrappedFun,
   used_mesh_axes = used_resources & resource_env.physical_resource_axes
   if used_mesh_axes:
     assert spmd_in_axes is None and spmd_out_axes_thunk is None  # No outer xmaps, so should be None
-    submesh = resource_env.physical_mesh[sorted(used_mesh_axes, key=str)]
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
     return pxla.mesh_callable(f,
                               name,
                               backend,
-                              submesh,
+                              resource_env.physical_mesh,
                               mesh_in_axes,
                               mesh_out_axes,
                               donated_invars,

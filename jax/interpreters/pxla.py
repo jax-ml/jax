@@ -1345,15 +1345,6 @@ class Mesh:
     assert is_local_device[subcube_indices].all()
     return Mesh(self.devices[subcube_indices], self.axis_names)
 
-  def __getitem__(self, new_axes):
-    axis_pos = {name: i for i, name in enumerate(self.axis_names)}
-    new_devices = self.devices.transpose(tuple(axis_pos[axis] for axis in new_axes) +
-                                         tuple(axis_pos[axis] for axis in self.axis_names
-                                               if axis not in new_axes))
-    new_devices = new_devices[(slice(None),) * len(new_axes) +
-                              (0,) * (len(self.axis_names) - len(new_axes))]
-    return Mesh(new_devices, new_axes)
-
   @property
   def device_ids(self):
     return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
