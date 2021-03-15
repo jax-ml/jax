@@ -1028,7 +1028,7 @@ DeviceArray = xc.DeviceArrayBase
 _CppDeviceArray: DeviceArrayProtocol = xc.Buffer
 
 _EXPERIMENTAL_CPP_DEVICE_ARRAY = lib._xla_extension_version >= 7
-
+_HAVE_WEAK_TYPE_ATTR = lib._xla_extension_version >= 8
 
 def make_device_array(
     aval: core.ShapedArray,
@@ -1048,6 +1048,8 @@ def make_device_array(
     device_buffer = device_buffer.clone()
     device_buffer._device = device
     device_buffer.aval = aval
+    if _HAVE_WEAK_TYPE_ATTR:
+      device_buffer.weak_type = aval.weak_type
     return device_buffer
 
   return _DeviceArray(aval, device, device_buffer)

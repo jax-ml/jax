@@ -66,7 +66,7 @@ class AbstractSparseArray(core.ShapedArray):
     self.nnz = nnz
     self.data_aval = core.ShapedArray((nnz,), dtype, weak_type, named_shape)
     self.indices_aval = core.ShapedArray((nnz, len(shape)), index_dtype,
-                                         named_shape)
+                                         named_shape=named_shape)
 
   def update(self, shape=None, dtype=None, index_dtype=None, nnz=None,
              weak_type=None, named_shape=None):
