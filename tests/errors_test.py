@@ -17,8 +17,10 @@ import traceback
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
-from jax import grad, jit, vmap, lax
+import jax
+from jax import core, grad, jit, vmap, lax
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax._src import traceback_util
@@ -305,6 +307,20 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     self.assertIsInstance(e.__cause__, ValueError)
     self.assertIsInstance(e.__cause__.__cause__,
                           traceback_util.FilteredStackTrace)
+
+
+class CustomErrorsTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}".format(errorclass), "errorclass": errorclass}
+     for errorclass in dir(jax.errors)
+     if errorclass.endswith('Error') and errorclass != 'JAXTypeError'))
+  def testErrorsURL(self, errorclass):
+    class FakeTracer(core.Tracer):
+      aval = None
+    ErrorClass = getattr(jax.errors, errorclass)
+    err = ErrorClass(FakeTracer(None))
+
+    self.assertIn(f'https://jax.readthedocs.io/en/latest/errors.html#jax.errors.{errorclass}', str(err))
 
 
 if __name__ == '__main__':

@@ -16,9 +16,11 @@ from jax import core
 
 class JAXTypeError(TypeError):
   """Base class for JAX-specific TypeErrors"""
+  _error_page = 'https://jax.readthedocs.io/en/latest/errors.html'
+
   def __init__(self, message: str):
-    error_page = 'https://jax.readthedocs.io/en/latest/errors.html'
-    module_name = self.__class__.__module__
+    error_page = self._error_page
+    module_name = getattr(self, '_module_name', self.__class__.__module__)
     class_name = self.__class__.__name__
     error_msg = f'{message} ({error_page}#{module_name}.{class_name})'
     super().__init__(error_msg)
@@ -128,6 +130,8 @@ class ConcretizationTypeError(JAXTypeError):
   To understand more subtleties having to do with tracers vs. regular values, and
   concrete vs. abstract values, you may want to read :ref:`faq-different-kinds-of-jax-values`.
   """
+  _module_name = "jax.errors"
+
   def __init__(self, tracer: "core.Tracer", context: str = ""):
     super().__init__(
         "Abstract tracer value encountered where concrete value is expected: "
@@ -201,6 +205,8 @@ class TracerArrayConversionError(JAXTypeError):
   To understand more subtleties having to do with tracers vs. regular values, and concrete vs.
   abstract values, you may want to read :ref:`faq-different-kinds-of-jax-values`.
   """
+  _module_name = "jax.errors"
+
   def __init__(self, tracer: "core.Tracer"):
     super().__init__(
         "The numpy.ndarray conversion method __array__() was called on "
@@ -287,6 +293,8 @@ class TracerIntegerConversionError(JAXTypeError):
   To understand more subtleties having to do with tracers vs. regular values, and concrete vs.
   abstract values, you may want to read :ref:`faq-different-kinds-of-jax-values`.
   """
+  _module_name = "jax.errors"
+
   def __init__(self, tracer: "core.Tracer"):
     super().__init__(
         f"The __index__() method was called on the JAX Tracer object {tracer}")
