@@ -37,7 +37,6 @@ def convert_and_save_model(
     model_dir: str,
     *,
     input_signatures: Sequence[tf.TensorSpec],
-    shape_polymorphic_input_spec: Optional[str] = None,
     with_gradient: bool = False,
     enable_xla: bool = True,
     compile_model: bool = True,
@@ -75,12 +74,6 @@ def convert_and_save_model(
       the default serving signature. The additional signatures will be used
       only to ensure that the `jax_fn` is traced and converted to TF for the
       corresponding input shapes.
-    shape_polymorphic_input_spec: if given then it will be used as the
-      `in_shapes` argument to jax2tf.convert for the second parameter of
-      `jax_fn`. In this case, a single `input_signatures` is supported, and
-      should have `None` in the polymorphic dimensions. Should be a string, or a
-      (nesteD) tuple/list/dictionary thereof with a structure matching the
-      second argument of `jax_fn`.
     with_gradient: whether the SavedModel should support gradients. If True,
       then a custom gradient is saved. If False, then a
       tf.raw_ops.PreventGradient is saved to error if a gradient is attempted.
@@ -95,14 +88,9 @@ def convert_and_save_model(
   """
   if not input_signatures:
     raise ValueError("At least one input_signature must be given")
-  if shape_polymorphic_input_spec is not None:
-    if len(input_signatures) > 1:
-      raise ValueError("For shape-polymorphic conversion a single "
-                       "input_signature is supported.")
   tf_fn = jax2tf.convert(
     jax_fn,
     with_gradient=with_gradient,
-    in_shapes=[None, shape_polymorphic_input_spec],
     enable_xla=enable_xla)
 
   # Create tf.Variables for the parameters. If you want more useful variable

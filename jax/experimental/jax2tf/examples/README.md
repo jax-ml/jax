@@ -131,10 +131,10 @@ following sequence of steps:
    * optionally plot images with the training digits and the inference results.
 
 
-There are a number of flags to select the Flax model (`--model=mnist_flag`),
+There are a number of flags to select the Flax model (`--model=mnist_flax`),
 to skip the training and just test a previously loaded
 SavedModel (`--nogenerate_model`), to choose the saving path, etc.
-The default saving location is `/tmp/jax2tf/saved_models/1`.
+The default saving location is `/tmp/jax2tf/saved_models/`.
 
 
 By default, this example will convert the inference function for three separate

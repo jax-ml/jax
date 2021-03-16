@@ -42,6 +42,9 @@ config.parse_flags_with_absl()
 
 class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
+  def setUp(self):
+    raise unittest.SkipTest("shape polymorphism not supported anymore. See #6080.")
+
   def test_simple(self):
     """Test shape polymorphism for a simple case."""
     def f_jax(x):
@@ -333,6 +336,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
 class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
 
+  def setUp(self):
+    raise unittest.SkipTest("shape polymorphism not supported anymore. See #6080.")
+
   def test_concrete_shapes(self):
     # Test shape_as_value with concrete shapes. All transformations work.
     def f(x):
@@ -428,6 +434,9 @@ class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
 
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   """Tests for primitives that take shape values as parameters."""
+
+  def setUp(self):
+    raise unittest.SkipTest("shape polymorphism not supported anymore. See #6080.")
 
   def test_matmul(self):
     raise unittest.SkipTest("Failing after fixing Poly unsoundness #4878")
