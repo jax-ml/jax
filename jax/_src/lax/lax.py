@@ -6086,6 +6086,77 @@ rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
 xla.translations[rng_uniform_p] = _rng_uniform_translation_rule
 
 
+if jax.lib.version >= (0, 1, 62):
+  def _rng_bit_generator_shape_rule(key, *, shape, dtype, algorithm):
+    _ = dtype, algorithm
+    return (key.shape, tuple(shape))
+
+
+  def _rng_bit_generator_dtype_rule(key, *, shape, dtype, algorithm):
+    _ = key, shape, algorithm
+    return (key.dtype, dtype)
+
+
+  def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
+    _ = shape, dtype, algorithm
+    return (key.weak_type, False)
+
+
+  def _rng_bit_generator_translation_rule(c, key, *, shape, dtype, algorithm):
+    _ = c
+    xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
+    return xops.RngBitGenerator(algorithm, key, xla_shape)
+
+
+  def _rng_bit_generator_named_shape_rule(key, *, shape, dtype, algorithm):
+    return [key.named_shape, key.named_shape]
+
+  rng_bit_generator_p = Primitive("rng_bit_generator")
+  rng_bit_generator_p.multiple_results = True
+  rng_bit_generator_p.def_impl(
+      partial(xla.apply_primitive, rng_bit_generator_p))
+  rng_bit_generator_p.def_abstract_eval(
+      partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
+              _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
+              _rng_bit_generator_weak_type_rule,
+              _rng_bit_generator_named_shape_rule))
+  xla.translations[rng_bit_generator_p] = _rng_bit_generator_translation_rule
+
+  RandomAlgorithm = xops.RandomAlgorithm
+  RandomAlgorithm.__str__ = lambda algorithm: algorithm.name
+
+
+  def rng_bit_generator(key,
+                        shape,
+                        dtype=np.uint32,
+                        algorithm=RandomAlgorithm.RNG_DEFAULT):
+    """Stateless PRNG bit generator. Experimental and its use is discouraged.
+
+    Returns uniformly distributed random bits with the specified shape and dtype
+    (what is requirted to be an integer type) using the platform specific
+    default algorithm or the one specified.
+
+    It provides direct acces to the RngBitGenerator primitive exposed by XLA
+    (https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator) for low
+    level API access.
+
+    Most users should use `jax.random` instead for a stable and more user
+    friendly API.
+    """
+    shape = jax.core.canonicalize_shape(shape)
+    return tuple(
+        rng_bit_generator_p.bind(
+            key, shape=shape, dtype=dtype, algorithm=algorithm))
+else:
+  # TODO(tberghammer): Remove when minimum jaxlib version is past (0, 1, 62).
+  rng_bit_generator_p = Primitive("rng_bit_generator")
+  class RandomAlgorithm: pass  # type: ignore
+
+
+  def rng_bit_generator(key, shape, dtype=np.uint32, algorithm=None):
+    raise "rng_bit_generator needs jaxlib 0.1.62 or newer"
+
+
 def _iota_abstract_eval(*, dtype, shape, dimension):
   _check_shapelike("iota", "shape", shape)
   if not any(dtypes.issubdtype(dtype, t) for t in _num):
