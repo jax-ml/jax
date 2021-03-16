@@ -161,7 +161,7 @@ def model_description() -> str:
 def savedmodel_dir(with_version: bool = True) -> str:
   """The directory where we save the SavedModel."""
   model_dir = os.path.join(
-      FLAGS.model_path, FLAGS.model,
+      FLAGS.model_path,
       FLAGS.model + ('' if FLAGS.model_classifier_layer else '_features')
   )
   if with_version:
