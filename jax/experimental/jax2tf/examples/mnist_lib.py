@@ -20,6 +20,7 @@ See README.md for how these are used.
 """
 import functools
 import logging
+import re
 import time
 from typing import Any, Callable, Optional, Sequence, Tuple
 from absl import flags
@@ -63,7 +64,18 @@ def load_mnist(split: tfds.Split, batch_size: int):
   """
   if FLAGS.mock_data:
     with tfds.testing.mock_data(num_examples=batch_size):
-      ds = tfds.load("mnist", split=split)
+      try:
+        ds = tfds.load("mnist", split=split)
+      except Exception as e:
+        m = re.search(r'metadata files were not found in (.+/)mnist/', str(e))
+        if m:
+          msg = ("TFDS mock_data is missing the mnist metadata files. Run the "
+                 "`saved_model_main.py` binary and see where TFDS downloads "
+                 "the mnist data set (typically ~/tensorflow_datasets/mnist). "
+                 f"Copy the `mnist` directory to {m.group(1)} and re-run the test")
+          raise ValueError(msg) from e
+        else:
+          raise e
   else:
     ds = tfds.load("mnist", split=split)
 

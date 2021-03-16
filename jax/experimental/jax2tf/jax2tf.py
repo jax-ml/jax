@@ -130,37 +130,7 @@ def convert(fun: Callable, *,
       JAX arrays, or (nested) standard Python containers (tuple/list/dict)
       thereof.
 
-    in_shapes: an optional sequence of shape specifications,
-      one for each argument of the function to be converted. Default is a
-      list of `None`, in which case the argument shape specifications are taken
-      from the shapes of the actual arguments.
-
-      A non-default `in_shapes` is needed sometimes when the actual arguments
-      have partially-specified shapes. If an argument is a pytree, then the
-      shape specification must be a matching pytree or `None`.
-      See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
-      A shape specification should be a string, with comma-separated dimension
-      specifications, and optionally wrapped in parentheses. A dimension
-      specification is either a number, or the placeholder `_`, or a lowercase
-      word denoting a name for a dimension variable, or an arithmetic expression
-      with integer literals, dimension variables, and the operators `+` and `*`.
-      In presence of dimension variables, the conversion is done with a
-      shape abstraction that allows any concrete value for the variable.
-
-      Examples of shape specifications:
-        * `[None, "(batch, 16)"]`: no specification for the first argument (takes
-          the shape from the actual argument); the second argument is a 2D
-          array with the first dimension size set to a variable `batch` and the
-          second dimension 16.
-        * `["(batch, _)", "(batch,)"]`: the leading dimensions of the two arguments
-          must match. The second dimension of the first argument is taken from the
-          actual argument shape.
-        * `[(batch, 2 * batch)]`: a 2D matrix with the second dimension having
-          double the size of the first one.
-
-      See [the README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
-      for more details.
-
+    in_shapes: Not used. This is kept for backwards compatibility (see #6080).
     with_gradient: if set, will add a tf.custom_gradient to the converted
       function, by converting the ``jax.vjp(fun)``. Only first-order
       differentiation is supported for now. If the converted function is
@@ -212,11 +182,8 @@ def convert(fun: Callable, *,
     if in_shapes is None:
       in_shapes_ = (None,) * len(args)
     else:
-      if not isinstance(in_shapes, Sequence) or len(args) != len(in_shapes):
-        msg = ("in_shapes must be a sequence as long as the argument list "
-               f"({len(args)}). Got in_shapes={in_shapes}.")
-        raise TypeError(msg)
-      in_shapes_ = tuple(in_shapes)
+      raise ValueError("The `in_shapes` parameter is not supported")
+
     # Expand the in_shapes to match the argument pytree
     in_shapes_flat = tuple(api_util.flatten_axes("jax2tf.convert in_shapes",
                                                  in_tree.children()[0], in_shapes_))
