@@ -20,7 +20,13 @@ __all__ = [
   'pocketfft', 'pytree', 'tpu_client', 'version', 'xla_client'
 ]
 
-import jaxlib
+try:
+  import jaxlib
+except ModuleNotFoundError as err:
+  raise ModuleNotFoundError(
+    'jax requires jaxlib to be installed. See '
+    'https://github.com/google/jax#installation for installation instructions.'
+    ) from err
 
 # Must be kept in sync with the jaxlib version in build/test-requirements.txt
 _minimum_jaxlib_version = (0, 1, 60)
