@@ -98,9 +98,7 @@ zip = safe_zip
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
-# TODO(jblespiau): Remove the `if` when jaxlib 0.1.62 is the minimal version.
-if lib._xla_extension_version >= 5:
-  jax_jit.set_disable_jit_cpp_flag(bool_env("JAX_DISABLE_JIT", False))
+jax_jit.set_disable_jit_cpp_flag(bool_env("JAX_DISABLE_JIT", False))
 
 flags.DEFINE_bool(
     "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
@@ -347,39 +345,9 @@ def _cpp_jit(
 
     return _BackendAndDeviceInfo(default_device, committed_to_device)
 
-  # TODO(jblespiau): Delete `get_jax_enable_x64` and `get_jax_disable_jit_flag`
-  # when jaxlib 0.1.62 is the minimal version.
-  def get_jax_enable_x64():
-    """Returns the value of the flag after GoogleInit.
-
-    We must wait until flags have been parsed (in particular for top-level
-    functions decorated with jax.jit), so we delay inspecting the value
-    of the jax_enable_x64 flag until JIT time.
-    """
-    # TODO(jblespiau): Delete when jaxlib 0.1.62 is the minimal version.
-    if lib._xla_extension_version >= 4:
-      return config.read("jax_enable_x64")
-    else:
-      return config.x64_enabled
-
-  def get_jax_disable_jit_flag():
-    """Returns the value of the `jax_disable_jit` flag.
-
-    Both a flag and the `disable_jit` context manager can disable jit. We access
-    the flag only once, when jitting the function, and the context manager
-    modifies a C++ thread-local value.
-    """
-    return config.read("jax_disable_jit")
-
   static_argnums_ = (0,) + tuple(i + 1 for i in static_argnums)
-  # TODO(jblespiau): Remove when jaxlib 0.1.62 is the minimal version.
-  if lib._xla_extension_version >= 5:
-    cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
-                               static_argnums_)
-  else:
-    cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
-                               get_jax_enable_x64, get_jax_disable_jit_flag,
-                               static_argnums_)
+  cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
+                             static_argnums_)
 
   # TODO(mattjj): make cpp callable follow descriptor protocol for bound methods
   @wraps(fun)

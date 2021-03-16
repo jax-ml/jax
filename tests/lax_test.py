@@ -17,7 +17,6 @@ import collections
 from functools import partial
 import itertools
 import operator
-import unittest
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -2285,7 +2284,6 @@ class LaxTest(jtu.JaxTestCase):
                                              (x,), (1.,)))(1.)
     self.assertLen(jaxpr.jaxpr.eqns, 2)
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 62), "Needs jaxlib 0.1.62 or newer")
   def testRngBitGenerator(self):
     if not config.x64_enabled:
       raise SkipTest("RngBitGenerator requires 64bit key")

@@ -29,7 +29,7 @@ except ModuleNotFoundError as err:
     ) from err
 
 # Must be kept in sync with the jaxlib version in build/test-requirements.txt
-_minimum_jaxlib_version = (0, 1, 60)
+_minimum_jaxlib_version = (0, 1, 62)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:

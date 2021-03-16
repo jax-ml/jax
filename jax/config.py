@@ -50,9 +50,6 @@ class _ThreadLocalState(threading.local):
 
 
 class Config:
-  # TODO(jakevdp): Remove when minimum jaxlib is has extension version 4
-  _thread_local_state = _ThreadLocalState()
-
   def __init__(self):
     self.values = {}
     self.meta = {}
@@ -70,10 +67,9 @@ class Config:
         raise Exception("Unrecognized config option: {}".format(name))
       self.values[name] = val
 
-    # TODO(jblespiau): Remove when jaxlib 0.1.62 is the minimal version.
-    if lib._xla_extension_version >= 5 and name == "jax_disable_jit":
+    if name == "jax_disable_jit":
       lib.jax_jit.set_disable_jit_cpp_flag(val)
-    elif lib._xla_extension_version >= 5 and name == "jax_enable_x64":
+    elif name == "jax_enable_x64":
       lib.jax_jit.set_enable_x64_cpp_flag(val)
 
   def read(self, name):
@@ -157,21 +153,11 @@ class Config:
 
   @property
   def x64_enabled(self):
-    if lib._xla_extension_version >= 5:
-      return lib.jax_jit.get_enable_x64()
-    else:
-      # TODO(jakevdp): Remove when minimum jaxlib is has extension version 4
-      if self._thread_local_state.enable_x64 is None:
-        self._thread_local_state.enable_x64 = bool(self.read('jax_enable_x64'))
-      return self._thread_local_state.enable_x64
+    return lib.jax_jit.get_enable_x64()
 
   # TODO(jakevdp): make this public when thread-local x64 is fully implemented.
   def _set_x64_enabled(self, state):
-    if lib._xla_extension_version >= 5:
-      lib.jax_jit.set_enable_x64_thread_local(bool(state))
-    else:
-      # TODO(jakevdp): Remove when minimum jaxlib is has extension version 4
-      self._thread_local_state.enable_x64 = bool(state)
+    lib.jax_jit.set_enable_x64_thread_local(bool(state))
 
 
 class NameSpace(object):

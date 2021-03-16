@@ -2582,9 +2582,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_xla_cpu_gpu_loop_cond_bug(self):
     # https://github.com/google/jax/issues/5900
-    if jax.lib.version < (0, 1, 62):
-      raise SkipTest("test is broken on jaxlib==0.1.61 and 0.1.60")
-
     def deriv(f):
       return lambda x, *args: jax.linearize(lambda x: f(x, *args), x)[1](1.0)
 

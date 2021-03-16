@@ -19,13 +19,11 @@ import time
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import jax
 from jax import api
 from jax import lax
 from jax import partial
 from jax import random
 from jax.config import config
-from jax.config import FLAGS
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
 import jax.test_util as jtu
@@ -145,9 +143,6 @@ class X64ContextTests(jtu.JaxTestCase):
   def test_jit_cache(self):
     if jtu.device_under_test() == "tpu":
       self.skipTest("64-bit random not available on TPU")
-    if jax.lib._xla_extension_version < 4 and FLAGS.experimental_cpp_jit:
-      self.skipTest(
-          "Known failure due to https://github.com/google/jax/issues/5532")
 
     f = partial(random.uniform, random.PRNGKey(0), (1,), 'float64', -1, 1)
     with disable_x64():
