@@ -91,7 +91,7 @@ jobs:
     - name: Install dependencies
       run: |
         pip install -r build/test-requirements.txt
-        if [ ${{ matrix.package-overrides }} != none ]; then
+        if [ "${{ matrix.package-overrides }}" != "none" ]; then
           pip install ${{ matrix.package-overrides }}
         fi
 
