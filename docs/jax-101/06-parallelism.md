@@ -206,7 +206,7 @@ Note that `normalized_convolution` will no longer work without being transformed
 The reason we specify `axis_name` as a string is so we can use collective operations when nesting `jax.pmap` and `jax.vmap`. For example:
 
 ```python
-jax.vmap4(jax.pmap(f, axis_name='i'), axis_name='j')
+jax.vmap(jax.pmap(f, axis_name='i'), axis_name='j')
 ```
 
 A `jax.lax.psum(..., axis_name='i')` in `f` would refer only to the pmapped axis, since they share the `axis_name`. 
