@@ -5043,20 +5043,24 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
       'angle': ['deg'],
+      'asarray': ['like'],
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
-      'corrcoef': ['ddof', 'bias'],
+      'corrcoef': ['ddof', 'bias', 'dtype'],
+      'cov': ['dtype'],
       'empty_like': ['subok', 'order'],
       'einsum': ['kwargs'],
       'einsum_path': ['einsum_call'],
-      'eye': ['order'],
-      'full': ['order'],
+      'eye': ['order', 'like'],
+      'identity': ['like'],
+      'full': ['order', 'like'],
       'full_like': ['subok', 'order'],
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
-      'ones': ['order'],
+      'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
+      'tri': ['like'],
       'zeros_like': ['subok', 'order']
     }
 
