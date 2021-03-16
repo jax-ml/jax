@@ -222,17 +222,13 @@ _jax_types = [
   np.dtype('complex128'),
 ] + _weak_types  # type: ignore[operator]
 
-def _jax_type(value):
-  """Return the jax type for a value or type."""
-  # Note: `x in _weak_types` can return false positives due to dtype comparator overloading.
-  if any(value is typ for typ in _weak_types):
-    return value
-  dtype_ = dtype(value)
-  if is_weakly_typed(value):
-    pytype = type(dtype_.type(0).item())
-    if pytype in _weak_types:
-      return pytype
-  return dtype_
+def _jax_type(dtype, weak_type):
+  """Return the jax type for a dtype and weak type."""
+  return type(dtype.type(0).item()) if (weak_type and dtype != bool) else dtype
+
+def _dtype_and_weaktype(value):
+  """Return a (dtype, weak_type) tuple for the given input."""
+  return dtype(value), any(value is typ for typ in _weak_types) or is_weakly_typed(value)
 
 def _type_promotion_lattice():
   """
@@ -264,6 +260,14 @@ _lattice_upper_bounds = _make_lattice_upper_bounds()
 
 @functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
 def _least_upper_bound(*nodes):
+  """Compute the least upper bound of a set of nodes.
+
+  Args:
+    nodes: sequence of entries from _jax_types
+  Returns:
+    the _jax_type representing the least upper bound of the input nodes
+      on the promotion lattice.
+  """
   # This function computes the least upper bound of a set of nodes N within a partially
   # ordered set defined by the lattice generated above.
   # Given a partially ordered set S, let the set of upper bounds of n ∈ S be
@@ -323,13 +327,23 @@ def dtype(x):
     return python_scalar_dtypes[type(x)]
   return np.result_type(x)
 
-def _result_type_raw(*args):
-  if len(args) == 1:
-    return _jax_type(args[0])
-  return _least_upper_bound(*{_jax_type(arg) for arg in args})
+def _lattice_result_type(*args):
+  dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
+  if len(dtypes) == 1:
+    return dtypes[0], weak_types[0]
+
+  # If all inputs are weakly typed, we compute the bound of the strongly-typed
+  # counterparts and apply the weak type at the end. This avoids returning the
+  # incorrect result with non-canonical weak types (e.g. weak int16).
+  if all(weak_types):
+    result_type = _least_upper_bound(*{_jax_type(dtype, False) for dtype in dtypes})
+    return dtype(result_type), True
+  else:
+    result_type = _least_upper_bound(*{_jax_type(d, w) for d, w in zip(dtypes, weak_types)})
+    return dtype(result_type), any(result_type is t for t in _weak_types)
 
 def result_type(*args):
-  """Convenience function to apply Numpy argument dtype promotion."""
+  """Convenience function to apply JAX argument dtype promotion."""
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
-  return canonicalize_dtype(_result_type_raw(*args))
+  return canonicalize_dtype(_lattice_result_type(*args)[0])
