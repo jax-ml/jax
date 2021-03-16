@@ -1165,6 +1165,9 @@ def partitioned_sharding_spec(num_partitions: int,
 def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
+  if xla.needs_check_special():
+    for bufs in out_bufs:
+      xla.check_special("parallel computation", bufs)
   return out_handler(out_bufs)
 
 
