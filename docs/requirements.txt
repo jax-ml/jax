@@ -12,5 +12,4 @@ pytest-xdist
 # Packages used for notebook execution
 matplotlib
 sklearn
-jaxlib
-.  # install jax itself from current directory.
+.[cpu]  # Install jax from the current directory; jaxlib from pypi.
