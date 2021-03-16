@@ -14,6 +14,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features:
 * Bug fixes:
 * Breaking changes:
+  * The minimum jaxlib version is now 0.1.62.
 
 ## jaxlib 0.1.63 (Unreleased)
 

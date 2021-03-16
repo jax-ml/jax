@@ -236,8 +236,6 @@ def schedules(sizes: Dict[str, int]
 
 class XMapTestCase(jtu.BufferDonationTestCase):
   def setUp(self):
-    if jax.lib.version < (0, 1, 58):
-      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
     if not config.omnistaging_enabled:
       raise SkipTest("xmap requires omnistaging")
     super().setUp()
@@ -691,8 +689,6 @@ class NamedNNTest(XMapTestCase):
 
 class NewPrimitiveTest(XMapTestCase):
   def setUp(self):
-    if jax.lib.version < (0, 1, 58):
-      raise SkipTest("xmap requires jaxlib version >= 0.1.58")
     if not config.omnistaging_enabled:
       raise SkipTest("xmap requires omnistaging")
 
