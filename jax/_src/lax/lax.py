@@ -3848,7 +3848,7 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     raise TypeError(msg.format(start_indices, operand.shape))
   if len(start_indices) != len(limit_indices):
     msg = ("slice limit_indices must have the same length as start_indices, "
-           "got start_inidices {} and limit_indices {}.")
+           "got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
   if (not masking.is_polymorphic(limit_indices) and
       not masking.is_polymorphic(operand.shape) and
@@ -3948,7 +3948,7 @@ def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
     raise TypeError(msg.format(start_indices, operand.shape))
   if len(start_indices) != len(slice_sizes):
     msg = ("dynamic_slice slice_sizes must have the same length as "
-           "start_indices, got start_inidices length {} and slice_sizes {}.")
+           "start_indices, got start_indices length {} and slice_sizes {}.")
     raise TypeError(msg.format(len(start_indices), slice_sizes))
   if not np.all(np.less_equal(slice_sizes, operand.shape)):
     msg = ("slice slice_sizes must be less than or equal to operand shape, "
