@@ -1960,6 +1960,80 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_idx={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, idx),
+       "dtype": dtype, "shape": shape, "axis": axis, "idx": idx}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in all_dtypes
+      for axis in [None] + list(range(-len(shape), len(shape)))
+      for idx in (range(-prod(shape), prod(shape))
+                  if axis is None else
+                  range(-shape[axis], shape[axis]))))
+  def testDeleteInteger(self, shape, dtype, idx, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda arg: np.delete(arg, idx, axis=axis)
+    jnp_fun = lambda arg: jnp.delete(arg, idx, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_slc={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, slc),
+       "dtype": dtype, "shape": shape, "axis": axis, "slc": slc}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in all_dtypes
+      for axis in [None] + list(range(-len(shape), len(shape)))
+      for slc in [slice(None), slice(1, 3), slice(1, 5, 2)]))
+  def testDeleteSlice(self, shape, dtype, axis, slc):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda arg: np.delete(arg, slc, axis=axis)
+    jnp_fun = lambda arg: jnp.delete(arg, slc, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_idx={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis,
+          jtu.format_shape_dtype_string(idx_shape, int)),
+       "dtype": dtype, "shape": shape, "axis": axis, "idx_shape": idx_shape}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in all_dtypes
+      for axis in [None] + list(range(-len(shape), len(shape)))
+      for idx_shape in all_shapes))
+  def testDeleteIndexArray(self, shape, dtype, axis, idx_shape):
+    rng = jtu.rand_default(self.rng())
+    max_idx = np.zeros(shape).size if axis is None else np.zeros(shape).shape[axis]
+    # Previous to numpy 1.19, negative indices were ignored so we don't test this.
+    low = 0 if numpy_version < (1, 19, 0) else -max_idx
+    idx = jtu.rand_int(self.rng(), low=low, high=max_idx)(idx_shape, int)
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda arg: np.delete(arg, idx, axis=axis)
+    jnp_fun = lambda arg: jnp.delete(arg, idx, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @unittest.skipIf(numpy_version < (1, 19), "boolean mask not supported in numpy < 1.19.0")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "dtype": dtype, "shape": shape, "axis": axis}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in all_dtypes
+      for axis in [None] + list(range(-len(shape), len(shape)))))
+  def testDeleteMaskArray(self, shape, dtype, axis):
+    rng = jtu.rand_default(self.rng())
+    mask_size = np.zeros(shape).size if axis is None else np.zeros(shape).shape[axis]
+    mask = jtu.rand_int(self.rng(), low=0, high=2)(mask_size, bool)
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda arg: np.delete(arg, mask, axis=axis)
+    jnp_fun = lambda arg: jnp.delete(arg, mask, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_out_dims={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
