@@ -16,7 +16,7 @@ from setuptools import setup, find_packages
 
 __version__ = None
 _minimum_jaxlib_version = '0.1.62'
-_current_jaxlib_version = '0.1.62'
+_current_jaxlib_version = '0.1.63'
 _available_cuda_versions = ['101', '102', '110', '111', '112']
 
 with open('jax/version.py') as f:
