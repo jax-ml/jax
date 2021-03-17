@@ -422,7 +422,7 @@ Next, run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax jaxlib==0.1.62+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install --upgrade jax jaxlib==0.1.63+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
