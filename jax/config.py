@@ -14,8 +14,6 @@
 
 import os
 import sys
-import threading
-from typing import Optional
 from jax import lib
 
 def bool_env(varname: str, default: bool) -> bool:
@@ -43,12 +41,6 @@ def int_env(varname: str, default: int) -> int:
   return int(os.getenv(varname, default))
 
 
-class _ThreadLocalState(threading.local):
-
-  def __init__(self):
-    self.enable_x64: Optional[bool] = None
-
-
 class Config:
   def __init__(self):
     self.values = {}
@@ -68,9 +60,9 @@ class Config:
       self.values[name] = val
 
     if name == "jax_disable_jit":
-      lib.jax_jit.set_disable_jit_cpp_flag(val)
+      lib.jax_jit.global_state().disable_jit = val
     elif name == "jax_enable_x64":
-      lib.jax_jit.set_enable_x64_cpp_flag(val)
+      lib.jax_jit.global_state().enable_x64 = val
 
   def read(self, name):
     if self.use_absl:
@@ -157,7 +149,7 @@ class Config:
 
   # TODO(jakevdp): make this public when thread-local x64 is fully implemented.
   def _set_x64_enabled(self, state):
-    lib.jax_jit.set_enable_x64_thread_local(bool(state))
+    lib.jax_jit.thread_local_state().enable_x64 = bool(state)
 
 
 class NameSpace(object):

@@ -425,12 +425,13 @@ def disable_jit():
     prev_val = _thread_local_state.jit_is_disabled
     _thread_local_state.jit_is_disabled = True
 
-    prev_cpp_val = lib.jax_jit.get_disable_jit()
-    lib.jax_jit.set_disable_jit(True)
+    cpp_tls = jax_jit.thread_local_state()
+    prev_cpp_val = cpp_tls.disable_jit
+    cpp_tls.disable_jit = True
     yield
   finally:
     _thread_local_state.jit_is_disabled = prev_val
-    lib.jax_jit.set_disable_jit(prev_cpp_val)
+    cpp_tls.disable_jit = prev_cpp_val
 
 
 def _jit_is_disabled():
