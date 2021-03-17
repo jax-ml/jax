@@ -15,9 +15,25 @@
 # Helpers for indexed updates.
 
 
+import sys
+from typing import Any, Optional, Sequence, Tuple, Union
+
+import numpy as np
+
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src import util
+
+
+Array = Any
+if sys.version_info >= (3, 10):
+    from typing import EllipsisType
+    SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
+else:
+    SingleIndex = Union[None, int, slice, Sequence[int], Array]
+Index = Union[SingleIndex, Tuple[SingleIndex, ...]]
+Scalar = Union[complex, float, int, np.number]
+Numeric = Union[Array, Scalar]
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
@@ -102,7 +118,11 @@ class _Indexable(object):
 index = _Indexable()
 
 
-def index_add(x, idx, y, indices_are_sorted=False, unique_indices=False):
+def index_add(x: Array,
+              idx: Index,
+              y: Numeric,
+              indices_are_sorted: bool = False,
+              unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] += y`.
 
   Returns the value of `x` that would result from the
@@ -145,7 +165,11 @@ def index_add(x, idx, y, indices_are_sorted=False, unique_indices=False):
       x, idx, y, lax.scatter_add, indices_are_sorted, unique_indices)
 
 
-def index_mul(x, idx, y, indices_are_sorted=False, unique_indices=False):
+def index_mul(x: Array,
+              idx: Index,
+              y: Numeric,
+              indices_are_sorted: bool = False,
+              unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] *= y`.
 
   Returns the value of `x` that would result from the
@@ -188,7 +212,11 @@ def index_mul(x, idx, y, indices_are_sorted=False, unique_indices=False):
                          indices_are_sorted, unique_indices)
 
 
-def index_min(x, idx, y, indices_are_sorted=False, unique_indices=False):
+def index_min(x: Array,
+              idx: Index,
+              y: Numeric,
+              indices_are_sorted: bool = False,
+              unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
   Returns the value of `x` that would result from the
@@ -228,7 +256,11 @@ def index_min(x, idx, y, indices_are_sorted=False, unique_indices=False):
   return _scatter_update(
       x, idx, y, lax.scatter_min, indices_are_sorted, unique_indices)
 
-def index_max(x, idx, y, indices_are_sorted=False, unique_indices=False):
+def index_max(x: Array,
+              idx: Index,
+              y: Numeric,
+              indices_are_sorted: bool = False,
+              unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
 
   Returns the value of `x` that would result from the
@@ -268,7 +300,11 @@ def index_max(x, idx, y, indices_are_sorted=False, unique_indices=False):
   return _scatter_update(
       x, idx, y, lax.scatter_max, indices_are_sorted, unique_indices)
 
-def index_update(x, idx, y, indices_are_sorted=False, unique_indices=False):
+def index_update(x: Array,
+                 idx: Index,
+                 y: Numeric,
+                 indices_are_sorted: bool = False,
+                 unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = y`.
 
   Returns the value of `x` that would result from the
@@ -309,12 +345,13 @@ def index_update(x, idx, y, indices_are_sorted=False, unique_indices=False):
   return _scatter_update(
       x, idx, y, lax.scatter, indices_are_sorted, unique_indices)
 
-def segment_sum(data,
-                segment_ids,
-                num_segments=None,
-                indices_are_sorted=False,
-                unique_indices=False,
-                bucket_size=None): # TODO(zhangqiaorjc): use non-None default.
+def segment_sum(data: Array,
+                segment_ids: Array,
+                num_segments: Optional[int] = None,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False,
+                # TODO(zhangqiaorjc): use non-None default for bucket_size.
+                bucket_size: Optional[int] = None) -> Array:
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's segment_sum:
