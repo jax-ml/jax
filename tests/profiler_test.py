@@ -16,6 +16,7 @@ from functools import partial
 import glob
 import os
 import shutil
+import tempfile
 import threading
 import unittest
 from absl.testing import absltest
@@ -56,23 +57,69 @@ class ProfilerTest(unittest.TestCase):
     jax.profiler.start_server(port=port)
     del port
 
-  def testTraceContext(self):
+  def testProgrammaticProfiling(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      jax.profiler.start_trace(tmpdir)
+      jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+          jnp.ones(jax.local_device_count()))
+      jax.profiler.stop_trace()
+
+      proto_path = glob.glob(os.path.join(tmpdir, "**/*.xplane.pb"),
+                             recursive=True)
+      self.assertEqual(len(proto_path), 1)
+      with open(proto_path[0], "rb") as f:
+        proto = f.read()
+      # Sanity check that serialized proto contains host and device traces
+      # without deserializing.
+      self.assertIn(b"/host:CPU", proto)
+      if jtu.device_under_test() == "tpu":
+        self.assertIn(b"/device:TPU", proto)
+
+  def testProgrammaticProfilingErrors(self):
+    with self.assertRaisesRegex(RuntimeError, "No profile started"):
+      jax.profiler.stop_trace()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      jax.profiler.start_trace(tmpdir)
+      with self.assertRaisesRegex(RuntimeError,
+                                  "Profile has already been started. Only one "
+                                  "profile may be run at a time."):
+        jax.profiler.start_trace(tmpdir)
+
+  def testProgrammaticProfilingContextManager(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with jax.profiler.trace(tmpdir):
+        jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+            jnp.ones(jax.local_device_count()))
+
+      proto_path = glob.glob(os.path.join(tmpdir, "**/*.xplane.pb"),
+                             recursive=True)
+      self.assertEqual(len(proto_path), 1)
+      with open(proto_path[0], "rb") as f:
+        proto = f.read()
+      # Sanity check that serialized proto contains host and device traces
+      # without deserializing.
+      self.assertIn(b"/host:CPU", proto)
+      if jtu.device_under_test() == "tpu":
+        self.assertIn(b"/device:TPU", proto)
+
+  def testTraceAnnotation(self):
     x = 3
-    with jax.profiler.TraceContext("mycontext"):
+    with jax.profiler.TraceAnnotation("mycontext"):
       x = x + 2
 
   def testTraceFunction(self):
-    @jax.profiler.trace_function
+    @jax.profiler.annotate_function
     def f(x):
       return x + 2
     self.assertEqual(f(7), 9)
 
-    @partial(jax.profiler.trace_function, name="aname")
+    @partial(jax.profiler.annotate_function, name="aname")
     def g(x):
       return x + 2
     self.assertEqual(g(7), 9)
 
-    @partial(jax.profiler.trace_function, name="aname", akwarg="hello")
+    @partial(jax.profiler.annotate_function, name="aname", akwarg="hello")
     def h(x):
       return x + 2
     self.assertEqual(h(7), 9)
@@ -96,7 +143,7 @@ class ProfilerTest(unittest.TestCase):
       worker_start.set()
       x = jnp.ones((1000, 1000))
       while True:
-        with jax.profiler.TraceContext("atracecontext"):
+        with jax.profiler.TraceAnnotation("atraceannotation"):
           jnp.dot(x, x.T).block_until_ready()
           if self.profile_done:
             break
