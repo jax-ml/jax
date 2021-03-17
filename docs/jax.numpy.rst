@@ -120,6 +120,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     cumsum
     deg2rad
     degrees
+    delete
     diag
     diagflat
     diag_indices
