@@ -47,6 +47,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    notebooks/XLA_in_Python
    notebooks/maml
    notebooks/score_matching
+   notebooks/xmap_tutorial
 
 .. toctree::
    :maxdepth: 1

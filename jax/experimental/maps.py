@@ -275,8 +275,8 @@ def xmap(fun: Callable,
   result has a (set) union of all named axes.  The positional semantics of the
   program remain unchanged, and broadcasting still implicitly right-aligns
   positional axes for unification. For an extended description of the
-  :py:func:`xmap` programming model, please refer to ... (a link to a
-  non-existent detailed tutorial!).
+  :py:func:`xmap` programming model, please refer to the :py:func:`xmap`
+  tutorial notebook in main JAX documentation.
 
   Note that since all top-level JAX expressions are interpreted in the NumPy
   programming model, :py:func:`xmap` can also be seen as an adapter that
