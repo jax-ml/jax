@@ -275,7 +275,24 @@ class CoreTest(jtu.JaxTestCase):
     try:
       fn(params)
       gc.set_debug(gc.DEBUG_SAVEALL)
-      self.assertEqual(gc.collect(), 0)
+      self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
+    finally:
+      gc.set_debug(debug)
+
+  def test_reference_cycles_jit(self):
+    gc.collect()
+
+    def f(x):
+      return x.sum()
+
+    fn = jit(f)
+    params = jnp.zeros([])
+
+    debug = gc.get_debug()
+    try:
+      fn(params).block_until_ready()
+      gc.set_debug(gc.DEBUG_SAVEALL)
+      self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
 
