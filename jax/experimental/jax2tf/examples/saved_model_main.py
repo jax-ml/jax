@@ -36,8 +36,8 @@ import numpy as np
 import tensorflow as tf  # type: ignore
 import tensorflow_datasets as tfds  # type: ignore
 
-flags.DEFINE_string("model", "mnist_flax",
-                    "Which model to use: mnist_flax, mnist_pure_jax.")
+flags.DEFINE_enum("model", "mnist_flax", ["mnist_flax", "mnist_pure_jax"],
+                  "Which model to use.")
 flags.DEFINE_boolean("model_classifier_layer", True,
                      ("The model should include the classifier layer, or just "
                       "the last layer of logits. Set this to False when you "
