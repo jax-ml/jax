@@ -57,7 +57,7 @@ int_dtypes = jtu.dtypes.all_integer
 uint_dtypes = jtu.dtypes.all_unsigned
 bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
-all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+all_dtypes = float_dtypes + complex_dtypes + int_dtypes + uint_dtypes + bool_dtypes
 python_scalar_types = [bool, int, float, complex]
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
@@ -1497,12 +1497,10 @@ class LaxTest(jtu.JaxTestCase):
           (0, lax.max, all_dtypes), # non-monoidal
           (-np.inf, lax.max, float_dtypes),
           (dtypes.iinfo(np.int32).min, lax.max, [np.int32]),
-          # (dtypes.iinfo(np.int64).min, lax.max, [np.int64]),  # TODO fails
-          (dtypes.iinfo(np.uint32).min, lax.max, [np.uint32]),
-          (dtypes.iinfo(np.uint64).min, lax.max, [np.uint64]),
+          (dtypes.iinfo(np.int64).min, lax.max, [np.int64]),
           (np.inf, lax.min, float_dtypes),
           (dtypes.iinfo(np.int32).max, lax.min, [np.int32]),
-          # (dtypes.iinfo(np.int64).max, lax.min, [np.int64]),  # TODO fails
+          (dtypes.iinfo(np.int64).max, lax.min, [np.int64]),
           (dtypes.iinfo(np.uint32).max, lax.min, [np.uint32]),
           (dtypes.iinfo(np.uint64).max, lax.min, [np.uint64]),
       ]
