@@ -953,7 +953,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_seed={seed}_type={type}", "seed": seed, "type": type}
       for type in ["int", "np.array", "jnp.array"]
-      for seed in [-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)]))
+      for seed in [-1, 0, 1, (1 << 31) - 1, (1 << 32) - 1, (1 << 63) - 1, (1 << 64) - 1]))
   def test_prng_jit_invariance(self, seed, type):
     if type == "int" and seed == (1 << 64) - 1:
       self.skipTest("Expected failure: Python int too large.")
@@ -962,7 +962,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self._CompileAndCheck(random.PRNGKey, args_maker)
 
   def test_prng_errors(self):
-    seed = np.iinfo(np.uint64).max
+    seed = np.iinfo(np.uint64).max + 1
     with self.assertRaises(OverflowError):
       random.PRNGKey(seed)
     with self.assertRaises(OverflowError):
@@ -979,8 +979,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       api.jit(random.split)(key)
       key, _ = random.split(key, 2)
     self.assertEqual(count[0], 1)  # 1 for the argument device_put call
-
-
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@
 from distutils.util import strtobool
 import functools
 import os
-from typing import Dict
+from typing import Any, Dict
 
 import numpy as np
 
@@ -68,6 +68,14 @@ _dtype_to_32bit_dtype = {
     np.dtype('complex128'): np.dtype('complex64'),
 }
 
+_UINT_DTYPES = {
+  8: np.uint8,
+  16: np.uint16,
+  32: np.uint32,
+  64: np.uint64
+}
+
+
 @util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
@@ -105,14 +113,52 @@ def scalar_type_of(x):
   else:
     raise TypeError("Invalid scalar value {}".format(x))
 
+
+def _scalar_type_to_dtype(typ: type, value: Any = None):
+  """Return the numpy dtype for the given scalar type.
+
+  If `value` is specified and typ is int, then the resulting integer dtype will
+  be signed or unsigned depending on the value.
+
+  Examples
+  --------
+  >>> _scalar_dtype_to_dtype(int)
+  numpy.int64
+  >>> _scalar_dtype_to_dtype(float)
+  numpy.float64
+  >>> _scalar_dtype_to_dtype(complex)
+  numpy.complex128
+  >>> _scalar_dtype_to_dtype(int)
+  np.int64
+  >>> _scalar_dtype_to_dtype(int, 0)
+  np.int64
+  >>> _scalar_dtype_to_dtype(int, 1 << 63)
+  np.uint64
+  """
+  dtype = python_scalar_dtypes[typ]
+  # For integers, we return unsigned if required to store the value.
+  if typ is int and value is not None:
+    unsigned_dtype = _UINT_DTYPES[np.iinfo(dtype).bits]
+    if np.iinfo(dtype).min <= value <= np.iinfo(dtype).max:
+      pass
+    elif np.iinfo(unsigned_dtype).min < value <= np.iinfo(unsigned_dtype).max:
+      dtype = unsigned_dtype
+    else:
+      raise OverflowError(f"Python int {value} too large to convert to {dtype}")
+  return dtype
+
+
 def coerce_to_array(x):
   """Coerces a scalar or NumPy array to an np.array.
 
   Handles Python scalar type promotion according to JAX's rules, not NumPy's
   rules.
   """
-  dtype = python_scalar_dtypes.get(type(x), None)
-  return np.array(x, dtype) if dtype else np.array(x)
+  if type(x) in python_scalar_dtypes:
+    dtype = _scalar_type_to_dtype(type(x), x)
+  else:
+    dtype = None
+  return np.asarray(x, dtype)
 
 iinfo = np.iinfo
 

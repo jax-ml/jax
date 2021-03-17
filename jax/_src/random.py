@@ -52,15 +52,19 @@ def PRNGKey(seed: int) -> jnp.ndarray:
   """
   if np.shape(seed):
     raise TypeError(f"PRNGKey seed must be a scalar; got {seed!r}.")
+
+  if type(seed) in dtypes.python_scalar_dtypes:
+    seed = dtypes.coerce_to_array(seed)
+
   if not np.issubdtype(np.result_type(seed), np.integer):
     raise TypeError(f"PRNGKey seed must be an integer; got {seed!r}")
 
-  # Explicitly cast to int64 for JIT invariance of behavior on large ints.
-  if isinstance(seed, int):
-    seed = np.int64(seed)  # type: ignore[assignment]
   # Converting to jnp.array may truncate bits when jax_enable_x64=False, but this
   # is necessary for the sake of JIT invariance of the result for such values.
-  seed = jnp.asarray(seed)
+  seed = jnp.array(seed)
+
+  # Strip weak type to avoid lax typecasting issues.
+  seed = lax.convert_element_type(seed, weak_type=False)
 
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
   k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))
