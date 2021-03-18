@@ -58,6 +58,7 @@ uint_dtypes = jtu.dtypes.all_unsigned
 bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+python_scalar_types = [bool, int, float, complex]
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
@@ -2300,6 +2301,19 @@ class LaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(out[0], out_jit[0])
     self.assertArraysEqual(out[1], out_jit[1])
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype={}_weak_type={}".format(dtype.__name__, weak_type),
+       "dtype": dtype, "weak_type": weak_type}
+      for dtype in all_dtypes + python_scalar_types
+      for weak_type in [True, False]))
+  def test_const(self, dtype, weak_type):
+    if dtype in set(python_scalar_types):
+      val = dtype(0)
+    else:
+      val = lax.convert_element_type(0, dtype, weak_type=weak_type)
+
+    const = lax._const(val, 0)
+    self.assertEqual(dtypes.result_type(val), dtypes.result_type(const))
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

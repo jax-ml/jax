@@ -6343,9 +6343,11 @@ def _dynamic_slice_indices(operand, start_indices):
 
 
 def _const(example, val):
+  dtype = _dtype(example)
   if dtypes.is_python_scalar(example):
-    return dtypes.scalar_type_of(example)(val)
-  return np.array(val, _dtype(example))
+    val = dtypes.scalar_type_of(example)(val)
+    return val if dtype == _dtype(val) else np.array(val, dtype)
+  return np.array(val, dtype)
 
 _zeros: Callable = partial(full_like, fill_value=0)
 _zero: Callable = partial(full_like, shape=(), fill_value=0)
