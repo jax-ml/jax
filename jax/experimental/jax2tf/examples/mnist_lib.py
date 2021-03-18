@@ -178,8 +178,8 @@ class PureJaxMNIST:
       test_acc = PureJaxMNIST.accuracy(PureJaxMNIST.predict, params, test_ds)
       logging.info(
         f"{PureJaxMNIST.name}: Epoch {epoch} in {epoch_time:0.2f} sec")
-      logging.info(f"{PureJaxMNIST.name}: Training set accuracy {train_acc}")
-      logging.info(f"{PureJaxMNIST.name}: Test set accuracy {test_acc}")
+      logging.info(f"{PureJaxMNIST.name}: Training set accuracy {100. * train_acc:0.2f}%")
+      logging.info(f"{PureJaxMNIST.name}: Test set accuracy {100. * test_acc:0.2f}%")
 
     return (functools.partial(
       PureJaxMNIST.predict, with_classifier=with_classifier), params)
@@ -269,8 +269,8 @@ class FlaxMNIST:
       test_acc = PureJaxMNIST.accuracy(FlaxMNIST.predict, optimizer.target,
                                        test_ds)
       logging.info(f"{FlaxMNIST.name}: Epoch {epoch} in {epoch_time:0.2f} sec")
-      logging.info(f"{FlaxMNIST.name}: Training set accuracy {train_acc}")
-      logging.info(f"{FlaxMNIST.name}: Test set accuracy {test_acc}")
+      logging.info(f"{FlaxMNIST.name}: Training set accuracy {100. * train_acc:0.2f}%")
+      logging.info(f"{FlaxMNIST.name}: Test set accuracy {100. * test_acc:0.2f}%")
 
     # See discussion in README.md for packaging Flax models for conversion
     predict_fn = functools.partial(FlaxMNIST.predict,
