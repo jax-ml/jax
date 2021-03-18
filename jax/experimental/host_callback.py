@@ -343,7 +343,7 @@ from absl import logging
 
 from jax import api
 from jax import core
-from jax.config import config, bool_env, int_env
+from jax.config import config
 from jax import custom_derivatives
 from jax import dtypes
 from jax import lax
