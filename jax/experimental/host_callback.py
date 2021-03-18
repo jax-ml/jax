@@ -229,7 +229,8 @@ the send operations were performed on the device.
 The host callback functions for multiple devices may be interleaved.
 The data from the devices is received by separate threads managed by the JAX
 runtime (one thread per device). The runtime maintains a buffer of
-configurable size. When the buffer is full, all the receiving threads are paused
+configurable size (see the flag ``--jax_host_callback_max_queue_byte_size``).
+When the buffer is full, all the receiving threads are paused
 which eventually pauses the computation on devices. The runtime has one
 additional thread that invokes the Python user functions with the received data.
 If the processing of the callbacks is slow, it may actually lead to the runtime
@@ -342,7 +343,7 @@ from absl import logging
 
 from jax import api
 from jax import core
-from jax.config import config, bool_env
+from jax.config import config
 from jax import custom_derivatives
 from jax import dtypes
 from jax import lax
@@ -359,19 +360,6 @@ import numpy as np
 
 
 FLAGS = config.FLAGS
-config.DEFINE_bool(
-    'jax_host_callback_inline',
-    bool_env('JAX_HOST_CALLBACK_INLINE', False),
-    help='Inline the host_callback, if not in a staged context.'
-)
-
-def inline_host_callback() -> bool:
-  try:
-    return FLAGS.jax_host_callback_inline
-  except AttributeError:
-    # TODO: I cannot get this flag to be seen for py3.6 tests in Github
-    return False
-
 xops = xla_client._xla.ops
 
 # TODO(necula): fix mypy errors if I define the type aliases below
@@ -545,7 +533,9 @@ def _call(callback_func: Callable, arg, *,
           result_shape=None,
           call_with_device=False,
           identity=False):
-  _initialize_outfeed_receiver()  # Lazy initialization
+  # Lazy initialization
+  _initialize_outfeed_receiver(
+      max_callback_queue_size_bytes=FLAGS.jax_host_callback_max_queue_byte_size)
   api._check_callable(callback_func)
   flat_args, arg_treedef = pytree.flatten(arg)
   for arg in flat_args:
@@ -762,7 +752,7 @@ outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
 
 def _outside_call_impl(*args, **params):
   assert not "has_token" in params
-  if inline_host_callback():
+  if FLAGS.jax_host_callback_inline:
     device = api.devices()[0]
     results = _outside_call_run_callback(args, device, send_infeed=False, **params)
     return results
