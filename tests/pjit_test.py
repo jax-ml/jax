@@ -174,6 +174,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
+  @ignore_pjit_warning()
   @with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraintPyTree(self):
     @partial(pjit, in_axis_resources=None, out_axis_resources=None)
