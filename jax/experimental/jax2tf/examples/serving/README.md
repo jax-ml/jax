@@ -2,33 +2,33 @@ Using jax2tf with TensorFlow serving
 ====================================
 
 This is a supplement to the
-[examples/README.md](https://g3doc.corp.google.com/third_party/py/jax/experimental/jax2tf/examples/README.md)
+[examples/README.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md)
 with example code and
 instructions for using `jax2tf` with the OSS TensorFlow model server.
-For Google-internal versions of model server, see the `internal` subdirectory. 
+Specific instructions for Google-internal versions of model server are in the `internal` subdirectory.
 
 The goal of `jax2tf` is to convert JAX functions
 into Python functions that behave as if they had been written with TensorFlow.
-These functions can be tracerd and saved in a SavedModel using **standard TensorFlow
+These functions can be traced and saved in a SavedModel using **standard TensorFlow
 code, so the user has full control over what metadata is saved in the
 SavedModel**.
 
 The only difference in the SavedModel produced with jax2tf is that the
 function graphs may contain
-[XLA TF ops](http://g3doc/third_party/py/jax/experimental/jax2tf/README.md#caveats)
-that require enabling XLA for execution in the model server. This 
+[XLA TF ops](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#caveats)
+that require enabling CPU/GPU XLA for execution in the model server. This
 is achieved using a command-line flag. There are no other differences compared
-to using SavedModel produced by TensorFlow.  
+to using SavedModel produced by TensorFlow.
 
 This serving example uses
-[saved_model_main.py](http://google3/third_party/py/jax/experimental/jax2tf/examples/saved_model_main.py)
+[saved_model_main.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/saved_model_main.py)
 for saving the SavedModel and adds code specific to interacting with the
 model server:
-[model_server_request.py](http://google3/third_party/py/jax/experimental/jax2tf/examples/serving/model_server_request.py).
+[model_server_request.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/serving/model_server_request.py).
 
-0.  *Set up JAX and TensorFlow serving*. 
+0.  *Set up JAX and TensorFlow serving*.
 
-If you have already installed JAX and TensorFlow serving, you can skip most of these steps, but do set the 
+If you have already installed JAX and TensorFlow serving, you can skip most of these steps, but do set the
 environment variables `JAX2TF_EXAMPLES` and `DOCKER_IMAGE`.
 
 The following will clone locally a copy of the JAX sources, and will install the `jax`, `jaxlib`, and `flax` packages.
@@ -48,7 +48,7 @@ again using a recent "nightly" version. Install Docker and then run:
     ```shell
     DOCKER_IMAGE=tensorflow/serving:nightly
     docker pull ${DOCKER_IMAGE}
-    ``` 
+    ```
 
 1.  *Set some variables*.
 
@@ -94,7 +94,7 @@ again using a recent "nightly" version. Install Docker and then run:
 
     Note that we are forwarding the ports 8500 (for the gRPC server) and
     8501 (for the HTTP REST server).
-    
+
     You do not need to redo this step if you change the model parameters and
     regenerate the SavedModel, as long as you bumped the ${MODEL_VERSION}.
     The running model server will automatically load newer model versions.
