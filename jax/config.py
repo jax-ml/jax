@@ -191,3 +191,18 @@ flags.DEFINE_bool(
           'Enabling leak checking may have performance impacts: some caching '
           'is disabled, and other overheads may be added.'),
 )
+
+flags.DEFINE_bool(
+    'jax_host_callback_inline',
+    bool_env('JAX_HOST_CALLBACK_INLINE', False),
+    help='Inline the host_callback, if not in a staged context.'
+)
+flags.DEFINE_integer(
+    'jax_host_callback_max_queue_byte_size',
+    int_env('JAX_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE', int(256 * 1e6)),
+    help=('The size in bytes of the buffer used to hold outfeeds from each '
+          'device. When this capacity is reached consuming outfeeds from the '
+          'device is paused, thus potentially pausing the device computation, '
+          'until the Python callback consume more outfeeds.'),
+    lower_bound=int(16 * 1e6)
+)

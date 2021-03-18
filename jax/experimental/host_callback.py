@@ -360,28 +360,6 @@ import numpy as np
 
 
 FLAGS = config.FLAGS
-config.DEFINE_bool(
-    'jax_host_callback_inline',
-    bool_env('JAX_HOST_CALLBACK_INLINE', False),
-    help='Inline the host_callback, if not in a staged context.'
-)
-config.DEFINE_integer(
-    'jax_host_callback_max_queue_byte_size',
-    int_env('JAX_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE', int(256 * 1e6)),
-    help=('The size in bytes of the buffer used to hold outfeeds from each '
-          'device. When this capacity is reached consuming outfeeds from the '
-          'device is paused, thus potentially pausing the device computation, '
-          'until the Python callback consume more outfeeds.'),
-    lower_bound=int(16 * 1e6)
-)
-
-def inline_host_callback() -> bool:
-  try:
-    return FLAGS.jax_host_callback_inline
-  except AttributeError:
-    # TODO: I cannot get this flag to be seen for py3.6 tests in Github
-    return False
-
 xops = xla_client._xla.ops
 
 # TODO(necula): fix mypy errors if I define the type aliases below
@@ -774,7 +752,7 @@ outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
 
 def _outside_call_impl(*args, **params):
   assert not "has_token" in params
-  if inline_host_callback():
+  if FLAGS.jax_host_callback_inline:
     device = api.devices()[0]
     results = _outside_call_run_callback(args, device, send_infeed=False, **params)
     return results
