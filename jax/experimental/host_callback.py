@@ -229,7 +229,8 @@ the send operations were performed on the device.
 The host callback functions for multiple devices may be interleaved.
 The data from the devices is received by separate threads managed by the JAX
 runtime (one thread per device). The runtime maintains a buffer of
-configurable size. When the buffer is full, all the receiving threads are paused
+configurable size (see the flag ``--jax_host_callback_max_queue_byte_size``).
+When the buffer is full, all the receiving threads are paused
 which eventually pauses the computation on devices. The runtime has one
 additional thread that invokes the Python user functions with the received data.
 If the processing of the callbacks is slow, it may actually lead to the runtime
@@ -342,7 +343,7 @@ from absl import logging
 
 from jax import api
 from jax import core
-from jax.config import config, bool_env
+from jax.config import config, bool_env, int_env
 from jax import custom_derivatives
 from jax import dtypes
 from jax import lax
@@ -363,6 +364,15 @@ config.DEFINE_bool(
     'jax_host_callback_inline',
     bool_env('JAX_HOST_CALLBACK_INLINE', False),
     help='Inline the host_callback, if not in a staged context.'
+)
+config.DEFINE_integer(
+    'jax_host_callback_max_queue_byte_size',
+    int_env('JAX_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE', int(256 * 1e6)),
+    help=('The size in bytes of the buffer used to hold outfeeds from each '
+          'device. When this capacity is reached consuming outfeeds from the '
+          'device is paused, thus potentially pausing the device computation, '
+          'until the Python callback consume more outfeeds.'),
+    lower_bound=int(16 * 1e6)
 )
 
 def inline_host_callback() -> bool:
@@ -545,7 +555,9 @@ def _call(callback_func: Callable, arg, *,
           result_shape=None,
           call_with_device=False,
           identity=False):
-  _initialize_outfeed_receiver()  # Lazy initialization
+  # Lazy initialization
+  _initialize_outfeed_receiver(
+      max_callback_queue_size_bytes=FLAGS.jax_host_callback_max_queue_byte_size)
   api._check_callable(callback_func)
   flat_args, arg_treedef = pytree.flatten(arg)
   for arg in flat_args:
