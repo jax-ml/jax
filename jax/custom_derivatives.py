@@ -671,6 +671,7 @@ xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_vjp_call_jaxpr_impl)
 
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
+xla.translations[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 
 
 @config.register_omnistaging_disabler

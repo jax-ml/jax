@@ -3803,6 +3803,10 @@ class CustomVJPTest(jtu.JaxTestCase):
         TypeError,
         r"can't apply forward-mode autodiff \(jvp\) to a custom_vjp function.",
         lambda: api.jvp(api.vmap(f), (jnp.arange(3.),), (jnp.ones(3),)))
+    self.assertRaisesRegex(
+        TypeError,
+        r"can't apply forward-mode autodiff \(jvp\) to a custom_vjp function.",
+        lambda: api.jvp(jit(f), (3.,), (1.,)))
 
   def test_kwargs(self):
     # from https://github.com/google/jax/issues/1938
