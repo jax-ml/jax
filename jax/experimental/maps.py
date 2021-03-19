@@ -674,7 +674,7 @@ core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
 def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   from jax.interpreters.partial_eval import (
     trace_to_subjaxpr_dynamic, DynamicJaxprTracer, source_info_util,
-    convert_constvars_jaxpr, call_param_updaters, new_jaxpr_eqn)
+    convert_constvars_jaxpr, new_jaxpr_eqn)
   assert primitive is xmap_p
   in_avals = [t.aval for t in tracers]
   global_axis_sizes = params['global_axis_sizes']
@@ -695,13 +695,12 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   invars = map(self.getvar, tracers)
   constvars = map(self.getvar, map(self.instantiate_const, consts))
   outvars = map(self.makevar, out_tracers)
-  new_in_axes = (None,) * len(consts) + params['in_axes']
+  new_in_axes = (AxisNamePos(user_repr='{}'),) * len(consts) + params['in_axes']
+  new_donated_invars = (False,) * len(consts) + params['donated_invars']
   new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
+                    donated_invars=new_donated_invars,
                     call_jaxpr=convert_constvars_jaxpr(jaxpr))
   del new_params['out_axes_thunk']
-  update_params = call_param_updaters.get(primitive)
-  if update_params:
-    new_params = update_params(new_params, [True] * len(tracers))
   eqn = new_jaxpr_eqn([*constvars, *invars], outvars, primitive,
                       new_params, source_info)
   self.frame.eqns.append(eqn)

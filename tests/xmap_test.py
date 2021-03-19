@@ -386,15 +386,16 @@ class XMapTest(XMapTestCase):
     def f(x):
       y = x * 2
       @partial(xmap, in_axes={0: 'b'}, out_axes=({1: 'b'}, {}),
-                axis_resources=dict([axis_resources[1]]))
+               axis_resources=dict([axis_resources[1]]))
       def h(y):
-        return jnp.sin(y), lax.psum(y, ('a', 'b'))
+        # Multiply by a constant array to better exercise the partial_eval rule
+        return jnp.sin(y) * np.arange(y.size), lax.psum(y, ('a', 'b'))
       return h(y)
 
     xshape = (4, 2, 5)
     x = jnp.arange(np.prod(xshape)).reshape(xshape)
     y = f(x)
-    self.assertAllClose(y, (jnp.sin(x * 2).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
+    self.assertAllClose(y, ((jnp.sin(x * 2) * np.arange(xshape[-1])).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
     self.assertEqual(y[0].sharding_spec.sharding,
                       (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
     self.assertEqual(y[0].sharding_spec.mesh_mapping,
