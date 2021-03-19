@@ -325,6 +325,8 @@ def is_python_scalar(x):
     return type(x) in python_scalar_dtypes
 
 def dtype(x):
+  if isinstance(dtype, str) and dtype == "bfloat16":
+    return bfloat16
   if type(x) in python_scalar_dtypes:
     return python_scalar_dtypes[type(x)]
   return np.result_type(x)
