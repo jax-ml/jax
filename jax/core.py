@@ -978,6 +978,8 @@ def concrete_or_error(force: Any, val: Any, context=""):
   else:
     return force(val)
 
+convert_element_type_p = Primitive('convert_element_type')
+
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
   array_abstraction_level = 2

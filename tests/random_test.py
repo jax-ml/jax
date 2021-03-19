@@ -969,18 +969,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       api.jit(random.PRNGKey)(seed)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
-    raise SkipTest("broken test")  # TODO(mattjj): fix
-
     if not config.omnistaging_enabled:
-      raise SkipTest("test is omnistaging-specific")
-
-    key = random.PRNGKey(1)
+      raise SkipTest("test requires omnistaging")
+    key = random.PRNGKey(1).block_until_ready()
     with jtu.count_device_put() as count:
       api.jit(random.split)(key)
-      key, _ = random.split(key, 2)
-    self.assertEqual(count[0], 1)  # 1 for the argument device_put call
-
-
+    self.assertEqual(count[0], 1)  # 1 for the argument device_put
 
 
 if __name__ == "__main__":
