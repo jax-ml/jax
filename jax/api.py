@@ -768,7 +768,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
             "same shape as the arguments at positions {argnums}.")
 
   _check_callable(fun)
-  argnums = _ensure_index(argnums)
+  argnums = core.concrete_or_error(_ensure_index, argnums)
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   @api_boundary
