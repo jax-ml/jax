@@ -634,18 +634,19 @@ def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
     An iterable of pairs of indices and shapes for each array within the shape
     tree.
   """
-  def _flatten_shape(s, index):
-    if s.is_array():
-      yield index, s
-    else:
-      assert s.is_tuple()
-      for i, sub in enumerate(s.tuple_shapes()):
-        subindex = index + (i,)
-        if sub.is_tuple():
-          yield from _flatten_shape(sub, subindex)
-        else:
-          yield subindex, sub
-  return tuple(_flatten_shape(s, index=()))
+  results: List[Tuple[Tuple[int, ...], XlaShape]] = []
+  _flatten_shape(s, (), results)
+  return results
+
+def _flatten_shape(s: XlaShape, index: Tuple[int, ...],
+                   results: List[Tuple[Tuple[int, ...], XlaShape]]) -> None:
+  if s.is_array() or s.is_token():
+    results.append((index, s))
+  else:
+    assert s.is_tuple()
+    for i, sub in enumerate(s.tuple_shapes()):
+      _flatten_shape(sub, index + (i,), results)
+
 
 def _xla_consts(c, consts):
   unique_consts = {id(const): const for const in consts}

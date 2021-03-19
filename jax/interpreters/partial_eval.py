@@ -986,11 +986,8 @@ class JaxprStackFrame:
 def _inline_literals(jaxpr, constvals):
   consts = dict(zip(jaxpr.constvars, constvals))
   newvar = core.gensym()
-  class var(dict):
-    def __missing__(self, v):
-      new_v = self[v] = newvar(v.aval)
-      return new_v
-  var = var()
+  newvars = {}
+  var = lambda v: newvars.get(v) or newvars.setdefault(v, newvar(v.aval))
 
   def lit(var: core.Var) -> Optional[Any]:
     val = consts.get(var)
@@ -1000,14 +997,14 @@ def _inline_literals(jaxpr, constvals):
       return None
 
   used = {v for eqn in jaxpr.eqns for v in eqn.invars} | set(jaxpr.outvars)
-  new_constvars = [var[v] for v in jaxpr.constvars if not lit(v)]
+  new_constvars = [var(v) for v in jaxpr.constvars if not lit(v)]
   new_constvals = [c for v, c in zip(jaxpr.constvars, constvals) if not lit(v)]
-  new_invars = [var[v] for v in jaxpr.invars]
-  new_eqns = [new_jaxpr_eqn([lit(v) or var[v] for v in eqn.invars],
-                            [var[v] if v in used else dropvar for v in eqn.outvars],
+  new_invars = [var(v) for v in jaxpr.invars]
+  new_eqns = [new_jaxpr_eqn([lit(v) or var(v) for v in eqn.invars],
+                            [var(v) if v in used else dropvar for v in eqn.outvars],
                             eqn.primitive, eqn.params, eqn.source_info)
               for eqn in jaxpr.eqns]
-  new_outvars = [lit(v) or var[v] for v in jaxpr.outvars]
+  new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
   new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns)
   return new_jaxpr, new_constvals
 
