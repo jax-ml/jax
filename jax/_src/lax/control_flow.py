@@ -1113,7 +1113,7 @@ def _cond_typecheck(*avals, branches, linear):
       f'called with operands of type {_avals_short(op_avals)}')
 
 def cond_bind(*args, branches, linear):
-  if not core.skip_checks:
+  if config.jax_enable_checks:
     avals = _map(core.get_aval, args)
     _cond_typecheck(*avals, branches=branches, linear=linear)
     for jaxpr in branches:
@@ -1876,7 +1876,7 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
       f'called with sequence of type\n{_avals_short(x_avals)}')
 
 def scan_bind(*args, **params):
-  if not core.skip_checks:
+  if config.jax_enable_checks:
     avals = _map(core.get_aval, args)
     _scan_typecheck(True, *avals, **params)
     core.check_jaxpr(params['jaxpr'].jaxpr)

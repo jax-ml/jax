@@ -25,7 +25,6 @@ import numpy as np
 
 import jax
 from jax import api
-from jax import core
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
@@ -992,7 +991,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = np.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    with core.skipping_checks():
+    with jax.enable_checks(False):
       with self.assertRaises(TypeError):
         lax.stop_gradient(lambda x: x)
 

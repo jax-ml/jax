@@ -144,7 +144,7 @@ def _sharded_callable(
                      for out, parts, lparts
                      in safe_zip(global_out_avals, out_parts, local_out_parts)]
 
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               f"Compiling {fun.__name__} for {nparts} devices with "
               f"args {global_abstract_args}.")

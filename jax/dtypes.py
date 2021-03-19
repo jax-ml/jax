@@ -20,27 +20,19 @@
 # so we need our own implementation that deviates from NumPy in places.
 
 
-from distutils.util import strtobool
 import functools
-import os
 from typing import Dict
 
 import numpy as np
 
 from ._src import util
 from .config import flags, config
-from . import lib
 from .lib import xla_client
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool('jax_enable_x64',
-                  strtobool(os.getenv('JAX_ENABLE_X64', 'False')),
-                  'Enable 64-bit types to be used.')
-lib.jax_jit.global_state().enable_x64 = strtobool(
-    os.getenv('JAX_ENABLE_X64', 'False'))
 
 # bfloat16 support
 bfloat16: type = xla_client.bfloat16

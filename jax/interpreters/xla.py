@@ -23,7 +23,7 @@ from warnings import warn
 from absl import logging
 import numpy as np
 
-from ..config import flags, bool_env, config
+from ..config import config
 from .. import core
 from .. import ad_util
 from .. import dtypes
@@ -57,17 +57,6 @@ XlaOp = Any  # xla_extension.XlaOp
 XlaShape = Any # xla_client.Shape
 XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
 XlaExecutable = Any # xla_extension.LocalExecutable
-
-FLAGS = flags.FLAGS
-flags.DEFINE_bool('jax_debug_nans',
-                  bool_env('JAX_DEBUG_NANS', False),
-                  'Add nan checks to every operation.')
-flags.DEFINE_bool('jax_debug_infs',
-                  bool_env('JAX_DEBUG_INFS', False),
-                  'Add inf checks to every operation.')
-flags.DEFINE_bool('jax_log_compiles',
-                  bool_env('JAX_LOG_COMPILES', False),
-                  'Print a message each time a `jit` computation is compiled.')
 
 # This flag is set on exit; no logging should be attempted
 _on_exit = False
@@ -244,7 +233,7 @@ def apply_primitive(prim, *args, **params):
 
 def _partition_outputs(avals, outs):
   nouts = [aval._num_buffers for aval in avals]
-  if not core.skip_checks:
+  if config.jax_enable_checks:
     assert sum(nouts) == len(outs), f"Internal error: sum(nouts)={sum(nouts)} should equal len(outs)={len(outs)}."
   outs = iter(outs)
   return [[next(outs) for _ in range(nout)] for nout in nouts]
@@ -372,7 +361,7 @@ def _execute_replicated_primitive(prim, compiled, result_handler, *args):
   return result_handler(*out_bufs)
 
 def needs_check_special():
-  return FLAGS.jax_debug_infs or FLAGS.jax_debug_nans
+  return config.jax_debug_infs or config.jax_debug_nans
 
 def check_special(name, bufs):
   if needs_check_special():
@@ -382,9 +371,9 @@ def check_special(name, bufs):
 def _check_special(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
   if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
-    if FLAGS.jax_debug_nans and np.any(np.isnan(buf.to_py())):
+    if config.jax_debug_nans and np.any(np.isnan(buf.to_py())):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
-    if FLAGS.jax_debug_infs and np.any(np.isinf(buf.to_py())):
+    if config.jax_debug_infs and np.any(np.isinf(buf.to_py())):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 ### compiling jaxprs
@@ -590,13 +579,13 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_inv
   try:
     return compiled_fun(*args)
   except FloatingPointError:
-    assert FLAGS.jax_debug_nans or FLAGS.jax_debug_infs  # compiled_fun can only raise in this case
+    assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
     print("Invalid value encountered in the output of a jit function. "
           "Calling the de-optimized version.")
     # We want to run the wrapped function again (after _xla_callable already ran
     # it), but linear_util.WrappedFun instances are meant to be run only once.
     # In addition to re-executing the Python code, which is usually undesirable
-    # but which FLAGS.jax_debug_nans is meant to opt into, we'll be re-executing
+    # but which config.jax_debug_nans is meant to opt into, we'll be re-executing
     # any linear_util.py-style side effects, i.e. re-populating Stores created
     # by any transformation_with_aux's applied to fun. Since this is
     # intentional here, to avoid "Store occupied" errors we reset the stores to
@@ -688,7 +677,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
     return partial(_execute_trivial, jaxpr, device, consts, out_avals, result_handlers)
 
   if not _on_exit:
-    log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+    log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
     logging.log(log_priority, "Compiling %s (%s) for args %s.",
                 fun.__name__, id(fun), abstract_args)
 
@@ -1096,7 +1085,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
     self._device = device
 
     self._npy_value = None
-    if not core.skip_checks:
+    if config.jax_enable_checks:
       assert type(aval) is ShapedArray
       npy_value = self._value
       assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape

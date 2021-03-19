@@ -208,7 +208,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   ))
   def test_bicgstab_against_scipy(
       self, shape, dtype, preconditioner):
-    if not config.FLAGS.jax_enable_x64:
+    if not config.jax_enable_x64:
       raise unittest.SkipTest("requires x64 mode")
 
     rng = jtu.rand_default(self.rng())

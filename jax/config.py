@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+import functools
 import os
 import sys
+import threading
+
 from jax import lib
 
 def bool_env(varname: str, default: bool) -> bool:
@@ -42,11 +46,16 @@ def int_env(varname: str, default: int) -> int:
 
 
 class Config:
+  _HAS_DYNAMIC_ATTRIBUTES = True
+
   def __init__(self):
     self.values = {}
     self.meta = {}
     self.FLAGS = NameSpace(self.read)
     self.use_absl = False
+    self._contextmanager_flags = set()
+
+    # TODO(mattjj): delete these when only omnistaging is available
     self.omnistaging_enabled = bool_env('JAX_OMNISTAGING', True)
     self._omnistaging_disablers = []
 
@@ -65,6 +74,13 @@ class Config:
       lib.jax_jit.global_state().enable_x64 = val
 
   def read(self, name):
+    if name in self._contextmanager_flags:
+      raise AttributeError(
+          "For flags with a corresponding contextmanager, read their value "
+          f"via e.g. `config.{name}` rather than `config.FLAGS.{name}`.")
+    return self._read(name)
+
+  def _read(self, name):
     if self.use_absl:
       return getattr(self.absl_flags.FLAGS, name)
     else:
@@ -143,14 +159,82 @@ class Config:
         disabler()
       self.omnistaging_enabled = False
 
-  @property
-  def x64_enabled(self):
-    return lib.jax_jit.get_enable_x64()
+#   # TODO(jakevdp, mattjj): unify this with `define_bool_state` stuff below
+#   @property
+#   def x64_enabled(self):
+#     return lib.jax_jit.get_enable_x64()
 
-  # TODO(jakevdp): make this public when thread-local x64 is fully implemented.
-  def _set_x64_enabled(self, state):
-    lib.jax_jit.thread_local_state().enable_x64 = bool(state)
+#   def _set_x64_enabled(self, state):
+#     lib.jax_jit.thread_local_state().enable_x64 = bool(state)
 
+  def define_bool_state(self, name: str, default: bool, help: str):
+    """Set up thread-local state and return a contextmanager for managing it.
+
+    This function is a convenience wrapper. It defines a flag and corresponding
+    thread-local state, which can be managed via the contextmanager it returns.
+
+    The thread-local state value can be read via the ``config.<option_name>``
+    attribute, where ``config`` is the singleton ``Config`` instance.
+
+    Args:
+      name: string, converted to lowercase to define the name of the config
+        option (and absl flag). It is converted to uppercase to define the
+        corresponding shell environment variable.
+      default: boolean, a default value for the option.
+      help: string, used to populate the flag help information as well as the
+        docstring of the returned context manager.
+
+    Returns:
+      A contextmanager to control the thread-local state value.
+
+    Example:
+
+      enable_foo = config.define_bool_state(
+          name='jax_enable_foo',
+          default=False,
+          help='Enable foo.')
+
+      # Now the JAX_ENABLE_FOO shell environment variable and --jax_enable_foo
+      # command-line flag can be used to control the process-level value of
+      # the configuration option, in addition to using e.g.
+      # ``config.update("jax_enable_foo", True)`` directly. We can also use a
+      # context manager:
+
+      with enable_foo(True):
+        ...
+
+    The value of the thread-local state or flag can be accessed via
+    ``config.jax_enable_foo``. Reading it via ``config.FLAGS.jax_enable_foo`` is
+    an error.
+    """
+    name = name.lower()
+    self.DEFINE_bool(name, bool_env(name.upper(), default), help)
+    self._contextmanager_flags.add(name)
+
+    def get_state(self):
+      val = getattr(_thread_local_state, name, unset)
+      return val if val is not unset else self._read(name)
+    setattr(Config, name, property(get_state))
+
+    @contextlib.contextmanager
+    def set_state(new_val: bool):
+      prev_val = getattr(_thread_local_state, name, unset)
+      setattr(_thread_local_state, name, new_val)
+      try:
+        yield
+      finally:
+        if prev_val is unset:
+          delattr(_thread_local_state, name)
+        else:
+          setattr(_thread_local_state, name, prev_val)
+    set_state.__name__ = name[4:] if name.startswith('jax_') else name
+    set_state.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
+    return set_state
+
+_thread_local_state = threading.local()
+
+class Unset: pass
+unset = Unset()
 
 class NameSpace(object):
   def __init__(self, getter):
@@ -166,11 +250,6 @@ FLAGS = flags.FLAGS
 
 already_configured_with_absl = False
 
-flags.DEFINE_bool(
-    'jax_enable_checks',
-    bool_env('JAX_ENABLE_CHECKS', False),
-    help='Turn on invariant checking (core.skip_checks = False)'
-)
 
 flags.DEFINE_bool(
     'jax_omnistaging',
@@ -182,14 +261,6 @@ flags.DEFINE_integer(
     'jax_tracer_error_num_traceback_frames',
     int_env('JAX_TRACER_ERROR_NUM_TRACEBACK_FRAMES', 5),
     help='Set the number of stack frames in JAX tracer error messages.'
-)
-
-flags.DEFINE_bool(
-    'jax_check_tracer_leaks',
-    bool_env('JAX_CHECK_TRACER_LEAKS', False),
-    help=('Turn on checking for leaked tracers as soon as a trace completes. '
-          'Enabling leak checking may have performance impacts: some caching '
-          'is disabled, and other overheads may be added.'),
 )
 
 flags.DEFINE_bool(
@@ -206,3 +277,72 @@ flags.DEFINE_integer(
           'until the Python callback consume more outfeeds.'),
     lower_bound=int(16 * 1e6)
 )
+
+
+enable_checks = config.define_bool_state(
+    name='jax_enable_checks',
+    default=False,
+    help='Turn on invariant checking for JAX internals. Makes things slower.')
+
+check_tracer_leaks = config.define_bool_state(
+    name='jax_check_tracer_leaks',
+    default=False,
+    help=('Turn on checking for leaked tracers as soon as a trace completes. '
+          'Enabling leak checking may have performance impacts: some caching '
+          'is disabled, and other overheads may be added.'))
+checking_leaks = functools.partial(check_tracer_leaks, True)
+
+debug_nans = config.define_bool_state(
+    name='jax_debug_nans',
+    default=False,
+    help=('Add nan checks to every operation. When a nan is detected on the '
+          'output of a jit-compiled computation, call into the un-compiled '
+          'version in an attempt to more precisely identify the operation '
+          'which produced the nan.'))
+
+debug_infs = config.define_bool_state(
+    name='jax_debug_infs',
+    default=False,
+    help=('Add inf checks to every operation. When an inf is detected on the '
+          'output of a jit-compiled computation, call into the un-compiled '
+          'version in an attempt to more precisely identify the operation '
+          'which produced the inf.'))
+
+log_compiles = config.define_bool_state(
+    name='jax_log_compiles',
+    default=False,
+    help=('Log a message each time every time `jit` or `pmap` compiles an XLA '
+          'computation. Logging is performed with `absl.logging`. When this '
+          'option is set, the log level is WARNING; otherwise the level is '
+          'DEBUG.'))
+
+# Because jax_enable_x64 is managed by C++ code, we don't reuse the
+# config.define_bool_state mechanism, though conceptually it is the same.
+config.DEFINE_bool('jax_enable_x64', bool_env('JAX_ENABLE_X64', False),
+                   help='Enable 64-bit types to be used')
+lib.jax_jit.global_state().enable_x64 = bool_env('JAX_ENABLE_X64', False)
+
+@contextlib.contextmanager
+def enable_x64(new_val: bool = True):
+  """Experimental context manager to temporarily enable X64 mode.
+
+  Usage::
+
+    >>> import jax.numpy as jnp
+    >>> with enable_x64(True):
+    ...   print(jnp.arange(10.0).dtype)
+    ...
+    float64
+  """
+  prev_val = config.jax_enable_x64
+  lib.jax_jit.thread_local_state().enable_x64 = bool(new_val)
+  try:
+    yield
+  finally:
+    lib.jax_jit.thread_local_state().enable_x64 = prev_val
+Config.jax_enable_x64 = property(lambda self: lib.jax_jit.get_enable_x64())
+# config._contextmanager_flags.add('jax_enable_x64')  # TODO(mattjj): remove footgun
+
+# The `x64_enabled` property doesn't fit the naming scheme, but we use it for
+# backward compatibility.
+Config.x64_enabled = Config.jax_enable_x64

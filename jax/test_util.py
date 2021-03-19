@@ -445,7 +445,7 @@ def skip_on_flag(flag_name, skip_value):
   def skip(test_method):        # pylint: disable=missing-docstring
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
-      flag_value = getattr(FLAGS, flag_name)
+      flag_value = config._read(flag_name)
       if flag_value == skip_value:
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise unittest.SkipTest(
@@ -819,7 +819,7 @@ class JaxTestCase(parameterized.TestCase):
 
   def setUp(self):
     super(JaxTestCase, self).setUp()
-    core.skip_checks = False
+    config.update('jax_enable_checks', True)
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
     # b) it returns values in int32 range, which RandomState requires.

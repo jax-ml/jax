@@ -108,7 +108,7 @@ class BatchTracer(Tracer):
   __slots__ = ['val', 'batch_dim']
 
   def __init__(self, trace, val, batch_dim: Optional[int]):
-    assert core.skip_checks or type(batch_dim) in (int, NotMapped)  # type: ignore
+    assert not config.jax_enable_checks or type(batch_dim) in (int, NotMapped)  # type: ignore
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim

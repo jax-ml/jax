@@ -914,7 +914,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       raise SkipTest("after deleting lazy constants, requires omnistaging")
     def f(x):
       return random.normal(random.PRNGKey(x), (int(1e12),))
-    with core.skipping_checks():  # check_jaxpr will materialize array
+    with jax.enable_checks(False):  # check_jaxpr will materialize array
       api.eval_shape(f, 0)  # doesn't error
 
   @parameterized.named_parameters(jtu.cases_from_list(

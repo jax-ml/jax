@@ -2217,7 +2217,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       lst = []
 
       @jit
@@ -2232,7 +2232,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       lst = []
 
       @api.pmap
@@ -2247,7 +2247,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       lst = []
 
       def f(x):
@@ -2261,7 +2261,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       @jit
       def f(x):
         return x
@@ -2279,7 +2279,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       lst = []
 
       to_scan = lambda c, x: (lst.append(c) or jnp.sin(c), None)
@@ -2291,7 +2291,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       to_scan = lambda c, x: (jnp.sin(c), None)
       lax.scan(to_scan, 1., np.arange(3.))  # doesn't crash
 
@@ -2299,7 +2299,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       to_scan = lambda c, x: (c, None)
 
       def f(x):
@@ -2310,7 +2310,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       to_scan = lambda c, _: (1., None)
 
       @api.vmap
@@ -2322,7 +2322,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       to_scan = lambda c, _: (c, None)
 
       @api.vmap
@@ -2334,7 +2334,7 @@ class APITest(jtu.JaxTestCase):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test only works with omnistaging")
 
-    with core.checking_leaks():
+    with jax.checking_leaks():
       @jit
       def f(x):
         lst = []
@@ -4957,29 +4957,29 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     api.grad(lambda x, y: f(x, y)[0])(1., 2.)  # doesn't crash
 
   def test_custom_transforms_vjp_nones(self):
-    core.skip_checks = True  # Fails with checks
-    # issue raised by jsnoek@ and jumper@
-    @jax.custom_transforms
-    def solve(a, b):
-      return jnp.dot(jnp.linalg.inv(a), b)
-    # print(solve(a, b))
+    with jax.enable_checks(False):  # fails with checks
+      # issue raised by jsnoek@ and jumper@
+      @jax.custom_transforms
+      def solve(a, b):
+        return jnp.dot(jnp.linalg.inv(a), b)
+      # print(solve(a, b))
 
-    def solve_vjp(a, b):
-      x = solve(a, b)
-      def vjp(x_tangent):
-        dx = jnp.dot(solve(a, x_tangent), x.T)
-        out = (dx, b * 0.)
-        return out
-      return x, vjp
-    jax.defvjp_all(solve, solve_vjp)
-    gf = grad(lambda a,b: jnp.sum(solve(a, b)))
+      def solve_vjp(a, b):
+        x = solve(a, b)
+        def vjp(x_tangent):
+          dx = jnp.dot(solve(a, x_tangent), x.T)
+          out = (dx, b * 0.)
+          return out
+        return x, vjp
+      jax.defvjp_all(solve, solve_vjp)
+      gf = grad(lambda a,b: jnp.sum(solve(a, b)))
 
-    n = 3
-    a_in = jnp.linspace(0, 1, n)[:, None]
-    a = jnp.dot(a_in, a_in.T) + jnp.eye(n) * 0.1
-    real_x = np.random.RandomState(0).randn(n)
-    b = jnp.dot(a + jnp.eye(a.shape[0]), real_x)
-    print(gf(a, b))  # doesn't crash
+      n = 3
+      a_in = jnp.linspace(0, 1, n)[:, None]
+      a = jnp.dot(a_in, a_in.T) + jnp.eye(n) * 0.1
+      real_x = np.random.RandomState(0).randn(n)
+      b = jnp.dot(a + jnp.eye(a.shape[0]), real_x)
+      print(gf(a, b))  # doesn't crash
 
 
 class BufferDonationTest(jtu.BufferDonationTestCase):
