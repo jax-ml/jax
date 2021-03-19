@@ -437,8 +437,10 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, np.ComplexWarning, stacklevel=2)
 
-  if ((old_dtype, old_weak_type) == (new_dtype, new_weak_type)
-      and isinstance(operand, (core.Tracer, xla.DeviceArray))):
+  if not isinstance(operand, (core.Tracer, xla.DeviceArray)):
+    return _device_put_raw(np.asarray(operand, dtype=new_dtype),
+                           weak_type=new_weak_type)
+  elif (old_dtype, old_weak_type) == (new_dtype, new_weak_type):
     return operand
   else:
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
@@ -2685,13 +2687,10 @@ def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
   else:
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype, weak_type=weak_type)
 
-convert_element_type_p = core.convert_element_type_p
-convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
-convert_element_type_p.def_abstract_eval(
-    partial(standard_abstract_eval, convert_element_type_p,
-            _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
-            _convert_element_type_weak_type_rule, standard_named_shape_rule))
-xla.translations[convert_element_type_p] = _convert_element_type_translation_rule
+convert_element_type_p = standard_primitive(
+    _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
+    'convert_element_type', _convert_element_type_translation_rule,
+    weak_type_rule=_convert_element_type_weak_type_rule)
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
