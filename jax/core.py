@@ -688,7 +688,23 @@ class TraceStack:
     new.dynamic = self.dynamic
     return new
 
-class Sublevel(int): pass
+
+@total_ordering
+class Sublevel:
+
+  def __init__(self, level: int):
+    self.level = level
+
+  def __repr__(self):
+    return str(self.level)
+
+  def __eq__(self, other):
+    return type(other) is Sublevel and self.level == other.level
+
+  def __lt__(self, other):
+    return type(other) is Sublevel and self.level < other.level
+
+
 AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
 AxisName = Hashable
 
@@ -793,12 +809,11 @@ def new_sublevel() -> Generator[None, None, None]:
   finally:
     thread_local_state.trace_state.substack.pop()
 
-  # TODO(mattjj): to check sublevel leaks, we need to make Sublevel weakref-able
-  # if debug_state.check_leaks:
-  #   t = ref(sublevel)
-  #   del sublevel
-  #   if t() is not None:
-  #     raise Exception('Leaked sublevel {}'.format(t()))
+  if debug_state.check_leaks:
+    t = ref(sublevel)
+    del sublevel
+    if t() is not None:
+      raise Exception(f'Leaked sublevel {t()}.')
 
 def maybe_new_sublevel(trace):
   # dynamic traces run the WrappedFun, so we raise the sublevel for them

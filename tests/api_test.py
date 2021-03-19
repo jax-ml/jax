@@ -2330,6 +2330,25 @@ class APITest(jtu.JaxTestCase):
         lax.scan(to_scan, x, None, length=1)
       f(np.arange(5.))  # doesn't crash
 
+  def test_leak_checker_catches_a_sublevel_leak(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
+    with core.checking_leaks():
+      @jit
+      def f(x):
+        lst = []
+        @jit
+        def g(x):
+          lst.append(x)
+          return x
+
+        x = g(x)
+        return x
+
+      with self.assertRaisesRegex(Exception, r"Leaked sublevel"):
+        f(3)
+
   def test_default_backend(self):
     first_local_device = api.local_devices()[0]
     self.assertEqual(first_local_device.platform, api.default_backend())
