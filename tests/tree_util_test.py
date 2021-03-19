@@ -20,6 +20,9 @@ from absl.testing import parameterized
 
 from jax import test_util as jtu
 from jax import tree_util
+from jax import flatten_util
+from jax import dtypes
+import jax.numpy as jnp
 
 
 def _dummy_func(*args, **kwargs):
@@ -273,6 +276,57 @@ class TreeTest(jtu.JaxTestCase):
     actual = tree_util.tree_transpose(outer_treedef, inner_treedef,
                                       FlatCache({"a": [3, 4], "b": [5, 6]}))
     self.assertEqual(expected, actual)
+
+
+class RavelUtilTest(jtu.JaxTestCase):
+
+  def testFloats(self):
+    tree = [jnp.array([3.], jnp.float32),
+            jnp.array([[1., 2.], [3., 4.]], jnp.float32)]
+    raveled, unravel = flatten_util.ravel_pytree(tree)
+    self.assertEqual(raveled.dtype, jnp.float32)
+    tree_ = unravel(raveled)
+    self.assertAllClose(tree, tree_, atol=0., rtol=0.)
+
+  def testInts(self):
+    tree = [jnp.array([3], jnp.int32),
+            jnp.array([[1, 2], [3, 4]], jnp.int32)]
+    raveled, unravel = flatten_util.ravel_pytree(tree)
+    self.assertEqual(raveled.dtype, jnp.int32)
+    tree_ = unravel(raveled)
+    self.assertAllClose(tree, tree_, atol=0., rtol=0.)
+
+  def testMixedFloatInt(self):
+    tree = [jnp.array([3], jnp.int32),
+            jnp.array([[1., 2.], [3., 4.]], jnp.float32)]
+    raveled, unravel = flatten_util.ravel_pytree(tree)
+    self.assertEqual(raveled.dtype, dtypes.promote_types(jnp.float32, jnp.int32))
+    tree_ = unravel(raveled)
+    self.assertAllClose(tree, tree_, atol=0., rtol=0.)
+
+  def testMixedIntBool(self):
+    tree = [jnp.array([0], jnp.bool_),
+            jnp.array([[1, 2], [3, 4]], jnp.int32)]
+    raveled, unravel = flatten_util.ravel_pytree(tree)
+    self.assertEqual(raveled.dtype, dtypes.promote_types(jnp.bool_, jnp.int32))
+    tree_ = unravel(raveled)
+    self.assertAllClose(tree, tree_, atol=0., rtol=0.)
+
+  def testMixedFloatComplex(self):
+    tree = [jnp.array([1.], jnp.float32),
+            jnp.array([[1, 2 + 3j], [3, 4]], jnp.complex64)]
+    raveled, unravel = flatten_util.ravel_pytree(tree)
+    self.assertEqual(raveled.dtype, dtypes.promote_types(jnp.float32, jnp.complex64))
+    tree_ = unravel(raveled)
+    self.assertAllClose(tree, tree_, atol=0., rtol=0.)
+
+  def testEmpty(self):
+    tree = []
+    raveled, unravel = flatten_util.ravel_pytree(tree)
+    self.assertEqual(raveled.dtype, jnp.float32)  # convention
+    tree_ = unravel(raveled)
+    self.assertAllClose(tree, tree_, atol=0., rtol=0.)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
