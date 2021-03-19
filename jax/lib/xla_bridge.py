@@ -29,10 +29,12 @@ from absl import logging
 logging._warn_preinit_stderr = 0
 
 from ..config import flags
-from jax._src import util
+from jax._src import util, traceback_util
 from .. import dtypes
 import numpy as np
 import threading
+
+traceback_util.register_exclusion(__file__)
 
 try:
   from . import tpu_client
@@ -335,11 +337,12 @@ def constant(builder, py_val, canonicalize_types=True):
   Returns:
     A representation of the constant, either a ComputationDataHandle or None
   """
-  py_type = type(py_val)
-  if py_type in _constant_handlers:
-    return _constant_handlers[py_type](builder, py_val, canonicalize_types)
-  else:
-    raise TypeError("No constant handler for type: {}".format(py_type))
+  for t in type(py_val).mro():
+    handler = _constant_handlers.get(t)
+    if handler: return handler(builder, py_val, canonicalize_types)
+  if hasattr(py_val, '__jax_array__'):
+    return constant(builder, py_val.__jax_array__(), canonicalize_types)
+  raise TypeError("No constant handler for type: {}".format(type(py_val)))
 
 # HLO instructions optionally can be annotated to say how the output should be
 # spatially partitioned (represented in XLA as OpSharding protos, see
