@@ -16,6 +16,7 @@
 import collections
 from contextlib import contextmanager
 import copy
+import enum
 from functools import partial
 import re
 import unittest
@@ -2359,6 +2360,19 @@ class APITest(jtu.JaxTestCase):
     for f in [jnp.isscalar, jnp.size, jnp.shape, jnp.dtype]:
       self.assertEqual(f(x), f(a))
 
+  def test_constant_handler_mro(self):
+    # https://github.com/google/jax/issues/6129
+
+    class Foo(enum.IntEnum):
+      bar = 1
+
+    @api.pmap
+    def f(_):
+      return Foo.bar
+
+    ans = f(jnp.arange(1))  # doesn't crash
+    expected = jnp.arange(1) + 1
+    self.assertAllClose(ans, expected)
 
 
 class RematTest(jtu.JaxTestCase):
