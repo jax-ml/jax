@@ -331,7 +331,8 @@ def broadcast_batcher(prim, args, dims, **params):
     return (out, (d,) * len(out)) if prim.multiple_results else (out, d)
   else:
     size, = {shape[d] for shape, d in shapes if d is not not_mapped}
-    args = [bdim_at_front(x, d, size) for x, d in zip(args, dims)]
+    args = [bdim_at_front(x, d, size) if np.ndim(x) else x
+            for x, d in zip(args, dims)]
     ndim = max(np.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
     out = prim.bind(*args, **params)

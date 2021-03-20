@@ -2113,6 +2113,7 @@ def _naryop_weak_type_rule(name, *avals, **kwargs):
   return all(aval.weak_type for aval in avals)
 
 def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
+  # TODO(frostig,mattjj): only used with arity > 2 once, simplify
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
   shape_rule = partial(_broadcasting_shape_rule, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)

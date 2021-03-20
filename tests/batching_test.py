@@ -21,6 +21,7 @@ from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jax import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
@@ -1239,6 +1240,14 @@ class BatchingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
       TypeError, "Output from batched function.*is not a valid JAX type"):
       vmap(lambda x: "hello")(np.arange(5))
+
+  def testIssue6096(self):
+    def f(x):
+      return jsp.special.betainc(jnp.ones(3), 1., x)
+
+    self.assertEqual(f(jnp.ones(3)).shape, (3,))
+    self.assertEqual(jax.vmap(f)(jnp.ones((2, 3))).shape, (2, 3))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
