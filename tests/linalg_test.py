@@ -119,6 +119,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a[0] = 0
       jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
 
+  def testDetGradIssue6121(self):
+    f = lambda x: jnp.linalg.det(x).sum()
+    x = jnp.ones((16, 1, 1))
+    jax.grad(f)(x)
+    jtu.check_grads(f, (x,), 2, atol=1e-1, rtol=1e-1)
+
   def testDetGradOfSingularMatrixCorank1(self):
     # Rank 2 matrix with nonzero gradient
     a = jnp.array([[ 50, -30,  45],

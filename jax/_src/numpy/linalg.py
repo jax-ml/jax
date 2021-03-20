@@ -202,7 +202,7 @@ def _cofactor_solve(a, b):
            "a=[..., m, m] and b=[..., m, m]; got a={} and b={}")
     raise ValueError(msg.format(a_shape, b_shape))
   if a_shape[-1] == 1:
-    return a[0, 0], b
+    return a[..., 0, 0], b
   # lu contains u in the upper triangular matrix and l in the strict lower
   # triangular matrix.
   # The diagonal of l is set to ones without loss of generality.
