@@ -797,7 +797,7 @@ for unexpected in xla.call_translations: # Call primitives are inlined
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  "reduce", "rng_uniform",
+  "reduce", "rng_uniform", "clz",
 
   "igamma_grad_a",
   "random_gamma_grad",
