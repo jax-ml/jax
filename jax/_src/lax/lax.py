@@ -2658,6 +2658,12 @@ lt_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'lt')
 ad.defjvp_zero(lt_p)
 
 
+def _convert_element_type_impl(operand, *, new_dtype, weak_type):
+  if dtypes.is_python_scalar(operand):
+    operand = np.asarray(operand, dtype=new_dtype)
+  return xla.apply_primitive(convert_element_type_p, operand,
+                             new_dtype=new_dtype, weak_type=weak_type)
+
 def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
   return operand.shape
 
@@ -2693,7 +2699,7 @@ def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype, weak_type=weak_type)
 
 convert_element_type_p = core.convert_element_type_p
-convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
+convert_element_type_p.def_impl(_convert_element_type_impl)
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,

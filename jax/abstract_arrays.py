@@ -68,9 +68,8 @@ def _zeros_like_python_scalar(t, x):
   return np.array(0, dtypes.python_scalar_dtypes[t])
 
 def _make_concrete_python_scalar(t, x):
-  return ConcreteArray(
-    np.array(x, dtype=dtypes.python_scalar_dtypes[t]),
-    weak_type=True)
+  return ConcreteArray(np.array(x, dtype=dtypes.python_scalar_dtypes[t]),
+                       weak_type=True)
 
 for t in dtypes.python_scalar_dtypes:
   core.pytype_aval_mappings[t] = partial(_make_concrete_python_scalar, t)

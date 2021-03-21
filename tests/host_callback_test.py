@@ -1028,7 +1028,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           2 )
         transforms: ['jvp', 'transpose'] what: pair
         ( 2.00
-          False )""", testing_stream.output)
+          0 )""", testing_stream.output)
     testing_stream.reset()
 
   def test_tap_vmap(self):
@@ -1590,8 +1590,8 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
               ( 3 ) ) )
           ( ( [0.  0.1 0.2 0.3 0.4]
               [0.  0.2 0.4 0.6 0.8] )
-            ( ( False )
-              ( False ) ) ) )""", testing_stream.output)
+            ( ( 0 )
+              ( 0 ) ) ) )""", testing_stream.output)
     testing_stream.reset()
 
     # Now with JIT

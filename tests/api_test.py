@@ -2393,6 +2393,20 @@ class APITest(jtu.JaxTestCase):
     expected = jnp.arange(1) + 1
     self.assertAllClose(ans, expected)
 
+  def test_large_python_int_to_float(self):
+    # https://github.com/google/jax/pull/6165
+    # We skip checks because otherwise we end up calling valid_jaxtype(2**100),
+    # which tries to form a ConcreteArray with that value and thus leads to a
+    # NumPy OverflowError. It's true that 2**100 does not inhabit a jax type,
+    # but as an issue of Python embedding we can handle operations like
+    # lax.convert_element_type(2 ** 100, jnp.float32) as in the tests below.
+    # That is, lax.convert_element_type(2 ** 100, jnp.int32) is an error while
+    # lax.convert_element_type(2 ** 100, jnp.float32) is not.
+    with jax.core.skipping_checks():
+      jnp.multiply(2 ** 100, 3.)  # doesn't crash
+      out = lax.convert_element_type(2 ** 100, jnp.float32)  # doesn't crash
+      self.assertArraysEqual(out, np.float32(2 ** 100))
+
 
 class RematTest(jtu.JaxTestCase):
 
