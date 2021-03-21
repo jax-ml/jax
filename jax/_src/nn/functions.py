@@ -160,7 +160,7 @@ def hard_tanh(x: Array) -> Array:
   .. math::
     \mathrm{hard\_tanh}(x) = \begin{cases}
       -1, & x < -1\\
-      x, & 0 \le x \le 1\\
+      x, & -1 \le x \le 1\\
       1, & 1 < x
     \end{cases}
 
