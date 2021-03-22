@@ -253,7 +253,11 @@ def _det_jvp(primals, tangents):
   return y, jnp.trace(z, axis1=-1, axis2=-2)
 
 
-@_wraps(np.linalg.eig)
+@_wraps(np.linalg.eig, lax_description="""
+This differs from ``numpy.linalg.eig`` in that the return type of
+``jax.numpy.linalg.eig`` is always ``complex64`` for 32-bit input,
+and ``complex128`` for 64-bit input.
+""")
 def eig(a):
   a = _promote_arg_dtypes(jnp.asarray(a))
   return lax_linalg.eig(a, compute_left_eigenvectors=False)
