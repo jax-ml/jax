@@ -707,7 +707,7 @@ def _triangular_solve_gpu_translation_rule(trsm_impl,
   if conjugate_a and not transpose_a:
     a = xops.Conj(a)
     conjugate_a = False
-  if batch > 1 and m <= 32 and n <= 32:
+  if batch > 1 and m <= 256 and n <= 256:
     return trsm_impl(
       c, a, b, left_side, lower, transpose_a,
       conjugate_a, unit_diagonal)
