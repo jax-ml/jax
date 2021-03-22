@@ -203,6 +203,10 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(jnp.int32(101),
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
 
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromString(self, dtype):
+    self.assertEqual(dtypes.dtype(str(dtype)), dtype)
+
 
 class TestPromotionTables(jtu.JaxTestCase):
 
@@ -352,10 +356,6 @@ class TestPromotionTables(jtu.JaxTestCase):
     y = (x + x)
     assert x.dtype == y.dtype
     assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
-
-  @parameterized.parameters(all_dtypes)
-  def testDtypeFromString(self, dtype):
-    self.assertEqual(dtypes.dtype(str(dtype)), dtype)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
