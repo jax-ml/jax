@@ -353,10 +353,15 @@ def _cpp_jit(
   @wraps(fun)
   @api_boundary
   def f_jitted(*args, **kwargs):
-    # TODO(jblespiau): We can remove `config.x64_enabled` when jaxlib 0.1.62 is
-    # the minimal version.
-    context = (getattr(core.thread_local_state.trace_state.trace_stack,
-                       "dynamic", None), config.x64_enabled)
+    # TODO(jblespiau,phawkins): We can remove `config.x64_enabled` when jaxlib
+    # 0.1.65 is the minimal version.
+    if lib._xla_extension_version < 10:
+      context = (getattr(core.thread_local_state.trace_state.trace_stack,
+                         "dynamic", None), config.x64_enabled)
+    else:
+      context = getattr(core.thread_local_state.trace_state.trace_stack,
+                        "dynamic", None)
+
     # TODO(jblespiau): Move this to C++.
     if (FLAGS.jax_debug_nans or FLAGS.jax_debug_infs) and not _jit_is_disabled():
       device_arrays = cpp_jitted_f(context, *args, **kwargs)
