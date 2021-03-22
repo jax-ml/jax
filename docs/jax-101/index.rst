@@ -13,6 +13,7 @@ It is a work in progress; more content will be added soon!
   03-vectorization
   04-advanced-autodiff
   05-random-numbers
+  05.1-pytrees
   06-parallelism
   07-state
 
