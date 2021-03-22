@@ -934,7 +934,6 @@ def _outside_call_jvp_rule(primals, tangents, **params):
   if not params["identity"]:
     raise NotImplementedError("JVP rule is implemented only for id_tap, not for call.")
   tangent_instantiated = tuple(map(_instantiate_zeros, primals, tangents))
-  tangent_instantiated = tuple(map(ad.replace_float0s, primals, tangent_instantiated))
 
   arg_treedef = params["arg_treedef"]
   # The argument to the jvp tap is a pair of the tapped primals and tangents
@@ -947,7 +946,6 @@ def _outside_call_jvp_rule(primals, tangents, **params):
              arg_treedef=jvp_arg_treedef,
              ))
   out_primals_tapped, out_tangents_tapped = util.split_list(out_all, [len(primals)])
-  out_tangents_tapped = map(ad.recast_to_float0, out_primals_tapped, out_tangents_tapped)
   return tuple(out_primals_tapped), tuple(out_tangents_tapped)
 
 
