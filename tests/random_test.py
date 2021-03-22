@@ -746,6 +746,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     grad(lambda x: jnp.sum(vmap(f)(x)))(jnp.ones(2))
 
   def testNoOpByOpUnderHash(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("test requires omnistaging")
     def fail(*args, **kwargs): assert False
     apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
     try:

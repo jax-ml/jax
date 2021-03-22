@@ -428,8 +428,8 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
-  # Note: don't canonicalize old_dtype because x64 context might
-  # cause un-canonicalized operands to be passed in.
+  # Don't canonicalize old_dtype because x64 context might cause
+  # un-canonicalized operands to be passed in.
   old_dtype = np.result_type(operand)
   old_weak_type = dtypes.is_weakly_typed(operand)
 
@@ -440,6 +440,14 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, np.ComplexWarning, stacklevel=2)
+
+  # Python has big integers, but convert_element_type(2 ** 100, np.float32) need
+  # not be an error since the target dtype fits the value. Handle this case by
+  # converting to a NumPy array before calling bind. Without this step, we'd
+  # first canonicalize the input to a value of dtype int32 or int64, leading to
+  # an overflow error.
+  if type(operand) is int:
+    operand = np.asarray(operand, new_dtype)
 
   if ((old_dtype, old_weak_type) == (new_dtype, new_weak_type)
       and isinstance(operand, (core.Tracer, xla.DeviceArray))):

@@ -2393,6 +2393,12 @@ class APITest(jtu.JaxTestCase):
     expected = jnp.arange(1) + 1
     self.assertAllClose(ans, expected)
 
+  def test_large_python_int_to_float(self):
+    # https://github.com/google/jax/pull/6165
+    jnp.multiply(2 ** 100, 3.)  # doesn't crash
+    out = lax.convert_element_type(2 ** 100, jnp.float32)  # doesn't crash
+    self.assertArraysEqual(out, np.float32(2 ** 100))
+
 
 class RematTest(jtu.JaxTestCase):
 
