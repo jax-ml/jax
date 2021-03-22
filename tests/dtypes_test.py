@@ -353,5 +353,9 @@ class TestPromotionTables(jtu.JaxTestCase):
     assert x.dtype == y.dtype
     assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
 
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromString(self, dtype):
+    self.assertEqual(dtypes.dtype(str(dtype)), dtype)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
