@@ -149,7 +149,7 @@ jax.grad(sum_squared_error, argnums=(0, 1))(x, y)  # Find gradient wrt both x & 
 
 +++ {"id": "yQAMTnZSqo-t"}
 
-Does this mean that when doing machine learning, we need to write functions with gigantic argument lists, with an argument for each model parameter array? No. JAX comes equipped with machinery for bundling arrays together in data structures called 'pytrees', on which more in a [later guide](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/06-pytrees.ipynb). So, most often, use of `jax.grad` looks like this:
+Does this mean that when doing machine learning, we need to write functions with gigantic argument lists, with an argument for each model parameter array? No. JAX comes equipped with machinery for bundling arrays together in data structures called 'pytrees', on which more in a [later guide](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/05.1-pytrees.ipynb). So, most often, use of `jax.grad` looks like this:
 
 ```
 def loss_fn(params, data):
@@ -372,4 +372,4 @@ print(f"w: {w:<.2f}, b: {b:<.2f}")
 
 +++ {"id": "5-q17kJ_rjLc"}
 
-As you will see going through these guides, this basic recipe underlies almost all training loops you'll see implemented in JAX. The main difference between this example and real training loops is the simplicity of our model: that allows us to use a single array to house all our parameters. We cover managing more parameters in the later [pytree guide](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/06-pytrees.ipynb). Feel free to skip forward to that guide now to see how to manually define and train a simple MLP in JAX.
+As you will see going through these guides, this basic recipe underlies almost all training loops you'll see implemented in JAX. The main difference between this example and real training loops is the simplicity of our model: that allows us to use a single array to house all our parameters. We cover managing more parameters in the later [pytree guide](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/05.1-pytrees.ipynb). Feel free to skip forward to that guide now to see how to manually define and train a simple MLP in JAX.
