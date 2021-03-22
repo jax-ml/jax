@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-03-03*
+*Last generated on (YYYY-MM-DD): 2021-03-23*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -53,7 +53,7 @@ More detailed information can be found in the
 
 
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |
-| --- | --- | --- | --- | --- | ---|
+| --- | --- | --- | --- | --- |
 | acos | TF error: op not defined for dtype | complex128 | cpu, gpu | eager, graph |
 | acos | TF error: op not defined for dtype | bfloat16, complex64, float16 | cpu, gpu | eager, graph |
 | acosh | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
@@ -72,6 +72,7 @@ More detailed information can be found in the
 | cholesky | TF error: op not defined for dtype | complex | tpu | compiled, graph |
 | clamp | TF error: op not defined for dtype | int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | conv_general_dilated | TF error: jax2tf BUG: batch_group_count > 1 not yet converted | all | cpu, gpu, tpu | compiled, eager, graph |
+| conv_general_dilated | TF error: op not defined for dtype | complex | gpu | compiled, eager, graph |
 | cosh | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
 | cummax | TF test skipped: Not implemented in JAX: unimplemented | complex64 | tpu | compiled, eager, graph |
 | cummax | TF error: op not defined for dtype | complex128 | cpu, gpu | compiled, eager, graph |
@@ -167,7 +168,7 @@ with jax2tf. The following table lists that cases when this does not quite hold:
 
 
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |
-| --- | --- | --- | --- | --- | ---|
+| --- | --- | --- | --- | --- |
 | acos | May return different but still correct results | complex | cpu, gpu, tpu | eager, graph |
 | acosh | May return different but still correct results | complex | cpu, gpu, tpu | eager, graph |
 | asin | May return different but still correct results | complex | cpu, gpu, tpu | eager, graph |

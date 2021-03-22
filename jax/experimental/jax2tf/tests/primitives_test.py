@@ -173,7 +173,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     tf_error_table = [
         """
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |
-| --- | --- | --- | --- | --- | ---|"""
+| --- | --- | --- | --- | --- |"""
     ]
     tf_numerical_discrepancies_table = list(tf_error_table)  # a copy
     for h, l in sorted(

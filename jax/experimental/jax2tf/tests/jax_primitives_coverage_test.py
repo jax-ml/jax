@@ -103,7 +103,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
 
     primitive_coverage_table = ["""
 | Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
-| --- | --- | --- | --- | --- |"""]
+| --- | --- | --- | --- |"""]
     all_dtypes = set(jtu.dtypes.all)
 
     for group_name in sorted(harness_groups.keys()):
@@ -120,7 +120,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
     print(f"Found {len(unique_limitations)} unique limitations")
     primitive_unimpl_table = ["""
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
-| --- | --- | --- | --- | --- |"""]
+| --- | --- | --- | --- |"""]
     for h, l in sorted(
         unique_limitations.values(), key=lambda pair: unique_hash(*pair)):
       devices = ", ".join(l.devices)
