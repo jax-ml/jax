@@ -138,7 +138,6 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
         if kept_sections:
           docstr += "\n" + "\n\n".join(kept_sections) + "\n"
       except:
-        raise
         docstr = fun.__doc__
 
     op.__doc__ = docstr
