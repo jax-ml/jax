@@ -428,8 +428,8 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
-  # Note: don't canonicalize old_dtype because x64 context might
-  # cause un-canonicalized operands to be passed in.
+  # Don't canonicalize old_dtype because x64 context might cause
+  # un-canonicalized operands to be passed in.
   old_dtype = np.result_type(operand)
   old_weak_type = dtypes.is_weakly_typed(operand)
 
@@ -440,6 +440,12 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, np.ComplexWarning, stacklevel=2)
+
+  # Python has big integers, but convert_element_type(2 ** 100, np.float32) need
+  # not be an error since the target dtype fits the value. Handle this case by
+  # converting to a NumPy array before calling bind.
+  if type(operand) is int:
+    operand = np.asarray(operand, new_dtype)
 
   if ((old_dtype, old_weak_type) == (new_dtype, new_weak_type)
       and isinstance(operand, (core.Tracer, xla.DeviceArray))):
@@ -2658,12 +2664,6 @@ lt_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'lt')
 ad.defjvp_zero(lt_p)
 
 
-def _convert_element_type_impl(operand, *, new_dtype, weak_type):
-  if dtypes.is_python_scalar(operand):
-    operand = np.asarray(operand, dtype=new_dtype)
-  return xla.apply_primitive(convert_element_type_p, operand,
-                             new_dtype=new_dtype, weak_type=weak_type)
-
 def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
   return operand.shape
 
@@ -2699,7 +2699,7 @@ def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype, weak_type=weak_type)
 
 convert_element_type_p = core.convert_element_type_p
-convert_element_type_p.def_impl(_convert_element_type_impl)
+convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
