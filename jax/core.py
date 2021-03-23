@@ -34,8 +34,6 @@ from .errors import (ConcretizationTypeError, TracerArrayConversionError,
                      TracerIntegerConversionError)
 from . import linear_util as lu
 
-from . import lib
-from .lib import jax_jit
 from jax._src import source_info_util
 from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
                    tuple_insert, tuple_delete, as_hashable_function, unzip2,
@@ -727,18 +725,12 @@ class TraceState:
     new.axis_env = self.axis_env[:]
     return new
 
-def extra_jit_context(trace_stack):
-    return trace_stack.dynamic
-
 # The global state of the tracer is accessed by a thread-local object.
 # This allows concurrent tracing in separate threads; passing traced objects
 # between threads is forbidden.
 class ThreadLocalState(threading.local):
   def __init__(self):
     self.trace_state = TraceState()
-    if lib._xla_extension_version >= 11:
-      jax_jit.thread_local_state().extra_jit_context = extra_jit_context(
-          self.trace_state.trace_stack)
 thread_local_state = ThreadLocalState()
 
 def trace_state_clean() -> bool:
@@ -769,10 +761,7 @@ def new_main(trace_type: Type[Trace],
   main = MainTrace(level, trace_type, **payload)
   stack.push(main)
   if dynamic:
-    jit_tls = jax_jit.thread_local_state()
     prev_dynamic, stack.dynamic = stack.dynamic, main
-    if lib._xla_extension_version >= 11:
-      jit_tls.extra_jit_context = extra_jit_context(stack)
 
   try:
     yield main
@@ -780,8 +769,6 @@ def new_main(trace_type: Type[Trace],
     stack.pop()
     if dynamic:
       stack.dynamic = prev_dynamic
-      if lib._xla_extension_version >= 11:
-        jit_tls.extra_jit_context = extra_jit_context(stack)
 
   if debug_state.check_leaks:
     t = ref(main)
@@ -796,16 +783,11 @@ def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
   main = MainTrace(0, trace_type)
   prev_dynamic, stack.dynamic = stack.dynamic, main
   prev_base, stack.stack[0] = stack.stack[0], main
-  jit_tls = jax_jit.thread_local_state()
-  if lib._xla_extension_version >= 11:
-    jit_tls.extra_jit_context = extra_jit_context(stack)
   try:
     yield main
   finally:
     stack.dynamic = prev_dynamic
     stack.stack[0] = prev_base
-    if lib._xla_extension_version >= 11:
-      jit_tls.extra_jit_context = extra_jit_context(stack)
 
   if debug_state.check_leaks:
     t = ref(main)
@@ -1850,7 +1832,7 @@ def pp_kv_pairs(kv_pairs):
 def omnistaging_disabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
       new_main, reset_trace_state, TraceStack, TraceState, extend_axis_env, \
-      eval_context, extra_jit_context
+      eval_context
 
   class TraceStack:
     upward: List[MainTrace]
@@ -1907,9 +1889,6 @@ def omnistaging_disabler() -> None:
       return new
 
   thread_local_state = ThreadLocalState()
-
-  def extra_jit_context(trace_stack):
-    return None
 
   def reset_trace_state() -> bool:
     "Reset the global trace state and return True if it was already clean."
