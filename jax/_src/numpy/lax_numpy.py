@@ -43,6 +43,7 @@ from .vectorize import vectorize
 from .util import _wraps
 from jax import core
 from jax import dtypes
+from jax import errors
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import flags, config
 from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
@@ -4782,9 +4783,8 @@ def _expand_bool_indices(idx):
         abstract_i = core.get_aval(i)
 
       if not type(abstract_i) is ConcreteArray:
-        # TODO(mattjj): improve this error by tracking _why_ the indices are not
-        # concrete
-        raise IndexError("Array boolean indices must be concrete.")
+        # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
+        raise errors.NonConcreteBooleanIndexError(abstract_i)
       else:
         out.extend(np.where(i))
     else:

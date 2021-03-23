@@ -313,7 +313,7 @@ class CustomErrorsTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}".format(errorclass), "errorclass": errorclass}
      for errorclass in dir(jax.errors)
-     if errorclass.endswith('Error') and errorclass != 'JAXTypeError'))
+     if errorclass.endswith('Error') and errorclass not in ['JaxIndexError', 'JAXTypeError']))
   def testErrorsURL(self, errorclass):
     class FakeTracer(core.Tracer):
       aval = None

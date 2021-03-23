@@ -24,6 +24,7 @@ pure alternatives, namely :func:`jax.ops.index_update` and its relatives.
     index_min
     index_max
 
+.. _syntactic-sugar-for-ops:
 
 Syntactic sugar for indexed update operators
 --------------------------------------------
