@@ -14,13 +14,15 @@
 
 from setuptools import setup, find_packages
 
-__version__ = None
-_minimum_jaxlib_version = '0.1.62'
+# The following should be updated with each new jaxlib release.
 _current_jaxlib_version = '0.1.64'
 _available_cuda_versions = ['101', '102', '110', '111', '112']
 
+_dct = {}
 with open('jax/version.py') as f:
-  exec(f.read(), globals())
+  exec(f.read(), _dct)
+__version__ = _dct['__version__']
+_minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 
 setup(
     name='jax',
@@ -37,6 +39,9 @@ setup(
         'opt_einsum',
     ],
     extras_require={
+        # Minimum jaxlib version; used in testing.
+        'minimum-jaxlib': [f'jaxlib=={_minimum_jaxlib_version}'],
+
         # CPU-only jaxlib can be installed via:
         # $ pip install jax[cpu]
         'cpu': [f'jaxlib>={_minimum_jaxlib_version}'],

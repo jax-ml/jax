@@ -28,24 +28,22 @@ except ModuleNotFoundError as err:
     'https://github.com/google/jax#installation for installation instructions.'
     ) from err
 
-# Must be kept in sync with the jaxlib versions in
-# - setup.py
-# - build/test-requirements.txt
-_minimum_jaxlib_version = (0, 1, 62)
+from jax.version import _minimum_jaxlib_version as _minimum_jaxlib_version_str
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
   # jaxlib is too old to have version number.
-  msg = 'This version of jax requires jaxlib version >= {}.'
-  raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version)))
-                    ) from err
+  msg = f'This version of jax requires jaxlib version >= {_minimum_jaxlib_version_str}.'
+  raise ImportError(msg) from err
 
 version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
+_minimum_jaxlib_version = tuple(int(x) for x in _minimum_jaxlib_version_str.split('.'))
 
 # Check the jaxlib version before importing anything else from jaxlib.
 def _check_jaxlib_version():
   if version < _minimum_jaxlib_version:
-    msg = 'jaxlib is version {}, but this version of jax requires version {}.'
+    msg = (f'jaxlib is version {jaxlib_version.__version__}, '
+           f'but this version of jax requires version {_minimum_jaxlib_version_str}.')
 
     if version == (0, 1, 23):
       msg += ('\n\nA common cause of this error is that you installed jaxlib '
@@ -53,8 +51,7 @@ def _check_jaxlib_version():
               'manylinux2010 wheels. Try running:\n\n'
               'pip install --upgrade pip\n'
               'pip install --upgrade jax jaxlib\n')
-    raise ValueError(msg.format('.'.join(map(str, version)),
-                                '.'.join(map(str, _minimum_jaxlib_version))))
+    raise ValueError(msg)
 
 _check_jaxlib_version()
 

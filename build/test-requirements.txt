@@ -1,10 +1,10 @@
 flake8
 # For now, we pin the numpy version here
 numpy>=1.16
- # Must be kept in sync with the minimum jaxlib version in jax/lib/__init__.py
-jaxlib==0.1.62
 mypy==0.790
 pillow
 pytest-benchmark
 pytest-xdist
 wheel
+# Install jax from the current directory; minimum required jaxlib from pypi.
+.[minimum-jaxlib]

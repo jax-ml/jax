@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This should be increased after releasing the current version (i.e. this
-# is always the next version to be released).
+# After a new jaxlib release, please remember to update the values of
+# `_current_jaxlib_version` and `_available_cuda_versions` in setup.py to
+# reflect the most recent available binaries.
+# __version__ should be increased after releasing the current version
+# (i.e. on master, this is always the next version to be released).
 __version__ = "0.1.65"
