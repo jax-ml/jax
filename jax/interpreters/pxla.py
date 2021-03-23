@@ -685,7 +685,7 @@ def parallel_callable(fun: lu.WrappedFun,
   logging.vlog(2, "global_sharded_avals: %s", global_sharded_avals)
 
   with core.extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(fun, global_sharded_avals)
+    jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(fun, global_sharded_avals, transform_name="pmap")
   jaxpr = xla.apply_outfeed_rewriter(jaxpr)
 
   out_axes = out_axes_thunk()

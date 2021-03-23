@@ -63,14 +63,18 @@ T = TypeVar('T')
 Array = Any
 
 @cache()
-def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):
+def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
+                              transform_name: str = ""):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals,
+                                               transform_name=transform_name)
   return jaxpr, consts, out_tree()
 
 @cache()
-def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
-  jaxpr, consts, out_tree = _initial_style_open_jaxpr(fun, in_tree, in_avals)
+def _initial_style_jaxpr(fun: Callable, in_tree, in_avals,
+                         transform_name: str = ""):
+  jaxpr, consts, out_tree = _initial_style_open_jaxpr(fun, in_tree, in_avals,
+                                                      transform_name)
   closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
   return closed_jaxpr, consts, out_tree
 
@@ -266,8 +270,8 @@ def while_loop(cond_fun: Callable[[T], bool],
   def _create_jaxpr(init_val):
     init_vals, in_tree = tree_flatten((init_val,))
     init_avals = tuple(_map(_abstractify, init_vals))
-    cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals)
-    body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(body_fun, in_tree, init_avals)
+    cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals, "while_cond")
+    body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(body_fun, in_tree, init_avals, "while_loop")
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
@@ -1256,7 +1260,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     in_flat, in_tree = tree_flatten((init, xs))
 
     carry_avals = tuple(_map(_abstractify, init_flat))
-    jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
+    jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals, "scan")
     out_tree_children = out_tree.children()
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
