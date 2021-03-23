@@ -14,6 +14,8 @@
 
 # flake8: noqa: F401
 from ._src.errors import (JAXTypeError,
+                          JAXIndexError,
                           ConcretizationTypeError,
+                          NonConcreteBooleanIndexError,
                           TracerArrayConversionError,
                           TracerIntegerConversionError)
