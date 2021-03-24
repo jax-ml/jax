@@ -17,31 +17,14 @@
 **Experimental: please give feedback, and expect changes.**
 """
 
+# This file provides
+#  1. a jax.experimental API endpoint;
+#  2. the `disable_x64` wrapper.
+# TODO(jakevdp): remove this file, and consider removing `disable_x64` for
+# uniformity
+
 from contextlib import contextmanager
-from jax import config
-
-@contextmanager
-def enable_x64():
-  """Experimental context manager to temporarily enable X64 mode.
-
-  Usage::
-
-    >>> import jax.numpy as jnp
-    >>> with enable_x64():
-    ...   print(jnp.arange(10.0).dtype)
-    ...
-    float64
-
-  See Also
-  --------
-  jax.experimental.disable_x64 :  temporarily disable X64 mode.
-  """
-  _x64_state = config.x64_enabled
-  config._set_x64_enabled(True)
-  try:
-    yield
-  finally:
-    config._set_x64_enabled(_x64_state)
+from jax.config import enable_x64
 
 @contextmanager
 def disable_x64():
@@ -59,9 +42,5 @@ def disable_x64():
   --------
   jax.experimental.enable_x64 : temporarily enable X64 mode.
   """
-  _x64_state = config.x64_enabled
-  config._set_x64_enabled(False)
-  try:
+  with enable_x64(False):
     yield
-  finally:
-    config._set_x64_enabled(_x64_state)

@@ -30,7 +30,7 @@ config.parse_flags_with_absl()
 class DebugNaNsTest(jtu.JaxTestCase):
 
   def setUp(self):
-    self.cfg = config.read("jax_debug_nans")
+    self.cfg = config._read("jax_debug_nans")
     config.update("jax_debug_nans", True)
 
   def tearDown(self):
@@ -144,7 +144,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
 class DebugInfsTest(jtu.JaxTestCase):
 
   def setUp(self):
-    self.cfg = config.read("jax_debug_infs")
+    self.cfg = config._read("jax_debug_infs")
     config.update("jax_debug_infs", True)
 
   def tearDown(self):

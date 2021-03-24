@@ -21,7 +21,6 @@ from typing import Any, Callable
 
 import numpy as np
 
-import jax
 from jax.config import config
 
 partial = functools.partial
@@ -192,7 +191,7 @@ def cache(max_size=4096):
 
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
-      if jax.core.debug_state.check_leaks:
+      if config.jax_check_tracer_leaks:
         return f(*args, **kwargs)
       else:
         return cached(bool(config.x64_enabled), *args, **kwargs)

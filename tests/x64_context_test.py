@@ -73,7 +73,7 @@ class X64ContextTests(jtu.JaxTestCase):
       func = _maybe_jit(jit, lambda: jnp.arange(10.0))
       func()
 
-    expected_dtype = "float64" if config.read("jax_enable_x64") else "float32"
+    expected_dtype = "float64" if config._read("jax_enable_x64") else "float32"
     self.assertEqual(func().dtype, expected_dtype)
 
     with enable_x64():

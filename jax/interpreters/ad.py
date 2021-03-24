@@ -174,7 +174,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
       # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
       return
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
-    if not core.skip_checks:
+    if config.jax_enable_checks:
       ct_aval = core.get_aval(ct_env[v])
       joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type()
       assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
@@ -389,7 +389,7 @@ class JVPTracer(Tracer):
   __slots__ = ['primal', 'tangent']
 
   def __init__(self, trace, primal, tangent):
-    if not core.skip_checks:
+    if config.jax_enable_checks:
       _primal_tangent_shapes_match(primal, tangent)
     self._trace = trace
     self.primal = primal

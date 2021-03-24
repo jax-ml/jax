@@ -70,9 +70,9 @@ def _is_tfval(v: TfVal) -> bool:
   if isinstance(v, (tf.Tensor, tf.Variable)):
     return True
   try:
-    # Note: this conversion is overkill and just intended as a type check; this code
-    # is in principle only run if core.skip_checks is False.
-    # TODO: it is not true that this code is run only without skip_checks
+    # Note: this conversion is overkill and just intended as a type check; this
+    # code is in principle only run if config.jax_enable_checks is True.
+    # TODO: it is not true that this code is run only with jax_enable_checks.
     _safe_convert_to_tensor(v)
     return True
   except ValueError:
@@ -353,7 +353,7 @@ def _tfval_shape_dtype(val: TfVal) -> Tuple[Sequence[Optional[int]], DType]:
     # May be partially known
     return tuple(val.shape), to_jax_dtype(val.dtype)
   else:  # Must be a numeric value
-    assert core.skip_checks or _is_tfval(val), f"Non TfVal: {val}"
+    assert not config.jax_enable_checks or _is_tfval(val), f"Non TfVal: {val}"
     raw_aval = xla.abstractify(val)
     return raw_aval.shape, raw_aval.dtype  # type: ignore[attr-defined]
 
@@ -605,7 +605,7 @@ class TensorFlowTracer(core.Tracer):
         val = tf.cast(val, dtype=aval_dtype)
         val_dtype = aval_dtype
 
-      if not core.skip_checks:
+      if config.jax_enable_checks:
         assert aval_dtype == val_dtype, f"expected {aval_dtype} == {val_dtype}"
         for aval_dim, val_dim in util.safe_zip(self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
@@ -703,7 +703,7 @@ class TensorFlowTrace(core.Trace):
 
     # Check that the impl rule returned a value of expected shape and dtype
     # TODO: adapt this to match polymorphic shapes
-    if not core.skip_checks:
+    if config.jax_enable_checks:
       if primitive.multiple_results:
         for o, expected_aval in zip(out, out_aval):  # type: ignore
           assert o.aval.strip_weak_type() == expected_aval.strip_weak_type(), (
@@ -1530,7 +1530,7 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
   reducer_fn = tf.function(reducer, autograph=False).get_concrete_function(o_spec, o_spec)
 
   if not isinstance(init_val, tf.Tensor):
-    assert core.skip_checks or _is_tfval(init_val), f"Non TfVal: {init_val}"
+    assert not config.jax_enable_checks or _is_tfval(init_val), f"Non TfVal: {init_val}"
     init_val = tf.constant(init_val, operand.dtype)
   out = tfxla.reduce_window(operand, init_val,
                             reducer_fn, window_dimensions,

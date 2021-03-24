@@ -914,7 +914,7 @@ def closure_convert(fun, *example_args):
   """
   flat_args, in_tree = tree_flatten(example_args)
   in_avals = tuple(map(abstractify, flat_args))
-  if core.debug_state.check_leaks:
+  if config.jax_check_tracer_leaks:
     return _closure_convert_for_avals.__wrapped__(fun, in_tree, in_avals)
   else:
     return _closure_convert_for_avals(fun, in_tree, in_avals)

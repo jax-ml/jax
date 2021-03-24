@@ -49,7 +49,7 @@ class PartialVal(tuple):
   """
   def __new__(cls, xs: Tuple[Optional[AbstractValue], core.Value]):
     pv, const = xs
-    if not core.skip_checks:
+    if config.jax_enable_checks:
       # type checks
       assert isinstance(pv, (AbstractValue, type(None))), xs
       assert isinstance(const, core.Tracer) or type(const) is Zero or core.valid_jaxtype(const), xs
@@ -648,25 +648,25 @@ def tracers_to_jaxpr(
   const_vars, const_vals = unzip2(consts.items())
   # The env_vars are pre-pended to the invars
   jaxpr = Jaxpr(const_vars, [*env_vars, *invars], map(getvar, out_tracers), eqns)
-  core.skip_checks or core.check_jaxpr(jaxpr)
+  config.jax_enable_checks and core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
 
 @cache()
 def convert_constvars_jaxpr(jaxpr: Jaxpr):
   """Moves the constvars to the start of invars."""
-  core.skip_checks or core.check_jaxpr(jaxpr)
+  config.jax_enable_checks and core.check_jaxpr(jaxpr)
   lifted_jaxpr = Jaxpr(constvars=(),
                        invars=jaxpr.constvars + jaxpr.invars,
                        outvars=jaxpr.outvars, eqns=jaxpr.eqns)
-  core.skip_checks or core.check_jaxpr(lifted_jaxpr)
+  config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
 def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int):
-  core.skip_checks or core.check_jaxpr(jaxpr)
+  config.jax_enable_checks and core.check_jaxpr(jaxpr)
   env_vars, invars = split_list(jaxpr.invars, [num_env_vars])
   converted_jaxpr = Jaxpr(constvars=jaxpr.constvars + env_vars,
                           invars=invars, outvars=jaxpr.outvars, eqns=jaxpr.eqns)
-  core.skip_checks or core.check_jaxpr(converted_jaxpr)
+  config.jax_enable_checks and core.check_jaxpr(converted_jaxpr)
   return converted_jaxpr
 
 

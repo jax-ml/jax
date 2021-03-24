@@ -30,7 +30,8 @@ except Exception as exc:
 del _cloud_tpu_init
 
 # flake8: noqa: F401
-from .config import config
+from .config import (config, enable_checks, check_tracer_leaks, checking_leaks,
+                     debug_nans, debug_infs, log_compiles)
 from .api import (
   ad,  # TODO(phawkins): update users to avoid this.
   argnums_partial,  # TODO(phawkins): update Haiku to not use this.

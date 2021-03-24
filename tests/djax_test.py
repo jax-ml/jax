@@ -148,7 +148,7 @@ class DJaxADTests(jtu.JaxTestCase):
       y = sin(x)
       return reduce_sum(y, axes=(0,))
     x = bbarray((5,), jnp.arange(2.))
-    with jax.core.skipping_checks():  # TODO implement dxla_call abs eval rule
+    with jax.enable_checks(False):  # TODO implement dxla_call abs eval rule
       z, f_lin = jax.linearize(f, x)
     z_dot = f_lin(ones_like(x))
 

@@ -117,12 +117,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testEluMemory(self):
     # see https://github.com/google/jax/pull/1640
-    with core.skipping_checks():  # With checks we materialize the array
+    with jax.enable_checks(False):  # With checks we materialize the array
       jax.make_jaxpr(lambda: nn.elu(jnp.ones((10 ** 12,))))  # don't oom
 
   def testHardTanhMemory(self):
     # see https://github.com/google/jax/pull/1640
-    with core.skipping_checks():  # With checks we materialize the array
+    with jax.enable_checks(False):  # With checks we materialize the array
       jax.make_jaxpr(lambda: nn.hard_tanh(jnp.ones((10 ** 12,))))  # don't oom
 
   def testOneHot(self):

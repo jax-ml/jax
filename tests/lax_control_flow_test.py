@@ -1709,7 +1709,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(carry_out[1], carry_init, check_dtypes=False)
     self.assertAllClose(carry_out[0], jnp.array([2., 2., 2.]), check_dtypes = False)
 
-  # TODO(mattjj, dougalm): fix this test when skip_checks is False
   def testIssue757(self):
     # code from https://github.com/google/jax/issues/757
     def fn(a):

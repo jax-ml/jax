@@ -486,7 +486,7 @@ class ShardedDeviceArray(xla.DeviceArray):  # type: ignore
     self.indices = indices
     self._npy_value = None
     self._one_replica_buffer_indices = None
-    if not core.skip_checks:
+    if config.jax_enable_checks:
       assert type(aval) is ShapedArray
 
   @property
@@ -792,7 +792,7 @@ def parallel_callable(fun: lu.WrappedFun,
       f"`axis_size` (or remove the `devices` argument). Got nested_replicas="
       f"{jaxpr_replicas} and nested_partitions={num_partitions}")
 
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               f"Compiling {fun.__name__} ({id(fun)}) for {num_global_shards} "
               f"devices with args {avals}. (num_replicas={num_global_replicas}"
@@ -1387,7 +1387,7 @@ def mesh_callable(fun: lu.WrappedFun,
   global_axis_sizes = mesh.shape
   local_axis_sizes = local_mesh.shape
 
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               f"Compiling {fun.__name__} ({id(fun)}) for {tuple(global_axis_sizes.items())} "
               f"mesh with args {local_in_untiled_avals}. Argument mapping: {in_axes}.")

@@ -2190,7 +2190,7 @@ class LaxTest(jtu.JaxTestCase):
     #     api.make_jaxpr(lambda x: lax.tie_in((x, x), 1))(1.)
 
   def test_primitive_jaxtype_error(self):
-    with core.skipping_checks():
+    with jax.enable_checks(False):
       with self.assertRaisesRegex(
           TypeError, "Argument .* of type .* is not a valid JAX type"):
         lax.add(1, 'hi')
