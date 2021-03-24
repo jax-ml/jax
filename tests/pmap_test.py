@@ -1954,6 +1954,17 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
         r"num_local_devices=\d."):
       f(jnp.ones(xla_bridge.device_count() + 1))
 
+  def testBadAxisSizeErrorNested(self):
+    f = pmap(pmap(lambda x: lax.psum(x, ('i', 'j')),
+                  axis_name='j'),
+             axis_name='i',
+             devices=[jax.local_devices()[0]])
+    with self.assertRaisesRegex(
+        ValueError,
+        r"pmapped function requires 4 local devices to run due to nested "
+        r"pmapped or other parallel functions, but only 1 are available."):
+      f(jnp.ones((1, 4)))
+
   def testNestedPmaps(self):
     if xla_bridge.device_count() % 2 != 0:
       raise SkipTest
