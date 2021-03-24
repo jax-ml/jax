@@ -8,15 +8,34 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.11 (unreleased)
+## jax 0.2.12 (unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.11...master).
 
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.10...master).
+## jaxlib 0.1.65 (unreleased)
+
+## jax 0.2.11 (March 23 2021)
+
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.10...jax-v0.2.11).
 * New features:
+  * [#6112](https://github.com/google/jax/pull/6112) added context managers:
+    `jax.enable_checks`, `jax.check_tracer_leaks`, `jax.debug_nans`,
+    `jax.debug_infs`, `jax.log_compiles`.
+  * [#6085](https://github.com/google/jax/pull/6085) added `jnp.delete`
 * Bug fixes:
+  * [#6136](https://github.com/google/jax/pull/6136) generalized
+    `jax.flatten_util.ravel_pytree` to handle integer dtypes.
+  * [#6129](https://github.com/google/jax/issues/6129) fixed a bug with handling
+    some constants like `enum.IntEnums`
+  * [#6145](https://github.com/google/jax/pull/6145) fixed batching issues with
+    incomplete beta functions
+  * [#6014](https://github.com/google/jax/pull/6014) fixed H2D transfers during
+    tracing
+  * [#6165](https://github.com/google/jax/pull/6165) avoids OverflowErrors when
+    converting some large Python integers to floats
 * Breaking changes:
   * The minimum jaxlib version is now 0.1.62.
 
-## jaxlib 0.1.65 (unreleased)
 
 ## jaxlib 0.1.64 (March 18 2021)
 
