@@ -63,8 +63,6 @@ _dtype_to_32bit_dtype = {
 @util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  if isinstance(dtype, str) and dtype == "bfloat16":
-    dtype = bfloat16
   try:
     dtype = np.dtype(dtype)
   except TypeError as e:
@@ -317,8 +315,6 @@ def is_python_scalar(x):
     return type(x) in python_scalar_dtypes
 
 def dtype(x):
-  if isinstance(x, str) and x == "bfloat16":
-    return _bfloat16_dtype
   if type(x) in python_scalar_dtypes:
     return python_scalar_dtypes[type(x)]
   return np.result_type(x)
