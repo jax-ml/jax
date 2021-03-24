@@ -248,6 +248,18 @@ $ pre-commit run --all
 See the pre-commit framework documentation for information on how to set your local git
 environment to execute this automatically.
 
+### Creating new notebooks
+
+If you are adding a new notebook to the documentation and would like to use the `jupytext --sync`
+command discussed here, you can set up your notebook for jupytext by using the following command:
+
+```
+$ jupytext --set-formats ipynb,md:myst path/to/the/notebook.ipynb
+```
+
+This works by adding a `"jupytext"` metadata field to the notebook file which specifies the
+desired formats, and which the `jupytext --sync` command recognizes when invoked.
+
 ### Notebooks within the sphinx build
 
 Some of the notebooks are built automatically as part of the Travis pre-submit checks and
