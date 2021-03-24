@@ -17,9 +17,9 @@ import functools
 import os
 import sys
 import threading
+from typing import List, Callable, Optional
 
 from jax import lib
-from typing import Callable, Optional
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.
@@ -52,7 +52,7 @@ class Config:
   def __init__(self):
     self.values = {}
     self.meta = {}
-    self.FLAGS = NameSpace(self.read)
+    self.FLAGS = NameSpace(self.read, self.update)
     self.use_absl = False
     self._contextmanager_flags = set()
 
@@ -255,17 +255,69 @@ class Config:
     set_state.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
     return set_state
 
+  def define_enum_state(self, name: str, enum_values: List[str],
+                        default: Optional[str], help: str):
+    """Set up thread-local state and return a contextmanager for managing it.
+    Args:
+      name: string, converted to lowercase to define the name of the config
+        option (and absl flag). It is converted to uppercase to define the
+        corresponding shell environment variable.
+      enum_values: list of strings representing the possible values for the
+        option.
+      default: optional string, default value.
+      help: string, used to populate the flag help information as well as the
+        docstring of the returned context manager.
+    Returns:
+      A contextmanager to control the thread-local state value.
+    See docstring for ``define_bool_state``.
+    """
+    name = name.lower()
+    self.DEFINE_enum(name, os.getenv(name.upper(), default),
+                     enum_values=enum_values, help=help)
+    self._contextmanager_flags.add(name)
+
+    def get_state(self):
+      val = getattr(_thread_local_state, name, unset)
+      return val if val is not unset else self._read(name)
+    setattr(Config, name, property(get_state))
+
+    @contextlib.contextmanager
+    def set_state(new_val: Optional[str]):
+      if (new_val is not None and
+          (type(new_val) is not str or new_val not in enum_values)):
+        raise ValueError(f"new enum value must be None or in {enum_values}, "
+                         f"got {new_val} of type {type(new_val)}.")
+      prev_val = getattr(_thread_local_state, name, unset)
+      setattr(_thread_local_state, name, new_val)
+      try:
+        yield
+      finally:
+        if prev_val is unset:
+          delattr(_thread_local_state, name)
+        else:
+          setattr(_thread_local_state, name, prev_val)
+    set_state.__name__ = name[4:] if name.startswith('jax_') else name
+    set_state.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
+    return set_state
+
+
 _thread_local_state = threading.local()
 
 class Unset: pass
 unset = Unset()
 
-class NameSpace(object):
-  def __init__(self, getter):
-    self._getter = getter
+class NameSpace:
+  def __init__(self, getter, setter):
+    # must use super because we override this class's __setattr__, see
+    # https://docs.python.org/3/reference/datamodel.html#object.__setattr__
+    super().__setattr__('_getter', getter)
+    super().__setattr__('_setter', setter)
 
   def __getattr__(self, name):
     return self._getter(name)
+
+  def __setattr__(self, name, val):
+    self._setter(name, val)
 
 
 config = Config()
@@ -357,3 +409,32 @@ enable_x64 = config.define_bool_state(
 config._contextmanager_flags.remove("jax_enable_x64")
 
 Config.x64_enabled = Config.jax_enable_x64  # type: ignore
+
+
+numpy_rank_promotion = config.define_enum_state(
+    name='jax_numpy_rank_promotion',
+    enum_values=['allow', 'warn', 'raise'],
+    default='allow',
+    help=('Control NumPy-style automatic rank promotion broadcasting '
+          '("allow", "warn", or "raise").'))
+
+default_matmul_precision = config.define_enum_state(
+    name='jax_default_matmul_precision',
+    enum_values=['bfloat16', 'tensorfloat32', 'float32'],
+    default=None,
+    help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
+
+          'Some platforms, like TPU, offer configurable precision levels for '
+          'matrix multiplication and convolution computations, trading off '
+          'accuracy for speed. The precision can be controlled for each '
+          'operation; for example, see the :func:`jax.lax.conv_general_dilated` '
+          'and :func:`jax.lax.dot` docstrings. But it can be useful to control '
+          'the default behavior obtained when an operation is not given a '
+          'specific precision.\n\n'
+
+          'This option can be used to control the default precision '
+          'level for computations involved in matrix multiplication and '
+          'convolution on 32bit inputs. The levels roughly describe the '
+          "precision at which scalar products are computed. The 'bfloat16' "
+          "option is the fastest and least precise; 'float32' is similar to "
+          "full float32 precision; 'tensorfloat32' is intermediate.\n\n"))

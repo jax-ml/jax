@@ -506,8 +506,17 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
 Precision = xla_client.PrecisionConfig.Precision
 Precision.__str__ = lambda precision: precision.name
 PrecisionType = Any
-PrecisionLike = Union[None, PrecisionType, Tuple[PrecisionType, PrecisionType]]
-
+PrecisionLike = Union[None, str, PrecisionType, Tuple[str, str],
+                      Tuple[PrecisionType, PrecisionType]]
+_precision_strings = {
+    'highest':       Precision.HIGHEST,
+    'float32':       Precision.HIGHEST,
+    'bfloat16_3x':   Precision.HIGH,
+    'tensorfloat32': Precision.HIGH,
+    'bfloat16':      Precision.DEFAULT,
+    'fastest':       Precision.DEFAULT,
+    None:            Precision.DEFAULT,
+}
 
 class ConvDimensionNumbers(NamedTuple):
   """Describes batch, spatial, and feature dimensions of a convolution.
@@ -555,23 +564,25 @@ def conv_general_dilated(
     rhs_dilation: `None`, or a sequence of `n` integers, giving the
       dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
       is also known as atrous convolution.
-    dimension_numbers: either `None`, a `ConvDimensionNumbers` object, or
-      a 3-tuple `(lhs_spec, rhs_spec, out_spec)`, where each element is a string
-      of length `n+2`.
+    dimension_numbers: either `None`, a ``ConvDimensionNumbers`` object, or
+      a 3-tuple ``(lhs_spec, rhs_spec, out_spec)``, where each element is a
+      string of length `n+2`.
     feature_group_count: integer, default 1. See XLA HLO docs.
     batch_group_count: integer, default 1. See XLA HLO docs.
     precision: Optional. Either ``None``, which means the default precision for
       the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+      ``Precision.HIGH`` or ``Precision.HIGHEST``), a string (e.g. 'highest' or
+      'fastest', see the ``jax.default_matmul_precision`` context manager), or a
+      tuple of two ``lax.Precision`` enums or strings indicating precision of
+      ``lhs`` and ``rhs``.
 
   Returns:
     An array containing the convolution result.
 
-  In the string case of `dimension_numbers`, each character identifies by
+  In the string case of ``dimension_numbers``, each character identifies by
   position:
 
-  - the batch dimensions in `lhs`, `rhs`, and the output with the character
+  - the batch dimensions in ``lhs``, ``rhs``, and the output with the character
     'N',
   - the feature dimensions in `lhs` and the output with the character 'C',
   - the input and output feature dimensions in rhs with the characters 'I'
@@ -579,18 +590,18 @@ def conv_general_dilated(
   - spatial dimension correspondences between lhs, rhs, and the output using
     any distinct characters.
 
-  For example, to indicate dimension numbers consistent with the `conv` function
-  with two spatial dimensions, one could use `('NCHW', 'OIHW', 'NCHW')`. As
-  another example, to indicate dimension numbers consistent with the TensorFlow
-  Conv2D operation, one could use `('NHWC', 'HWIO', 'NHWC')`. When using the
-  latter form of convolution dimension specification, window strides are
-  associated with spatial dimension character labels according to the order in
-  which the labels appear in the `rhs_spec` string, so that `window_strides[0]`
-  is matched with the dimension corresponding to the first character
-  appearing in rhs_spec that is not `'I'` or `'O'`.
+  For example, to indicate dimension numbers consistent with the ``conv``
+  function with two spatial dimensions, one could use ``('NCHW', 'OIHW',
+  'NCHW')``. As another example, to indicate dimension numbers consistent with
+  the TensorFlow Conv2D operation, one could use ``('NHWC', 'HWIO', 'NHWC')``.
+  When using the latter form of convolution dimension specification, window
+  strides are associated with spatial dimension character labels according to
+  the order in which the labels appear in the ``rhs_spec`` string, so that
+  ``window_strides[0]`` is matched with the dimension corresponding to the first
+  character appearing in rhs_spec that is not ``'I'`` or ``'O'``.
 
-  If `dimension_numbers` is `None`, the default is `('NCHW', 'OIHW', 'NCHW')`
-  (for a 2D convolution).
+  If ``dimension_numbers`` is ``None``, the default is ``('NCHW', 'OIHW',
+  'NCHW')`` (for a 2D convolution).
   """
   dnums = conv_dimension_numbers(lhs.shape, rhs.shape, dimension_numbers)
   if lhs_dilation is None:
@@ -6394,16 +6405,31 @@ def remaining(original, *removed_lists):
 
 def _canonicalize_precision(precision):
   if precision is None:
-    return None
-  if isinstance(precision, Precision) or (
-      isinstance(precision, tuple)
-      and len(precision) == 2
-      and all(isinstance(p, Precision) for p in precision)
-  ):
+    if config.jax_default_matmul_precision is None:
+      return None
+    try:
+      return _precision_strings[config.jax_default_matmul_precision]
+    except KeyError:
+      raise ValueError(
+          "jax_default_matmul_precision flag must be set to None or a value in "
+          f"{_precision_strings}, but got {config.jax_default_matmul_precision}"
+      ) from None
+  elif isinstance(precision, str) and precision in _precision_strings:
+    return _precision_strings.get(precision)
+  elif isinstance(precision, Precision):
     return precision
+  elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
+        all(isinstance(p, Precision) for p in precision)):
+    return precision
+  elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
+        all(isinstance(s, str) for s in precision)):
+    s1, s2 = precision
+    return (_canonicalize_precision(s1), _canonicalize_precision(s2))
   else:
-    raise ValueError("Precision argument must be None, a lax.Precision value "
-                     f"or a tuple of two lax.Precision values; got {precision}")
+    raise ValueError(
+        f"Precision argument must be None, a string in {_precision_strings}, "
+        "a lax.Precision value or a tuple of two lax.Precision values or "
+        f"strings; got {precision}.")
 
 
 def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers

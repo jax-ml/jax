@@ -25,6 +25,7 @@ import warnings
 import weakref
 import functools
 import itertools as it
+import operator as op
 
 from absl import logging
 from absl.testing import absltest, parameterized
@@ -2398,6 +2399,58 @@ class APITest(jtu.JaxTestCase):
     jnp.multiply(2 ** 100, 3.)  # doesn't crash
     out = lax.convert_element_type(2 ** 100, jnp.float32)  # doesn't crash
     self.assertArraysEqual(out, np.float32(2 ** 100))
+
+  def test_dot_precision_context_manager(self):
+    x = jnp.zeros((2, 2))
+
+    with jax.default_matmul_precision(None):
+      jnp.dot(x, x)  # doesn't crash
+      jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
+    self.assertIn('precision=None', str(jaxpr))
+
+    with jax.default_matmul_precision("bfloat16"):
+      x @ x  # doesn't crash
+      jaxpr = jax.make_jaxpr(op.matmul)(x, x)
+    self.assertIn('precision=DEFAULT', str(jaxpr))
+
+    with jax.default_matmul_precision("tensorfloat32"):
+      jnp.dot(x, x)  # doesn't crash
+      jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
+    self.assertIn('precision=HIGH\n', str(jaxpr))
+
+    with jax.default_matmul_precision("float32"):
+      jnp.dot(x, x)  # doesn't crash
+      jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
+    self.assertIn('precision=HIGHEST', str(jaxpr))
+
+    dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
+    with jax.default_matmul_precision("tensorfloat32"):
+      dot(x, x)  # doesn't crash
+      jaxpr = jax.make_jaxpr(dot)(x, x)
+    self.assertIn('precision=HIGHEST', str(jaxpr))
+
+  def test_dot_precision_flag(self):
+    x = jnp.zeros((2, 2))
+
+    prev_val = config._read("jax_default_matmul_precision")
+    try:
+      config.FLAGS.jax_default_matmul_precision = "tensorfloat32"
+      jnp.dot(x, x)  # doesn't crash
+      jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
+    finally:
+      config.FLAGS.jax_default_matmul_precision = prev_val
+    self.assertIn('precision=HIGH', str(jaxpr))
+    self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
+
+    prev_val = config._read("jax_default_matmul_precision")
+    try:
+      config.update('jax_default_matmul_precision','tensorfloat32')
+      jnp.dot(x, x)  # doesn't crash
+      jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
+    finally:
+      config.update('jax_default_matmul_precision', prev_val)
+    self.assertIn('precision=HIGH', str(jaxpr))
+    self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
 
 
 class RematTest(jtu.JaxTestCase):
