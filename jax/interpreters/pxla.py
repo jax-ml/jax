@@ -846,11 +846,19 @@ def parallel_callable(fun: lu.WrappedFun,
   else:
     if num_local_shards != len(local_devices):
       local_devices_str = ", ".join(map(str, local_devices))
-      raise ValueError(
-          "Leading axis size of input to pmapped function must equal the "
-          "number of local devices passed to pmap. Got axis_size=%d, "
-          "num_local_devices=%d.\n(Local devices passed to pmap: %s)"
-          % (axis_size, len(local_devices), local_devices_str))
+      if num_local_shards == axis_size:
+        raise ValueError(
+            f"Leading axis size of input to pmapped function must equal the "
+            f"number of local devices passed to pmap. Got axis_size="
+            f"{axis_size}, num_local_devices={len(local_devices)}.\n(Local "
+            f"devices available to pmap: {local_devices_str})")
+      else:
+        raise ValueError(
+            f"pmapped function requires {num_local_shards} local devices to "
+            f"run due to nested pmapped or other parallel functions, but only "
+            f"{len(local_devices)} are available.\n(outer axis size: "
+            f"{axis_size}, local devices available to pmap: "
+            f"{local_devices_str})")
     if num_global_shards != len(devices):
       raise ValueError("compiling computation that creates %s shards, "
                        "but %s devices were specified" %
