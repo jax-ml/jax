@@ -15,7 +15,7 @@
 
 import functools
 import itertools as it
-from typing import Any, Callable, Dict, Set, List
+from typing import Any, Callable, Dict
 
 from . import partial_eval as pe
 from ..config import config
@@ -180,7 +180,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
       assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
-    return ct_env.get(v, Zero(v.aval))
+    return ct_env.pop(v, Zero(v.aval))
 
   def read_primal(v):
     if type(v) is Literal:
@@ -199,18 +199,9 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
   #        forces primal_in to contain UndefinedPrimals for tangent values!
   map(write_primal, jaxpr.invars, primals_in)
 
-  # Find the last use of each cotangent so that they can be removed
-  # as soon as possible.
-  drop_cts: List[Set[Any]] = []
-  seen_vars: Set[Any] = set(jaxpr.invars)
-  for eqn in jaxpr.eqns:
-    read_set = set(eqn.outvars)  # NOTE: eqn is not transposed yet!
-    drop_cts.append(read_set - seen_vars)
-    seen_vars |= read_set
-
   ct_env: Dict[Any, Any] = {}
   map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
-  for eqn, to_drop in zip(jaxpr.eqns[::-1], drop_cts[::-1]):
+  for eqn in jaxpr.eqns[::-1]:
     # FIXME: Some invars correspond to tangents
     invals = map(read_primal, eqn.invars)
     if eqn.primitive.multiple_results:
@@ -229,8 +220,6 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
     cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
     # FIXME: Some invars correspond to primals!
     map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
-    for var in to_drop:
-      ct_env.pop(var, None)  # NB: Constant cotangents might be missing
 
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return cotangents_out
