@@ -154,18 +154,13 @@ class Config:
       raise Exception("can't re-enable omnistaging after it's been disabled")
 
   def disable_omnistaging(self):
+    return
+
+  def temporary_hack_do_not_call_me(self):
     if self.omnistaging_enabled:
       for disabler in self._omnistaging_disablers:
         disabler()
       self.omnistaging_enabled = False
-
-#   # TODO(jakevdp, mattjj): unify this with `define_bool_state` stuff below
-#   @property
-#   def x64_enabled(self):
-#     return lib.jax_jit.get_enable_x64()
-
-#   def _set_x64_enabled(self, state):
-#     lib.jax_jit.thread_local_state().enable_x64 = bool(state)
 
   def define_bool_state(self, name: str, default: bool, help: str):
     """Set up thread-local state and return a contextmanager for managing it.
