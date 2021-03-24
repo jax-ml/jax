@@ -19,8 +19,9 @@ import numpy as np
 
 from . import core
 from . import dtypes
-from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
+from .tree_util import (tree_flatten, tree_unflatten, tree_multimap,
                         tree_structure, treedef_children, treedef_is_leaf)
+from ._src.tree_util import _replace_nones
 from . import linear_util as lu
 from ._src.util import safe_map, WrapHashably, Hashable
 from .core import unit

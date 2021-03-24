@@ -20,6 +20,7 @@ from absl.testing import parameterized
 
 from jax import test_util as jtu
 from jax import tree_util
+from jax._src.tree_util import _process_pytree
 from jax import flatten_util
 from jax import dtypes
 import jax.numpy as jnp
@@ -165,7 +166,7 @@ class TreeTest(jtu.JaxTestCase):
 
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripViaBuild(self, inputs):
-    xs, tree = tree_util._process_pytree(tuple, inputs)
+    xs, tree = _process_pytree(tuple, inputs)
     actual = tree_util.build_tree(tree, xs)
     self.assertEqual(actual, inputs)
 

@@ -26,8 +26,9 @@ from .. import numpy as jnp
 from .. import core
 from .. import linear_util as lu
 from ..api import _check_callable, _check_arg
-from ..tree_util import (tree_flatten, tree_unflatten, all_leaves,
-                         _replace_nones, tree_map, tree_leaves)
+from ..tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
+                         tree_leaves)
+from .._src.tree_util import _replace_nones
 from ..api_util import (flatten_fun_nokwargs, flatten_axes, _ensure_index_tuple,
                         donation_vector)
 from ..interpreters import partial_eval as pe
