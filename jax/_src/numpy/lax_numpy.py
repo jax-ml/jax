@@ -28,7 +28,6 @@ import builtins
 import collections
 import collections.abc
 import operator
-import os
 import types
 from typing import Any, Sequence, FrozenSet, Optional, Tuple, Union, cast
 from textwrap import dedent as _dedent
@@ -45,7 +44,7 @@ from jax import core
 from jax import dtypes
 from jax import errors
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
-from jax.config import flags, config
+from jax.config import config
 from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
 from jax.interpreters.masking import Poly
 from jax import lax
@@ -54,14 +53,6 @@ from jax import ops
 from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
-
-FLAGS = flags.FLAGS
-flags.DEFINE_enum(
-    'jax_numpy_rank_promotion', os.getenv('JAX_NUMPY_RANK_PROMOTION', 'allow'),
-    enum_values=['allow', 'warn', 'raise'],
-    help=
-    'Control NumPy-style automatic rank promotion broadcasting '
-    '("allow", "warn", or "raise").')
 
 newaxis = None
 
@@ -247,20 +238,20 @@ def _promote_shapes(fun_name, *args):
     if not nonscalar_ranks or len(set(nonscalar_ranks)) == 1:
       return args
     else:
-      if FLAGS.jax_numpy_rank_promotion != "allow":
+      if config.jax_numpy_rank_promotion != "allow":
         _rank_promotion_warning_or_error(fun_name, shapes)
       result_rank = len(lax.broadcast_shapes(*shapes))
       return [broadcast_to(arg, (1,) * (result_rank - len(shp)) + shp)
               for arg, shp in zip(args, shapes)]
 
 def _rank_promotion_warning_or_error(fun_name, shapes):
-  if FLAGS.jax_numpy_rank_promotion == "warn":
+  if config.jax_numpy_rank_promotion == "warn":
     msg = ("Following NumPy automatic rank promotion for {} on shapes {}. "
            "Set the jax_numpy_rank_promotion config option to 'allow' to "
            "disable this warning; for more information, see "
            "https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
     warnings.warn(msg.format(fun_name, ' '.join(map(str, shapes))))
-  elif FLAGS.jax_numpy_rank_promotion == "raise":
+  elif config.jax_numpy_rank_promotion == "raise":
     msg = ("Operands could not be broadcast together for {} on shapes {} "
            "and with the config option jax_numpy_rank_promotion='raise'. "
            "For more information, see "

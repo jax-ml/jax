@@ -31,7 +31,8 @@ del _cloud_tpu_init
 
 # flake8: noqa: F401
 from .config import (config, enable_checks, check_tracer_leaks, checking_leaks,
-                     debug_nans, debug_infs, log_compiles)
+                     debug_nans, debug_infs, log_compiles,
+                     default_matmul_precision, numpy_rank_promotion)
 from .api import (
   ad,  # TODO(phawkins): update users to avoid this.
   argnums_partial,  # TODO(phawkins): update Haiku to not use this.
