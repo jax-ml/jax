@@ -11,6 +11,10 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.12 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.11...master).
 
+* Breaking changes:
+  * The minimum jaxlib version is now 0.1.64.
+
+
 ## jaxlib 0.1.65 (unreleased)
 
 ## jax 0.2.11 (March 23 2021)
