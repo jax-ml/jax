@@ -252,7 +252,7 @@ def while_loop(cond_fun: Callable[[T], bool],
   Returns:
     The output from the final iteration of body_fun, of type ``a``.
   """
-  if jax.api._jit_is_disabled():
+  if config.jax_disable_jit:
     try:
       val = init_val
       while cond_fun(val):
@@ -598,7 +598,7 @@ def switch(index, branches: Sequence[Callable], operand):
   hi = np.array(len(branches) - 1, np.int32)
   index = lax.clamp(lo, index, hi)
 
-  if (jax.api._jit_is_disabled() and
+  if (config.jax_disable_jit and
       isinstance(core.get_aval(index), ConcreteArray)):
     return branches[int(index)](operand)
 
@@ -676,7 +676,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
 
-  if jax.api._jit_is_disabled() and isinstance(core.get_aval(pred), ConcreteArray):
+  if config.jax_disable_jit and isinstance(core.get_aval(pred), ConcreteArray):
     if pred:
       return true_fun(operand)
     else:
@@ -1244,7 +1244,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     else:
       length, = unique_lengths
 
-  if jax.api._jit_is_disabled():
+  if config.jax_disable_jit:
     carry = init
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x

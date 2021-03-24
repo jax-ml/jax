@@ -74,9 +74,6 @@ class Config:
     if hook:
       hook(val)
 
-    if name == "jax_disable_jit":
-      lib.jax_jit.global_state().disable_jit = val
-
   def read(self, name):
     if name in self._contextmanager_flags:
       raise AttributeError(
@@ -409,6 +406,19 @@ enable_x64 = config.define_bool_state(
 config._contextmanager_flags.remove("jax_enable_x64")
 
 Config.x64_enabled = Config.jax_enable_x64  # type: ignore
+
+def _update_disable_jit_global(val):
+  lib.jax_jit.global_state().disable_jit = val
+
+def _update_disable_jit_thread_local(val):
+  lib.jax_jit.thread_local_state().disable_jit = val
+
+disable_jit = config.define_bool_state(
+    name='jax_disable_jit',
+    default=False,
+    help=('Disable JIT compilation and just call original Python.'),
+    update_global_hook=_update_disable_jit_global,
+    update_thread_local_hook=_update_disable_jit_thread_local)
 
 
 numpy_rank_promotion = config.define_enum_state(
