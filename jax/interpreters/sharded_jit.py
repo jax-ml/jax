@@ -101,9 +101,10 @@ def _sharded_callable(
           const if pv is None else core.unit for pv, const in out_pvals
       ]
 
-  if xb.get_backend().platform != "tpu":
+  if xb.get_backend().platform not in ["tpu", "gpu"]:
     # TODO(skye): fall back to regular jit?
-    raise ValueError("sharded_jit only works on TPU!")
+    raise ValueError("sharded_jit not supported for " +
+                     xb.get_backend().platform)
 
   nparts = pxla.reconcile_num_partitions(jaxpr, nparts)
   assert nparts is not None
