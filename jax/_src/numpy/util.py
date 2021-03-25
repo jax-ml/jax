@@ -20,6 +20,7 @@ from typing import Callable, NamedTuple, Optional, Dict, Sequence
 _parameter_break = re.compile("\n(?=[A-Za-z_])")
 _section_break = re.compile(r"\n(?=[^\n]{3,15}\n-{3,15})", re.MULTILINE)
 _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\([\w\W]*?\)$', re.MULTILINE)
+_versionadded = re.compile(r'^\s+\.\.\s+versionadded::', re.MULTILINE)
 
 class ParsedDoc(NamedTuple):
   """
@@ -116,7 +117,7 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
           parsed.sections['Parameters'] = (
             "Parameters\n"
             "----------\n" +
-            "\n".join(desc for p, desc in parameters.items()
+            "\n".join(_versionadded.split(desc)[0].rstrip() for p, desc in parameters.items()
                       if p in op.__code__.co_varnames)
           )
 
