@@ -26,6 +26,22 @@ jobs:
         with:
           python-version: 3.8
       - uses: pre-commit/action@v2.0.0
+      - name: Report success or failure as github status
+        if: always()
+        shell: bash
+        run: |
+          status="${{ job.status }}"
+          lowercase_status=$(echo $status | tr '[:upper:]' '[:lower:]')
+          curl -sS --request POST \
+            --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }} \
+            --header 'authorization: Bearer ${{ github.token }}' \
+            --header 'content-type: application/json' \
+            --data '{
+              "state": "'$lowercase_status'",
+              "target_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+              "description": "'$status'",
+              "context": "github-actions/lint_and_typecheck"
+              }'
 
   build:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
