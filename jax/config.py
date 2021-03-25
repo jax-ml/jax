@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# TODO(phawkins): this file triggers a pytype bug.
+# pytype: skip-file
+
 import contextlib
 import functools
 import os
@@ -230,27 +233,7 @@ class Config:
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
-    @contextlib.contextmanager
-    def set_state(new_val: bool):
-      prev_val = getattr(_thread_local_state, name, unset)
-      setattr(_thread_local_state, name, new_val)
-      if update_thread_local_hook:
-        update_thread_local_hook(new_val)
-      try:
-        yield
-      finally:
-        if prev_val is unset:
-          delattr(_thread_local_state, name)
-          if update_thread_local_hook:
-            update_thread_local_hook(None)
-        else:
-          setattr(_thread_local_state, name, prev_val)
-          if update_thread_local_hook:
-            update_thread_local_hook(prev_val)
-
-    set_state.__name__ = name[4:] if name.startswith('jax_') else name
-    set_state.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
-    return set_state
+    return _BoolStateContextManager(name, help, update_thread_local_hook)
 
   def define_enum_state(self, name: str, enum_values: List[str],
                         default: Optional[str], help: str):
@@ -297,11 +280,41 @@ class Config:
     set_state.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
     return set_state
 
+class _BoolStateContextManager:
+  def __init__(self, name, help, update_thread_local_hook):
+    self._name = name
+    self.__name__ = name[4:] if name.startswith('jax_') else name
+    self.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
+    self._hook = update_thread_local_hook
+
+  @contextlib.contextmanager
+  def __call__(self, new_val: bool):
+    prev_val = getattr(_thread_local_state, self._name, unset)
+    setattr(_thread_local_state, self._name, new_val)
+    if self._hook is not None: self._hook(new_val)
+    try:
+      yield
+    finally:
+      if prev_val is unset:
+        delattr(_thread_local_state, self._name)
+        if self._hook is not None: self._hook(None)
+      else:
+        setattr(_thread_local_state, self._name, prev_val)
+        if self._hook is not None: self._hook(prev_val)
+
+  def _add_hooks(self, update_global_hook, update_thread_local_hook):
+    """Private method that adds hooks to an existing context-manager.
+
+    Used to avoid cyclic import dependencies."""
+    self._hook = update_thread_local_hook
+    config._update_hooks[self._name] = update_global_hook
+    update_global_hook(config._read(self._name))
+
 
 _thread_local_state = threading.local()
 
-class Unset: pass
-unset = Unset()
+class _Unset: pass
+unset = _Unset()
 
 class NameSpace:
   def __init__(self, getter, setter):

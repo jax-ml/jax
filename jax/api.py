@@ -75,7 +75,11 @@ from .interpreters import invertible_ad as iad
 from .interpreters.invertible_ad import custom_ivjp
 from .custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
                                  custom_vjp, linear_call)
-from .config import flags, config, bool_env, disable_jit as _disable_jit
+
+from .config import (flags, config, bool_env, disable_jit as _disable_jit,
+                     debug_nans as config_debug_nans,
+                     debug_infs as config_debug_infs,
+                     _thread_local_state as config_thread_local_state)
 
 traceback_util.register_exclusion(__file__)
 
@@ -102,6 +106,27 @@ flags.DEFINE_bool(
     "A temporary flag enabling the C++ jax.jit fast path."
     "Set this to `False` only if it crashes otherwise and report "
     "the error to the jax-team.")
+
+# TODO(phawkins): make this unconditional when jaxlib 0.1.65 is the minimum.
+if lib._xla_extension_version >= 12:
+  def _update_debug_special_global(_):
+    if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
+      jax_jit.global_state().post_hook = _nan_check_posthook
+    else:
+      jax_jit.global_state().post_hook = None
+
+  def _update_debug_special_thread_local(_):
+    if (getattr(config_thread_local_state, "jax_debug_nans", False) or
+        getattr(config_thread_local_state, "jax_debug_infs", False)):
+      jax_jit.thread_local_state().post_hook = _nan_check_posthook
+    else:
+      jax_jit.thread_local_state().post_hook = None
+
+  config_debug_nans._add_hooks(_update_debug_special_global,
+                               _update_debug_special_thread_local)
+  config_debug_infs._add_hooks(_update_debug_special_global,
+                               _update_debug_special_thread_local)
+
 
 float0 = dtypes.float0
 
@@ -230,6 +255,21 @@ class _BackendAndDeviceInfo(NamedTuple):
   default_device: xc.Device
   committed_to_device: bool
 
+def _nan_check_posthook(fun, args, kwargs, output):
+  """Hook function called by the C++ jit to perform NaN checking."""
+  try:
+    xla.check_special(xla.xla_call_p, [
+        da.device_buffer
+        for da in tree_leaves(output)
+        if hasattr(da, "device_buffer")
+    ])
+  except FloatingPointError:
+    # compiled_fun can only raise in this case
+    assert config.jax_debug_nans or config.jax_debug_infs
+    print("Invalid nan value encountered in the output of a C++-jit "
+          "function. Calling the de-optimized version.")
+    fun._cache_miss(*args, **kwargs)[0]  # probably won't return
+
 
 def _cpp_jit(
     fun: F,
@@ -334,7 +374,7 @@ def _cpp_jit(
 
   # TODO(phawkins): Remove this branch when jaxlib 0.1.65 is the minimum
   # version.
-  if lib._xla_extension_version < 11:
+  if lib._xla_extension_version < 12:
     def cache_miss_wrapper(_, *args, **kw): return cache_miss(*args, **kw)
     static_argnums_ = (0,) + tuple(i + 1 for i in static_argnums)
     cpp_jitted_f = jax_jit.jit(fun, cache_miss_wrapper, get_device_info,
@@ -344,11 +384,8 @@ def _cpp_jit(
     @wraps(fun)
     @api_boundary
     def f_jitted(*args, **kwargs):
-      # TODO(jblespiau,phawkins): We can remove `config.x64_enabled` when jaxlib
-      # 0.1.65 is the minimal version.
       context = (getattr(core.thread_local_state.trace_state.trace_stack,
                          "dynamic", None), config.x64_enabled)
-      # TODO(jblespiau): Move this to C++.
       if (config.jax_debug_nans or config.jax_debug_infs) and not config.jax_disable_jit:
         device_arrays = cpp_jitted_f(context, *args, **kwargs)
         try:
@@ -371,27 +408,12 @@ def _cpp_jit(
     cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
                                tuple(static_argnums))
 
+    # TODO(phawkins,mattjj): eliminate the Python wrapper functions.
     # TODO(mattjj): make cpp callable follow descriptor protocol for bound methods
     @wraps(fun)
     @api_boundary
     def f_jitted(*args, **kwargs):
-      # TODO(jblespiau): Move this to C++.
-      if (config.jax_debug_nans or config.jax_debug_infs) and not config.jax_disable_jit:
-        device_arrays = cpp_jitted_f(*args, **kwargs)
-        try:
-          xla.check_special(xla.xla_call_p, [
-              da.device_buffer
-              for da in tree_leaves(device_arrays)
-              if hasattr(da, "device_buffer")
-          ])
-          return device_arrays
-        except FloatingPointError:
-          assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
-          print("Invalid nan value encountered in the output of a C++-jit "
-                "function. Calling the de-optimized version.")
-          return cache_miss(*args, **kwargs)[0]  # probably won't return
-      else:
-        return cpp_jitted_f(*args, **kwargs)
+      return cpp_jitted_f(*args, **kwargs)
 
   f_jitted._cpp_jitted_f = cpp_jitted_f
   return f_jitted

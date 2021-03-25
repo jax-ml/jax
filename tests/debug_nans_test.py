@@ -57,6 +57,17 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans = jax.jit(lambda x: 0. / x)(A)
       ans.block_until_ready()
 
+  def testJitComputationNaNContextManager(self):
+    config.update("jax_debug_nans", False)
+    A = jnp.array(0.)
+    f = jax.jit(lambda x: 0. / x)
+    ans = f(A)
+    ans = f(A)
+    with self.assertRaises(FloatingPointError):
+      with jax.debug_nans(True):
+        ans = f(A)
+      ans.block_until_ready()
+
   def testSingleResultPrimitiveNaN(self):
     A = jnp.array(0.)
     with self.assertRaises(FloatingPointError):
