@@ -11,7 +11,7 @@
 | [**Transformations**](#transformations)
 | [**Install guide**](#installation)
 | [**Neural net libraries**](#neural-network-libraries)
-| [**Change logs**](https://jax.readthedocs.io/en/latest/CHANGELOG.html)
+| [**Change logs**](https://jax.readthedocs.io/en/latest/changelog.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 | [**Code search**](https://cs.opensource.google/jax/jax)
 
