@@ -1695,6 +1695,21 @@ class PmapTest(jtu.JaxTestCase):
     expected = bulk_op(x, axis=axis)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_dtype={}".format(
+          jtu.format_shape_dtype_string((), dtype)),
+       "dtype": dtype}
+      for dtype in [np.float32, np.int32]
+  )
+  def testPmapDtype(self, dtype):
+    # Regression test for https://github.com/google/jax/issues/6022
+    @partial(pmap, axis_name='i')
+    def func(_):
+      return jax.lax.psum(dtype(0), axis_name='i')
+    unused_arg = jnp.arange(xla_bridge.device_count())
+    out_dtype = func(unused_arg).dtype
+    self.assertEqual(out_dtype, dtype)
+
 
 class VmapOfPmapTest(jtu.JaxTestCase):
 

@@ -759,7 +759,7 @@ def psum_bind(*args, axes, axis_index_groups):
       size = len(axis_index_groups[0])
     else:
       size = prod([core.axis_frame(name).size for name in named_axes])  # type: ignore
-    return tuple(size * pos_reduce(x) for x in args)
+    return tuple(lax._const(x, size) * pos_reduce(x) for x in args)
   return core.Primitive.bind(
       psum_p, *args, axes=axes, axis_index_groups=axis_index_groups)
 
