@@ -2452,6 +2452,23 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('precision=HIGH', str(jaxpr))
     self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
 
+  def test_backward_pass_ref_dropping(self):
+    refs = []
+
+    @api.custom_vjp
+    def f(x):
+      return x
+    def f_fwd(x):
+      return x, None
+    def f_rev(_, g):
+      assert len(refs) != 2 or refs[0]() is None
+      zero = np.zeros(())
+      refs.append(weakref.ref(zero))
+      return (zero,)
+    f.defvjp(f_fwd, f_rev)
+
+    api.grad(lambda x: f(f(f(x))))(1.)
+
 
 class RematTest(jtu.JaxTestCase):
 
