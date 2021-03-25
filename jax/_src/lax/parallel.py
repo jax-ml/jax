@@ -1119,7 +1119,11 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
 def _all_gather_batched_collective(frame, vals_in, dims_in, all_gather_dimension, axis_name, axis_index_groups, axis_size):
   assert axis_index_groups is None, "axis_index_groups not supported in vmap"
   assert axis_size == frame.size, "axis size doesn't match"
-  assert axis_name == frame.name, "batcher called with wrong axis name"
+  if not isinstance(axis_name, tuple):
+    axis_name = (axis_name,)
+  if len(axis_name) > 1:
+    raise NotImplementedError("Please open a feature request!")
+  assert axis_name == (frame.name,), "batcher called with wrong axis name"
   (x,), (d,) = vals_in, dims_in
   assert d is not batching.not_mapped
   return _moveaxis(d, all_gather_dimension, x), batching.not_mapped
