@@ -10,9 +10,17 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.2.12 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.11...master).
-
+* New features
+  * New profiling APIs: {func}`jax.profiler.start_trace`,
+    {func}`jax.profiler.stop_trace`, and {func}`jax.profiler.trace`
 * Breaking changes:
   * The minimum jaxlib version is now 0.1.64.
+  * Some profiler APIs names have been changed. There are still aliases, so this
+    should not break existing code, but the aliases will eventually be removed
+    so please change your code.
+    * `TraceContext` --> {func}`~jax.profiler.TraceAnnotation`
+    * `StepTraceContext` --> {func}`~jax.profiler.StepTraceAnnotation`
+    * `trace_function` --> {func}`~jax.profiler.annotate_function`
 
 
 ## jaxlib 0.1.65 (unreleased)
