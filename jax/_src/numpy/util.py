@@ -86,7 +86,8 @@ def _parse_parameters(body: str) -> Dict[str, str]:
 
 
 def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
-           sections: Sequence[str] = ('Parameters', 'Returns', 'References')):
+           sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
+           skip_params: Sequence[str] = ()):
   """Specialized version of functools.wraps for wrapping numpy functions.
 
   This produces a wrapped function with a modified docstring. In particular, if
@@ -104,6 +105,8 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
       the docstring.
     sections: a list of sections to include in the docstring. The default is
       ["Parameters", "returns", "References"]
+    skip_params: a list of strings containing names of parameters accepted by the
+      function that should be skipped in the parameter list.
   """
   def wrap(op):
     docstr = getattr(fun, "__doc__", None)
@@ -118,7 +121,7 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
             "Parameters\n"
             "----------\n" +
             "\n".join(_versionadded.split(desc)[0].rstrip() for p, desc in parameters.items()
-                      if p in op.__code__.co_varnames)
+                      if p in op.__code__.co_varnames and p not in skip_params)
           )
 
         docstr = parsed.summary.strip() + "\n" if parsed.summary else ""
