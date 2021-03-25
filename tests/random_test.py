@@ -715,7 +715,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert np.unique(np.ravel(keys)).shape == (20,)
 
   def testStaticShapeErrors(self):
-    if config.read("jax_disable_jit"):
+    if config.jax_disable_jit:
       raise SkipTest("test only relevant when jit enabled")
 
     @api.jit

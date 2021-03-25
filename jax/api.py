@@ -75,7 +75,7 @@ from .interpreters import invertible_ad as iad
 from .interpreters.invertible_ad import custom_ivjp
 from .custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
                                  custom_vjp, linear_call)
-from .config import flags, config, bool_env
+from .config import flags, config, bool_env, disable_jit as _disable_jit
 
 traceback_util.register_exclusion(__file__)
 
@@ -96,9 +96,6 @@ map = safe_map
 zip = safe_zip
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
-                  "Disable JIT compilation and just call original Python.")
-jax_jit.set_disable_jit_cpp_flag(bool_env("JAX_DISABLE_JIT", False))
 
 flags.DEFINE_bool(
     "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
@@ -113,16 +110,6 @@ def _check_callable(fun):
     raise TypeError(f"Expected a callable value, got {fun}")
   if inspect.isgeneratorfunction(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
-
-
-# TODO(jakevdp): merge this with _thread_local_state in jax.config
-class _ThreadLocalState(threading.local):
-
-  def __init__(self):
-    self.jit_is_disabled = False
-
-
-_thread_local_state = _ThreadLocalState()
 
 
 def jit(
@@ -208,7 +195,7 @@ def _python_jit(
   @wraps(fun)
   @api_boundary
   def f_jitted(*args, **kwargs):
-    if _jit_is_disabled():
+    if config.jax_disable_jit:
       return fun(*args, **kwargs)
     if max(static_argnums + donate_argnums, default=-1) >= len(args):
       raise ValueError(f"jitted function has static_argnums={static_argnums}, "
@@ -362,7 +349,7 @@ def _cpp_jit(
       context = (getattr(core.thread_local_state.trace_state.trace_stack,
                          "dynamic", None), config.x64_enabled)
       # TODO(jblespiau): Move this to C++.
-      if (config.jax_debug_nans or config.jax_debug_infs) and not _jit_is_disabled():
+      if (config.jax_debug_nans or config.jax_debug_infs) and not config.jax_disable_jit:
         device_arrays = cpp_jitted_f(context, *args, **kwargs)
         try:
           xla.check_special(xla.xla_call_p, [
@@ -376,7 +363,7 @@ def _cpp_jit(
           print("Invalid nan value encountered in the output of a C++-jit "
                 "function. Calling the de-optimized version.")
           return cache_miss(*args, **kwargs)[0]  # probably won't return
-      elif _jit_is_disabled():
+      elif config.jax_disable_jit:
         return cpp_jitted_f(*args, **kwargs)
       else:
         return cpp_jitted_f(context, *args, **kwargs)
@@ -389,7 +376,7 @@ def _cpp_jit(
     @api_boundary
     def f_jitted(*args, **kwargs):
       # TODO(jblespiau): Move this to C++.
-      if (config.jax_debug_nans or config.jax_debug_infs) and not _jit_is_disabled():
+      if (config.jax_debug_nans or config.jax_debug_infs) and not config.jax_disable_jit:
         device_arrays = cpp_jitted_f(*args, **kwargs)
         try:
           xla.check_special(xla.xla_call_p, [
@@ -450,21 +437,8 @@ def disable_jit():
   Value of y is [2 4 6]
   [5 7 9]
   """
-  try:
-    prev_val = _thread_local_state.jit_is_disabled
-    _thread_local_state.jit_is_disabled = True
-
-    cpp_tls = jax_jit.thread_local_state()
-    prev_cpp_val = cpp_tls.disable_jit
-    cpp_tls.disable_jit = True
+  with _disable_jit(True):
     yield
-  finally:
-    _thread_local_state.jit_is_disabled = prev_val
-    cpp_tls.disable_jit = prev_cpp_val
-
-
-def _jit_is_disabled():
-  return _thread_local_state.jit_is_disabled or config.read("jax_disable_jit")
 
 
 def xla_computation(fun: Callable,
