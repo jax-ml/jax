@@ -296,6 +296,7 @@ def _cpp_jit(
     raise ValueError("can't specify both a device and a backend for jit, "
                      f"got device={device} and backend={backend}.")
 
+  @api_boundary
   def cache_miss(*args, **kwargs):
     ### This first part is basically the same code as in _python_jit.
     # An alternative would be for cache_miss to accept from C++ the arguments
@@ -382,7 +383,6 @@ def _cpp_jit(
 
     # TODO(mattjj): make cpp callable follow descriptor protocol for bound methods
     @wraps(fun)
-    @api_boundary
     def f_jitted(*args, **kwargs):
       context = (getattr(core.thread_local_state.trace_state.trace_stack,
                          "dynamic", None), config.x64_enabled)
@@ -411,7 +411,6 @@ def _cpp_jit(
     # TODO(phawkins,mattjj): eliminate the Python wrapper functions.
     # TODO(mattjj): make cpp callable follow descriptor protocol for bound methods
     @wraps(fun)
-    @api_boundary
     def f_jitted(*args, **kwargs):
       return cpp_jitted_f(*args, **kwargs)
 
