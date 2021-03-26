@@ -36,6 +36,9 @@ below.
 
 ### How can I disable omnistaging for now?
 
+*Note: this applies to JAX versions 0.2.0 through 0.2.11; omnistaging cannot be
+disabled in JAX versions 0.2.12 and higher*
+
 It is temporarily possible to disable omnistaging by
 1. setting the shell environment variable `JAX_OMNISTAGING` to something falsey;
 2. setting the boolean flag `jax_omnistaging` to soething falsey if your code

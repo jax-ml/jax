@@ -21,6 +21,7 @@ import os
 import sys
 import threading
 from typing import List, Callable, Optional
+import warnings
 
 from jax import lib
 
@@ -154,20 +155,23 @@ class Config:
       already_configured_with_absl = True
 
       if not FLAGS.jax_omnistaging:
-        self.disable_omnistaging()
+        warnings.warn(
+          "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
+          "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.\n"
+          "To remove this warning, unset the JAX_OMNISTAGING environment variable.")
 
   def register_omnistaging_disabler(self, disabler):
     if self.omnistaging_enabled:
       self._omnistaging_disablers.append(disabler)
-    else:
-      disabler()
 
   def enable_omnistaging(self):
     if not self.omnistaging_enabled:
       raise Exception("can't re-enable omnistaging after it's been disabled")
 
   def disable_omnistaging(self):
-    return
+    warnings.warn(
+      "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
+      "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.")
 
   def temporary_hack_do_not_call_me(self):
     if self.omnistaging_enabled:
