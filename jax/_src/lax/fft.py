@@ -114,7 +114,9 @@ def _irfft_transpose(t, fft_lengths):
   scale = 1 / prod(fft_lengths)
   out = scale * mask * x
   assert out.dtype == _complex_dtype(t.dtype), (out.dtype, t.dtype)
-  return out
+  # Use JAX's convention for complex gradients
+  # https://github.com/google/jax/issues/6223#issuecomment-807740707
+  return lax.conj(out)
 
 def fft_transpose_rule(t, operand, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
