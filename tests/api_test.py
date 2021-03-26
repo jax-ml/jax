@@ -153,7 +153,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(f1(1, A()), 100)
     self.assertLen(side, 1)
     if self.jit == jax.api._cpp_jit:
-      self.assertEqual(f1._cpp_jitted_f._cache_size(), 1)
+      f1_cpp = getattr(f1, "_cpp_jitted_f", f1)
+      self.assertEqual(f1_cpp._cache_size(), 1)
 
   @parameterized.parameters([
       (1, 2, 3),
@@ -1254,8 +1255,8 @@ class APITest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/5683
     class EasyDict(dict):
       def __init__(self, *args, **kwargs):
-          super().__init__(*args, **kwargs)
-          self.__dict__ = self
+        super().__init__(*args, **kwargs)
+        self.__dict__ = self
 
     x = EasyDict(shape=(3,), dtype=np.dtype('float32'))
     out_shape = api.eval_shape(lambda x: x, x)  # doesn't crash

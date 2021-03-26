@@ -375,7 +375,8 @@ def _cpp_jit(
 
   # TODO(phawkins): Remove this branch when jaxlib 0.1.65 is the minimum
   # version.
-  if lib._xla_extension_version < 12:
+  if lib._xla_extension_version < 13:
+
     def cache_miss_wrapper(_, *args, **kw): return cache_miss(*args, **kw)
     static_argnums_ = (0,) + tuple(i + 1 for i in static_argnums)
     cpp_jitted_f = jax_jit.jit(fun, cache_miss_wrapper, get_device_info,
@@ -404,17 +405,12 @@ def _cpp_jit(
         return cpp_jitted_f(*args, **kwargs)
       else:
         return cpp_jitted_f(context, *args, **kwargs)
+    f_jitted._cpp_jitted_f = cpp_jitted_f
   else:
     cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
                                tuple(static_argnums))
+    f_jitted = wraps(fun)(cpp_jitted_f)
 
-    # TODO(phawkins,mattjj): eliminate the Python wrapper functions.
-    # TODO(mattjj): make cpp callable follow descriptor protocol for bound methods
-    @wraps(fun)
-    def f_jitted(*args, **kwargs):
-      return cpp_jitted_f(*args, **kwargs)
-
-  f_jitted._cpp_jitted_f = cpp_jitted_f
   return f_jitted
 
 
