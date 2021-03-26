@@ -1126,11 +1126,17 @@ class APITest(jtu.JaxTestCase):
     z, = transpose_fun(y)
     self.assertArraysEqual(2 * y, z, check_dtypes=True)
 
+  def test_linear_transpose_integer(self):
+    f = lambda x: 2 * x
+    transpose = api.linear_transpose(f, 1)
+    actual, = transpose(3)
+    expected = 6
+    self.assertEqual(actual, expected)
+
   def test_linear_transpose_error(self):
     with self.assertRaisesRegex(
-        TypeError, "linear_transpose only supports float and complex inputs"):
-      api.linear_transpose(lambda x: x, 1)
-
+        TypeError, "linear_transpose only supports"):
+      api.linear_transpose(lambda x: 2. * x, 1)
     transpose_fun = api.linear_transpose(lambda x: [x, x], 1.0)
     with self.assertRaisesRegex(TypeError, "cotangent tree does not match"):
       transpose_fun(1.0)
