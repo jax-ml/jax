@@ -133,8 +133,16 @@ float0 = dtypes.float0
 def _check_callable(fun):
   if not callable(fun):
     raise TypeError(f"Expected a callable value, got {fun}")
-  if inspect.isgeneratorfunction(fun):
+  if _isgeneratorfunction(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
+
+def _isgeneratorfunction(fun):
+  # re-implemented here because of https://bugs.python.org/issue33261
+  while inspect.ismethod(fun):
+    fun = fun.__func__
+  while isinstance(fun, functools.partial):
+    fun = fun.func
+  return inspect.isfunction(fun) and bool(fun.__code__.co_flags & inspect.CO_GENERATOR)
 
 
 def jit(
