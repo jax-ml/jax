@@ -1048,6 +1048,13 @@ class APITest(jtu.JaxTestCase):
     expected = -5 + 10j
     self.assertEqual(actual, expected)
 
+  def test_linear_transpose_zeros(self):
+    f = lambda x: x[0]
+    transpose = api.linear_transpose(f, [1., 2.])
+    actual, = transpose(3.)
+    expected = [3., 0.]
+    self.assertEqual(actual, expected)
+
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: jnp.sin(x))(1 + 2j))
 

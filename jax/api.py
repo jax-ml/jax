@@ -1963,7 +1963,9 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
       raise TypeError("cotangent type does not match function output, "
                       f"expected {out_avals} but got {out_cotangents}")
     dummies = [ad.UndefinedPrimal(a) for a in in_avals]
-    in_cotangents = ad.backward_pass(jaxpr, consts, dummies, out_cotangents)
+    in_cotangents = map(
+        ad.instantiate_zeros,
+        ad.backward_pass(jaxpr, consts, dummies, out_cotangents))
     return tree_unflatten(in_tree, in_cotangents)
 
   return transposed_fun
