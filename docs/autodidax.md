@@ -71,7 +71,7 @@ flow through our program. For example, we might want to replace the
 application of every primitive with an application of [its JVP
 rule](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html),
 and let primal-tangent pairs flow through our program. Moreover, we want to be
-able to comopse multiple transformations, leading to stacks of interpreters.
+able to compose multiple transformations, leading to stacks of interpreters.
 
 +++
 
