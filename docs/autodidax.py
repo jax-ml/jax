@@ -32,6 +32,11 @@
 # Ever want to learn how JAX works, but the implementation seemed impenetrable?
 # Well, you're in luck! By reading this tutorial, you'll learn every big idea in
 # JAX's core system. You'll even get clued into our weird jargon!
+#
+# **This is a work-in-progress draft.** There are some important ingredients
+# missing, still to come in parts 5 and 6 (and more?). There are also some
+# simplifications here that we haven't yet applied to the main system, but we
+# will.
 
 # ## Part 1: Transformations as interpreters: standard evaluation, `jvp`, and `vmap`
 #
@@ -386,6 +391,7 @@ class EvalTrace(Trace):
 
 trace_stack.append(MainTrace(0, EvalTrace, None))  # special bottom of the stack
 
+# NB: in JAX, instead of a dict we attach impl rules to the Primitive instance
 impl_rules = {}
 
 impl_rules[add_p] = lambda x, y: [np.add(x, y)]
@@ -600,9 +606,9 @@ def jvp(f, primals, tangents):
 # types](https://en.wikipedia.org/wiki/Substructural_type_system).)
 #
 # All that remains is to write `tree_flatten`, `tree_unflatten`, and
-# `flatten_fun`:
+# `flatten_fun`.
 
-# +
+# + tags=["hide-input"]
 def flatten_fun(f, in_tree):
   store = Store()
 
@@ -628,7 +634,7 @@ class Store:
   def __call__(self):
     return self.val
 
-# +
+# + tags=["hide-input"]
 import itertools as it
 from typing import Callable, Type, Hashable, Dict, Iterable, Iterator
 
@@ -1074,7 +1080,7 @@ class JaxprTrace(Trace):
   def builder(self):
     return self.main.global_data
 
-# NB: in JAX, instead of a dict we attach impl rules to the Primitive instance
+# NB: in JAX, we instead attach abstract eval rules to Primitive instances
 abstract_eval_rules = {}
 # -
 
@@ -1524,20 +1530,6 @@ def broadcast_translation(c, in_avals, in_vals, *, shape, axes):
   dims_complement = [i for i in range(len(shape)) if i not in axes]
   return [xops.BroadcastInDim(x, shape, dims_complement)]
 xla_translations[broadcast_p] = broadcast_translation
-
-def xla_call_translation(c, in_avals, in_vals, *, jaxpr, num_consts):
-  del num_consts  # Only used at top-level.
-  # Calling jaxpr_subcomp directly would inline. We generate a Call HLO instead.
-  subc = xb.make_computation_builder('inner xla_call')
-  xla_params = _xla_params(subc, in_avals)
-  outs = jaxpr_subcomp(subc, jaxpr, xla_params)
-  subc = subc.build(xops.Tuple(subc, outs))
-  return destructure_tuple(c, xops.Call(c, subc, in_vals))
-xla_translations[xla_call_p] = xla_call_translation
-
-def destructure_tuple(c, tup):
-  num_elements = len(c.get_shape(tup).tuple_shapes())
-  return [xops.GetTupleElement(tup, i) for i in range(num_elements)]
 # -
 
 # With that, we can now use `jit` to stage out, compile, and execute programs
@@ -1636,9 +1628,7 @@ def unmapped_aval(axis_size: int, batch_dim: BatchAxis, aval: ShapedArray
     shape.insert(batch_dim, axis_size)
     return ShapedArray(tuple(shape), aval.dtype)
 
-
-# -
-
+# +
 def xla_call_abstract_eval_rule(*in_types, jaxpr, num_consts):
   del num_consts  # Unused.
   jaxpr_type = typecheck_jaxpr(jaxpr)
@@ -1646,6 +1636,20 @@ def xla_call_abstract_eval_rule(*in_types, jaxpr, num_consts):
     raise TypeError
   return jaxpr_type.out_types
 abstract_eval_rules[xla_call_p] = xla_call_abstract_eval_rule
+
+def xla_call_translation(c, in_avals, in_vals, *, jaxpr, num_consts):
+  del num_consts  # Only used at top-level.
+  # Calling jaxpr_subcomp directly would inline. We generate a Call HLO instead.
+  subc = xb.make_computation_builder('inner xla_call')
+  xla_params = _xla_params(subc, in_avals)
+  outs = jaxpr_subcomp(subc, jaxpr, xla_params)
+  subc = subc.build(xops.Tuple(subc, outs))
+  return destructure_tuple(c, xops.Call(c, subc, in_vals))
+xla_translations[xla_call_p] = xla_call_translation
+
+def destructure_tuple(c, tup):
+  num_elements = len(c.get_shape(tup).tuple_shapes())
+  return [xops.GetTupleElement(tup, i) for i in range(num_elements)]
 
 # +
 @jit
@@ -1895,7 +1899,7 @@ class PartialVal(NamedTuple):
 
 # Partial evaluation will take a list of `PartialVal`s representing inputs, and
 # return a list of `PartialVal` outputs along with a jaxpr representing the
-# dleayed computation:
+# delayed computation:
 
 def partial_eval_flat(f, pvals_in: List[PartialVal]):
   with new_main(PartialEvalTrace) as main:
@@ -2113,9 +2117,9 @@ y, sin_lin = linearize(sin, 3.)
 print(y, sin(3.))
 print(sin_lin(1.), cos(3.))
 
-# To handle linearize-of-jit, we still need to write a partial evaluation rule
-# for `xla_call_p`. Other than tracer bookkeeping, the main task is to perform
-# partial evaluation of a jaxpr, 'unzipping' it into two jaxprs.
+# To handle `linearize`-of-`jit`, we still need to write a partial evaluation
+# rule for `xla_call_p`. Other than tracer bookkeeping, the main task is to
+# perform partial evaluation of a jaxpr, 'unzipping' it into two jaxprs.
 
 # +
 def xla_call_partial_eval(trace, tracers, *, jaxpr, num_consts):
