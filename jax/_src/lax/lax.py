@@ -409,9 +409,9 @@ def lt(x: Array, y: Array) -> Array:
   r"""Elementwise less-than: :math:`x < y`."""
   return lt_p.bind(x, y)
 
-def convert_element_type(operand: Array, new_dtype: DType = None,
-                         weak_type: bool = False) -> Array:
+def convert_element_type(operand: Array, new_dtype: DType) -> Array:
   """Elementwise cast.
+
   Wraps XLA's `ConvertElementType
   <https://www.tensorflow.org/xla/operation_semantics#convertelementtype>`_
   operator, which performs an elementwise conversion from one type to another.
@@ -419,15 +419,17 @@ def convert_element_type(operand: Array, new_dtype: DType = None,
 
   Args:
     operand: an array or scalar value to be cast
-    new_dtype: the new type. Should be a NumPy type.
-    weak_type: whether the new dtype should be weak.
+    new_dtype: a NumPy dtype representing the target type.
 
   Returns:
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
+  return _convert_element_type(operand, new_dtype, weak_type=False)
 
+def _convert_element_type(operand: Array, new_dtype: Optional[DType] = None,
+                          weak_type: bool = False):
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
   old_dtype = np.result_type(operand)
@@ -1169,7 +1171,8 @@ def reduce(operands: Array, init_values: Array, computation: Callable,
   if monoid_reducer:
     # monoid reducers bypass the weak_type_rule, so we set it explicitly.
     weak_type = dtypes.is_weakly_typed(*flat_operands) and dtypes.is_weakly_typed(*flat_init_values)
-    return convert_element_type(monoid_reducer(*flat_operands, dimensions), weak_type=weak_type)
+    return _convert_element_type(monoid_reducer(*flat_operands, dimensions),
+                                 weak_type=weak_type)
   else:
     flat_init_avals = safe_map(_abstractify, flat_init_values)
     jaxpr, consts, out_tree = _variadic_reduction_jaxpr(
@@ -1495,7 +1498,7 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
     raise TypeError(msg.format(np.shape(fill_value)))
   weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
-  fill_value = convert_element_type(fill_value, dtype, weak_type)
+  fill_value = _convert_element_type(fill_value, dtype, weak_type)
   return broadcast(fill_value, shape)
 
 def _device_put_raw(x, weak_type=None):
@@ -1540,7 +1543,8 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   iotas = [broadcasted_iota(np.uint32, base_shape, i)
            for i in range(len(base_shape))]
   eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-  result = convert_element_type_p.bind(_reduce(operator.and_, eyes), new_dtype=dtype, weak_type=False)
+  result = convert_element_type_p.bind(_reduce(operator.and_, eyes),
+                                       new_dtype=dtype, weak_type=False)
   return broadcast_in_dim(result, shape, axes)
 
 def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
@@ -1765,7 +1769,7 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
   dtype = dtype or _dtype(x)
   if not config.omnistaging_enabled:
     fill_value = tie_in(x, fill_value)
-  return full(fill_shape, convert_element_type(fill_value, dtype, weak_type))
+  return full(fill_shape, _convert_element_type(fill_value, dtype, weak_type))
 
 
 def collapse(operand: Array, start_dimension: int,
@@ -2703,13 +2707,15 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
   elif core.primal_dtype_to_tangent_dtype(old_dtype) is dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
-    return [convert_element_type_p.bind(ct, new_dtype=old_dtype, weak_type=old_weak_type)]
+    return [convert_element_type_p.bind(ct, new_dtype=old_dtype,
+                                        weak_type=old_weak_type)]
 
 def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
   if core.primal_dtype_to_tangent_dtype(new_dtype) is dtypes.float0:
     return ad_util.Zero(tangent.aval.update(dtype=dtypes.float0, weak_type=False))
   else:
-    return convert_element_type_p.bind(tangent, new_dtype=new_dtype, weak_type=weak_type)
+    return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
+                                       weak_type=weak_type)
 
 convert_element_type_p = core.convert_element_type_p
 convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
@@ -5900,7 +5906,8 @@ def _top_k_abstract_eval(operand, *, k):
     msg = "k argument to top_k must be no larger than minor dimension; {} vs {}"
     raise ValueError(msg.format(k, shape))
   shape[-1] = k
-  return (operand.update(shape=shape, dtype=operand.dtype, weak_type=operand.weak_type),
+  return (operand.update(shape=shape, dtype=operand.dtype,
+                         weak_type=operand.weak_type),
           operand.update(shape=shape, dtype=np.dtype(np.int32)))
 
 def _top_k_jvp(primals, tangents, *, k):
@@ -6101,7 +6108,8 @@ def _rng_uniform_abstract_eval(a, b, *, shape):
     raise ValueError(
       "Arguments to rng_uniform must be scalars; got shapes {} and {}."
       .format(a.shape, b.shape))
-  return a.update(shape=shape, dtype=a.dtype, weak_type=(a.weak_type and b.weak_type))
+  return a.update(shape=shape, dtype=a.dtype,
+                  weak_type=(a.weak_type and b.weak_type))
 
 def _rng_uniform_translation_rule(c, a, b, *, shape):
   xla_shape = xc.Shape.array_shape(c.get_shape(a).xla_element_type(), shape)

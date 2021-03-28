@@ -266,7 +266,7 @@ def _promote_dtypes(*args):
   else:
     to_dtype, weak_type = dtypes._lattice_result_type(*args)
     to_dtype = dtypes.canonicalize_dtype(to_dtype)
-    return [lax.convert_element_type(x, to_dtype, weak_type) for x in args]
+    return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 def _promote_dtypes_inexact(*args):
   """Convenience function to apply Numpy argument dtype promotion.
@@ -276,7 +276,7 @@ def _promote_dtypes_inexact(*args):
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
   to_dtype_inexact = _to_inexact_dtype(to_dtype)
   weak_type = (weak_type and to_dtype == to_dtype_inexact)
-  return [lax.convert_element_type(x, to_dtype_inexact, weak_type) for x in args]
+  return [lax._convert_element_type(x, to_dtype_inexact, weak_type) for x in args]
 
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
@@ -2922,7 +2922,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
-  out = lax.convert_element_type(out, dtype, weak_type=weak_type)
+  out = lax._convert_element_type(out, dtype, weak_type=weak_type)
 
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))

@@ -217,7 +217,7 @@ class LaxTest(jtu.JaxTestCase):
   def testConvertElementType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((2, 3), from_dtype)]
-    op = lambda x: lax.convert_element_type(x, to_dtype, weak_type)
+    op = lambda x: lax._convert_element_type(x, to_dtype, weak_type)
     self._CompileAndCheck(op, args_maker)
 
     x = rng((1,), from_dtype)
@@ -272,7 +272,8 @@ class LaxTest(jtu.JaxTestCase):
       for weak_type in [True, False]))
   def testBitcastConvertWeakType(self, from_dtype, to_dtype, weak_type):
     rng = jtu.rand_default(self.rng())
-    x_in = lax.convert_element_type(rng((2, 3), from_dtype), weak_type=weak_type)
+    x_in = lax._convert_element_type(rng((2, 3), from_dtype),
+                                     weak_type=weak_type)
     op = lambda x: lax.bitcast_convert_type(x, to_dtype)
     self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
     x_out = op(x_in)
@@ -1535,8 +1536,8 @@ class LaxTest(jtu.JaxTestCase):
       for init_weak_type in [True, False]))
   def testReduceWeakType(self, op_namespace, op, arr_weak_type, init_weak_type):
     op = getattr(op_namespace, op)
-    arr = lax.convert_element_type(np.arange(10), int, weak_type=arr_weak_type)
-    init = lax.convert_element_type(1, int, weak_type=init_weak_type)
+    arr = lax._convert_element_type(np.arange(10), int, weak_type=arr_weak_type)
+    init = lax._convert_element_type(1, int, weak_type=init_weak_type)
     fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
     out = fun(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)
@@ -2309,7 +2310,7 @@ class LaxTest(jtu.JaxTestCase):
     if dtype in set(python_scalar_types):
       val = dtype(0)
     else:
-      val = lax.convert_element_type(0, dtype, weak_type=weak_type)
+      val = lax._convert_element_type(0, dtype, weak_type=weak_type)
 
     const = lax._const(val, 0)
     self.assertEqual(dtypes.result_type(val), dtypes.result_type(const))
@@ -2445,7 +2446,7 @@ class LazyConstantTest(jtu.JaxTestCase):
       for weak_type in [True, False]))
   def testArgMinMaxWeakType(self, jax_fn, weak_type):
     op = lambda x: jax_fn(x, axis=0, index_dtype=np.int32)
-    x_in = lax.convert_element_type(np.ones((2, 2)), weak_type=weak_type)
+    x_in = lax._convert_element_type(np.ones((2, 2)), weak_type=weak_type)
     self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
     x_out = op(x_in)
     self.assertEqual(dtypes.is_weakly_typed(x_out), False)

@@ -94,6 +94,7 @@ from jax._src.lax.lax import (
   conv_transpose_shape_tuple,
   conv_with_general_padding,
   convert_element_type,
+  _convert_element_type,
   convert_element_type_p,
   cos,
   cos_p,
