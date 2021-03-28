@@ -654,8 +654,8 @@ def _custom_vjp_call_jaxpr_vmap(
 
   fwd_args_batched = [0 if b else not_mapped for b in args_batched]
   fwd_out_dims = lambda: out_dims2[0]
-  batched_bwd = batching.batch(bwd, axis_name, axis_size, fwd_out_dims,
-                               fwd_args_batched)
+  batched_bwd = batching.batch_custom_vjp_bwd(bwd, axis_name, axis_size, fwd_out_dims,
+                                              fwd_args_batched)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
