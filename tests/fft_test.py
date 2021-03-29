@@ -20,6 +20,7 @@ import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
@@ -115,6 +116,21 @@ class FftTest(jtu.JaxTestCase):
       # TODO(skye): can we be more precise?
       tol = 0.15
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
+
+  def testIrfftTranspose(self):
+    # regression test for https://github.com/google/jax/issues/6223
+    def build_matrix(linear_func, size):
+      return jax.vmap(linear_func)(jnp.eye(size, size))
+
+    def func(x):
+      return jnp.fft.irfft(jnp.concatenate([jnp.zeros(1), x[:2] + 1j*x[2:]]))
+
+    def func_transpose(x):
+      return jax.linear_transpose(func, x)(x)[0]
+
+    matrix = build_matrix(func, 4)
+    matrix2 = build_matrix(func_transpose, 4).T
+    self.assertAllClose(matrix, matrix2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}".format(inverse, real),
