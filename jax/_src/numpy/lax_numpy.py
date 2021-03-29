@@ -2892,7 +2892,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
   if _can_call_numpy_array(object):
     if dtypes.is_python_scalar(object):
-      object = dtypes.coerce_to_array(object)
+      object = dtypes.coerce_to_array(object, dtype)
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists containing
     # large integers; see discussion in https://github.com/google/jax/pull/6047.
     object = _np_array(object, dtype=dtype, ndmin=ndmin, copy=False)
