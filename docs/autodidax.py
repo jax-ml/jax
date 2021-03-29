@@ -1916,9 +1916,8 @@ def partial_eval_flat(f, pvals_in: List[PartialVal]):
 # do so, it builds a bipartite directed acyclic graph (DAG) between
 # `PartialEvalTracer` nodes, representing staged-out values, and `JaxprRecipe`
 # nodes, representing formulas for how to compute some values from others. One
-# kind of recipe is a `JaxprEqnRecipe`, corresponding to a `JaxprEqn`'s
-# primitive application, but we also have recipe types for constants and lambda
-# binders:
+# kind of recipe is a `JaxprEqnRecipe`, corresponding to a `JaxprEqn`'s primitive
+# application, but we also have recipe types for constants and lambda binders:
 
 # +
 from weakref import ref, ReferenceType
