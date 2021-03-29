@@ -3288,6 +3288,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(OverflowError, f"Python int {val} too large to convert to int64"):
       jnp.array(val)
 
+    # explicit uint64 should work
+    if config.x64_enabled:
+      self.assertEqual(val, jnp.array(val, dtype='uint64'))
+
   # TODO(jakevdp): fix list inputs to jnp.array and enable the following test
   # def testArrayFromList(self):
   #   int_max = jnp.iinfo(jnp.int64).max
