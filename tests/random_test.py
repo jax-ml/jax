@@ -964,7 +964,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self._CompileAndCheck(random.PRNGKey, args_maker)
 
   def test_prng_errors(self):
-    seed = np.iinfo(np.uint64).max
+    seed = np.iinfo(np.int64).max + 1
     with self.assertRaises(OverflowError):
       random.PRNGKey(seed)
     with self.assertRaises(OverflowError):

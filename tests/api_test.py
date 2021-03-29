@@ -36,7 +36,7 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import api, core, lax
+from jax import api, core, dtypes, lax
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
@@ -5163,6 +5163,38 @@ class NamedCallTest(jtu.JaxTestCase):
     f = jax.jit(functools.partial(f, True))
     out = f(5)
     self.assertEqual(out, 5)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_jit_type={}_func={}".format(jit_type, func),
+       "jit_type": jit_type, "func": func}
+      for func in ['identity', 'asarray', 'device_put']
+      for jit_type in [None, "python", "cpp"]
+      if not (jit_type is None and func == 'identity')))
+  def test_integer_overflow(self, jit_type, func):
+    def jit(f, **kwargs):
+      if jit_type is None:
+        return f
+      elif jit_type == "python":
+        return api._python_jit(f, **kwargs)
+      elif jit_type == "cpp":
+        return api._cpp_jit(f, **kwargs)
+      else:
+        raise ValueError(f"invalid jit_type={jit_type}")
+    func = jit({
+      'identity': lambda x: x,
+      'asarray': jnp.asarray,
+      'device_put': api.device_put
+    }[func])
+
+    int64_max = np.iinfo(np.int64).max
+    int64_min = np.iinfo(np.int64).min
+
+    int_dtype = dtypes.canonicalize_dtype(np.int64)
+
+    self.assertEqual(func(int64_max).dtype, int_dtype)
+    self.assertEqual(func(int64_min).dtype, int_dtype)
+    self.assertRaises(OverflowError, func, int64_max + 1)
+    self.assertRaises(OverflowError, func, int64_min - 1)
 
 
 if __name__ == '__main__':

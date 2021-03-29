@@ -59,21 +59,15 @@ def PRNGKey(seed: int) -> jnp.ndarray:
     key is constructed from a 64-bit seed by effectively bit-casting to a pair
     of uint32 values (or from a 32-bit seed by first padding out with zeros).
   """
-  if np.shape(seed):
+  seed_arr = jnp.asarray(seed)
+  if seed_arr.shape:
     raise TypeError(f"PRNGKey seed must be a scalar; got {seed!r}.")
-  if not np.issubdtype(np.result_type(seed), np.integer):
+  if not np.issubdtype(seed_arr.dtype, np.integer):
     raise TypeError(f"PRNGKey seed must be an integer; got {seed!r}")
 
-  # Explicitly cast to int64 for JIT invariance of behavior on large ints.
-  if isinstance(seed, int):
-    seed = np.int64(seed)  # type: ignore[assignment]
-  # Converting to jnp.array may truncate bits when jax_enable_x64=False, but this
-  # is necessary for the sake of JIT invariance of the result for such values.
-  seed = jnp.asarray(seed)
-
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
-  k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))
-  k2 = convert(jnp.bitwise_and(seed, np.uint32(0xFFFFFFFF)))
+  k1 = convert(lax.shift_right_logical(seed_arr, lax._const(seed_arr, 32)))
+  k2 = convert(jnp.bitwise_and(seed_arr, np.uint32(0xFFFFFFFF)))
   return lax.concatenate([k1, k2], 0)
 
 def _is_prng_key(key: jnp.ndarray) -> bool:
