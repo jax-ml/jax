@@ -4,7 +4,7 @@ Using jax2tf with TensorFlow serving
 This is a supplement to the
 [examples/README.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md)
 with example code and
-instructions for using `jax2tf` with the OSS TensorFlow model server.
+instructions for using `jax2tf` with the open source TensorFlow model server.
 Specific instructions for Google-internal versions of model server are in the `internal` subdirectory.
 
 The goal of `jax2tf` is to convert JAX functions
@@ -35,20 +35,20 @@ The following will clone locally a copy of the JAX sources, and will install the
 We also need to install TensorFlow for the `jax2tf` feature and the rest of this example.
 We use the `tf_nightly` package to get an up-to-date version.
 
-    ```shell
-    git clone https://github.com/google/jax
-    JAX2TF_EXAMPLES=$(pwd)/jax/jax/experimental/jax2tf/examples
-    pip install -e jax
-    pip install flax jaxlib tensorflow_datasets tensorflow_serving_api tf_nightly
-    ```
+  ```shell
+  git clone https://github.com/google/jax
+  JAX2TF_EXAMPLES=$(pwd)/jax/jax/experimental/jax2tf/examples
+  pip install -e jax
+  pip install flax jaxlib tensorflow_datasets tensorflow_serving_api tf_nightly
+  ```
 
 We then install [TensorFlow serving in a Docker image](https://www.tensorflow.org/tfx/serving/docker),
-again using a recent "nightly" version. Install Docker and then run:
+again using a recent "nightly" version. Install Docker and then run.
 
-    ```shell
-    DOCKER_IMAGE=tensorflow/serving:nightly
-    docker pull ${DOCKER_IMAGE}
-    ```
+  ```shell
+  DOCKER_IMAGE=tensorflow/serving:nightly
+  docker pull ${DOCKER_IMAGE}
+  ```
 
 1.  *Set some variables*.
 

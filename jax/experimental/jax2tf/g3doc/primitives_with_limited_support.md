@@ -12,10 +12,10 @@ There are several kinds of limitations.
   * There are some cases when the converted program computes different results than
   the JAX program, see [below](#generated-summary-of-primitives-with-known-numerical-discrepancies-in-tensorflow).
 
-Note that automated tests will fail if new limitations appear, but
-they won't when limitations are fixed. If you see a limitation that
-you think it does not exist anymore, please ask for this file to
-be updated.
+Note that automated tests will ensure that this list of limitations is a
+superset of the actual limitations. If you see a limitation that
+you think it does not exist anymore in a recent TensorFlow version,
+please ask for this file to be updated.
 
 ## Generated summary of primitives with unimplemented support in Tensorflow
 
@@ -31,6 +31,8 @@ to one Tensorflow op, e.g., `sin` is mapped to `tf.math.sin`.
 The errors apply only for certain devices and compilation modes ("eager",
 "graph", and "compiled"). In general, "eager" and "graph" mode share the same errors.
 On TPU only the "compiled" mode is relevant.
+
+Our first priority is to ensure that the coverage of data types is complete for the "compiled" mode.
 
 This table only shows errors for cases that are working in JAX (see [separate
 list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )

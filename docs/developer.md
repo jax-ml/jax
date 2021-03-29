@@ -239,7 +239,7 @@ $ jupytext --sync docs/notebooks/*
 ```
 
 Alternatively, you can run this command via the [pre-commit](https://pre-commit.com/)
-framework by executing the folloing in the main JAX directory:
+framework by executing the following in the main JAX directory:
 
 ```
 $ pre-commit run --all

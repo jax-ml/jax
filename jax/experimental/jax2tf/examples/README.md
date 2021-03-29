@@ -6,10 +6,10 @@ Link: go/jax2tf-examples.
 This directory contains a number of examples of using the
 [jax2tf converter](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md) to:
 
-  * save SavedModel from trained MNIST models, using both pure JAX and Flax.
-  * reuse the feature-extractor part of the trained MNIST model in
-    TensorFlow Hub, and in a larger TensorFlow Keras model.
-  * use jax2tf with TensorFlow Serving and TensorFlow JavaScript.
+  * save SavedModel from trained MNIST models, using both Flax and pure JAX.
+  * reuse the feature-extractor part of the trained MNIST model
+    in a larger TensorFlow Keras model.
+  * use Flax models with TensorFlow Serving, TensorFlow JavaScript, and TensorFlow Lite.
 
 # Generating TensorFlow SavedModel
 

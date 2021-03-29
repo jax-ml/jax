@@ -32,8 +32,8 @@ FLAGS = flags.FLAGS
 
 def main(_):
   FLAGS.model_classifier_layer = False  # We only need the features
-  saved_model_main.train_and_save(
-  )  # Train the model and save the feature extractor
+  # Train the model and save the feature extractor
+  saved_model_main.train_and_save()
 
   tf_accelerator, _ = saved_model_main.tf_accelerator_and_tolerances()
   feature_model_dir = saved_model_main.savedmodel_dir()
