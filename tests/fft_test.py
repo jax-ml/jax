@@ -119,7 +119,6 @@ class FftTest(jtu.JaxTestCase):
 
   def testIrfftTranspose(self):
     # regression test for https://github.com/google/jax/issues/6223
-
     def build_matrix(linear_func, size):
       return jax.vmap(linear_func)(jnp.eye(size, size))
 
