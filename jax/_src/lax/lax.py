@@ -2817,7 +2817,7 @@ def _conv_general_dilated_shape_rule(
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, **unused_kwargs):
-  return naryop_dtype_rule(_input_dtype, [_float | _complex, _float | _complex],
+  return naryop_dtype_rule(_input_dtype, [_any, _any],
                           'conv_general_dilated', lhs, rhs)
 
 _conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]

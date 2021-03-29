@@ -478,7 +478,7 @@ class LaxTest(jtu.JaxTestCase):
            (j * feature_group_count * batch_group_count, i, 4, 5))
           for w in [0, 10]
           for b, i, j in itertools.product([2, 3], repeat=3)]
-      for dtype in inexact_dtypes for strides in [(1, 1), (2, 1)]
+      for dtype in all_dtypes for strides in [(1, 1), (2, 1)]
       for padding in [((1, 2), (2, 0)), ((10, 8), (7, 13))]
       for lhs_dilation, rhs_dilation in itertools.product(
           [(1, 1), (1, 2), (1, 4)], repeat=2)
@@ -491,6 +491,12 @@ class LaxTest(jtu.JaxTestCase):
                              padding, lhs_dilation, rhs_dilation,
                              feature_group_count, batch_group_count,
                              dimension_numbers, perms):
+    if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
+      if jtu.device_under_test() == "cpu" and jax.lib.version < (0, 1, 65):
+        raise SkipTest("Integer convolution requires jaxlib 0.1.65 or newer on CPU")
+      # TODO(b/183565702): Support integer convolutions on CPU/GPU.
+      if jtu.device_under_test() == "gpu":
+        raise SkipTest("Integer convolution not yet supported on GPU")
     rng = jtu.rand_small(self.rng())
     lhs_perm, rhs_perm = perms  # permute to compatible shapes
 
@@ -596,7 +602,7 @@ class LaxTest(jtu.JaxTestCase):
        "dimension_numbers": dim_nums,
        "precision": precision
       }
-      for dtype in inexact_dtypes
+      for dtype in all_dtypes
       for lhs_shape, filter_shape, strides, padding, dim_nums in [
           ((2, 5), (), (), [], ("NC", "OI", "CN")),
           ((2, 3, 4), (2,), (2,), [(0, 2)], ("CNH", "OHI", "HNC")),
@@ -624,6 +630,12 @@ class LaxTest(jtu.JaxTestCase):
                                                   padding,
                                                   dimension_numbers,
                                                   precision):
+    if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
+      if jtu.device_under_test() == "cpu" and jax.lib.version < (0, 1, 65):
+        raise SkipTest("Integer convolution requires jaxlib 0.1.65 or newer on CPU")
+      # TODO(b/183565702): Support integer convolutions on CPU/GPU.
+      if jtu.device_under_test() == "gpu":
+        raise SkipTest("Integer convolution not yet supported on GPU")
     rng = jtu.rand_small(self.rng())
     lhs = rng(lhs_shape, dtype)
 
