@@ -340,7 +340,7 @@ class TestPromotionTables(jtu.JaxTestCase):
   )
   def testUnaryPromotion(self, dtype, weak_type):
     # Regression test for https://github.com/google/jax/issues/6051
-    x = lax.convert_element_type(0, dtype, weak_type=weak_type)
+    x = lax._convert_element_type(0, dtype, weak_type=weak_type)
     y = jnp.array(0, dtype=dtypes.result_type(x))
     assert x.dtype == y.dtype
 
@@ -352,7 +352,7 @@ class TestPromotionTables(jtu.JaxTestCase):
   )
   def testBinaryNonPromotion(self, dtype, weak_type):
     # Regression test for https://github.com/google/jax/issues/6051
-    x = lax.convert_element_type(0, dtype, weak_type=weak_type)
+    x = lax._convert_element_type(0, dtype, weak_type=weak_type)
     y = (x + x)
     assert x.dtype == y.dtype
     assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)

@@ -2857,7 +2857,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if numpy_version < (1, 19) and out_shape == ():
       raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
     rng = jtu.rand_default(self.rng())
-    x = lax.convert_element_type(rng(shape, in_dtype), weak_type=weak_type)
+    x = lax._convert_element_type(rng(shape, in_dtype), weak_type=weak_type)
     fun = lambda x: getattr(jnp, func)(x, *args, dtype=out_dtype, shape=out_shape)
     expected_weak_type = weak_type and (out_dtype is None)
     self.assertEqual(dtypes.is_weakly_typed(fun(x)), expected_weak_type)
@@ -2889,7 +2889,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for slc in [slice(None), slice(0), slice(3), 0, ...]))
   def testSliceWeakTypes(self, shape, dtype, weak_type, slc):
     rng = jtu.rand_default(self.rng())
-    x = lax.convert_element_type(rng(shape, dtype), weak_type=weak_type)
+    x = lax._convert_element_type(rng(shape, dtype), weak_type=weak_type)
     op = lambda x: x[slc]
     self.assertEqual(op(x).aval.weak_type, weak_type)
     self.assertEqual(api.jit(op)(x).aval.weak_type, weak_type)
