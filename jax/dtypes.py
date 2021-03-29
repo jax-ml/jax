@@ -21,7 +21,7 @@
 
 
 import functools
-from typing import Dict
+from typing import Any, Dict
 
 import numpy as np
 
@@ -97,14 +97,49 @@ def scalar_type_of(x):
   else:
     raise TypeError("Invalid scalar value {}".format(x))
 
+
+def _scalar_type_to_dtype(typ: type, value: Any = None):
+  """Return the numpy dtype for the given scalar type.
+
+  Raises
+  ------
+  OverflowError: if `typ` is `int` and the value is too large for int64.
+
+  Examples
+  --------
+  >>> _scalar_dtype_to_dtype(int)
+  numpy.int64
+  >>> _scalar_dtype_to_dtype(float)
+  numpy.float64
+  >>> _scalar_dtype_to_dtype(complex)
+  numpy.complex128
+  >>> _scalar_dtype_to_dtype(int)
+  np.int64
+  >>> _scalar_dtype_to_dtype(int, 0)
+  np.int64
+  >>> _scalar_dtype_to_dtype(int, 1 << 63)  # doctest: +IGNORE_EXCEPTION_DETAIL
+  ---------------------------------------------------------------------------
+  OverflowError: Python int 9223372036854775808 too large to convert to int64
+  """
+  dtype = python_scalar_dtypes[typ]
+  # TODO(jakevdp): use proper overflow for int32.
+  if typ is int and value is not None:
+    if value < np.iinfo(dtype).min or value > np.iinfo(dtype).max:
+      raise OverflowError(f"Python int {value} too large to convert to {dtype}")
+  return dtype
+
+
 def coerce_to_array(x):
   """Coerces a scalar or NumPy array to an np.array.
 
   Handles Python scalar type promotion according to JAX's rules, not NumPy's
   rules.
   """
-  dtype = python_scalar_dtypes.get(type(x), None)
-  return np.array(x, dtype) if dtype else np.array(x)
+  if type(x) in python_scalar_dtypes:
+    dtype = _scalar_type_to_dtype(type(x), x)
+  else:
+    dtype = None
+  return np.asarray(x, dtype)
 
 iinfo = np.iinfo
 

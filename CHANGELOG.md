@@ -23,6 +23,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     * `trace_function` --> {func}`~jax.profiler.annotate_function`
   * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/master/design_notes/omnistaging.md)
     for more information.
+  * Python integers larger than the maximum `int64` value will now lead to an overflow
+    in all cases, rather than being silently converted to `uint64` in some cases ({jax-issue}`#6047`).
 
 
 ## jaxlib 0.1.65 (unreleased)

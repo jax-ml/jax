@@ -150,7 +150,7 @@ def _canonicalize_ndarray_dtype(x):
 
 def _canonicalize_python_scalar_dtype(typ, x):
   return np.asarray(
-      x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
+      x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
 
 canonicalize_dtype_handlers: Dict[Any, Callable] = {core.Unit: identity}
 canonicalize_dtype_handlers.update(
@@ -169,8 +169,8 @@ def abstractify(x) -> core.AbstractValue:
     return abstractify(x.__jax_array__())
   raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
 
-def _make_abstract_python_scalar(typ, _):
-  return ShapedArray((), dtypes.python_scalar_dtypes[typ], weak_type=True)
+def _make_abstract_python_scalar(typ, val):
+  return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val), weak_type=True)
 
 pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {
     core.Unit: lambda _: core.abstract_unit,
