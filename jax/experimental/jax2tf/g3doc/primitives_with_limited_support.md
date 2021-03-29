@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-03-23*
+*Last generated on (YYYY-MM-DD): 2021-03-29*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -134,7 +134,6 @@ More detailed information can be found in the
 | reduce_window_mul | TF test skipped: Not implemented in JAX: unimplemented in XLA | complex64 | tpu | compiled, eager, graph |
 | regularized_incomplete_beta | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | rem | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
-| rem | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
 | rem | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | rev | TF error: op not defined for dtype | uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | round | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
