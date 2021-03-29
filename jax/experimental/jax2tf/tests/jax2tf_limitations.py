@@ -1029,10 +1029,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             ],
             # Only the harnesses with "singularity" will have divide by 0
             enabled=("singularity" in harness.name)),
-        missing_tf_kernel(
-            dtypes=[np.float16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
     ]
 
   @classmethod
