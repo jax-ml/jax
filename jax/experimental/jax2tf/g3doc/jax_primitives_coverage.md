@@ -1,6 +1,6 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-03-03* (YYYY-MM-DD)
+*Last generated on: 2021-03-23* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
@@ -39,7 +39,7 @@ be updated.
 
 
 | Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
-| --- | --- | --- | --- | --- |
+| --- | --- | --- | --- |
 | abs | 10 | inexact, signed | bool, unsigned |
 | acos | 6 | inexact | bool, integer |
 | acosh | 6 | inexact | bool, integer |
@@ -183,7 +183,7 @@ and search for "limitation".
 
 
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
-| --- | --- | --- | --- | --- |
+| --- | --- | --- | --- |
 |cholesky|unimplemented|float16|cpu, gpu|
 |cummax|unimplemented|complex64|tpu|
 |cummin|unimplemented|complex64|tpu|
