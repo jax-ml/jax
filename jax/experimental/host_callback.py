@@ -272,6 +272,8 @@ program as:
 RET_CHECK failure ... Mismatch between infeed source buffer shape s8[12345] ...
 ```
 
+To debug the underlying cause for these messages, see the Debugging section.
+
 On TPU, there is currently no shape check for infeed, so we take the safer
 route to not send anything in case of errors, and let the computation hang.
 
@@ -318,9 +320,14 @@ for the C++ outfeed `receiver backend
 
 You should also use the ``--verbosity=2`` flag so that you see the logs from Python.
 
-For example:
+For example, you can try to enable logging in the ``host_callback`` module:
 ```
-TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed_receiver_py=3,outfeed_thunk=3,infeed_thunk=3,cpu_transfer_manager=3,cpu_runtime=3,xfeed_manager=3,pjrt_client=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_jit_simple
+TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=host_callback=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_tap_jit_simple
+```
+
+If you want to enable logging in lower-level implementation modules try:
+```
+TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed_receiver_py=3,outfeed_thunk=3,infeed_thunk=3,cpu_transfer_manager=3,cpu_runtime=3,xfeed_manager=3,pjrt_client=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_tap_jit_simple
 ```
 
 (For bazel tests use --test_arg=--vmodule=...
@@ -783,29 +790,46 @@ def _outside_call_translation_rule(
       "The last two arguments must be tokens")
 
   args_to_outfeed = args_op[:-2]
-  send_infeed = not params["identity"] and len(params["flat_results_aval"]) > 0
+  identity = params["identity"]
+  flat_results_aval = params["flat_results_aval"] if not identity else []
+  # Many platforms refuse to infeed empty arrays. We generate constants
+  # instead.
+  non_empty_flat_results_aval = list(filter(lambda aval: not (_aval_is_empty(aval)),
+                                            flat_results_aval))
+  send_infeed = not identity and len(non_empty_flat_results_aval) > 0
   callback_id = _register_callback(
       functools.partial(_outside_call_run_callback, send_infeed=send_infeed, **params))
   next_token = _outfeed_receiver.receiver.add_outfeed(comp, current_token,
                                                       callback_id,
                                                       args_to_outfeed)
   expecting_infeed = False
-  if params["identity"]:
+  if identity:
     results = list(args_to_outfeed)
     next_itoken = current_itoken
   else:
-    flat_results_aval = params["flat_results_aval"]
-    if flat_results_aval:
+    empty_results = [
+        xops.ConstantLiteral(comp, np.zeros(aval.shape, aval.dtype))
+        for aval in flat_results_aval
+        if _aval_is_empty(aval)
+    ]
+    if non_empty_flat_results_aval:
       after_outfeed_itoken = xops.AfterAll(comp, [current_itoken, next_token])
 
       results_and_token = xla.translations[lax.infeed_p](comp, after_outfeed_itoken,
-                                                         shapes=flat_results_aval, partitions=None)
+                                                         shapes=non_empty_flat_results_aval,
+                                                         partitions=None)
       expecting_infeed = True
-      next_itoken = xops.GetTupleElement(results_and_token, len(flat_results_aval))
-      results = [xops.GetTupleElement(results_and_token, i) for i in range(len(flat_results_aval))]
+      next_itoken = xops.GetTupleElement(results_and_token, len(non_empty_flat_results_aval))
+      non_empty_results = [xops.GetTupleElement(results_and_token, i)
+                           for i in range(len(non_empty_flat_results_aval))]
+      results = [
+          empty_results.pop(0) if _aval_is_empty(result_aval) else non_empty_results.pop(0)
+          for result_aval in flat_results_aval]
     else:
-      results = []
+      results = empty_results
       next_itoken = current_itoken
+
+    assert len(results) == len(flat_results_aval)
 
   assert expecting_infeed == send_infeed
   return xops.Tuple(comp, results + [next_token, next_itoken])
@@ -877,7 +901,10 @@ def _outside_call_run_callback(
         raise TypeError(msg)
 
       if send_infeed:
-        device.transfer_to_infeed(tuple(canonical_flat_results))
+        # Do not send the 0-sized arrays
+        non_empty_canonical_flat_results = tuple(filter(lambda r: not _aval_is_empty(r),
+                                                        canonical_flat_results))
+        device.transfer_to_infeed(non_empty_canonical_flat_results)
       return canonical_flat_results
 
   except Exception as e:
@@ -909,6 +936,9 @@ def _add_transform(params: Dict, name: str, *transform_params) -> Dict:
   return dict(
       params, transforms=(params.get("transforms", ()) + (new_transform,)))
 
+
+def _aval_is_empty(aval) -> bool:
+  return np.prod(aval.shape) == 0
 
 # TODO(necula): there must be a better way to do this.
 # The AttributeError is for regular values, the KeyError is for ConcreteArray

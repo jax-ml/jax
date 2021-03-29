@@ -330,6 +330,18 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         3""", testing_stream.output)
     testing_stream.reset()
 
+  def test_tap_empty(self):
+    """Tap empty arrays."""
+    hcb.id_print((), output_stream=testing_stream)
+    hcb.id_print((1., np.ones((2, 0))), what="second", output_stream=testing_stream)
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+        (  )
+        what: second
+        ( 1.00
+          [] )""", testing_stream.output)
+    testing_stream.reset()
+
   def test_tap_jit_simple(self):
     jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
         2. * x, what="here", output_stream=testing_stream))
@@ -1739,6 +1751,58 @@ class HostCallbackCallTest(jtu.JaxTestCase):
 
     res_inside = fun(2, use_outside=False)
     self.assertAllClose(res_inside, fun(2, use_outside=True))
+
+  def test_call_empty_arg(self):
+    """Call with empty array."""
+    result = np.ones((2,), dtype=np.float32)
+    def f_outside(_):
+      return result
+    def fun(x):
+      return x + hcb.call(f_outside, (),
+                          result_shape=api.ShapeDtypeStruct(result.shape, result.dtype))
+    self.assertAllClose(2. + result, fun(2.))
+
+  def test_call_empty_result(self):
+    """Call returning empty array."""
+    result_shape = (2, 0)
+    def f_outside(_):
+      return np.ones(result_shape, dtype=np.float32)
+    def fun(x):
+      return x + hcb.call(f_outside, 1.,
+                          result_shape=api.ShapeDtypeStruct(result_shape, np.float32))
+    self.assertAllClose(f_outside(0.), fun(2.))
+
+  def test_call_empty_result_inside_pytree(self):
+    """Call returning a tuple with an empty array and a non-empty one."""
+    result_shape_0 = (2, 0)
+    result_shape_2 = (0,)
+    def f_outside(_):
+      return (np.ones(result_shape_0, dtype=np.float32),
+              np.ones((1,), dtype=np.float32),
+              np.ones(result_shape_2, dtype=np.float32))
+    def fun(x):
+      res = hcb.call(f_outside, 1.,
+                     result_shape=(api.ShapeDtypeStruct(result_shape_0, np.float32),
+                                   api.ShapeDtypeStruct((1,), np.float32),
+                                   api.ShapeDtypeStruct(result_shape_2, np.float32)))
+      self.assertEqual(result_shape_0, res[0].shape)
+      self.assertEqual(result_shape_2, res[2].shape)
+      return x + res[1]
+    self.assertAllClose(2 + np.ones((1,), dtype=np.float32), fun(2.))
+
+  def test_call_empty_result_all_pytree(self):
+    """Call returning a tuple of empty arrays."""
+    result_shape = (2, 0)
+    def f_outside(_):
+      return (np.ones(result_shape, dtype=np.float32),
+              np.ones(result_shape, dtype=np.float32))
+    def fun(x):
+      res = hcb.call(f_outside, 1.,
+                     result_shape=(api.ShapeDtypeStruct(result_shape, np.float32),
+                                   api.ShapeDtypeStruct(result_shape, np.float32)))
+      return x + res[0] + res[1]
+    self.assertAllClose(np.ones(result_shape, dtype=np.float32),
+                        fun(2.))
 
   def test_call_no_result(self):
     def f_outside(arg):
