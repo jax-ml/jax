@@ -1767,8 +1767,6 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = dtype or _dtype(x)
-  if not config.omnistaging_enabled:
-    fill_value = tie_in(x, fill_value)
   return full(fill_shape, _convert_element_type(fill_value, dtype, weak_type))
 
 
@@ -4017,10 +4015,7 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)] + [None] * len(start_indices)
   else:
-    if config.omnistaging_enabled:
-      zeros = full(operand_shape, 0, operand_dtype)
-    else:
-      zeros = full(operand_shape, tie_in(t, _zero(t)))
+    zeros = full(operand_shape, 0, operand_dtype)
     return ([dynamic_update_slice(zeros, t, start_indices)] +
             [None] * len(start_indices))
 
@@ -4319,10 +4314,7 @@ def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
   if type(t) is ad_util.Zero:
     out = ad_util.Zero(operand.aval)
   else:
-    if config.omnistaging_enabled:
-      zeros = full(operand_shape, _zero(t))
-    else:
-      zeros = full(operand_shape, tie_in(t, _zero(t)))
+    zeros = full(operand_shape, _zero(t))
     scatter_dnums = ScatterDimensionNumbers(
       update_window_dims=dimension_numbers.offset_dims,
       inserted_window_dims=dimension_numbers.collapsed_slice_dims,
@@ -5924,8 +5916,6 @@ def _top_k_jvp(primals, tangents, *, k):
     gather_indices = []
     for i in range(rank-1):
       _iota = iota(k_idxs.dtype, idx_shape[i])
-      if not config.omnistaging_enabled:
-        _iota = tie_in(operand, _iota)
       _iota = broadcast_in_dim(_iota, gather_index_shape, (i,))
       gather_indices.append(_iota)
     gather_indices.append(reshape(k_idxs, gather_index_shape))
@@ -5979,14 +5969,7 @@ def create_token(_=None):
 
   The argument is ignored. It exists for backward compatibility.
   """
-  if config.omnistaging_enabled:
-    return create_token_p.bind()
-  else:
-    x = _
-    if x is None:
-      raise ValueError(
-          'create_token needs a tie-in operand unless omnistaging is enabled.')
-    return create_token_p.bind(stop_gradient(x))
+  return create_token_p.bind()
 
 create_token_p = Primitive("create_token")
 create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
@@ -6601,71 +6584,3 @@ def _canonicalize_axis(axis, num_dims):
   if axis < 0:
     axis = axis + num_dims
   return axis
-
-
-tie_in_p = Primitive('tie_in')
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global tie_in
-
-  def tie_in(x: Array, y: Array) -> Array:
-    """Returns the value of ``y`` but with a fake data dependence on ``x``.
-
-    When staging to XLA (e.g. running under jit or pmap), values that don't depend
-    on computation inputs are computed op-by-op, and folded into the XLA
-    computation as constants.
-
-    ``tie_in`` provides a way to explicitly stage values into the computation.
-    When staging to XLA and ``x`` is already staged, then the result of ``tie_in``
-    is ``y``, but staged to XLA. Downstream use of the result will also be staged
-    to XLA.
-
-    For example, ``lax.sin(const)`` would be constant-folded if ``const`` is
-    a constant array, but ``lax.sin(lax.tie_in(x, const))``, will be staged to
-    XLA as long as ``x`` is staged to XLA.
-    """
-    if config.omnistaging_enabled:
-      return y
-    else:
-      return tie_in_p.bind(x, y)
-
-  # If lax has already been imported, we need to monkey-patch the
-  # lax/__init__.py import of tie_in. If not (i.e. if this is running at lax
-  # module creation time) then we'll get an import error.
-  try:
-    jax.lax.tie_in = tie_in
-  except AttributeError:
-    pass
-
-  def _tie_in_transpose_rule(t, x, y):
-    if ad.is_undefined_primal(x):
-      return [ad_util.Zero(x.aval), t]
-    else:
-      return [ad_util.Zero.from_value(x), t]
-
-  def _tie_in_batch_rule(batched_args, batch_dims):
-    y = tie_in(*batched_args)
-    _, bdim_y = batch_dims
-    return y, bdim_y
-
-  def _tie_in_impl(x, y):
-    core.check_valid_jaxtype(x)
-    core.check_valid_jaxtype(y)
-    return y
-
-  def _tie_in_jvp(primals, tangents):
-    x, y = primals
-    x_dot, y_dot = tangents
-    if type(y_dot) is ad_util.Zero or core.get_aval(y_dot).dtype is dtypes.float0:
-      return y, y_dot  # skip tying in in this case
-    else:
-      return ad.linear_jvp(tie_in_p, primals, tangents)
-
-  tie_in_p.def_impl(_tie_in_impl)
-  tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
-  xla.translations[tie_in_p] = lambda c, x, y: y
-  ad.primitive_jvps[tie_in_p] = _tie_in_jvp
-  ad.primitive_transposes[tie_in_p] = partial(ad.linear_transpose2, _tie_in_transpose_rule)
-  batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-  masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]

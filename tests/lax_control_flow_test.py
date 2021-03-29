@@ -18,7 +18,7 @@ from functools import partial
 import itertools
 import operator
 import re
-from unittest import SkipTest, skipIf
+from unittest import SkipTest
 import textwrap
 
 from absl.testing import absltest
@@ -335,7 +335,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.array([4, 3, 4, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
   def testWhileLoopAxisIndexBatched(self):
     def fun(x):
       return lax.while_loop(lambda x: x < lax.axis_index('i'), lambda x: x + 2, x)
@@ -996,7 +995,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
     jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
-  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
   def testCondGradVmapNan(self):
     eps = 1e-3
 
@@ -2564,8 +2562,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     *_, ext_res = vjp_fun.args[0].args[0]
     self.assertIsInstance(ext_res, xla.DeviceArray)
 
-  @skipIf(not config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def test_scan_vmap_collectives(self):
     def scan_f(state, x):
       s = lax.psum(state, 'i') * x

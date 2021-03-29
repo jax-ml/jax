@@ -235,10 +235,7 @@ def schedules(sizes: Dict[str, int]
 
 
 class XMapTestCase(jtu.BufferDonationTestCase):
-  def setUp(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("xmap requires omnistaging")
-    super().setUp()
+  pass
 
 
 # A mixin that enables SPMD lowering tests
@@ -689,9 +686,6 @@ class NamedNNTest(XMapTestCase):
 
 
 class NewPrimitiveTest(XMapTestCase):
-  def setUp(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("xmap requires omnistaging")
 
   def testGatherPositional(self):
     x = jnp.arange(27).reshape((9, 3))
@@ -1030,11 +1024,6 @@ class PDotTests(XMapTestCase):
 
 
 class XMapErrorTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("xmap requires omnistaging")
-    super().setUp()
 
   @ignore_xmap_warning()
   @with_mesh([('x', 2)])

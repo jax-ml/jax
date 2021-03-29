@@ -746,8 +746,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     grad(lambda x: jnp.sum(vmap(f)(x)))(jnp.ones(2))
 
   def testNoOpByOpUnderHash(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("test requires omnistaging")
     def fail(*args, **kwargs): assert False
     apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
     try:
@@ -910,8 +908,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       random.choice(key, 5, 2, replace=True)
 
   def test_eval_shape_big_random_array(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("after deleting lazy constants, requires omnistaging")
     def f(x):
       return random.normal(random.PRNGKey(x), (int(1e12),))
     with jax.enable_checks(False):  # check_jaxpr will materialize array
@@ -971,8 +967,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       api.jit(random.PRNGKey)(seed)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("test requires omnistaging")
     key = random.PRNGKey(1).block_until_ready()
     with jtu.count_device_put() as count:
       api.jit(random.split)(key)

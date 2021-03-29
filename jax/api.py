@@ -206,7 +206,7 @@ def jit(
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
-  if FLAGS.experimental_cpp_jit and config.omnistaging_enabled:
+  if FLAGS.experimental_cpp_jit:
     return _cpp_jit(fun, static_argnums, device, backend, donate_argnums)
   else:
     return _python_jit(fun, static_argnums, device, backend, donate_argnums)
@@ -644,16 +644,10 @@ def xla_computation(fun: Callable,
           "xla_computation in_parts", in_tree.children()[0], in_parts))
     jaxtree_fun, out_tree = flatten_fun(f, in_tree)
     avals = map(shaped_abstractify, args_flat)
-    if config.omnistaging_enabled:
-      with ExitStack() as stack:
-        for axis_name, size in axis_env or []:
-          stack.enter_context(core.extend_axis_env(axis_name, size, None))
-        jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
-    else:
-      pvals = [pe.PartialVal.unknown(aval) for aval in avals]
-      jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-          jaxtree_fun, pvals, instantiate=True, stage_out=True)  # type: ignore
-      out_avals = [raise_to_shaped(pval.get_aval()) for pval in out_pvals]
+    with ExitStack() as stack:
+      for axis_name, size in axis_env or []:
+        stack.enter_context(core.extend_axis_env(axis_name, size, None))
+      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
     jaxpr = xla.apply_outfeed_rewriter(jaxpr)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     if out_parts is None:
@@ -1549,10 +1543,6 @@ def pmap(
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap", kws=True)
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    if not config.omnistaging_enabled and out_axes != 0:
-      raise ValueError("out_axes supported only with omnistaging enabled")
-    if not config.omnistaging_enabled and any(in_axis not in {None, 0} for in_axis in in_axes_flat):
-      raise ValueError("in_axes other than 0 and None only supported with omnistaging enabled")
     if any(out_axis is None for out_axis in tree_flatten(out_axes)):
       raise NotImplementedError("None out_axes in pmap are not supported yet")
     # NOTE: We don't put out_tree() in the closure, because it's (1) non-hashable,
@@ -2048,19 +2038,10 @@ def make_jaxpr(fun: Callable,
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_avals = map(shaped_abstractify, jax_args)
-    if config.omnistaging_enabled:
-      with ExitStack() as stack:
-        for axis_name, size in axis_env or []:
-          stack.enter_context(core.extend_axis_env(axis_name, size, None))
-        jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, in_avals)
-    else:
-      if axis_env:
-        raise NotImplementedError(
-            "axis_env argument to make_jaxpr only supported with omnistaging.")
-      in_pvals = [pe.PartialVal.unknown(a) for a in in_avals]
-      jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-          jaxtree_fun, in_pvals, instantiate=True, stage_out=True)  # type: ignore
-      out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
+    with ExitStack() as stack:
+      for axis_name, size in axis_env or []:
+        stack.enter_context(core.extend_axis_env(axis_name, size, None))
+      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, in_avals)
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     if return_shape:
       out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
@@ -2488,11 +2469,7 @@ class CustomTransformsFunction(object):
     flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
     in_pvals = [pe.PartialVal.unknown(raise_to_shaped(core.get_aval(x)))
                 for x in args_flat]
-    if config.omnistaging_enabled:
-      jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)
-    else:
-      with core.initial_style_staging():  # type: ignore
-        jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)
+    jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)
     outs = self.prim.bind(*it.chain(consts, args_flat), jaxpr=jaxpr,
                           in_tree=in_tree, out_tree=out_tree(),
                           num_consts=len(consts))

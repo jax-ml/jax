@@ -47,8 +47,6 @@ class X64ContextTests(jtu.JaxTestCase):
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
       for jit in ["python", "cpp", None]))
   def test_make_array(self, jit):
-    if jit == "cpp" and not config.omnistaging_enabled:
-      self.skipTest("cpp_jit requires omnistaging")
     func = _maybe_jit(jit, lambda: jnp.arange(10.0))
     dtype_start = func().dtype
     with enable_x64():
@@ -64,9 +62,6 @@ class X64ContextTests(jtu.JaxTestCase):
           "enable_or_disable": f
       } for jit in ["python", "cpp", None] for f in [enable_x64, disable_x64]))
   def test_correctly_capture_default(self, jit, enable_or_disable):
-    if jit == "cpp" and not config.omnistaging_enabled:
-      self.skipTest("cpp_jit requires omnistaging")
-
     # The fact we defined a jitted function with a block with a different value
     # of `config.enable_x64` has no impact on the output.
     with enable_or_disable():
@@ -87,8 +82,6 @@ class X64ContextTests(jtu.JaxTestCase):
   def test_near_singular_inverse(self, jit):
     if jtu.device_under_test() == "tpu":
       self.skipTest("64-bit inverse not available on TPU")
-    if jit == "cpp" and not config.omnistaging_enabled:
-      self.skipTest("cpp_jit requires omnistaging")
     @partial(_maybe_jit, jit, static_argnums=1)
     def near_singular_inverse(key, N, eps):
       X = random.uniform(key, (N, N))
@@ -111,8 +104,6 @@ class X64ContextTests(jtu.JaxTestCase):
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
       for jit in ["python", "cpp", None]))
   def test_while_loop(self, jit):
-    if jit == "cpp" and not config.omnistaging_enabled:
-      self.skipTest("cpp_jit requires omnistaging")
     @partial(_maybe_jit, jit)
     def count_to(N):
       return lax.while_loop(lambda x: x < N, lambda x: x + 1.0, 0.0)

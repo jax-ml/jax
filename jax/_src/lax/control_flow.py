@@ -45,7 +45,7 @@ from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax._src.traceback_util import api_boundary
-from jax._src.util import (partial, unzip2, unzip3, unzip4, safe_map, safe_zip,
+from jax._src.util import (partial, unzip2, unzip3, safe_map, safe_zip,
                            split_list, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
@@ -481,17 +481,12 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   params = dict(cond_nconsts=cond_nconsts, cond_jaxpr=cond_jaxpr,
                 body_nconsts=body_nconsts, body_jaxpr=body_jaxpr)
 
-  if config.omnistaging_enabled:
-    partial_eval_jaxpr = pe.partial_eval_jaxpr
-  else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
-
   cond_consts_uk, body_consts_uk, carry_init_uk = split_list(unknowns, [cond_nconsts, body_nconsts])
   # Fixpoint computation of unknown carry. Each iteration promotes
   # at least one carry to unknown. We need one last iteration to prepare the jaxpr.
   carry_uk = carry_init_uk
   for _ in range(1 + len(carry_uk)):
-    body_jaxpr_known, _, carry_out_uk = partial_eval_jaxpr(  # type: ignore
+    body_jaxpr_known, _, carry_out_uk = pe.partial_eval_jaxpr(  # type: ignore
         body_jaxpr, body_consts_uk + carry_uk, instantiate=carry_uk)
     if carry_out_uk == carry_uk:
       break
@@ -500,7 +495,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   else:
     assert False, "Fixpoint not reached"
 
-  cond_jaxpr_known, _, cond_uk = partial_eval_jaxpr(  # type: ignore
+  cond_jaxpr_known, _, cond_uk = pe.partial_eval_jaxpr(  # type: ignore
       cond_jaxpr, cond_consts_uk + carry_uk, instantiate=False)
 
   if cond_uk[0] or all([not uk for uk in unknowns]) or all(unknowns):
@@ -850,11 +845,6 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   unknowns = [t.pval[0] is not None for t in tracers]
   index_uk, *ops_uk = unknowns
 
-  if config.omnistaging_enabled:
-    partial_eval_jaxpr = pe.partial_eval_jaxpr
-  else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
-
   if index_uk:
     # When the branch index is unknown, we stage out the whole cond.
     params = dict(branches=branches, linear=linear)
@@ -862,13 +852,13 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
 
   branches_out_uks = []
   for branch_jaxpr in branches:
-    _, _, out_uks = partial_eval_jaxpr(branch_jaxpr, ops_uk, instantiate=False)
+    _, _, out_uks = pe.partial_eval_jaxpr(branch_jaxpr, ops_uk, instantiate=False)
     branches_out_uks.append(out_uks)
   out_uks = [any(uks) for uks in zip(*branches_out_uks)]
 
   branches_1, branches_2, branch_res_avals = [], [], []
   for branch_jaxpr in branches:
-    branch_jaxpr_1, branch_jaxpr_2, _ = partial_eval_jaxpr(
+    branch_jaxpr_1, branch_jaxpr_2, _ = pe.partial_eval_jaxpr(
         branch_jaxpr, ops_uk, instantiate=out_uks)
     branch_num_res = len(branch_jaxpr_1.out_avals) - len(out_uks)
 
@@ -1552,21 +1542,10 @@ def _prune_zeros(ts):
 
 def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                        jaxpr, linear, unroll):
-  if not config.omnistaging_enabled and trace.main.trace_type is pe.StagingJaxprTrace:  # type: ignore
-    params = dict(reverse=reverse, length=length, num_consts=num_consts,
-                  num_carry=num_carry, jaxpr=jaxpr, linear=linear,
-                  unroll=unroll)
-    return trace.default_process_primitive(scan_p, tracers, params)
-
   num_ys = len(jaxpr.out_avals) - num_carry
 
   unknowns = [t.pval[0] is not None for t in tracers]
   const_uk, init_uk, xs_uk = split_list(unknowns, [num_consts, num_carry])
-
-  if config.omnistaging_enabled:
-    partial_eval_jaxpr = pe.partial_eval_jaxpr
-  else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
 
   # Fixpoint computation of which carry are unknown (not a constant): either
   # unknown from init, or the carry out is unknown. Each iteration promotes
@@ -1576,7 +1555,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   carry_uk = init_uk
   for _ in range(1 + len(carry_uk)):
     unknowns = const_uk + carry_uk + xs_uk
-    jaxpr_1, jaxpr_2, out_uk = partial_eval_jaxpr(
+    jaxpr_1, jaxpr_2, out_uk = pe.partial_eval_jaxpr(
         jaxpr, unknowns, instantiate=carry_uk + [False] * num_ys)
     carry_uk_out = out_uk[:num_carry]
     if carry_uk_out == carry_uk:
@@ -1744,12 +1723,7 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
   return _make_closed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
 
 def _make_closed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
-  if config.omnistaging_enabled:
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
-  else:
-    pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-    jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
-    out_avals, _ = unzip2(pvals_out)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
   return core.ClosedJaxpr(jaxpr, consts)
 
 
@@ -2623,63 +2597,3 @@ def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,
 ad.primitive_jvps[cumprod_p] = partial(_cumulative_jvp_rule, combine_fn=lax.mul)
 ad.primitive_jvps[cummin_p] = partial(_cumulative_jvp_rule, combine_fn=lax.min)
 ad.primitive_jvps[cummax_p] = partial(_cumulative_jvp_rule, combine_fn=lax.max)
-
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global _initial_style_open_jaxpr, _initial_style_jaxpr, \
-      _initial_style_jaxprs_with_common_consts
-
-  @cache()
-  def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):
-    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-    with core.initial_style_staging():  # type: ignore
-      jaxpr, out_pvals, consts = pe.trace_to_jaxpr(  # type: ignore
-        wrapped_fun, in_pvals, instantiate=True, stage_out=False)  # type: ignore
-    return jaxpr, out_pvals, consts, out_tree
-
-  @cache()
-  def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
-    jaxpr, out_pvals, consts, out_tree = _initial_style_open_jaxpr(
-        fun, in_tree, in_avals)
-    closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
-    return closed_jaxpr, consts, out_tree()
-
-  @cache()
-  def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
-                                              in_tree, in_avals):
-    # When staging the branches of a conditional into jaxprs, constants are
-    # extracted from each branch and converted to jaxpr arguments. To use the
-    # staged jaxprs as the branches to a conditional *primitive*, we need for
-    # their (input) signatures to match. This function "joins" the staged jaxprs:
-    # for each one, it makes another that accepts *all* constants, but only uses
-    # those that it needs (dropping the rest).
-
-    jaxprs, all_out_pvals, all_consts, all_out_trees = unzip4([
-        _initial_style_open_jaxpr(fun, in_tree, in_avals) for fun in funs])
-
-    newvar = core.gensym(jaxprs, suffix='_')
-    all_const_avals = tuple(
-        tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
-        for consts in all_consts)
-    unused_const_vars = tuple(
-        tuple(newvar(aval) for aval in const_avals)
-        for const_avals in all_const_avals)
-
-    def pad_jaxpr_constvars(i, jaxpr):
-      prefix = util.concatenate(unused_const_vars[:i])
-      suffix = util.concatenate(unused_const_vars[i+1:])
-      constvars = prefix + jaxpr.constvars + suffix
-      return core.Jaxpr(constvars=constvars, invars=jaxpr.invars,
-                        outvars=jaxpr.outvars, eqns=jaxpr.eqns)
-
-    def type_and_const_convert_jaxpr(jaxpr, out_pvals):
-      return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
-
-    jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
-    closed_jaxprs = _map(type_and_const_convert_jaxpr, jaxprs, all_out_pvals)
-
-    return (tuple(closed_jaxprs),
-            tuple(util.concatenate(all_consts)),
-            tuple(out_tree() for out_tree in all_out_trees))

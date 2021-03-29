@@ -152,16 +152,9 @@ def convert(fun: Callable, *,
 
   def converted_fun(*args: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
-    if config.omnistaging_enabled:
-      if not core.trace_state_clean():
-        raise ValueError("convert must be used outside all JAX transformations."
-                         + f"Trace state: {core.thread_local_state.trace_state}")
-    else:
-      if (core.thread_local_state.trace_state.trace_stack.downward or
-          core.thread_local_state.trace_state.trace_stack.upward or
-          core.thread_local_state.trace_state.substack != [core.Sublevel(0)]):
-        raise ValueError("convert must be used outside all JAX transformations."
-                         + f"Trace state: {core.thread_local_state.trace_state}")
+    if not core.trace_state_clean():
+      raise ValueError("convert must be used outside all JAX transformations."
+                       + f"Trace state: {core.thread_local_state.trace_state}")
 
     def check_arg(a):
       if not _is_tfval(a):
@@ -267,8 +260,7 @@ def _interpret_fun(fun: lu.WrappedFun,
                    in_vals: Sequence[TfVal],
                    in_avals: Sequence[core.AbstractValue]
                    ) -> Sequence[Tuple[TfVal, core.AbstractValue]]:
-  new_main = core.new_base_main if config.omnistaging_enabled else core.new_main
-  with new_main(TensorFlowTrace) as main:  # type: ignore
+  with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
     fun = _interpret_subtrace(fun, main, in_avals)
     out_vals: Sequence[Tuple[TfVal, core.AbstractValue]] = fun.call_wrapped(*in_vals)
     del main
@@ -813,10 +805,6 @@ tf_not_yet_impl = [
   "call_tf",
 ]
 
-try:
-  tf_impl[lax.tie_in_p] = lambda x, y: y
-except AttributeError:
-  pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
 

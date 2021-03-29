@@ -649,25 +649,16 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
                      "got device={} and backend={}".format(device, backend))
 
   abstract_args, arg_devices = unzip2(arg_specs)
-  if config.omnistaging_enabled:
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args)
-    if any(isinstance(c, core.Tracer) for c in consts):
-      raise core.UnexpectedTracerError("Encountered an unexpected tracer.")
-  else:
-    pvals: Sequence[pe.PartialVal] = [pe.PartialVal.unknown(aval) for aval in abstract_args]
-    jaxpr, pvals, consts = pe.trace_to_jaxpr(  # type: ignore
-        fun, pvals, instantiate=False, stage_out=True, bottom=True)  # type: ignore
+  jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args)
+  if any(isinstance(c, core.Tracer) for c in consts):
+    raise core.UnexpectedTracerError("Encountered an unexpected tracer.")
   map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
   jaxpr = apply_outfeed_rewriter(jaxpr)
 
   nreps = jaxpr_replicas(jaxpr)
   device = _xla_callable_device(nreps, backend, device, arg_devices)
   backend = device.platform if device else backend
-  if config.omnistaging_enabled:
-    result_handlers = map(partial(aval_to_result_handler, device), out_avals)
-  else:
-    out_avals = [pval.get_aval() for pval in pvals]
-    result_handlers = map(partial(_pval_to_result_handler, device), pvals)  # type: ignore
+  result_handlers = map(partial(aval_to_result_handler, device), out_avals)
 
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
@@ -953,16 +944,9 @@ def lower_fun(fun, multiple_results, parallel=False, with_avals=False):
     wrapped_fun = lu.wrap_init(fun, params)
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)
-    if config.omnistaging_enabled:
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-      outs = jaxpr_subcomp(c, jaxpr, None, axis_env, _xla_consts(c, consts), '',
-                          *xla_args)
-    else:
-      pvals = [pe.PartialVal.unknown(a) for a in avals]
-      jaxpr, _, consts = pe.trace_to_jaxpr(wrapped_fun, pvals, instantiate=True,
-                                          stage_out=True)  # type: ignore
-      xla_consts = _xla_consts(c, consts)
-      outs = jaxpr_subcomp(c, jaxpr, None, axis_env, xla_consts, '', *xla_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+    outs = jaxpr_subcomp(c, jaxpr, None, axis_env, _xla_consts(c, consts), '',
+                         *xla_args)
     if multiple_results or any(v.aval._num_buffers > 1 for v in jaxpr.outvars):
       return xops.Tuple(c, outs)
     else:
@@ -980,17 +964,9 @@ def _array_aval_from_xla_shape(xla_shape):
 
 def lower_fun_initial_style(fun):
   def f(c, axis_env, name_stack, avals, backend, *xla_args, **params):
-    if config.omnistaging_enabled:
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(fun, params), avals)
-      outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts),
-                          name_stack, *xla_args)
-    else:
-      pvals = [pe.PartialVal.unknown(a) for a in avals]
-      jaxpr, _, consts = pe.trace_to_jaxpr(
-          lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)  # type: ignore
-      xla_consts = _xla_consts(c, consts)
-      outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, name_stack,
-                          *xla_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(fun, params), avals)
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts),
+                         name_stack, *xla_args)
     return xops.Tuple(c, outs)
   return f
 
@@ -1438,18 +1414,3 @@ def _call_translation_rule(c, axis_env, in_nodes, name_stack, *, backend,
       c, axis_env, in_nodes, name_stack, name="core_call",
       backend=backend, call_jaxpr=call_jaxpr)
 call_translations[core.call_p] = _call_translation_rule
-
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global _pval_to_result_handler
-
-  def _pval_to_result_handler(device, pval):
-    pv, const = pval
-    if pv is None:
-      const = _device_put_impl(const, device) if device else const
-      return lambda _: const
-    else:
-      return aval_to_result_handler(device, pv)
-
-  pe.staged_out_calls.add(xla_call_p)  # type: ignore

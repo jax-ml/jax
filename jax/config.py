@@ -59,11 +59,10 @@ class Config:
     self.FLAGS = NameSpace(self.read, self.update)
     self.use_absl = False
     self._contextmanager_flags = set()
+    self._update_hooks = {}
 
     # TODO(mattjj): delete these when only omnistaging is available
     self.omnistaging_enabled = bool_env('JAX_OMNISTAGING', True)
-    self._omnistaging_disablers = []
-    self._update_hooks = {}
 
   def update(self, name, val):
     if self.use_absl:
@@ -160,13 +159,8 @@ class Config:
           "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.\n"
           "To remove this warning, unset the JAX_OMNISTAGING environment variable.")
 
-  def register_omnistaging_disabler(self, disabler):
-    if self.omnistaging_enabled:
-      self._omnistaging_disablers.append(disabler)
-
   def enable_omnistaging(self):
-    if not self.omnistaging_enabled:
-      raise Exception("can't re-enable omnistaging after it's been disabled")
+    return  # TODO(mattjj): remove all callers
 
   def disable_omnistaging(self):
     warnings.warn(
@@ -341,6 +335,7 @@ FLAGS = flags.FLAGS
 already_configured_with_absl = False
 
 
+# TODO(mattjj): remove all uses of this flag
 flags.DEFINE_bool(
     'jax_omnistaging',
     bool_env('JAX_OMNISTAGING', True),

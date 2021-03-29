@@ -48,7 +48,7 @@ def batchfun(axis_name, axis_size, in_dims, *in_vals):
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
-             and not isinstance(core.get_aval(x), core.AbstractUnit)  # non-omnistaging
+             and not isinstance(core.get_aval(x), core.AbstractUnit)
              else ax for x, ax in zip(in_vals, in_dims)]
   with core.new_main(BatchTrace, axis_name=axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
@@ -475,22 +475,6 @@ def _merge_bdims(x, y):
     return x
   else:
     return x  # arbitrary
-
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global batch_jaxpr
-
-  def batch_jaxpr(jaxpr, axis_size, in_batched, instantiate, axis_name):
-    f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
-    f, out_batched = batch_subtrace_instantiate(f, instantiate, axis_size)
-    f = batchfun(f, axis_name, axis_size, [0 if b else None for b in in_batched])
-    avals_in = [core.unmapped_aval(axis_size, 0, aval) if b else aval
-                for aval, b in zip(jaxpr.in_avals, in_batched)]
-    in_pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
-    jaxpr_out, pvals_out, consts_out = pe.trace_to_jaxpr(f, in_pvals, instantiate=True)
-    avals_out, _ = unzip2(pvals_out)
-    return core.ClosedJaxpr(jaxpr_out, consts_out), out_batched()
 
 
 collective_rules: Dict[core.Primitive, Callable] = {}

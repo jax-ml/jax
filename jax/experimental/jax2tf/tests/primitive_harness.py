@@ -682,28 +682,6 @@ def _make_add_any_harness(name, *, shapes=((2,), (2,)), dtype=np.float32):
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
   _make_add_any_harness("dtypes", dtype=dtype)
 
-for rhs_dtype in jtu.dtypes.all:
-  lhs_dtype = np.float32
-  lhs_shape = (2, 3)
-  rhs_shape = (4, 5)
-  define(
-    lax.tie_in_p,
-    f"lhs={jtu.format_shape_dtype_string(lhs_shape, lhs_dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}",
-    lax.tie_in_p.bind,
-    [RandArg(lhs_shape, lhs_dtype),
-     RandArg(rhs_shape, rhs_dtype)],
-    jax_unimplemented=[
-      Limitation(
-        "requires omnistaging to be disabled",
-        enabled=config.omnistaging_enabled)
-    ],
-    dtype=rhs_dtype,
-    lhs_shape=lhs_shape,
-    lhs_dtype=lhs_dtype,
-    rhs_shape=rhs_shape,
-    rhs_dtype=rhs_dtype,
-    primitive=lax.tie_in_p)
-
 for dtype in jtu.dtypes.all:
   shape: Tuple[int, ...] = (20, 20)
   define(

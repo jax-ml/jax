@@ -17,7 +17,7 @@ from collections import namedtuple
 import contextlib
 import functools
 from typing import (Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple,
-                    List, Union, cast, Type, no_type_check)
+                    List, Union, cast)
 from weakref import ref
 
 import numpy as np
@@ -163,11 +163,6 @@ class JaxprTrace(Trace):
 
   # We use process_call to handle both call and map primitives.
   def process_call(self, primitive, f: lu.WrappedFun, tracers, params):
-    if not config.omnistaging_enabled:
-      if (self.main.trace_type is StagingJaxprTrace  # type: ignore
-          and primitive in staged_out_calls):        # type: ignore
-        tracers = map(self.instantiate_const_abstracted, tracers)
-
     if primitive in call_partial_eval_rules:
       return call_partial_eval_rules[primitive](self, primitive, f, tracers, params)
 
@@ -406,15 +401,8 @@ call_param_updaters: Dict[core.Primitive, Callable] = {}
 
 
 def abstract_eval_fun(fun, *avals, **params):
-  if config.omnistaging_enabled:
-    _, avals_out, _ = trace_to_jaxpr_dynamic(lu.wrap_init(fun, params), avals)
-  else:
-    pvals_in = [PartialVal.unknown(a) for a in avals]
-    _, pvals_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
-                                    instantiate=True, stage_out=True)  # type: ignore
-    avals_out, _ = unzip2(pvals_out)
-  for aval_out in avals_out:
-    assert isinstance(aval_out, AbstractValue)  # instantiate=True
+  _, avals_out, _ = trace_to_jaxpr_dynamic(lu.wrap_init(fun, params), avals)
+  assert all(isinstance(aval, AbstractValue) for aval in avals_out)
   return avals_out
 
 
@@ -775,13 +763,8 @@ def _remat_partial_eval(trace, _, f, tracers, params):
 
   # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
   in_pvals = [t.pval for t in instantiated_tracers]
-  if config.omnistaging_enabled:
-    jaxpr, eval_out_pvals, consts, env_tracers = trace.partial_eval(
-      f, in_pvals, partial(remat_call_p.bind, **params), instantiate=False)
-  else:
-    with core.initial_style_staging():  # type: ignore
-      jaxpr, eval_out_pvals, consts, env_tracers = trace.partial_eval(
-        f, in_pvals, partial(remat_call_p.bind, **params), instantiate=False)
+  jaxpr, eval_out_pvals, consts, env_tracers = trace.partial_eval(
+    f, in_pvals, partial(remat_call_p.bind, **params), instantiate=False)
 
   # Convert consts to inputs, since they may contain Tracer instances.
   jaxpr = convert_constvars_jaxpr(jaxpr)
@@ -792,12 +775,8 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
   in_unknowns = ([False] * len(consts) +
                  [not t.is_known() for t in it.chain(env_tracers, tracers)])
-  if config.omnistaging_enabled:
-    jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
-        closed_jaxpr, in_unknowns, instantiate=False)  # type: ignore
-  else:
-    jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
-        closed_jaxpr, in_unknowns, instantiate=False, trace_type=trace.main.trace_type)  # type: ignore
+  jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
+      closed_jaxpr, in_unknowns, instantiate=False)  # type: ignore
   out_knowns = [not b for b in out_unknowns]
   out_known_pvals, out_unknown_pvals = _partition_knowns(eval_out_pvals, out_unknowns)
 
@@ -1191,7 +1170,6 @@ def _memoize(thunk):
 
 
 def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
-  assert config.omnistaging_enabled
   with core.new_main(DynamicJaxprTrace, dynamic=True) as main:  # type: ignore
     main.source_info = fun_sourceinfo(fun.f)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
@@ -1221,7 +1199,6 @@ def extend_jaxpr_stack(main, frame):
     main.jaxpr_stack = main.jaxpr_stack[:-1]
 
 def trace_to_jaxpr_final(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
-  assert config.omnistaging_enabled
   with core.new_base_main(DynamicJaxprTrace) as main:  # type: ignore
     main.source_info = fun_sourceinfo(fun.f)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
@@ -1234,7 +1211,6 @@ def partial_eval_to_jaxpr_dynamic(fun: lu.WrappedFun, in_pvals: Sequence[Partial
   # use trace_to_jaxpr directly because of an interaction with the curent
   # custom_derivatives.py, which we work around by adding the EvalTrace.
   # TODO(mattjj): alias to trace_to_jaxpr after revising custom_derivatives.py
-  assert config.omnistaging_enabled
   with core.new_main(core.EvalTrace, dynamic=True) as _:  # type: ignore
     return trace_to_jaxpr(fun, in_pvals)
 
@@ -1247,124 +1223,3 @@ def fun_sourceinfo(fun):
     return f"{fun.__name__} at {filename}:{lineno}"
   except AttributeError:
     return "<unknown>"
-
-
-@config.register_omnistaging_disabler
-@no_type_check
-def omnistaging_disabler() -> None:
-  global trace_to_jaxpr, partial_eval_jaxpr, staged_out_calls, StagingJaxprTrace
-
-  def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
-                     instantiate: Union[bool, Sequence[bool]] = False,
-                     stage_out=False, bottom=False,
-                     trace_type: Optional[Type[Trace]] = None,
-                     ) -> Tuple[Jaxpr, Tuple[PartialVal, ...], Tuple[core.Value, ...]]:
-    """Traces a function into a Jaxpr, given PartialVals for inputs.
-
-    Returns (`jaxpr`, `out_pvals`, `consts`). The `jaxpr` contains only the
-    computation that depends on unknown inputs. The `out_pvals` are the PartialVal
-    for the outputs. The intermediate values that depend only on known inputs and
-    are needed to compute the output of `jaxpr` are in `consts` and are passed in
-    as the constvars of the `jaxpr`. The handling of the known outputs depends on
-    `instantiate`.
-
-    For example, given `fun` defined as follows::
-
-      def fun(ki, ui):  # ki will be a known input in this example
-        ka = ki + 2
-        kb = ka + 3
-        return (kb, ui + ka)
-
-    with `ki` the known PartialVal `1.`, and `ui` an unknown PartialVal. The only
-    computation that depends on unknown inputs is `ui + ka` and will be the only
-    computation in the body of the `jaxpr`. This computation depends on the known
-    intermediate value `ka`, which will be computed statically. Currently, such
-    constants are either embedded in the Jaxpr if they are scalars, or passed as a
-    constvar to `jaxpr`, and then the value of the actual constant will be in
-    `consts`:
-
-    When `instantiate=False` we get::
-
-      jaxpr =
-        { lambda ka ; ki ui.
-          let c = add ui ka
-          in (*, c) }   # known outputs are `*`
-      out_pvals = [PartialVal.known(6), PartialVal.unknown(ShapedArray)]
-      consts = [3]  # the constant for `ka`
-
-    When `instantiate=True` we get::
-
-      jaxpr =
-        { lambda ka kb ; ki ui.
-          let c = add ui ka
-          in (kb, c) }   # known output are explicit
-      out_pvals = [PartialVal.unknown(ConcreteArray(6)), PartialVal.unknown(ShapedArray)]
-      consts = [3, 6]  # values for `ka` and `kb` constvars
-    """
-    trace_type = trace_type or (StagingJaxprTrace if stage_out else JaxprTrace)
-    with core.new_main(trace_type, bottom=bottom) as main:
-      fun = trace_to_subjaxpr(fun, main, instantiate)
-      jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
-      assert not env
-      del main
-
-    return jaxpr, out_pvals, consts
-
-  def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
-                        instantiate: Union[bool, Sequence[bool]],
-                        trace_type: Optional[Type[core.Trace]]
-                        ) -> Tuple[ClosedJaxpr, ClosedJaxpr, Sequence[bool]]:
-    f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
-
-    cell = []
-    def fun(*vals):
-      pvals = [PartialVal.unknown(aval) if uk else PartialVal.known(val)
-              for aval, val, uk in zip(jaxpr.in_avals, vals, unknowns)]
-      jaxpr_2, out_pvals_2, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate,
-                                                      trace_type=trace_type)
-      out_pvs_2, out_consts_2 = unzip2(out_pvals_2)
-      cell.append((out_pvs_2, jaxpr_2, len(consts_2)))
-      return out_consts_2 + consts_2
-
-    # The abstract_unit here doesn't really matter, because trace_to_jaxpr completely ignores
-    # the avals, and it will never actually reach any primitives, because the `fun` above will
-    # execute the jaxpr with the right avals (it reconstructs `pvals` inside).
-    pvals = [PartialVal.unknown(abstract_unit) if uk else PartialVal.unknown(aval)
-            for aval, uk in zip(jaxpr.in_avals, unknowns)]
-    jaxpr_1, out_pvals, consts_1 = trace_to_jaxpr(lu.wrap_init(fun), pvals, instantiate=True)
-    (out_pvs_2, jaxpr_2, num_res), = cell
-    assert len(jaxpr_2.constvars) == num_res
-
-    #   jaxpr :: a -> b
-    # jaxpr_1 :: a1 -> [b1, res]
-    # jaxpr_2 :: res | a2 -> b2
-    # jaxpr_2 :: [a2, res] -> b2
-    jaxpr_2 = convert_constvars_jaxpr(jaxpr_2)
-    jaxpr_2.invars = jaxpr_2.invars[num_res:] + jaxpr_2.invars[:num_res]
-    for var, unknown in zip(jaxpr_2.invars[:len(unknowns)], unknowns):
-      if not unknown:
-        var.aval = abstract_unit
-
-    uk_out = [pv is not None for pv in out_pvs_2]
-
-    return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
-
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
-    # See comment at top of `JaxprTrace`. This method should be reachable
-    # only when we stage out, and in that case we drop the custom differentiation
-    # rules, because we do not need them.
-    if not config.omnistaging_enabled:
-      assert self.main.trace_type is StagingJaxprTrace
-    return fun.call_wrapped(*tracers)
-  JaxprTrace.process_custom_jvp_call = process_custom_jvp_call
-
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
-    # See comment in the above process_custom_jvp_call method.
-    if not config.omnistaging_enabled:
-      assert self.main.trace_type is StagingJaxprTrace
-    return fun.call_wrapped(*tracers)
-  JaxprTrace.process_custom_vjp_call = process_custom_vjp_call
-
-  staged_out_calls = set()
-
-  class StagingJaxprTrace(JaxprTrace): pass
