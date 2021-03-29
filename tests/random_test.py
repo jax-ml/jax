@@ -714,6 +714,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     keys = [random.fold_in(key, i) for i in range(10)]
     assert np.unique(np.ravel(keys)).shape == (20,)
 
+  def testFoldInBig(self):
+    key = random.PRNGKey(0)
+    seeds = [2 ** 32 - 2, 2 ** 32 - 1]
+    keys = [random.fold_in(key, seed) for seed in seeds]
+    assert np.unique(np.ravel(keys)).shape == (4,)
+
   def testStaticShapeErrors(self):
     if config.jax_disable_jit:
       raise SkipTest("test only relevant when jit enabled")
