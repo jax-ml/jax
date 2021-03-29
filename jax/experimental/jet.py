@@ -163,11 +163,11 @@ class JetTrace(core.Trace):
     return fun.call_wrapped(*tracers)
 
 
-class ZeroTerm(object): pass
+class ZeroTerm: pass
 zero_term = ZeroTerm()
 register_pytree_node(ZeroTerm, lambda z: ((), None), lambda _, xs: zero_term)
 
-class ZeroSeries(object): pass
+class ZeroSeries: pass
 zero_series = ZeroSeries()
 register_pytree_node(ZeroSeries, lambda z: ((), None), lambda _, xs: zero_series)
 
@@ -549,7 +549,6 @@ def _select_taylor_rule(primal_in, series_in, **params):
   return primal_out, series_out
 jet_rules[lax.select_p] = _select_taylor_rule
 
-
 def _lax_max_taylor_rule(primal_in, series_in):
     x, y = primal_in
 
@@ -589,3 +588,14 @@ def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
   del jvp_jaxpr_thunk
   return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
 jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
+
+def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
+                      dimension_numbers, indices_are_sorted, unique_indices):
+  bind = partial(lax.scatter_add_p.bind, update_jaxpr=update_jaxpr,
+                 update_consts=update_consts, dimension_numbers=dimension_numbers,
+                 indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
+  operand, scatter_indices, updates = primals_in
+  primal_out = bind(operand, scatter_indices, updates)
+  series_out = [bind(d1, scatter_indices, d2) for d1, _, d2 in zip(*series_in)]
+  return primal_out, series_out
+jet_rules[lax.scatter_add_p] = _scatter_add_rule
