@@ -20,7 +20,7 @@ import re
 import threading
 import time
 from typing import Callable, Optional, Sequence
-from unittest import SkipTest, skipIf
+from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -262,8 +262,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           9.00 )""", testing_stream.output)
     testing_stream.reset()
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_with_result_no_arg(self):
     def tap_func(arg, transforms):
       testing_stream.write(f"called tap_func with {arg}")
@@ -278,8 +276,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
                                  testing_stream.output)
     testing_stream.reset()
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_result_unused(self):
     def tap_func(arg, transforms):
       testing_stream.write(f"called tap_func with {arg}")
@@ -415,8 +411,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         11""", testing_stream.output)
     testing_stream.reset()
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_jit_result_unused(self):
     """We can id_print even if we don't use the result."""
 
@@ -593,8 +587,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
               testcase_name=f"_with_jit_{with_jit}",
               with_jit=with_jit)
           for with_jit in [True, False]))
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_cond(self, with_jit=False):
     """A conditional"""
 
@@ -630,8 +622,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           dict(testcase_name=f"_with_jit_{with_jit}",
                with_jit=with_jit)
           for with_jit in [True, False]))
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_while_cond(self, with_jit=False):
     def func(x):
       x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
@@ -713,8 +703,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
               testcase_name=f"_with_jit_{with_jit}",
               with_jit=with_jit)
           for with_jit in [True, False]))
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_scan_cond(self, with_jit=True):
     def func(x):
       x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
@@ -864,8 +852,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         4""", testing_stream.output)
     testing_stream.reset()
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_jvp(self):
     jvp_fun1 = lambda x, xt: api.jvp(fun1, (x,), (xt,))
     res_primals, res_tangents = jvp_fun1(jnp.float32(5.), jnp.float32(0.1))
@@ -882,9 +868,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_tap_grad_primal_unused(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("Test requires omnistaging")
-
     # The output of id_print is not needed for backwards pass
     def func(x):
       return 2. * hcb.id_print(x * 3., what="x * 3",
@@ -948,9 +931,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_tap_grad_grad(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("Test requires omnistaging")
-
     def func(x):
       y = hcb.id_print(x * 2., what="x * 2", output_stream=testing_stream)
       return x * (y * 3.)
@@ -976,8 +956,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         2.00""", testing_stream.output)
     testing_stream.reset()
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_grad_pytree(self):
     def func(x):
       x4, x5 = hcb.id_print((x * 2., x * 3.), what="pair",
@@ -1000,8 +978,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           0.00 )""", testing_stream.output)
     testing_stream.reset()
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_jvp_float0(self):
     def f(x, yint):
       x, yint = hcb.id_tap(lambda arg, _: arg, (x, yint))
@@ -1010,8 +986,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     res = api.jvp(f, (2., 3), (0.2, np.zeros((), dtypes.float0)))
     self.assertAllClose((6., 0.6), res)
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_grad_float0(self):
     def func(x, yint):
       x, yint = hcb.id_print((x, yint), what="pair", output_stream=testing_stream)
@@ -1147,8 +1121,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         [2 2 2 3 4]""", testing_stream.output)
     testing_stream.reset()
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_transforms(self):
     def power(x, n):
       x, n = hcb.id_print((x, n), output_stream=testing_stream)
@@ -1315,8 +1287,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
 
     testing_stream.reset()
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_jvp_pmap_vmap(self):
     # A matrix M[ijk] = i * 100 + j * 10 * k
     nr_devices = len(devices())
@@ -1537,8 +1507,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
         what: ct_b
         1.""", testing_stream.output)
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_tap_mask(self):
 
     @partial(api.mask, in_shapes=['n'], out_shape='')
@@ -1714,9 +1682,6 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
   def test_tap_named_call(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("Test requires omnistaging")
-
     def tap_scalar(init, do_print=False):
       @partial(api.named_call, name="step")
       def step(acc, step_nr):
@@ -1775,8 +1740,6 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     res_inside = fun(2, use_outside=False)
     self.assertAllClose(res_inside, fun(2, use_outside=True))
 
-  @skipIf(not config.omnistaging_enabled,
-          "test works only with omnistaging enabled")
   def test_call_no_result(self):
     def f_outside(arg):
       self.call_log_testing_stream(lambda x: None, arg,

@@ -283,7 +283,6 @@ from jax._src.lax.lax import (
   tanh,
   tanh_p,
   tie_in,
-  tie_in_p,
   top_k,
   top_k_p,
   transpose,

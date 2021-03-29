@@ -86,20 +86,7 @@ def _sharded_callable(
   logging.vlog(2, "in_parts: %s", in_parts)
   logging.vlog(2, "local_in_parts: %s", local_in_parts)
 
-  if config.omnistaging_enabled:
-    jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
-        fun, global_abstract_args)
-  else:
-    in_pvals = [pe.PartialVal.unknown(aval) for aval in global_abstract_args]
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals,  # type: ignore
-                                                 instantiate=False, bottom=True)  # type: ignore
-
-    # TODO(skye): add tests for equationless jaxpr cases
-    if not jaxpr.eqns and all(outvar.aval is core.abstract_unit
-                              for outvar in jaxpr.outvars):
-      return lambda *_: [
-          const if pv is None else core.unit for pv, const in out_pvals
-      ]
+  jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(fun, global_abstract_args)
 
   if xb.get_backend().platform not in ["tpu", "gpu"]:
     # TODO(skye): fall back to regular jit?
@@ -182,7 +169,6 @@ def _sharded_callable(
 
   handle_args = partial(pxla.shard_args, compiled.local_devices(),
                         input_indices)
-  assert config.omnistaging_enabled
   handle_outs = _avals_to_results_handler(nrep, local_nparts,  # type: ignore
                                           local_out_parts, local_out_avals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,
@@ -467,29 +453,3 @@ def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
     A new version of ``x`` with the specified sharding applied.
   """
   return sharding_constraint_p.bind(x, partitions=partitions)
-
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global _pvals_to_results_handler, _pval_to_result_handler
-
-  def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
-    handlers = [_pval_to_result_handler(npart, parts, out_pval)
-                for parts, out_pval in safe_zip(partitions, out_pvals)]  # type: ignore
-
-    def handler(out_bufs):
-      return [h(bufs) for h, bufs in zip(handlers, out_bufs)]
-
-    return handler
-
-  def _pval_to_result_handler(npart, parts, pval):
-    pv, const = pval
-    if pv is None:
-      raise NotImplementedError  # TODO(skye): handle constant outputs
-    else:
-      if pv is not core.abstract_unit:
-        spec = pxla.partitioned_sharding_spec(npart, parts, pv)
-        indices = pxla.spec_to_indices(pv.shape, spec)
-      else:
-        spec = indices = None
-      return pxla.aval_to_result_handler(spec, indices, pv)

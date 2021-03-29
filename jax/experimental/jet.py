@@ -589,6 +589,3 @@ def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
   del jvp_jaxpr_thunk
   return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
 jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
-
-
-deflinear(lax.tie_in_p)

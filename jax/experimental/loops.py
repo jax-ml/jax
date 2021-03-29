@@ -118,7 +118,6 @@ from jax import tree_util
 from jax import numpy as jnp
 from jax.interpreters import partial_eval as pe
 from jax._src.util import safe_map
-from jax.config import config
 
 
 class Scope(object):
@@ -291,25 +290,15 @@ class Scope(object):
   def start_subtrace(self):
     """Starts a nested trace, returns the Trace object."""
     # TODO: This follows the __enter__ part of core.new_main.
-    if config.omnistaging_enabled:
-      level = core.thread_local_state.trace_state.trace_stack.next_level()
-      main = core.MainTrace(level, pe.JaxprTrace)
-      core.thread_local_state.trace_state.trace_stack.push(main)
-      self._count_subtraces += 1
-      return pe.JaxprTrace(main, core.cur_sublevel())
-    else:
-      level = core.thread_local_state.trace_state.trace_stack.next_level(False)
-      main = core.MainTrace(level, pe.JaxprTrace)
-      core.thread_local_state.trace_state.trace_stack.push(main, False)
-      self._count_subtraces += 1
-      return pe.JaxprTrace(main, core.cur_sublevel())
+    level = core.thread_local_state.trace_state.trace_stack.next_level()
+    main = core.MainTrace(level, pe.JaxprTrace)
+    core.thread_local_state.trace_state.trace_stack.push(main)
+    self._count_subtraces += 1
+    return pe.JaxprTrace(main, core.cur_sublevel())
 
   def end_subtrace(self):
     # TODO: This follows the __exit__ part of core.new_main
-    if config.omnistaging_enabled:
-      core.thread_local_state.trace_state.trace_stack.pop()
-    else:
-      core.thread_local_state.trace_state.trace_stack.pop(False)
+    core.thread_local_state.trace_state.trace_stack.pop()
     self._count_subtraces -= 1
 
 

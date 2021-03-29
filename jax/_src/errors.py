@@ -322,6 +322,7 @@ class TracerArrayConversionError(JAXTypeError):
   abstract values, you may want to read :ref:`faq-different-kinds-of-jax-values`.
   """
   def __init__(self, tracer: "core.Tracer"):
+    # TODO(mattjj, jakevdp): use tracer._origin_msg() here
     super().__init__(
         "The numpy.ndarray conversion method __array__() was called on "
         f"the JAX Tracer object {tracer}")

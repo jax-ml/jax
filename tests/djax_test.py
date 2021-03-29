@@ -32,7 +32,6 @@ zip, unsafe_zip = safe_zip, zip
 jax.config.parse_flags_with_absl()
 
 
-@skipIf(not jax.config.omnistaging_enabled, "requires omnistaging")
 class DJaxTests(jtu.JaxTestCase):
 
   def test_identity_typechecks(self):
@@ -79,7 +78,6 @@ class DJaxTests(jtu.JaxTestCase):
     djax.typecheck_jaxpr(jaxpr)
 
 
-@skipIf(not jax.config.omnistaging_enabled, "requires omnistaging")
 @skipIf(jax.config.x64_enabled, "only 32bit for now")
 class DJaxXLATests(jtu.JaxTestCase):
 
@@ -123,7 +121,6 @@ class DJaxXLATests(jtu.JaxTestCase):
     self.assertAllClose(np.array(ans), expected, check_dtypes=False)
 
 
-@skipIf(not jax.config.omnistaging_enabled, "requires omnistaging")
 @skipIf(jax.config.x64_enabled, "only 32bit for now")
 class DJaxADTests(jtu.JaxTestCase):
 
@@ -160,7 +157,6 @@ class DJaxADTests(jtu.JaxTestCase):
     self.assertAllClose(np.array(z_dot), expected_z_dot, check_dtypes=False)
 
 
-@skipIf(not jax.config.omnistaging_enabled, "requires omnistaging")
 @skipIf(jax.config.x64_enabled, "only 32bit for now")
 class DJaxBatchingTests(jtu.JaxTestCase):
 

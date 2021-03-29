@@ -112,8 +112,6 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
   @jtu.ignore_warning(message=".*is an experimental.*")
   def testXmap(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("xmap requires omnistaging")
 
     f = jax.experimental.maps.xmap(
         lambda x: 0. / x,

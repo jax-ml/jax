@@ -20,7 +20,7 @@ import gc
 import os
 from random import shuffle
 from typing import Optional, cast
-from unittest import SkipTest, skipIf
+from unittest import SkipTest
 import warnings
 import weakref
 
@@ -51,17 +51,11 @@ prev_xla_flags = None
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 def all_bdims(*shapes, pmap):
-  if pmap and not config.omnistaging_enabled:
-    bdims = ((None, 0) for shape in shapes)
-  else:
-    bdims = (it.chain([cast(Optional[int], None)],
-                       range(len(shape) + 1))
-             for shape in shapes)
+  bdims = (it.chain([cast(Optional[int], None)], range(len(shape) + 1))
+           for shape in shapes)
   return (t for t in it.product(*bdims) if not all(e is None for e in t))
 
 def out_bdims(shape, pmap):
-  if pmap and not config.omnistaging_enabled:
-    return (0,)
   return (d[0] for d in all_bdims(shape, pmap=pmap) if d[0] is not None)
 
 
@@ -157,9 +151,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_slow_all_to_all_warning()
   def testTrees(self):
-    if not config.omnistaging_enabled:
-      self.skipTest("all_to_all doesn't work without omnistaging")
-
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
       n = lax.psum(1, axis_name)
@@ -217,9 +208,6 @@ class PmapTest(jtu.JaxTestCase):
       for split_axis, concat_axis in it.product(range(2), range(2)))
   @ignore_slow_all_to_all_warning()
   def testAllToAll(self, split_axis, concat_axis):
-    if not config.omnistaging_enabled:
-      self.skipTest("all_to_all doesn't work without omnistaging")
-
     pmap_in_axis = 0
     shape = (xla_bridge.device_count(),) * 3
     x = np.arange(np.prod(shape)).reshape(shape)
@@ -240,9 +228,6 @@ class PmapTest(jtu.JaxTestCase):
       for split_axis, concat_axis in it.product(range(2), range(2)))
   @ignore_slow_all_to_all_warning()
   def testAllToAllSplitAxis(self, split_axis, concat_axis):
-    if not config.omnistaging_enabled:
-      self.skipTest("all_to_all doesn't work without omnistaging")
-
     if xla_bridge.device_count() < 4:
       raise SkipTest("test requires at least four devices")
     pmap_in_axis = 0
@@ -620,8 +605,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_slow_all_to_all_warning()
   def testGradOfGather(self):
-    if not config.omnistaging_enabled:
-      self.skipTest("all_to_all doesn't work without omnistaging")
     @partial(pmap, axis_name='i')
     def f(x):
       return lax.all_gather(x, axis_name='i')
@@ -893,29 +876,18 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     f = pmap(lambda x: 3)
     x = jnp.arange(device_count + 1)
-    if config.omnistaging_enabled:
-      self.assertRaisesRegex(
-          ValueError,
-          (r"compiling computation that requires \d+ logical devices, "
-          r"but only \d+ XLA devices are available .*"),
-          lambda: f(x))
+    self.assertRaisesRegex(
+        ValueError,
+        (r"compiling computation that requires \d+ logical devices, "
+        r"but only \d+ XLA devices are available .*"),
+        lambda: f(x))
 
-      # TODO(mattjj): test error message with explicit devices
-      # f = pmap(lambda x: 3, devices=[xla_bridge.devices()[0]])
-      # x = jnp.arange(2)
-      # self.assertRaisesRegex(
-      #     ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
-      #     r"local devices are available.", lambda: f(x))
-    else:
-      self.assertRaisesRegex(
-          ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
-          r"local devices are available.", lambda: f(x))
-
-      f = pmap(lambda x: 3, devices=[xla_bridge.devices()[0]])
-      x = jnp.arange(2)
-      self.assertRaisesRegex(
-          ValueError, "Cannot replicate across 2 replicas because only 1 "
-          "local devices are available.", lambda: f(x))
+    # TODO(mattjj): test error message with explicit devices
+    # f = pmap(lambda x: 3, devices=[xla_bridge.devices()[0]])
+    # x = jnp.arange(2)
+    # self.assertRaisesRegex(
+    #     ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
+    #     r"local devices are available.", lambda: f(x))
 
   def testNestedPmapConstant(self):
     if xla_bridge.device_count() == 1:
@@ -967,35 +939,22 @@ class PmapTest(jtu.JaxTestCase):
     f = pmap(pmap(lambda x: 3))
     shape = (2, xla_bridge.device_count() // 2 + 1, 3)
     x = jnp.arange(prod(shape)).reshape(shape)
-    if config.omnistaging_enabled:
-      self.assertRaisesRegex(
-          ValueError,
-          (r"compiling computation that requires \d+ logical devices, "
-          r"but only \d+ XLA devices are available .*"),
-          lambda: f(x))
+    self.assertRaisesRegex(
+        ValueError,
+        (r"compiling computation that requires \d+ logical devices, "
+        r"but only \d+ XLA devices are available .*"),
+        lambda: f(x))
 
-      # TODO(mattjj): check error message with explicit devices
-      # if xla_bridge.device_count() > 1:
-      #   f = pmap(pmap(lambda x: 3), devices=xla_bridge.devices()[:-1])
-      #   shape = (2, xla_bridge.device_count() // 2, 3)
-      #   x = jnp.arange(prod(shape)).reshape(shape)
-      #   self.assertRaisesRegex(
-      #       ValueError,
-      #       (r"compiling computation that requires \d+ replicas, "
-      #        r"but only \d+ XLA devices are available"),
-      #       lambda: f(x))
-    else:
-      self.assertRaisesRegex(
-          ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
-          r"local devices are available.", lambda: f(x))
-
-      if xla_bridge.device_count() > 1:
-        f = pmap(pmap(lambda x: 3), devices=xla_bridge.devices()[:-1])
-        shape = (2, xla_bridge.device_count() // 2, 3)
-        x = jnp.arange(prod(shape)).reshape(shape)
-        self.assertRaisesRegex(
-            ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
-            r"local devices are available.", lambda: f(x))
+    # TODO(mattjj): check error message with explicit devices
+    # if xla_bridge.device_count() > 1:
+    #   f = pmap(pmap(lambda x: 3), devices=xla_bridge.devices()[:-1])
+    #   shape = (2, xla_bridge.device_count() // 2, 3)
+    #   x = jnp.arange(prod(shape)).reshape(shape)
+    #   self.assertRaisesRegex(
+    #       ValueError,
+    #       (r"compiling computation that requires \d+ replicas, "
+    #        r"but only \d+ XLA devices are available"),
+    #       lambda: f(x))
 
   def testCollectiveConstant(self):
     device_count = xla_bridge.device_count()
@@ -1049,8 +1008,6 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(f('i')(x), expected_j.T, check_dtypes=False)
 
   def testAxisIndexNd(self):
-    if not config.omnistaging_enabled:
-      self.skipTest("axis_index doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
     if device_count < 4:
       raise SkipTest("test requires at least four devices")
@@ -1149,8 +1106,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_slow_all_to_all_warning()
   def testPswapaxes(self):
-    if not config.omnistaging_enabled:
-      self.skipTest("all_to_all doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
     shape = (device_count, 3, device_count, 5)
     x = np.arange(prod(shape)).reshape(shape)
@@ -1161,8 +1116,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_slow_all_to_all_warning()
   def testGradOfPswapaxes(self):
-    if not config.omnistaging_enabled:
-      self.skipTest("all_to_all doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
     shape = (device_count, 1, device_count)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -1179,8 +1132,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_slow_all_to_all_warning()
   def testAllToAllReplicaGroups(self):
-    if not config.omnistaging_enabled:
-      self.skipTest("all_to_all doesn't work without omnistaging")
     # If num_devices = 4, these would be the inputs/outputs:
     # input = [[0, 1], [2, 3], [4, 5], [6, 7]]
     # axis_index_groups = [[0, 1], [2, 3]]
@@ -1210,8 +1161,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_slow_all_to_all_warning()
   def testGradOfAllToAllReplicaGroups(self):
-    if not config.omnistaging_enabled:
-      self.skipTest("all_to_all doesn't work without omnistaging")
     device_count = xla_bridge.device_count()
     if device_count % 2 != 0:
       raise SkipTest('test requires an even number of devices')
@@ -1254,7 +1203,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_xmap_warning()
   def testSoftPmapBatchMatmul(self):
-    if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
     xs = np.arange(n * 2 * 3).reshape(n, 2, 3)
     ys = np.arange(n * 3 * 4).reshape(n, 3, 4)
@@ -1264,7 +1212,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_xmap_warning()
   def testSoftPmapBatchMatmulJit(self):
-    if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
     xs = np.arange(n * 2 * 3).reshape(n, 2, 3)
     ys = np.arange(n * 3 * 4).reshape(n, 3, 4)
@@ -1274,7 +1221,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_xmap_warning()
   def testSoftPmapPsumConstant(self):
-    if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
     def f(_):
       return lax.psum(1, 'i')
@@ -1284,7 +1230,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_xmap_warning()
   def testSoftPmapPsum(self):
-    if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
     def f(x):
       return x / lax.psum(x, 'i')
@@ -1294,7 +1239,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_xmap_warning()
   def testSoftPmapAxisIndex(self):
-    if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
     def f(x):
       return x * lax.axis_index('i')
@@ -1304,7 +1248,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_xmap_warning()
   def testSoftPmapOfJit(self):
-    if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     n = 4 * xla_bridge.device_count()
     def f(x):
       return 3 * x
@@ -1342,7 +1285,6 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_xmap_warning()
   def testSoftPmapDevicePersistence(self):
-    if not config.omnistaging_enabled: raise SkipTest("requires omnistaging")
     device_count = xla_bridge.device_count()
     shape = (2 * 2 * device_count, 2, 3)
 
@@ -1651,8 +1593,6 @@ class PmapTest(jtu.JaxTestCase):
     mapped_fn(indices)  # doesn't crash
 
   @ignore_xmap_warning()
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testPdotBasic(self):
     num_devices = jax.device_count()
 
@@ -1679,8 +1619,6 @@ class PmapTest(jtu.JaxTestCase):
       for axis in range(len(shape))
   )
   def testArgAllReduce(self, shape, dtype, axis, collective, bulk_op):
-    if not config.omnistaging_enabled:
-      self.skipTest("test requires omnistaging")
     if xla_bridge.device_count() < shape[axis]:
       raise SkipTest(f"test requires at least {shape[axis]} devices")
     if (jtu.device_under_test() == 'cpu' and
@@ -1757,8 +1695,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
        "collective": collective}
       for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testCollectivesWithVmap(self, collective):
     def f(map1, map2):
       @partial(map1, axis_name='i')
@@ -1775,8 +1711,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testPPermuteWithVmap(self):
     perm = [(0, 1), (1, 0)]
 
@@ -1796,8 +1730,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
       for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   @ignore_slow_all_to_all_warning()
   def testAllToAllInVmap(self, split_axis, concat_axis, vmap_axis):
     def f(x):
@@ -1867,8 +1799,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(3), range(3)))
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   @ignore_slow_all_to_all_warning()
   def testAllToAllVsVmap(self, split_axis, concat_axis):
     def f(x):
@@ -1884,8 +1814,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
        "axes": axes, "split_axis": split_axis, "concat_axis": concat_axis}
       for axes, split_axis, concat_axis
       in it.product([('i', 'j'), ('j', 'i')], range(3), range(3)))
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   @ignore_slow_all_to_all_warning()
   def testAllToAllMultipleAxesVsVmap(self, axes, split_axis, concat_axis):
     raise SkipTest("multi-axis all_to_all broken after #4835")  # TODO(mattjj,apaszke)
@@ -1900,8 +1828,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(pmap(pmap(f, axis_name='j'), axis_name='i')(x),
                         vmap(vmap(f, axis_name='j'), axis_name='i')(x))
 
-  @skipIf(not jax.config.omnistaging_enabled,
-      "vmap collectives only supported when omnistaging is enabled")
   def testAllGatherWithVmap(self):
     def f(map2):
       @partial(jax.pmap, axis_name='i')
@@ -2062,7 +1988,6 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     expected = np.sin(x + 3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
   def testPmapInAxesBasic(self):
     @partial(pmap, in_axes=(1, 2))
     def f(x, y):
@@ -2075,7 +2000,6 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     self.assertAllClose(f(x, y),
                         jnp.sin(x.transpose((1, 0, 2)) + y.transpose((2, 0, 1))))
 
-  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
   def testPmapInAxesGrad(self):
     def f(x, y, z):
       return jnp.sin(x + y + z)
@@ -2096,7 +2020,6 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(lambda args: fp(*args).sum())((x, y, z)),
                         jax.grad(lambda args: fv(*args).sum())((x, y, z)))
 
-  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
   def testPmapOutAxesBasic(self):
     @partial(pmap, in_axes=(1, None), out_axes=(2, None))
     def f(x, y):
@@ -2109,7 +2032,6 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     self.assertAllClose(f(x, y),
                         (jnp.sin(x.transpose((1, 0, 2)) + y).transpose((1, 2, 0)), y * 2))
 
-  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{in_axes}_{out_axes}",
        "in_axes": in_axes, "out_axes": out_axes}
@@ -2128,7 +2050,6 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     jtu.check_grads(pmap(f, in_axes=in_axes, out_axes=out_axes), args,
                     order=2, atol=2e-2, rtol=2e-2, eps=1e-3)
 
-  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
   def testPmapPostProcess(self):
     def mk_case(map_fun):
       def f(x, y):

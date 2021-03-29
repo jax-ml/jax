@@ -25,18 +25,15 @@ import numpy as np
 from jax import core
 from jax import dtypes
 from jax import tree_util
-from jax._src import source_info_util
 from . import lax
 from jax.core import ShapedArray, AxisName, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
 from jax._src.util import partial, unzip2, prod, canonicalize_axis, safe_map, moveaxis
 from jax.lib import xla_client as xc
 from jax.lib import xla_bridge as xb
-from jax.config import config
 from jax._src.numpy import lax_numpy
 
 xops = xc.ops
@@ -1044,15 +1041,9 @@ def all_gather(x, axis_name, *, axis_index_groups=None):
     [ 4.  5.  6.  7.]]
   """
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
-  # The all_gather primitive doesn't work when omni-staging is disabled.
-  if not config.omnistaging_enabled:
-    return _all_gather_via_psum(x, all_gather_dimension=0, axis_name=axis_name,
-                                axis_index_groups=axis_index_groups, axis_size=axis_size)
-
-  def bind(x):
-    return all_gather_p.bind(x, all_gather_dimension=0, axis_name=axis_name,
-                             axis_index_groups=axis_index_groups, axis_size=axis_size)
-
+  bind = partial(all_gather_p.bind, all_gather_dimension=0,
+                 axis_name=axis_name, axis_index_groups=axis_index_groups,
+                 axis_size=axis_size)
   return tree_util.tree_map(bind, x)
 
 def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
@@ -1337,42 +1328,3 @@ xla.parallel_translations[pgather_p] = _pgather_parallel_translation
 batching.primitive_batchers[pgather_p] = _pgather_batcher
 batching.collective_rules[pgather_p] = _pgather_collective_batcher
 core.axis_substitution_rules[pgather_p] = partial(_subst_all_names_in_param, 'axes')
-
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global axis_index
-
-  psum_p.bind = partial(core.Primitive.bind, psum_p)  # type: ignore
-  psum_p.def_impl(partial(pxla.apply_parallel_primitive, psum_p))  # type: ignore
-  pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)  # type: ignore
-
-  def _axis_index_bind(*, axis_name):
-    dynamic_axis_env = pxla._thread_local_state.dynamic_axis_env
-    frame = dynamic_axis_env[axis_name]
-    sizes = dynamic_axis_env.sizes[:dynamic_axis_env.index(frame)+1]
-    nreps = dynamic_axis_env.nreps
-    trace = frame.pmap_trace
-
-    out_aval = _axis_index_abstract_eval(
-        nreps=nreps, sizes=sizes, axis_name=axis_name)
-    out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
-    eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
-                            dict(nreps=nreps, sizes=sizes, axis_name=axis_name),
-                            source_info_util.current())
-    out_tracer.recipe = eqn
-
-    return out_tracer
-
-  def _axis_index_translation_rule(c, nreps, sizes, axis_name):
-    div = xb.constant(c, np.array(nreps // prod(sizes), dtype=np.uint32))
-    mod = xb.constant(c, np.array(sizes[-1], dtype=np.uint32))
-    unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
-    return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
-
-  def _axis_index_abstract_eval(*, nreps, sizes, axis_name):
-    return ShapedArray((), np.int32, named_shape={axis_name: sizes[-1]})
-
-  axis_index_p.def_custom_bind(_axis_index_bind)
-  axis_index_p.def_abstract_eval(_axis_index_abstract_eval)
-  xla.translations[axis_index_p] = _axis_index_translation_rule

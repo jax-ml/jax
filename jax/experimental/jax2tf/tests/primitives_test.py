@@ -129,8 +129,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     all_primitives = tuple(sorted(all_primitives, key=str))
     for p in all_primitives:
-      # TODO: remove tie_in once omnistaging is on by default
-      if p.name == "axis_index" or p.name == "tie_in":
+      if p.name == "axis_index":
         continue
       if p.name in tf_not_yet_impl:
         self.assertNotIn(

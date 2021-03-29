@@ -485,9 +485,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_omnistaging(self):
     # See https://github.com/google/jax/issues/5206
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     key_list = [None]
 
     def init():
@@ -1551,10 +1548,7 @@ class APITest(jtu.JaxTestCase):
     def f():
       return jnp.zeros((3, 4))
 
-    if config.omnistaging_enabled:
-      xla_comp = api.xla_computation(f)()
-    else:
-      xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
+    xla_comp = api.xla_computation(f)()
     out_shape, = xla_comp.program_shape().result_shape().tuple_shapes()
     self.assertEqual(out_shape.dimensions(), (3, 4))
 
@@ -1608,8 +1602,6 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('sharding={{devices=[4,1]0,1,2,3}, {replicated}}', hlo_text)
 
   def test_xla_computation_psum_constant(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test requires omnistaging")
     f = lambda: jax.lax.psum(1, "i")
     api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
 
@@ -1856,11 +1848,10 @@ class APITest(jtu.JaxTestCase):
         api.pmap(f, 'i')(x, x)
 
     # With in_axes and out_axes
-    if config.omnistaging_enabled:
-      for x_in, y_in, x_out, y_out in it.product(*((0, 1, 2) for _ in range(4))):
-        with jtu.assert_num_jit_and_pmap_compilations(1):
-          for _ in range(2):
-            api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
+    for x_in, y_in, x_out, y_out in it.product(*((0, 1, 2) for _ in range(4))):
+      with jtu.assert_num_jit_and_pmap_compilations(1):
+        for _ in range(2):
+          api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
 
     # Forward-mode AD on the outside
     with jtu.assert_num_jit_and_pmap_compilations(1):
@@ -1962,7 +1953,7 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
     subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
-    self.assertLen(inner_jaxpr.eqns, 2 if config.omnistaging_enabled else 3)
+    self.assertLen(inner_jaxpr.eqns, 2)
     self.assertEqual(inner_jaxpr.eqns[-2].primitive.name, 'mul')
     self.assertEqual(inner_jaxpr.eqns[-1].primitive.name, 'add')
 
@@ -2043,9 +2034,6 @@ class APITest(jtu.JaxTestCase):
       api.jit(func1)(2.)
 
   def test_escaped_tracer_omnistaging(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test is omnistaging-specific")
-
     count = 1
 
     @jit
@@ -2067,9 +2055,6 @@ class APITest(jtu.JaxTestCase):
       g()
 
   def test_escaped_tracer_omnistaging_top_trace(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test is omnistaging-specific")
-
     count = 1
 
     def f(_, __):
@@ -2117,16 +2102,6 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('constant.1 = f32[2]{0} constant({7, 14})', hlo_lines)
     self.assertNotIn('constant.2 = f32[2]{0} constant({7, 14})', hlo_lines)
 
-  def test_omnistaging_flag(self):
-    if FLAGS.jax_omnistaging:
-      jaxpr = api.make_jaxpr(lambda: jnp.add(1, 1))()
-      self.assertLen(jaxpr.jaxpr.eqns, 1)
-    else:
-      # omnistaging can be enabled programmatically without setting the flag,
-      # but that shouldn't happen in tests
-      jaxpr = api.make_jaxpr(lambda: jnp.add(1, 1))()
-      self.assertLen(jaxpr.jaxpr.eqns, 0)
-
   def test_eval_context(self):
     @jit
     def f():
@@ -2136,9 +2111,6 @@ class APITest(jtu.JaxTestCase):
     f()  # doesn't crash
 
   def test_concrete_error_because_arg(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test is omnistaging-specific")
-
     @jax.jit
     def f(x, y):
       if x > y:
@@ -2151,9 +2123,6 @@ class APITest(jtu.JaxTestCase):
       f(1, 2)
 
   def test_concrete_error_because_const(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test is omnistaging-specific")
-
     @jax.jit
     def f():
       assert jnp.add(1, 1) > 0
@@ -2165,18 +2134,12 @@ class APITest(jtu.JaxTestCase):
   def test_xla_computation_zeros_doesnt_device_put(self):
     raise unittest.SkipTest("broken test")  # TODO(mattjj): fix
 
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test is omnistaging-specific")
-
     with jtu.count_device_put() as count:
       api.xla_computation(lambda: jnp.zeros(3))()
     self.assertEqual(count[0], 0)
 
   def test_join_concrete_arrays_with_omnistaging(self):
     # https://github.com/google/jax/issues/4622
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test is omnistaging-specific")
-
     x = jnp.array([1., 2., 3.])
     y = jnp.array([1., 2., 4.])
 
@@ -2223,9 +2186,6 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(x, jax.interpreters.xla.Token)
 
   def test_leak_checker_catches_a_jit_leak(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       lst = []
 
@@ -2238,9 +2198,6 @@ class APITest(jtu.JaxTestCase):
         f(3)
 
   def test_leak_checker_catches_a_pmap_leak(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       lst = []
 
@@ -2253,9 +2210,6 @@ class APITest(jtu.JaxTestCase):
         f(np.ones(1))
 
   def test_leak_checker_catches_a_grad_leak(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       lst = []
 
@@ -2267,9 +2221,6 @@ class APITest(jtu.JaxTestCase):
         api.grad(f)(3.)
 
   def test_leak_checker_avoids_false_positives(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       @jit
       def f(x):
@@ -2285,9 +2236,6 @@ class APITest(jtu.JaxTestCase):
       api.vmap(f)(np.ones((1, 1)))  # doesn't crash
 
   def test_leak_checker_catches_a_scan_leak(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       lst = []
 
@@ -2297,17 +2245,11 @@ class APITest(jtu.JaxTestCase):
         lax.scan(to_scan, 1., np.arange(3.))
 
   def test_leak_checker_avoids_false_positives_scan(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       to_scan = lambda c, x: (jnp.sin(c), None)
       lax.scan(to_scan, 1., np.arange(3.))  # doesn't crash
 
   def test_leak_checker_avoids_false_positives_scan_jvp(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       to_scan = lambda c, x: (c, None)
 
@@ -2316,9 +2258,6 @@ class APITest(jtu.JaxTestCase):
       api.jvp(f, (3.,), (1.,))  # doesn't crash
 
   def test_leak_checker_avoids_false_positives_scan_vmap(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       to_scan = lambda c, _: (1., None)
 
@@ -2328,9 +2267,6 @@ class APITest(jtu.JaxTestCase):
       f(np.arange(5.))  # doesn't crash
 
   def test_leak_checker_avoids_false_positives_scan_vmap_2(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       to_scan = lambda c, _: (c, None)
 
@@ -2340,9 +2276,6 @@ class APITest(jtu.JaxTestCase):
       f(np.arange(5.))  # doesn't crash
 
   def test_leak_checker_catches_a_sublevel_leak(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     with jax.checking_leaks():
       @jit
       def f(x):
@@ -2804,25 +2737,8 @@ class RematTest(jtu.JaxTestCase):
 
     jax.grad(scan_bug)(1.0)  # doesn't crash
 
-  def test_remat_jit_static_argnum(self):
-    # https://github.com/google/jax/issues/2833
-    if config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works without omnistaging")  # see next test
-
-    def f(a_bool, y):
-      if a_bool:
-        return y + 1
-      else:
-        return y
-
-    api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
-
-
   def test_remat_jit_static_argnum_omnistaging(self):
     # https://github.com/google/jax/issues/2833
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")  # see previous test
-
     def named_call(f):
       def named_f(*args):
         f_ = lu.wrap_init(lambda: (f(*args),))
@@ -2894,9 +2810,6 @@ class RematTest(jtu.JaxTestCase):
 
   def test_escaped_tracer_remat(self):
     # b/169779185
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     def f():
       seq = [jnp.zeros([])]
       def g():
@@ -2926,18 +2839,11 @@ class JaxprTest(jtu.JaxTestCase):
     def fun(x):
       return (x, 1., np.zeros(1))
 
-    if config.omnistaging_enabled:
-      expected = """
-      { lambda a ; b.
-      let
-      in (b, 1.0, a) }
-      """
-    else:
-      expected = """
-      { lambda b ; a.
-      let
-      in (a, 1.0, b) }
-      """
+    expected = """
+    { lambda a ; b.
+    let
+    in (b, 1.0, a) }
+    """
 
     jaxpr = api.make_jaxpr(fun)(0.)
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
@@ -2949,43 +2855,21 @@ class JaxprTest(jtu.JaxTestCase):
                       lambda xt: xt + x,
                       x + 2.,
                       lambda xf: xf - x)
-    if config.omnistaging_enabled:
-      expected = """
-      { lambda  ; a.
-        let b = ge a 0.0
-            c = add a 1.0
-            d = add a 2.0
-            e = convert_element_type[ new_dtype=int32
-                                      weak_type=False ] b
-            f = cond[ branches=( { lambda  ; e_ a b c.
-                                   let d = sub c a
-                                   in (d,) }
-                                 { lambda  ; a f_ b c.
-                                   let d = add b a
-                                   in (d,) } )
-                      linear=(False, False, False, False) ] e a a c d
-        in (f,) }
-        """
-    else:
-      expected = """
-      { lambda  ; a.
-        let b = ge a 0.0
-            c = convert_element_type[ new_dtype=int32
-                                      weak_type=False ] b
-            d = convert_element_type[ new_dtype=float32
-                                      weak_type=False ] a
-            e = convert_element_type[ new_dtype=float32
-                                      weak_type=False ] a
-            f = add a 1.0
-            g = add a 2.0
-            h = cond[ branches=( { lambda  ; e_ c a b.
-                                   let d = sub b c
-                                   in (d,) }
-                                 { lambda  ; c f_ a b.
-                                   let d = add a c
-                                   in (d,) } )
-                      linear=(False, False, False, False) ] c d e f g
-        in (h,) }
+    expected = """
+    { lambda  ; a.
+      let b = ge a 0.0
+          c = add a 1.0
+          d = add a 2.0
+          e = convert_element_type[ new_dtype=int32
+                                    weak_type=False ] b
+          f = cond[ branches=( { lambda  ; e_ a b c.
+                                  let d = sub c a
+                                  in (d,) }
+                                { lambda  ; a f_ b c.
+                                  let d = add b a
+                                  in (d,) } )
+                    linear=(False, False, False, False) ] e a a c d
+      in (f,) }
       """
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
@@ -3005,18 +2889,12 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertEqual(shape_tree, expected)
 
   def test_make_jaxpr_axis_env(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     def f(x):
       return x - lax.psum(x, 'i')
     jaxpr = api.make_jaxpr(f, axis_env=[('i', 4)])(2)
     self.assertIn('psum', str(jaxpr))
 
   def test_make_jaxpr_named(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     def f(x):
       return x - lax.psum(x, 'i')
 
@@ -3276,9 +3154,6 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_tracers_error_message(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     def f(x):
       @api.custom_jvp
       def g(y):
@@ -3326,9 +3201,6 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_nondiff_arg_hiding_jvp_tracer(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     def f(x):
       @partial(api.custom_jvp, nondiff_argnums=(0,))
       def g(h, x):
@@ -3600,9 +3472,6 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_nondiff_argnums_vmap_tracer(self):
     # https://github.com/google/jax/issues/3964
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     @partial(jax.custom_jvp, nondiff_argnums=(0, 2))
     def sample(shape, param, seed):
       return jax.random.uniform(key=seed, shape=shape, minval=param)
@@ -3622,9 +3491,6 @@ class CustomJVPTest(jtu.JaxTestCase):
             (1.,), (1.,))
 
   def test_fun_with_nested_calls_2(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     def call(f, *args):
       f = api.custom_jvp(f)
       f.defjvp(lambda primals, tangents: (f(*primals), sum(tangents)))
@@ -3647,9 +3513,6 @@ class CustomJVPTest(jtu.JaxTestCase):
     api.vmap(fun_with_nested_calls_2)(jnp.arange(3.))
 
   def test_closure_with_vmap(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("test only works with omnistaging")
-
     # https://github.com/google/jax/issues/3822
     alpha = np.float32(2.)
 
@@ -4788,9 +4651,6 @@ class InvertibleADTest(jtu.JaxTestCase):
 
   @jtu.ignore_warning(message="Values that an @invertible function closes")
   def test_invertible_basic(self):
-    if not config.omnistaging_enabled:
-      raise unittest.SkipTest("Test requires omnistaging")
-
     def f(x):
       return (jnp.exp(x) * 4) * x
 

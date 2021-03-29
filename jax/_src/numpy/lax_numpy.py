@@ -2306,12 +2306,7 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 
   normalizer = sum(logical_not(isnan(a)), axis=axis, keepdims=keepdims)
   normalizer = normalizer - ddof
-  if config.omnistaging_enabled:
-    normalizer_mask = lax.le(normalizer, 0)
-  else:
-    zero = lax.full_like(normalizer, 0, shape=())
-    normalizer_mask = lax.le(normalizer, zero)
-
+  normalizer_mask = lax.le(normalizer, 0)
   result = nansum(centered, axis, keepdims=keepdims)
   result = where(normalizer_mask, nan, result)
   divisor = where(normalizer_mask, 1, normalizer)
@@ -4353,8 +4348,6 @@ def _take_along_axis(arr, indices, axis):
       j += 1
     elif idx_shape[i] != 1:
       iota = lax.iota(_dtype(indices), out_shape[i])
-      if not config.omnistaging_enabled:
-        iota = lax.tie_in(arr, iota)
       iota = lax.broadcast_in_dim(iota, gather_index_shape, (j,))
       gather_indices.append(iota)
       slice_sizes.append(1)

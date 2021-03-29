@@ -379,7 +379,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "grad")
 
-  @jtu.skip_on_flag('jax_omnistaging', False)
   def test_convert_nullary_func(self):
     # Even nullary functions are converted to TF (as opposed to constant-folded
     # in JAX prior to conversion).
@@ -389,7 +388,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf_graph = f_tf.get_concrete_function().graph.as_graph_def()
     self.assertIn('op: "Sin"', str(f_tf_graph))
 
-  @jtu.skip_on_flag('jax_omnistaging', False)
   def test_convert_of_nested_independent_jit(self):
     def func(x):
       def inner1(y):
@@ -449,7 +447,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         ValueError, "convert must be used outside all JAX transformations"):
       self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
 
-  @jtu.skip_on_flag('jax_omnistaging', False)
   def test_name_scope(self):
     log = []
 

@@ -550,13 +550,8 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   # (in this case via partial_eval) before we call into backward_pass again.
   typed_call_jaxpr = core.ClosedJaxpr(call_jaxpr, [])
   unknowns = map(is_undefined_primal, primals_in)
-  if config.omnistaging_enabled:
-    primal_jaxpr, tangent_jaxpr, out_unknowns = \
-      pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True)  # type: ignore
-  else:
-    primal_jaxpr, tangent_jaxpr, out_unknowns = \
-      pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True,
-                            trace_type=None)  # type: ignore
+  primal_jaxpr, tangent_jaxpr, out_unknowns = \
+    pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True)  # type: ignore
 
   def do_transpose(primals_in, cotangents_in):
     # NOTE: This is passing in undefined primals in place of tangent arguments, but it
@@ -706,12 +701,7 @@ def defvjp_all(prim, custom_vjp):
       primals_out = [primals_out]
     out_avals = [raise_to_shaped(get_aval(x)) for x in primals_out]
     ct_pvals = [pe.PartialVal.unknown(aval) for aval in out_avals]
-    if config.omnistaging_enabled:
-      jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals, instantiate=True)
-    else:
-      with core.initial_style_staging():  # type: ignore
-        jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals,
-                                          instantiate=True)
+    jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals, instantiate=True)
     tangents_out = fun_lin_p.bind(*it.chain(res, tangents), trans_jaxpr=jaxpr,
                                   num_res=len(res), out_avals=out_avals)
     return primals_out + tangents_out
@@ -766,17 +756,3 @@ class CustomVJPException(Exception):
            "closed-over value into the custom_vjp function as an argument, and "
            "adapting the custom_vjp fwd and bwd rules.")
     super().__init__(msg)
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global jvp_jaxpr
-
-  def jvp_jaxpr(jaxpr, nonzeros, instantiate):
-    assert len(jaxpr.in_avals) == len(nonzeros)
-    f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
-    f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
-    tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
-    avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
-    pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
-    jaxpr_out, _, consts = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
-    return core.ClosedJaxpr(jaxpr_out, consts), out_nonzeros()

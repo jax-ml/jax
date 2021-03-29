@@ -76,7 +76,7 @@ class InfeedTest(jtu.JaxTestCase):
       y, token = lax.infeed(
           token, shape=jax.ShapedArray((3, 4), jnp.float32))
       token = lax.outfeed(token, y + np.float32(1))
-      return x - 1 if config.omnistaging_enabled else lax.tie_in(token, x - 1)
+      return x - 1
 
     x = np.float32(7.5)
     y = np.random.randn(3, 4).astype(np.float32)
@@ -101,7 +101,7 @@ class InfeedTest(jtu.JaxTestCase):
     def f(n):
       token = lax.create_token(n)
       token = lax.fori_loop(0, n, doubler, token)
-      return n if config.omnistaging_enabled else lax.tie_in(token, n)
+      return n
 
     device = jax.local_devices()[0]
     n = 10
