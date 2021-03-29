@@ -3,10 +3,10 @@
 This package provides experimental support for interoperation between JAX and TensorFlow.
 There are two interoperation directions: 
 
-- `jax2tf.convert`: using JAX functions in a TensorFlow context, e.g., 
-for eager or graph execution, or for saving as a SavedModel; and 
-- `call_tf`: using TensorFlow  functions in a JAX context, e.g., to use a
-TensorFlow library or a SavedModel. 
+- `jax2tf.convert`: for using JAX functions in a TensorFlow context, e.g.,
+for eager or graph execution, or for saving as a TensorFlow SavedModel; and
+- `jax2tf.call_tf`: for using TensorFlow  functions in a JAX context, e.g., to call a
+TensorFlow library or a SavedModel inside a JAX function.
 
 The `jax2tf.convert` mechanism can wrap a function
 written in JAX, possibly including JAX transformations, and turn it into
@@ -17,7 +17,7 @@ TensorFlow eager mode, or stage it out as a TensorFlow graph, even save it
 as a SavedModel for archival, or for use with TensorFlow tools such as serving stack,
 or TensorFlow Hub.
 
-This package also contains the `call_tf` mechanism to call TensorFlow functions
+This package also contains the `jax2tf.call_tf` mechanism to call TensorFlow functions
 from JAX. These functions can be called in JAX's op-by-op execution mode,
 in which case the callee is executed in eager mode, or in JAX's jit (staged) context,
 in which case the callee is compiled to XLA and embedded in JAX's staged XLA. 
@@ -34,7 +34,7 @@ be JIT-compiled by design, we can round-trip from JAX to TensorFlow
 
 We describe below some general concepts and capabilities, first for 
 `jax2tf.convert` and [later](#calling-tensorflow-functions-from-jax)
-for `call_tf`.
+for `jax2tf.call_tf`.
 
 More involved examples, including using jax2tf with
 Flax models and their use with TensorFlow Hub and Keras, are described in the
@@ -92,9 +92,8 @@ restored_model = tf.saved_model.load('/some/directory')
 ```
 
 An important point is that in the above code snippet **everything is standard
-TensorFlow code. In particular, the saving of the model is independent of JAX,
-and one can therefore set metadata and assets as needed for their application,
-as if the saved function had been written directly in TensorFlow**.
+TensorFlow code. In particular, the saving of the model is not directly part
+of the jax2tf API, and the user has full control over how to create the SavedModel**.
 
 Just like for regular TensorFlow functions, it is possible to include in the
 SavedModel multiple versions of a function for different input shapes, by
@@ -107,36 +106,22 @@ my_model.f(tf.ones([16, 28, 28]))  # a batch size of 16
 tf.saved_model.save(my_model, '/some/directory')
 ```
 
-For examples of how to save a Flax or Haiku model as a SavedModel see the 
+For examples of how to save a Flax model as a SavedModel see the
 [examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
 
 
 ## Differentiation
 
-The converted code supports differentiation from TensorFlow.
-The main challenge with TensorFlow-differentiation of the converted code is that some
-of the JAX primitives or functions that were used in the original JAX code might
-have had JAX custom gradients. One example is the ``jax.nn.relu``, which
-at 0 has a JAX custom gradient of 0, but the primitive-by-primitive conversion
-to TensorFlow is not mathematically differentiable at 0 and may generate another value. In this
-particular case the TensorFlow differentiation of the raw conversion returns 1.
-If we were to use ``tf.nn.relu``, then we would get a correct custom TensorFlow gradient of 0,
-because ``tf.nn.relu`` has a TensorFlow custom gradient.
-
-Other challenges for differentiation are that some of the TensorFlow ops used in translation
-do not yet have differentiation rules defined.
-For other ops, we would have to ensure that they match the JAX differentiation rules.
-
-All of these problems are solved by having the jax2tf converter
-annotate the converted
-function with a ``tf.custom_gradient`` that, upon TensorFlow differentiation,
-will lazily
+The converted code supports differentiation from TensorFlow. In order to
+ensure that the result of TensorFlow differentiation is identical to the
+one that JAX differentiation would produce, the jax2tf converter will
+annotate the converter function with a ``tf.custom_gradient`` that,
+upon TensorFlow differentiation, will lazily
 call into JAX to compute the ``jax.vjp`` of the converted function, followed by
-jax2tf conversion.
-This ensures that JAX’s differentiation uses the JAX rules and custom gradients.
-In particular, TensorFlow’s internal op differentiation rules will not be
-used at all, and we need not worry about ops not having differentiation rules
-that match JAX's.
+jax2tf conversion. This ensures that ultimately it is JAX that performs the
+differentiation, thus respecting any custom gradients that may be present
+in the original function.
+
 The jax2tf converter has an option ``with_gradient=False`` to skip the
 custom gradients and wrap instead the converted function with
 ``tf.raw_ops.PreventGradient`` to generated an error in case a gradient
@@ -145,16 +130,28 @@ computation is attempted.
 Currently, there is a bug that prevents using custom gradients with SavedModel
 (see [Caveats](#caveats) below).
 
-## Running on GPU
-
-To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
-for CUDA. One must be mindful to install a version of CUDA that is compatible
-with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
-[TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
-
-As of today, the tests are run using `tf_nightly==2.5.0-dev20210315`.
-
 ## Caveats
+
+### Incomplete TensorFlow data type coverage
+
+There are a number of cases when the TensorFlow ops that are used by the
+jax2tf converter are not supported by TensorFlow for fewer data types than JAX.
+There is an
+[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+
+### Missing features
+
+There is currently no support for replicated (e.g. `pmap`) or multi-device
+(e.g. `sharded_jit`) functions. The collective operations are not yet handled.
+
+### No SavedModel fine-tuning
+
+Currently, TensorFlow SavedModel does not properly save the `tf.custom_gradient`.
+It does save however some attributes that on model restore result in a warning
+that the model might not be differentiable, and trigger an error if differentiation
+is attempted. The plan is to fix this. Note that if no gradients are requested,
+the PreventGradient ops will be saved along with the converted code and will
+give a nice error if differentiation of the converted code is attempted.
 
 ### TensorFlow XLA ops
 
@@ -181,7 +178,7 @@ There are several drawbacks of using TFXLA ops:
    * These ops are not yet recognized by tools that process
    tf.Graph, e.g., TensorFlow.js converter.
 
-We use the following such TFXLA:
+We use the following TFXLA ops:
 
    * `XlaPad` (wraps XLA Pad operator). We use this instead of `tf.pad` in order to
      support `lax.pad` interior padding (dilation) or negative edge padding.
@@ -197,36 +194,34 @@ We use the following such TFXLA:
    * `XlaReduceWindow` (wraps XLA ReduceWindow operator). These are used
      for `lax.reduce_window_sum_p`, `lax.reduce_window_min_p`,
      `lax.reduce_window_max_p`, and `lax.reduce_window_p`.
-   * `XlaSort` (wraps XLA Sort operator).
-
-### Incomplete data type coverage
-
-A small number of JAX primitives are converted only
-for certain data types, when the required TensorFlow ops are not implemented for some
-data types on certain devices. There is an
-[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
-
-### Missing features
-
-There is currently no support for replicated (e.g. `pmap`) or multi-device
-(e.g. `sharded_jit`) functions. The collective operations are not yet handled.
-
-### No SavedModel fine-tuning
-
-Currently, TensorFlow SavedModel does not properly save the `tf.custom_gradient`.
-It does save however some attributes that on model restore result in a warning
-that the model might not be differentiable, and trigger an error if differentiation
-is attempted. The plan is to fix this. Note that if no gradients are requested,
-the PreventGradient ops will be saved along with the converted code and will
-give a nice error if differentiation of the converted code is attempted.
+   * `XlaVariadicSort` (wraps XLA Sort operator).
 
 ### Different performance characteristics
 
 The converted code may have slightly different performance characteristics than
 the original JAX code.
-If one were to write the same functionality in JAX idiomatic code vs.
-native TensorFlow idiomatic code we could end up with very different compilation paths,
-when TensorFlow is used without XLA. Take for example, the case of batch normalization.
+We do expect that the performance characteristics of converted code
+should approximate those of JAX when used with the XLA compiler (`tf.function(jit_compile=True)`).
+This is because
+during conversion we try to generate one TensorFlow op for one JAX primitive.
+We expect that the lowering that XLA does is similar to that done by JAX
+before conversion. (This is a hypothesis, we have not yet verified it extensively.)
+
+There is one know case when the performance of the converted code will be different.
+JAX programs use a [stateless
+deterministic PRNG](https://github.com/google/jax/blob/master/design_notes/prng.md)
+and it has an internal JAX primitive for it.
+This primitive is at the moment converted to a soup of tf.bitwise operations,
+which has a clear performance penalty. We plan to look into using the
+HLO [RNGBitGenerator](https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator)
+(exposed as a TFXLA op), which does implement
+the same basic Threefry algorithm as JAX’s PRNG, although that would
+result in different results than JAX’s PRNG.
+
+In absence of TensorFlow XLA compilation,
+if one were to write the same functionality in JAX idiomatic code vs.
+native TensorFlow idiomatic code we could end up with very different compilation paths.
+Take for example, the case of batch normalization.
 In TensorFlow if one uses [tf.nn.batch_normalization](https://www.tensorflow.org/api_docs/python/tf/nn/batch_normalization),
 a “high-level” TensorFlow op for batch
 normalization is generated, and in the absence of XLA, on CPU or GPU,
@@ -240,25 +235,9 @@ possibly behave differently, performance-wise or even numerically,
 than either the TensorFlow native or JAX native batch normalization.
 A similar example is that of an LSTM cell.
 
-Yet another example are the PRNG primitives. JAX programs use a [stateless
-deterministic PRNG](https://github.com/google/jax/blob/master/design_notes/prng.md)
-and it has an internal JAX primitive for it.
-This primitive is at the moment converted to a soup of tf.bitwise operations,
-which has a clear performance penalty. We plan to look into using the
-HLO [RNGBitGenerator](https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator)
-(exposed as a TFXLA op), which does implement
-the same basic Threefry algorithm as JAX’s PRNG, although that would
-result in different results than JAX’s PRNG.
-
-We do expect that the performance characteristics of converted code
-should approximate those of JAX or TensorFlow native with XLA. This is because
-during conversion we try to generate one TensorFlow op for one JAX primitive.
-We expect that the lowering that XLA does is similar to that done by JAX
-before conversion. (This is a hypothesis, we have not verified it extensively.)
-
 # Calling TensorFlow functions from JAX
 
-The function ```call_tf``` allows JAX to call
+The function ```call_tf``` allows JAX functions to call
 TensorFlow functions. These functions can be called anywhere in a JAX
 computation, including in staging contexts ``jax.jit``, ``jax.pmap``, ``jax.xmap``,
 or inside JAX's control-flow primitives. In non-staging contexts, 
@@ -266,7 +245,7 @@ the TensorFlow function is called in eager mode.
 For now, only reverse-mode autodiff is supported for these functions
 (no forward-mode autodiff, nor ``vmap``).
 
-For example, to computing ``sin(cos(1.))`` with ``sin`` done in JAX and ``cos`` in TF:
+As a trivial example, consider computing ``sin(cos(1.))`` with ``sin`` done in JAX and ``cos`` in TF:
 
 ```python
   from jax.experimental import jax2tf
@@ -345,9 +324,10 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
     The zero-copy does not yet work on TPU.   
   * ``call_tf`` works best with pure TF functions that do not capture
     ``tf.Variable``s or tensors from the environment, and all such
-    context is passed explicitly through arguments, and if variables
+    context is passed in explicitly through arguments, and if variables
     are modified, the resulting values are passed out through results.
-    There is a best-effort mechanism that can handle these situations,
+    There is a best-effort mechanism that can handle variable capture
+    and variable updates,
     except in the case of a function that modifies ``tf.Variable``s
     and is used in a JAX jitted context. Calling the ``inpure_func_tf``
     will give an error:
@@ -369,10 +349,25 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
           return x + new_var1, new_var1
 ```
     
-   This use case is likely to be revisited. 
+   This use case is likely to be revisited.
 
 ## TODO
 
   * Ensure that there is no array copy through the host when running in eager
     mode (JAX op-by-op).
-  * Show how use ``call_tf`` to load a SavedModel into JAX.   
+  * Show how use ``call_tf`` to load a SavedModel into JAX.
+
+
+# Additional notes
+
+## TensorFlow versions supported
+
+The ``jax2tf.convert`` and `call_tf` require very recent versions of TensorFlow.
+As of today, the tests are run using `tf_nightly==2.5.0-dev20210315`.
+
+## Running on GPU
+
+To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
+for CUDA. One must be mindful to install a version of CUDA that is compatible
+with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
+[TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
