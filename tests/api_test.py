@@ -517,6 +517,82 @@ class PythonJitTest(CPPJitTest):
     return jax.api._python_jit
 
 
+class PythonJitWithStaticArgnamesTest(CPPJitTest):
+
+  @property
+  def jit(self):
+    return jax.api._python_jit_with_static_argnames
+
+  def test__infer_argnums_and_argnames(self):
+    def f(x, y=1):
+      pass
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        f, argnums=None, argnames=None)
+    assert argnums == ()
+    assert argnames == ()
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        f, argnums=0, argnames=None)
+    assert argnums == (0,)
+    assert argnames == ('x',)
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        f, argnums=None, argnames='y')
+    assert argnums == (1,)
+    assert argnames == ('y',)
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        f, argnums=0, argnames='y')  # no validation
+    assert argnums == (0,)
+    assert argnames == ('y',)
+
+    def g(x, y, *args):
+      pass
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        g, argnums=(1, 2), argnames=None)
+    assert argnums == (1, 2)
+    assert argnames == ('y',)
+
+    def h(x, y, **kwargs):
+      pass
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        h, argnums=None, argnames=('foo', 'bar'))
+    assert argnums == ()
+    assert argnames == ('foo', 'bar')
+
+  def test_jit_with_static_argnames(self):
+
+    def f(x):
+      assert x == 'foo'
+      return 1
+
+    f_nums = self.jit(f, static_argnums=0)
+    assert f_nums('foo') == 1
+    assert f_nums(x='foo') == 1
+
+    f_names = self.jit(f, static_argnames='x')
+    assert f_names('foo') == 1
+    assert f_names(x='foo') == 1
+
+  def test_static_argnum_errors_on_keyword_arguments(self):
+    # disable this test -- there is intentionally new behavior after adding
+    # static_argnames
+    pass
+
+  def test_new_static_argnum_on_keyword_arguments(self):
+    f = self.jit(lambda x: x, static_argnums=0)
+    y = f(x=4)
+    assert y == 4
+
+  def test_new_static_argnum_with_default_arguments(self):
+    f = self.jit(lambda x=4: x, static_argnums=0)
+    y = f()
+    assert y == 4
+
+
 class APITest(jtu.JaxTestCase):
 
   def test_grad_bad_input(self):

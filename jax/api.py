@@ -46,7 +46,8 @@ from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial,
                        argnums_partial_except, flatten_axes, donation_vector,
                        rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-                       shaped_abstractify)
+                       shaped_abstractify, _ensure_str_tuple,
+                       argnames_partial_except)
 from ._src import traceback_util
 from ._src.traceback_util import api_boundary
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
@@ -160,6 +161,40 @@ def _isgeneratorfunction(fun):
     fun = fun.func
   return inspect.isfunction(fun) and bool(fun.__code__.co_flags & inspect.CO_GENERATOR)
 
+_POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
+
+def _infer_argnums_and_argnames(
+    fun: Callable,
+    argnums: Union[int, Iterable[int], None],
+    argnames: Union[str, Iterable[str], None],
+) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
+  """Infer missing argnums and argnames for a function with inspect."""
+  if argnums is None and argnames is None:
+    argnums = ()
+    argnames = ()
+  elif argnums is None:
+    assert argnames is not None
+    parameters = inspect.signature(fun).parameters
+    argnames = _ensure_str_tuple(argnames)
+    argnums = tuple(
+        i for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
+    )
+  elif argnames is None:
+    assert argnums is not None
+    parameters = inspect.signature(fun).parameters
+    argnums = _ensure_index_tuple(argnums)
+    argnames = tuple(
+        k for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
+    )
+  else:
+    assert argnums is not None
+    assert argnames is not None
+    argnums = _ensure_index_tuple(argnums)
+    argnames = _ensure_str_tuple(argnames)
+  return argnums, argnames
+
 
 def jit(
   fun: F,
@@ -252,12 +287,62 @@ def _python_jit(
                        f"was called with only {len(args)} positional arguments.")
     f = lu.wrap_init(fun)
     if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args)
+      f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     if donate_argnums:
       donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
+    else:
+      donated_invars = (False,) * len(args_flat)
+    for arg in args_flat:
+      _check_arg(arg)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    out = xla.xla_call(
+        flat_fun,
+        *args_flat,
+        device=device,
+        backend=backend,
+        name=flat_fun.__name__,
+        donated_invars=donated_invars)
+    return tree_unflatten(out_tree(), out)
+
+  return f_jitted
+
+
+# TODO(shoyer): fix C++ JIT to handle static_argnames; then switch _python_jit
+# to this implementation. Note that changed default argument value for
+# static_argnums.
+def _python_jit_with_static_argnames(
+    fun: F,
+    static_argnums: Union[int, Iterable[int]] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
+    device: Optional[xc.Device] = None,
+    backend: Optional[str] = None,
+    donate_argnums: Union[int, Iterable[int]] = ()
+) -> F:
+  """The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit."""
+  _check_callable(fun)
+  static_argnums, static_argnames = _infer_argnums_and_argnames(
+      fun, static_argnums, static_argnames)
+  static_argnums = _ensure_index_tuple(static_argnums)
+  donate_argnums = _ensure_index_tuple(donate_argnums)
+  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
+
+  @wraps(fun)
+  @api_boundary
+  def f_jitted(*args, **kwargs):
+    if config.jax_disable_jit:
+      return fun(*args, **kwargs)
+    if max(donate_argnums, default=-1) >= len(args):
+      raise ValueError(f"jitted function has donate_argnums={donate_argnums} but "
+                       f"was called with only {len(args)} positional arguments.")
+    f = lu.wrap_init(fun)
+    f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
+    f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    if donate_argnums:
+      donated_invars = donation_vector(donate_argnums, args, kwargs)
     else:
       donated_invars = (False,) * len(args_flat)
     for arg in args_flat:
@@ -317,7 +402,7 @@ def _cpp_jit(
       raise ValueError(msg.format(static_argnums, donate_argnums, len(args)))
     f = lu.wrap_init(fun)
     if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args)
+      f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
@@ -629,7 +714,7 @@ def xla_computation(fun: Callable,
 
     f = lu.wrap_init(fun)
     if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args)
+      f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
