@@ -1993,7 +1993,10 @@ def _reduction_init_val(a, init_val):
     sign, info = np.sign(init_val), iinfo(a_dtype)
     return np.array(info.min if sign < 0 else info.max, dtype=a_dtype)
 
-_cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
+def _cast_to_bool(operand):
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=np.ComplexWarning)
+    return lax.convert_element_type(operand, bool_)
 
 @_wraps(np.sum, skip_params=['out'])
 def sum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
