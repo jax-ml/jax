@@ -107,6 +107,22 @@ flags.DEFINE_bool(
     "Set this to `False` only if it crashes otherwise and report "
     "the error to the jax-team.")
 
+
+def _nan_check_posthook(fun, args, kwargs, output):
+  """Hook function called by the C++ jit to perform NaN checking."""
+  try:
+    xla.check_special(xla.xla_call_p, [
+        da.device_buffer
+        for da in tree_leaves(output)
+        if hasattr(da, "device_buffer")
+    ])
+  except FloatingPointError:
+    # compiled_fun can only raise in this case
+    assert config.jax_debug_nans or config.jax_debug_infs
+    print("Invalid nan value encountered in the output of a C++-jit "
+          "function. Calling the de-optimized version.")
+    fun._cache_miss(*args, **kwargs)[0]  # probably won't return
+
 # TODO(phawkins): make this unconditional when jaxlib 0.1.65 is the minimum.
 if lib._xla_extension_version >= 12:
   def _update_debug_special_global(_):
@@ -262,21 +278,6 @@ def _python_jit(
 class _BackendAndDeviceInfo(NamedTuple):
   default_device: xc.Device
   committed_to_device: bool
-
-def _nan_check_posthook(fun, args, kwargs, output):
-  """Hook function called by the C++ jit to perform NaN checking."""
-  try:
-    xla.check_special(xla.xla_call_p, [
-        da.device_buffer
-        for da in tree_leaves(output)
-        if hasattr(da, "device_buffer")
-    ])
-  except FloatingPointError:
-    # compiled_fun can only raise in this case
-    assert config.jax_debug_nans or config.jax_debug_infs
-    print("Invalid nan value encountered in the output of a C++-jit "
-          "function. Calling the de-optimized version.")
-    fun._cache_miss(*args, **kwargs)[0]  # probably won't return
 
 
 def _cpp_jit(
