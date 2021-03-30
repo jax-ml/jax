@@ -59,6 +59,11 @@ def PRNGKey(seed: int) -> jnp.ndarray:
     key is constructed from a 64-bit seed by effectively bit-casting to a pair
     of uint32 values (or from a 32-bit seed by first padding out with zeros).
   """
+  # Avoid overflowerror in X32 mode by first converting ints to int64.
+  # This breaks JIT invariance of PRNGKey for large ints, but supports the
+  # common use-case of instantiating PRNGKey with Python hashes in X32 mode.
+  if isinstance(seed, int):
+    seed = np.int64(seed)
   seed_arr = jnp.asarray(seed)
   if seed_arr.shape:
     raise TypeError(f"PRNGKey seed must be a scalar; got {seed!r}.")
@@ -279,7 +284,7 @@ def fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
     A new PRNGKey that is a deterministic function of the inputs and is
     statistically safe for producing a stream of new pseudo-random values.
   """
-  return _fold_in(key, data)
+  return _fold_in(key, jnp.uint32(data))
 
 @jit
 def _fold_in(key, data):

@@ -25,6 +25,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     for more information.
   * Python integers larger than the maximum `int64` value will now lead to an overflow
     in all cases, rather than being silently converted to `uint64` in some cases ({jax-issue}`#6047`).
+  * Outside X64 mode, Python integers outside the range representable by `int32` will now lead to an
+    `OverflowError` rather than having their value silently truncated.
 * Bug fixes:
   * `host_callback` now supports empty arrays in arguments and results ({jax-issue}`#6262`).
 

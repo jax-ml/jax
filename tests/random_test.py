@@ -946,6 +946,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     ]
   ))
   def test_prng_seeds_and_keys(self, seed, type, jit, key):
+    if (jit and type is int and not config.x64_enabled and
+        (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
+      self.skipTest("Expected failure: integer out of range for jit.")
     seed = type(seed)
     if jit:
       actual = api.jit(random.PRNGKey)(seed)
@@ -960,6 +963,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       for seed in [-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)]))
   def test_prng_jit_invariance(self, seed, type):
     if type == "int" and seed == (1 << 64) - 1:
+      self.skipTest("Expected failure: Python int too large.")
+    if not config.x64_enabled and seed > np.iinfo(np.int32).max:
       self.skipTest("Expected failure: Python int too large.")
     type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
     args_maker = lambda: [type(seed)]
