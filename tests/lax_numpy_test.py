@@ -785,9 +785,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
       return res
     np_fun = _promote_like_jnp(np_fun, inexact)
-    np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
-    jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     tol = {np.float16: 0.002}
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
