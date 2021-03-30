@@ -5,8 +5,8 @@ This is a tutorial developed by engineers and researchers at DeepMind_.
 It is a work in progress; more content will be added soon!
 
 .. toctree::
-  :maxdepth: 2
-  :caption: Tutorial Outline
+  :maxdepth: 1
+  :caption: Tutorials
 
   01-jax-basics
   02-jitting
