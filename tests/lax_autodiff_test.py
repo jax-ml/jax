@@ -655,6 +655,30 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_reducedims={}"
+       .format(jtu.format_shape_dtype_string(shape, dtype), dims),
+       "shape": shape, "dtype": dtype, "dims": dims}
+      for dtype in grad_float_dtypes
+      for shape, dims in [
+          [(3, 4, 5), ()],
+          [(3, 4, 5), (0,)],
+          [(3, 4, 5), (1, 2)],
+          [(3, 4, 5), (0, 2)],
+          [(3, 4, 5), (0, 1, 2)],
+          [(3, 1), (1,)],
+          [(3, 0, 5), (1,)],
+      ]))
+  def testReducePairGrad(self, shape, dtype, dims):
+    rng = jtu.rand_default(self.rng(), scale=1)
+    tol = {np.float32: 1e-2, np.float64: 1e-4}
+    operands = (rng(shape, dtype), rng(shape, dtype))
+    init_vals = (np.array(0, dtype), np.array(1, dtype))
+    def op(xs, ys):
+      return (xs[0] + ys[0], xs[1] * ys[1])
+    reduce = lambda xs, ys: lax.reduce((xs, ys), init_vals, op, dims)
+    check_grads(reduce, operands, 2, ["fwd", "rev"], tol, tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
                          "_basedilation={}_windowdilation={}")
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims,

@@ -13,6 +13,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features
   * New profiling APIs: {func}`jax.profiler.start_trace`,
     {func}`jax.profiler.stop_trace`, and {func}`jax.profiler.trace`
+  * {func}`jax.lax.reduce` is now differentiable.
 * Breaking changes:
   * The minimum jaxlib version is now 0.1.64.
   * Some profiler APIs names have been changed. There are still aliases, so this
@@ -41,6 +42,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     `jax.enable_checks`, `jax.check_tracer_leaks`, `jax.debug_nans`,
     `jax.debug_infs`, `jax.log_compiles`.
   * [#6085](https://github.com/google/jax/pull/6085) added `jnp.delete`
+
 * Bug fixes:
   * [#6136](https://github.com/google/jax/pull/6136) generalized
     `jax.flatten_util.ravel_pytree` to handle integer dtypes.
