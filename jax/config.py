@@ -61,8 +61,7 @@ class Config:
     self._contextmanager_flags = set()
     self._update_hooks = {}
 
-    # TODO(mattjj): delete these when only omnistaging is available
-    self.omnistaging_enabled = bool_env('JAX_OMNISTAGING', True)
+    self.omnistaging_enabled = True  # TODO(mattjj): remove this
 
   def update(self, name, val):
     if self.use_absl:
@@ -154,24 +153,20 @@ class Config:
       already_configured_with_absl = True
 
       if not FLAGS.jax_omnistaging:
-        warnings.warn(
+        raise Exception(
           "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
           "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.\n"
           "To remove this warning, unset the JAX_OMNISTAGING environment variable.")
 
   def enable_omnistaging(self):
-    return  # TODO(mattjj): remove all callers
+    warnings.warn(
+        "enable_omnistaging() is a no-op in JAX versions 0.2.12 and higher;\n"
+        "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md")
 
   def disable_omnistaging(self):
-    warnings.warn(
+    raise Exception(
       "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
       "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.")
-
-  def temporary_hack_do_not_call_me(self):
-    if self.omnistaging_enabled:
-      for disabler in self._omnistaging_disablers:
-        disabler()
-      self.omnistaging_enabled = False
 
   def define_bool_state(
     self, name: str, default: bool, help: str, *,
@@ -339,7 +334,8 @@ already_configured_with_absl = False
 flags.DEFINE_bool(
     'jax_omnistaging',
     bool_env('JAX_OMNISTAGING', True),
-    help='Enable staging based on dynamic context rather than data dependence.'
+    help=('Deprecated. Setting this flag to False raises an error. Setting it '
+          'to True has no effect.'),
 )
 
 flags.DEFINE_integer(
