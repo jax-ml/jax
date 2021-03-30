@@ -3275,17 +3275,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.array(3, [('a','<i4'),('b','<i4')])
 
   def testArrayFromInteger(self):
-    # TODO(jakevdp): implement X32 overflow and canonicalize these
-    int_max = jnp.iinfo(jnp.int64).max
-    int_min = jnp.iinfo(jnp.int64).min
+    int_dtype = dtypes.canonicalize_dtype(jnp.int64)
+    int_max = jnp.iinfo(int_dtype).max
+    int_min = jnp.iinfo(int_dtype).min
 
     # Values at extremes are converted correctly.
     for val in [int_min, 0, int_max]:
-      self.assertEqual(jnp.array(val).dtype, dtypes.canonicalize_dtype('int64'))
+      self.assertEqual(jnp.array(val).dtype, int_dtype)
 
     # out of bounds leads to an OverflowError
     val = int_max + 1
-    with self.assertRaisesRegex(OverflowError, f"Python int {val} too large to convert to int64"):
+    with self.assertRaisesRegex(OverflowError, f"Python int {val} too large to convert to {int_dtype.name}"):
       jnp.array(val)
 
     # explicit uint64 should work

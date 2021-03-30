@@ -5031,30 +5031,28 @@ class NamedCallTest(jtu.JaxTestCase):
       for jit_type in [None, "python", "cpp"]
       if not (jit_type is None and func == 'identity')))
   def test_integer_overflow(self, jit_type, func):
-    def jit(f, **kwargs):
-      if jit_type is None:
-        return f
-      elif jit_type == "python":
-        return api._python_jit(f, **kwargs)
-      elif jit_type == "cpp":
-        return api._cpp_jit(f, **kwargs)
-      else:
-        raise ValueError(f"invalid jit_type={jit_type}")
-    func = jit({
+    if jit_type == "cpp" and not config.x64_enabled and jax.lib.version < (0, 1, 65):
+      self.skipTest("int32 overflow not yet implemented in CPP JIT.")
+    funcdict = {
       'identity': lambda x: x,
       'asarray': jnp.asarray,
-      'device_put': api.device_put
-    }[func])
+      'device_put': api.device_put,
+    }
+    jit = {
+      'python': api._python_jit,
+      'cpp': api._cpp_jit,
+      None: lambda x: x,
+    }
+    f = jit[jit_type](funcdict[func])
 
-    int64_max = np.iinfo(np.int64).max
-    int64_min = np.iinfo(np.int64).min
+    int_dtype = dtypes.canonicalize_dtype(jnp.int_)
+    int_max = np.iinfo(int_dtype).max
+    int_min = np.iinfo(int_dtype).min
 
-    int_dtype = dtypes.canonicalize_dtype(np.int64)
-
-    self.assertEqual(func(int64_max).dtype, int_dtype)
-    self.assertEqual(func(int64_min).dtype, int_dtype)
-    self.assertRaises(OverflowError, func, int64_max + 1)
-    self.assertRaises(OverflowError, func, int64_min - 1)
+    self.assertEqual(f(int_max).dtype, int_dtype)
+    self.assertEqual(f(int_min).dtype, int_dtype)
+    self.assertRaises(OverflowError, f, int_max + 1)
+    self.assertRaises(OverflowError, f, int_min - 1)
 
 
 if __name__ == '__main__':
