@@ -1169,9 +1169,11 @@ def _memoize(thunk):
   return memoized
 
 
-def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
+def trace_to_jaxpr_dynamic(fun: lu.WrappedFun,
+                           in_avals: Sequence[AbstractValue],
+                           transform_name: str = ""):
   with core.new_main(DynamicJaxprTrace, dynamic=True) as main:  # type: ignore
-    main.source_info = fun_sourceinfo(fun.f)  # type: ignore
+    main.source_info = fun_sourceinfo(fun.f, transform_name)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
     del main, fun
@@ -1198,9 +1200,11 @@ def extend_jaxpr_stack(main, frame):
     assert frame is main.jaxpr_stack[-1]
     main.jaxpr_stack = main.jaxpr_stack[:-1]
 
-def trace_to_jaxpr_final(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
+def trace_to_jaxpr_final(fun: lu.WrappedFun,
+                         in_avals: Sequence[AbstractValue],
+                         transform_name: str = ""):
   with core.new_base_main(DynamicJaxprTrace) as main:  # type: ignore
-    main.source_info = fun_sourceinfo(fun.f)  # type: ignore
+    main.source_info = fun_sourceinfo(fun.f, transform_name)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
     del fun, main
@@ -1214,12 +1218,15 @@ def partial_eval_to_jaxpr_dynamic(fun: lu.WrappedFun, in_pvals: Sequence[Partial
   with core.new_main(core.EvalTrace, dynamic=True) as _:  # type: ignore
     return trace_to_jaxpr(fun, in_pvals)
 
-def fun_sourceinfo(fun):
+def fun_sourceinfo(fun, transform_name: str = ""):
   if isinstance(fun, functools.partial):
     fun = fun.func
   try:
     filename = fun.__code__.co_filename
     lineno = fun.__code__.co_firstlineno
-    return f"{fun.__name__} at {filename}:{lineno}"
+    line_info = f"{fun.__name__} at {filename}:{lineno}"
+    if transform_name:
+      line_info += f', transformed by {transform_name}.'
+    return line_info
   except AttributeError:
     return "<unknown>"

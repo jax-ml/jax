@@ -2602,6 +2602,24 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertAllClose(deriv(my_pow)(3.0, 1), 1.0, check_dtypes=False)
 
+  def test_unexpected_tracer_error(self):
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "transformed by while_loop"):
+      lst = []
+      def side_effecting_body(val):
+        lst.append(val)
+        return val+1
+      lax.while_loop(lambda x: x < 2, side_effecting_body, 1)
+      lst[0] += 1
+
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "transformed by scan"):
+      lst = []
+      def side_effecting_scan(carry, val):
+        lst.append(val)
+        return carry, val+1
+      lax.scan(side_effecting_scan, None, jnp.ones((2, 2)))
+      lst[0] += 1
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

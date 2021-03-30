@@ -2070,6 +2070,17 @@ class APITest(jtu.JaxTestCase):
       # level, which is no longer live.
       jax.jit(jnp.add)(jnp.ones(()), count)
 
+  def test_escaped_tracer_transform_name(self):
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "transformed by jit"):
+      jax.jit(self.helper_save_tracer)(1)
+      _ = self._saved_tracer+1
+
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "transformed by pmap"):
+      jax.pmap(self.helper_save_tracer)(jnp.ones((1, 2)))
+      _ = self._saved_tracer+1
+
   def test_pmap_static_kwarg_error_message(self):
     # https://github.com/google/jax/issues/3007
     def f(a, b):
