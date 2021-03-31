@@ -407,7 +407,7 @@ class JetTest(jtu.JaxTestCase):
 
       return grad(jacfwd(F))(0.)
 
-    self.check_jet(h, (0.,), ([1., 2., 3.],))
+    self.check_jet(h, (0.,), ([1., 2., 3.],), rtol=1e-3)
 
 
 if __name__ == '__main__':
