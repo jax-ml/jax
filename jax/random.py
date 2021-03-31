@@ -78,6 +78,7 @@ for the design and its motivation.
 
 from jax._src.random import (
   PRNGKey,
+  PRNGKey64,
   bernoulli,
   beta,
   categorical,

@@ -19,10 +19,12 @@ import warnings
 
 import numpy as np
 
-from jax import lax
 from jax import core
-from jax import numpy as jnp
 from jax import dtypes
+from jax import errors
+from jax import experimental
+from jax import lax
+from jax import numpy as jnp
 from jax.core import NamedShape
 from jax.api import jit, vmap
 from jax._src.numpy.lax_numpy import _constant_like, asarray
@@ -74,6 +76,37 @@ def PRNGKey(seed: int) -> jnp.ndarray:
   k1 = convert(lax.shift_right_logical(seed_arr, lax._const(seed_arr, 32)))
   k2 = convert(jnp.bitwise_and(seed_arr, np.uint32(0xFFFFFFFF)))
   return lax.concatenate([k1, k2], 0)
+
+
+def PRNGKey64(seed: int) -> jnp.ndarray:
+  """Create a pseudo-random number generator (PRNG) key given a 64-bit integer seed.
+
+  This function returns the same result as PRNGKey() when jax_enable_x64=True, but will
+  raise an error if the seed is not a 64-bit integer. Outside X64 mode, this assertion
+  means
+
+  Outside X64 mode, this will return the same result so long as the seed is a Python
+  or numpy integer.
+  """
+  if isinstance(seed, int):
+    # Avoid overflow errors for large integers.
+    seed = np.uint64(seed)
+  try:
+    seed_arr = core.concrete_or_error(np.asarray, seed, "PRNGKey64 seed argument")
+  except errors.ConcretizationTypeError:
+    seed_arr = jnp.array(seed)
+
+  if seed_arr.shape:
+    raise TypeError(f"PRNGKey64 seed must be a scalar; got {seed!r}.")
+  if not np.issubdtype(seed_arr.dtype, np.integer) or np.iinfo(seed_arr.dtype).bits != 64:
+    raise TypeError(f"PRNGKey64 seed must be a 64-bit integer; got {seed_arr.dtype}")
+
+  if isinstance(seed_arr, np.ndarray):
+    return jnp.array(seed_arr.astype('uint64') >> np.array([32, 0], 'uint64'), 'uint32')
+  else:
+    with experimental.enable_x64():
+      return PRNGKey(seed_arr)
+
 
 def _is_prng_key(key: jnp.ndarray) -> bool:
   try:

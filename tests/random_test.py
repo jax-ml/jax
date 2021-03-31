@@ -26,6 +26,7 @@ import scipy.stats
 
 from jax import api
 from jax import core
+from jax import experimental
 from jax import grad
 from jax import lax
 from jax import numpy as jnp
@@ -976,6 +977,36 @@ class LaxRandomTest(jtu.JaxTestCase):
       random.PRNGKey(seed)
     with self.assertRaises(OverflowError):
       api.jit(random.PRNGKey)(seed)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_seed1={seed}_type={type}_jit={jit}",
+       "seed": seed, "type": type, "jit": jit}
+      for seed in [-(1 << 40), -1, 0, 1, (1 << 40), np.uint64((1 << 64) - 1)]
+      for type in [np.int64, np.uint64, jnp.int64, jnp.uint64]
+      for jit in [True, False]))
+  def test_prngkey64(self, seed, type, jit):
+    key1 = random.PRNGKey64(seed)
+
+    # Convert seed to given type. We use enable_x64 to create 64-bit keys
+    # even when jax_enable_x64=False.
+    with experimental.enable_x64():
+      tseed = type(seed)
+
+    # PRNGKey64 returns the same values regardless of how it is called.
+    if jit:
+      # jit-compiling in X32 mode will always lead to a TypeError
+      if not config.x64_enabled:
+        self.assertRaises(TypeError, api.jit(random.PRNGKey64), tseed)
+      with experimental.enable_x64():
+        key2 = api.jit(random.PRNGKey64)(tseed)
+    else:
+      key2 = random.PRNGKey64(tseed)
+    self.assertArraysEqual(key1, key2)
+
+    # In X64 mode, original random.PRNGKey should return the same result.
+    with experimental.enable_x64():
+      key3 = random.PRNGKey(tseed)
+      self.assertArraysEqual(key2, key3)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
     key = random.PRNGKey(1).block_until_ready()
