@@ -25,7 +25,7 @@ from jax import numpy as jnp
 from jax import dtypes
 from jax.core import NamedShape
 from jax.api import jit, vmap
-from jax._src.numpy.lax_numpy import _constant_like, asarray
+from jax._src.numpy.lax_numpy import _constant_like, _convert_and_clip_integer, asarray
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
@@ -443,8 +443,8 @@ def _randint(key, shape, minval, maxval, dtype):
   if not jnp.issubdtype(dtype, np.integer):
     raise TypeError("randint only accepts integer dtypes.")
 
-  minval = lax.convert_element_type(minval, dtype)
-  maxval = lax.convert_element_type(maxval, dtype)
+  minval = _convert_and_clip_integer(minval, dtype)
+  maxval = _convert_and_clip_integer(maxval, dtype)
   minval = lax.broadcast_to_rank(minval, len(shape))
   maxval = lax.broadcast_to_rank(maxval, len(shape))
   nbits = jnp.iinfo(dtype).bits
