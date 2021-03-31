@@ -2335,6 +2335,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.ignore_warning(message=".*includes a pmap.*")
   def test_while_loop_of_pmap_error_message(self):
 
     def body(i, x):
@@ -2347,9 +2348,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "compiling a primitive computation `while` that requires {} "
-            "replicas, but only {} XLA devices are available on backend {}."
-            .format(too_big, api.device_count(), jtu.device_under_test())),
+            f"compiling computation that requires {too_big} replicas, "
+            f"but only {api.device_count()} XLA devices are available"),
         lambda: f_loop(jnp.ones(too_big)))
 
   @parameterized.named_parameters(

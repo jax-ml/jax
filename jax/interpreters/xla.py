@@ -25,6 +25,7 @@ from absl import logging
 import numpy as np
 
 from ..config import config
+from ..config import disable_jit
 from .. import core
 from .. import ad_util
 from jax._src import dtypes
@@ -33,9 +34,11 @@ from jax._src import source_info_util
 from ..abstract_arrays import (make_shaped_array, array_types)
 from ..core import (ConcreteArray, ShapedArray, AbstractToken,
                     Literal, pp_eqn_compact, raise_to_shaped, abstract_token)
+from .. import tree_util
+from .. import lib
 from jax._src.pprint_util import pp
 from .._src.util import (partial, partialmethod, cache, prod, unzip2,
-                    extend_name_stack, wrap_name, safe_zip, safe_map)
+                         extend_name_stack, wrap_name, safe_zip, safe_map)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
@@ -216,7 +219,7 @@ def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
       return True
   return False
 
-### op-by-op execution
+### utilities
 
 def arg_spec(x):
   aval = abstractify(x)
@@ -224,64 +227,6 @@ def arg_spec(x):
     return aval, x._device
   except:
     return aval, None
-
-def apply_primitive(prim, *args, **params):
-  """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args), **params)
-  return compiled_fun(*args)
-
-
-def _partition_outputs(avals, outs):
-  nouts = [aval._num_buffers for aval in avals]
-  if config.jax_enable_checks:
-    assert sum(nouts) == len(outs), f"Internal error: sum(nouts)={sum(nouts)} should equal len(outs)={len(outs)}."
-  outs = iter(outs)
-  return [[next(outs) for _ in range(nout)] for nout in nouts]
-
-
-@cache()
-def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
-                                                   Optional[Device]], **params):
-  avals, arg_devices = unzip2(arg_specs)
-  donated_invars = (False,) * len(arg_specs)
-  device = _device_from_arg_devices(arg_devices)
-  backend = xb.get_device_backend(device)
-  if primitive_uses_outfeed(prim, params):
-    # We use the _xla_callable path, where we pre-process the primitives
-    def prim_fun(*args):
-      return prim.bind(*args, **params)
-    return _xla_callable(lu.wrap_init(prim_fun), device, None, "prim", donated_invars,
-                         *arg_specs)
-  aval_out = prim.abstract_eval(*avals, **params)
-  if not prim.multiple_results:
-    handle_result = aval_to_result_handler(device, aval_out)
-  else:
-    handlers = map(partial(aval_to_result_handler, device), aval_out)
-    handle_result = lambda *bufs:\
-      tuple(handler(*bs) for handler, bs in zip(handlers, _partition_outputs(aval_out, bufs)))
-  tuple_args = len(avals) > 100
-  if prim in initial_style_translations:
-    nreps = initial_style_primitive_replicas(params)
-  else:
-    nreps = 1
-
-  if nreps > xb.device_count(backend):
-    raise ValueError(
-        f"compiling a primitive computation `{prim}` that requires {nreps} "
-        f"replicas, but only {xb.device_count(backend)} XLA devices are "
-        f"available on backend {backend.platform}.")
-  built_c = primitive_computation(prim, AxisEnv(nreps, (), ()), backend,
-                                  tuple_args, *avals, **params)
-  options = xb.get_compile_options(
-      num_replicas=nreps,
-      num_partitions=1,
-      device_assignment=device and (device.id,))
-  options.parameter_is_tupled_arguments = tuple_args
-  compiled = backend_compile(backend, built_c, options)
-  if nreps == 1:
-    return partial(_execute_compiled_primitive, prim, compiled, handle_result)
-  else:
-    return partial(_execute_replicated_primitive, prim, compiled, handle_result)
 
 def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[Device]:
   """Given devices of inputs, determine where to perform a computation.
@@ -300,65 +245,107 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
     msg = "primitive arguments must be colocated on the same device, got {}"
     raise ValueError(msg.format(", ".join(map(str, devices)))) from err
 
-@cache()
-def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params):
-  c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
-  c.set_op_metadata(xc.OpMetadata(
-      op_type=prim.name,
-      op_name=str(pp_eqn_compact(prim.name, params))))
-  platform = xb.get_backend(backend).platform
-  xla_args, _ = _xla_callable_args(c, avals, tuple_args)
-  # return val always set as a side-effect on c
-  if prim in backend_specific_translations[platform]:
-    rule = backend_specific_translations[platform][prim]
-    ans = rule(c, *xla_args, **params)
-  elif prim in translations:
-    rule = translations[prim]
-    ans = rule(c, *xla_args, **params)
-  elif prim in translations_with_avals:
-    rule = translations_with_avals[prim]
-    ans = rule(c, avals, xla_args, params)
-  elif prim in initial_style_translations:
-    rule = initial_style_translations[prim]
-    ans = rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
-         *xla_args, **params)
-  else:
-    raise NotImplementedError(f"XLA translation rule for {prim} not found")
-  assert isinstance(ans, xe.XlaOp)
-  c.clear_op_metadata()
-  try:
-    return c.build(ans)
-  except RuntimeError as e:
-    msg = (" ".join(map(str, e.args)) + "\n"
-           "This is a bug in JAX's shape-checking rules; please report it!\n"
-           "https://github.com/google/jax/issues\n")
-    raise RuntimeError(msg) from e
-
-def primitive_subcomputation(prim, *avals, **params):
-  axis_env = AxisEnv(1, (), ())
-  return primitive_computation(prim, axis_env, None, False, *avals, **params)
+def _partition_outputs(avals, outs):
+  nouts = [aval._num_buffers for aval in avals]
+  if config.jax_enable_checks:
+    assert sum(nouts) == len(outs), f"Internal error: sum(nouts)={sum(nouts)} should equal len(outs)={len(outs)}."
+  outs = iter(outs)
+  return [[next(outs) for _ in range(nout)] for nout in nouts]
 
 def backend_compile(backend, built_c, options):
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results
   return backend.compile(built_c, compile_options=options)
 
-def _execute_compiled_primitive(prim, compiled, result_handler, *args):
-  device, = compiled.local_devices()
-  input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
-  out_bufs = compiled.execute(input_bufs)
-  check_special(prim.name, out_bufs)
-  return result_handler(*out_bufs)
 
-def _execute_replicated_primitive(prim, compiled, result_handler, *args):
-  input_bufs = [
-      list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
-      for device in compiled.local_devices()]
-  out_bufs = [
-      buf[0] for buf in compiled.execute_sharded_on_local_devices(
-          list(zip(*input_bufs)))
-  ]
-  return result_handler(*out_bufs)
+### op-by-op execution
+
+def apply_primitive(prim, *args, **params):
+  params = tuple(params.items()) if params else ()
+  with disable_jit(False):
+    out = _jit_prim(prim, args, params)
+  return out if prim.multiple_results else out[0]
+
+def _apply_prim(prim, *args, **params):
+  out = prim.bind(*args, **params)
+  return [out] if not prim.multiple_results else out
+
+def _cache_miss(prim, args, param_tup):
+  fn = lu.hashable_partial(lu.wrap_init(_apply_prim, dict(param_tup)), prim)
+  in_avals = map(abstractify, args)
+  compiled = _xla_callable(fn, None, None, prim.name, (False,) * len(args),
+                           *unsafe_map(arg_spec, args))
+  try:
+    out = compiled(*args)
+  except FloatingPointError as e:
+    new_msg = ' '.join(e.args[0].split(' ')[:-1])
+    raise FloatingPointError(f"{new_msg} {prim.name}")
+
+  execute = _xla_callable.peek_most_recent_entry()  # type: ignore
+  maybe_use_fastpath = (
+      execute is not None and
+      execute.func is _execute_compiled and  # c++ doesn't handle replicated
+      all(type(aval) is ShapedArray for aval in in_avals) and
+      all(type_is_device_array(x) for x in out)  # tokens, etc
+  )
+  if not maybe_use_fastpath:
+    return out, None
+
+  xla_executable, _, result_handlers = execute.args
+  out_avals, _ = unzip2(handler.args for handler in result_handlers)
+  use_fastpath = all(type(aval) is ShapedArray for aval in out_avals)
+  if not use_fastpath:
+    return out, None
+
+  assert execute is _xla_callable.pop_most_recent_entry()  # type: ignore
+  _, treedef_dummy = tree_util.tree_flatten([1] * len(out))
+  sticky_device = result_handlers[0].args[1] if result_handlers else None
+  lazy_exprs = [None] * len(result_handlers)
+  fastpath_data = (xla_executable, treedef_dummy, sticky_device, out_avals,
+                   lazy_exprs)
+  return out, fastpath_data
+
+def _get_device_info():
+  default_device = xb.get_backend(None).get_default_device_assignment(1)[0]
+  return BackendAndDeviceInfo(default_device, False)
+
+class BackendAndDeviceInfo(NamedTuple):
+  default_device: xc.Device
+  committed_to_device: bool
+
+def _fail(*args, **kwargs):
+  assert False
+
+_jit_prim = lib.jax_jit.jit(_fail, _cache_miss, _get_device_info, (0, 2))
+
+
+### single-primitive subcomputations
+
+@cache()
+def primitive_subcomputation(prim, *in_avals, **params):
+  jaxpr = _single_eqn_jaxpr(prim, in_avals, params)
+  c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
+  c.set_op_metadata(xc.OpMetadata(op_type=prim.name,
+                                  op_name=str(pp_eqn_compact(prim.name, params))
+                                  ))
+  xla_args, _ = _xla_callable_args(c, in_avals, False)
+  ans = jaxpr_subcomp(c, jaxpr, None, AxisEnv(1, (), ()), [], "", *xla_args)
+  ans = xops.Tuple(c, ans) if prim.multiple_results else ans[0]
+  c.clear_op_metadata()
+  return c.build(ans)
+
+def _single_eqn_jaxpr(prim, in_avals, params):
+  out_avals = prim.abstract_eval(*in_avals, **params)
+  out_avals = [out_avals] if not prim.multiple_results else out_avals
+  newvar = core.gensym()
+  invars = [newvar(a) for a in in_avals]
+  outvars = [newvar(a) for a in out_avals]
+  jaxpr = core.Jaxpr([], invars, outvars,
+                     [core.new_jaxpr_eqn(invars, outvars, prim, params)])
+  return jaxpr
+
+
+### checking for nan/inf outputs
 
 def needs_check_special():
   return config.jax_debug_infs or config.jax_debug_nans
@@ -591,6 +578,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_inv
     # intentional here, to avoid "Store occupied" errors we reset the stores to
     # be empty.
     for store in fun.stores: store and store.reset()
+    # TODO(mattjj): instead of returning, raise an exception if we return here
     return fun.call_wrapped(*args)  # probably won't return
 
 def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:

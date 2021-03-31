@@ -1219,7 +1219,7 @@ def partial_eval_to_jaxpr_dynamic(fun: lu.WrappedFun, in_pvals: Sequence[Partial
     return trace_to_jaxpr(fun, in_pvals)
 
 def fun_sourceinfo(fun, transform_name: str = ""):
-  if isinstance(fun, functools.partial):
+  while isinstance(fun, functools.partial):
     fun = fun.func
   try:
     filename = fun.__code__.co_filename

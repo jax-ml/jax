@@ -148,7 +148,7 @@ LAX_OPS = [
     op_record("population_count", 1, int_dtypes + uint_dtypes, jtu.rand_int),
     op_record("clz", 1, int_dtypes + uint_dtypes, jtu.rand_int),
 
-    op_record("add", 2, default_dtypes + complex_dtypes, jtu.rand_small),
+    op_record("add", 2, default_dtypes + complex_dtypes + bool_dtypes, jtu.rand_small),
     op_record("sub", 2, default_dtypes + complex_dtypes, jtu.rand_small),
     op_record("mul", 2, default_dtypes + complex_dtypes, jtu.rand_small),
     op_record("div", 2, default_dtypes + complex_dtypes, jtu.rand_nonzero),

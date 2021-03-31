@@ -1127,6 +1127,7 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   operator.
   """
   permutation = tuple(permutation)
+  # TODO(mattjj): only return operand if it's already a Tracer or DeviceArray
   if permutation == tuple(range(len(permutation))):
     return operand
   else:
@@ -2560,7 +2561,7 @@ def _add_transpose(t, x, y):
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
   return [t, t]
 
-add_p = standard_naryop([_num, _num], 'add')
+add_p = standard_naryop([_any, _any], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
 def _add_inverse(r, x, y):

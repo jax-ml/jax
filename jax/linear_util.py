@@ -229,8 +229,8 @@ class _CacheLocalContext(threading.local):
 
   def __init__(self):
     super(_CacheLocalContext, self).__init__()
-    self.most_recent_entry = None
-
+    self.most_recent_entry = lambda _: None
+    self.misses = 0
 
 def cache(call: Callable):
   """Memoization decorator for functions taking a WrappedFun as first argument.
@@ -257,20 +257,27 @@ def cache(call: Callable):
       ans, stores = result
       fun.populate_stores(stores)
     else:
+      thread_local.misses += 1
       ans = call(fun, *args)
       cache[key] = (ans, fun.stores)
 
-    thread_local.most_recent_entry = weakref.ref(ans)
+    f_ref = weakref.ref(fun.f)
+    def most_recent_entry(peek):
+      maybe_f = f_ref()
+      if not maybe_f: return
+      maybe_cache = fun_caches.get(maybe_f)
+      if not maybe_cache: return
+      maybe_result = maybe_cache.get(key) if peek else maybe_cache.pop(key, None)
+      if not maybe_result: return
+      ans, _ = maybe_result
+      return ans
+
+    thread_local.most_recent_entry = most_recent_entry
     return ans
 
-  def _most_recent_entry():
-    most_recent_entry = thread_local.most_recent_entry
-    if most_recent_entry is not None:
-      result = most_recent_entry()
-      thread_local.most_recent_entry = None
-      return result
-
-  memoized_fun.most_recent_entry = _most_recent_entry  # type: ignore
+  memoized_fun.peek_most_recent_entry = lambda: thread_local.most_recent_entry(True)  # type: ignore
+  memoized_fun.pop_most_recent_entry = lambda: thread_local.most_recent_entry(False)  # type: ignore
+  memoized_fun.misses = lambda: thread_local.misses
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
 
   return memoized_fun

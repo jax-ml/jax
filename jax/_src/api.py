@@ -351,11 +351,6 @@ def _python_jit(
   return f_jitted
 
 
-class _BackendAndDeviceInfo(NamedTuple):
-  default_device: xc.Device
-  committed_to_device: bool
-
-
 def _cpp_jit(
     fun: F,
     static_argnums: Union[int, Iterable[int], None] = None,
@@ -422,36 +417,38 @@ def _cpp_jit(
         donated_invars=donated_invars)
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
+    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
 
     ### Decide whether we can support the C++ fast path
     # High level note: The Python tracing mechanism is complex; in particular
     # to know whether `jax.jit(f)(x)` will execute or trace, it's not enough to
-    # inspect the argument x, we actually do need to execute it and look at the
-    # outputs that could be tracers (if f is capturing `Tracer` by closure).
-    execute: Optional[functools.partial] = (
-        xla._xla_callable.most_recent_entry())
-    use_fastpath = (
+    # inspect the argument x; we actually do need to execute it and look at the
+    # outputs that could be Tracers (if `f` is capturing a `Tracer` by closure).
+    execute: Optional[functools.partial] = xla._xla_callable.peek_most_recent_entry()
+    maybe_use_fastpath = (
         # This is if we have already executed this code-path (most-recent entry
         # has been reset to None). Thus, we do not support the fast-path.
         execute is not None and
         execute.func is xla._execute_compiled and  # not trivial, not pmap
-        # Not supported: ShardedDeviceArray
+        # Not supported: ShardedDeviceArray, tokens, custom output types, etc
+        all(type(aval) is ShapedArray for aval in in_avals) and
         all(xla.type_is_device_array(x) for x in out_flat))
+    if not maybe_use_fastpath:
+      return out, None
 
-    ### If we can use the fastpath, we return required info to the caller.
-    if use_fastpath:
-      xla_executable, _, result_handlers = execute.args
-      sticky_device = None
-      avals = []
-      lazy_exprs = [None] * len(result_handlers)
-      for result_handler in result_handlers:
-        aval, sticky_device = result_handler.args
-        avals.append(aval)
-      assert len(avals) == len(out_flat)
-      fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals, lazy_exprs)
-    else:
-      fastpath_data = None
+    # We also need to check that the output avals are all ShapedArrays.
+    xla_executable, _, result_handlers = execute.args
+    out_avals, _ = unzip2(handler.args for handler in result_handlers)
+    assert len(out_avals) == len(out_flat)
+    use_fastpath = all(type(aval) is ShapedArray for aval in out_avals)
+    if not use_fastpath:
+      return out, None
 
+    assert execute is xla._xla_callable.pop_most_recent_entry()
+    sticky_device = result_handlers[0].args[1] if result_handlers else None
+    lazy_exprs = [None] * len(result_handlers)
+    fastpath_data = (xla_executable, out_pytree_def, sticky_device, out_avals,
+                     lazy_exprs)
     return out, fastpath_data
 
   def get_device_info():
@@ -464,7 +461,7 @@ def _cpp_jit(
       backend_ = xb.get_backend(backend)
       default_device = backend_.get_default_device_assignment(1)[0]
 
-    return _BackendAndDeviceInfo(default_device, committed_to_device)
+    return xla.BackendAndDeviceInfo(default_device, committed_to_device)
 
   if lib._xla_extension_version < 14:
     cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info, static_argnums)

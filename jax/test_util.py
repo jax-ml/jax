@@ -331,27 +331,6 @@ def count_device_put():
 
 
 @contextmanager
-def count_primitive_compiles():
-  xla.xla_primitive_callable.cache_clear()
-
-  # We count how many times we call primitive_computation (which is called
-  # inside xla_primitive_callable) instead of xla_primitive_callable so we don't
-  # count cache hits.
-  primitive_computation = xla.primitive_computation
-  count = [0]
-
-  def primitive_computation_and_count(*args, **kwargs):
-    count[0] += 1
-    return primitive_computation(*args, **kwargs)
-
-  xla.primitive_computation = primitive_computation_and_count
-  try:
-    yield count
-  finally:
-    xla.primitive_computation = primitive_computation
-
-
-@contextmanager
 def count_jit_and_pmap_compiles():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
@@ -368,6 +347,8 @@ def count_jit_and_pmap_compiles():
     yield count
   finally:
     xla.jaxpr_subcomp = jaxpr_subcomp
+
+count_primitive_compiles = count_jit_and_pmap_compiles
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
@@ -906,11 +887,11 @@ class JaxTestCase(parameterized.TestCase):
     np_shapes = tree_map(lambda x: np.shape(np.asarray(x)), python_ans)
     self.assertEqual(python_shapes, np_shapes)
 
-    cache_misses = xla.xla_primitive_callable.cache_info().misses
+    cache_misses = xla._xla_callable.misses()
     python_ans = fun(*args)
     if check_cache_misses:
       self.assertEqual(
-          cache_misses, xla.xla_primitive_callable.cache_info().misses,
+          cache_misses, xla._xla_callable.misses(),
           "Compilation detected during second call of {} in op-by-op "
           "mode.".format(fun))
 
