@@ -26,6 +26,7 @@ import scipy.stats
 
 from jax import api
 from jax import core
+from jax import dtypes
 from jax import grad
 from jax import lax
 from jax import numpy as jnp
@@ -982,6 +983,34 @@ class LaxRandomTest(jtu.JaxTestCase):
     with jtu.count_device_put() as count:
       api.jit(random.split)(key)
     self.assertEqual(count[0], 1)  # 1 for the argument device_put
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_dtype={dtype}", "dtype": dtype}
+      for dtype in int_dtypes + uint_dtypes))
+  def test_randint_bounds(self, dtype):
+    min = np.iinfo(dtype).min
+    max = np.iinfo(dtype).max
+    key = random.PRNGKey(1701)
+    shape = (10,)
+    if np.iinfo(dtype).bits < np.iinfo(dtypes.canonicalize_dtype(int)).bits:
+      expected = random.randint(key, shape, min, max, dtype)
+      self.assertArraysEqual(expected, random.randint(key, shape, min - 12345, max + 12345, dtype))
+    else:
+      self.assertRaises(OverflowError, random.randint, key, shape, min - 12345, max + 12345, dtype)
+
+  def test_randint_out_of_range(self):
+    key = random.PRNGKey(0)
+
+    r = random.randint(key, (10,), 255, 256, np.uint8)
+    self.assertAllClose(r, jnp.full_like(r, 255))
+
+    r = random.randint(key, (1000,), -128, 128, np.int8)
+    self.assertGreater((r == -128).sum(), 0)
+    self.assertGreater((r == 127).sum(), 0)
+
+    r = random.randint(key, (1000,), -1000, 1000, np.uint8)
+    self.assertGreater((r == 0).sum(), 0)
+    self.assertGreater((r == 255).sum(), 0)
 
 
 if __name__ == "__main__":
