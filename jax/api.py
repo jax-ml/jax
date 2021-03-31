@@ -103,9 +103,7 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_bool(
     "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
-    "A temporary flag enabling the C++ jax.jit fast path."
-    "Set this to `False` only if it crashes otherwise and report "
-    "the error to the jax-team.")
+    "Deprecated. Setting this flag has no effect.")
 
 
 def _nan_check_posthook(fun, args, kwargs, output):
@@ -222,57 +220,7 @@ def jit(
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
-  if FLAGS.experimental_cpp_jit:
-    return _cpp_jit(fun, static_argnums, device, backend, donate_argnums)
-  else:
-    return _python_jit(fun, static_argnums, device, backend, donate_argnums)
-
-
-def _python_jit(
-    fun: F,
-    static_argnums: Union[int, Iterable[int]] = (),
-    device: Optional[xc.Device] = None,
-    backend: Optional[str] = None,
-    donate_argnums: Union[int, Iterable[int]] = ()
-) -> F:
-  """The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit."""
-  _check_callable(fun)
-  static_argnums = _ensure_index_tuple(static_argnums)
-  donate_argnums = _ensure_index_tuple(donate_argnums)
-  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
-
-  @wraps(fun)
-  @api_boundary
-  def f_jitted(*args, **kwargs):
-    if config.jax_disable_jit:
-      return fun(*args, **kwargs)
-    if max(static_argnums + donate_argnums, default=-1) >= len(args):
-      raise ValueError(f"jitted function has static_argnums={static_argnums}, "
-                       f"donate_argnums={donate_argnums} but "
-                       f"was called with only {len(args)} positional arguments.")
-    f = lu.wrap_init(fun)
-    if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args)
-    else:
-      dyn_args = args
-    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
-    if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
-    else:
-      donated_invars = (False,) * len(args_flat)
-    for arg in args_flat:
-      _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(
-        flat_fun,
-        *args_flat,
-        device=device,
-        backend=backend,
-        name=flat_fun.__name__,
-        donated_invars=donated_invars)
-    return tree_unflatten(out_tree(), out)
-
-  return f_jitted
+  return _cpp_jit(fun, static_argnums, device, backend, donate_argnums)
 
 
 class _BackendAndDeviceInfo(NamedTuple):
@@ -292,9 +240,6 @@ def _cpp_jit(
   The goal of this function is to speed up the time it takes to process the
   arguments, find the correct C++ executable, start the transfer of arguments
   and schedule the computation.
-  As long as it does not support all features of the Python implementation
-  the C++ code will fallback to `_python_jit` when it faces some unsupported
-  feature.
   """
   _check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)
@@ -307,7 +252,7 @@ def _cpp_jit(
 
   @api_boundary
   def cache_miss(*args, **kwargs):
-    ### This first part is basically the same code as in _python_jit.
+    ### Bind the xla_call primitive, as we would from a pure-Python code path
     # An alternative would be for cache_miss to accept from C++ the arguments
     # (dyn_args, donated_invars, args_flat, in_tree), since otherwise we have
     # work/code that is redundant between C++ and Python. We can try that later.

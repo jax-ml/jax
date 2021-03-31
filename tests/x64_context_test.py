@@ -32,9 +32,7 @@ config.parse_flags_with_absl()
 
 
 def _maybe_jit(jit_type, func, *args, **kwargs):
-  if jit_type == "python":
-    return api._python_jit(func, *args, **kwargs)
-  elif jit_type == "cpp":
+  if jit_type == "cpp":
     return api._cpp_jit(func, *args, **kwargs)
   elif jit_type is None:
     return func
@@ -45,7 +43,7 @@ def _maybe_jit(jit_type, func, *args, **kwargs):
 class X64ContextTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
-      for jit in ["python", "cpp", None]))
+      for jit in ["cpp", None]))
   def test_make_array(self, jit):
     func = _maybe_jit(jit, lambda: jnp.arange(10.0))
     dtype_start = func().dtype
@@ -60,7 +58,7 @@ class X64ContextTests(jtu.JaxTestCase):
           "testcase_name": "_jit={}_f_{}".format(jit, f.__name__),
           "jit": jit,
           "enable_or_disable": f
-      } for jit in ["python", "cpp", None] for f in [enable_x64, disable_x64]))
+      } for jit in ["cpp", None] for f in [enable_x64, disable_x64]))
   def test_correctly_capture_default(self, jit, enable_or_disable):
     # The fact we defined a jitted function with a block with a different value
     # of `config.enable_x64` has no impact on the output.
@@ -78,7 +76,7 @@ class X64ContextTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
-      for jit in ["python", "cpp", None]))
+      for jit in ["cpp", None]))
   def test_near_singular_inverse(self, jit):
     if jtu.device_under_test() == "tpu":
       self.skipTest("64-bit inverse not available on TPU")
@@ -102,7 +100,7 @@ class X64ContextTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
-      for jit in ["python", "cpp", None]))
+      for jit in ["cpp", None]))
   def test_while_loop(self, jit):
     @partial(_maybe_jit, jit)
     def count_to(N):

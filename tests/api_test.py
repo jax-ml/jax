@@ -52,20 +52,10 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-class CPPJitTest(jtu.BufferDonationTestCase):
-  """Shared tests between the Python and the C++ jax,jit implementations.
-
-  Because the Python implementation supports more features, we need to have the
-  Python tests that extend the C++ tests (and not the other way around).
-  """
+class JitTest(jtu.BufferDonationTestCase):
 
   @property
   def jit(self):
-    # Right now, the CPP tests also test the Python code-path when jaxlib is
-    # too old.
-    # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
-    # This is in the future, because we are making a breaking change to
-    # Tensorflow.
     return jax.api._cpp_jit
 
   def test_jit_of_noncallable(self):
@@ -411,8 +401,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     assert x() is None      # x is gone
 
   def test_jit_raises_on_first_invocation_on_non_hashable_static_argnum(self):
-    if self.jit != jax.api._python_jit:
-      raise unittest.SkipTest("this test only applies to _python_jit")
+    raise unittest.SkipTest("this test covered a now-removed path")
     f = lambda x, y: x + 3
     jitted_f = self.jit(f, static_argnums=(1,))
 
@@ -508,13 +497,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         {attr: getattr(f, f"__{attr}__")},
         {attr: getattr(jf, f"__{attr}__")})
     self.assertEqual(f.some_value, jf.some_value)
-
-
-class PythonJitTest(CPPJitTest):
-
-  @property
-  def jit(self):
-    return jax.api._python_jit
 
 
 class APITest(jtu.JaxTestCase):
@@ -5039,10 +5021,10 @@ class NamedCallTest(jtu.JaxTestCase):
       {"testcase_name": "_jit_type={}_func={}".format(jit_type, func),
        "jit_type": jit_type, "func": func}
       for func in ['identity', 'asarray', 'device_put']
-      for jit_type in [None, "python", "cpp"]
+      for jit_type in [None, "cpp"]
       if not (jit_type is None and func == 'identity')))
   def test_integer_overflow(self, jit_type, func):
-    if jit_type == "cpp" and not config.x64_enabled and jax.lib.version < (0, 1, 65):
+    if not config.x64_enabled and jax.lib.version < (0, 1, 65):
       self.skipTest("int32 overflow detection not yet implemented in CPP JIT.")
     funcdict = {
       'identity': lambda x: x,
@@ -5050,7 +5032,6 @@ class NamedCallTest(jtu.JaxTestCase):
       'device_put': api.device_put,
     }
     jit = {
-      'python': api._python_jit,
       'cpp': api._cpp_jit,
       None: lambda x: x,
     }

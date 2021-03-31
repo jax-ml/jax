@@ -75,9 +75,8 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans.block_until_ready()
 
   def testCallDeoptimized(self):
-    for jit in [jax.api._python_jit, jax.api._cpp_jit]:
 
-      @jit
+      @jax.jit
       def f(x):
         return jax.lax.cond(
             x == 1, lambda _: np.nan, lambda _: 2., operand=None)
@@ -181,9 +180,8 @@ class DebugInfsTest(jtu.JaxTestCase):
       ans.block_until_ready()
 
   def testCallDeoptimized(self):
-    for jit in [jax.api._python_jit, jax.api._cpp_jit]:
 
-      @jit
+      @jax.jit
       def f(x):
         return jax.lax.cond(
             x == 1, lambda _: np.inf, lambda _: 2., operand=None)
