@@ -4831,85 +4831,33 @@ batching.primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max))
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
 
-def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
-                 dimension_numbers, indices_are_sorted, unique_indices):
-  operand, scatter_indices, updates = primals
-  g_operand, g_scatter_indices, g_updates = tangents
-  dnums = dimension_numbers
 
-  if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
-    val_out = scatter_p.bind(
-      operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=dnums,
-      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
-    return val_out, ad_util.Zero.from_value(val_out)
-
-  g_operand = ad.instantiate_zeros(g_operand)
-  g_updates = ad.instantiate_zeros(g_updates)
-
-  # If there are overlapping indices in the scatter, it is unspecified which
-  # update "wins". So we use the following perhaps surprising scheme:
-  # a) attach a positive ID to each update in updates, and perform the scatter
-  #    on the IDs
-  # b) perform the inverse gather on the scattered IDs (similar to
-  #    _scatter_add_transpose).
-  # c) use the gathered IDs to mask the primal and tangent values.
-  # d) perform a scatter-add on the masked primal and tangent values. A benefit
-  #    of using scatter-add here is that we don't need a `scatter` transpose
-  #    rule.
+def _scatter_via_scatter_add(
+    operand, scatter_indices, updates, *, update_jaxpr, update_consts,
+    dimension_numbers, indices_are_sorted, unique_indices
+):
+  # TODO(shoyer): figure out if it's really safe to ignore these arguments!
+  del update_jaxpr, update_consts
+  trues = full(operand.shape, fill_value=True)
+  falses = full(updates.shape, fill_value=False)
+  preserved = scatter(
+      trues, scatter_indices, falses, dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+  )
+  operand_values = select(preserved, operand, full_like(operand, 0))
+  return scatter_add(
+      operand_values, scatter_indices, updates, dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+  )
 
 
-  # a) attach a positive ID to each update in `updates`, and perform a scatter
-  #    on the IDs.
-  ids_shape = np.array(updates.shape, dtype=np.int64)
-  ids_shape[dnums.update_window_dims,] = 1
-  num_ids = np.prod(ids_shape)
-  id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
-  update_ids = add(reshape(iota(id_dtype, num_ids), ids_shape),
-                   _ones(updates, dtype=id_dtype))
-
-  scattered_ids = scatter(full(operand.shape, 0, id_dtype),
-                          scatter_indices, update_ids, dnums,
-                          indices_are_sorted=indices_are_sorted,
-                          unique_indices=unique_indices)
-
-  # b) compute the inverse gather that "undoes" the scatter on the id values.
-  gather_dnums = GatherDimensionNumbers(
-    offset_dims=dnums.update_window_dims,
-    collapsed_slice_dims=dnums.inserted_window_dims,
-    start_index_map=dnums.scatter_dims_to_operand_dims)
-  slice_sizes = []
-  pos = 0
-  for i in range(len(scattered_ids.shape)):
-    if i in dnums.inserted_window_dims:
-      slice_sizes.append(1)
-    else:
-      slice_sizes.append(updates.shape[dnums.update_window_dims[pos]])
-      pos += 1
-  gathered_update_ids = gather(scattered_ids, scatter_indices,
-                               dimension_numbers=gather_dnums,
-                               slice_sizes=slice_sizes)
-
-  # c) mask off input elements that do not correspond to a primal output.
-  masked_operand = select(eq(scattered_ids, _zeros(scattered_ids)),
-                          operand, _zeros(operand))
-  masked_updates = select(eq(update_ids,  gathered_update_ids),
-                          updates, _zeros(updates))
-  masked_g_operand = select(eq(scattered_ids, _zeros(scattered_ids)),
-                            g_operand, _zeros(g_operand))
-  masked_g_updates = select(eq(update_ids, gathered_update_ids),
-                            g_updates, _zeros(g_updates))
-
-  # d) perform scatter-adds to compute the primal and tangent outputs.
-  val_out = scatter_add(masked_operand, scatter_indices, masked_updates,
-                        dimension_numbers=dnums,
-                        indices_are_sorted=indices_are_sorted,
-                        unique_indices=unique_indices)
-  tangent_out = scatter_add(masked_g_operand, scatter_indices, masked_g_updates,
-                            dimension_numbers=dnums,
-                            indices_are_sorted=indices_are_sorted,
-                            unique_indices=unique_indices)
-  return val_out, tangent_out
+def _scatter_jvp(primals, tangents, **kwargs):
+  # Note: we use ad.jvp here instead of the higher-level api.jvp to properly
+  # handle symbolic zeros
+  f = lu.wrap_init(lambda *args: [_scatter_via_scatter_add(*args, **kwargs)])
+  result = ad.jvp(f).call_wrapped(primals, tangents)
+  (out_primals,), (out_tangents,) = result
+  return out_primals, out_tangents
 
 
 scatter_p = standard_primitive(
