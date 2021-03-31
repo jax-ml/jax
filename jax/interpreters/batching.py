@@ -81,23 +81,6 @@ def _match_axes(axis_size, in_dims, out_dims_thunk, out_dim_dests, *in_vals):
   yield map(partial(matchaxis, axis_size), out_dims, out_dim_dests, out_vals)
 
 
-# These next two functions, `batch_fun2` and `_batch_fun2`, are deprecated; the
-# former is only called from `custom_transforms`, which itself is deprecated.
-# TODO(mattjj): delete these along with custom_transforms
-
-def batch_fun2(fun: lu.WrappedFun, in_dims):
-  # like `batch_fun` but returns output batch dims (so no out_dim_dests)
-  fun, out_dims = batch_subtrace(fun)
-  return _batch_fun2(fun, in_dims), out_dims
-
-@lu.transformation
-def _batch_fun2(in_dims, *in_vals, **params):
-  with core.new_main(BatchTrace, axis_name=None) as main:
-    out_vals = yield (main, in_dims,) + in_vals, params
-    del main
-  yield out_vals
-
-
 ### tracer
 
 # TODO(mattjj): use a special sentinel type rather than None

@@ -940,9 +940,17 @@ def batch_jaxpr(jaxpr, axis_size, in_dims):
               if d is not batching.not_mapped else aval
               for d, aval in zip(in_dims, in_avals)]
 
-  f, out_dims = batching.batch_fun2(lu.wrap_init(jaxpr_as_fun(jaxpr)), in_dims)
+  fun, out_dims = batching.batch_subtrace(lu.wrap_init(jaxpr_as_fun(jaxpr)))
+  f = _batch_fun(fun, in_dims)
   jaxpr, consts, _ = trace_to_jaxpr_dynamic(f, in_avals)
   return jaxpr, consts, out_dims()
+
+@lu.transformation
+def _batch_fun(in_dims, *in_vals, **params):
+  with core.new_main(batching.BatchTrace, axis_name=None) as main:
+    out_vals = yield (main, in_dims, *in_vals), params
+    del main
+  yield out_vals
 
 def _map_array(size: int, axis: int, aval: AbsArray) -> AbsArray:
   return AbsArray(tuple_delete(aval.shape, axis), aval._eltTy)
