@@ -901,7 +901,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     if numpy_version >= (1, 20, 2) or np_op.__name__ in ("all", "any"):
-        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1791,8 +1791,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype in default_dtypes
       for a_shape in one_dim_array_shapes
       for order in range(5)
-      for k in [np.arange(order, dtype=dtype), np.ones(1, dtype), None]
-))
+      for k in [np.arange(order, dtype=dtype), np.ones(1, dtype), None]))
   def testPolyInt(self, a_shape, order, k, dtype):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda arg1: np.polyint(arg1, m=order, k=k)
@@ -2749,9 +2748,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     def np_fun(x, n=n, axis=axis, prepend=prepend, append=append):
       if prepend is None:
-          prepend = np._NoValue
+        prepend = np._NoValue
       elif not np.isscalar(prepend) and prepend.dtype == jnp.bfloat16:
-          prepend = prepend.astype(np.float32)
+        prepend = prepend.astype(np.float32)
 
       if append is None:
         append = np._NoValue
