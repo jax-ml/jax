@@ -3,6 +3,7 @@
 sphinx >=3, <4
 sphinx_rtd_theme
 sphinx-autodoc-typehints
+jupyter-sphinx>=0.3.2
 myst-nb
 
 # Packages used for CI tests.

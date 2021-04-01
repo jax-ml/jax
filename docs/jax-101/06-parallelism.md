@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "tCOWitsAS1EE"}
 
-# Parallel evaluation in JAX
+# Parallel Evaluation in JAX
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/06-parallelism.ipynb)
 
@@ -33,7 +33,7 @@ If you're running this code in Google Colab, be sure to choose *Runtime*→*Chan
 
 Once this is done, you can run the following to set up the Colab TPU for use with JAX:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: hn7HtC2QS92b
 
 import jax.tools.colab_tpu
@@ -44,7 +44,7 @@ jax.tools.colab_tpu.setup_tpu()
 
 Next run the following to see the TPU devices you have available:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: tqbpCcqY3Cn7
 :outputId: 1fb88cf7-35f7-4565-f370-51586213b988
 
@@ -58,7 +58,7 @@ jax.devices()
 
 The most basic use of `jax.pmap` is completely analogous to `jax.vmap`, so let's return to the convolution example from the [Vectorisation notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/03-vectorization.ipynb).
 
-```{code-cell} ipython3
+```{code-cell}
 :id: IIQKBr-CgtD2
 :outputId: 6e7f8755-fdfd-4cf9-e2b5-a10c5a870dd4
 
@@ -81,7 +81,7 @@ convolve(x, w)
 
 Now, let's convert our `convolve` function into one that runs on entire batches of data. In anticipation of spreading the batch across several devices, we'll make the batch size equal to the number of devices:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: ll-hEa0jihzx
 :outputId: 788be05a-10d4-4a05-8d9d-49d0083541ab
 
@@ -92,7 +92,7 @@ ws = np.stack([w] * n_devices)
 xs
 ```
 
-```{code-cell} ipython3
+```{code-cell}
 :id: mi-nysDWYbn4
 :outputId: 2d115fc3-52f5-4a68-c3a7-115111a83657
 
@@ -103,7 +103,7 @@ ws
 
 As before, we can vectorise using `jax.vmap`:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: TNb9HsFXYVOI
 :outputId: 2e60e07a-6687-49ab-a455-60d2ec484363
 
@@ -114,7 +114,7 @@ jax.vmap(convolve)(xs, ws)
 
 To spread out the computation across multiple devices, just replace `jax.vmap` with `jax.pmap`:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: KWoextrails4
 :outputId: bad1fbb7-226a-4538-e442-20ce0c1c8fad
 
@@ -125,7 +125,7 @@ jax.pmap(convolve)(xs, ws)
 
 Note that the parallelized `convolve` returns a `ShardedDeviceArray`. That is because the elements of this array are sharded across all of the devices used in the parallelism. If we were to run another parallel computation, the elements would stay on their respective devices, without incurring cross-device communication costs.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: P9dUyk-ciquy
 :outputId: 99ea4c6e-cff7-4611-e9e5-bf016fa9716c
 
@@ -142,7 +142,7 @@ The outputs of the inner `jax.pmap(convolve)` never left their devices when bein
 
 Like with `vmap`, we can use `in_axes` to specify whether an argument to the parallelized function should be broadcast (`None`), or whether it should be split along a given axis. Note, however, that unlike `vmap`, only the leading axis (`0`) is supported by `pmap` at the time of writing this guide.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 6Es5WVuRlXnB
 :outputId: 7e9612ae-d6e0-4d79-a228-f0403fcf8237
 
@@ -170,7 +170,7 @@ Keep in mind that when calling the transformed function, the size of the specifi
 The above is enough to perform simple parallel operations, e.g. batching a simple MLP forward pass across several devices. However, sometimes we need to pass information between the devices. For example, perhaps we are interested in normalizing the output of each device so they sum to 1.
 For that, we can use special [collective ops](https://jax.readthedocs.io/en/latest/jax.lax.html#parallel-operators) (such as the `jax.lax.p*` ops `psum`, `pmean`, `pmax`, ...). In order to use the collective ops we must specify the name of the `pmap`-ed axis through `axis_name` argument, and then refer to it when calling the op. Here's how to do that:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 0nCxGwqmtd3w
 :outputId: 6f9c93b0-51ed-40c5-ca5a-eacbaf40e686
 
@@ -190,7 +190,7 @@ The `axis_name` is just a string label that allows collective operations like `j
 
 `jax.vmap` also supports `axis_name`, which allows `jax.lax.p*` operations to be used in the vectorisation context in the same way they would be used in a `jax.pmap`:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: nT61xAYJUqCW
 :outputId: e8831025-78a6-4a2b-a60a-3c77b35214ef
 
@@ -225,7 +225,7 @@ There are two places to pay attention to:
 
 If this example is too confusing, you can find the same example, but without parallelism, in the next notebook, [State in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/07-state-in-jax.ipynb). Once that example makes sense, you can compare the differences to understand how parallelism changes the picture.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: cI8xQqzRrc-4
 
 from typing import NamedTuple
@@ -290,7 +290,7 @@ At some point during the update step, we need to combine the gradients computed 
 
 Aside on naming: here, we use `num_devices` for the `axis_name` for didactic clarity while introducing `jax.pmap`. However, in some sense that is tautologous: any axis introduced by a pmap will represent a number of devices. Therefore, it's common to see the axis be named something semantically meaningful, like `batch`, `data` (signifying data parallelism) or `model` (signifying model parallelism).
 
-```{code-cell} ipython3
+```{code-cell}
 :id: _CTtLrsQ-0kK
 
 # Generate true data from y = w*x + b + noise
@@ -309,7 +309,7 @@ replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), params)
 
 So far, we've just constructed arrays with an additional leading dimension. The params are all still all on the host (CPU). `pmap` will communicate them to the devices when `update()` is first called, and each copy will stay on its own device subsequently. You can tell because they are a DeviceArray, not a ShardedDeviceArray:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: YSCgHguTSdGW
 :outputId: a8bf28df-3747-4d49-e340-b7696cf0c27d
 
@@ -324,7 +324,7 @@ The params will become a ShardedDeviceArray when they are returned by our pmappe
 
 We do the same to the data:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: vY61QJoFWCII
 :outputId: f436a15f-db97-44cc-df33-bbb4ff222987
 
@@ -343,7 +343,7 @@ type(x_split)
 
 The data is just a reshaped vanilla NumPy array. Hence, it cannot be anywhere but on the host, as NumPy runs on CPU only. Since we never modify it, it will get sent to the device at each `update` call, like in a real pipeline where data is typically streamed from CPU to the device at each step.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: atOTi7EeSQw-
 :outputId: c8daf141-63c4-481f-afa5-684c5f7b698d
 
@@ -378,7 +378,7 @@ for i in range(1000):
 params = jax.device_get(jax.tree_map(lambda x: x[0], replicated_params))
 ```
 
-```{code-cell} ipython3
+```{code-cell}
 :id: rvVCACv9UZcF
 :outputId: 5c472d0f-1236-401b-be55-86e3dc43875d
 
@@ -395,7 +395,7 @@ plt.show()
 
 When running on TPU, the idea of a 'host' becomes important. A host is the CPU that manages several devices. A single host can only manage so many devices (usually 8), so when running very large parallel programs, multiple hosts are needed, and some finesse is required to manage them.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 3DO8NwW5hurX
 :outputId: 6df0bdd7-fee2-4805-9bfe-38e41bdaeb50
 
