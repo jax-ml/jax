@@ -1232,10 +1232,10 @@ def poisson(key: jnp.ndarray,
 
   Args:
     key: a PRNGKey used as the random key.
-    lam: rate parameter (mean of the distribution), must be >= 0.
+    lam: scale parameter (mean of the distribution), must be >= 0.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
-    dtype: optional, a integer dtype for the returned values (default int64 if
+    dtype: optional, an integer dtype for the returned values (default int64 if
       jax_enable_x64 is true, otherwise int32).
 
   Returns:
