@@ -58,8 +58,7 @@ jobs:
             # Test with numpy version that matches Google-internal version
             package-overrides: "numpy==1.16.4 scipy==1.2.1"
             num_generated_cases: 10
-          - name-prefix: "without omnistaging"
-            # TODO: rename or remove this test
+          - name-prefix: "with 3.7"
             python-version: 3.7
             os: ubuntu-latest
             enable-x64: 0
