@@ -48,17 +48,19 @@ def _parse_numpydoc(docstr: Optional[str]) -> ParsedDoc:
   if docstr is None or not docstr.strip():
     return ParsedDoc(docstr)
 
-  firstline, _, body = docstr.partition('\n')
+  signature, body = "", docstr
+  match = _numpy_signature_re.match(body)
+  if match:
+    signature = match.group()
+    body = docstr[match.end():]
+
+  firstline, _, body = body.partition('\n')
   body = textwrap.dedent(body.lstrip('\n'))
 
-  signature = ""
-  if _numpy_signature_re.match(firstline):
-    signature, firstline = firstline, ""
-  else:
-    match = _numpy_signature_re.match(body)
-    if match:
-      signature = match.group()
-      body = body[match.end():]
+  match = _numpy_signature_re.match(body)
+  if match:
+    signature = match.group()
+    body = body[match.end():]
 
   summary = firstline
   if not summary:
