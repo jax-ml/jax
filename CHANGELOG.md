@@ -30,6 +30,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     `OverflowError` rather than having their value silently truncated.
 * Bug fixes:
   * `host_callback` now supports empty arrays in arguments and results ({jax-issue}`#6262`).
+  * {func}`jax.random.randint` clips rather than wraps of out-of-bounds limits, and can now generate
+    integers in the full range of the specified dtype ({jax-issue}`#5868`)
 
 ## jaxlib 0.1.65 (unreleased)
 
