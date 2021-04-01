@@ -33,6 +33,7 @@ from jax._src.lax.lax import (
 from jax._src.lax import lax as lax_internal
 from jax.lib import lapack
 
+from jax.lib import cuda_lu_pivot
 from jax.lib import cusolver
 from jax.lib import rocsolver
 
@@ -888,7 +889,9 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
-def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
+
+def _lu_cpu_gpu_translation_rule(getrf_impl, pivots_to_permutation_impl, c,
+                                 operand):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
   m = shape.dimensions()[-2]
@@ -898,9 +901,14 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   ok = xops.Ge(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   lu = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), lu,
                             _nan_like(c, lu))
-  perm = xla.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
-                       multiple_results=False)(c, pivot)
+  perm = pivots_to_permutation_impl(c, pivot, m)
   return xops.Tuple(c, [lu, pivot, perm])
+
+
+def _generic_lu_pivots_to_permutation(c, pivot, num_rows):
+  return xla.lower_fun(
+      lambda x: lu_pivots_to_permutation(x, num_rows),
+      multiple_results=False)(c, pivot)
 
 
 def _lu_tpu_translation_rule(c, operand):
@@ -920,15 +928,22 @@ ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
 xla.backend_specific_translations['cpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, lapack.getrf)
+    _lu_cpu_gpu_translation_rule,
+    lapack.getrf,
+    _generic_lu_pivots_to_permutation,
+)
 
 if cusolver is not None:
+  _pivot_impl = (
+      cuda_lu_pivot.lu_pivots_to_permutation
+      if cuda_lu_pivot else _generic_lu_pivots_to_permutation)
   xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, cusolver.getrf)
+      _lu_cpu_gpu_translation_rule, cusolver.getrf, _pivot_impl)
 
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, rocsolver.getrf)
+      _lu_cpu_gpu_translation_rule, rocsolver.getrf,
+      _generic_lu_pivots_to_permutation)
 
 xla.backend_specific_translations['tpu'][lu_p] = _lu_tpu_translation_rule
 

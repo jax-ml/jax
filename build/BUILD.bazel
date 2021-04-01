@@ -39,6 +39,7 @@ py_binary(
     ]) + if_cuda([
         "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",
+        "//jaxlib:cuda_lu_pivot_kernels",
         "//jaxlib:cuda_prng_kernels",
     ]) + if_rocm([
         "//jaxlib:rocblas_kernels",
