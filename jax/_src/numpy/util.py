@@ -21,6 +21,7 @@ _parameter_break = re.compile("\n(?=[A-Za-z_])")
 _section_break = re.compile(r"\n(?=[^\n]{3,15}\n-{3,15})", re.MULTILINE)
 _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\([\w\W]*?\)$', re.MULTILINE)
 _versionadded = re.compile(r'^\s+\.\.\s+versionadded::', re.MULTILINE)
+_docreference = re.compile(r':doc:`(.*?)\s*<.*?>`')
 
 class ParsedDoc(NamedTuple):
   """
@@ -47,6 +48,10 @@ def _parse_numpydoc(docstr: Optional[str]) -> ParsedDoc:
   """
   if docstr is None or not docstr.strip():
     return ParsedDoc(docstr)
+
+  # Remove any :doc: directives in the docstring to avoid sphinx errors
+  docstr = _docreference.sub(
+    lambda match: f"{match.groups()[0]}", docstr)
 
   signature, body = "", docstr
   match = _numpy_signature_re.match(body)

@@ -1928,10 +1928,12 @@ def _isposneginf(infinity, x, out):
     return full_like(x, False, dtype=bool_)
 
 isposinf = _wraps(np.isposinf, skip_params=['out'])(
-  lambda x, out=None: _isposneginf(inf, x, out))
+  lambda x, out=None: _isposneginf(inf, x, out)
+)
 
 isneginf = _wraps(np.isneginf, skip_params=['out'])(
-  lambda x, out=None: _isposneginf(-inf, x, out))
+  lambda x, out=None: _isposneginf(-inf, x, out)
+)
 
 @_wraps(np.isnan)
 def isnan(x):
