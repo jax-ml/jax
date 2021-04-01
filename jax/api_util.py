@@ -217,3 +217,8 @@ def shaped_abstractify(x):
   named_shape = getattr(x, 'named_shape', {})
   return core.ShapedArray(np.shape(x), _dtype(x), weak_type=weak_type,
                           named_shape=named_shape)
+
+# This decorator exists to make it easier to monkey-patch APIs in JAX.
+# By default it does nothing, but it can be monkey-patched to do other things.
+def api_hook(fun, tag: str):
+  return fun

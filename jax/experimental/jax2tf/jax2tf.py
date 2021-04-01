@@ -117,6 +117,7 @@ def _xla_path_disabled_error(primitive_name: str) -> Exception:
     f"Call to {primitive_name} can only be converted through TFXLA, but "
      "XLA is disabled")
 
+@functools.partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable, *,
             in_shapes: Optional[Sequence[Any]]=None,
             with_gradient=True, enable_xla=True) -> Callable:
