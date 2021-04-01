@@ -25,7 +25,7 @@ from jax import numpy as jnp
 from jax import dtypes
 from jax.core import NamedShape
 from jax.api import jit, vmap
-from jax._src.numpy.lax_numpy import _constant_like, asarray
+from jax._src.numpy.lax_numpy import _constant_like, _convert_and_clip_integer, asarray
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
@@ -441,20 +441,28 @@ def randint(key: jnp.ndarray,
 def _randint(key, shape, minval, maxval, dtype):
   _check_shape("randint", shape, np.shape(minval), np.shape(maxval))
   if not jnp.issubdtype(dtype, np.integer):
-    raise TypeError("randint only accepts integer dtypes.")
+    raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
 
-  minval = lax.convert_element_type(minval, dtype)
-  maxval = lax.convert_element_type(maxval, dtype)
+  minval = _asarray(minval)
+  maxval = _asarray(maxval)
+  if not jnp.issubdtype(minval.dtype, np.integer):
+    minval = minval.astype(int)
+  if not jnp.issubdtype(maxval.dtype, np.integer):
+    maxval = maxval.astype(int)
+
+  # Flag where maxval is greater than the maximum value of dtype
+  # in order to handle cases like randint(key, shape, 0, 256, 'uint8')
+  maxval_out_of_range = lax.gt(
+    maxval, _convert_and_clip_integer(jnp.array(jnp.iinfo(dtype).max, dtype), maxval.dtype))
+
+  minval = _convert_and_clip_integer(minval, dtype)
+  maxval = _convert_and_clip_integer(maxval, dtype)
   minval = lax.broadcast_to_rank(minval, len(shape))
   maxval = lax.broadcast_to_rank(maxval, len(shape))
   nbits = jnp.iinfo(dtype).bits
 
   if nbits not in (8, 16, 32, 64):
-    raise TypeError("randint only accepts 8-, 16-, 32-, or 64-bit dtypes.")
-
-  # if we don't have minval < maxval, just always return minval
-  # https://github.com/google/jax/issues/222
-  maxval = lax.max(lax.add(minval, np.array(1, dtype)), maxval)
+    raise TypeError(f"randint only accepts 8-, 16-, 32-, or 64-bit dtypes, got {dtype}")
 
   # This algorithm is biased whenever (maxval - minval) is not a power of 2.
   # We generate double the number of random bits required by the dtype so as to
@@ -465,6 +473,18 @@ def _randint(key, shape, minval, maxval, dtype):
 
   unsigned_dtype = _UINT_DTYPES[nbits]
   span = lax.convert_element_type(maxval - minval, unsigned_dtype)
+
+  # Ensure that span=1 when maxval <= minval, so minval is always returned;
+  # https://github.com/google/jax/issues/222
+  span = lax.select(maxval <= minval, lax.full_like(span, 1), span)
+
+  # When maxval is out of range, the span has to be one larger.
+  # If span is already the maximum representable value, this will wrap to zero,
+  # causing remainders below to have no effect, which is the correct semantics.
+  span = lax.select(
+    maxval_out_of_range & (maxval > minval),
+    lax.add(span, lax._const(span, 1)),
+    span)
 
   # To compute a remainder operation on an integer that might have twice as many
   # bits as we can represent in the native unsigned dtype, we compute a
