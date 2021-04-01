@@ -1,8 +1,7 @@
-Tutorial: JAX 101 (Work in Progress)
-====================================
+Tutorial: JAX 101
+=================
 
 This is a tutorial developed by engineers and researchers at DeepMind_.
-It is a work in progress; more content will be added soon!
 
 .. toctree::
   :maxdepth: 1

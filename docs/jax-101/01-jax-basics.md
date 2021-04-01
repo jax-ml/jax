@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "6_117sy0CGEU"}
 
-# JAX as accelerated NumPy
+# JAX As Accelerated NumPy
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/01-jax-basics.ipynb)
 
@@ -31,7 +31,7 @@ Over the course of this series of guides, we will unpack exactly what that means
 
 The code below shows how to import JAX and create a vector.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: ZqUzvqF1B1TO
 
 import jax
@@ -47,7 +47,7 @@ So far, everything is just like NumPy. A big appeal of JAX is that you don't nee
 
 You can notice the first difference if you check the type of `x`. It is a variable of type `DeviceArray`, which is the way JAX represents arrays.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 3fLtgPUAn7mi
 
 x
@@ -61,7 +61,7 @@ We will now perform a dot product to demonstrate that it can be done in differen
 
 (Technical detail: when a JAX function is called, the corresponding operation is dispatched to an accelerator to be computed asynchronously when possible. The returned array is therefore not necessarily 'filled in' as soon as the function returns. Thus, if we don't require the result immediately, the computation won't block Python execution. Therefore, unless we `block_until_ready`, we will only time the dispatch, not the actual computation. See [Asynchronous dispatch](https://jax.readthedocs.io/en/latest/async_dispatch.html#asynchronous-dispatch) in the JAX docs.)
 
-```{code-cell} ipython3
+```{code-cell}
 :id: mRvjVxoqo-Bi
 
 long_vector = jnp.arange(int(1e7))
@@ -83,7 +83,7 @@ One of the most commonly used transformations is `jax.grad`, which takes a numer
 
 To use it, let's first define a function that takes an array and returns the sum of squares.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: LuaGUVRUvbzQ
 
 def sum_of_squares(x):
@@ -96,7 +96,7 @@ Applying `jax.grad` to `sum_of_squares` will return a different function, namely
 
 Then, you can use that function on an array to return the derivatives with respect to each element of the array.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: dKeorwJfvpeI
 
 sum_of_squares_dx = jax.grad(sum_of_squares)
@@ -124,7 +124,7 @@ This makes the JAX API quite different to other autodiff libraries like Tensorfl
 
 This way of doing things makes it straightforward to control things like which variables to differentiate with respect to. By default, `jax.grad` will find the gradient with respect to the first argument. In the example below, the result of `sum_squared_error_dx` will be the gradient of `sum_squared_error` with respect to `x`.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: f3NfaVu4yrQE
 
 def sum_squared_error(x, y):
@@ -141,7 +141,7 @@ print(sum_squared_error_dx(x, y))
 
 To find the gradient with respect to a different argument (or several), you can set `argnums`:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: FQSczVQkqIPY
 
 jax.grad(sum_squared_error, argnums=(0, 1))(x, y)  # Find gradient wrt both x & y
@@ -168,7 +168,7 @@ where `params` is, for example, a nested dict of arrays, and the returned `grads
 
 Often, you need to find both the value and the gradient of a function, e.g. if you want to log the training loss. JAX has a handy sister transformation for efficiently doing that:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: dWg4_-h3sYwl
 
 jax.value_and_grad(sum_squared_error)(x, y)
@@ -188,7 +188,7 @@ jax.value_and_grad(f)(*xs) == (f(*xs), jax.grad(f)(*xs))
 
 In addition to wanting to log the value, we often want to report some intermediate results obtained in computing the loss function. But if we try doing that with regular `jax.grad`, we run into trouble:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: ffGCEzT4st41
 :tags: [raises-exception]
 
@@ -202,7 +202,7 @@ jax.grad(squared_error_with_aux)(x, y)
 
 This is because `jax.grad` is only defined on scalar functions, and our new function returns a tuple. But we need to return a tuple to return our intermediate results! This is where `has_aux` comes in:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: uzUFihyatgiF
 
 jax.grad(squared_error_with_aux, has_aux=True)(x, y)
@@ -224,7 +224,7 @@ An introduction to functional programming (FP) is out of scope of this guide. If
 
 A side-effect is any effect of a function that doesn't appear in its output. One example is modifying an array in place:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: o_YBuLQC1wPJ
 
 import numpy as np
@@ -245,7 +245,7 @@ The side-effectful function modifies its argument, but returns a completely unre
 
 The code below will run in NumPy. However, JAX arrays won't allow themselves to be modified in-place:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: u6grTYIVcZ3f
 :tags: [raises-exception]
 
@@ -256,7 +256,7 @@ in_place_modify(jnp.array(x))  # Raises error when we cast input to jnp.ndarray
 
 Helpfully, the error points us to JAX's side-effect-free way of doing the same thing via the [`jax.ops.index_*`](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-operators) ops. They are analogous to in-place modification by index, but create a new array with the corresponding modifications made:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: Rmklk6BB2xF0
 
 def jax_in_place_modify(x):
@@ -270,7 +270,7 @@ jax_in_place_modify(y)
 
 Note that the old array was untouched, so there is no side-effect:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: KQGXig4Hde6T
 
 y
@@ -296,7 +296,7 @@ To keep things simple, we'll start with a linear regression.
 
 Our data is sampled according to $y = w_{true} x + b_{true} + \epsilon$.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: WGgyEWFqrPq1
 
 import numpy as np
@@ -306,7 +306,7 @@ xs = np.random.normal(size=(100,))
 noise = np.random.normal(scale=0.1, size=(100,))
 ys = xs * 3 - 1 + noise
 
-plt.scatter(xs, ys)
+plt.scatter(xs, ys);
 ```
 
 +++ {"id": "RTh22mo4rR1x"}
@@ -315,7 +315,7 @@ Therefore, our model is $\hat y(x; \theta) = wx + b$.
 
 We will use a single array, `theta = [w, b]` to house both parameters:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: TnVrRTMamyzb
 
 def model(theta, x):
@@ -328,7 +328,7 @@ def model(theta, x):
 
 The loss function is $J(x, y; \theta) = (\hat y - y)^2$.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 07eMcDLMn9Ww
 
 def loss_fn(theta, x, y):
@@ -342,7 +342,7 @@ How do we optimize a loss function? Using gradient descent. At each update step,
 
 $\theta_{new} = \theta - 0.1 (\nabla_\theta J) (x, y; \theta)$
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 2I6T5Wphpaaa
 
 def update(theta, x, y, lr=0.1):
@@ -355,7 +355,7 @@ In JAX, it's common to define an `update()` function that is called every step, 
 
 This function can then be JIT-compiled in its entirety for maximum efficiency. The next guide will explain exactly how `jax.jit` works, but if you want to, you can try adding `@jax.jit` before the `update()` definition, and see how the training loop below runs much faster.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: WLZxY7nIpuVW
 
 theta = jnp.array([1., 1.])

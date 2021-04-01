@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "zMIrmiaZxiJC"}
 
-# Automatic vectorization in JAX
+# Automatic Vectorization in JAX
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/03-vectorization.ipynb)
 
@@ -27,7 +27,7 @@ In the previous section we discussed JIT compilation via the `jax.jit` function.
 
 Consider the following simple code that computes the convolution of two one-dimensional vectors:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 5Obro91lwE_s
 :outputId: 061983c6-2faa-4a54-83a5-d2a823f61087
 
@@ -50,7 +50,7 @@ convolve(x, w)
 
 Suppose we would like to apply this function to a batch of weights `w` to a batch of vectors `x`.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: rHQJnnrVUbxE
 
 xs = jnp.stack([x, x])
@@ -61,7 +61,7 @@ ws = jnp.stack([w, w])
 
 The most naive option would be to simply loop over the batch in Python:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: yM-IycdlzGyJ
 :outputId: 07ed6ffc-0265-45ef-d585-4b5fa7d221f1
 
@@ -82,7 +82,7 @@ In order to batch the computation efficiently, you would normally have to rewrit
 
 For example, we could manually rewrite `convolve()` to support vectorized computation across the batch dimension as follows:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: I4Wd9nrcTRRL
 :outputId: 0b037b43-7b41-4625-f9e0-a6e0dbc4c65a
 
@@ -105,7 +105,7 @@ Such re-implementation is messy and error-prone; fortunately JAX provides anothe
 
 In JAX, the `jax.vmap` transformation is designed to generate such a vectorized implementation of a function automatically:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: Brl-BoTqSQDw
 :outputId: af608dbb-27f2-4fbc-f225-79f3101b13ff
 
@@ -120,7 +120,7 @@ It does this by tracing the function similarly to `jax.jit`, and automatically a
 
 If the batch dimension is not the first, you may use the `in_axes` and `out_axes` arguments to specify the location of the batch dimension in inputs and outputs. These may be an integer if the batch axis is the same for all inputs and outputs, or lists, otherwise.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: _VEEm1CGT2n0
 :outputId: 751e0fbf-bdfb-41df-9436-4da5de23123f
 
@@ -136,7 +136,7 @@ auto_batch_convolve_v2(xst, wst)
 
 `jax.vmap` also supports the case where only one of the arguments is batched: for example, if you would like to convolve to a single set of weights `w` with a batch of vectors `x`; in this case the `in_axes` argument can be set to `None`:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 2s2YDsamSxki
 :outputId: 5c70879b-5cce-4549-e38a-f45dbe663ab2
 
@@ -151,7 +151,7 @@ batch_convolve_v3(xs, w)
 
 As with all JAX transformations, `jax.jit` and `jax.vmap` are designed to be composable, which means you can wrap a vmapped function with `jit`, or a JITted function with `vmap`, and everything will work correctly:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: gsC-Myg0RVdj
 :outputId: cbdd384e-6633-4cea-b1a0-a01ad934a768
 

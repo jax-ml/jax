@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "Ga0xSM8xhBIm"}
 
-# Stateful computations
+# Stateful Computations in JAX
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/07-state.ipynb)
 
@@ -34,22 +34,18 @@ Some JAX transformations, most notably `jax.jit`, impose constraints on the func
 
 Changing program state is one kind of side-effect. So, if we can't have side effects, how do we update model parameters, the optimizer state, and use stateful layers in our models? This colab will explain this in detail, but the short answer is: with [functional programming](https://en.wikipedia.org/wiki/Functional_programming).
 
-```{code-cell} ipython3
-:id: S-n8XRC2kTnI
-
-import jax
-import jax.numpy as jnp
-```
-
 +++ {"id": "s_-6semKkSzp"}
 
 ## A simple example: Counter
 
 Let's start by looking at a simple stateful program: a counter.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: B3aoCHpjg8gm
 :outputId: 5cbcfbf5-5c42-498f-a175-050438518337
+
+import jax
+import jax.numpy as jnp
 
 class Counter:
   """A simple counter."""
@@ -79,7 +75,7 @@ The `n` attribute maintains the counter's _state_ between successive calls of `c
 
 Let's say we want to count fast, so we `jax.jit` the `count` method. (In this example, this wouldn't actually help speed anyway, for many reasons, but treat this as a toy model of wanting to JIT-compile the update of model parameters, where `jax.jit` makes an enormous difference).
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 5jSjmJMon03W
 :outputId: d952f16b-9b30-4753-ed94-cc914a929a36
 
@@ -102,7 +98,7 @@ in `count` is only called once, when JAX compiles the method call. Moreover, sin
 
 Part of the problem with our counter was that the returned value didn't depend on the arguments, meaning a constant was "baked into" the compiled output. But it shouldn't be a constant -- it should depend on the state. Well, then why don't we make the state into an argument?
 
-```{code-cell} ipython3
+```{code-cell}
 :id: 53pSdK4KoOEZ
 :outputId: 5ac72b9c-7029-4bf2-de8d-1d412bd74c79
 
@@ -132,7 +128,7 @@ for _ in range(3):
 
 In this new version of `Counter`, we moved `n` to be an argument of `count`, and added another return value that represents the new, updated, state. To use this counter, we now need to keep track of the state explicitly. But in return, we can now safely `jax.jit` this counter:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: LO4Xzcq_q8PH
 :outputId: 25c06a56-f2bf-4c54-a3c3-6e093d484362
 
@@ -184,7 +180,7 @@ Here, we only deal with one kind of state: the model parameters. But generally, 
 
 The function to look at carefully is `update`.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: wQdU7DoAseW6
 
 from typing import NamedTuple
@@ -233,7 +229,7 @@ def update(params: Params, x: jnp.ndarray, y: jnp.ndarray) -> Params:
 
 Notice that we manually pipe the params in and out of the update function.
 
-```{code-cell} ipython3
+```{code-cell}
 :id: jQCYYy0yxO6K
 :outputId: 1f3b69d2-e90b-4065-cbcc-6422978d25c2
 
@@ -255,8 +251,7 @@ for _ in range(1000):
 
 plt.scatter(xs, ys)
 plt.plot(xs, params.weight * xs + params.bias, c='red', label='Model Prediction')
-plt.legend()
-plt.show()
+plt.legend();
 ```
 
 +++ {"id": "1wq3L6Xg1UHP"}
