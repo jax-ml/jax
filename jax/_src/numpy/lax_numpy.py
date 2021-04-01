@@ -1308,19 +1308,15 @@ def reshape(a, newshape, order="C"):
 
 def _compute_newshape(a, newshape):
   """Fixes a -1 value in newshape, if present."""
-  # other errors, like having more than one -1, are caught downstream
+  # other errors, like having more than one -1, are caught downstream, in
+  # reshape_shape_rule.
   try: iter(newshape)
   except: iterable = False
   else: iterable = True
-  def check(size):
-    return size if type(size) is Poly else core.concrete_or_error(
-      operator.index, size, "The error arose in jax.numpy.reshape.")
-  newshape = [check(size) for size in newshape] if iterable else [check(newshape)]
-  if np.any(np.equal(newshape, -1)):
-    fix = -a.size // (newshape if type(newshape) is Poly else _prod(newshape))
-    return [d if d != -1 else fix for d in newshape]
-  else:
-    return newshape
+  newshape = core.canonicalize_shape(newshape if iterable else [newshape])
+  return tuple(d if d is not -1 else - core.dim_divide_shape_sizes(np.shape(a), newshape)
+               for d in newshape)
+
 
 def _reshape(a, *args, order="C"):
   newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
@@ -1767,15 +1763,18 @@ def broadcast_to(arr, shape):
   shape = (shape,) if ndim(shape) == 0 else shape
   shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
-  if arr_shape == shape:
+  if core.dim_symbolic_equal_shape(arr_shape, shape):
     return arr
   else:
     nlead = len(shape) - len(arr_shape)
-    compatible = np.equal(arr_shape, shape[nlead:]) | np.equal(arr_shape, 1)
-    if nlead < 0 or not np.all(compatible):
+    shape_tail = shape[nlead:]
+    compatible = _all(core.dim_symbolic_equal_one_of(arr_d, [1, shape_d])
+                      for arr_d, shape_d in safe_zip(arr_shape, shape_tail))
+    if nlead < 0 or not compatible:
       msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
       raise ValueError(msg.format(arr_shape, shape))
-    diff, = np.where(np.not_equal(shape[nlead:], arr_shape))
+    diff, = np.where(tuple(not core.dim_symbolic_equal(arr_d, shape_d)
+                           for arr_d, shape_d in safe_zip(arr_shape, shape_tail)))
     new_dims = tuple(range(nlead)) + tuple(nlead + diff)
     kept_dims = tuple(np.delete(np.arange(len(shape)), new_dims))
     return lax.broadcast_in_dim(squeeze(arr, tuple(diff)), shape, kept_dims)
@@ -3108,7 +3107,7 @@ def arange(start, stop=None, step=None, dtype=None):
   if stop is None and step is None:
     start = require(start, msg("stop"))
     dtype = dtype or _dtype(start)
-    return lax.iota(dtype, np.ceil(start)) # avoids materializing
+    return lax.iota(dtype, np.ceil(start).astype(int)) # avoids materializing
   else:
     start = require(start, msg("start"))
     stop = None if stop is None else require(stop, msg("stop"))
@@ -3846,13 +3845,13 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
       idx_b_other.append(i)
     elif bb is None:
       idx_a_other.append(i)
-    elif ba == 1:
+    elif core.dim_symbolic_equal(ba, 1):
       idx_b_other.append(i)
       a_squeeze.append(len(idx_batch) + len(idx_a_other) + len(a_squeeze))
-    elif bb == 1:
+    elif core.dim_symbolic_equal(bb, 1):
       idx_a_other.append(i)
       b_squeeze.append(len(idx_batch) + len(idx_b_other) + len(b_squeeze))
-    elif ba == bb:
+    elif core.dim_symbolic_equal(ba, bb):
       a_batch.append(len(idx_batch) + len(idx_a_other))
       b_batch.append(len(idx_batch) + len(idx_b_other))
       idx_batch.append(i)

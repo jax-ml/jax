@@ -16,6 +16,7 @@
 # pytype: skip-file
 
 import builtins
+import collections
 from enum import IntEnum
 import functools
 import itertools
@@ -65,7 +66,7 @@ _reduce = functools.reduce
 
 Array = Any
 DType = Any
-Shape = Sequence[int]
+Shape = core.Shape
 
 def _try_broadcast_shapes(shapes):
   assert shapes
@@ -75,13 +76,15 @@ def _try_broadcast_shapes(shapes):
   if not rank: return ()  # scalar case
   result_shape = [None] * rank
   for i, sizes in enumerate(zip(*shapes)):
-    if sizes[:-1] == sizes[1:]:
-      result_shape[i] = sizes[0]  # all equal sizes for this dimension
-    else:
-      sizes = [d for d in sizes if d != 1]
-      if sizes[:-1] != sizes[1:]:
+    non_1s = [d for d in sizes if not core.dim_symbolic_equal(d, 1)]
+    if non_1s:
+      if not all(core.dim_symbolic_equal(non_1s[0], other)
+                 for other in non_1s[1:]):
         return None  # must have equal sizes other than 1-sized axes
-      result_shape[i] = sizes[0] if sizes else 1
+      result_shape[i] = non_1s[0]
+    else:
+      result_shape[i] = 1
+
   return tuple(result_shape)
 
 @cache()
@@ -1514,7 +1517,7 @@ def iota(dtype: DType, size: int) -> Array:
   operator.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  size = core.concrete_or_error(int, size, "size argument of lax.iota")
+  size, = canonicalize_shape((size,))
   return iota_p.bind(dtype=dtype, shape=(size,), dimension=0)
 
 def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
@@ -3339,8 +3342,9 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
            'dimensions, got {} for operand ndim {} and shape {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand_ndim, shape))
-  if any(operand.shape[i] != shape[broadcast_dimensions[i]] and
-         operand.shape[i] != 1 for i in range(operand_ndim)):
+  if not all(core.dim_symbolic_equal_one_of(operand.shape[i],
+                                            [1, shape[broadcast_dimensions[i]]])
+             for i in range(operand_ndim)):
     msg = (
         "broadcast_in_dim operand dimension sizes must either be 1, or be "
         "equal to their corresponding dimensions in the target broadcast "
@@ -3642,10 +3646,10 @@ def _is_singleton_reshape(old, new):
       return None
 
 def _reshape_shape_rule(operand, *, new_sizes, dimensions):
-  if not np.all(np.greater_equal(new_sizes, 0)):
+  if not all(core.dim_greater_equal(d, 0) for d in new_sizes):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
-  if prod(np.shape(operand)) != prod(new_sizes):
+  if not core.dim_same_total_size(np.shape(operand), new_sizes):
     msg = 'reshape total size must be unchanged, got new_sizes {} for shape {}.'
     raise TypeError(msg.format(new_sizes, np.shape(operand)))
   if dimensions is not None:
@@ -4252,9 +4256,10 @@ def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
     slice_size = slice_sizes[i]
     corresponding_input_size = operand.shape[i]
 
-    if slice_size < 0 or slice_size > corresponding_input_size:
+    if not (core.dim_greater_equal(slice_size, 0) and
+            core.dim_greater_equal(corresponding_input_size, slice_size)):
       raise TypeError(f"Slice size at index {i} in gather op is out of range, "
-                      f"must be within [0, {corresponding_input_size + 1}), "
+                      f"must be within [0, {corresponding_input_size} + 1), "
                       f"got {slice_size}.")
 
   for i in range(len(collapsed_slice_dims)):
@@ -4342,7 +4347,8 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     counts = broadcasted_iota(start_indices.dtype, tuple(count_shape), 0)
     start_indices = concatenate([counts, start_indices], len(count_shape) - 1)
 
-    slice_sizes = (_min(operand.shape[0], 1),) + slice_sizes
+    batch_slice_size = 1 if core.dim_greater_equal(operand.shape[0], 1) else 0
+    slice_sizes = (batch_slice_size,) + slice_sizes
     collapsed_slice_dims = (0,) + tuple(np.add(1, dimension_numbers.collapsed_slice_dims))
     offset_dims = tuple(np.add(1, dimension_numbers.offset_dims))
     start_index_map = (0,) + tuple(np.add(1, dimension_numbers.start_index_map))
@@ -6359,7 +6365,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj)))) from err
   lower_bound, bound_error = (
       (1, "strictly positive") if non_zero_shape else (0, "nonnegative"))
-  if not (obj_arr >= lower_bound).all():
+  if not all(core.dim_greater_equal(d, lower_bound) for d in obj_arr):
     msg = "{} {} must have every element be {}, got {}."
     raise TypeError(msg.format(fun_name, arg_name, bound_error, obj))
 

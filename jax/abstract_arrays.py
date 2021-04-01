@@ -23,8 +23,6 @@ from ._src import dtypes
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
-_DIMENSION_TYPES = core._DIMENSION_TYPES
-
 UnshapedArray = core.UnshapedArray
 ShapedArray = core.ShapedArray
 ConcreteArray = core.ConcreteArray

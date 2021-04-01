@@ -26,7 +26,6 @@ from jax import random, tree_util
 from jax._src import util
 from jax.api_util import flatten_fun
 from jax.interpreters import ad, batching
-from jax.interpreters import masking
 from jax.interpreters import pxla
 from jax.interpreters import sharded_jit
 from jax.interpreters import xla
@@ -36,6 +35,7 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 import jax._src.random
 from jax.lib import xla_bridge as xb
+from . import shape_poly
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -120,7 +120,8 @@ def _xla_path_disabled_error(primitive_name: str) -> Exception:
 
 @functools.partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable, *,
-            in_shapes: Optional[Sequence[Any]]=None,
+            polymorphic_shapes: Optional[Sequence[Any]]=None,
+            in_shapes=None,
             with_gradient=True, enable_xla=True) -> Callable:
   """Transforms `fun` to be executed by TensorFlow.
 
@@ -132,7 +133,42 @@ def convert(fun: Callable, *,
       JAX arrays, or (nested) standard Python containers (tuple/list/dict)
       thereof.
 
-    in_shapes: Not used. This is kept for backwards compatibility (see #6080).
+    polymorphic_shapes: an optional sequence of shape specifications,
+      one for each argument of the function to be converted. Default is a
+      list of `None`, in which case the argument shape specifications are taken
+      from the shapes of the actual arguments.
+      A non-default `polymorphic_shapes` is used to specify shape variables for
+      some of the input dimensions. The specified polymorphic shape
+
+      In that case the conversion will succeed
+      only if it would produce the same exact result as for any concrete shape
+
+
+      is needed to ensure that the result
+      of the conversion works for sometimes when the
+      actual arguments have partially-specified shapes. If an argument is a
+      pytree, then the
+      shape specification must be a matching pytree or `None`.
+      See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+      A shape specification should be a string, with comma-separated dimension
+      specifications, and optionally wrapped in parentheses. A dimension
+      specification is either a number, or the placeholder `_`, or a lowercase
+      word denoting a name for a dimension variable.
+      In presence of dimension variables, the conversion is done with a
+      shape abstraction that allows any concrete value for the variable.
+      Examples of shape specifications:
+        * `[None, "(batch, 16)"]`: no specification for the first argument (takes
+          the shape from the actual argument); the second argument is a 2D
+          array with the first dimension size set to a variable `batch` and the
+          second dimension 16.
+        * `["(batch, _)", "(batch,)"]`: the leading dimensions of the two arguments
+          must match. The second dimension of the first argument is taken from the
+          actual argument shape.
+      See [the README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
+      for more details.
+
+    in_shapes: DEPRECATED.
+
     with_gradient: if set, will add a tf.custom_gradient to the converted
       function, by converting the ``jax.vjp(fun)``. Only first-order
       differentiation is supported for now. If the converted function is
@@ -174,19 +210,24 @@ def convert(fun: Callable, *,
     # tf.custom_gradient on functions that take a flat argument list.
     args_flat, in_tree = tree_util.tree_flatten((args, {}))
 
-    if in_shapes is None:
-      in_shapes_ = (None,) * len(args)
+    if polymorphic_shapes is None:
+      polymorphic_shapes_ = (None,) * len(args)
     else:
-      raise ValueError("The `in_shapes` parameter is not supported")
+      if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
+        msg = ("polymorphic_shapes must be a sequence with the same length as the argument list "
+               f"({len(args)}). Got polymorphic_shapes={polymorphic_shapes}.")
+        raise TypeError(msg)
+      polymorphic_shapes_ = tuple(polymorphic_shapes)
 
     # Expand the in_shapes to match the argument pytree
-    in_shapes_flat = tuple(api_util.flatten_axes("jax2tf.convert in_shapes",
-                                                 in_tree.children()[0], in_shapes_))
+    polymorphic_shapes_flat = tuple(api_util.flatten_axes("jax2tf.convert polymorphic_shapes",
+                                                 in_tree.children()[0], polymorphic_shapes_))
 
     # Construct the abstract values for the flat arguments, possibly based on
     # the input shapes and the in_shapes if given. May create new shape
     # variables.
-    args_avals_flat = _input_avals(args_flat, in_shapes_flat)
+    args_avals_flat, shapeenv = _args_to_avals_and_env(args_flat,
+                                                       polymorphic_shapes_flat)
 
     f = lu.wrap_init(fun)
     # out_tree_thunk() will be the output tree, after running _interpret_fun.
@@ -210,25 +251,25 @@ def convert(fun: Callable, *,
         _, pullback_jax = jax.vjp(fun, *args_jax)
         return pullback_jax(out_cts_jax)
 
-      if in_shapes is None:
-        vjp_in_shapes = None
+      if polymorphic_shapes is None:
+        vjp_polymorphic_shapes = None
       else:
-        args_in_shapes = tree_util.tree_unflatten(in_tree.children()[0], in_shapes_flat)
-        out_cts_in_shapes = tree_util.tree_unflatten(
+        args_polymorphic_shapes = tree_util.tree_unflatten(in_tree.children()[0], polymorphic_shapes_flat)
+        out_cts_polymorphic_shapes = tree_util.tree_unflatten(
           out_tree_thunk(),
           tuple(str(out_aval.shape) for out_aval in _out_cts_avals))  # type: ignore
-        vjp_in_shapes = [args_in_shapes, out_cts_in_shapes]
+        vjp_polymorphic_shapes = [args_polymorphic_shapes, out_cts_polymorphic_shapes]
       out_cts = tree_util.tree_unflatten(out_tree_thunk(), out_cts_flat)
       # TODO: enable higher-order gradients
       with tf.name_scope("jax2tf_vjp"):
         in_cts = convert(fun_vjp_jax, with_gradient=False,
-                         in_shapes=vjp_in_shapes)(args, out_cts)
+                         polymorphic_shapes=vjp_polymorphic_shapes)(args, out_cts)
       return in_cts
 
     try:
       global _shape_env
       assert not _shape_env, f"Unexpected shape environment {_shape_env}"
-      _shape_env = _make_shape_env(args_avals_flat, args_flat)
+      _shape_env = shapeenv
 
       if with_gradient:
         @tf.custom_gradient
@@ -322,15 +363,12 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal) -> Sequence[TfVal]:
 
 ### tracer
 
-PolyDim = Union[int, masking.Poly]  # A polymorphic shape dimension
-
-def _poly_dim_to_tf_dim(dim: PolyDim) -> Optional[int]:
-  if isinstance(dim, int):
-    return dim
-  elif dim.is_constant:
-    return int(dim)
-  else:
+# TODO: remove references to poly_dim?
+def _poly_dim_to_tf_dim(dim: shape_poly.DimSize) -> Optional[int]:
+  if isinstance(dim, shape_poly.DimVar):
     return None
+  else:
+    return dim
 
 def _aval_to_tf_shape(aval: core.AbstractValue) -> Tuple[Optional[int], ...]:
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
@@ -352,129 +390,54 @@ def _tfval_shape_dtype(val: TfVal) -> Tuple[Sequence[Optional[int]], DType]:
     return raw_aval.shape, raw_aval.dtype  # type: ignore[attr-defined]
 
 
-def _input_avals(args: Sequence[TfVal], in_shapes: Sequence[Optional[str]]) -> Sequence[core.AbstractValue]:
-  """Abstract values for the input arguments."""
+# A dimension environment maps dimension variables to TF expressions that
+# compute the value of the dimension. These expressions refer to the TF
+# function arguments.
+_ShapeEnv = Dict[shape_poly.DimVar, TfVal]
+def _args_to_avals_and_env(args: Sequence[TfVal],
+                           polymorphic_shapes: Sequence[Optional[str]]) -> \
+  Tuple[Sequence[core.AbstractValue], _ShapeEnv]:
+  """Computes abstract values and a dimension environment for arguments.
 
-  def input_aval(arg: TfVal, in_shape: Optional[str]) -> core.AbstractValue:
+  Args:
+    args: the arguments, TF inputs.
+    polymorphic_shapes: the polymorphic specifications for the arguments.
+
+  Returns: a tuple of a sequence of abtract values corresponding to the arguments
+    and a dimension environment.
+  """
+  shapeenv: _ShapeEnv = {}
+  def input_aval(arg: TfVal, polymorphic_shape: Optional[str]) -> core.AbstractValue:
     """The abstract value for an input."""
     raw_shape, dtype = _tfval_shape_dtype(arg)
 
-    if in_shape is None:
-      if any(d is None for d in raw_shape):
-        msg = ("in_shape must be specified when the argument "
-               f"shape {raw_shape} is partially known.")
-        raise TypeError(msg)
+    aval_shape = shape_poly.parse_spec(polymorphic_shape, raw_shape)
+
+    for i, d in enumerate(aval_shape):
+      if type(d) is int:
+        assert d == np.shape(arg)[i]
       else:
-        return core.ShapedArray(raw_shape, dtype)
+        if d not in shapeenv:
+          # Even if the shape of `arg` is known, we still use `tf.shape` for
+          # safety, because the promise is that we will convert the function
+          # to work for any value of the dimension.
+          shapeenv[d] = tf.shape(arg)[i]
+        else:
+          # TODO: add an assertion tf.shape(arg)[i] == env[d]
+          pass
 
-    in_shape_spec = masking.parse_spec(in_shape)
-    if len(in_shape_spec) != len(raw_shape):
-      msg = (f"in_shape {in_shape} has different rank than actual argument "
-             f"shape {raw_shape}")
-      raise TypeError(msg)
-    try:
-      # TODO: improve finalize_spec error reporting, so we don't have to code our own
-      shape = masking.finalize_spec(in_shape_spec, raw_shape)
-    except TypeError:
-      msg = (f"in_shape {in_shape} has `_` placeholders for argument shape "
-             f"dimensions that are unknown: {raw_shape}")
-      raise TypeError(msg)
+    return core.ShapedArray(aval_shape, dtype)
 
-    for dim_idx, (s, raw_s) in enumerate(util.safe_zip(shape, raw_shape)):
-      s_int: Optional[int] = _poly_dim_to_tf_dim(s)
-      if s_int != raw_s and s_int is not None:
-        msg = (f"in_shape {in_shape} (resolved to {shape}) does not match "
-               f"argument shape {raw_shape} in dimension {dim_idx}")
-        raise TypeError(msg)
-
-    return core.ShapedArray(shape, dtype)
-
-  return tuple(map(input_aval, args, in_shapes))
+  avals = tuple(map(input_aval, args, polymorphic_shapes))
+  return avals, shapeenv
 
 # A shape environment maps shape variables to TfVal.
-ShapeEnv = Dict[str, TfVal]
-_shape_env = {}  # type: ShapeEnv
+_shape_env = {}  # type: _ShapeEnv
 
-def _eval_shape(shape: Sequence[PolyDim]) -> Sequence[TfVal]:
+def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
-  return masking.eval_poly_shape(shape, _shape_env)
-
-# Extracting a shape environment by solving the shape variables.
-# The shape environment will be derived by using `tf.shape` from the
-# dynamic shape of arguments, not their static shape.
-def _make_shape_env(args_avals: Sequence[core.AbstractValue],
-                    args: Sequence[TfVal]) -> Dict[str, TfVal]:
-  eqns = [(p, tf.shape(a)[i])
-          for a_aval, a in util.safe_zip(args_avals, args)
-          for i, p in enumerate(a_aval.shape)]
-  return _solve_shape_vars(eqns)
-
-ShapeEqn = Tuple[PolyDim, TfVal]
-def _solve_shape_vars(eqns: Sequence[ShapeEqn]) -> Dict[str, TfVal]:
-  """Solves a number of equations "poly = tfval" into an shape environment."""
-  # A simple variable elimination algorithm for now
-  solved: Dict[str, TfVal] = {}  # Already solved vars
-
-  def simplify_poly(p: PolyDim) -> Optional[Union[TfVal,
-                                                  Tuple[str, TfVal, TfVal]]]:
-    # Simplifies polynomial given `solved`
-    # Returns (v, f, rest) such that p = v * f + rest, or
-    #         rest such that p = rest, or None
-    v = None
-    f = None
-    rest = []
-    if isinstance(p, int):
-      return tf.constant(p)
-    for m, m_factor in p.items():
-      simpl_m: Union[str, TfVal] = simplify_mon(m, p)
-      if isinstance(simpl_m, str):  # A var
-        if v is not None:
-          return None
-        v = simpl_m
-        f = m_factor
-      else:  # A value
-        rest.append(tf.math.multiply(simpl_m, m_factor))
-    rest_val = functools.reduce(tf.math.add, rest, tf.constant(0))
-    return rest_val if v is None else (v, f, rest_val)
-
-  def simplify_mon(m: masking.Mon, in_poly: masking.Poly) -> Union[str, TfVal]:
-    # Simplifies monomial given `solved`
-    # Returns either a variable, or a solved value
-    if not m:
-      return tf.constant(1)
-    if m.degree > 1:
-      msg = ("only linear polynomials are supported as input shape "
-             f"specifications. Found '{m}' in '{in_poly}'.")
-      raise TypeError(msg)
-    var = list(m.keys())[0]
-    return solved.get(var, var)
-
-  remaining = eqns
-  while remaining:
-    new_remaining = []
-    for eqn in remaining:
-      eq_p, eq_val = eqn
-      p_simpl = simplify_poly(eq_p)
-      if p_simpl is None:
-        new_remaining.append(eqn)
-        continue
-      if not isinstance(p_simpl, tuple):
-        # TODO: add an assertion rest == eq_v
-        continue
-      var, factor, rest = p_simpl
-      # p = var * factor + rest
-      # TODO: add an assertion eq_v >= rest and (eq_v - rest) mod factor == 0
-      solved[var] = tf.math.floordiv(tf.math.subtract(eq_val, rest), factor)
-
-    if len(new_remaining) < len(remaining):
-      remaining = new_remaining
-    else:
-      msg = "Cannot solve"
-      raise ValueError(msg)
-
-  return solved
-
+  return tuple(d if type(d) is int else _shape_env[d] for d in shape)
 
 def shape_as_value(x):
   """Injects the shape of `x` as an array value.
@@ -486,78 +449,80 @@ def shape_as_value(x):
 
      jnp.sum(x) / np.prod(jax2tf.shape_as_value(x))
   """
-  return shape_as_value_p.bind(x)
+  # return shape_as_value_p.bind(x)
+  return NotImplementedError("shape_as_value is deprecated")
 
-# TODO: move this to masking or to some common library, if approved
-shape_as_value_p = core.Primitive("shape_as_value")
-shape_as_value_p.multiple_results = True
-def _shape_as_value_impl(x):
-  x_shape = np.shape(x)
-  def dim_to_int(dim: PolyDim) -> int:
-    dim_int = _poly_dim_to_tf_dim(dim)
-    if dim_int is None:
-      msg = ("shape_as_value is not implemented for non-constant shapes "
-             "except for masking and jax2tf. "
-             f"Has shape: {x_shape}")
-      raise TypeError(msg)
-    else:
-      return dim_int
-  return tuple(map(dim_to_int, x_shape))
 
-shape_as_value_p.def_impl(_shape_as_value_impl)
-
-def _shape_as_value_abstract(x_aval: core.AbstractValue) -> Sequence[core.AbstractValue]:
-  rank = len(x_aval.shape)  # type: ignore[attr-defined]
-  return (core.ShapedArray((), dtypes.canonicalize_dtype(np.int_), weak_type=True),) * rank
-
-shape_as_value_p.def_abstract_eval(_shape_as_value_abstract)
-
-def _shape_as_value_translation(comp, x):
-  return xla_client._xla.ops.Tuple(comp,
-                                   tuple(xb.constant(comp, d)
-                                         for d in comp.GetShape(x).dimensions()))
-
-xla.translations[shape_as_value_p] = _shape_as_value_translation
-
-def _shape_as_value_jvp_rule(primals, tangents):
-  # The shape does not depend on the contents of the input
-  x, = primals
-  zero = ad.Zero.from_value(0.)
-  return shape_as_value(x), (zero,) * len(x.shape)
-
-ad.primitive_jvps[shape_as_value_p] = _shape_as_value_jvp_rule
-
-def _shape_as_value__batching_rule(batched_args, batch_dims):
-  xv, = batched_args
-  batch_dim, = batch_dims
-  batch_size = xv.shape[batch_dim]
-  batched_shape = shape_as_value(xv)
-  one_shape = batched_shape[0:batch_dim] + batched_shape[batch_dim+1:]
-  res = tuple(jnp.broadcast_to(d, (batch_size, 1)) for d in one_shape)
-  return res, (0,) * len(one_shape)
-
-batching.primitive_batchers[shape_as_value_p] = _shape_as_value__batching_rule
-
-def _shape_as_value_masking_rule(operands, operands_logical_shapes):
-  x_logical_shape, = operands_logical_shapes
-  return tuple(x_logical_shape)
-
-masking.masking_rules[shape_as_value_p] = _shape_as_value_masking_rule
-
-def _shape_as_value_tf(x: TfVal,
-                       _in_avals: Sequence[core.AbstractValue],
-                       _out_aval: core.AbstractValue) -> TfVal:
-  x_aval = _in_avals[0]
-  def dim_to_tfval(dim: PolyDim, dim_idx: int) -> TfVal:
-    dim_int = _poly_dim_to_tf_dim(dim)
-    if dim_int is not None:
-      return tf.convert_to_tensor(dim_int)
-    else:
-      return tf.shape(x)[dim_idx]
-  return tuple(dim_to_tfval(dim, dim_idx)
-               for dim_idx, dim in enumerate(x_aval.shape))  # type: ignore[attr-defined]
-
-tf_impl_with_avals[shape_as_value_p] = _shape_as_value_tf
+# # TODO: move this to masking or to some common library, if approved
+# shape_as_value_p = core.Primitive("shape_as_value")
+# shape_as_value_p.multiple_results = True
+# def _shape_as_value_impl(x):
+#   x_shape = np.shape(x)
+#   def dim_to_int(dim: shape_poly.DimSize) -> int:
+#     dim_int = _poly_dim_to_tf_dim(dim)
+#     if dim_int is None:
+#       msg = ("shape_as_value is not implemented for non-constant shapes "
+#              "except for masking and jax2tf. "
+#              f"Has shape: {x_shape}")
+#       raise TypeError(msg)
+#     else:
+#       return dim_int
+#   return tuple(map(dim_to_int, x_shape))
+#
+# shape_as_value_p.def_impl(_shape_as_value_impl)
+#
+# def _shape_as_value_abstract(x_aval: core.AbstractValue) -> Sequence[core.AbstractValue]:
+#   rank = len(x_aval.shape)  # type: ignore[attr-defined]
+#   return (core.ShapedArray((), dtypes.canonicalize_dtype(np.int_), weak_type=True),) * rank
+#
+# shape_as_value_p.def_abstract_eval(_shape_as_value_abstract)
+#
+# def _shape_as_value_translation(comp, x):
+#   return xla_client._xla.ops.Tuple(comp,
+#                                    tuple(xb.constant(comp, d)
+#                                          for d in comp.GetShape(x).dimensions()))
+#
+# xla.translations[shape_as_value_p] = _shape_as_value_translation
+#
+# def _shape_as_value_jvp_rule(primals, tangents):
+#   # The shape does not depend on the contents of the input
+#   x, = primals
+#   zero = ad.Zero.from_value(0.)
+#   return shape_as_value(x), (zero,) * len(x.shape)
+#
+# ad.primitive_jvps[shape_as_value_p] = _shape_as_value_jvp_rule
+#
+# def _shape_as_value__batching_rule(batched_args, batch_dims):
+#   xv, = batched_args
+#   batch_dim, = batch_dims
+#   batch_size = xv.shape[batch_dim]
+#   batched_shape = shape_as_value(xv)
+#   one_shape = batched_shape[0:batch_dim] + batched_shape[batch_dim+1:]
+#   res = tuple(jnp.broadcast_to(d, (batch_size, 1)) for d in one_shape)
+#   return res, (0,) * len(one_shape)
+#
+# batching.primitive_batchers[shape_as_value_p] = _shape_as_value__batching_rule
+#
+# def _shape_as_value_masking_rule(operands, operands_logical_shapes):
+#   x_logical_shape, = operands_logical_shapes
+#   return tuple(x_logical_shape)
+#
+# masking.masking_rules[shape_as_value_p] = _shape_as_value_masking_rule
+#
+# def _shape_as_value_tf(x: TfVal,
+#                        _in_avals: Sequence[core.AbstractValue],
+#                        _out_aval: core.AbstractValue) -> TfVal:
+#   x_aval = _in_avals[0]
+#   def dim_to_tfval(dim: shape_poly.DimSize, dim_idx: int) -> TfVal:
+#     dim_int = _poly_dim_to_tf_dim(dim)
+#     if dim_int is not None:
+#       return tf.convert_to_tensor(dim_int)
+#     else:
+#       return tf.shape(x)[dim_idx]
+#   return tuple(dim_to_tfval(dim, dim_idx)
+#                for dim_idx, dim in enumerate(x_aval.shape))  # type: ignore[attr-defined]
+#
+# tf_impl_with_avals[shape_as_value_p] = _shape_as_value_tf
 
 # TODO(b/26854495): pylint doesn't understand slots and inheritance.
 # pylint: disable=assigning-non-slot
@@ -603,8 +568,8 @@ class TensorFlowTracer(core.Tracer):
         assert aval_dtype == val_dtype, f"expected {aval_dtype} == {val_dtype}"
         for aval_dim, val_dim in util.safe_zip(self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
-            assert isinstance(aval_dim, masking.Poly), f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
-          elif not isinstance(aval_dim, masking.Poly):
+            assert isinstance(aval_dim, shape_poly.DimVar), f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
+          elif not isinstance(aval_dim, shape_poly.DimVar):
             assert aval_dim == val_dim, f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           else:
             # We have a TF value with known shape, and the abstract shape is a polynomial
@@ -1085,12 +1050,13 @@ def _bitcast_convert_type(operand, new_dtype):
 tf_impl[lax.bitcast_convert_type_p] = _bitcast_convert_type
 
 
-def _clamp(minval, operand, maxval):
+def _clamp(minval, operand, maxval, *, _in_avals, _out_aval):
   # The below permits mirroring the behavior of JAX when maxval < minval
-  maxval = tf.broadcast_to(maxval, operand.shape)
-  minval = tf.math.minimum(tf.broadcast_to(minval, operand.shape), maxval)
+  op_shape_tf_val = _eval_shape(_in_avals[0].shape)
+  maxval = tf.broadcast_to(maxval, op_shape_tf_val)
+  minval = tf.math.minimum(tf.broadcast_to(minval, op_shape_tf_val), maxval)
   return tf.clip_by_value(operand, minval, maxval)
-tf_impl[lax.clamp_p] = _clamp
+tf_impl_with_avals[lax.clamp_p] = _clamp
 
 
 def _concatenate(*operands, dimension):

@@ -49,6 +49,9 @@ def naryop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.
   return prim.bind(*padded_vals)
 
+DimSize = core.DimSize
+Shape = core.Shape
+
 ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
 shape_envs = ShapeEnvs({}, {})  # TODO(mattjj): make this a stack for efficiency
 
@@ -302,7 +305,21 @@ def mul(coeff, mon):
     return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
 
 
-core._DIMENSION_TYPES.add(Poly)
+class DimensionHandlerPoly(core.DimensionHandler):
+  def as_index(self, d: DimSize) -> DimSize:
+    return d
+
+  def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
+    try:
+      return d1 == d2
+    except UndefinedPoly:
+      return False
+
+  def symbolic_equal_one_of(self, d1: core.DimSize, dlist: Sequence[core.DimSize]) -> bool:
+    return any(self.symbolic_equal(d1, d2) for d2 in dlist)
+
+
+core._SPECIAL_DIMENSION_HANDLERS[Poly] = DimensionHandlerPoly()
 
 class Mon(dict):
   # TODO: move this before Poly in the file

@@ -239,7 +239,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
   def CheckShapePolymorphism(self, f_jax: Callable, *,
                              input_signature: Sequence[tf.TensorSpec],
-                             in_shapes: Optional[Sequence[Any]],
+                             polymorphic_shapes: Optional[Sequence[Any]],
                              expected_output_signature: tf.TensorSpec):
     """Convert a function using polymorphic shapes.
 
@@ -250,7 +250,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         must match the `input_signature`. (see jax2tf.convert).
     """
     f_tf = tf.function(
-        jax2tf.convert(f_jax, in_shapes=in_shapes),
+        jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes),
         autograph=False,
         input_signature=input_signature)
     concrete_f_tf = f_tf.get_concrete_function(*input_signature)
@@ -262,18 +262,18 @@ class JaxToTfTestCase(jtu.JaxTestCase):
           tuple(concrete_output_tf_shape))
     return f_tf
 
-  def MakeInputSignature(self, *in_shapes):
+  def MakeInputSignature(self, *polymorphic_shapes):
     """From a pytree of in_shape string specification, make a pytree of tf.TensorSpec.
 
     Dimension variables are replaced with None.
     """
 
-    def in_shape_to_tensorspec(in_shape: str) -> tf.TensorSpec:
-      in_spec = masking.parse_spec(in_shape)
+    def polymorphic_shape_to_tensorspec(poly_shape: str) -> tf.TensorSpec:
+      in_spec = masking.parse_spec(poly_shape)
       return tf.TensorSpec(
           tuple(
               int(dim_spec) if dim_spec.is_constant else None
               for dim_spec in in_spec),
           dtype=tf.float32)
 
-    return tree_util.tree_multimap(in_shape_to_tensorspec, in_shapes)
+    return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)

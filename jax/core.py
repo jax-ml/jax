@@ -1207,16 +1207,112 @@ raise_to_shaped_mappings : Dict[type, Callable] = {
       aval.shape, aval.dtype, weak_type, aval.named_shape)
 }
 
-# Registry for valid dimension types. This is used by masking.Poly.
-_DIMENSION_TYPES: Set[type] = {int}
+### Operations on dimensions
 
-def _canonicalize_dimension(dim):
-  if type(dim) in _DIMENSION_TYPES:
-    return dim
+# Shapes are tuples of dimension sizes, which are normally integers. We allow
+# modules to extend the set of dimension sizes to contain other types, e.g.,
+# symbolic dimensions in masking.Poly and jax2tf.shape_poly.DimVar.
+DimSize = Union[int, Any]
+Shape = Sequence[DimSize]
+
+class DimensionHandler:
+  """Operations on dimensions.
+
+  Dimension sizes are normally integer constants, but can also be symbolic,
+  e.g., masking.Poly or jax2tf.shape_poly.DimVar.
+
+  The base class works for integers only. Subclasses should raise an error
+  if the result cannot be computed in some contexts.
+  """
+  def as_index(self, d1: DimSize) -> int:
+    """If a constant, apply operator.index to it."""
+    return operator.index(d1)
+
+  def symbolic_equal(self, d1: DimSize, d2: DimSize) -> bool:
+    """True iff the dimension sizes are equal in all possible contexts."""
+    return d1 == d2
+
+  def symbolic_equal_one_of(self, d1: DimSize, dlist: Sequence[DimSize]) -> bool:
+    """True iff `d1` is symbolic equal to one of `dlist`"""
+    return d1 in dlist
+
+  def greater_equal(self, d1: DimSize, d2: DimSize) -> bool:
+    return d1 >= d2
+
+  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> Shape:
+    """Computes the division of the sizes of the shapes.
+
+    Fails if the division has non-zero remainder.
+    """
+    sz1 = np.prod(s1)
+    sz2 = np.prod(s2)
+    if sz1 == 0 and sz2 == 0:
+      return 1
+    if sz1 % sz2:
+      raise ValueError(f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}")
+    return sz1 // sz2
+
+
+_dimension_handler_int = DimensionHandler()
+_SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
+
+def _get_dim_handler(*dlist: DimSize) -> DimensionHandler:
+  special_handlers = set()
+  for d in dlist:
+    handler = _SPECIAL_DIMENSION_HANDLERS.get(type(d))
+    if handler:
+      special_handlers.add(handler)
+    else:
+      # We check that the dimension is convertible to an int
+      # TODO: better error message
+      operator.index(d)
+  if special_handlers:
+    handler, *others = special_handlers
+    if others:
+      msg = (f"Dimension size operation involves multiple non-int types {dlist}")
+      raise TypeError(msg)
+    return handler
+  else:
+    return _dimension_handler_int
+
+def dim_as_index(d: DimSize) -> int:
+  return _get_dim_handler(d).as_index(d)
+
+def dim_symbolic_equal(d1: DimSize, d2: DimSize) -> bool:
+  """True iff the dimension sizes are equal in all possible contexts."""
+  return _get_dim_handler(d1, d2).symbolic_equal(d1, d2)
+
+def dim_symbolic_equal_one_of(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
+  """True iff `d1` is symbolic equal to one of `dlist`"""
+  return _get_dim_handler(d1, *dlist).symbolic_equal_one_of(d1, dlist)
+
+def dim_symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
+  return (len(s1) == len(s2) and
+          all(dim_symbolic_equal(d1, d2) for d1, d2 in safe_zip(s1, s2)))
+
+def dim_greater_equal(d1: DimSize, d2: DimSize) -> bool:
+  return _get_dim_handler(d1, d2).greater_equal(d1, d2)
+
+def dim_divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
+  """Computes the division of the size of arr_shape and newshape.
+
+  Fails if the division has non-zero remainder.
+  """
+  s1 = s1 or (1,)
+  s2 = s2 or (1,)
+  return _get_dim_handler(*s1, *s2).divide_shape_sizes(s1, s2)
+
+def dim_same_total_size(s1: Shape, s2: Shape) -> bool:
+  return 1 == dim_divide_shape_sizes(s1, s2)
+
+
+def _canonicalize_dimension(dim: DimSize) -> DimSize:
+  if type(dim) in _SPECIAL_DIMENSION_HANDLERS:
+    return _SPECIAL_DIMENSION_HANDLERS[type(dim)].as_index(dim)
   else:
     return operator.index(dim)
 
-def canonicalize_shape(shape):
+def canonicalize_shape(shape: Shape):
   """Canonicalizes and checks for errors in a user-provided shape value.
 
   Args:
