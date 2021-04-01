@@ -474,6 +474,45 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         np.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(1,), (4,), (5,)]
+      for dtype in (np.int32,)))
+  def testLuPivotsToPermutation(self, shape, dtype):
+    jtu.skip_if_unsupported_type(dtype)
+    pivots_size = shape[-1]
+    permutation_size = 2 * pivots_size
+
+    pivots = jnp.arange(permutation_size - 1, pivots_size - 1, -1, dtype=dtype)
+    pivots = jnp.broadcast_to(pivots, shape)
+    actual = lax.linalg.lu_pivots_to_permutation(pivots, permutation_size)
+    expected = jnp.arange(permutation_size - 1, -1, -1, dtype=dtype)
+    expected = jnp.broadcast_to(expected, actual.shape)
+    self.assertArraysEqual(actual, expected)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(1,), (4,), (5,)]
+      for dtype in (np.int32,)))
+  def testLuPivotsToPermutationBatching(self, shape, dtype):
+    jtu.skip_if_unsupported_type(dtype)
+    shape = (10,) + shape
+    pivots_size = shape[-1]
+    permutation_size = 2 * pivots_size
+
+    pivots = jnp.arange(permutation_size - 1, pivots_size - 1, -1, dtype=dtype)
+    pivots = jnp.broadcast_to(pivots, shape)
+    batched_fn = vmap(
+        lambda x: lax.linalg.lu_pivots_to_permutation(x, permutation_size))
+    actual = batched_fn(pivots)
+    expected = jnp.arange(permutation_size - 1, -1, -1, dtype=dtype)
+    expected = jnp.broadcast_to(expected, actual.shape)
+    self.assertArraysEqual(actual, expected)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(
          jtu.format_shape_dtype_string(shape, dtype), ord, axis, keepdims),
        "shape": shape, "dtype": dtype, "axis": axis, "keepdims": keepdims,

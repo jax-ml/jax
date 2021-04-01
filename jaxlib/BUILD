@@ -116,6 +116,7 @@ py_library(
         "pocketfft.py",
         "version.py",
     ] + if_cuda_is_configured([
+        "cuda_linalg.py",
         "cuda_prng.py",
         "cusolver.py",
     ]) + if_rocm_is_configured([
@@ -133,6 +134,7 @@ py_library(
     name = "gpu_support",
     deps = [
         ":cublas_kernels",
+        ":cuda_lu_pivot_kernels",
         ":cuda_prng_kernels",
         ":cusolver_kernels",
     ],
@@ -192,6 +194,35 @@ pybind_extension(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@pybind11",
+    ],
+)
+
+cuda_library(
+    name = "cuda_lu_pivot_kernels_lib",
+    srcs = ["cuda_lu_pivot_kernels.cu.cc"],
+    hdrs = ["cuda_lu_pivot_kernels.h"],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":kernel_helpers",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+pybind_extension(
+    name = "cuda_lu_pivot_kernels",
+    srcs = ["cuda_lu_pivot_kernels.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "cuda_lu_pivot_kernels",
+    deps = [
+        ":cuda_lu_pivot_kernels_lib",
+        ":kernel_pybind11_helpers",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@local_config_cuda//cuda:cuda_headers",
         "@pybind11",
     ],
