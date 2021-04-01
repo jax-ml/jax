@@ -8,7 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.12 (unreleased)
+## jax 0.2.13 (unreleased)
+
+## jax 0.2.12 (April 1 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.11...master).
 * New features
   * New profiling APIs: {func}`jax.profiler.start_trace`,
