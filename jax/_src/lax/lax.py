@@ -693,8 +693,8 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
     An array containing the result.
   """
   contract_dims_seq, batch_dims_seq = dimension_numbers
-  contract_dims = tuple(map(lambda x: tuple(x), contract_dims_seq))
-  batch_dims = tuple(map(lambda x: tuple(x), batch_dims_seq))
+  contract_dims = tuple(map(tuple, contract_dims_seq))  # type: ignore
+  batch_dims = tuple(map(tuple, batch_dims_seq))  # type: ignore
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(contract_dims, batch_dims),
                             precision=_canonicalize_precision(precision),
@@ -3272,34 +3272,6 @@ def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
 
   new_dimension_numbers = ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch))
   return new_dimension_numbers, int(result_batch_dim)
-
-def _dot_using_sum_of_products(lhs, rhs, *, dimension_numbers):
-  contract_dims, batch_dims = dimension_numbers
-  lhs_contract_dims, rhs_contract_dims = contract_dims
-  lhs_batch_dims, rhs_batch_dims = batch_dims
-  lhs_noncontract_dims = tuple(sorted(
-    set(range(np.ndim(lhs))) - set(lhs_batch_dims) - set(lhs_contract_dims)))
-  rhs_noncontract_dims = tuple(sorted(
-    set(range(np.ndim(rhs))) - set(rhs_batch_dims) - set(rhs_contract_dims)))
-  lhs = transpose(lhs,
-                  lhs_batch_dims + lhs_noncontract_dims + lhs_contract_dims)
-  rhs = transpose(rhs,
-                  rhs_batch_dims + rhs_noncontract_dims + rhs_contract_dims)
-
-  lhs_start_expand = len(lhs_batch_dims) + len(lhs_noncontract_dims)
-  lhs_end_expand = lhs_start_expand + len(rhs_noncontract_dims)
-  lhs = expand_dims(lhs, tuple(range(lhs_start_expand, lhs_end_expand)))
-
-  rhs_start_expand = len(lhs_batch_dims)
-  rhs_end_expand = rhs_start_expand + len(lhs_noncontract_dims)
-  rhs = expand_dims(rhs, tuple(range(rhs_start_expand, rhs_end_expand)))
-
-  out_ndim = (len(lhs_batch_dims) + len(lhs_noncontract_dims) +
-              len(rhs_noncontract_dims))
-  op_product = bitwise_and if lhs.dtype == np.bool_ else mul
-  op_sum = bitwise_or if lhs.dtype == np.bool_ else add
-  return reduce(op_product(lhs, rhs), _zero(lhs), op_sum,
-                tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
 
 def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision,
                                   preferred_element_type: Optional[DType]):
