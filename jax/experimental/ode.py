@@ -224,7 +224,7 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
   def aug_dynamics(augmented_state, t, *args):
     """Original system augmented with vjp_y, vjp_t and vjp_args."""
     y, y_bar, *_ = augmented_state
-    # `t` here is negatice time, so we need to negate again to get back to
+    # `t` here is negative time, so we need to negate again to get back to
     # normal time. See the `odeint` invocation in `scan_fun` below.
     y_dot, vjpfun = jax.vjp(func, y, -t, *args)
     return (-y_dot, *vjpfun(y_bar))
