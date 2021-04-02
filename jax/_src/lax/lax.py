@@ -1568,11 +1568,11 @@ def stop_gradient(x):
   For example:
 
   >>> jax.grad(lambda x: x**2)(3.)
-  array(6., dtype=float32)
+  DeviceArray(6., dtype=float32)
   >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
   array(0., dtype=float32)
   >>> jax.grad(jax.grad(lambda x: x**2))(3.)
-  array(2., dtype=float32)
+  DeviceArray(2., dtype=float32)
   >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
   array(0., dtype=float32)
   """

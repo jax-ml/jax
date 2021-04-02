@@ -107,19 +107,19 @@ def _scalar_type_to_dtype(typ: type, value: Any = None):
 
   Examples
   --------
-  >>> _scalar_dtype_to_dtype(int)
-  numpy.int64
-  >>> _scalar_dtype_to_dtype(float)
-  numpy.float64
-  >>> _scalar_dtype_to_dtype(complex)
-  numpy.complex128
-  >>> _scalar_dtype_to_dtype(int)
-  np.int64
-  >>> _scalar_dtype_to_dtype(int, 0)
-  np.int64
-  >>> _scalar_dtype_to_dtype(int, 1 << 63)  # doctest: +IGNORE_EXCEPTION_DETAIL
-  ---------------------------------------------------------------------------
-  OverflowError: Python int 9223372036854775808 too large to convert to int64
+  >>> _scalar_type_to_dtype(int)
+  dtype('int32')
+  >>> _scalar_type_to_dtype(float)
+  dtype('float32')
+  >>> _scalar_type_to_dtype(complex)
+  dtype('complex64')
+  >>> _scalar_type_to_dtype(int)
+  dtype('int32')
+  >>> _scalar_type_to_dtype(int, 0)
+  dtype('int32')
+  >>> _scalar_type_to_dtype(int, 1 << 63)  # doctest: +IGNORE_EXCEPTION_DETAIL
+  Traceback (most recent call last):
+  OverflowError: Python int 9223372036854775808 too large to convert to int32
   """
   dtype = canonicalize_dtype(python_scalar_dtypes[typ])
   if typ is int and value is not None:

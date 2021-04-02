@@ -155,11 +155,11 @@ def index_add(x: Array,
 
   >>> x = jax.numpy.ones((5, 6))
   >>> jax.ops.index_add(x, jax.ops.index[2:4, 3:], 6.)
-  array([[1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 7., 7., 7.],
-         [1., 1., 1., 7., 7., 7.],
-         [1., 1., 1., 1., 1., 1.]], dtype=float32)
+  DeviceArray([[1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 7., 7., 7.],
+               [1., 1., 1., 7., 7., 7.],
+               [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(
       x, idx, y, lax.scatter_add, indices_are_sorted, unique_indices)
@@ -202,11 +202,11 @@ def index_mul(x: Array,
 
   >>> x = jax.numpy.ones((5, 6))
   >>> jax.ops.index_mul(x, jax.ops.index[2:4, 3:], 6.)
-  array([[1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 6., 6., 6.],
-         [1., 1., 1., 6., 6., 6.],
-         [1., 1., 1., 1., 1., 1.]], dtype=float32)
+  DeviceArray([[1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 6., 6., 6.],
+               [1., 1., 1., 6., 6., 6.],
+               [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(x, idx, y, lax.scatter_mul,
                          indices_are_sorted, unique_indices)
@@ -246,12 +246,12 @@ def index_min(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_minimum(x, jax.ops.index[2:4, 3:], 0.)
-  array([[1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 0., 0., 0.],
-         [1., 1., 1., 0., 0., 0.],
-         [1., 1., 1., 1., 1., 1.]], dtype=float32)
+  >>> jax.ops.index_min(x, jax.ops.index[2:4, 3:], 0.)
+  DeviceArray([[1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 0., 0., 0.],
+               [1., 1., 1., 0., 0., 0.],
+               [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(
       x, idx, y, lax.scatter_min, indices_are_sorted, unique_indices)
@@ -291,11 +291,11 @@ def index_max(x: Array,
 
   >>> x = jax.numpy.ones((5, 6))
   >>> jax.ops.index_max(x, jax.ops.index[2:4, 3:], 6.)
-  array([[1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 6., 6., 6.],
-         [1., 1., 1., 6., 6., 6.],
-         [1., 1., 1., 1., 1., 1.]], dtype=float32)
+  DeviceArray([[1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 6., 6., 6.],
+               [1., 1., 1., 6., 6., 6.],
+               [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
   return _scatter_update(
       x, idx, y, lax.scatter_max, indices_are_sorted, unique_indices)
@@ -336,11 +336,11 @@ def index_update(x: Array,
 
   >>> x = jax.numpy.ones((5, 6))
   >>> jax.ops.index_update(x, jax.ops.index[::2, 3:], 6.)
-  array([[1., 1., 1., 6., 6., 6.],
-         [1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 6., 6., 6.],
-         [1., 1., 1., 1., 1., 1.],
-         [1., 1., 1., 6., 6., 6.]], dtype=float32)
+  DeviceArray([[1., 1., 1., 6., 6., 6.],
+               [1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 6., 6., 6.],
+               [1., 1., 1., 1., 1., 1.],
+               [1., 1., 1., 6., 6., 6.]], dtype=float32)
   """
   return _scatter_update(
       x, idx, y, lax.scatter, indices_are_sorted, unique_indices)

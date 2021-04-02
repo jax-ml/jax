@@ -115,10 +115,9 @@ class TraceAnnotation(xla_client.profiler.TraceMe):
 
   For example:
 
-  >>> import jax, jax.numpy as jnp
   >>> x = jnp.ones((1000, 1000))
   >>> with jax.profiler.TraceAnnotation("my_label"):
-  ...   jnp.dot(x, x.T).block_until_ready()
+  ...   result = jnp.dot(x, x.T).block_until_ready()
 
   This will cause a "my_label" event to show up on the trace timeline if the
   event occurs while the process is being traced.
@@ -144,12 +143,10 @@ class StepTraceAnnotation(TraceAnnotation):
   For example, it can be used to mark training steps and enable the profiler to
   provide the performance analysis per step:
 
-  >>> import jax
-  >>>
-  >>> while global_step < NUM_STEPS:
-  ...   with jax.profiler.StepTraceAnnotation("train", step_num=global_step):
-  ...     train_step()
-  ...     global_step += 1
+  >>> while global_step < NUM_STEPS:                                           # doctest: +SKIP
+  ...   with jax.profiler.StepTraceAnnotation("train", step_num=global_step):  # doctest: +SKIP
+  ...     train_step()                                                         # doctest: +SKIP
+  ...     global_step += 1                                                     # doctest: +SKIP
 
   This will cause a "train xx" event to show up on the trace timeline if the
   event occurs while the process is being traced by TensorBoard. In addition,
@@ -177,27 +174,24 @@ def annotate_function(func: Callable, name: str = None, **kwargs):
 
   For example:
 
-  >>> import jax, jax.numpy as jnp
-  >>>
   >>> @jax.profiler.annotate_function
-  >>> def f(x):
+  ... def f(x):
   ...   return jnp.dot(x, x.T).block_until_ready()
   >>>
-  >>> f(jnp.ones((1000, 1000))
+  >>> result = f(jnp.ones((1000, 1000)))
 
   This will cause an "f" event to show up on the trace timeline if the
   function execution occurs while the process is being traced by TensorBoard.
 
   Arguments can be passed to the decorator via :py:func:`functools.partial`.
 
-  >>> import jax, jax.numpy as jnp
   >>> from functools import partial
-  >>>
-  >>> @partial(jax.profiler.trace_function, name="event_name")
-  >>> def f(x):
+
+  >>> @partial(jax.profiler.annotate_function, name="event_name")
+  ... def f(x):
   ...   return jnp.dot(x, x.T).block_until_ready()
-  >>>
-  >>> f(jnp.ones((1000, 1000))
+
+  >>> result = f(jnp.ones((1000, 1000)))
   """
 
   name = name or getattr(func, '__qualname__', None)

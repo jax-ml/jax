@@ -99,8 +99,6 @@ class custom_jvp:
 
   For example::
 
-    import jax.numpy as jnp
-
     @jax.custom_jvp
     def f(x, y):
       return jnp.sin(x) * y
@@ -141,8 +139,6 @@ class custom_jvp:
       None.
 
     Example::
-
-      import jax.numpy as jnp
 
       @jax.custom_jvp
       def f(x, y):
@@ -388,8 +384,6 @@ class custom_vjp:
 
   For example::
 
-    import jax.numpy as jnp
-
     @jax.custom_vjp
     def f(x, y):
       return jnp.sin(x) * y
@@ -441,8 +435,6 @@ class custom_vjp:
       None.
 
     Example::
-
-      import jax.numpy as jnp
 
       @jax.custom_vjp
       def f(x, y):
@@ -882,45 +874,42 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   ``linear_call`` primitive is another ``linear_call`` to
   ``fun_transpose``, with ``fun`` as its custom transposition.
 
-  For example, if::
+  For example:
 
-    def f(r, x):
-      return x / r
+  >>> def f(r, x):
+  ...   return x / r
 
-    def t(r, t):
-      return t / r
+  >>> def t(r, t):
+  ...   return t / r
 
-    def div_add(denom, x):
-      return x + linear_call(f, t, denom, x)
+  >>> def div_add(x, denom):
+  ...   return x + linear_call(f, t, denom, x)
 
-    def transpose(f, x_example):
-      def transposed(y):
-        x, = jax.linear_transpose(f, x_example)(y)
-        return x
-      return transposed
-
-  Then:
+  >>> def transpose(f, x_example):
+  ...   def transposed(y):
+  ...     x, = jax.linear_transpose(f, x_example)(y)
+  ...     return x
+  ...   return transposed
 
   >>> div_add(9., 3.)
-  12.0
-  >>> transpose(partial(div_add, 3.), 1.)(18.)  # custom
-  24.0
+  DeviceArray(12., dtype=float32)
+
+  >>> transpose(partial(div_add, denom=3.), 1.)(18.)  # custom
+  DeviceArray(24., dtype=float32)
+
   >>> transpose(lambda x: x + x / 3., 1.)(18.)  # reference
-  24.0
+  DeviceArray(24., dtype=float32)
 
   The above definition of ``f`` illustrates the purpose of a residual
   argument: division is linear in one of its inputs (the dividend
   ``x``) but not the other (the divisor ``r``).
 
-  As another example, if::
+  As another example:
 
-    def custom_id(x):
-      def f(_, x): return x
-      def t(_, t): return 7.
-      return linear_call(f, t, (), x)
-
-  Then:
-
+  >>> def custom_id(x):
+  ...   def f(_, x): return x
+  ...   def t(_, t): return 7.
+  ...   return linear_call(f, t, (), x)
   >>> custom_id(1.)
   1.0
   >>> transpose(custom_id, 1.)(1.)
