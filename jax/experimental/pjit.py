@@ -69,7 +69,8 @@ def pjit(fun: Callable,
 
     f = lu.wrap_init(fun)
     if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args)
+      f, dyn_args = argnums_partial_except(
+          f, static_argnums, args, allow_invalid=False)
     else:
       dyn_args = args
 

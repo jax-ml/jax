@@ -208,7 +208,7 @@ def prod(xs):
     out *= x
   return out
 
-class WrapHashably(object):
+class WrapHashably:
   __slots__ = ["val"]
 
   def __init__(self, val):
@@ -220,7 +220,7 @@ class WrapHashably(object):
   def __eq__(self, other):
     return self.val is other.val
 
-class Hashable(object):
+class Hashable:
   __slots__ = ["val"]
 
   def __init__(self, val):
@@ -228,6 +228,18 @@ class Hashable(object):
 
   def __hash__(self):
     return hash(self.val)
+
+  def __eq__(self, other):
+    return self.val == other.val
+
+class WrapKwArgs:
+  __slots__ = ["val"]
+
+  def __init__(self, val):
+    self.val = val
+
+  def __hash__(self):
+    return hash(tuple((k, v) for k, v in sorted(self.val.items())))
 
   def __eq__(self, other):
     return self.val == other.val
