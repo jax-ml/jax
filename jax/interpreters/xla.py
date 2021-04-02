@@ -19,6 +19,7 @@ import operator as op
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Type,
                     Tuple, Union, NamedTuple)
 from warnings import warn
+import weakref
 
 from absl import logging
 import numpy as np
@@ -1026,13 +1027,23 @@ def type_is_device_array(x):
   return type_x is _DeviceArray or type_x is _CppDeviceArray
 
 
+def device_array_supports_weakrefs():
+  try:
+    weakref.ref(DeviceArray())
+    return True
+  except TypeError:
+    return False
+
+
 class _DeviceArray(DeviceArray):  # type: ignore
   """A DeviceArray is an ndarray backed by a single device memory buffer."""
   # We don't subclass ndarray because that would open up a host of issues,
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
+  # TODO(phawkins): make __weakref__ an unconditional slot when jaxlib 0.1.65
+  # is the minimum version.
   __slots__ = [
       "aval", "device_buffer", "_npy_value", "_device"
-  ]
+  ] + ([] if device_array_supports_weakrefs() else ["__weakref__"])
   __array_priority__ = 100
 
   # DeviceArray has methods that are dynamically populated in lax_numpy.py,
