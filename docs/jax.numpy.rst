@@ -245,6 +245,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     mean
     median
     meshgrid
+    mgrid
     min
     minimum
     mod

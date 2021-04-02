@@ -3252,6 +3252,43 @@ def meshgrid(*args, **kwargs):
   return output
 
 
+class _Mgrid:
+  """Return dense multi-dimensional "meshgrid".
+
+  LAX-backend implementation of `mgrid()`."""
+
+  def __getitem__(self, key):
+    if isinstance(key, slice):
+      start = core.concrete_or_error(None, key.start,
+                                     "slice start of jnp.mgrid") or 0
+      stop = core.concrete_or_error(None, key.stop, "slice stop of jnp.mgrid")
+      step = core.concrete_or_error(None, key.step,
+                                    "slice step of jnp.mgrid") or 1
+      if np.iscomplex(step):
+        return linspace(start, stop, int(_abs(step)))
+      return arange(start, stop, step)
+
+    xi = []
+    # Key is tuple of slices.
+    for k in key:
+      start = core.concrete_or_error(None, k.start,
+                                     "slice start of jnp.mgrid") or 0
+      stop = core.concrete_or_error(None, k.stop, "slice stop of jnp.mgrid")
+      step = core.concrete_or_error(None, k.step,
+                                    "slice step of jnp.mgrid") or 1
+
+      if np.iscomplex(step):
+        xi.append(linspace(start, stop, int(_abs(step))))
+      else:
+        xi.append(arange(start, stop, step))
+
+    m_grid = meshgrid(*xi, indexing='ij')
+    return stack(m_grid, 0)
+
+
+mgrid = _Mgrid()
+
+
 @_wraps(np.i0)
 def i0(x):
   x_orig = x

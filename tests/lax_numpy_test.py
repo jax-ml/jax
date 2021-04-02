@@ -4631,6 +4631,45 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testMgrid(self):
+    assertAllEqual = partial(self.assertAllClose, atol=0, rtol=0)
+    assertAllEqual(np.mgrid[:4], jnp.mgrid[:4])
+    assertAllEqual(np.mgrid[:4,], jnp.mgrid[:4,])
+    assertAllEqual(np.mgrid[:4], jax.jit(lambda: jnp.mgrid[:4])())
+    assertAllEqual(np.mgrid[:5, :5], jnp.mgrid[:5, :5])
+    assertAllEqual(np.mgrid[:3, :2], jnp.mgrid[:3, :2])
+    assertAllEqual(np.mgrid[1:4:2], jnp.mgrid[1:4:2])
+    assertAllEqual(np.mgrid[1:5:3, :5], jnp.mgrid[1:5:3, :5])
+    assertAllEqual(np.mgrid[:3, :2, :5], jnp.mgrid[:3, :2, :5])
+    assertAllEqual(np.mgrid[:3:2, :2, :5], jnp.mgrid[:3:2, :2, :5])
+    # Corner cases
+    assertAllEqual(np.mgrid[:], jnp.mgrid[:])
+    # When the step length is a complex number, becuase of float calculation,
+    # the values between jnp and np might slightly different.
+    atol = 1e-6
+    rtol = 1e-6
+    self.assertAllClose(np.mgrid[-1:1:5j],
+                        jnp.mgrid[-1:1:5j],
+                        atol=atol,
+                        rtol=rtol)
+    self.assertAllClose(np.mgrid[3:4:7j],
+                        jnp.mgrid[3:4:7j],
+                        atol=atol,
+                        rtol=rtol)
+    self.assertAllClose(np.mgrid[1:6:8j, 2:4],
+                        jnp.mgrid[1:6:8j, 2:4],
+                        atol=atol,
+                        rtol=rtol)
+    # Non-integer steps
+    self.assertAllClose(np.mgrid[0:3.5:0.5],
+                        jnp.mgrid[0:3.5:0.5],
+                        atol=atol,
+                        rtol=rtol)
+    self.assertAllClose(np.mgrid[1.3:4.2:0.3],
+                        jnp.mgrid[1.3:4.2:0.3],
+                        atol=atol,
+                        rtol=rtol)
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
