@@ -1,4 +1,4 @@
-/* Copyright 2019 Google LLC
+/* Copyright 2021 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,17 +26,17 @@ namespace {
 
 __device__ void ComputePermutation(const std::int32_t* pivots,
                                    std::int32_t* permutation_out,
-                                   const std::int32_t num_pivots,
-                                   const std::int32_t num_permutation_rows) {
-  for (int i = 0; i < num_permutation_rows; ++i) {
+                                   const std::int32_t pivot_size,
+                                   const std::int32_t permutation_size) {
+  for (int i = 0; i < permutation_size; ++i) {
     permutation_out[i] = i;
   }
 
   // Compute the permutation from a sequence of transpositions encoded in the
   // pivot array by applying the transpositions in order on the identity
   // permutation.
-  for (int i = 0; i < num_pivots; ++i) {
-    if (pivots[i] < 0) {
+  for (int i = 0; i < pivot_size; ++i) {
+    if ((pivots[i] < 0) || (pivots[i] >= permutation_size)) {
       continue;
     }
     std::int32_t swap_temporary = permutation_out[i];
@@ -47,30 +47,30 @@ __device__ void ComputePermutation(const std::int32_t* pivots,
 
 __global__ void LuPivotsToPermutationKernel(
     const std::int32_t* pivots, std::int32_t* permutation_out,
-    const std::int64_t num_batches, const std::int32_t num_pivots,
-    const std::int32_t num_permutation_rows) {
+    const std::int64_t batch_size, const std::int32_t pivot_size,
+    const std::int32_t permutation_size) {
   for (std::int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-       idx < num_batches; idx += blockDim.x * gridDim.x) {
+       idx < batch_size; idx += blockDim.x * gridDim.x) {
     // Fill in the output array with the identity permutation.
-    ComputePermutation(pivots + idx * num_pivots,
-                       permutation_out + idx * num_permutation_rows, num_pivots,
-                       num_permutation_rows);
+    ComputePermutation(pivots + idx * pivot_size,
+                       permutation_out + idx * permutation_size, pivot_size,
+                       permutation_size);
   }
 }
 
 }  // namespace
 
 struct LuPivotsToPermutationDescriptor {
-  std::int64_t num_batches;
-  std::int32_t num_pivots;
-  std::int32_t num_permutation_rows;
+  std::int64_t batch_size;
+  std::int32_t pivot_size;
+  std::int32_t permutation_size;
 };
 
 std::string BuildCudaLuPivotsToPermutationDescriptor(
-    std::int64_t num_batches, std::int32_t num_pivots,
-    std::int32_t num_permutation_rows) {
+    std::int64_t batch_size, std::int32_t pivot_size,
+    std::int32_t permutation_size) {
   return PackDescriptorAsString(LuPivotsToPermutationDescriptor{
-      num_batches, num_pivots, num_permutation_rows});
+      batch_size, pivot_size, permutation_size});
 }
 
 void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
@@ -83,12 +83,12 @@ void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
 
   const int block_dim = 128;
   const std::int64_t grid_dim = std::min<std::int64_t>(
-      1024, (descriptor.num_batches + block_dim - 1) / block_dim);
+      1024, (descriptor.batch_size + block_dim - 1) / block_dim);
 
   LuPivotsToPermutationKernel<<<grid_dim, block_dim,
                                 /*dynamic_shared_mem_bytes=*/0, stream>>>(
-      pivots, permutation_out, descriptor.num_batches, descriptor.num_pivots,
-      descriptor.num_permutation_rows);
+      pivots, permutation_out, descriptor.batch_size, descriptor.pivot_size,
+      descriptor.permutation_size);
   ThrowIfError(cudaGetLastError());
 }
 

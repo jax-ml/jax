@@ -29,33 +29,26 @@ except ImportError:
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-# TODO(phawkins): remove after we no longer need to support old jax releases.
-def _unpack_builder(c):
-  # If `c` is a ComputationBuilder object, extracts the underlying XlaBuilder.
-  return getattr(c, "_builder", c)
-
-
-def lu_pivots_to_permutation(c, pivots, num_rows):
+def lu_pivots_to_permutation(c, pivots, *, permutation_size):
   """Kernel for the transformation of pivots to permutations on GPU."""
-  c = _unpack_builder(c)
   pivots_shape = c.get_shape(pivots)
   dims = pivots_shape.dimensions()
   dtype = np.dtype(np.int32)
 
   assert pivots_shape.element_type() == dtype
 
-  num_batches = _prod(dims[:-1])
-  num_pivots = dims[-1]
+  batch_size = _prod(dims[:-1])
+  pivot_size = dims[-1]
 
   opaque = cuda_lu_pivot_kernels.cuda_lu_pivots_to_permutation_descriptor(
-      num_batches, num_pivots, num_rows)
+      batch_size, pivot_size, permutation_size)
   pivots_layout = tuple(range(len(dims) - 1, -1, -1))
   pivots_shape_with_layout = xla_client.Shape.array_shape(
       dtype, dims, pivots_layout)
 
   permutations_layout = pivots_layout
   permutations_dims = list(dims)
-  permutations_dims[-1] = num_rows
+  permutations_dims[-1] = permutation_size
   permutations_shape_with_layout = xla_client.Shape.array_shape(
       dtype, permutations_dims, permutations_layout)
 

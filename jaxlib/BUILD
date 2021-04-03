@@ -116,7 +116,7 @@ py_library(
         "pocketfft.py",
         "version.py",
     ] + if_cuda_is_configured([
-        "cuda_lu_pivot.py",
+        "cuda_linalg.py",
         "cuda_prng.py",
         "cusolver.py",
     ]) + if_rocm_is_configured([

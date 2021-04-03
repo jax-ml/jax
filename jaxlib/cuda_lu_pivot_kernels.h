@@ -24,8 +24,8 @@ limitations under the License.
 namespace jax {
 
 std::string BuildCudaLuPivotsToPermutationDescriptor(
-    std::int64_t num_batches, std::int32_t num_pivots,
-    std::int32_t num_permutation_rows);
+    std::int64_t batch_size, std::int32_t pivot_size,
+    std::int32_t permutation_size);
 
 void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
                                const char* opaque, std::size_t opaque_len);

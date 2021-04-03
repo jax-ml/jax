@@ -31,10 +31,10 @@ pybind11::dict Registrations() {
 PYBIND11_MODULE(cuda_lu_pivot_kernels, m) {
   m.def("registrations", &Registrations);
   m.def("cuda_lu_pivots_to_permutation_descriptor",
-        [](std::int64_t num_batches, std::int32_t num_pivots,
-           std::int32_t num_permutation_rows) {
+        [](std::int64_t batch_size, std::int32_t pivot_size,
+           std::int32_t permutation_size) {
           std::string result = BuildCudaLuPivotsToPermutationDescriptor(
-              num_batches, num_pivots, num_permutation_rows);
+              batch_size, pivot_size, permutation_size);
           return pybind11::bytes(result);
         });
 }
