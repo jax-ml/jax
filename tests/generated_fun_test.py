@@ -196,7 +196,7 @@ def gen_vals(vs):
   return [gen_array_val(v.vartype) for v in vs]
 
 def inner_prod(xs, ys):
-  xys = zip(xs, ys)
+  xys = list(zip(xs, ys))
   assert all(x.shape == y.shape for x, y in xys)
   return sum(jnp.sum(x * y) for x, y in xys)
 

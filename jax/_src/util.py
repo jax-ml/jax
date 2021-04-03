@@ -30,7 +30,7 @@ def safe_zip(*args):
   n = len(args[0])
   for arg in args[1:]:
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
-  return list(zip(*args))
+  return zip(*args)
 
 def safe_map(f, *args):
   args = list(map(list, args))

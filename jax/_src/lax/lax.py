@@ -3498,8 +3498,8 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
     total = lambda x: _reduce_sum(x, list(range(t.ndim)))
 
     def t_op():
-      unpad_config = safe_zip(np.negative(lo), np.negative(hi),
-                              np.zeros_like(interior))
+      unpad_config = tuple(safe_zip(np.negative(lo), np.negative(hi),
+                                    np.zeros_like(interior)))
       unpadded = pad(t, np.array(0., t.dtype), unpad_config)
       return slice(unpadded, np.zeros_like(lo), unpadded.shape, np.add(interior, 1))
 
@@ -6512,7 +6512,7 @@ def _conv_general_vjp_lhs_padding(
   pad_before = np.subtract(rhs_dilated_shape, [lo for lo, _ in padding]) - 1
   pad_after = (np.add(lhs_dilated_shape, rhs_dilated_shape) - 1
                - out_dilated_shape - pad_before)
-  return safe_zip(pad_before, pad_after)
+  return list(safe_zip(pad_before, pad_after))
 
 
 def _conv_general_vjp_rhs_padding(

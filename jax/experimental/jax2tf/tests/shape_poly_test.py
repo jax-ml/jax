@@ -131,7 +131,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_solve_shape_vars(self):
     def solve_shape_vars(shape_spec: str, shape: Sequence[int]) -> Dict[str, int]:
       shape_polys = masking.parse_spec(shape_spec)
-      return jax2tf.jax2tf._solve_shape_vars(util.safe_zip(shape_polys, shape))
+      return jax2tf.jax2tf._solve_shape_vars(list(util.safe_zip(shape_polys, shape)))
 
     self.assertAllClose(solve_shape_vars("(a, b, c)", [1, 2, 3]),
                          dict(a=1, b=2, c=3), check_dtypes=False)
