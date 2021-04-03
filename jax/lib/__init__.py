@@ -16,7 +16,7 @@
 # checking on import.
 
 __all__ = [
-  'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
+  'cuda_lu_pivot', 'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
   'pocketfft', 'pytree', 'tpu_client', 'version', 'xla_client'
 ]
 
@@ -78,6 +78,11 @@ try:
   from jaxlib import cuda_prng  # pytype: disable=import-error
 except ImportError:
   cuda_prng = None
+
+try:
+  from jaxlib import cuda_lu_pivot  # pytype: disable=import-error
+except ImportError:
+  cuda_lu_pivot = None
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
