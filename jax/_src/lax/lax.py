@@ -5432,10 +5432,9 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
     operand_shape = _dilate_shape(operand_shape, base_dilation)
   if window_dilation is not None:
     window_dimensions = _dilate_shape(window_dimensions, window_dilation)
-  operand_padded = np.add(operand_shape, np.add(*zip(*padding)))
-  t = np.floor_divide(
-      np.subtract(operand_padded, window_dimensions), window_strides) + 1
-  return tuple(t)
+  pads_lo, pads_hi = zip(*padding)
+  operand_padded = core.shapes_sum(operand_shape, pads_lo, pads_hi)
+  return core.shape_stride(operand_padded, window_dimensions, window_strides)
 
 _reduce_window_max_translation_rule = partial(
     _reduce_window_chooser_translation_rule, max_p, _get_max_identity)
@@ -6231,8 +6230,7 @@ def _dilate_shape(shape, dilation):
     msg = "All dilations must be positive, got {}."
     raise TypeError(msg.format(dilation))
   dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
-  return np.where(shape == 0, 0,
-                   np.multiply(dilation, np.subtract(shape, 1)) + 1)
+  return core.dim_dilate_shape(shape, dilation)
 
 def _ceil_divide(x1, x2):
   return -np.floor_divide(np.negative(x1), x2)

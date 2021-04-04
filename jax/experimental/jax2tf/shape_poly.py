@@ -67,6 +67,7 @@ class DimVar:
   def __ne__(self, other):
     return not self == other
 
+## TODO: add unit tests
 
 class DimensionHandlerVar(core.DimensionHandler):
   """See core.DimensionHandler."""
@@ -104,6 +105,26 @@ class DimensionHandlerVar(core.DimensionHandler):
       msg = (f"Shapes {s1} and {s2} must have the same set of shape variables.")
       raise TypeError(msg)
     return super(DimensionHandlerVar, self).divide_shape_sizes(s1_ints, s2_ints)
+
+  def dilate(self, d: DimSize, dilation: DimSize) -> DimSize:
+    """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
+    if dilation not in {1}:
+      raise TypeError(f"Dilation is not supported for shape variables (d = {dilation})")
+    return d
+
+  def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
+    """Implements `(d - window_size) // window_stride + 1`"""
+    if {window_size, window_stride} != {1}:
+      raise TypeError(f"Striding is not supported for shape variables (window_size = {window_size}, stride = {window_stride}")
+    return d
+
+  def add(self, *d: DimSize):
+    d_ints, d_vars = _split_shape_ints(d)
+    if len(d_vars) != 1:
+      raise TypeError(f"Adding shape variables is not supported ({' + '.join(map(str, d))})")
+    if sum(d_ints) != 0:
+      raise TypeError(f"Adding non-zero to shape variables is not supported {' + '.join(map(str, d))}")
+    return d_vars[0]
 
 
 core._SPECIAL_DIMENSION_HANDLERS[DimVar] = DimensionHandlerVar()

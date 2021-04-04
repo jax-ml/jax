@@ -1252,6 +1252,17 @@ class DimensionHandler:
       raise ValueError(f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}")
     return sz1 // sz2
 
+  def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
+    """(d - window_size) // window_stride + 1"""
+    return (d - window_size) // window_stride + 1
+
+  def dilate(self, d: DimSize, dilation: int) -> DimSize:
+    """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
+    return 0 if d == 0 else 1 + dilation * (d - 1)
+
+  def add(self, *d: DimSize):
+    return sum(d)
+
 
 _dimension_handler_int = DimensionHandler()
 _SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
@@ -1304,6 +1315,29 @@ def dim_divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
 
 def dim_same_total_size(s1: Shape, s2: Shape) -> bool:
   return 1 == dim_divide_shape_sizes(s1, s2)
+
+def dim_dilate(d: DimSize, dilation: DimSize) -> DimSize:
+  """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
+  return _get_dim_handler(d, dilation).dilate(d, dilation)
+
+def dim_dilate_shape(s: Shape, dilations: Sequence[int]) -> Shape:
+  """Implements `dim_dilate` for each dimension."""
+  return tuple(safe_map(dim_dilate, s, dilations))
+
+def dim_sum(*d: DimSize) -> Shape:
+  """sum(d)"""
+  return _get_dim_handler(*d).add(*d)
+
+def shapes_sum(*s: Shape) -> Shape:
+  """Implements sum(s)"""
+  return tuple(safe_map(dim_sum, *s))
+
+def dim_stride(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
+  return _get_dim_handler(d, window_size, window_stride).stride(d, window_size, window_stride)
+
+def shape_stride(s: Shape, window_size: Shape, window_stride: Shape) -> Shape:
+  """(s - window_size) // window_stride + 1"""
+  return tuple(safe_map(dim_stride, s, window_size, window_stride))
 
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
