@@ -1263,6 +1263,8 @@ class DimensionHandler:
   def add(self, *d: DimSize):
     return sum(d)
 
+  def diff(self, d1: DimSize, d2: DimSize) -> DimSize:
+    return d1 - d2
 
 _dimension_handler_int = DimensionHandler()
 _SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
@@ -1297,12 +1299,16 @@ def dim_symbolic_equal_one_of(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
   """True iff `d1` is symbolic equal to one of `dlist`"""
   return _get_dim_handler(d1, *dlist).symbolic_equal_one_of(d1, dlist)
 
-def dim_symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
+def shape_symbolic_equal(s1: Shape, s2: Shape) -> bool:
   return (len(s1) == len(s2) and
           all(dim_symbolic_equal(d1, d2) for d1, d2 in safe_zip(s1, s2)))
 
 def dim_greater_equal(d1: DimSize, d2: DimSize) -> bool:
   return _get_dim_handler(d1, d2).greater_equal(d1, d2)
+
+def shape_greater_equal(s1: Shape, s2: Shape) -> bool:
+  return all(safe_map(dim_greater_equal, s1, s2))
+
 
 def dim_divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
   """Computes the division of the size of arr_shape and newshape.
@@ -1331,6 +1337,13 @@ def dim_sum(*d: DimSize) -> Shape:
 def shapes_sum(*s: Shape) -> Shape:
   """Implements sum(s)"""
   return tuple(safe_map(dim_sum, *s))
+
+def dim_diff(d1: DimSize, d2: DimSize) -> DimSize:
+  return _get_dim_handler(d1, d2).diff(d1, d2)
+
+def shape_diff(s1: Shape, s2: Shape) -> Shape:
+  return tuple(safe_map(dim_diff, s1, s2))
+
 
 def dim_stride(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
   return _get_dim_handler(d, window_size, window_stride).stride(d, window_size, window_stride)

@@ -633,6 +633,37 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x, x, x), f_tf(x, x, x))
 
   def test_conv_general_dilated(self):
+    batch_size = 7
+    lhs_shape = (batch_size, 3, 9, 10)  # 2 spatial dimensions (9, 10)
+    rhs_shape = (3, 3, 4, 5)
+    window_strides = (2, 3)
+    padding = ((0, 0), (0, 0))
+    lhs_dilation = (1, 1)
+    rhs_dilation = (1, 2)
+    dimension_numbers = ('NCHW','OIHW','NCHW')
+    feature_group_count = 1
+    batch_group_count = 1
+    precision = None
+
+    lhs = np.ones(lhs_shape, dtype=np.float32)
+    rhs = np.ones(rhs_shape, dtype=np.float32)
+
+    def f_jax(lhs, rhs):
+      return lax.conv_general_dilated(lhs, rhs,
+          window_strides, padding, lhs_dilation, rhs_dilation,
+          dimension_numbers, feature_group_count,
+          batch_group_count, precision)
+
+    f_tf = self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec(lhs_shape),
+                         tf.TensorSpec(rhs_shape)],
+        polymorphic_shapes=["b, _, _, _", "_, _, _, _"],
+        expected_output_signature=tf.TensorSpec([None, 3, 3, 1]))
+    self.assertAllClose(f_jax(lhs, rhs), f_tf(lhs, rhs))
+
+
+  def test_conv_general_dilated_vmap(self):
     lhs_shape = (2, 3, 9, 10)
     rhs_shape = (3, 3, 4, 5)
     window_strides = (2, 3)
@@ -677,6 +708,21 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec((None,) + shape)],
         polymorphic_shapes=["b, _, _"],
         expected_output_signature=tf.TensorSpec([None, 8, 9]))
+    self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_dynamic_slice(self):
+
+    def f_jax(x):
+      return lax.dynamic_slice(x, (0, 1,), (x.shape[0], 2,))
+    batch_size = 7
+    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
+
+    res = f_jax(x)
+    f_tf = self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec((None, 4))],
+        polymorphic_shapes=["b, _"],
+        expected_output_signature=tf.TensorSpec([None, 2]))
     self.assertAllClose(f_jax(x), f_tf(x))
 
   def test_squeeze(self):

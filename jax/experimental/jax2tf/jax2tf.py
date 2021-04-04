@@ -572,12 +572,11 @@ class TensorFlowTracer(core.Tracer):
           elif not isinstance(aval_dim, shape_poly.DimVar):
             assert aval_dim == val_dim, f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           else:
-            # We have a TF value with known shape, and the abstract shape is a polynomial
-            # As an extra check, verify the value if the shape env are only constants
+            # We have a TF value with known shape, and the abstract shape is a shape variable.
             try:
-              aval_int = int(masking.eval_poly(aval_dim, _shape_env))
+             aval_int = int(_eval_shape([aval_dim]))
             except TypeError:
-              continue
+             continue
             assert aval_int == val_dim, f"expected {self._aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
 
       self.val = val
@@ -1757,7 +1756,10 @@ tf_impl_with_avals[lax.gather_p] = _gather
 def _slice(operand, start_indices, limit_indices, strides):
   if strides is None:
     strides = [1] * len(start_indices)
-  slices = tuple(map(slice, start_indices, limit_indices, strides))
+  slices = tuple(map(slice,
+                     _eval_shape(start_indices),
+                     _eval_shape(limit_indices),
+                     _eval_shape(strides)))
   return operand[slices]
 tf_impl[lax.slice_p] = _slice
 
@@ -1774,9 +1776,9 @@ def _dynamic_slice(operand, *start_indices, slice_sizes):
   if not _enable_xla:
     raise _xla_path_disabled_error("dynamic_slice")
   res = tfxla.dynamic_slice(operand, tf.stack(start_indices),
-                            size_indices=slice_sizes)
+                            size_indices=_eval_shape(slice_sizes))
   # TODO: implement shape inference for XlaDynamicSlice
-  res.set_shape(tuple(slice_sizes))
+  res.set_shape(tuple(map(_poly_dim_to_tf_dim, slice_sizes)))
   return res
 
 tf_impl[lax.dynamic_slice_p] = _dynamic_slice

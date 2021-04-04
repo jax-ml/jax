@@ -126,6 +126,12 @@ class DimensionHandlerVar(core.DimensionHandler):
       raise TypeError(f"Adding non-zero to shape variables is not supported {' + '.join(map(str, d))}")
     return d_vars[0]
 
+  def diff(self, d1: DimSize, d2: DimSize) -> DimSize:
+    if self.symbolic_equal(d1, d2):
+      return 0
+    if d2 in {0}:
+      return d1
+    raise TypeError(f"Subtracting shape variables is not supported ({d1} - {d2})")
 
 core._SPECIAL_DIMENSION_HANDLERS[DimVar] = DimensionHandlerVar()
 

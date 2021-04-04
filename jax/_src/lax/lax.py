@@ -2786,7 +2786,7 @@ def _conv_general_dilated_shape_rule(
            "must be a positive integer, got {}.")
     raise ValueError(msg.format(batch_group_count))
   lhs_batch_count = lhs.shape[dimension_numbers.lhs_spec[0]]
-  if lhs_batch_count % batch_group_count != 0:
+  if batch_group_count > 1 and lhs_batch_count % batch_group_count != 0:
     msg = ("conv_general_dilated batch_group_count must divide lhs batch "
            "dimension size, but {} does not divide {}.")
     raise ValueError(msg.format(batch_group_count, lhs_batch_count))
@@ -3861,18 +3861,15 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice limit_indices must have the same length as start_indices, "
            "got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
-  if (not masking.is_polymorphic(limit_indices) and
-      not masking.is_polymorphic(operand.shape) and
-      not np.all(np.less_equal(limit_indices, operand.shape))):
+  if not core.shape_greater_equal(operand.shape, limit_indices):
     msg = ("slice limit_indices must be less than or equal to operand shape, "
            "got limit_indices {} for operand shape {}.")
     raise TypeError(msg.format(limit_indices, operand.shape))
-  if not np.all(np.greater_equal(start_indices, 0)):
+  if not core.shape_greater_equal(start_indices, (0,) * len(start_indices)):
     msg = ("slice start_indices must be greater than or equal to zero, "
            "got start_indices of {}.")
     raise TypeError(msg.format(start_indices))
-  if (not masking.is_polymorphic(limit_indices) and
-      not np.all(np.greater_equal(limit_indices, start_indices))):
+  if not core.shape_greater_equal(limit_indices, start_indices):
     msg = ("slice limit_indices must be greater than or equal to start_indices,"
            " got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
@@ -3884,13 +3881,15 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
       msg = ("slice strides must have length equal to the number of dimensions "
              "of the operand, got strides {} for operand shape {}.")
       raise TypeError(msg.format(strides, operand.shape))
-    if not np.all(np.greater(strides, 0)):
+    if not core.shape_greater_equal(strides, (0,) * len(strides)):
       msg = "slice strides must be positive, got {}"
       raise TypeError(msg.format(strides))
 
-  diff = np.subtract(limit_indices, start_indices)
+  diff = core.shape_diff(limit_indices, start_indices)
+  #diff = np.subtract(limit_indices, start_indices)
   # Not np.divmod since Poly.__rdivmod__ is ignored by NumPy, breaks poly stride
-  return tuple(q + (r > 0) for q, r in map(divmod, diff, strides))
+  #return tuple(q + (r > 0) for q, r in map(divmod, diff, strides))
+  return core.shape_stride(diff, (1,) * len(diff), strides)
 
 def _slice_translation_rule(c, operand, *, start_indices, limit_indices,
                             strides):
@@ -3961,11 +3960,11 @@ def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
     msg = ("dynamic_slice slice_sizes must have the same length as "
            "start_indices, got start_indices length {} and slice_sizes {}.")
     raise TypeError(msg.format(len(start_indices), slice_sizes))
-  if not np.all(np.less_equal(slice_sizes, operand.shape)):
+  if not core.shape_greater_equal(operand.shape, slice_sizes):
     msg = ("slice slice_sizes must be less than or equal to operand shape, "
            "got slice_sizes {} for operand shape {}.")
     raise TypeError(msg.format(slice_sizes, operand.shape))
-  if not np.all(np.greater_equal(slice_sizes, 0)):
+  if not core.shape_greater_equal(slice_sizes, (0,) * len(slice_sizes)):
     msg = ("slice slice_sizes must be greater than or equal to zero, "
            "got slice_sizes of {}.")
     raise TypeError(msg.format(slice_sizes))
@@ -6309,11 +6308,14 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
 
   lhs_padded = np.add(lhs_shape[2:], np.sum(np.array(pads).reshape(-1, 2),
                                               axis=1))
-  out_space = np.floor_divide(
-    np.subtract(lhs_padded, rhs_shape[2:]), strides) + 1
+  out_space = core.shape_stride(lhs_padded, rhs_shape[2:], strides)
   out_space = np.maximum(0, out_space)
-  assert lhs_shape[0] % batch_group_count == 0
-  out_shape = (lhs_shape[0] // batch_group_count, rhs_shape[0])
+  if batch_group_count > 1:
+    assert lhs_shape[0] % batch_group_count == 0
+    out_shape_0 = lhs_shape[0] // batch_group_count
+  else:
+    out_shape_0 = lhs_shape[0]
+  out_shape = (out_shape_0, rhs_shape[0])
   return tuple(out_shape + tuple(out_space))
 
 
@@ -6373,8 +6375,6 @@ def _dynamic_slice_indices(operand, start_indices):
     msg = ("Length of slice indices must match number of operand dimensions ({} "
           "vs {})")
     raise ValueError(msg.format(len(start_indices), operand.shape))
-  # map int over operand.shape to raise any dynamic-shape errors
-  safe_map(int, operand.shape)
   if not isinstance(start_indices, (tuple, list)):
     if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
@@ -6559,8 +6559,12 @@ def _conv_general_vjp_rhs_padding(
   lhs_dilated_shape = _dilate_shape(in_shape, lhs_dilation)
   rhs_dilated_shape = _dilate_shape(window_dimensions, rhs_dilation)
   out_dilated_shape = _dilate_shape(out_shape, window_strides)
-  total_in_pad = out_dilated_shape + rhs_dilated_shape - lhs_dilated_shape - 1
-  return [(pad[0], tot - pad[0]) for pad, tot in zip(padding, total_in_pad)]
+  pads_lo, _ = zip(*padding)
+  pads_from_lhs = core.shape_diff(out_dilated_shape, lhs_dilated_shape)
+  pads_from_rhs = core.shape_diff(core.shape_diff(rhs_dilated_shape, pads_lo),
+                                  (1,) * len(pads_lo))
+  pads_hi = core.shapes_sum(pads_from_lhs, pads_from_rhs)
+  return list(zip(pads_lo, pads_hi))
 
 
 def _balanced_eq(x, z, y):

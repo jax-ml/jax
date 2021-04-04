@@ -1763,7 +1763,7 @@ def broadcast_to(arr, shape):
   shape = (shape,) if ndim(shape) == 0 else shape
   shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
-  if core.dim_symbolic_equal_shape(arr_shape, shape):
+  if core.shape_symbolic_equal(arr_shape, shape):
     return arr
   else:
     nlead = len(shape) - len(arr_shape)
