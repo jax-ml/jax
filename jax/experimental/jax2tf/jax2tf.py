@@ -1262,7 +1262,7 @@ def _dot_general(lhs, rhs, dimension_numbers, precision, preferred_element_type)
   del precision
   del preferred_element_type
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  lhs_dim, rhs_dim = len(lhs.shape), len(rhs.shape)
+  lhs_ndim, rhs_ndim = len(lhs.shape), len(rhs.shape)
   # This condition ensures that:
   # 1) the considered dtype is not tf.bfloat16/tf.int32, which are supported by
   #    tf.linalg.einsum but not by tf.linalg.matmul;
@@ -1275,9 +1275,9 @@ def _dot_general(lhs, rhs, dimension_numbers, precision, preferred_element_type)
   #    matrix/matrix, vector/matrix or matrix/vector multiplication.
   if (not lhs.dtype in [tf.bfloat16, tf.int32]
       and lhs_batch == rhs_batch == tuple(range(len(lhs_batch)))
-      and lhs_dim - rhs_dim in [-1, 0, 1]
-      and 1 <= lhs_dim - len(lhs_batch) <= 2
-      and 1 <= rhs_dim - len(rhs_batch) <= 2
+      and lhs_ndim - rhs_ndim in [-1, 0, 1]
+      and 1 <= lhs_ndim - len(lhs_batch) <= 2
+      and 1 <= rhs_ndim - len(rhs_batch) <= 2
       and lhs_contracting == (len(lhs.shape) - 1,)
       and rhs_contracting == (len(lhs_batch),)):
     # All the inputs to tf.linalg.matmul must have 2 inner dimensions,
@@ -1299,14 +1299,15 @@ def _dot_general(lhs, rhs, dimension_numbers, precision, preferred_element_type)
     #     and the resulting shape is (). We need to squeeze the result of
     #     tf.linalg.matmul as it will have shape [1, 1].
     squeeze_idxs = []
-    if lhs_dim - len(lhs_batch) == 1:
-      lhs = tf.expand_dims(lhs, lhs_dim - 1)
+    if lhs_ndim - len(lhs_batch) == 1:
+      lhs = tf.expand_dims(lhs, lhs_ndim - 1)
       squeeze_idxs.append(len(lhs.shape) - 2)
-    if rhs_dim - len(rhs_batch) == 1:
-      rhs = tf.expand_dims(rhs, rhs_dim - 2)
+    if rhs_ndim - len(rhs_batch) == 1:
+      rhs = tf.expand_dims(rhs, rhs_ndim)
       squeeze_idxs.append(len(rhs.shape) - 1)
     result = tf.linalg.matmul(lhs, rhs)
     if len(squeeze_idxs) != 0:
+      assert all([result.shape[i] == 1 for i in squeeze_idxs])
       result = tf.squeeze(result, squeeze_idxs)
     return result
 
