@@ -1755,15 +1755,20 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
   return out
 tf_impl_with_avals[lax.gather_p] = _gather
 
-def _slice(operand, start_indices, limit_indices, strides):
+def _slice(operand, start_indices, limit_indices, strides,
+           _in_avals, _out_aval):
   if strides is None:
     strides = [1] * len(start_indices)
   slices = tuple(map(slice,
                      _eval_shape(start_indices),
                      _eval_shape(limit_indices),
                      _eval_shape(strides)))
-  return operand[slices]
-tf_impl[lax.slice_p] = _slice
+  out = operand[slices]
+  # TODO(b/184503314): improve shape inference for __getitem__
+  out.set_shape(_aval_to_tf_shape(_out_aval))
+  return out
+
+tf_impl_with_avals[lax.slice_p] = _slice
 
 
 def _dynamic_slice(operand, *start_indices, slice_sizes):

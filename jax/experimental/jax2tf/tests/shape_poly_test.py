@@ -470,8 +470,10 @@ class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
 
     self.assertAllClose(jnp.mean(x), f_tf(x))
 
-def _all_harnesses() -> Sequence[primitive_harness.Harness]:
-  """For each harness group, pick a single dtype."""
+def _all_shape_poly_harnesses() -> Sequence[primitive_harness.Harness]:
+  """For each harness group, pick a single dtype.
+  Ignore harnesses that fail in graph mode in jax2tf.
+  """
   all_h = primitive_harness.all_harnesses
 
   # Index by group
@@ -513,7 +515,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
   # This test runs for all primitive harnesses, and verifies that the result
   # of vmap over a primitive harness can be converted batch-polymorphically.
-  @primitive_harness.parameterized(_all_harnesses(), include_jax_unimpl=False)
+  @primitive_harness.parameterized(_all_shape_poly_harnesses(),
+                                   include_jax_unimpl=False)
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
   def test_prim_vmap(self, harness: primitive_harness.Harness):
@@ -688,7 +691,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
   def test_dynamic_slice(self):
 
-    def f_jax(x):
+    def f_jax(x):  # x:shape: (b, 4)
       return lax.dynamic_slice(x, (0, 1,), (x.shape[0], 2,))
     batch_size = 7
     x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
@@ -700,6 +703,22 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=["b, _"],
         expected_output_signature=tf.TensorSpec([None, 2]))
     self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_dynamic_slice_vmap(self):
+    @jax.vmap
+    def f_jax(x, idx):  # x.shape : (4,)
+      return lax.dynamic_slice(x, idx, slice_sizes=(2,))
+    batch_size = 7
+    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
+    idx = np.arange(batch_size, dtype=np.int32).reshape((batch_size, 1))
+    res = f_jax(x, idx)
+    f_tf = self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec((None, 4)),
+                         tf.TensorSpec((None, 1), dtype=idx.dtype)],
+        polymorphic_shapes=["b, _", "b, _"],
+        expected_output_signature=tf.TensorSpec([None, 2]))
+    self.assertAllClose(f_jax(x, idx), f_tf(x, idx))
 
 
   def test_gather(self):
@@ -838,6 +857,18 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_jax, f_tf(x))
     self.assertFalse(traced)  # We are not tracing again
 
+  def test_slice(self):
+    def f_jax(x):  # x.shape = (b, 3)
+      return lax.slice(x, start_indices=(0, 1),
+                       limit_indices=(x.shape[0], 3))
+    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:7, :3]
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 3], dtype=x.dtype)],
+      polymorphic_shapes=["(b, _)"],
+      expected_output_signature=tf.TensorSpec([None, 2]))
+
+    self.assertAllClose(f_jax(x), f_tf(x))
 
   def test_squeeze(self):
     def f_jax(x):

@@ -76,14 +76,10 @@ def _try_broadcast_shapes(shapes):
   if not rank: return ()  # scalar case
   result_shape = [None] * rank
   for i, sizes in enumerate(zip(*shapes)):
-    non_1s = [d for d in sizes if not core.dim_symbolic_equal(d, 1)]
-    if non_1s:
-      if not all(core.dim_symbolic_equal(non_1s[0], other)
-                 for other in non_1s[1:]):
-        return None  # must have equal sizes other than 1-sized axes
-      result_shape[i] = non_1s[0]
-    else:
-      result_shape[i] = 1
+    non_1s = set([d for d in sizes if not core.dim_symbolic_equal(d, 1)])
+    if len(non_1s) > 1:
+      return None  # must have equal sizes other than 1-sized axes
+    result_shape[i] = next(iter(non_1s), 1)
 
   return tuple(result_shape)
 
@@ -4008,8 +4004,10 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
 def _batch_dynamic_slice_indices(indices, bdims):
   if len(indices) == 0:
     return np.array([], 'int32'), None
-  size = next((x.shape[i] for x, i in zip(indices, bdims) if i is not None), -1)
-  if size < 0:
+  empty_marker = object()
+  size = next((x.shape[i] for x, i in zip(indices, bdims) if i is not None),
+              empty_marker)
+  if size is empty_marker:
     return concatenate([broadcast(i, (1,)) for i in indices], 0), None
   indices = concatenate(
     [broadcast_in_dim(x, (size, 1),
