@@ -45,7 +45,7 @@ Example pytrees:
 ```
 
 JAX can be extended to consider other container types as pytrees; see
-[Extending pytrees](extending pytrees) below.
+{ref}`extending-pytrees` below.
 
 ## Pytrees and JAX functions
 
@@ -186,6 +186,8 @@ def show_example(structured):
 for structured in example_containers:
   show_example(structured)
 ```
+
+(extending-pytrees)=
 
 ### Extending pytrees
 
