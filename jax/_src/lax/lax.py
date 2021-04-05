@@ -4472,7 +4472,7 @@ def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
 
   for i in range(len(update_window_dims)):
     update_window_dim = update_window_dims[i]
-    if updates.shape[update_window_dim] > max_update_slice_sizes[i]:
+    if not core.dim_greater_equal(max_update_slice_sizes[i], updates.shape[update_window_dim]):
       raise TypeError(f"Bounds of the window dimensions of updates must not "
                       f"exceed the bounds of the corresponding dimensions of "
                       f"operand. For dimension {update_window_dim}, updates "

@@ -857,6 +857,28 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_jax, f_tf(x))
     self.assertFalse(traced)  # We are not tracing again
 
+  def test_scatter(self):
+    batch_size = 7
+    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
+    idx = np.array([[1], [2]], np.int32)
+    upd = - np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :2]
+    dimension_numbers=((0,), (1,), (1,))
+    def f_jax(x, upd):
+      return lax.scatter_add(x, scatter_indices=idx,
+                             updates=upd,
+                             dimension_numbers=lax.ScatterDimensionNumbers(*dimension_numbers),
+                             indices_are_sorted=False,
+                             unique_indices=True)
+
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 4], dtype=x.dtype),
+                       tf.TensorSpec([None, 2], dtype=upd.dtype)],
+      polymorphic_shapes=["b, _", "b, _"],
+      expected_output_signature=tf.TensorSpec([None, 4]))
+
+    self.assertAllClose(f_jax(x, upd), f_tf(x, upd))
+
   def test_slice(self):
     def f_jax(x):  # x.shape = (b, 3)
       return lax.slice(x, start_indices=(0, 1),
