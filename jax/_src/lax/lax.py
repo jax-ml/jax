@@ -16,7 +16,6 @@
 # pytype: skip-file
 
 import builtins
-import collections
 from enum import IntEnum
 import functools
 import itertools
@@ -76,7 +75,7 @@ def _try_broadcast_shapes(shapes):
   if not rank: return ()  # scalar case
   result_shape = [None] * rank
   for i, sizes in enumerate(zip(*shapes)):
-    non_1s = set([d for d in sizes if not core.dim_symbolic_equal(d, 1)])
+    non_1s = set([d for d in sizes if not core.symbolic_equal_dim(d, 1)])
     if len(non_1s) > 1:
       return None  # must have equal sizes other than 1-sized axes
     result_shape[i] = next(iter(non_1s), 1)
@@ -3338,7 +3337,7 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
            'dimensions, got {} for operand ndim {} and shape {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand_ndim, shape))
-  if not all(core.dim_symbolic_equal_one_of(operand.shape[i],
+  if not all(core.symbolic_equal_one_of_dim(operand.shape[i],
                                             [1, shape[broadcast_dimensions[i]]])
              for i in range(operand_ndim)):
     msg = (
@@ -3491,9 +3490,9 @@ def _pad_shape_rule(operand, padding_value, *, padding_config):
   if not all(i >= 0 for _, _, i in padding_config):
     raise ValueError("interior padding in padding_config must be nonnegative, "
                      f"got padding_config {padding_config}")
-  result = tuple(core.dim_sum(l, h, core.dim_dilate(d, i + 1))
+  result = tuple(core.sum_dim(l, h, core.dilate_dim(d, i + 1))
                  for (l, h, i), d in zip(padding_config, op_shape))
-  if not all(core.dim_greater_equal(d, 0) for d in result):
+  if not all(core.greater_equal_dim(d, 0) for d in result):
     msg = (f"Dimension size after padding is not at least 0, "
            f"got result shape {result}, for padding_config {padding_config}"
            f" and operand shape {op_shape}")
@@ -3649,10 +3648,10 @@ def _is_singleton_reshape(old, new):
       return None
 
 def _reshape_shape_rule(operand, *, new_sizes, dimensions):
-  if not all(core.dim_greater_equal(d, 0) for d in new_sizes):
+  if not all(core.greater_equal_dim(d, 0) for d in new_sizes):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
-  if not core.dim_same_total_size(np.shape(operand), new_sizes):
+  if not core.same_shape_sizes(np.shape(operand), new_sizes):
     msg = 'reshape total size must be unchanged, got new_sizes {} for shape {}.'
     raise TypeError(msg.format(new_sizes, np.shape(operand)))
   if dimensions is not None:
@@ -3864,15 +3863,15 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice limit_indices must have the same length as start_indices, "
            "got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
-  if not core.shape_greater_equal(operand.shape, limit_indices):
+  if not core.greater_equal_shape(operand.shape, limit_indices):
     msg = ("slice limit_indices must be less than or equal to operand shape, "
            "got limit_indices {} for operand shape {}.")
     raise TypeError(msg.format(limit_indices, operand.shape))
-  if not core.shape_greater_equal(start_indices, (0,) * len(start_indices)):
+  if not all(core.greater_equal_dim(si, 0) for si in start_indices):
     msg = ("slice start_indices must be greater than or equal to zero, "
            "got start_indices of {}.")
     raise TypeError(msg.format(start_indices))
-  if not core.shape_greater_equal(limit_indices, start_indices):
+  if not core.greater_equal_shape(limit_indices, start_indices):
     msg = ("slice limit_indices must be greater than or equal to start_indices,"
            " got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
@@ -3884,15 +3883,12 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
       msg = ("slice strides must have length equal to the number of dimensions "
              "of the operand, got strides {} for operand shape {}.")
       raise TypeError(msg.format(strides, operand.shape))
-    if not core.shape_greater_equal(strides, (0,) * len(strides)):
+    if not core.greater_equal_shape(strides, (0,) * len(strides)):
       msg = "slice strides must be positive, got {}"
       raise TypeError(msg.format(strides))
 
-  diff = core.shape_diff(limit_indices, start_indices)
-  #diff = np.subtract(limit_indices, start_indices)
-  # Not np.divmod since Poly.__rdivmod__ is ignored by NumPy, breaks poly stride
-  #return tuple(q + (r > 0) for q, r in map(divmod, diff, strides))
-  return core.shape_stride(diff, (1,) * len(diff), strides)
+  diff = core.diff_shape(limit_indices, start_indices)
+  return core.stride_shape(diff, (1,) * len(diff), strides)
 
 def _slice_translation_rule(c, operand, *, start_indices, limit_indices,
                             strides):
@@ -3963,11 +3959,11 @@ def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
     msg = ("dynamic_slice slice_sizes must have the same length as "
            "start_indices, got start_indices length {} and slice_sizes {}.")
     raise TypeError(msg.format(len(start_indices), slice_sizes))
-  if not core.shape_greater_equal(operand.shape, slice_sizes):
+  if not core.greater_equal_shape(operand.shape, slice_sizes):
     msg = ("slice slice_sizes must be less than or equal to operand shape, "
            "got slice_sizes {} for operand shape {}.")
     raise TypeError(msg.format(slice_sizes, operand.shape))
-  if not core.shape_greater_equal(slice_sizes, (0,) * len(slice_sizes)):
+  if not all(core.greater_equal_dim(ssz, 0) for ssz in slice_sizes):
     msg = ("slice slice_sizes must be greater than or equal to zero, "
            "got slice_sizes of {}.")
     raise TypeError(msg.format(slice_sizes))
@@ -4260,8 +4256,8 @@ def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
     slice_size = slice_sizes[i]
     corresponding_input_size = operand.shape[i]
 
-    if not (core.dim_greater_equal(slice_size, 0) and
-            core.dim_greater_equal(corresponding_input_size, slice_size)):
+    if not (core.greater_equal_dim(slice_size, 0) and
+            core.greater_equal_dim(corresponding_input_size, slice_size)):
       raise TypeError(f"Slice size at index {i} in gather op is out of range, "
                       f"must be within [0, {corresponding_input_size} + 1), "
                       f"got {slice_size}.")
@@ -4351,7 +4347,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
     counts = broadcasted_iota(start_indices.dtype, tuple(count_shape), 0)
     start_indices = concatenate([counts, start_indices], len(count_shape) - 1)
 
-    batch_slice_size = 1 if core.dim_greater_equal(operand.shape[0], 1) else 0
+    batch_slice_size = 1 if core.greater_equal_dim(operand.shape[0], 1) else 0
     slice_sizes = (batch_slice_size,) + slice_sizes
     collapsed_slice_dims = (0,) + tuple(np.add(1, dimension_numbers.collapsed_slice_dims))
     offset_dims = tuple(np.add(1, dimension_numbers.offset_dims))
@@ -4472,7 +4468,7 @@ def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
 
   for i in range(len(update_window_dims)):
     update_window_dim = update_window_dims[i]
-    if not core.dim_greater_equal(max_update_slice_sizes[i], updates.shape[update_window_dim]):
+    if not core.greater_equal_dim(max_update_slice_sizes[i], updates.shape[update_window_dim]):
       raise TypeError(f"Bounds of the window dimensions of updates must not "
                       f"exceed the bounds of the corresponding dimensions of "
                       f"operand. For dimension {update_window_dim}, updates "
@@ -5437,8 +5433,8 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
   if window_dilation is not None:
     window_dimensions = _dilate_shape(window_dimensions, window_dilation)
   pads_lo, pads_hi = zip(*padding)
-  operand_padded = core.shapes_sum(operand_shape, pads_lo, pads_hi)
-  return core.shape_stride(operand_padded, window_dimensions, window_strides)
+  operand_padded = core.sum_shapes(operand_shape, pads_lo, pads_hi)
+  return core.stride_shape(operand_padded, window_dimensions, window_strides)
 
 _reduce_window_max_translation_rule = partial(
     _reduce_window_chooser_translation_rule, max_p, _get_max_identity)
@@ -6234,7 +6230,7 @@ def _dilate_shape(shape, dilation):
     msg = "All dilations must be positive, got {}."
     raise TypeError(msg.format(dilation))
   dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
-  return core.dim_dilate_shape(shape, dilation)
+  return core.dilate_shape(shape, dilation)
 
 def _ceil_divide(x1, x2):
   return -np.floor_divide(np.negative(x1), x2)
@@ -6313,7 +6309,7 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
 
   lhs_padded = np.add(lhs_shape[2:], np.sum(np.array(pads).reshape(-1, 2),
                                               axis=1))
-  out_space = core.shape_stride(lhs_padded, rhs_shape[2:], strides)
+  out_space = core.stride_shape(lhs_padded, rhs_shape[2:], strides)
   out_space = np.maximum(0, out_space)
   if batch_group_count > 1:
     assert lhs_shape[0] % batch_group_count == 0
@@ -6370,7 +6366,7 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj)))) from err
   lower_bound, bound_error = (
       (1, "strictly positive") if non_zero_shape else (0, "nonnegative"))
-  if not all(core.dim_greater_equal(d, lower_bound) for d in obj_arr):
+  if not all(core.greater_equal_dim(d, lower_bound) for d in obj_arr):
     msg = "{} {} must have every element be {}, got {}."
     raise TypeError(msg.format(fun_name, arg_name, bound_error, obj))
 
@@ -6565,10 +6561,10 @@ def _conv_general_vjp_rhs_padding(
   rhs_dilated_shape = _dilate_shape(window_dimensions, rhs_dilation)
   out_dilated_shape = _dilate_shape(out_shape, window_strides)
   pads_lo, _ = zip(*padding)
-  pads_from_lhs = core.shape_diff(out_dilated_shape, lhs_dilated_shape)
-  pads_from_rhs = core.shape_diff(core.shape_diff(rhs_dilated_shape, pads_lo),
+  pads_from_lhs = core.diff_shape(out_dilated_shape, lhs_dilated_shape)
+  pads_from_rhs = core.diff_shape(core.diff_shape(rhs_dilated_shape, pads_lo),
                                   (1,) * len(pads_lo))
-  pads_hi = core.shapes_sum(pads_from_lhs, pads_from_rhs)
+  pads_hi = core.sum_shapes(pads_from_lhs, pads_from_rhs)
   return list(zip(pads_lo, pads_hi))
 
 

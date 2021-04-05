@@ -11,112 +11,61 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""TODO
+"""Shape polymorphism support for jax2tf.
+
+For usage instructions, read the jax2tf.convert docstring, and the
+[README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md).
 
 """
-import logging
 import collections
 import string
-from typing import Callable, Dict, Optional, Sequence, Set, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
-import jax
 from jax import core
-from jax import dlpack
-from jax import dtypes
-from jax import numpy as jnp
-from jax import tree_util
-from jax._src import util
-from jax.interpreters import xla
-from jax.lib import xla_bridge
-from jax.lib import xla_client
-
-import numpy as np
-import tensorflow as tf  # type: ignore[import]
 
 DimSize = core.DimSize
 Shape = core.Shape
 
-
-class InconclusiveDimensionOperation(Exception):
-  """Raised when we cannot conclusively compute with DimVars"""
-  pass
-
-
 class DimVar:
   """A shape dimension variable.
   We assume that these range over integer values >= 1.
+
+  Implements only a minimal set of operations to allow us to construct sets and
+  dictionaries.
   """
   def __init__(self, varname: str):
-    self.varname = varname
+    self._varname = varname
 
   def __str__(self):
-    return self.varname
+    return self._varname
 
   def __repr__(self):
     return str(self)
 
   def __hash__(self):
-    return hash(self.varname)
+    return hash(self._varname)
 
   def __eq__(self, other):
-    if isinstance(other, DimVar) and self.varname == other.varname:
+    if isinstance(other, DimVar) and self._varname == other._varname:
       return True
     else:
-      raise InconclusiveDimensionOperation(f"Shape variable comparison {self} == {other} is inconclusive")
+      raise core.InconclusiveDimensionOperation(f"Shape variable comparison {self} == {other} is inconclusive")
 
   def __ne__(self, other):
     return not self == other
 
-## TODO: add unit tests
 
 class DimensionHandlerVar(core.DimensionHandler):
   """See core.DimensionHandler."""
-  def as_index(self, d: DimSize) -> DimSize:
-    return d
-
   def symbolic_equal(self, d1: DimSize, d2: DimSize) -> bool:
-    # The set inclusion will use the __hash__ first, and only then __eq__
-    return d1 in {d2}
-
-  def symbolic_equal_one_of(self, d1: DimSize, dlist: Sequence[DimSize]) -> bool:
-    return d1 in set(dlist)
+    # We compare hashes first, to avoid InconclusiveDimensionOperation.
+    return hash(d1) == hash(d2) and d1 == d2
 
   def greater_equal(self, d1: DimSize, d2: DimSize):
-    if d1 in {d2}:
-      return True
-
-    if type(d2) is not DimVar and d2 <= 1:
+    if self.symbolic_equal(d1, d2) or (type(d2) is not DimVar and 1 >= d2):
       return True
     else:
-      raise InconclusiveDimensionOperation(f"Shape variable comparison {d1} >= {d2} is inconclusive")
-
-  def same_total_size(self, s1: Shape, s2: Shape) -> int:
-    s1_ints, s1_vars = _split_shape_ints(s1)
-    s2_ints, s2_vars = _split_shape_ints(s2)
-    if collections.Counter(s1_vars) != collections.Counter(s2_vars):
-      msg = (f"Shapes {s1} and {s2} must have the same set of shape variables.")
-      raise TypeError(msg)
-    return np.prod(s1_ints) == np.prod(s2_ints)
-
-  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> Shape:
-    s1_ints, s1_vars = _split_shape_ints(s1)
-    s2_ints, s2_vars = _split_shape_ints(s2)
-    if collections.Counter(s1_vars) != collections.Counter(s2_vars):
-      msg = (f"Shapes {s1} and {s2} must have the same set of shape variables.")
-      raise TypeError(msg)
-    return super(DimensionHandlerVar, self).divide_shape_sizes(s1_ints, s2_ints)
-
-  def dilate(self, d: DimSize, dilation: DimSize) -> DimSize:
-    """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
-    if dilation not in {1}:
-      raise TypeError(f"Dilation is not supported for shape variables (d = {dilation})")
-    return d
-
-  def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
-    """Implements `(d - window_size) // window_stride + 1`"""
-    if {window_size, window_stride} != {1}:
-      raise TypeError(f"Striding is not supported for shape variables (window_size = {window_size}, stride = {window_stride}")
-    return d
+      raise core.InconclusiveDimensionOperation(f"Shape variable comparison {d1} >= {d2} is inconclusive")
 
   def sum(self, *ds: DimSize):
     d_ints, d_vars = _split_shape_ints(ds)
@@ -131,13 +80,35 @@ class DimensionHandlerVar(core.DimensionHandler):
       return 0
     if d2 in {0}:
       return d1
-    raise TypeError(f"Subtracting shape variables is not supported ({d1} - {d2})")
+    raise core.InconclusiveDimensionOperation(f"Subtracting shape variables is not supported ({d1} - {d2})")
+
+  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> int:
+    s1_ints, s1_vars = _split_shape_ints(s1)
+    s2_ints, s2_vars = _split_shape_ints(s2)
+    if collections.Counter(s1_vars) != collections.Counter(s2_vars):
+      msg = (f"Shapes {s1} and {s2} must have the same set of shape variables.")
+      raise core.InconclusiveDimensionOperation(msg)
+    return super(DimensionHandlerVar, self).divide_shape_sizes(s1_ints, s2_ints)
+
+  def dilate(self, d: DimSize, dilation: DimSize) -> DimSize:
+    """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
+    if dilation not in {1}:
+      raise core.InconclusiveDimensionOperation(f"Dilation is not supported for shape variables (d = {dilation})")
+    return d
+
+  def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
+    """Implements `(d - window_size) // window_stride + 1`"""
+    if {window_size, window_stride} != {1}:
+      raise core.InconclusiveDimensionOperation(f"Striding is not supported for shape variables (window_size = {window_size}, stride = {window_stride}")
+    return d
+
 
 core._SPECIAL_DIMENSION_HANDLERS[DimVar] = DimensionHandlerVar()
 
 def _split_shape_ints(shape: Shape) -> Tuple[Sequence[int], Sequence[DimVar]]:
   """Splits the shape into an integer sequence and a sequence of vars."""
-  shape_ints, shape_vars = [], []
+  shape_ints: List[int] = []
+  shape_vars: List[DimVar] = []
   for d in shape:
     (shape_ints if isinstance(d, int) else shape_vars).append(d)
   return shape_ints, shape_vars
@@ -147,7 +118,7 @@ class ShapeSyntaxError(Exception): pass
 
 _identifiers = frozenset(string.ascii_lowercase)
 def parse_spec(spec: Optional[str],
-               arg_shape: Tuple[Optional[int], ...]) -> Tuple[DimSize, ...]:
+               arg_shape: Sequence[Optional[int]]) -> Tuple[DimSize, ...]:
   """Parse the shape polymorphic specification for one array argument.
   Args:
     spec: a shape polymorphic specification.
@@ -156,7 +127,7 @@ def parse_spec(spec: Optional[str],
   The placeholders `_` in the specification are replaced with the values from
   the actual shape, which must be known.
 
-  TO FINISH
+  See the README.md for usage.
   """
   shape_var_map: Dict[str, Set[int]] = collections.defaultdict(set)
   def _parse_dim(dim_spec: str, dim_size: Optional[int]) -> Union[int, DimSize]:
@@ -188,7 +159,7 @@ def parse_spec(spec: Optional[str],
       msg = ("polymorphic_shape must be specified when the argument "
              f"shape {arg_shape} is partially known.")
       raise ValueError(msg)
-    return arg_shape
+    return tuple(arg_shape)
 
   if spec[0] == '(':
     if spec[-1] != ')':
@@ -211,4 +182,3 @@ def parse_spec(spec: Optional[str],
       raise ValueError(msg)
 
   return dims
-

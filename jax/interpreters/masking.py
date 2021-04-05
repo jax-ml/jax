@@ -120,7 +120,7 @@ def _polys_to_ints(shape):
 def is_polymorphic(shape: Sequence['Size']):
   return any(map(lambda d: type(d) is Poly, shape))
 
-class UndefinedPoly(Exception):
+class UndefinedPoly(core.InconclusiveDimensionOperation):
   """Exception raised when an operation involving polynomials is not defined.
 
   An operation `op` on polynomials `p1` and `p2` either raises this exception,
@@ -306,17 +306,15 @@ def mul(coeff, mon):
 
 
 class DimensionHandlerPoly(core.DimensionHandler):
-  def as_index(self, d: DimSize) -> DimSize:
-    return d
+  """See core.DimensionHandler.
 
+  Most methods are inherited.
+  """
   def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
     try:
       return d1 == d2
     except UndefinedPoly:
       return False
-
-  def symbolic_equal_one_of(self, d1: core.DimSize, dlist: Sequence[core.DimSize]) -> bool:
-    return any(self.symbolic_equal(d1, d2) for d2 in dlist)
 
 
 core._SPECIAL_DIMENSION_HANDLERS[Poly] = DimensionHandlerPoly()

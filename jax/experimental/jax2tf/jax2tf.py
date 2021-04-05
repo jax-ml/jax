@@ -25,7 +25,7 @@ from jax import numpy as jnp
 from jax import random, tree_util
 from jax._src import util
 from jax.api_util import flatten_fun
-from jax.interpreters import ad, batching
+from jax.interpreters import ad
 from jax.interpreters import pxla
 from jax.interpreters import sharded_jit
 from jax.interpreters import xla
@@ -34,7 +34,6 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 import jax._src.random
-from jax.lib import xla_bridge as xb
 from . import shape_poly
 
 import numpy as np
@@ -120,7 +119,7 @@ def _xla_path_disabled_error(primitive_name: str) -> Exception:
 
 @functools.partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable, *,
-            polymorphic_shapes: Optional[Sequence[Any]]=None,
+            polymorphic_shapes_experimental: Optional[Sequence[Any]]=None,
             in_shapes=None,
             with_gradient=True, enable_xla=True) -> Callable:
   """Transforms `fun` to be executed by TensorFlow.
@@ -133,21 +132,20 @@ def convert(fun: Callable, *,
       JAX arrays, or (nested) standard Python containers (tuple/list/dict)
       thereof.
 
-    polymorphic_shapes: an optional sequence of shape specifications,
-      one for each argument of the function to be converted. Default is a
-      list of `None`, in which case the argument shape specifications are taken
-      from the shapes of the actual arguments.
+    polymorphic_shapes_experimental: an optional sequence of shape specifications,
+      one for each argument of the function to be converted. Default is `None`,
+      in which case the argument shape specifications are taken from the shapes
+      of the actual arguments.
       A non-default `polymorphic_shapes` is used to specify shape variables for
-      some of the input dimensions. The specified polymorphic shape
+      some of the input dimensions, to specify that the conversion to TF must be
+      done for any possible non-zero values for the shape variables.
 
-      In that case the conversion will succeed
-      only if it would produce the same exact result as for any concrete shape
+      The conversion fails if it cannot ensure that the it would produce the same
+      sequence of TF ops for any non-zero values of shape variables. This feature
+      is experimental, and it may fail loudly even for code that is actually
+      shape polymorphic.
 
-
-      is needed to ensure that the result
-      of the conversion works for sometimes when the
-      actual arguments have partially-specified shapes. If an argument is a
-      pytree, then the
+      If an argument is a pytree, then the
       shape specification must be a matching pytree or `None`.
       See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
       A shape specification should be a string, with comma-separated dimension
@@ -155,7 +153,7 @@ def convert(fun: Callable, *,
       specification is either a number, or the placeholder `_`, or a lowercase
       word denoting a name for a dimension variable.
       In presence of dimension variables, the conversion is done with a
-      shape abstraction that allows any concrete value for the variable.
+      shape abstraction that allows any non-zero concrete value for the variable.
       Examples of shape specifications:
         * `[None, "(batch, 16)"]`: no specification for the first argument (takes
           the shape from the actual argument); the second argument is a 2D
@@ -167,7 +165,7 @@ def convert(fun: Callable, *,
       See [the README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
 
-    in_shapes: DEPRECATED.
+    in_shapes: DEPRECATED in favor of `polymorphic_shapes_experimental`.
 
     with_gradient: if set, will add a tf.custom_gradient to the converted
       function, by converting the ``jax.vjp(fun)``. Only first-order
@@ -187,6 +185,7 @@ def convert(fun: Callable, *,
   global _enable_xla
   _enable_xla = enable_xla
   api._check_callable(fun)
+  polymorphic_shapes = polymorphic_shapes_experimental
 
   def converted_fun(*args: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
@@ -215,7 +214,7 @@ def convert(fun: Callable, *,
     else:
       if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
         msg = ("polymorphic_shapes must be a sequence with the same length as the argument list "
-               f"({len(args)}). Got polymorphic_shapes={polymorphic_shapes}.")
+               f"({len(args)}). Got polymorphic_shapes_experimental={polymorphic_shapes}.")
         raise TypeError(msg)
       polymorphic_shapes_ = tuple(polymorphic_shapes)
 
@@ -263,7 +262,7 @@ def convert(fun: Callable, *,
       # TODO: enable higher-order gradients
       with tf.name_scope("jax2tf_vjp"):
         in_cts = convert(fun_vjp_jax, with_gradient=False,
-                         polymorphic_shapes=vjp_polymorphic_shapes)(args, out_cts)
+                         polymorphic_shapes_experimental=vjp_polymorphic_shapes)(args, out_cts)
       return in_cts
 
     try:
@@ -363,16 +362,10 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal) -> Sequence[TfVal]:
 
 ### tracer
 
-# TODO: remove references to poly_dim?
-def _poly_dim_to_tf_dim(dim: shape_poly.DimSize) -> Optional[int]:
-  if isinstance(dim, shape_poly.DimVar):
-    return None
-  else:
-    return dim
-
 def _aval_to_tf_shape(aval: core.AbstractValue) -> Tuple[Optional[int], ...]:
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
-  return tuple(map(_poly_dim_to_tf_dim, aval.shape))  # type: ignore[attr-defined]
+  return tuple(map(lambda d: None if isinstance(d, shape_poly.DimVar) else d,
+                   aval.shape))  # type: ignore[attr-defined]
 
 
 def _tfval_shape_dtype(val: TfVal) -> Tuple[Sequence[Optional[int]], DType]:
@@ -421,7 +414,7 @@ def _args_to_avals_and_env(args: Sequence[TfVal],
           # Even if the shape of `arg` is known, we still use `tf.shape` for
           # safety, because the promise is that we will convert the function
           # to work for any value of the dimension.
-          shapeenv[d] = tf.shape(arg)[i]
+          shapeenv[d] = tf.shape(arg)[i]  # type: ignore[index]
         else:
           # TODO: add an assertion tf.shape(arg)[i] == env[d]
           pass
@@ -437,7 +430,7 @@ _shape_env = {}  # type: _ShapeEnv
 def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
-  return tuple(_shape_env[d] if type(d) is shape_poly.DimVar else d
+  return tuple(_shape_env[d] if type(d) is shape_poly.DimVar else d  # type: ignore[index]
                for d in shape)
 
 def shape_as_value(x):
@@ -575,7 +568,7 @@ class TensorFlowTracer(core.Tracer):
           else:
             # We have a TF value with known shape, and the abstract shape is a shape variable.
             try:
-             aval_int = int(_eval_shape([aval_dim]))
+             aval_int = int(_eval_shape([aval_dim]))  # type: ignore
             except TypeError:
              continue
             assert aval_int == val_dim, f"expected {self._aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
@@ -1772,7 +1765,9 @@ def _slice(operand, start_indices, limit_indices, strides,
 tf_impl_with_avals[lax.slice_p] = _slice
 
 
-def _dynamic_slice(operand, *start_indices, slice_sizes):
+def _dynamic_slice(operand, *start_indices, slice_sizes,
+                   _in_avals: Sequence[core.ShapedArray],
+                   _out_aval: core.ShapedArray):
   # Here we could use tf.slice. Similarly, for lax.gather we can sometimes use
   # tf.gather. But those have different semantics for index-out-of-bounds than
   # JAX (and XLA). We have tried to force compilation, by wrapping into
@@ -1786,10 +1781,10 @@ def _dynamic_slice(operand, *start_indices, slice_sizes):
   res = tfxla.dynamic_slice(operand, tf.stack(start_indices),
                             size_indices=_eval_shape(slice_sizes))
   # TODO: implement shape inference for XlaDynamicSlice
-  res.set_shape(tuple(map(_poly_dim_to_tf_dim, slice_sizes)))
+  res.set_shape(_aval_to_tf_shape(_out_aval))
   return res
 
-tf_impl[lax.dynamic_slice_p] = _dynamic_slice
+tf_impl_with_avals[lax.dynamic_slice_p] = _dynamic_slice
 
 def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   proto = xla_data_pb2.ScatterDimensionNumbers()
@@ -2082,9 +2077,13 @@ tf_impl_with_avals[lax_linalg.lu_p] = _lu
 
 def _triangular_solve(a: TfVal, b: TfVal, *, left_side: bool, lower: bool,
                       transpose_a: bool, conjugate_a: bool,
-                      unit_diagonal: bool):
+                      unit_diagonal: bool,
+                      _in_avals: Sequence[core.ShapedArray],
+                      _out_aval: core.ShapedArray):
   if unit_diagonal:
-    a = tf.linalg.set_diag(a, tf.ones(a.shape[:-1], dtype=a.dtype))
+    a_aval, _ = _in_avals
+    a_shape = _eval_shape(a_aval.shape)
+    a = tf.linalg.set_diag(a, tf.ones(a_shape[:-1], dtype=a.dtype))
   if not left_side:
     rank = len(a.shape)
     transpose_dimensions = list(range(rank - 2)) + [rank - 1, rank - 2]
@@ -2101,7 +2100,7 @@ def _triangular_solve(a: TfVal, b: TfVal, *, left_side: bool, lower: bool,
     result = tf.transpose(result, transpose_dimensions)
   return result
 
-tf_impl[lax_linalg.triangular_solve_p] = _triangular_solve
+tf_impl_with_avals[lax_linalg.triangular_solve_p] = _triangular_solve
 
 def _linear_solve(*args: TfVal, const_lengths, jaxprs, _in_avals, _out_aval):
   return _convert_jax_impl(lax_control_flow._custom_linear_solve_impl)(

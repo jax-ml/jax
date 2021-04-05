@@ -184,7 +184,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     with self.assertRaisesRegex(TypeError,
                                 re.escape("polymorphic_shapes must be a sequence with the same length as the argument list (2). "
-                                          "Got polymorphic_shapes=['(b, 4)']")):
+                                          "Got polymorphic_shapes_experimental=['(b, 4)']")):
       self.CheckShapePolymorphism(add2,
                                   input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
                                   polymorphic_shapes=["(b, 4)"],
@@ -321,7 +321,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     x = np.ones((2, 3))
     y = np.ones((3,))
     res_jax = f(x, y)
-    self.assertAllClose(res_jax, jax2tf.convert(f, polymorphic_shapes=["(b, h)", "h"])(x, y))
+    self.assertAllClose(res_jax,
+                        jax2tf.convert(f, polymorphic_shapes_experimental=["(b, h)", "h"])(x, y))
 
   def test_shape_error(self):
     """Some of the examples from the README."""
@@ -338,21 +339,22 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(TypeError,
                                 re.escape("add got incompatible shapes for broadcasting: (v,), (4,)")):
       jax2tf.convert(lambda x, y: x + y,
-                     polymorphic_shapes=["(v,)", "(4,)"])(four_ones, four_ones)
+                     polymorphic_shapes_experimental=["(v,)", "(4,)"])(four_ones, four_ones)
 
-    with self.assertRaisesRegex(shape_poly.InconclusiveDimensionOperation,
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
                                 re.escape("Shape variable comparison v == 4 is inconclusive")):
       jax2tf.convert(lambda x: jnp.matmul(x, x),
-                     polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
+                     polymorphic_shapes_experimental=["(v, 4)"])(np.ones((4, 4)))
 
 
   def test_dim_vars(self):
+    """Unit tests for DimVar."""
     da, db = shape_poly.parse_spec("a, b", (2, 3))
     self.assertTrue(da == da)
     self.assertFalse(da != da)
-    with self.assertRaisesRegex(shape_poly.InconclusiveDimensionOperation, ""):
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, ""):
       da == db
-    with self.assertRaisesRegex(shape_poly.InconclusiveDimensionOperation, ""):
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, ""):
       da != db
 
     self.assertLen({da, da}, 1)
@@ -360,8 +362,38 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertTrue(da in {da, db})
     self.assertTrue(db in {da, db})
     self.assertTrue(da in [da, db])
-    with self.assertRaisesRegex(shape_poly.InconclusiveDimensionOperation, ""):
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, ""):
       db in [da, db]
+
+  def test_dim_vars_symbolic_equal(self):
+    da, db = shape_poly.parse_spec("a, b", (2, 3))
+    self.assertTrue(core.symbolic_equal_dim(da, da))
+    self.assertFalse(core.symbolic_equal_dim(da, 1))
+    self.assertFalse(core.symbolic_equal_dim(da, db))
+
+    self.assertTrue(core.symbolic_equal_one_of_dim(da, [2, da]))
+    self.assertFalse(core.symbolic_equal_one_of_dim(da, [2, db]))
+    self.assertFalse(core.symbolic_equal_one_of_dim(da, []))
+
+    self.assertTrue(core.symbolic_equal_one_of_dim(2, [da, 3, 2]))
+    self.assertFalse(core.symbolic_equal_one_of_dim(1, [2, db]))
+    self.assertFalse(core.symbolic_equal_one_of_dim(3, []))
+
+  def test_dim_vars_greater_equal(self):
+    da, db = shape_poly.parse_spec("a, b", (2, 3))
+    self.assertTrue(core.greater_equal_dim(da, da))
+    self.assertTrue(core.greater_equal_dim(da, 0))
+    self.assertTrue(core.greater_equal_dim(da, 1))
+
+    self.assertTrue(core.greater_equal_shape((da, 2), (1, 1)))
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                "Shape variable comparison .* is inconclusive"):
+      core.greater_equal_dim(da, 2)
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                "Shape variable comparison .* is inconclusive"):
+      core.greater_equal_dim(da, db)
 
 
 class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
@@ -400,9 +432,9 @@ class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
       return jnp.sum(x, axis=0) * jax2tf.shape_as_value(x)[0]
 
     x = np.arange(3.)
-    self.assertAllClose(9., jax2tf.convert(f, polymorphic_shapes=["(b,)"])(x))
-    self.assertAllClose(9., jax2tf.convert(jax.jit(f), polymorphic_shapes=["(b,)"])(x))
-    self.assertAllClose(9., tf.function(jax2tf.convert(f, polymorphic_shapes=["(b,)"]))(x))
+    self.assertAllClose(9., jax2tf.convert(f, polymorphic_shapes_experimental=["(b,)"])(x))
+    self.assertAllClose(9., jax2tf.convert(jax.jit(f), polymorphic_shapes_experimental=["(b,)"])(x))
+    self.assertAllClose(9., tf.function(jax2tf.convert(f, polymorphic_shapes_experimental=["(b,)"]))(x))
 
     res_primal, res_tangent = jax2tf.convert(
       lambda x, xt: jax.jvp(f, (x,), (xt,)),
@@ -411,7 +443,7 @@ class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
 
     self.assertAllClose(np.array([3., 3., 3.]),
                         jax2tf.convert(jax.grad(f),
-                                       polymorphic_shapes=["b"])(x))
+                                       polymorphic_shapes_experimental=["b"])(x))
 
     xv = np.arange(24.).reshape((2, 3, 4))
     res_vmap = jax.vmap(f, in_axes=1)(xv)
@@ -434,7 +466,7 @@ class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
                       operand=None)
     x = np.ones((2, 3, 4))
     self.assertAllClose(1., f(x))
-    self.assertAllClose(1., jax2tf.convert(f, polymorphic_shapes=["(a, b, 4)"])(x))
+    self.assertAllClose(1., jax2tf.convert(f, polymorphic_shapes_experimental=["(a, b, 4)"])(x))
 
   def test_mean0(self):
     def f_jax(x):
@@ -507,15 +539,13 @@ _VMAP_NOT_POLY_YET = {
 
     # In linalg._lu_python we do reshape(-1, ...)
     "lu",
+    "custom_linear_solve",
 
     # We do *= shapes in the batching rule for conv_general_dilated
     "conv_general_dilated",
 
     # vmap(clamp) fails in JAX
     "clamp",
-
-    # Getting error: Can not squeeze dim[2], expected a dimension of 1, got 4 for '{{node Squeeze}} = Squeeze[T=DT_FLOAT, squeeze_dims=[2]](MatMul)' with input shapes: [?,4,4]
-    "custom_linear_solve",
 }
 
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
@@ -548,7 +578,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     def arr_to_shape_spec(a):
       return "b, " + ", ".join(str(d) for d in a.shape)
     func_jax_vmap_polymorphic_shapes = jax.tree_map(arr_to_shape_spec, tuple(args))
-    func_jax_vmap_out_shapes = jax.tree_map(arr_to_shape_spec, res_jax)
     def arr_to_tf_tensor_spec(a):
       return tf.TensorSpec((None,) + a.shape, a.dtype)
     func_jax_vmap_input_signature = jax.tree_map(arr_to_tf_tensor_spec,
@@ -738,7 +767,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     batch_size = 7
     x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
     idx = np.arange(batch_size, dtype=np.int32).reshape((batch_size, 1))
-    res = f_jax(x, idx)
     f_tf = self.CheckShapePolymorphism(
         f_jax,
         input_signature=[tf.TensorSpec((None, 4)),
@@ -766,7 +794,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     # f_tf = self.CheckShapePolymorphism(
     #   f,
     #   input_signature=[tf.TensorSpec([None, 3, 4]), tf.TensorSpec([None], np.int32)],
-    #   polymorphic_shapes=["batch, _, _", "slice_size"],
+    #   polymorphic_shapes=["batch, _, _", "batch"],
     #   expected_output_signature=tf.TensorSpec([None, None, 4]))
     # self.assertAllClose(f(x, i), f_tf(x, i))
 
@@ -836,7 +864,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     key = np.random.rand(batch_size, 2)
     a = np.random.rand(batch_size, 3)
 
-    self.CheckShapePolymorphism(
+    f_tf = self.CheckShapePolymorphism(
       f_jax,
       input_signature=[tf.TensorSpec([None, 2], dtype=key.dtype),
                        tf.TensorSpec([None, 3], dtype=a.dtype)],
@@ -858,7 +886,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       polymorphic_shapes=["(batch, 2, batch, height, 3)"],
       expected_output_signature=tf.TensorSpec([None, 6, None, None]))
 
-    with self.assertRaisesRegex(TypeError,
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
                                 re.escape("Shapes (batch, 2, batch, height, 3) and (batch, -1, batch) must have the same set of shape variables")):
       self.CheckShapePolymorphism(
         lambda x: x.reshape([x.shape[0], -1, x.shape[2]]),
@@ -866,7 +894,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=["(batch, 2, batch, height, 3)"],
         expected_output_signature=tf.TensorSpec([None, 6, None]))
 
-    with self.assertRaisesRegex(ValueError,
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
                                 re.escape("Cannot divide evenly the sizes of shapes (2, 4) and (-1, 3)")):
       self.CheckShapePolymorphism(
         lambda x: x.reshape([x.shape[0], -1, 3]),
@@ -889,7 +917,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
     traced = False
     # If we get_concrete_function we trace once
-    f_tf = tf.function(jax2tf.convert(f_jax, polymorphic_shapes=["(b, _, _)"]),
+    f_tf = tf.function(jax2tf.convert(f_jax, polymorphic_shapes_experimental=["(b, _, _)"]),
                        autograph=False,
                        jit_compile=True).get_concrete_function(tf.TensorSpec([None, 2, 3], x.dtype))
     self.assertTrue(traced)
@@ -994,7 +1022,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_jax, f_tf(x))
 
     with self.assertRaisesRegex(
-        shape_poly.InconclusiveDimensionOperation,
+        core.InconclusiveDimensionOperation,
         re.escape("Shape variable comparison b2 == 1 is inconclusive")):
       # Trace with unknown dimension to squeeze
       self.CheckShapePolymorphism(

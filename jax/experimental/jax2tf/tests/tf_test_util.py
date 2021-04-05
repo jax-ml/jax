@@ -251,7 +251,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         must match the `input_signature`. (see jax2tf.convert).
     """
     f_tf = tf.function(
-        jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes),
+        jax2tf.convert(f_jax, polymorphic_shapes_experimental=polymorphic_shapes),
         autograph=False,
         input_signature=input_signature)
     concrete_f_tf = f_tf.get_concrete_function(*input_signature)
