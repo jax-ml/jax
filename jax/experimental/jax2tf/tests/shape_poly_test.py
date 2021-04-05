@@ -33,6 +33,7 @@ import numpy as np
 
 
 from jax.experimental.jax2tf.tests import tf_test_util
+from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
 
 import tensorflow as tf  # type: ignore[import]
 import unittest
@@ -472,10 +473,18 @@ class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
 def _all_harnesses() -> Sequence[primitive_harness.Harness]:
   """For each harness group, pick a single dtype."""
   all_h = primitive_harness.all_harnesses
-  # Index by group; value is a harness
+
+  # Index by group
   harness_groups: Dict[str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
+  device = jtu.device_under_test()
+
+
   for h in all_h:
-    if not h.filter(device_under_test=jtu.device_under_test(), include_jax_unimpl=False):
+    # Drop the the JAX limitations
+    if not h.filter(device_under_test=device, include_jax_unimpl=False):
+      continue
+    # And the jax2tf limitations
+    if _get_jax2tf_limitations(device, h):
       continue
     harness_groups[h.group_name].append(h)
 
@@ -487,6 +496,16 @@ def _all_harnesses() -> Sequence[primitive_harness.Harness]:
     (dtype, _), = c.most_common(1)
     res.extend([h for h in hlist if h.dtype == dtype])
   return res
+
+
+def _get_jax2tf_limitations(device, h: primitive_harness.Harness) -> Sequence[Jax2TfLimitation]:
+  # And the jax2tf limitations
+  def applicable_jax2tf_limitation(l: Jax2TfLimitation) -> bool:
+    return (l.filter(device=device,
+                     dtype=h.dtype,
+                     mode="graph") and l.expect_tf_error)
+  limitations = Jax2TfLimitation.limitations_for_harness(h)
+  return tuple(filter(applicable_jax2tf_limitation, limitations))
 
 
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
@@ -527,7 +546,10 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
                                 input_signature=func_jax_vmap_input_signature,
                                 polymorphic_shapes=func_jax_vmap_polymorphic_shapes,
                                 expected_output_signature=func_jax_vmap_output_signature)
-    self.assertAllClose(res_jax_vmap, f_tf(*batched_args))
+
+    limitations = _get_jax2tf_limitations(jtu.device_under_test(), harness)
+    if any([l.custom_assert or l.skip_comparison for l in limitations]):
+      self.assertAllClose(res_jax_vmap, f_tf(*batched_args))
 
 
   def test_matmul(self):

@@ -1943,7 +1943,6 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
   if not _enable_xla:
     raise _xla_path_disabled_error("sort")
   assert 1 <= num_keys <= len(operands)
-  assert all([operands[0].shape == op.shape for op in operands[1:]])
   assert 0 <= dimension < len(
       operands[0].shape
   ), f"Invalid {dimension} for ndim {len(operands[0].shape)}"

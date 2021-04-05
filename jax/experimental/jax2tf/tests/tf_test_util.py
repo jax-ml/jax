@@ -27,6 +27,7 @@ from jax import tree_util
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.interpreters import masking
+from jax._src import util
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
@@ -255,11 +256,17 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         input_signature=input_signature)
     concrete_f_tf = f_tf.get_concrete_function(*input_signature)
     if expected_output_signature:
+      # Strangely, output_shapes can be a single shape for a function with a
+      # single result, or a list/tuple of shapes.
       concrete_output_tf_shape = concrete_f_tf.output_shapes
-      assert not isinstance(concrete_output_tf_shape, tuple)  # A single result
-      self.assertEqual(
-          tuple(expected_output_signature.shape),
-          tuple(concrete_output_tf_shape))
+      if not isinstance(concrete_output_tf_shape, (tuple, list)):  # Single result
+        assert not isinstance(expected_output_signature, (tuple, list))
+        expected_output_signature = [expected_output_signature]
+        concrete_output_tf_shape = [concrete_output_tf_shape]
+
+      for expected, found in util.safe_zip(expected_output_signature,
+                                           concrete_output_tf_shape):
+        self.assertEqual(tuple(expected.shape), tuple(found))
     return f_tf
 
   def MakeInputSignature(self, *polymorphic_shapes):
