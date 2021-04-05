@@ -20,4 +20,5 @@ from jax._src.scipy.signal import (
   correlate,
   correlate2d,
   detrend,
+  fftconvolve
 )
