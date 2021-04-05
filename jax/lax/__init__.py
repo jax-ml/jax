@@ -209,6 +209,8 @@ from jax._src.lax.lax import (
   reduce_min_p,
   reduce_or_p,
   reduce_p,
+  reduce_precision,
+  reduce_precision_p,
   reduce_prod_p,
   reduce_sum_p,
   reduce_window,
