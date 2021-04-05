@@ -2378,8 +2378,10 @@ for dtype in jtu.dtypes.all:
     None, lax.Precision.DEFAULT, lax.Precision.HIGH, lax.Precision.HIGHEST
   ]:
     for lhs_shape, rhs_shape, dimension_numbers in [
-      ((3, 4), (4, 2), (((1,), (0,)), ((), ()))),
-      ((1, 3, 4), (1, 4, 3), (((2, 1), (1, 2)), ((0,), (0,))))
+        ((3, 4), (4, 2), (((1,), (0,)), ((), ()))),
+        ((1, 3, 4), (1, 4, 3), (((2, 1), (1, 2)), ((0,), (0,)))),
+        # Some batch dimensions
+        ((7, 3, 4), (7, 4), (((2,), (1,)), ((0,), (0,)))),
     ]:
       _make_dot_general_harness(
         "dtypes_and_precision",
