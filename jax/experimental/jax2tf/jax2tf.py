@@ -794,6 +794,7 @@ tf_not_yet_impl = [
 
   "igamma_grad_a",
   "random_gamma_grad",
+  "reduce_precision",
 
   # Not high priority?
   "after_all", "all_to_all", "create_token",

@@ -5449,6 +5449,34 @@ batching.primitive_batchers[reduce_window_min_p] = partial(
   _reduce_window_batch_rule, _reduce_window_min)
 
 
+def _reduce_precision_shape_rule(operand, *, exponent_bits, mantissa_bits):
+  exponent_bits = operator.index(exponent_bits)
+  mantissa_bits = operator.index(mantissa_bits)
+  if exponent_bits < 1:
+    raise ValueError(f"reduce_precision: exponent_bits must be positive; got {exponent_bits}")
+  if mantissa_bits < 0:
+    raise ValueError(f"reduce_precision: mantissa_bits must be non-negative; got {mantissa_bits}")
+  return operand.shape
+
+
+reduce_precision_p = standard_primitive(
+    _reduce_precision_shape_rule,
+    partial(unop_dtype_rule, _identity, _float, 'reduce_precision'),
+    name='reduce_precision')
+
+
+def reduce_precision(operand, exponent_bits, mantissa_bits):
+  """Wraps XLA's `ReducePrecision
+  <https://www.tensorflow.org/xla/operation_semantics#reduceprecision>`_
+  operator.
+  """
+  exponent_bits = core.concrete_or_error(
+    operator.index, exponent_bits, "exponent_bits argument of lax.reduce_precision")
+  mantissa_bits = core.concrete_or_error(
+    operator.index, mantissa_bits, "mantissa_bits argument of lax.reduce_precision")
+  return reduce_precision_p.bind(operand, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits)
+
+
 def _select_and_scatter_shape_rule(
     operand, source, init_value, *, select_jaxpr, select_consts, scatter_jaxpr,
     scatter_consts, window_dimensions, window_strides, padding):

@@ -1693,6 +1693,25 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
     self._CheckAgainstNumpy(np_fun, fun, args_maker)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_out_dtype={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          jtu.format_shape_dtype_string(shape, out_dtype)),
+       "shape": shape, "dtype": dtype, "out_dtype": out_dtype}
+      for shape in [(), (3,), (3, 4)]
+      for dtype in float_dtypes
+      for out_dtype in float_dtypes))
+  def testReducePrecision(self, shape, dtype, out_dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    info = dtypes.finfo(out_dtype)
+    fun = lambda x: lax.reduce_precision(x, info.nexp, info.nmant)
+    np_fun = lambda x: np.asarray(x).astype(out_dtype).astype(dtype)
+    self._CheckAgainstNumpy(np_fun, fun, args_maker)
+    self._CompileAndCheck(fun, args_maker)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_isstable={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
