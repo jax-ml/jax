@@ -1354,6 +1354,8 @@ def _pad(operand, padding_value, *, padding_config,
   if not _enable_xla:
     raise _xla_path_disabled_error("pad")
   out = tfxla.pad(operand, padding_value, low, high, interior)
+  # TODO(b/184499027): improve shape inference for XlaPad
+  out.set_shape(_aval_to_tf_shape(_out_aval))
   return out
 tf_impl_with_avals[lax.pad_p] = _pad
 

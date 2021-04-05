@@ -551,79 +551,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     if any([l.custom_assert or l.skip_comparison for l in limitations]):
       self.assertAllClose(res_jax_vmap, f_tf(*batched_args))
 
-
-  def test_matmul(self):
-    def f_jax(x, y):
-      return jnp.matmul(x, y)
-
-    self.CheckShapePolymorphism(
-      f_jax,
-      input_signature=[tf.TensorSpec([None, 8, 4]), tf.TensorSpec([None, 4, None])],
-      polymorphic_shapes=["(batch, _, 4)", "(batch, 4, w)"],
-      expected_output_signature=tf.TensorSpec([None, 8, None]))
-
-  def test_reshape(self):
-
-    self.CheckShapePolymorphism(
-      lambda x: x.reshape([x.shape[0], -1]),
-      input_signature=[tf.TensorSpec([None, 2, 3])],
-      polymorphic_shapes=["(batch, _, _)"],
-      expected_output_signature=tf.TensorSpec([None, 6]))
-
-    self.CheckShapePolymorphism(
-      lambda x: x.reshape([x.shape[0], -1, x.shape[3], x.shape[2]]),
-      input_signature=[tf.TensorSpec([None, 2, None, None, 3])],
-      polymorphic_shapes=["(batch, 2, batch, height, 3)"],
-      expected_output_signature=tf.TensorSpec([None, 6, None, None]))
-
-    with self.assertRaisesRegex(TypeError,
-                                re.escape("Shapes (batch, 2, batch, height, 3) and (batch, -1, batch) must have the same set of shape variables")):
-      self.CheckShapePolymorphism(
-        lambda x: x.reshape([x.shape[0], -1, x.shape[2]]),
-        input_signature=[tf.TensorSpec([None, 2, None, None, 3])],
-        polymorphic_shapes=["(batch, 2, batch, height, 3)"],
-        expected_output_signature=tf.TensorSpec([None, 6, None]))
-
-    with self.assertRaisesRegex(ValueError,
-                                re.escape("Cannot divide evenly the sizes of shapes (2, 4) and (-1, 3)")):
-      self.CheckShapePolymorphism(
-        lambda x: x.reshape([x.shape[0], -1, 3]),
-        input_signature=[tf.TensorSpec([None, 2, 4])],
-        polymorphic_shapes=["(batch, _, _)"],
-        expected_output_signature=tf.TensorSpec([None, 1]))
-
-  def test_reshape_compiled(self):
-    # raise unittest.SkipTest("Failing after fixing Poly unsoundness #4878")
-    # We compile the result of conversion for two shapes, hence we need to
-    # involve the TF compiler twice, but we trace only once with shape polymorphism
-    traced = False
-    def f_jax(x):
-      nonlocal traced
-      traced = True
-      y = jnp.sin(x)
-      return y.reshape([x.shape[0], -1])
-
-    x = np.ones((4, 2, 3), dtype=np.float32)
-    res_jax = f_jax(x)
-
-    traced = False
-    # If we get_concrete_function we trace once
-    f_tf = tf.function(jax2tf.convert(f_jax, polymorphic_shapes=["(b, _, _)"]),
-                       autograph=False,
-                       jit_compile=True).get_concrete_function(tf.TensorSpec([None, 2, 3], tf.float32))
-    self.assertTrue(traced)
-    traced = False
-    self.assertAllClose(res_jax, f_tf(x))
-    self.assertFalse(traced)  # We are not tracing again
-
-    x = np.ones((6, 2, 3), dtype=np.float32)
-    res_jax = f_jax(x)
-    traced = False
-
-    self.assertAllClose(res_jax, f_tf(x))
-    self.assertFalse(traced)  # We are not tracing again
-
-
   def test_add_with_broadcast(self):
     def f_jax(x, y):
       return jnp.add(x, y)
@@ -638,6 +565,33 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       expected_output_signature=tf.TensorSpec([None, None, 4]))
 
     self.assertAllClose(f_jax(x, y), f_tf(x, y))
+
+  def test_broadcast(self):
+    def f_jax(x):
+      return jnp.broadcast_to(x, [x.shape[0], x.shape[0], x.shape[1]])
+
+    x = np.arange(12.).reshape((3, 4))
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 4], dtype=x.dtype)],
+      polymorphic_shapes=[("batch, _")],
+      expected_output_signature=tf.TensorSpec([None, None, 4]))
+
+    self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_ones(self):
+    def f_jax(x):
+      return jnp.ones(x.shape, dtype=x.dtype)
+
+    x_shape = (5, 6, 4)
+    x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, None, 4], dtype=x.dtype)],
+      polymorphic_shapes=[("width, height, _")],
+      expected_output_signature=tf.TensorSpec([None, None, 4]))
+
+    self.assertAllClose(f_jax(x), f_tf(x))
 
   def test_clamp(self):
     @jax.vmap
@@ -747,70 +701,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         expected_output_signature=tf.TensorSpec([None, 2]))
     self.assertAllClose(f_jax(x), f_tf(x))
 
-  def test_squeeze(self):
-    def f_jax(x):
-      return jnp.squeeze(x, axis=1)
-    x = np.ones((4, 1))
-    res_jax = f_jax(x)
-
-    # Trace with a known dimension to squeeze
-    f_tf = self.CheckShapePolymorphism(
-      f_jax,
-      input_signature=[tf.TensorSpec([None, 1], dtype=x.dtype)],
-      polymorphic_shapes=["(b, _)"],
-      expected_output_signature=tf.TensorSpec([None]))
-
-    self.assertAllClose(res_jax, f_tf(x))
-
-    with self.assertRaisesRegex(
-        shape_poly.InconclusiveDimensionOperation,
-        re.escape("Shape variable comparison b2 == 1 is inconclusive")):
-      # Trace with unknown dimension to squeeze
-      self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, None])],
-        polymorphic_shapes=["(b1, b2)"],
-        expected_output_signature=tf.TensorSpec([None]))
-
-  def test_broadcast(self):
-    def f_jax(x):
-      return jnp.broadcast_to(x, [x.shape[0], x.shape[0], x.shape[1]])
-
-    x = np.arange(12.).reshape((3, 4))
-    f_tf = self.CheckShapePolymorphism(
-      f_jax,
-      input_signature=[tf.TensorSpec([None, 4], dtype=x.dtype)],
-      polymorphic_shapes=[("batch, _")],
-      expected_output_signature=tf.TensorSpec([None, None, 4]))
-
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_ones(self):
-    def f_jax(x):
-      return jnp.ones(x.shape, dtype=x.dtype)
-
-    x_shape = (5, 6, 4)
-    x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
-    f_tf = self.CheckShapePolymorphism(
-      f_jax,
-      input_signature=[tf.TensorSpec([None, None, 4], dtype=x.dtype)],
-      polymorphic_shapes=[("width, height, _")],
-      expected_output_signature=tf.TensorSpec([None, None, 4]))
-
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_iota(self):
-    def f_jax(x):
-      x + lax.iota(np.float32, x.shape[0])
-
-    x = np.arange(12.)
-    f_tf = self.CheckShapePolymorphism(
-      f_jax,
-      input_signature=[tf.TensorSpec([None], dtype=x.dtype)],
-      polymorphic_shapes=["d"],
-      expected_output_signature=None)
-
-    self.assertAllClose(f_jax(x), f_tf(x))
 
   def test_gather(self):
     def f(a, i):
@@ -850,6 +740,129 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       expected_output_signature=tf.TensorSpec([None, 4]))
 
     self.assertAllClose(f(x, i), f_tf(x, i))
+
+
+  def test_iota(self):
+    def f_jax(x):
+      x + lax.iota(np.float32, x.shape[0])
+
+    x = np.arange(12.)
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None], dtype=x.dtype)],
+      polymorphic_shapes=["d"],
+      expected_output_signature=None)
+
+    self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_matmul(self):
+    def f_jax(x, y):
+      return jnp.matmul(x, y)
+
+    self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 8, 4]), tf.TensorSpec([None, 4, None])],
+      polymorphic_shapes=["(batch, _, 4)", "(batch, 4, w)"],
+      expected_output_signature=tf.TensorSpec([None, 8, None]))
+
+  def test_pad(self):
+    def f_jax(x):
+      return lax.pad(x, 5., ((0, 0, 0), (0, 0, 0), (1, 1, 1)))
+
+    batch_size = 7
+    x = np.ones((batch_size,) + (2, 3))
+    self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 2, 3])],
+      polymorphic_shapes=["(batch, _, _)"],
+      expected_output_signature=tf.TensorSpec([None, 2, 7]))
+
+  def test_reshape(self):
+
+    self.CheckShapePolymorphism(
+      lambda x: x.reshape([x.shape[0], -1]),
+      input_signature=[tf.TensorSpec([None, 2, 3])],
+      polymorphic_shapes=["(batch, _, _)"],
+      expected_output_signature=tf.TensorSpec([None, 6]))
+
+    self.CheckShapePolymorphism(
+      lambda x: x.reshape([x.shape[0], -1, x.shape[3], x.shape[2]]),
+      input_signature=[tf.TensorSpec([None, 2, None, None, 3])],
+      polymorphic_shapes=["(batch, 2, batch, height, 3)"],
+      expected_output_signature=tf.TensorSpec([None, 6, None, None]))
+
+    with self.assertRaisesRegex(TypeError,
+                                re.escape("Shapes (batch, 2, batch, height, 3) and (batch, -1, batch) must have the same set of shape variables")):
+      self.CheckShapePolymorphism(
+        lambda x: x.reshape([x.shape[0], -1, x.shape[2]]),
+        input_signature=[tf.TensorSpec([None, 2, None, None, 3])],
+        polymorphic_shapes=["(batch, 2, batch, height, 3)"],
+        expected_output_signature=tf.TensorSpec([None, 6, None]))
+
+    with self.assertRaisesRegex(ValueError,
+                                re.escape("Cannot divide evenly the sizes of shapes (2, 4) and (-1, 3)")):
+      self.CheckShapePolymorphism(
+        lambda x: x.reshape([x.shape[0], -1, 3]),
+        input_signature=[tf.TensorSpec([None, 2, 4])],
+        polymorphic_shapes=["(batch, _, _)"],
+        expected_output_signature=tf.TensorSpec([None, 1]))
+
+  def test_reshape_compiled(self):
+    # raise unittest.SkipTest("Failing after fixing Poly unsoundness #4878")
+    # We compile the result of conversion for two shapes, hence we need to
+    # involve the TF compiler twice, but we trace only once with shape polymorphism
+    traced = False
+    def f_jax(x):
+      nonlocal traced
+      traced = True
+      y = jnp.sin(x)
+      return y.reshape([x.shape[0], -1])
+
+    x = np.ones((4, 2, 3), dtype=np.float32)
+    res_jax = f_jax(x)
+
+    traced = False
+    # If we get_concrete_function we trace once
+    f_tf = tf.function(jax2tf.convert(f_jax, polymorphic_shapes=["(b, _, _)"]),
+                       autograph=False,
+                       jit_compile=True).get_concrete_function(tf.TensorSpec([None, 2, 3], tf.float32))
+    self.assertTrue(traced)
+    traced = False
+    self.assertAllClose(res_jax, f_tf(x))
+    self.assertFalse(traced)  # We are not tracing again
+
+    x = np.ones((6, 2, 3), dtype=np.float32)
+    res_jax = f_jax(x)
+    traced = False
+
+    self.assertAllClose(res_jax, f_tf(x))
+    self.assertFalse(traced)  # We are not tracing again
+
+
+  def test_squeeze(self):
+    def f_jax(x):
+      return jnp.squeeze(x, axis=1)
+    x = np.ones((4, 1))
+    res_jax = f_jax(x)
+
+    # Trace with a known dimension to squeeze
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 1], dtype=x.dtype)],
+      polymorphic_shapes=["(b, _)"],
+      expected_output_signature=tf.TensorSpec([None]))
+
+    self.assertAllClose(res_jax, f_tf(x))
+
+    with self.assertRaisesRegex(
+        shape_poly.InconclusiveDimensionOperation,
+        re.escape("Shape variable comparison b2 == 1 is inconclusive")):
+      # Trace with unknown dimension to squeeze
+      self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([None, None])],
+        polymorphic_shapes=["(b1, b2)"],
+        expected_output_signature=tf.TensorSpec([None]))
 
 
 

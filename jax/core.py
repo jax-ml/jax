@@ -1260,8 +1260,8 @@ class DimensionHandler:
     """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
     return 0 if d == 0 else 1 + dilation * (d - 1)
 
-  def add(self, *d: DimSize):
-    return sum(d)
+  def sum(self, *ds: DimSize):
+    return sum(ds)
 
   def diff(self, d1: DimSize, d2: DimSize) -> DimSize:
     return d1 - d2
@@ -1330,9 +1330,9 @@ def dim_dilate_shape(s: Shape, dilations: Sequence[int]) -> Shape:
   """Implements `dim_dilate` for each dimension."""
   return tuple(safe_map(dim_dilate, s, dilations))
 
-def dim_sum(*d: DimSize) -> Shape:
+def dim_sum(*ds: DimSize) -> Shape:
   """sum(d)"""
-  return _get_dim_handler(*d).add(*d)
+  return _get_dim_handler(*ds).sum(*ds)
 
 def shapes_sum(*s: Shape) -> Shape:
   """Implements sum(s)"""

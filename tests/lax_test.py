@@ -1277,8 +1277,12 @@ class LaxTest(jtu.JaxTestCase):
   def testPadErrors(self):
     with self.assertRaisesRegex(ValueError, "padding_config"):
       lax.pad(np.zeros(2), 0., [(0, 1, 0), (0, 1, 0)])
-    with self.assertRaisesRegex(ValueError, "padding_config"):
+    with self.assertRaisesRegex(ValueError, "interior padding in padding_config must be nonnegative"):
       lax.pad(np.zeros(2), 0., [(0, 1, -1)])
+    with self.assertRaisesRegex(ValueError, "Dimension size after padding is not at least 0"):
+      lax.pad(np.zeros(2), 0., [(-3, 0, 0)])
+    with self.assertRaisesRegex(ValueError, "Dimension size after padding is not at least 0"):
+      lax.pad(np.zeros(2), 0., [(-4, 0, 1)])
 
   def testReverse(self):
     rev = api.jit(lambda operand: lax.rev(operand, dimensions))

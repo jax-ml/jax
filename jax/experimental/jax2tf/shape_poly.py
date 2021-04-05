@@ -118,12 +118,12 @@ class DimensionHandlerVar(core.DimensionHandler):
       raise TypeError(f"Striding is not supported for shape variables (window_size = {window_size}, stride = {window_stride}")
     return d
 
-  def add(self, *d: DimSize):
-    d_ints, d_vars = _split_shape_ints(d)
+  def sum(self, *ds: DimSize):
+    d_ints, d_vars = _split_shape_ints(ds)
     if len(d_vars) != 1:
-      raise TypeError(f"Adding shape variables is not supported ({' + '.join(map(str, d))})")
+      raise TypeError(f"Adding shape variables is not supported ({' + '.join(map(str, ds))})")
     if sum(d_ints) != 0:
-      raise TypeError(f"Adding non-zero to shape variables is not supported {' + '.join(map(str, d))}")
+      raise TypeError(f"Adding non-zero to shape variables is not supported {' + '.join(map(str, ds))}")
     return d_vars[0]
 
   def diff(self, d1: DimSize, d2: DimSize) -> DimSize:
