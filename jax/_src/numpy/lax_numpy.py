@@ -3289,6 +3289,40 @@ class _Mgrid:
 mgrid = _Mgrid()
 
 
+class _Ogrid:
+  """Return open multi-dimensional "meshgrid".
+
+  LAX-backend implementation of `ogrid()`."""
+
+  def __getitem__(self, key):
+    if isinstance(key, slice):
+      start = core.concrete_or_error(None, key.start,
+                                     "slice start of jnp.ogrid") or 0
+      stop = core.concrete_or_error(None, key.stop, "slice stop of jnp.ogrid")
+      step = core.concrete_or_error(None, key.step,
+                                    "slice step of jnp.ogrid") or 1
+      if np.iscomplex(step):
+        return linspace(start, stop, int(_abs(step)))
+      return arange(start, stop, step)
+
+    output = []
+    for k in key:
+      start = core.concrete_or_error(None, k.start,
+                                     "slice start of jnp.ogrid") or 0
+      stop = core.concrete_or_error(None, k.stop, "slice stop of jnp.ogrid")
+      step = core.concrete_or_error(None, k.step,
+                                    "slice step of jnp.ogrid") or 1
+      if np.iscomplex(step):
+        output.append(linspace(start, stop, int(_abs(step))))
+      else:
+        output.append(arange(start, stop, step))
+
+    return meshgrid(*output, indexing='ij', sparse=True)
+
+
+ogrid = _Ogrid()
+
+
 @_wraps(np.i0)
 def i0(x):
   x_orig = x
