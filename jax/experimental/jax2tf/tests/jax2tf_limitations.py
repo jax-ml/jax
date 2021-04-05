@@ -464,6 +464,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(
             dtypes=[np.complex64, np.float32], devices=("cpu", "gpu"),
             tol=1e-5),
+        custom_numeric(
+            dtypes=[np.complex128, np.float64], devices=("cpu", "gpu"),
+            tol=1e-12),
         custom_numeric(dtypes=np.float32, devices="tpu", tol=0.1),
         custom_numeric(dtypes=np.complex64, devices="tpu", tol=0.3),
         custom_numeric(dtypes=np.float16, devices=("gpu", "tpu"), tol=0.1),
