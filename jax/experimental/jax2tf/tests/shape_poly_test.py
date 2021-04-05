@@ -505,6 +505,9 @@ _VMAP_NOT_POLY_YET = {
     # In the random._gamma_impl we do reshape(-1, 2) for the keys
     "random_gamma",
 
+    # In linalg._lu_python we do reshape(-1, ...)
+    "lu",
+
     # We do *= shapes in the batching rule for conv_general_dilated
     "conv_general_dilated",
 
@@ -513,7 +516,6 @@ _VMAP_NOT_POLY_YET = {
 
     # Getting error: Can not squeeze dim[2], expected a dimension of 1, got 4 for '{{node Squeeze}} = Squeeze[T=DT_FLOAT, squeeze_dims=[2]](MatMul)' with input shapes: [?,4,4]
     "custom_linear_solve",
-
 }
 
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
@@ -632,8 +634,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     batch_group_count = 1
     precision = None
 
-    lhs = np.ones(lhs_shape, dtype=np.float32)
-    rhs = np.ones(rhs_shape, dtype=np.float32)
+    lhs = np.random.rand(*lhs_shape)
+    rhs = np.random.rand(*rhs_shape)
 
     def f_jax(lhs, rhs):
       return lax.conv_general_dilated(lhs, rhs,
@@ -665,8 +667,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
     batch_size = 7
 
-    lhs = np.ones((batch_size,) + lhs_shape, dtype=np.float32)
-    rhs = np.ones((batch_size,) + rhs_shape, dtype=np.float32)
+    lhs = np.random.rand(batch_size, *lhs_shape)
+    rhs = np.random.rand(batch_size, *rhs_shape)
     @jax.vmap
     def f_jax(lhs, rhs):
       return lax.conv_general_dilated(lhs, rhs,
@@ -688,15 +690,32 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       return lax_control_flow.cummax(x, axis=0, reverse=False)
 
     batch_size = 7
-    shape = (8, 9)
-    x = np.ones((batch_size,) + shape, dtype=np.float32)
+    x = np.random.rand(batch_size, 8, 9)
 
     f_tf = self.CheckShapePolymorphism(
         f_jax,
-        input_signature=[tf.TensorSpec((None,) + shape)],
+        input_signature=[tf.TensorSpec((None, 8, 9))],
         polymorphic_shapes=["b, _, _"],
         expected_output_signature=tf.TensorSpec([None, 8, 9]))
     self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_dot_general(self):
+    dimension_numbers = (((2,), (1,)), ((0,), (0,)))
+    def f_jax(lhs, rhs):  # lhs: [b, 4, 4], rhs: [b, 4]
+      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+
+    batch_size = 7
+    lhs = np.random.rand(batch_size, 4, 4)
+    rhs = np.random.rand(batch_size, 4)
+
+    f_tf = self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec((None, 4, 4)),
+                         tf.TensorSpec((None, 4))],
+        polymorphic_shapes=["b, _, _", "b, _"],
+        expected_output_signature=tf.TensorSpec([None, 4]))
+    self.assertAllClose(f_jax(lhs, rhs), f_tf(lhs, rhs))
+
 
   def test_dynamic_slice(self):
 
@@ -705,7 +724,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     batch_size = 7
     x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
 
-    res = f_jax(x)
     f_tf = self.CheckShapePolymorphism(
         f_jax,
         input_signature=[tf.TensorSpec((None, 4))],
@@ -728,7 +746,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=["b, _", "b, _"],
         expected_output_signature=tf.TensorSpec([None, 2]))
     self.assertAllClose(f_jax(x, idx), f_tf(x, idx))
-
 
   def test_gather(self):
     def f(a, i):
@@ -792,8 +809,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       input_signature=[tf.TensorSpec([None, 8, 4]), tf.TensorSpec([None, 4, None])],
       polymorphic_shapes=["(batch, _, 4)", "(batch, 4, w)"],
       expected_output_signature=tf.TensorSpec([None, 8, None]))
-    x = np.ones((7, 8, 4))
-    y = np.ones((7, 4, 5))
+    x = np.random.rand(7, 8, 4)
+    y = np.random.rand(7, 4, 5)
     self.assertAllClose(f_jax(x, y), f_tf(x, y))
 
   def test_pad(self):
@@ -801,7 +818,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       return lax.pad(x, 5., ((0, 0, 0), (0, 0, 0), (1, 1, 1)))
 
     batch_size = 7
-    x = np.ones((batch_size,) + (2, 3))
+    x = np.random.rand(batch_size, 2, 3)
     f_tf = self.CheckShapePolymorphism(
       f_jax,
       input_signature=[tf.TensorSpec([None, 2, 3])],
@@ -816,8 +833,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     def f_jax(key, a):
       return jax.random.gamma(key, a)
     batch_size = 7
-    key = np.ones((batch_size, 2), dtype=np.uint32)
-    a = np.ones((batch_size, 3))
+    key = np.random.rand(batch_size, 2)
+    a = np.random.rand(batch_size, 3)
 
     self.CheckShapePolymorphism(
       f_jax,
@@ -867,20 +884,20 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       y = jnp.sin(x)
       return y.reshape([x.shape[0], -1])
 
-    x = np.ones((4, 2, 3), dtype=np.float32)
+    x = np.random.rand(4, 2, 3)
     res_jax = f_jax(x)
 
     traced = False
     # If we get_concrete_function we trace once
     f_tf = tf.function(jax2tf.convert(f_jax, polymorphic_shapes=["(b, _, _)"]),
                        autograph=False,
-                       jit_compile=True).get_concrete_function(tf.TensorSpec([None, 2, 3], tf.float32))
+                       jit_compile=True).get_concrete_function(tf.TensorSpec([None, 2, 3], x.dtype))
     self.assertTrue(traced)
     traced = False
     self.assertAllClose(res_jax, f_tf(x))
     self.assertFalse(traced)  # We are not tracing again
 
-    x = np.ones((6, 2, 3), dtype=np.float32)
+    x = np.random.rand(6, 2, 3)
     res_jax = f_jax(x)
     traced = False
 
@@ -964,7 +981,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   def test_squeeze(self):
     def f_jax(x):
       return jnp.squeeze(x, axis=1)
-    x = np.ones((4, 1))
+    x = np.random.rand(4, 1)
     res_jax = f_jax(x)
 
     # Trace with a known dimension to squeeze
