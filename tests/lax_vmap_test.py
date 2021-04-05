@@ -176,6 +176,20 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, (shape,), (from_dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nmant={}_nexp={}_bdims={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), nmant, nexp, bdims),
+       "shape": shape, "dtype": dtype, "nmant": nmant, "nexp": nexp, "bdims": bdims}
+      for dtype in float_dtypes
+      for shape in [(2, 4)]
+      for nexp in [1, 3, 5]
+      for nmant in [0, 2, 4]
+      for bdims in all_bdims(shape)))
+  def testReducePrecision(self, shape, dtype, nmant, nexp, bdims):
+    rng = jtu.rand_default(self.rng())
+    op = lambda x: lax.reduce_precision(x, exponent_bits=nexp, mantissa_bits=nmant)
+    self._CheckBatching(op, 10, bdims, (shape,), (dtype,), rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_from_dtype={}_to_dtype={}_bdims={}".format(
           shape, from_dtype, to_dtype, bdims),
        "shape": shape, "from_dtype": from_dtype, "to_dtype": to_dtype,
