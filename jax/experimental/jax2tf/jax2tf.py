@@ -437,7 +437,8 @@ _shape_env = {}  # type: _ShapeEnv
 def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
-  return tuple(d if type(d) is int else _shape_env[d] for d in shape)
+  return tuple(_shape_env[d] if type(d) is shape_poly.DimVar else d
+               for d in shape)
 
 def shape_as_value(x):
   """Injects the shape of `x` as an array value.
@@ -2058,20 +2059,20 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
 
 tf_impl[lax_linalg.eig_p] = _eig
 
-def _eigh(operand: TfVal, lower: bool):
+def _eigh(operand: TfVal, lower: bool, _in_avals, _out_aval):
   if operand.shape[-1] == 0:
-    v, w = operand, tf.reshape(operand, operand.shape[:-1])
+    v, w = operand, tf.reshape(operand, _eval_shape(_in_avals[0].shape[:-1]))
   else:
     if not lower:
       operand = tf.linalg.adjoint(operand)
     w, v = tf.linalg.eigh(operand)
-  cast_type = { tf.complex64: tf.float32
-              , tf.complex128: tf.float64 }.get(operand.dtype)
+  cast_type = { tf.complex64: tf.float32,
+                tf.complex128: tf.float64 }.get(operand.dtype)
   if cast_type is not None:
     w = tf.cast(w, cast_type)
   return v, w
 
-tf_impl[lax_linalg.eigh_p] = _eigh
+tf_impl_with_avals[lax_linalg.eigh_p] = _eigh
 
 def _lu(operand: TfVal, _in_avals, _out_aval):
   return _convert_jax_impl(lax_linalg._lu_python)(operand, _in_avals=_in_avals,

@@ -221,7 +221,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   def test_with_custom_vjp(self):
     """Shape-polymorphic custom VJP."""
-    raise unittest.SkipTest("Failing after fixing Poly unsoundness #4878")
     @jax.custom_vjp
     def f(x):
       # x: [b1, b2, d1, d2] (a batch of matrices)
@@ -312,7 +311,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((None, 3, 4), tuple(tf_grad.output_shapes[1]["grad"]))
 
   def test_cond(self):
-    raise unittest.SkipTest("Failing after fixing Poly unsoundness #4878")
     # Test the primitive under conditional
     def f(x, y):
       # x: f32[B, H], y : f32[H]
@@ -327,7 +325,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   def test_shape_error(self):
     """Some of the examples from the README."""
-    raise unittest.SkipTest("Failing after fixing Poly unsoundness #4878")
     with self.assertRaisesRegex(TypeError,
                                 re.escape("add got incompatible shapes for broadcasting: (v,), (4,)")):
       self.CheckShapePolymorphism(
@@ -343,16 +340,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(lambda x, y: x + y,
                      polymorphic_shapes=["(v,)", "(4,)"])(four_ones, four_ones)
 
-    with self.assertRaisesRegex(TypeError,
-                                re.escape("dot_general requires contracting dimensions to have the same shape, got [4] and [v].")):
+    with self.assertRaisesRegex(shape_poly.InconclusiveDimensionOperation,
+                                re.escape("Shape variable comparison v == 4 is inconclusive")):
       jax2tf.convert(lambda x: jnp.matmul(x, x),
                      polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
-
-    # TODO: this is an opportunity to improve the translation, should not error
-    with self.assertRaisesRegex(TypeError,
-                                "Only integers, .* tensors are valid indices, got 0"):
-      jax2tf.convert(lambda x: jnp.split(x, 2),
-                     polymorphic_shapes=["(2*v,)"])(four_ones)
 
 
   def test_dim_vars(self):
@@ -509,6 +500,21 @@ def _get_jax2tf_limitations(device, h: primitive_harness.Harness) -> Sequence[Ja
   limitations = Jax2TfLimitation.limitations_for_harness(h)
   return tuple(filter(applicable_jax2tf_limitation, limitations))
 
+# We do not yet support shape polymorphism for vmap for all primitives
+_VMAP_NOT_POLY_YET = {
+    # In the random._gamma_impl we do reshape(-1, 2) for the keys
+    "random_gamma",
+
+    # We do *= shapes in the batching rule for conv_general_dilated
+    "conv_general_dilated",
+
+    # vmap(clamp) fails in JAX
+    "clamp",
+
+    # Getting error: Can not squeeze dim[2], expected a dimension of 1, got 4 for '{{node Squeeze}} = Squeeze[T=DT_FLOAT, squeeze_dims=[2]](MatMul)' with input shapes: [?,4,4]
+    "custom_linear_solve",
+
+}
 
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   """Tests for primitives that take shape values as parameters."""
@@ -520,6 +526,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
   def test_prim_vmap(self, harness: primitive_harness.Harness):
+    if harness.group_name in _VMAP_NOT_POLY_YET:
+      raise unittest.SkipTest(f"TODO: vmap({harness.group_name}) not yet supported")
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
     if len(args) == 0:
@@ -643,6 +651,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
 
   def test_conv_general_dilated_vmap(self):
+    raise unittest.SkipTest("TODO: vmap(conv_general_dilated) not yet supported")
     lhs_shape = (2, 3, 9, 10)
     rhs_shape = (3, 3, 4, 5)
     window_strides = (2, 3)
@@ -778,11 +787,14 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     def f_jax(x, y):
       return jnp.matmul(x, y)
 
-    self.CheckShapePolymorphism(
+    f_tf = self.CheckShapePolymorphism(
       f_jax,
       input_signature=[tf.TensorSpec([None, 8, 4]), tf.TensorSpec([None, 4, None])],
       polymorphic_shapes=["(batch, _, 4)", "(batch, 4, w)"],
       expected_output_signature=tf.TensorSpec([None, 8, None]))
+    x = np.ones((7, 8, 4))
+    y = np.ones((7, 4, 5))
+    self.assertAllClose(f_jax(x, y), f_tf(x, y))
 
   def test_pad(self):
     def f_jax(x):
@@ -790,11 +802,30 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
     batch_size = 7
     x = np.ones((batch_size,) + (2, 3))
-    self.CheckShapePolymorphism(
+    f_tf = self.CheckShapePolymorphism(
       f_jax,
       input_signature=[tf.TensorSpec([None, 2, 3])],
       polymorphic_shapes=["(batch, _, _)"],
       expected_output_signature=tf.TensorSpec([None, 2, 7]))
+    self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_random_gamma(self):
+    if "random_gamma" in _VMAP_NOT_POLY_YET:
+      raise unittest.SkipTest("TODO: vmap(random_gamma) not yet supported")
+
+    def f_jax(key, a):
+      return jax.random.gamma(key, a)
+    batch_size = 7
+    key = np.ones((batch_size, 2), dtype=np.uint32)
+    a = np.ones((batch_size, 3))
+
+    self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 2], dtype=key.dtype),
+                       tf.TensorSpec([None, 3], dtype=a.dtype)],
+      polymorphic_shapes=["(batch, _)", "(batch, _)"],
+      expected_output_signature=tf.TensorSpec([None, 3]))
+    self.assertAllClose(f_jax(key, a), f_tf(key, a))
 
   def test_reshape(self):
 
@@ -827,7 +858,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         expected_output_signature=tf.TensorSpec([None, 1]))
 
   def test_reshape_compiled(self):
-    # raise unittest.SkipTest("Failing after fixing Poly unsoundness #4878")
     # We compile the result of conversion for two shapes, hence we need to
     # involve the TF compiler twice, but we trace only once with shape polymorphism
     traced = False
@@ -878,6 +908,45 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       expected_output_signature=tf.TensorSpec([None, 4]))
 
     self.assertAllClose(f_jax(x, upd), f_tf(x, upd))
+
+  def test_select(self):
+    def f_jax(x):  # x.shape = (b, 3)
+      return lax.select(x > 5., x, x)
+    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:7, :3]
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 3], dtype=x.dtype)],
+      polymorphic_shapes=["(b, _)"],
+      expected_output_signature=tf.TensorSpec([None, 3]))
+
+    self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_select_vmap_0(self):
+    @jax.vmap
+    def f_jax(x):  # x.shape = (3,)
+      return lax.select(x > 5., x, x)
+    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:7, :3]
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 3], dtype=x.dtype)],
+      polymorphic_shapes=["(b, _)"],
+      expected_output_signature=tf.TensorSpec([None, 3]))
+
+    self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_select_vmap_1(self):
+    @functools.partial(jax.vmap, in_axes=(0, None))
+    def f_jax(x, y):  # x.shape = (3,)
+      return lax.select(x > 5., x, y)
+    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:7, :3]
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 3], dtype=x.dtype),
+                       tf.TensorSpec([3], dtype=x.dtype)],
+      polymorphic_shapes=["(b, _)", "_"],
+      expected_output_signature=tf.TensorSpec([None, 3]))
+
+    self.assertAllClose(f_jax(x, x[0]), f_tf(x, x[0]))
 
   def test_slice(self):
     def f_jax(x):  # x.shape = (b, 3)

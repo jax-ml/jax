@@ -3812,7 +3812,7 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
       return select(pred, on_true, on_false), ot_bdim
 
   pred = batching.bdim_at_front(pred, pred_bdim, size) if np.shape(pred) else pred
-  if not np.shape(on_true) == np.shape(on_false) == ():
+  if not () == np.shape(on_true) == np.shape(on_false):
     on_true = batching.bdim_at_front(on_true, ot_bdim, size)
     on_false = batching.bdim_at_front(on_false, of_bdim, size)
   assert np.shape(on_true) == np.shape(on_false)
