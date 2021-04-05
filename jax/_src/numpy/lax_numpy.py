@@ -1314,7 +1314,8 @@ def _compute_newshape(a, newshape):
   except: iterable = False
   else: iterable = True
   newshape = core.canonicalize_shape(newshape if iterable else [newshape])
-  return tuple(d if d is not -1 else - core.divide_shape_sizes(np.shape(a), newshape)
+  return tuple(- core.divide_shape_sizes(np.shape(a), newshape)
+               if core.symbolic_equal_dim(d, -1) else d
                for d in newshape)
 
 
