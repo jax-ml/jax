@@ -20,10 +20,12 @@ generation of sequences of pseudorandom numbers.
 Basic usage
 -----------
 
+>>> seed = 1701
+>>> num_steps = 100
 >>> key = jax.random.PRNGKey(seed)
 >>> for i in range(num_steps):
 ...   key, subkey = jax.random.split(key)
-...   params = compiled_update(subkey, params, next(batches))
+...   params = compiled_update(subkey, params, next(batches))  # doctest: +SKIP
 
 PRNG Keys
 ---------

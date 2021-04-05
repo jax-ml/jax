@@ -2403,7 +2403,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   Example 1: partial sums of an array of numbers:
 
   >>> lax.associative_scan(jnp.add, jnp.arange(0, 4))
-  [ 0, 1, 3, 6]
+  DeviceArray([0, 1, 3, 6], dtype=int32)
 
   Example 2: partial products of an array of matrices
 
@@ -2415,7 +2415,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   Example 3: reversed partial sums of an array of numbers
 
   >>> lax.associative_scan(jnp.add, jnp.arange(0, 4), reverse=True)
-  [ 6, 6, 5, 3]
+  DeviceArray([6, 6, 5, 3], dtype=int32)
 
   .. [BLE1990] Blelloch, Guy E. 1990. "Prefix Sums and Their Applications.",
     Technical Report CMU-CS-90-190, School of Computer Science, Carnegie Mellon

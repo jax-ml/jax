@@ -607,14 +607,12 @@ def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
   We can query the arrays in the output tuple:
 
   >>> flatten_shape(c.GetShape(o))
-  (((0,), f32[1]{0}),
-   ((1,), f32[2]{0}),
-   ((2,), f32[3]{0}))
+  [((0,), f32[1]{0}), ((1,), f32[2]{0}), ((2,), f32[3]{0})]
 
   Or the arrays in one of the parameters (which is itself an array):
 
   >>> flatten_shape(c.GetShape(p0))
-  (((), f32[1]{0}),)
+  [((), f32[1]{0})]
 
   Args
     s: The input shape.

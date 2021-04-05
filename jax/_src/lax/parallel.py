@@ -73,7 +73,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
   [6 6 6 6]
   >>> y = jax.pmap(lambda x: x / jax.lax.psum(x, 'i'), axis_name='i')(x)
   >>> print(y)
-  [ 0.          0.16666667  0.33333334  0.5       ]
+  [0.         0.16666667 0.33333334 0.5       ]
   """
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
@@ -111,10 +111,10 @@ def pmean(x, axis_name, *, axis_index_groups=None):
   >>> x = np.arange(4)
   >>> y = jax.pmap(lambda x: jax.lax.pmean(x, 'i'), axis_name='i')(x)
   >>> print(y)
-  [ 1.5         1.5         1.5         1.5       ]
+  [1.5 1.5 1.5 1.5]
   >>> y = jax.pmap(lambda x: x / jax.lax.pmean(x, 'i'), axis_name='i')(x)
   >>> print(y)
-  [ 0.          0.66666667  1.33333334  2.0       ]
+  [0.        0.6666667 1.3333334 2.       ]
   """
   x = psum(x, axis_name=axis_name, axis_index_groups=axis_index_groups)
   n = psum(1, axis_name=axis_name, axis_index_groups=axis_index_groups)
@@ -1024,21 +1024,23 @@ def all_gather(x, axis_name, *, axis_index_groups=None):
 
   >>> x = np.arange(16).reshape(4, 4)
   >>> print(x)
-  [[ 0.  1.  2.  3.]
-   [ 4.  5.  6.  7.]
-   [ 8.  9. 10. 11.]
-   [12. 13. 14. 15.]]
-  >>> y = jax.pmap(lambda x: jax.lax.all_gather(
-  ... x, 'i', axis_index_groups=[[0, 2], [3, 1]]))(x)
+    [[ 0  1  2  3]
+     [ 4  5  6  7]
+     [ 8  9 10 11]
+     [12 13 14 15]]
+  >>> def f(x):
+  ...   return jax.lax.all_gather(
+  ...       x, 'i', axis_index_groups=[[0, 2], [3, 1]])
+  >>> y = jax.pmap(f, axis_name='i')(x)
   >>> print(y)
-  [[[ 0.  1.  2.  3.]
-    [ 8.  9. 10. 11.]]
-   [[12. 13. 14. 15.]
-    [ 4.  5.  6.  7.]]
-   [[ 0.  1.  2.  3.]
-    [ 8.  9. 10. 11.]]
-   [[12. 13. 14. 15.]
-    [ 4.  5.  6.  7.]]
+  [[[ 0  1  2  3]
+    [ 8  9 10 11]]
+   [[12 13 14 15]
+    [ 4  5  6  7]]
+   [[ 0  1  2  3]
+    [ 8  9 10 11]]
+   [[12 13 14 15]
+    [ 4  5  6  7]]]
   """
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
   bind = partial(all_gather_p.bind, all_gather_dimension=0,
