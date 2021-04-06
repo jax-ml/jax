@@ -1111,7 +1111,8 @@ def flip(m, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   _check_arraylike("flip", m)
   if axis is None:
     return lax.rev(m, list(range(len(shape(m)))))
-  return lax.rev(m, [_canonicalize_axis(axis, ndim(m))])
+  axis = _ensure_index_tuple(axis)
+  return lax.rev(m, [_canonicalize_axis(ax, ndim(m)) for ax in axis])
 
 
 @_wraps(np.fliplr)
