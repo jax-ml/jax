@@ -78,6 +78,38 @@ def copy_file(src_file, dst_dir, dst_filename=None):
   else:
     _copy_normal(src_file, dst_dir, dst_filename=dst_filename)
 
+
+_XLA_EXTENSION_STUBS = [
+    "__init__.pyi",
+    "jax_jit.pyi",
+    "ops.pyi",
+    "outfeed_receiver.pyi",
+    "pmap_lib.pyi",
+    "profiler.pyi",
+    "pytree.pyi",
+]
+
+
+def patch_copy_xla_extension_stubs(dst_dir):
+  # This file is required by PEP-561. It marks jaxlib as package containing
+  # type stubs.
+  with open(os.path.join(dst_dir, "py.typed"), "w") as f:
+    pass
+  # The -stubs suffix is required by PEP-561.
+  xla_extension_dir = os.path.join(dst_dir, "xla_extension-stubs")
+  os.makedirs(xla_extension_dir)
+  for stub_name in _XLA_EXTENSION_STUBS:
+    with open(r.Rlocation(
+        "org_tensorflow/tensorflow/compiler/xla/python/xla_extension/" + stub_name)) as f:
+      src = f.read()
+    src = src.replace(
+        "from tensorflow.compiler.xla.python import xla_extension",
+        "from .. import xla_extension"
+    )
+    with open(os.path.join(xla_extension_dir, stub_name), "w") as f:
+      f.write(src)
+
+
 def patch_copy_xla_client_py(dst_dir):
   with open(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_client.py")) as f:
     src = f.read()
@@ -160,6 +192,7 @@ def prepare_wheel(sources_path):
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.pyd"))
   else:
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so"))
+  patch_copy_xla_extension_stubs(jaxlib_dir)
   patch_copy_xla_client_py(jaxlib_dir)
 
   if not _is_windows():
