@@ -276,6 +276,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     not_equal
     number
     object_
+    ogrid
     ones
     ones_like
     outer

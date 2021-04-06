@@ -4670,6 +4670,41 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         atol=atol,
                         rtol=rtol)
 
+  def testOgrid(self):
+    def assertListOfArraysEqual(xs, ys):
+      self.assertIsInstance(xs, list)
+      self.assertIsInstance(ys, list)
+      self.assertEqual(len(xs), len(ys))
+      for x, y in zip(xs, ys):
+        self.assertArraysEqual(x, y)
+
+    self.assertArraysEqual(np.ogrid[:5], jnp.ogrid[:5])
+    self.assertArraysEqual(np.ogrid[:5], jax.jit(lambda: jnp.ogrid[:5])())
+    self.assertArraysEqual(np.ogrid[1:7:2], jnp.ogrid[1:7:2])
+    # List of arrays
+    assertListOfArraysEqual(np.ogrid[:5,], jnp.ogrid[:5,])
+    assertListOfArraysEqual(np.ogrid[0:5, 1:3], jnp.ogrid[0:5, 1:3])
+    assertListOfArraysEqual(np.ogrid[1:3:2, 2:9:3], jnp.ogrid[1:3:2, 2:9:3])
+    assertListOfArraysEqual(np.ogrid[:5, :9, :11], jnp.ogrid[:5, :9, :11])
+    # Corner cases
+    self.assertArraysEqual(np.ogrid[:], jnp.ogrid[:])
+    # Complex number steps
+    atol = 1e-6
+    rtol = 1e-6
+    self.assertAllClose(np.ogrid[-1:1:5j],
+                        jnp.ogrid[-1:1:5j],
+                        atol=atol,
+                        rtol=rtol)
+    # Non-integer steps
+    self.assertAllClose(np.ogrid[0:3.5:0.3],
+                        jnp.ogrid[0:3.5:0.3],
+                        atol=atol,
+                        rtol=rtol)
+    self.assertAllClose(np.ogrid[1.2:4.8:0.24],
+                        jnp.ogrid[1.2:4.8:0.24],
+                        atol=atol,
+                        rtol=rtol)
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
