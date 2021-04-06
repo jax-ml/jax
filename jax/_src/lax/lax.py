@@ -5463,6 +5463,8 @@ reduce_precision_p = standard_primitive(
     _reduce_precision_shape_rule,
     partial(unop_dtype_rule, _identity, _float, 'reduce_precision'),
     name='reduce_precision')
+batching.defvectorized(reduce_precision_p)
+masking.defvectorized(reduce_precision_p)
 
 
 def reduce_precision(operand, exponent_bits, mantissa_bits):
