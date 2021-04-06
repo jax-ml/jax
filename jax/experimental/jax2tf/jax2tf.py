@@ -800,6 +800,7 @@ tf_not_yet_impl = [
   "infeed", "outfeed", "pmax_p",
   "pmin", "ppermute", "psum", "pmax", "pgather",
   "axis_index", "pdot", "all_gather",
+  "lu_pivots_to_permutation",
   "rng_bit_generator",
 
   "xla_pmap",
