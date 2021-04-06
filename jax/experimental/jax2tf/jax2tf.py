@@ -34,7 +34,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 import jax._src.random
-from . import shape_poly
+from jax.experimental.jax2tf import shape_poly
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -48,6 +48,7 @@ from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # ty
 
 from jax.lib import xla_client
 
+PolyShape = shape_poly.PolyShape
 
 # The scope name need to be a valid TensorFlow name. See
 # https://github.com/tensorflow/tensorflow/blob/r2.3/tensorflow/core/framework/node_def_util.cc#L731
@@ -119,8 +120,8 @@ def _xla_path_disabled_error(primitive_name: str) -> Exception:
 
 @functools.partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable, *,
-            polymorphic_shapes_experimental: Optional[Sequence[Any]]=None,
-            in_shapes=None,
+            polymorphic_shapes: Optional[Sequence[Any]]=None,
+            in_shapes=None,  # DEPRECATED
             with_gradient=True, enable_xla=True) -> Callable:
   """Transforms `fun` to be executed by TensorFlow.
 
@@ -129,43 +130,45 @@ def convert(fun: Callable, *,
 
   Args:
     fun: Function to be transformed. Its arguments and return value should be
-      JAX arrays, or (nested) standard Python containers (tuple/list/dict)
-      thereof.
+      JAX arrays, or nested standard Python containers (tuple/list/dict)
+      thereof (pytrees).
 
-    polymorphic_shapes_experimental: an optional sequence of shape specifications,
-      one for each argument of the function to be converted. Default is `None`,
-      in which case the argument shape specifications are taken from the shapes
-      of the actual arguments.
-      A non-default `polymorphic_shapes` is used to specify shape variables for
-      some of the input dimensions, to specify that the conversion to TF must be
-      done for any possible non-zero values for the shape variables.
+    polymorphic_shapes: Specifies input shapes to be treated polymorphically
+      during conversion.
+
+      .. warning::
+      The shape-polymorphic conversion is an experimental feature. It is meant
+      to be sound, but it is known to reject some JAX programs that are
+      shape polymorphic. The details of this feature can change.
+
+      It should be a Python object with the same pytree structure as,
+      or a prefix of, the tuple of arguments to the function,
+      but with a shape specification corresponding to each argument.
+      The default value is `None`, which is a shortcut for a tuple of `None`
+      one for each argument, denoting that all shapes are monomorphic.
+      See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+
+      A shape specification for an array argument
+      should be an object `PolyShape(dim0, dim1, ..., dimn)`
+      where each `dim` is a dimension specification: a positive integer denoting
+      a monomorphic dimension of the given size,
+      or a string denoting a dimension variable assumed to range over non-zero
+      dimension sizes,
+      or the special placeholder string "_" denoting a monomorphic dimension
+      whose size is given by the actual argument.
+      As a shortcut, an Ellipsis suffix in the
+      list of dimension specifications stands for a list of "_" placeholders.
+      For convenience, a shape specification can also be given as a string
+      representation, e.g.: "batch, ...", "batch, height, width, _", possibly
+      with surrounding parentheses: "(batch, ...)".
 
       The conversion fails if it cannot ensure that the it would produce the same
-      sequence of TF ops for any non-zero values of shape variables. This feature
-      is experimental, and it may fail loudly even for code that is actually
-      shape polymorphic.
+      sequence of TF ops for any non-zero values of the dimension variables.
 
-      If an argument is a pytree, then the
-      shape specification must be a matching pytree or `None`.
-      See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
-      A shape specification should be a string, with comma-separated dimension
-      specifications, and optionally wrapped in parentheses. A dimension
-      specification is either a number, or the placeholder `_`, or a lowercase
-      word denoting a name for a dimension variable.
-      In presence of dimension variables, the conversion is done with a
-      shape abstraction that allows any non-zero concrete value for the variable.
-      Examples of shape specifications:
-        * `[None, "(batch, 16)"]`: no specification for the first argument (takes
-          the shape from the actual argument); the second argument is a 2D
-          array with the first dimension size set to a variable `batch` and the
-          second dimension 16.
-        * `["(batch, _)", "(batch,)"]`: the leading dimensions of the two arguments
-          must match. The second dimension of the first argument is taken from the
-          actual argument shape.
       See [the README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
 
-    in_shapes: DEPRECATED in favor of `polymorphic_shapes_experimental`.
+    in_shapes: DEPRECATED in favor of `polymorphic_shapes`.
 
     with_gradient: if set, will add a tf.custom_gradient to the converted
       function, by converting the ``jax.vjp(fun)``. Only first-order
@@ -185,7 +188,6 @@ def convert(fun: Callable, *,
   global _enable_xla
   _enable_xla = enable_xla
   api._check_callable(fun)
-  polymorphic_shapes = polymorphic_shapes_experimental
 
   def converted_fun(*args: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
@@ -214,13 +216,14 @@ def convert(fun: Callable, *,
     else:
       if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
         msg = ("polymorphic_shapes must be a sequence with the same length as the argument list "
-               f"({len(args)}). Got polymorphic_shapes_experimental={polymorphic_shapes}.")
+               f"({len(args)}). Got polymorphic_shapes={polymorphic_shapes}.")
         raise TypeError(msg)
       polymorphic_shapes_ = tuple(polymorphic_shapes)
 
     # Expand the in_shapes to match the argument pytree
     polymorphic_shapes_flat = tuple(api_util.flatten_axes("jax2tf.convert polymorphic_shapes",
-                                                 in_tree.children()[0], polymorphic_shapes_))
+                                                          in_tree.children()[0],
+                                                          polymorphic_shapes_))
 
     # Construct the abstract values for the flat arguments, possibly based on
     # the input shapes and the in_shapes if given. May create new shape
@@ -262,7 +265,7 @@ def convert(fun: Callable, *,
       # TODO: enable higher-order gradients
       with tf.name_scope("jax2tf_vjp"):
         in_cts = convert(fun_vjp_jax, with_gradient=False,
-                         polymorphic_shapes_experimental=vjp_polymorphic_shapes)(args, out_cts)
+                         polymorphic_shapes=vjp_polymorphic_shapes)(args, out_cts)
       return in_cts
 
     try:
@@ -294,6 +297,7 @@ def convert(fun: Callable, *,
     return out
 
   return converted_fun
+
 
 # Internals
 
@@ -388,7 +392,7 @@ def _tfval_shape_dtype(val: TfVal) -> Tuple[Sequence[Optional[int]], DType]:
 # function arguments.
 _ShapeEnv = Dict[shape_poly.DimVar, TfVal]
 def _args_to_avals_and_env(args: Sequence[TfVal],
-                           polymorphic_shapes: Sequence[Optional[str]]) -> \
+                           polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]]) -> \
   Tuple[Sequence[core.AbstractValue], _ShapeEnv]:
   """Computes abstract values and a dimension environment for arguments.
 
@@ -421,7 +425,7 @@ def _args_to_avals_and_env(args: Sequence[TfVal],
 
     return core.ShapedArray(aval_shape, dtype)
 
-  avals = tuple(map(input_aval, args, polymorphic_shapes))
+  avals = tuple(map(input_aval, args, polymorphic_shapes))  # type: ignore
   return avals, shapeenv
 
 # A shape environment maps shape variables to TfVal.

@@ -18,8 +18,7 @@ For usage instructions, read the jax2tf.convert docstring, and the
 
 """
 import collections
-import string
-from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from jax import core
 
@@ -114,14 +113,20 @@ def _split_shape_ints(shape: Shape) -> Tuple[Sequence[int], Sequence[DimVar]]:
   return shape_ints, shape_vars
 
 
-class ShapeSyntaxError(Exception): pass
+class PolyShape(tuple):
+  """Tuple of polymorphic dimension specifications.
 
-_identifiers = frozenset(string.ascii_lowercase)
-def parse_spec(spec: Optional[str],
+  See docstring of :func:`jax2tf.convert`.
+  """
+  def __new__(cls, *dim_specs):
+    return tuple.__new__(PolyShape, dim_specs)
+
+
+def parse_spec(spec: Optional[Union[str, PolyShape]],
                arg_shape: Sequence[Optional[int]]) -> Tuple[DimSize, ...]:
   """Parse the shape polymorphic specification for one array argument.
   Args:
-    spec: a shape polymorphic specification.
+    spec: a shape polymorphic specification, either a string, or a PolyShape.
     arg_shape: an actual shape, possibly containing unknown dimensions (None).
 
   The placeholders `_` in the specification are replaced with the values from
@@ -129,55 +134,75 @@ def parse_spec(spec: Optional[str],
 
   See the README.md for usage.
   """
-  shape_var_map: Dict[str, Set[int]] = collections.defaultdict(set)
-  def _parse_dim(dim_spec: str, dim_size: Optional[int]) -> Union[int, DimSize]:
-    if dim_spec == '_':
-      if dim_size is None:
-        msg = (f"polymorphic_shape '{spec}' has `_` placeholders for argument shape "
-               f"dimensions that are unknown: {arg_shape}")
-        raise ValueError(msg)
-      return dim_size
-    elif dim_spec.isdigit():
-      spec_size = int(dim_spec)
-      if dim_size != spec_size:
-        if dim_size is None:
-          msg = (f"polymorphic_shape '{spec}' must contain shape variables for argument shape "
-                 f"dimensions that are unknown: {arg_shape}")
-        else:
-          msg = (f"polymorphic_shape '{spec}' does not match argument shape {arg_shape}")
-        raise ValueError(msg)
-      return spec_size
-    elif dim_spec[0] in _identifiers:
-      if dim_size is not None:
-        shape_var_map[dim_spec].add(dim_size)
-      return DimVar(dim_spec)
+  if spec is None:
+    spec_tuple = (...,)  # type: Tuple[Any,...]
+  elif isinstance(spec, PolyShape):
+    spec_tuple = tuple(spec)
+  elif isinstance(spec, str):
+    spec_ = spec.replace(" ", "")
+    if spec_[0] == "(":
+      if spec_[-1] != ")":
+        raise ValueError(spec)
+      spec_ = spec_[1:-1]
+    spec_ = spec_.rstrip(",")
+    if not spec_:
+      spec_tuple = ()
     else:
-      raise ShapeSyntaxError(dim_spec)
+      specs = spec_.split(',')
+      def parse_dim(ds: str):
+        if ds == "...":
+          return ...
+        elif ds.isdigit():
+          return int(ds)
+        elif ds == "_" or ds.isalnum():
+          return ds
+        else:
+          raise ValueError(f"PolyShape '{spec}' has invalid syntax")
 
-  if not spec:
-    if any(d is None for d in arg_shape):
-      msg = ("polymorphic_shape must be specified when the argument "
-             f"shape {arg_shape} is partially known.")
-      raise ValueError(msg)
-    return tuple(arg_shape)
-
-  if spec[0] == '(':
-    if spec[-1] != ')':
-      raise ShapeSyntaxError(spec)
-    spec_ = spec[1:-1]
+      spec_tuple = tuple(map(parse_dim, specs))
   else:
-    spec_ = spec
-  specs = spec_.replace(' ', '').strip(',').split(',')
-  if len(specs) != len(arg_shape):
-    msg = (f"polymorphic_shape '{spec}' has different rank than argument "
-           f"shape {arg_shape}")
-    raise ValueError(msg)
-  dims = tuple(map(_parse_dim, specs, arg_shape))
+    raise ValueError(f"PolyShape '{spec}' must be either None, a string, or PolyShape.")
 
+  ds_ellipses = tuple(ds for ds in spec_tuple if ds == ...)
+  if ds_ellipses:
+    if len(ds_ellipses) > 1 or spec_tuple[-1] != ...:
+      raise ValueError(f"PolyShape '{spec}' can contain Ellipsis only at the end.")
+    spec_tuple = spec_tuple[0:-1]
+    if len(arg_shape) >= len(spec_tuple):
+      spec_tuple = spec_tuple + ("_",) * (len(arg_shape) - len(spec_tuple))
+
+  if len(arg_shape) != len(spec_tuple):
+    raise ValueError(f"PolyShape '{spec}' must match the rank of arguments {arg_shape}.")
+
+  shape_var_map: Dict[str, Set[int]] = collections.defaultdict(set)
+  def _process_dim(i: int, dim_spec):
+    if not isinstance(dim_spec, (str, int)):
+      raise ValueError(f"PolyShape '{spec}' in axis {i} must contain only integers, strings, or Ellipsis.")
+    dim_size = arg_shape[i]
+    if dim_size is None:
+      if dim_spec == "_" or not isinstance(dim_spec, str):
+        msg = (f"PolyShape '{spec}' in axis {i} must contain a shape variable "
+               f"for unknown dimension in argument shape {arg_shape}")
+        raise ValueError(msg)
+      return DimVar(dim_spec)
+    else:  # dim_size is known
+      if dim_spec == "_":
+        return dim_size
+      if isinstance(dim_spec, int):
+        if dim_spec != dim_size:
+          msg = (f"PolyShape '{spec}' in axis {i} must contain a constant or '_' "
+                 f"for known dimension in argument shape {arg_shape}")
+          raise ValueError(msg)
+        return dim_size
+      # We have a dimension variable for a known dimension.
+      shape_var_map[dim_spec].add(dim_size)
+      return DimVar(dim_spec)
+
+  dims = tuple([_process_dim(i, ds) for i, ds in enumerate(spec_tuple)])
   for dim_var, dim_var_values in shape_var_map.items():
     if len(dim_var_values) != 1:
-      msg = (f"polymorphic shape variable '{dim_var}' corresponds to multiple "
-             f"values ({sorted(dim_var_values)}), in polymorphic_shape '{spec}' and "
+      msg = (f"PolyShape '{spec}' has dimension variable '{dim_var}' "
+             f"corresponding to multiple values ({sorted(dim_var_values)}), for "
              f"argument shape {arg_shape}")
       raise ValueError(msg)
 

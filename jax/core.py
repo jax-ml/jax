@@ -1316,25 +1316,25 @@ def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
 def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
   """See DimensionHandler.symbolic_equal."""
   return (len(s1) == len(s2) and
-          all(safe_map(symbolic_equal_dim, s1, s2)))
+          all(map(symbolic_equal_dim, s1, s2)))
 
 def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   return _get_dim_handler(d1, d2).greater_equal(d1, d2)
 
 def greater_equal_shape(s1: Shape, s2: Shape) -> bool:
-  return all(safe_map(greater_equal_dim, s1, s2))
+  return all(map(greater_equal_dim, s1, s2))
 
 def sum_dim(*ds: DimSize) -> DimSize:
   return _get_dim_handler(*ds).sum(*ds)
 
 def sum_shapes(*ss: Shape) -> Shape:
-  return tuple(safe_map(sum_dim, *ss))
+  return tuple(map(sum_dim, *ss))
 
 def diff_dim(d1: DimSize, d2: DimSize) -> DimSize:
   return _get_dim_handler(d1, d2).diff(d1, d2)
 
 def diff_shape(s1: Shape, s2: Shape) -> Shape:
-  return tuple(safe_map(diff_dim, s1, s2))
+  return tuple(map(diff_dim, s1, s2))
 
 def divide_shape_sizes(s1: Shape, s2: Shape) -> int:
   s1 = s1 or (1,)
@@ -1349,14 +1349,14 @@ def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
   return _get_dim_handler(d, dilation).dilate(d, dilation)
 
 def dilate_shape(s: Shape, dilations: Sequence[int]) -> Shape:
-  return tuple(safe_map(dilate_dim, s, dilations))
+  return tuple(map(dilate_dim, s, dilations))
 
 def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
   return _get_dim_handler(d, window_size, window_stride).stride(d, window_size, window_stride)
 
 def stride_shape(s: Shape, window_size: Shape, window_stride: Shape) -> Shape:
   """(s - window_size) // window_stride + 1"""
-  return tuple(safe_map(stride_dim, s, window_size, window_stride))
+  return tuple(map(stride_dim, s, window_size, window_stride))
 
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
