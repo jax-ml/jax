@@ -3174,11 +3174,15 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
            "shape, got {} and {}.")
     raise TypeError(msg.format(lhs_contracting_shape, rhs_contracting_shape))
 
-  batch_shape = tuple(lhs_batch_shape)
+  return _dot_general_shape_computation(lhs.shape, rhs.shape, dimension_numbers)
+
+def _dot_general_shape_computation(lhs_shape, rhs_shape, dimension_numbers):
+  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  batch_shape = tuple(np.take(lhs_shape, lhs_batch))
   lhs_contract_or_batch = tuple(sorted(tuple(lhs_contracting) + tuple(lhs_batch)))
-  lhs_tensored_shape = tuple(np.delete(lhs.shape, lhs_contract_or_batch))
+  lhs_tensored_shape = tuple(np.delete(lhs_shape, lhs_contract_or_batch))
   rhs_contract_or_batch = tuple(sorted(tuple(rhs_contracting) + tuple(rhs_batch)))
-  rhs_tensored_shape = tuple(np.delete(rhs.shape, rhs_contract_or_batch))
+  rhs_tensored_shape = tuple(np.delete(rhs_shape, rhs_contract_or_batch))
   return batch_shape + lhs_tensored_shape + rhs_tensored_shape
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
