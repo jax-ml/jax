@@ -175,13 +175,16 @@ def prepare_wheel(sources_path):
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.so"))
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.pyd"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.pyd"))
   if r.Rlocation("__main__/jaxlib/cusolver.py") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver.py"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_linalg.py"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng.py"))
   if r.Rlocation("__main__/jaxlib/rocblas_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocblas_kernels.so"))
