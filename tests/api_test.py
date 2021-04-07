@@ -18,6 +18,7 @@ from contextlib import contextmanager
 import copy
 import enum
 from functools import partial
+import operator
 import re
 import unittest
 import types
@@ -508,6 +509,13 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         {attr: getattr(f, f"__{attr}__")},
         {attr: getattr(jf, f"__{attr}__")})
     self.assertEqual(f.some_value, jf.some_value)
+
+  def test_jit_python_builtin(self):
+    x = jnp.array([1, 2])
+    expected = x + 1
+    jit_add = self.jit(operator.add, static_argnums=(1,))
+    actual = jit_add(x, 1)
+    self.assertArraysEqual(expected, actual)
 
 
 class PythonJitTest(CPPJitTest):
