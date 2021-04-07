@@ -284,6 +284,43 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(4. * 4., y)
     self.assertAllClose(3. * 4., tape.gradient(y, x))
 
+  def test_gradient_with_float0_intermediate(self):
+    # Gradient over integer-argument functions
+    def f(x, y):  # x is an int, y is a float
+      return 2 * x + y
+
+    def g(x):  # x: f32
+      return 2. * f(3 * x.astype("int32"), x * 4.)
+
+    x = np.float_(2.)
+    grad_g = jax.grad(g)
+    self.ConvertAndCompare(grad_g, x)
+
+
+  def test_gradient_with_float0_result(self):
+    # Gradient over integer-argument functions, with float0 result
+    def f(x, y):  # x is an int, y is a float
+      return 2 * x + y
+
+    def g(x):  # x: i32
+      return jnp.sum(2. * f(3 * x, 4. * x.astype("float32")))
+
+    grad_g = jax.grad(g, allow_int=True)
+    x = 2
+    d_dx_jax = grad_g(x)
+    d_dx_tf = jax2tf.convert(grad_g)(x)
+    self.assertEqual(d_dx_jax.dtype, dtypes.float0)
+    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), dtypes.bfloat16),
+                        d_dx_tf.numpy())
+
+    shape = (3, 4)
+    x = np.ones(shape, dtype=np.int32)
+    d_dx_jax = grad_g(x)
+    d_dx_tf = jax2tf.convert(grad_g)(x)
+    self.assertEqual(d_dx_jax.dtype, dtypes.float0)
+    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), dtypes.bfloat16),
+                        d_dx_tf.numpy())
+
   def test_convert_argument_non_callable_error(self):
     with self.assertRaisesRegex(TypeError, "Expected a callable value"):
       jax2tf.convert(5.)

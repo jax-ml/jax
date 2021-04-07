@@ -81,8 +81,9 @@ def _is_tfval(v: TfVal) -> bool:
 def _safe_convert_to_tensor(val, dtype=None) -> TfVal:
   dtype = dtype if dtype else (val.dtype if hasattr(val, "dtype") else None)
   conversion_type = to_tf_dtype(dtype) if dtype else None
-  # We can convert directly, because all dtypes (even bfloat16) are the same
-  # in JAX and TF.
+  # The float0 type is not known to TF.
+  if dtype and dtype == dtypes.float0:
+    val = np.zeros(np.shape(val), conversion_type.as_numpy_dtype)
   return tf.convert_to_tensor(val, dtype=conversion_type)
 
 
@@ -774,9 +775,8 @@ class TensorFlowTrace(core.Trace):
 
 def to_tf_dtype(jax_dtype):
   if jax_dtype == dtypes.float0:
-    return tf.float32
-  else:
-    return tf.dtypes.as_dtype(jax_dtype)
+    jax_dtype = dtypes.bfloat16
+  return tf.dtypes.as_dtype(jax_dtype)
 
 def to_jax_dtype(tf_dtype):
   return tf_dtype.as_numpy_dtype

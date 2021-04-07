@@ -9,9 +9,13 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.2.13 (unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.12...master).
+* Bug fixes:
+  * The {func}`jax2tf.convert` now works in presence of gradients for functions
+    with integer inputs ({jax-issue}`#6360`).
 
 ## jax 0.2.12 (April 1 2021)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.11...master).
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.11...v0.2.12).
 * New features
   * New profiling APIs: {func}`jax.profiler.start_trace`,
     {func}`jax.profiler.stop_trace`, and {func}`jax.profiler.trace`
