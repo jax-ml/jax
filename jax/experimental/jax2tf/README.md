@@ -153,6 +153,23 @@ is attempted. The plan is to fix this. Note that if no gradients are requested,
 the PreventGradient ops will be saved along with the converted code and will
 give a nice error if differentiation of the converted code is attempted.
 
+### Converting gradients for integer-argument functions
+
+When JAX differentiates over functions with integer arguments, the gradients will
+be zero-vectors with a special `float0` type (see PR 4039](https://github.com/google/jax/pull/4039)).
+This type is translated to `bfloat16` when converting to TF. For example,
+
+```python
+def f_jax(x):  # x: int32
+  return x * 2.
+
+jax.grad(f_jax, allow_int=True)(2)
+# returns a special `float0`: array((b'',), dtype=[('float0', 'V')])
+
+jax2tf.convert(jax.grad(f_jax, allow_int=True))(2))
+# returns a `bfloat16` zero: tf.Tensor(0, shape=(), dtype=bfloat16)
+```
+
 ### TensorFlow XLA ops
 
 For most JAX primitives there is a natural TF op that fits the needed semantics.

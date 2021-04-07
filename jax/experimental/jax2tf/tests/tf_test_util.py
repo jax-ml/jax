@@ -44,6 +44,8 @@ def _make_tf_args(args):
 def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
   # tf_args can be PyTrees
   def _make_one_arg_signature(tf_arg):
+    if np.isscalar(tf_arg):
+      tf_arg = np.array(tf_arg)
     return tf.TensorSpec(np.shape(tf_arg), tf_arg.dtype)
 
   return tf.nest.map_structure(_make_one_arg_signature, list(tf_args))
