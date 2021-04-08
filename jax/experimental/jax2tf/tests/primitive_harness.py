@@ -2275,7 +2275,7 @@ for dtype in (np.float32, np.float64):
   for shape in ((), (3,)):
     define(
       "random_gamma",
-      f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+      f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
       jax.jit(jax.random.gamma),
       [np.array([42, 43], dtype=np.uint32),
        RandArg(shape, dtype)],
@@ -2290,7 +2290,7 @@ for key_i, key in enumerate([
 ]):
   define(
     "random_split",
-    f"_i={key_i}",
+    f"i={key_i}",
     jax.jit(lambda key: jax.random.split(key, 2)), [key],
     dtype=key.dtype)
 

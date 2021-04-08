@@ -49,6 +49,9 @@ def naryop_masking_rule(prim, padded_vals, logical_shapes):
   del logical_shapes  # Unused.
   return prim.bind(*padded_vals)
 
+DimSize = core.DimSize
+Shape = core.Shape
+
 ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
 shape_envs = ShapeEnvs({}, {})  # TODO(mattjj): make this a stack for efficiency
 
@@ -117,7 +120,7 @@ def _polys_to_ints(shape):
 def is_polymorphic(shape: Sequence['Size']):
   return any(map(lambda d: type(d) is Poly, shape))
 
-class UndefinedPoly(Exception):
+class UndefinedPoly(core.InconclusiveDimensionOperation):
   """Exception raised when an operation involving polynomials is not defined.
 
   An operation `op` on polynomials `p1` and `p2` either raises this exception,
@@ -302,7 +305,19 @@ def mul(coeff, mon):
     return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
 
 
-core._DIMENSION_TYPES.add(Poly)
+class DimensionHandlerPoly(core.DimensionHandler):
+  """See core.DimensionHandler.
+
+  Most methods are inherited.
+  """
+  def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
+    try:
+      return d1 == d2
+    except UndefinedPoly:
+      return False
+
+
+core._SPECIAL_DIMENSION_HANDLERS[Poly] = DimensionHandlerPoly()
 
 class Mon(dict):
   # TODO: move this before Poly in the file

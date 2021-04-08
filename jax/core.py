@@ -1207,16 +1207,169 @@ raise_to_shaped_mappings : Dict[type, Callable] = {
       aval.shape, aval.dtype, weak_type, aval.named_shape)
 }
 
-# Registry for valid dimension types. This is used by masking.Poly.
-_DIMENSION_TYPES: Set[type] = {int}
+### Operations on shapes and dimension sizes.
 
-def _canonicalize_dimension(dim):
-  if type(dim) in _DIMENSION_TYPES:
+# Shapes are tuples of dimension sizes, which are normally integers. We allow
+# modules to extend the set of dimension sizes to contain other types, e.g.,
+# symbolic dimensions in jax2tf.shape_poly.DimVar and masking.Poly.
+DimSize = Union[int, Any]  # extensible
+Shape = Sequence[DimSize]
+
+
+class InconclusiveDimensionOperation(Exception):
+  """Raised when we cannot conclusively compute with symbolic dimensions."""
+  pass
+
+class DimensionHandler:
+  """Operations on dimension sizes.
+
+  Dimension sizes are normally integer constants, but can also be symbolic,
+  e.g., masking.Poly or jax2tf.shape_poly.DimVar.
+
+  The base class works for integers only.
+  Subclasses should raise InconclusiveDimensionOperation if the result cannot
+  be computed in some contexts.
+  """
+  def symbolic_equal(self, d1: DimSize, d2: DimSize) -> bool:
+    """True iff the dimension sizes are equal in all contexts; False otherwise.
+    Unlike `d1 == d2` this never raises InconclusiveDimensionOperation.
+    """
+    return d1 == d2
+
+  def greater_equal(self, d1: DimSize, d2: DimSize) -> bool:
+    """Computes `d1 >= d2`.
+    Raise InconclusiveDimensionOperation if the result is different in
+    different contexts.
+    """
+    return d1 >= d2
+
+  def sum(self, *ds: DimSize) -> DimSize:
+    """Sum of dimensions.
+    Raises InconclusiveDimensionOperation if the result cannot be represented
+    by the same DimSize in all contexts.
+    """
+    return sum(ds)
+
+  def diff(self, d1: DimSize, d2: DimSize) -> DimSize:
+    """Difference of dimensions.
+    Raises InconclusiveDimensionOperation if the result cannot be represented
+    by the same DimSize in all contexts.
+    """
+    return d1 - d2
+
+  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> int:
+    """Computes the division of the sizes of the shapes.
+
+    Raise InconclusiveDimensionOperation if the result is different in different
+    contexts, or if the division is not even.
+    """
+    sz1 = np.prod(s1)
+    sz2 = np.prod(s2)
+    if sz1 == 0 and sz2 == 0:
+      return 1
+    if sz1 % sz2:
+      raise InconclusiveDimensionOperation(f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}")
+    return sz1 // sz2
+
+  def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
+    """(d - window_size) // window_stride + 1"""
+    return (d - window_size) // window_stride + 1
+
+  def dilate(self, d: DimSize, dilation: int) -> DimSize:
+    """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
+    return 0 if d == 0 else 1 + dilation * (d - 1)
+
+
+_dimension_handler_int = DimensionHandler()
+_SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
+
+def _get_dim_handler(*dlist: DimSize) -> DimensionHandler:
+  """Finds the handler that works for all dimension sizes.
+  At most one special dimension type is allowed. Non-special dimension
+  must be convertible to integers.
+  """
+  special_handlers = set()
+  for d in dlist:
+    handler = _SPECIAL_DIMENSION_HANDLERS.get(type(d))
+    if handler:
+      special_handlers.add(handler)
+
+  if special_handlers:
+    handler, *others = special_handlers
+    if others:
+      msg = (f"Dimension size operation involves multiple non-int types {dlist}")
+      raise TypeError(msg)
+    return handler
+  else:
+    return _dimension_handler_int
+
+def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
+  d1, d2 = canonicalize_shape((d1, d2))
+  return _get_dim_handler(d1, d2).symbolic_equal(d1, d2)
+
+def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
+  d1, *dlist = canonicalize_shape((d1, *dlist))
+  handler = _get_dim_handler(d1, *dlist)
+  return any([handler.symbolic_equal(d1, d2) for d2 in dlist])
+
+def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
+  """See DimensionHandler.symbolic_equal."""
+  return (len(s1) == len(s2) and
+          all(map(symbolic_equal_dim, s1, s2)))
+
+def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
+  d1, d2 = canonicalize_shape((d1, d2))
+  return _get_dim_handler(d1, d2).greater_equal(d1, d2)
+
+def greater_equal_shape(s1: Shape, s2: Shape) -> bool:
+  return all(map(greater_equal_dim, s1, s2))
+
+def sum_dim(*ds: DimSize) -> DimSize:
+  ds = canonicalize_shape(ds)
+  return _get_dim_handler(*ds).sum(*ds)
+
+def sum_shapes(*ss: Shape) -> Shape:
+  return tuple(map(sum_dim, *ss))
+
+def diff_dim(d1: DimSize, d2: DimSize) -> DimSize:
+  d1, d2 = canonicalize_shape((d1, d2))
+  return _get_dim_handler(d1, d2).diff(d1, d2)
+
+def diff_shape(s1: Shape, s2: Shape) -> Shape:
+  return tuple(map(diff_dim, s1, s2))
+
+def divide_shape_sizes(s1: Shape, s2: Shape) -> int:
+  s1 = canonicalize_shape(s1) or (1,)
+  s2 = canonicalize_shape(s2) or (1,)
+  return _get_dim_handler(*s1, *s2).divide_shape_sizes(s1, s2)
+
+def same_shape_sizes(s1: Shape, s2: Shape) -> bool:
+  return 1 == divide_shape_sizes(s1, s2)
+
+def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
+  """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
+  d, dilation = canonicalize_shape((d, dilation))
+  return _get_dim_handler(d, dilation).dilate(d, dilation)
+
+def dilate_shape(s: Shape, dilations: Sequence[int]) -> Shape:
+  return tuple(map(dilate_dim, s, dilations))
+
+def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
+  d, window_size, window_stride = canonicalize_shape((d, window_size, window_stride))
+  return _get_dim_handler(d, window_size, window_stride).stride(d, window_size, window_stride)
+
+def stride_shape(s: Shape, window_size: Shape, window_stride: Shape) -> Shape:
+  """(s - window_size) // window_stride + 1"""
+  return tuple(map(stride_dim, s, window_size, window_stride))
+
+
+def _canonicalize_dimension(dim: DimSize) -> DimSize:
+  if type(dim) in _SPECIAL_DIMENSION_HANDLERS:
     return dim
   else:
     return operator.index(dim)
 
-def canonicalize_shape(shape):
+def canonicalize_shape(shape: Shape) -> Shape:
   """Canonicalizes and checks for errors in a user-provided shape value.
 
   Args:
@@ -1236,27 +1389,6 @@ def canonicalize_shape(shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
   raise TypeError(msg.format(shape))
-
-def canonicalize_named_shape(named_shape):
-  return dict(sorted(named_shape.items()))
-
-def join_named_shapes(*named_shapes):
-  named_shape_tuples = sorted(set(
-      item for named_shape in named_shapes for item in named_shape.items()))
-  if not named_shape_tuples:
-    return {}
-  names, sizes = unzip2(named_shape_tuples)
-  if len(set(names)) != len(names):
-    seen = set()
-    for name in names:
-      if name in seen:
-        break
-      seen.add(name)
-    raise TypeError(
-        f"Axis name {name} used with inconsistent sizes "
-        f"{[item[1] for item in named_shape_tuples if item[0] == name]}")
-  return dict(zip(names, sizes))
-
 
 # ------------------- Named shapes -------------------
 
@@ -1323,6 +1455,26 @@ class NamedShape:
 
   def __hash__(self):
     return hash((self.__positional, tuple(self.__named.items())))
+
+def canonicalize_named_shape(named_shape):
+  return dict(sorted(named_shape.items()))
+
+def join_named_shapes(*named_shapes):
+  named_shape_tuples = sorted(set(
+      item for named_shape in named_shapes for item in named_shape.items()))
+  if not named_shape_tuples:
+    return {}
+  names, sizes = unzip2(named_shape_tuples)
+  if len(set(names)) != len(names):
+    seen = set()
+    for name in names:
+      if name in seen:
+        break
+      seen.add(name)
+    raise TypeError(
+        f"Axis name {name} used with inconsistent sizes "
+        f"{[item[1] for item in named_shape_tuples if item[0] == name]}")
+  return dict(zip(names, sizes))
 
 # TODO: Make canonicalize_shape return named shapes?
 def as_named_shape(shape) -> NamedShape:
