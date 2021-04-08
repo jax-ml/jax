@@ -203,6 +203,7 @@ def _infer_argnums_and_argnames(
 
 def jit(
   fun: F,
+  *,
   static_argnums: Union[int, Iterable[int]] = (),
   device: Optional[xc.Device] = None,
   backend: Optional[str] = None,
