@@ -14,6 +14,10 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * The {func}`jax2tf.convert` now works in presence of gradients for functions
     with integer inputs ({jax-issue}`#6360`).
 
+## jaxlib 0.1.66 (unreleased)
+
+## jaxlib 0.1.65 (April 7 2021)
+
 ## jax 0.2.12 (April 1 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.11...v0.2.12).
 * New features
@@ -38,8 +42,6 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * `host_callback` now supports empty arrays in arguments and results ({jax-issue}`#6262`).
   * {func}`jax.random.randint` clips rather than wraps of out-of-bounds limits, and can now generate
     integers in the full range of the specified dtype ({jax-issue}`#5868`)
-
-## jaxlib 0.1.65 (unreleased)
 
 ## jax 0.2.11 (March 23 2021)
 
