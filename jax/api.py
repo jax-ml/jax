@@ -29,8 +29,8 @@ import itertools as it
 import sys
 import threading
 import weakref
-from typing import (Any, Callable, Iterable, NamedTuple, Optional, Sequence,
-                    Tuple, TypeVar, Union, overload)
+from typing import (Any, Callable, Iterable, NamedTuple, Mapping, Optional,
+                    Sequence, Tuple, TypeVar, Union, overload)
 from warnings import warn
 
 import numpy as np
@@ -172,27 +172,32 @@ def _infer_argnums_and_argnames(
   if argnums is None and argnames is None:
     argnums = ()
     argnames = ()
-  elif argnums is None:
-    assert argnames is not None
-    parameters = inspect.signature(fun).parameters
-    argnames = _ensure_str_tuple(argnames)
-    argnums = tuple(
-        i for i, (k, param) in enumerate(parameters.items())
-        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
-    )
-  elif argnames is None:
-    assert argnums is not None
-    parameters = inspect.signature(fun).parameters
+  elif argnums is not None and argnames is not None:
     argnums = _ensure_index_tuple(argnums)
-    argnames = tuple(
-        k for i, (k, param) in enumerate(parameters.items())
-        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
-    )
+    argnames = _ensure_str_tuple(argnames)
   else:
-    assert argnums is not None
-    assert argnames is not None
-    argnums = _ensure_index_tuple(argnums)
-    argnames = _ensure_str_tuple(argnames)
+    try:
+      signature = inspect.signature(fun)
+    except ValueError:
+      # In rare cases, inspect can fail, e.g., on some builtin Python functions.
+      # In these cases, don't infer any parameters.
+      parameters: Mapping[str, inspect.Parameter] = {}
+    else:
+      parameters = signature.parameters
+    if argnums is None:
+      assert argnames is not None
+      argnames = _ensure_str_tuple(argnames)
+      argnums = tuple(
+          i for i, (k, param) in enumerate(parameters.items())
+          if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
+      )
+    else:
+      assert argnames is None
+      argnums = _ensure_index_tuple(argnums)
+      argnames = tuple(
+          k for i, (k, param) in enumerate(parameters.items())
+          if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
+      )
   return argnums, argnames
 
 
