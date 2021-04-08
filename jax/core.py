@@ -1263,8 +1263,8 @@ class DimensionHandler:
     Raise InconclusiveDimensionOperation if the result is different in different
     contexts, or if the division is not even.
     """
-    sz1 = np.prod(s1)
-    sz2 = np.prod(s2)
+    sz1 = int(np.prod(s1))
+    sz2 = int(np.prod(s2))
     if sz1 == 0 and sz2 == 0:
       return 1
     if sz1 % sz2:
@@ -1325,8 +1325,8 @@ def greater_equal_shape(s1: Shape, s2: Shape) -> bool:
   return all(map(greater_equal_dim, s1, s2))
 
 def sum_dim(*ds: DimSize) -> DimSize:
-  ds = canonicalize_shape(ds)
-  return _get_dim_handler(*ds).sum(*ds)
+  ds_tuple = canonicalize_shape(ds)
+  return _get_dim_handler(*ds_tuple).sum(*ds_tuple)
 
 def sum_shapes(*ss: Shape) -> Shape:
   return tuple(map(sum_dim, *ss))

@@ -63,8 +63,9 @@ def PRNGKey(seed: int) -> jnp.ndarray:
   # This breaks JIT invariance of PRNGKey for large ints, but supports the
   # common use-case of instantiating PRNGKey with Python hashes in X32 mode.
   if isinstance(seed, int):
-    seed = np.int64(seed)
-  seed_arr = jnp.asarray(seed)
+    seed_arr = jnp.asarray(np.int64(seed))
+  else:
+    seed_arr = jnp.asarray(seed)
   if seed_arr.shape:
     raise TypeError(f"PRNGKey seed must be a scalar; got {seed!r}.")
   if not np.issubdtype(seed_arr.dtype, np.integer):
