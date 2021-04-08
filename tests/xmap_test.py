@@ -376,6 +376,29 @@ class XMapTest(XMapTestCase):
     python_should_be_executing = False
     fm(x)
 
+  @ignore_xmap_warning()
+  def testCompilationCacheWithMesh(self):
+    amount_of_compiles = []
+    def f(x):
+      amount_of_compiles.append(1)
+      return x * 2
+    fm = xmap(f,
+              in_axes=['a', 'b', ...], out_axes=['a', 'b', ...],
+              axis_resources={'a': 'x', 'b': 'y'})
+    x = np.arange(64).reshape((8, 8))
+
+    with with_mesh([('x', 2), ('y', 4)]):
+      fm(x)
+    self.assertEqual(len(amount_of_compiles), 1)
+    with with_mesh([('x', 2), ('y', 4)]):
+      fm(x)
+    self.assertEqual(len(amount_of_compiles), 1)
+
+    # when the mesh changes the function should be recompiled.
+    with with_mesh([('x', 4), ('y', 2)]):
+      fm(x)
+    self.assertEqual(len(amount_of_compiles), 2)
+
   @parameterized.named_parameters(
     {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
     for name, mesh, axis_resources in (

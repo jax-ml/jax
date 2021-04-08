@@ -1315,6 +1315,16 @@ class Mesh:
   def __repr__(self):
     return f"Mesh({self.devices!r}, {self.axis_names!r})"
 
+  def __eq__(self, other) -> bool:
+    return (type(other) is Mesh and
+            np.all(self.devices == other.devices) and
+            self.axis_names == other.axis_names)
+
+  def __hash__(self) -> int:
+    return hash((tuple(self.devices.flatten()),
+                 self.devices.shape,
+                 self.axis_names))
+
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   if aval is core.abstract_unit:
