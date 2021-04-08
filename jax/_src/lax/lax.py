@@ -6183,7 +6183,7 @@ def rng_bit_generator(key,
   """Stateless PRNG bit generator. Experimental and its use is discouraged.
 
   Returns uniformly distributed random bits with the specified shape and dtype
-  (what is requirted to be an integer type) using the platform specific
+  (what is required to be an integer type) using the platform specific
   default algorithm or the one specified.
 
   It provides direct acces to the RngBitGenerator primitive exposed by XLA
