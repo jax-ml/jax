@@ -15,7 +15,6 @@
 
 import jax
 import numpy
-import os
 import pytest
 
 
@@ -25,10 +24,3 @@ def add_imports(doctest_namespace):
   doctest_namespace["lax"] = jax.lax
   doctest_namespace["jnp"] = jax.numpy
   doctest_namespace["np"] = numpy
-
-
-@pytest.fixture(autouse=True)
-def spoof_devices(doctest_namespace):
-  # Set up runtime to mimic an 8-core machine
-  flags = os.environ.get('XLA_FLAGS', '')
-  os.environ['XLA_FLAGS'] = flags + " --xla_force_host_platform_device_count=8"
