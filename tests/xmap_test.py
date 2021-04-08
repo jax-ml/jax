@@ -312,6 +312,13 @@ class XMapTest(XMapTestCase):
     self.assertAllClose(result, perm)
 
   @ignore_xmap_warning()
+  def testCollectiveAllGather(self):
+    x = jnp.arange(4)
+    result = xmap(lambda x: lax.all_gather(x, 'i') + lax.axis_index('i'),
+                  in_axes=['i', ...], out_axes=['i', ...])(x)
+    self.assertAllClose(result, x + x[jnp.newaxis].T)
+
+  @ignore_xmap_warning()
   @with_mesh([('x', 2), ('y', 2)])
   def testOneLogicalTwoMeshAxesBasic(self):
     def f(v):
