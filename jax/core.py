@@ -1230,6 +1230,10 @@ class DimensionHandler:
   Subclasses should raise InconclusiveDimensionOperation if the result cannot
   be computed in some contexts.
   """
+  def is_constant(self, d: DimSize) -> bool:
+    """The dimension is a constant."""
+    return True
+
   def symbolic_equal(self, d1: DimSize, d2: DimSize) -> bool:
     """True iff the dimension sizes are equal in all contexts; False otherwise.
     Unlike `d1 == d2` this never raises InconclusiveDimensionOperation.
@@ -1302,6 +1306,10 @@ def _get_dim_handler(*dlist: DimSize) -> DimensionHandler:
     return handler
   else:
     return _dimension_handler_int
+
+def is_constant_dim(d: DimSize) -> bool:
+  d, = canonicalize_shape((d,))
+  return _get_dim_handler(d).is_constant(d)
 
 def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   d1, d2 = canonicalize_shape((d1, d2))
