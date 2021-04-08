@@ -141,6 +141,8 @@ jobs:
       run: |
         pip install -r docs/requirements.txt
     - name: Test documentation
+      env:
+        XLA_FLAGS: "--xla_force_host_platform_device_count=8"
       run: |
         pytest -n 1 docs
         pytest -n 1 --doctest-modules --ignore=jax/experimental/jax2tf jax
