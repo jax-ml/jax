@@ -31,7 +31,7 @@ from jax._src import dtypes
 from jax import lax
 from jax import test_util as jtu
 from jax import tree_util
-from jax import lax_reference
+from jax._src import lax_reference
 from jax.test_util import check_grads
 import jax.util
 from jax._src.util import prod
