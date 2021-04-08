@@ -30,7 +30,7 @@ import numpy as np
 import jax
 from jax import api
 from jax import core
-from jax import dtypes
+from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lax import lax

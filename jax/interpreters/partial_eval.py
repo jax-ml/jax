@@ -23,7 +23,7 @@ from weakref import ref
 import numpy as np
 
 from .. import core
-from .. import dtypes
+from .._src import dtypes
 from .. import linear_util as lu
 from ..ad_util import Zero
 from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,

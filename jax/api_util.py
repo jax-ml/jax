@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, Tuple, Union
 import numpy as np
 
 from . import core
-from . import dtypes
+from ._src import dtypes
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap,
                         tree_structure, treedef_children, treedef_is_leaf)
 from ._src.tree_util import _replace_nones

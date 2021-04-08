@@ -21,7 +21,7 @@ import numpy as np
 import opt_einsum
 import scipy.special
 
-from . import dtypes
+from jax._src import dtypes
 
 _slice = builtins.slice
 _max = builtins.max

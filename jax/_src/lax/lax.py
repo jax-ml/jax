@@ -32,7 +32,7 @@ from jax import ad_util
 from jax import api
 from jax import api_util
 from jax import linear_util as lu
-from jax import dtypes
+from jax._src import dtypes
 from jax import tree_util
 from jax.config import flags, config
 from jax.core import (Primitive, _canonicalize_dimension, UnshapedArray,

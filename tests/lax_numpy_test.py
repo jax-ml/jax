@@ -40,7 +40,7 @@ from jax import lax
 from jax import linear_util
 from jax import numpy as jnp
 from jax import test_util as jtu
-from jax import dtypes
+from jax._src import dtypes
 from jax import tree_util
 from jax.interpreters import partial_eval, xla
 from jax.test_util import check_grads

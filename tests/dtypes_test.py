@@ -23,7 +23,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu

@@ -28,7 +28,7 @@ from typing import (Any, Callable, ClassVar, Dict, Generator,
 
 import numpy as np
 
-from . import dtypes
+from ._src import dtypes
 from .config import FLAGS, config
 from .errors import (ConcretizationTypeError, TracerArrayConversionError,
                      TracerIntegerConversionError)

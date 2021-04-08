@@ -20,7 +20,7 @@ from .tree_util import tree_flatten, tree_unflatten
 from ._src.util import safe_zip, unzip2
 
 import jax.numpy as jnp
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 
 zip = safe_zip

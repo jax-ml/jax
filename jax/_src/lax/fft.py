@@ -21,7 +21,8 @@ from jax.api import jit, linear_transpose, ShapeDtypeStruct
 from jax.core import Primitive
 from jax.interpreters import xla
 from jax._src.util import prod
-from jax import dtypes, lax
+from jax._src import dtypes
+from jax import lax
 from jax.lib import xla_client
 from jax.interpreters import ad
 from jax.interpreters import batching

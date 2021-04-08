@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict
 from . import partial_eval as pe
 from ..config import config
 from .. import core
-from ..dtypes import dtype, float0
+from .._src.dtypes import dtype, float0
 from ..core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                     raise_to_shaped)
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,

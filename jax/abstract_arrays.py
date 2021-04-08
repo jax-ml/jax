@@ -18,7 +18,7 @@ import numpy as np
 
 from . import ad_util
 from . import core
-from . import dtypes
+from ._src import dtypes
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)

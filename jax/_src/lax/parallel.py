@@ -23,7 +23,7 @@ from typing import Union
 import numpy as np
 
 from jax import core
-from jax import dtypes
+from jax._src import dtypes
 from jax import tree_util
 from . import lax
 from jax.core import ShapedArray, AxisName, raise_to_shaped

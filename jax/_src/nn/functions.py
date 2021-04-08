@@ -20,7 +20,7 @@ import numpy as np
 from typing import Any, Optional, Tuple, Union
 
 from jax import custom_jvp
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 from jax import core
 from jax.core import AxisName

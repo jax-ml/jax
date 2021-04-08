@@ -19,7 +19,7 @@ import operator as op
 from typing import Callable, Sequence, Tuple, Any
 
 from . import core
-from . import dtypes
+from ._src import dtypes
 from . import linear_util as lu
 from .tree_util import (tree_flatten, tree_unflatten, tree_map,
                         tree_multimap, treedef_is_leaf, treedef_tuple,

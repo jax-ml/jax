@@ -22,7 +22,8 @@ from typing import Callable, Dict, Optional, Sequence, Union, Tuple
 
 import numpy as np
 
-from .. import core, dtypes
+from .. import core
+from .._src import dtypes
 from ..tree_util import tree_unflatten
 from ..core import ShapedArray, Trace, Tracer
 from .._src.util import safe_map, safe_zip, unzip2, prod, wrap_name

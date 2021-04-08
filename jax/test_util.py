@@ -30,7 +30,7 @@ import numpy.random as npr
 
 from . import api
 from . import core
-from . import dtypes as _dtypes
+from ._src import dtypes as _dtypes
 from . import lax
 from .config import flags, bool_env, config
 from ._src.util import partial, prod

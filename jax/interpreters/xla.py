@@ -27,7 +27,7 @@ import numpy as np
 from ..config import config
 from .. import core
 from .. import ad_util
-from .. import dtypes
+from jax._src import dtypes
 from .. import linear_util as lu
 from jax._src import source_info_util
 from ..abstract_arrays import (make_shaped_array, array_types)

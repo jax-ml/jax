@@ -27,7 +27,7 @@ import numpy as np
 import jax
 from jax import api
 from jax import core
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 from jax import test_util as jtu
 from jax import tree_util

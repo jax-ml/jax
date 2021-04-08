@@ -22,7 +22,7 @@ import numpy as np
 from jax import lax
 from jax import core
 from jax import numpy as jnp
-from jax import dtypes
+from jax._src import dtypes
 from jax.core import NamedShape
 from jax.api import jit, vmap
 from jax._src.numpy.lax_numpy import _constant_like, _convert_and_clip_integer, asarray

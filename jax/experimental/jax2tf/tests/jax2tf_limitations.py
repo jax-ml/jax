@@ -17,7 +17,7 @@ import itertools
 import numpy as np
 from typing import Any, Callable, Optional, Sequence, Union
 
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 from jax import numpy as jnp
 

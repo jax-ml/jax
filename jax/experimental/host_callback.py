@@ -352,7 +352,7 @@ from jax import api
 from jax import core
 from jax.config import config
 from jax import custom_derivatives
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 from jax.lib import pytree
 from jax.lib import xla_client

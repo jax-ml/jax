@@ -30,7 +30,7 @@ logging._warn_preinit_stderr = 0
 
 from ..config import flags
 from jax._src import util, traceback_util
-from .. import dtypes
+from jax._src import dtypes
 import numpy as np
 import threading
 

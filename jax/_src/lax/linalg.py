@@ -21,7 +21,7 @@ from jax import ad_util
 from jax import api
 from jax import lax
 from jax import ops
-from jax import dtypes
+from jax._src import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching

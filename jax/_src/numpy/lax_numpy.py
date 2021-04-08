@@ -41,7 +41,7 @@ from jax import jit, custom_jvp
 from .vectorize import vectorize
 from .util import _wraps
 from jax import core
-from jax import dtypes
+from jax._src import dtypes
 from jax import errors
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import config

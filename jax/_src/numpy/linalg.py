@@ -24,7 +24,7 @@ from jax import jit, custom_jvp
 from jax import lax
 from jax import ops
 from jax._src.lax import linalg as lax_linalg
-from jax import dtypes
+from jax._src import dtypes
 from .util import _wraps
 from . import lax_numpy as jnp
 from jax._src.util import canonicalize_axis

@@ -19,7 +19,7 @@ from typing import (Tuple, List, Sequence, Set, Dict, Any, Callable, Union,
                     Optional)
 
 from jax import core
-from jax import dtypes
+from jax._src import dtypes
 from jax.core import Var, Literal, Atom, Tracer
 from jax._src.util import (safe_zip, safe_map, curry, unzip2, split_list,
                            tuple_delete)

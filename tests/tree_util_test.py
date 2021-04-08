@@ -22,7 +22,6 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax._src.tree_util import _process_pytree
 from jax import flatten_util
-from jax import dtypes
 import jax.numpy as jnp
 
 
@@ -301,7 +300,7 @@ class RavelUtilTest(jtu.JaxTestCase):
     tree = [jnp.array([3], jnp.int32),
             jnp.array([[1., 2.], [3., 4.]], jnp.float32)]
     raveled, unravel = flatten_util.ravel_pytree(tree)
-    self.assertEqual(raveled.dtype, dtypes.promote_types(jnp.float32, jnp.int32))
+    self.assertEqual(raveled.dtype, jnp.promote_types(jnp.float32, jnp.int32))
     tree_ = unravel(raveled)
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
 
@@ -309,7 +308,7 @@ class RavelUtilTest(jtu.JaxTestCase):
     tree = [jnp.array([0], jnp.bool_),
             jnp.array([[1, 2], [3, 4]], jnp.int32)]
     raveled, unravel = flatten_util.ravel_pytree(tree)
-    self.assertEqual(raveled.dtype, dtypes.promote_types(jnp.bool_, jnp.int32))
+    self.assertEqual(raveled.dtype, jnp.promote_types(jnp.bool_, jnp.int32))
     tree_ = unravel(raveled)
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
 
@@ -317,7 +316,7 @@ class RavelUtilTest(jtu.JaxTestCase):
     tree = [jnp.array([1.], jnp.float32),
             jnp.array([[1, 2 + 3j], [3, 4]], jnp.complex64)]
     raveled, unravel = flatten_util.ravel_pytree(tree)
-    self.assertEqual(raveled.dtype, dtypes.promote_types(jnp.float32, jnp.complex64))
+    self.assertEqual(raveled.dtype, jnp.promote_types(jnp.float32, jnp.complex64))
     tree_ = unravel(raveled)
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
 
