@@ -13,6 +13,9 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
   * The {func}`jax2tf.convert` now works in presence of gradients for functions
     with integer inputs ({jax-issue}`#6360`).
+  * Arguments to {func}`jax.jit` other than the function are now marked as
+    keyword-only. This change is to prevent accidental breakage when arguments
+    are added to `jit`.
 
 ## jaxlib 0.1.66 (unreleased)
 

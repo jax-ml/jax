@@ -1360,7 +1360,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(scan, (0,))
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -1391,7 +1391,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(scan, (0,))
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -1425,7 +1425,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(scan, (0,))
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -1646,7 +1646,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(scan, (0,))
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_shape = [5, 3]
     c_shape = [4]
