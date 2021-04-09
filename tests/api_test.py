@@ -1939,6 +1939,16 @@ class APITest(jtu.JaxTestCase):
         foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
+  def test_vmap_in_axes_bool_error(self):
+    # https://github.com/google/jax/issues/6372
+    with self.assertRaisesRegex(TypeError, "must be an int"):
+      api.vmap(lambda x: x, in_axes=False)(jnp.zeros(3))
+
+  def test_pmap_in_axes_bool_error(self):
+    # https://github.com/google/jax/issues/6372
+    with self.assertRaisesRegex(TypeError, "must be an int"):
+      api.pmap(lambda x: x, in_axes=False)(jnp.zeros(1))
+
   def test_pmap_global_cache(self):
     def f(x, y):
       return x, y
