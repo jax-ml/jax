@@ -193,6 +193,9 @@ def prepare_wheel(sources_path):
   if r.Rlocation("__main__/jaxlib/rocblas_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocblas_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocsolver.py"))
+  if r.Rlocation("__main__/jaxlib/cusparse.so") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/version.py"))
 
   if _is_windows():

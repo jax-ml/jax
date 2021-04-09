@@ -68,6 +68,15 @@ pytype_library(
 )
 
 pytype_library(
+    name = "experimental_sparse_ops",
+    srcs = [
+        "experimental/sparse_ops.py",
+    ],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
     name = "optimizers",
     srcs = ["experimental/optimizers.py"],
     srcs_version = "PY3",
