@@ -451,6 +451,11 @@ class XMapTest(XMapTestCase):
                   axis_resources=dict(axis_resources))()
     self.assertAllClose(result, jnp.arange(6, dtype=result.dtype))
 
+  def testCollectiveOverNoName(self):
+    result = xmap(lambda: lax.psum(jnp.array(2) ** 2, 'i'),
+                  in_axes={}, out_axes={}, axis_sizes={'i': 4})()
+    self.assertEqual(result, 16)
+
   def VmapOfXmapCases(s):
     xmap_in_axes = ([{}] +
                     [{i: 'x'} for i in range(3)] +

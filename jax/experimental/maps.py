@@ -725,6 +725,8 @@ def _process_xmap_default(self, call_primitive, f, tracers, params):
 core.Trace.process_xmap = _process_xmap_default  # type: ignore
 
 def _xmap_axis_subst(params, subst):
+  if 'call_jaxpr' not in params:  # TODO(apaszke): This feels sketchy, but I'm not sure why
+    return params
   def shadowed_subst(name):
     return (name,) if name in params['global_axis_sizes'] else subst(name)
   with core.extend_axis_env_nd(params['global_axis_sizes'].items()):
