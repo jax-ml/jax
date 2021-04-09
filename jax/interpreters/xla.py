@@ -1037,7 +1037,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
   """A DeviceArray is an ndarray backed by a single device memory buffer."""
   # We don't subclass ndarray because that would open up a host of issues,
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
-  # TODO(phawkins): make __weakref__ an unconditional slot when jaxlib 0.1.65
+  # TODO(phawkins): make __weakref__ an unconditional slot when jaxlib 0.1.66
   # is the minimum version.
   __slots__ = [
       "aval", "device_buffer", "_npy_value", "_device"

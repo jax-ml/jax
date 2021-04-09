@@ -125,7 +125,7 @@ class TraceAnnotation(xla_client.profiler.TraceMe):
   pass
 
 
-# TODO: remove this sometime after jax 0.1.11 is released
+# TODO: remove this sometime after jax 0.2.11 is released
 class TraceContext(TraceAnnotation):
   def __init__(self, *args, **kwargs):
     warnings.warn(
@@ -160,7 +160,7 @@ class StepTraceAnnotation(TraceAnnotation):
     super().__init__(name, _r=1, **kwargs)
 
 
-# TODO: remove this sometime after jax 0.1.11 is released
+# TODO: remove this sometime after jax 0.2.11 is released
 class StepTraceContext(StepTraceAnnotation):
   def __init__(self, *args, **kwargs):
     warnings.warn(
@@ -204,7 +204,7 @@ def annotate_function(func: Callable, name: str = None, **kwargs):
   return wrapper
 
 
-# TODO: remove this sometime after jax 0.1.11 is released
+# TODO: remove this sometime after jax 0.2.11 is released
 def trace_function(*args, **kwargs):
   warnings.warn(
       "trace_function has been renamed to annotate_function. This alias "

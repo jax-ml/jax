@@ -492,8 +492,6 @@ class LaxTest(jtu.JaxTestCase):
                              feature_group_count, batch_group_count,
                              dimension_numbers, perms):
     if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
-      if jtu.device_under_test() == "cpu" and jax.lib.version < (0, 1, 65):
-        raise SkipTest("Integer convolution requires jaxlib 0.1.65 or newer on CPU")
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
       if jtu.device_under_test() == "gpu":
         raise SkipTest("Integer convolution not yet supported on GPU")
@@ -631,8 +629,6 @@ class LaxTest(jtu.JaxTestCase):
                                                   dimension_numbers,
                                                   precision):
     if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
-      if jtu.device_under_test() == "cpu" and jax.lib.version < (0, 1, 65):
-        raise SkipTest("Integer convolution requires jaxlib 0.1.65 or newer on CPU")
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
       if jtu.device_under_test() == "gpu":
         raise SkipTest("Integer convolution not yet supported on GPU")
