@@ -5623,7 +5623,6 @@ def _select_and_gather_add_shape_rule(
     operand, window_dimensions, window_strides, padding, base_dilation,
     window_dilation)
 
-
 _UINT_DTYPES = {
   16: np.uint16,
   32: np.uint32,
@@ -5733,6 +5732,32 @@ def _select_and_gather_add_translation(
     window_dilation, padding)
   return snd(out)
 
+# TODO(phawkins): use this translation rule on all platforms.
+def _select_and_gather_add_translation_using_varadic_reducewindow(
+    c, tangents, operand, *, select_prim, window_dimensions, window_strides,
+    padding, base_dilation, window_dilation):
+  shape = c.get_shape(operand)
+  dtype = shape.numpy_dtype()
+
+  const = lambda c, dtype, x: xb.constant(c, np.array(x, dtype=dtype),
+                                          canonicalize_types=False)
+
+  def reducer():
+    c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
+    shape = xla_client.Shape.array_shape(np.dtype(dtype), ())
+    kx, vx, ky, vy = (xb.parameter(c, i, shape) for i in range(4))
+    which = (xops.Ge if select_prim is ge_p else xops.Le)(kx, ky)
+    xops.Tuple(c, [xops.Select(which, kx, ky), xops.Select(which, vx, vy)])
+    return c.build()
+
+  assert select_prim is ge_p or select_prim is le_p, select_prim
+  init = -np.inf if select_prim is ge_p else np.inf
+  out = xops.ReduceWindowWithGeneralPadding(
+    [operand, tangents], [const(c, dtype, init), const(c, dtype, 0)],
+    reducer(), window_dimensions, window_strides, base_dilation,
+    window_dilation, padding)
+  return xops.GetTupleElement(out, 1)
+
 def _select_and_gather_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
     padding, base_dilation, window_dilation):
@@ -5802,6 +5827,11 @@ ad.primitive_transposes[select_and_gather_add_p] = \
   _select_and_gather_add_transpose
 batching.primitive_batchers[select_and_gather_add_p] = \
   _select_and_gather_add_batching_rule
+# TODO(b/183233858): use variadic reducewindow on GPU, when implemented.
+# TODO(b/184942267): use variadic reducewindow on TPU, when fixed.
+if jax.lib._xla_extension_version >= 15:
+  xla.backend_specific_translations['cpu'][select_and_gather_add_p] = \
+    _select_and_gather_add_translation_using_varadic_reducewindow
 xla.backend_specific_translations['tpu'][select_and_gather_add_p] = partial(
   _select_and_gather_add_translation,
   max_bits=32)
