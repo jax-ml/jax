@@ -1975,7 +1975,7 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
   if initial is None and not has_identity:
-    if not size(a):
+    if not _all(core.greater_equal_dim(d, 1) for d in np.shape(a)):
       raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
     if where_ is not None:
       raise ValueError(f"reduction operation {name} does not have an identity, so to use a "

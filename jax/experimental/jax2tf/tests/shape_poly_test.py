@@ -14,6 +14,7 @@
 """Tests for the shape-polymorphic jax2tf conversion."""
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from typing import Dict, Optional, Sequence, Union
 
 import collections
@@ -992,8 +993,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x), f_tf(x))
 
   def test_random_gamma(self):
-    if "random_gamma" in _VMAP_NOT_POLY_YET:
-      raise unittest.SkipTest("TODO: vmap(random_gamma) not yet supported")
+    assert "random_gamma" in _VMAP_NOT_POLY_YET
+    raise unittest.SkipTest("TODO: vmap(random_gamma) not yet supported")
 
     def f_jax(key, a):
       return jax.random.gamma(key, a)
@@ -1011,6 +1012,24 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=["(batch, _)", "(batch, _)"],
         expected_output_signature=tf.TensorSpec([None, 3]))
     self.assertAllClose(f_jax(key, a), f_tf(key, a))
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+          dict(testcase_name=f"_{op.__name__}", op=op)
+          for op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]))
+  def test_reduce(self, op=jnp.max):
+    f_jax = lambda x: op(x, axis=-1, keepdims=True)
+
+    x = np.random.rand(7, 8)
+    f_tf = self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[
+            tf.TensorSpec([None, 8], dtype=x.dtype),
+        ],
+        polymorphic_shapes=["(batch, ...)"],
+        expected_output_signature=tf.TensorSpec([None, 1], dtype=x.dtype))
+
+    self.assertAllClose(f_jax(x), f_tf(x))
 
   def test_reshape(self):
 
