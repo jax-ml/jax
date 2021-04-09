@@ -12,24 +12,28 @@ and is a part of the code featured in the aforementioned blog post.
 ## Training the model
 
 You can train and export the model yourself by running
+
 ```bash
 $ python3 quickdraw.py
 ```
 
-The training itself lasts roughly 30 minutes, assuming the dataset has already
-been downloaded. You can also skip to the [next section](#interacting-with-the-model)
-to see instructions for playing with a pre-trained model.
+This will first download the dataset if it is not downloaded yet, which is about
+11Gb in total. Assuming the dataset has been downloaded already, training for 5
+epochs takes roughly 10 minutes on a CPU (3,5 GHz Dual-Core Intel Core i7). You
+can also skip to the [next section](#interacting-with-the-model) to see
+instructions for playing with a pre-trained model.
 
 The dataset will be downloaded directly into a `data/` directory in the
 `/tmp/jax2tf/tf_js_quickdraw` directory; by default, the model is configured to
-classify inputs into 100 different classes, which corresponds to a dataset of
-roughly 11 Gb. This can be tweaked by modifying the value of the `NB_CLASSES`
-global variable in `quickdraw.py` (max number of classes: 100). Only the files
-corresponding to the first `NB_CLASSES` classes in the dataset will be
+classify inputs into 100 different classes. This can be tweaked using the
+command-line argument `--num_classes` (max number of classes: 100). Only the
+files corresponding to the first `num_classes` classes in the dataset will be
 downloaded.
 
-The training loop runs for 5 epochs, and the model as well as its equivalent
-TF.js-loadable model are subsequently saved into `/tmp/jax2tf/tf_js_quickdraw`.
+The training loop runs for 5 epochs by default (this can be changed using
+the command-line argument `--num_epochs`), and the model as well as its
+equivalent TF.js-loadable model are subsequently saved into
+`/tmp/jax2tf/tf_js_quickdraw`.
 
 ## Interacting with the model
 

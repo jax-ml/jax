@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from absl import app # type: ignore
+from absl import flags
+
 import os # type: ignore
 import time
 from typing import Callable
@@ -35,7 +37,18 @@ config.config_with_absl()
 
 import utils
 
-NB_CLASSES = 100
+flags.DEFINE_boolean("run_eval_on_train", False,
+                     ("Also run eval on the train set after each epoch. This "
+                      "slows down training considerably."))
+flags.DEFINE_integer("num_epochs", 5,
+                     ("Number of epochs to train for."))
+flags.DEFINE_integer("num_classes", 100, "Number of classification classes.")
+
+flags.register_validator('num_classes',
+                         lambda value: value >= 1 and value <= 100,
+                         message='--num_classes must be in range [1, 100]')
+
+FLAGS = flags.FLAGS
 
 # The code below is an adaptation for Flax from the work published here:
 # https://blog.tensorflow.org/2018/07/train-model-in-tfkeras-with-colab-and-run-in-browser-tensorflowjs.html
@@ -59,7 +72,7 @@ class QuickDrawModule(nn.Module):
     x = nn.Dense(features=128)(x)
     x = nn.relu(x)
 
-    x = nn.Dense(features=NB_CLASSES)(x)
+    x = nn.Dense(features=FLAGS.num_classes)(x)
     x = nn.softmax(x)
 
     return x
@@ -110,25 +123,31 @@ def init_model():
 
 def train(train_ds, test_ds, classes):
   optimizer, params = init_model()
-  for epoch in range(5):
+  for epoch in range(1, FLAGS.num_epochs+1):
     start_time = time.time()
     optimizer = train_one_epoch(optimizer, train_ds)
-    epoch_time = time.time() - start_time
-    train_acc = accuracy(predict, optimizer.target, train_ds)
+
+    if FLAGS.run_eval_on_train:
+      train_acc = accuracy(predict, optimizer.target, train_ds)
+      print("Training set accuracy {}".format(train_acc))
+
     test_acc = accuracy(predict, optimizer.target, test_ds)
-    print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
-    print("Training set accuracy {}".format(train_acc))
     print("Test set accuracy {}".format(test_acc))
+    epoch_time = time.time() - start_time
+    print("Epoch {} in {:0.2f} sec".format(epoch, epoch_time))
 
   return optimizer.target
 
 def main(*args):
   base_model_path = "/tmp/jax2tf/tf_js_quickdraw"
   dataset_path = os.path.join(base_model_path, "data")
-  classes = utils.download_dataset(dataset_path, NB_CLASSES)
-  assert len(classes) == NB_CLASSES, classes
+  num_classes = FLAGS.num_classes
+  classes = utils.download_dataset(dataset_path, num_classes)
+  assert len(classes) == num_classes, classes
   print(f"Classes are: {classes}")
+  print("Loading dataset into memory...")
   train_ds, test_ds = utils.load_classes(dataset_path, classes)
+  print(f"Starting training for {FLAGS.num_epochs} epochs...")
   flax_params = train(train_ds, test_ds, classes)
 
   model_dir = os.path.join(base_model_path, "saved_models")
