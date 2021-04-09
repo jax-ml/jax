@@ -2937,20 +2937,20 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if type(object) is np.ndarray:
     _inferred_dtype = object.dtype and dtypes.canonicalize_dtype(object.dtype)
     lax._check_user_dtype_supported(_inferred_dtype, "array")
-    out = _device_put_raw(object, weak_type=weak_type)
+    out = np.array(object, copy=copy, dtype=dtype)
     if dtype: assert _dtype(out) == dtype
   elif isinstance(object, (DeviceArray, core.Tracer)):
     if isinstance(object, DeviceArray) and copy:
       # We perform a copy by bouncing back to the host
       # TODO(phawkins): add a device runtime function to copy a buffer
-      out = _device_put_raw(_np_asarray(object), weak_type=weak_type)
+      out = _np_asarray(object)
     else:
       out = object
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([asarray(elt, dtype=dtype) for elt in object])
     else:
-      out = _device_put_raw(_np_array([], dtype=dtype))
+      out = _np_array([], dtype=dtype)
   else:
     try:
       view = memoryview(object)
