@@ -52,4 +52,7 @@ Other operators
 .. autosummary::
   :toctree: _autosummary
 
+    segment_max
+    segment_min
+    segment_prod
     segment_sum

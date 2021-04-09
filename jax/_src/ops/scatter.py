@@ -16,7 +16,7 @@
 
 
 import sys
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -346,17 +346,76 @@ def index_update(x: Array,
   return _scatter_update(
       x, idx, y, lax.scatter, indices_are_sorted, unique_indices)
 
+
+def _get_identity(op, dtype):
+  """Get an appropriate identity for a given operation in a given dtype."""
+  if op is lax.scatter_add:
+    return 0
+  elif op is lax.scatter_mul:
+    return 1
+  elif op is lax.scatter_min:
+    if jnp.issubdtype(dtype, jnp.integer):
+      return jnp.iinfo(dtype).max
+    return float('inf')
+  elif op is lax.scatter_max:
+    if jnp.issubdtype(dtype, jnp.integer):
+      return jnp.iinfo(dtype).min
+    return -float('inf')
+  else:
+    raise ValueError(f"Unrecognized op: {op}")
+
+
+def _segment_update(name: str,
+                    data: Array,
+                    segment_ids: Array,
+                    scatter_op: Callable,
+                    num_segments: Optional[int] = None,
+                    indices_are_sorted: bool = False,
+                    unique_indices: bool = False,
+                    bucket_size: Optional[int] = None,
+                    reducer: Optional[Callable] = None) -> Array:
+  jnp._check_arraylike(name, data, segment_ids)
+  data = jnp.asarray(data)
+  segment_ids = jnp.asarray(segment_ids)
+  dtype = data.dtype
+  if num_segments is None:
+    num_segments = jnp.max(segment_ids) + 1
+  num_segments = core.concrete_or_error(int, num_segments, "segment_sum() `num_segments` argument.")
+  if num_segments is not None and num_segments < 0:
+    raise ValueError("num_segments must be non-negative.")
+
+  out = jnp.full((num_segments,) + data.shape[1:], _get_identity(scatter_op, dtype), dtype=dtype)
+
+  num_buckets = 1 if bucket_size is None \
+                  else util.ceil_of_ratio(segment_ids.size, bucket_size)
+  if num_buckets == 1:
+    return _scatter_update(
+      out, segment_ids, data, scatter_op, indices_are_sorted,
+      unique_indices, normalize_indices=False)
+
+  # Bucketize indices and perform segment_update on each bucket to improve
+  # numerical stability for operations like product and sum.
+  assert reducer is not None
+  outs = []
+  for sub_data, sub_segment_ids in zip(
+      jnp.array_split(data, num_buckets),
+      jnp.array_split(segment_ids, num_buckets)):
+    outs.append(
+        _segment_update(name, sub_data, sub_segment_ids, scatter_op, num_segments,
+                        indices_are_sorted, unique_indices))
+  return reducer(jnp.stack(outs), axis=0).astype(dtype)
+
+
 def segment_sum(data: Array,
                 segment_ids: Array,
                 num_segments: Optional[int] = None,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
-                # TODO(zhangqiaorjc): use non-None default for bucket_size.
                 bucket_size: Optional[int] = None) -> Array:
   """Computes the sum within segments of an array.
 
-  Similar to TensorFlow's segment_sum:
-  https://www.tensorflow.org/api_docs/python/tf/math/segment_sum
+  Similar to TensorFlow's `segment_sum
+  <https://www.tensorflow.org/api_docs/python/tf/math/segment_sum>`_
 
   Args:
     data: an array with the values to be summed.
@@ -394,29 +453,156 @@ def segment_sum(data: Array,
     >>> jit(segment_sum, static_argnums=2)(data, segment_ids, 3)
     DeviceArray([1, 5, 4], dtype=int32)
   """
-  if num_segments is None:
-    num_segments = jnp.max(segment_ids) + 1
-  num_segments = core.concrete_or_error(int, num_segments, "segment_sum() `num_segments` argument.")
+  return _segment_update("segment_sum", data, segment_ids, lax.scatter_add, num_segments,
+                         indices_are_sorted, unique_indices, bucket_size, jnp.sum)
 
-  if num_segments is not None and num_segments < 0:
-    raise ValueError("num_segments must be non-negative.")
 
-  out = jnp.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
+def segment_prod(data: Array,
+                 segment_ids: Array,
+                 num_segments: Optional[int] = None,
+                 indices_are_sorted: bool = False,
+                 unique_indices: bool = False,
+                 bucket_size: Optional[int] = None) -> Array:
+  """Computes the product within segments of an array.
 
-  num_buckets = 1 if bucket_size is None \
-                  else util.ceil_of_ratio(segment_ids.size, bucket_size)
-  if num_buckets == 1:
-    return _scatter_update(
-      out, segment_ids, data, lax.scatter_add, indices_are_sorted,
-      unique_indices, normalize_indices=False)
+  Similar to TensorFlow's `segment_prod
+  <https://www.tensorflow.org/api_docs/python/tf/math/segment_prod>`_
 
-  # Bucketize indices and perform segment_sum on each bucket to improve
-  # numerical stability.
-  outs = []
-  for sub_data, sub_segment_ids in zip(
-      jnp.array_split(data, num_buckets),
-      jnp.array_split(segment_ids, num_buckets)):
-    outs.append(
-        segment_sum(sub_data, sub_segment_ids, num_segments, indices_are_sorted,
-                    unique_indices))
-  return jnp.sum(jnp.stack(outs), axis=0)
+  Args:
+    data: an array with the values to be reduced.
+    segment_ids: an array with integer dtype that indicates the segments of
+      `data` (along its leading axis) to be reduced. Values can be repeated and
+      need not be sorted. Values outside of the range [0, num_segments) are
+      dropped and do not contribute to the result.
+    num_segments: optional, an int with nonnegative value indicating the number
+      of segments. The default is set to be the minimum number of segments that
+      would support all indices in ``segment_ids``, calculated as
+      ``max(segment_ids) + 1``.
+      Since `num_segments` determines the size of the output, a static value
+      must be provided to use ``segment_prod`` in a ``jit``-compiled function.
+    indices_are_sorted: whether ``segment_ids`` is known to be sorted.
+    unique_indices: whether `segment_ids` is known to be free of duplicates.
+    bucket_size: size of bucket to group indices into. ``segment_prod`` is
+      performed on each bucket separately to improve numerical stability of
+      addition. Default ``None`` means no bucketing.
+
+  Returns:
+    An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
+    segment products.
+
+  Examples:
+    Simple 1D segment product:
+
+    >>> data = jnp.arange(6)
+    >>> segment_ids = jnp.array([0, 0, 1, 1, 2, 2])
+    >>> segment_prod(data, segment_ids)
+    DeviceArray([ 0,  6, 20], dtype=int32)
+
+    Using JIT requires static `num_segments`:
+
+    >>> from jax import jit
+    >>> jit(segment_prod, static_argnums=2)(data, segment_ids, 3)
+    DeviceArray([ 0,  6, 20], dtype=int32)
+  """
+  return _segment_update("segment_prod", data, segment_ids, lax.scatter_mul, num_segments,
+                         indices_are_sorted, unique_indices, bucket_size, jnp.prod)
+
+
+def segment_max(data: Array,
+                segment_ids: Array,
+                num_segments: Optional[int] = None,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False,
+                bucket_size: Optional[int] = None) -> Array:
+  """Computes the maximum within segments of an array.
+
+  Similar to TensorFlow's `segment_max
+  <https://www.tensorflow.org/api_docs/python/tf/math/segment_max>`_
+
+  Args:
+    data: an array with the values to be reduced.
+    segment_ids: an array with integer dtype that indicates the segments of
+      `data` (along its leading axis) to be reduced. Values can be repeated and
+      need not be sorted. Values outside of the range [0, num_segments) are
+      dropped and do not contribute to the result.
+    num_segments: optional, an int with nonnegative value indicating the number
+      of segments. The default is set to be the minimum number of segments that
+      would support all indices in ``segment_ids``, calculated as
+      ``max(segment_ids) + 1``.
+      Since `num_segments` determines the size of the output, a static value
+      must be provided to use ``segment_max`` in a ``jit``-compiled function.
+    indices_are_sorted: whether ``segment_ids`` is known to be sorted.
+    unique_indices: whether `segment_ids` is known to be free of duplicates.
+    bucket_size: size of bucket to group indices into. ``segment_max`` is
+      performed on each bucket separately. Default ``None`` means no bucketing.
+
+  Returns:
+    An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
+    segment maximums.
+
+  Examples:
+    Simple 1D segment max:
+
+    >>> data = jnp.arange(6)
+    >>> segment_ids = jnp.array([0, 0, 1, 1, 2, 2])
+    >>> segment_max(data, segment_ids)
+    DeviceArray([1, 3, 5], dtype=int32)
+
+    Using JIT requires static `num_segments`:
+
+    >>> from jax import jit
+    >>> jit(segment_max, static_argnums=2)(data, segment_ids, 3)
+    DeviceArray([1, 3, 5], dtype=int32)
+  """
+  return _segment_update("segment_max", data, segment_ids, lax.scatter_max, num_segments,
+                         indices_are_sorted, unique_indices, bucket_size, jnp.max)
+
+
+def segment_min(data: Array,
+                segment_ids: Array,
+                num_segments: Optional[int] = None,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False,
+                bucket_size: Optional[int] = None) -> Array:
+  """Computes the minimum within segments of an array.
+
+  Similar to TensorFlow's `segment_min
+  <https://www.tensorflow.org/api_docs/python/tf/math/segment_min>`_
+
+  Args:
+    data: an array with the values to be reduced.
+    segment_ids: an array with integer dtype that indicates the segments of
+      `data` (along its leading axis) to be reduced. Values can be repeated and
+      need not be sorted. Values outside of the range [0, num_segments) are
+      dropped and do not contribute to the result.
+    num_segments: optional, an int with nonnegative value indicating the number
+      of segments. The default is set to be the minimum number of segments that
+      would support all indices in ``segment_ids``, calculated as
+      ``max(segment_ids) + 1``.
+      Since `num_segments` determines the size of the output, a static value
+      must be provided to use ``segment_min`` in a ``jit``-compiled function.
+    indices_are_sorted: whether ``segment_ids`` is known to be sorted.
+    unique_indices: whether `segment_ids` is known to be free of duplicates.
+    bucket_size: size of bucket to group indices into. ``segment_min`` is
+      performed on each bucket separately. Default ``None`` means no bucketing.
+
+  Returns:
+    An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
+    segment minimums.
+
+  Examples:
+    Simple 1D segment min:
+
+    >>> data = jnp.arange(6)
+    >>> segment_ids = jnp.array([0, 0, 1, 1, 2, 2])
+    >>> segment_min(data, segment_ids)
+    DeviceArray([0, 2, 4], dtype=int32)
+
+    Using JIT requires static `num_segments`:
+
+    >>> from jax import jit
+    >>> jit(segment_min, static_argnums=2)(data, segment_ids, 3)
+    DeviceArray([0, 2, 4], dtype=int32)
+  """
+  return _segment_update("segment_min", data, segment_ids, lax.scatter_min, num_segments,
+                         indices_are_sorted, unique_indices, bucket_size, jnp.min)
