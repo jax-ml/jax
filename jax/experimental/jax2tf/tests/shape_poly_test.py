@@ -458,6 +458,11 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertFalse(core.symbolic_equal_one_of_dim(1, [2, db]))
     self.assertFalse(core.symbolic_equal_one_of_dim(3, []))
 
+    self.assertTrue(core.symbolic_equal_dim(1, jnp.add(0, 1)))  # A DeviceArray
+    with self.assertRaisesRegex(TypeError,
+                                re.escape("Shapes must be 1D sequences of concrete values of integer type, got (1, 'a').")):
+      self.assertTrue(core.symbolic_equal_dim(1, "a"))
+
   def test_dim_vars_greater_equal(self):
     da, db = shape_poly.parse_spec("a, b", (2, 3))
     self.assertTrue(core.greater_equal_dim(da, da))
@@ -473,6 +478,31 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
                                 "Shape variable comparison .* is inconclusive"):
       core.greater_equal_dim(da, db)
+
+  def test_dilate_shape(self):
+    da, = shape_poly.parse_spec("a,", (2,))
+
+    self.assertEqual((4, 7), core.dilate_shape((2, 3), (3, 3)))
+    self.assertEqual((0, 7), core.dilate_shape((0, 3), (3, 3)))
+    self.assertEqual((da, 7), core.dilate_shape((da, 3), (1, 3)))
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                re.escape("Only dilation == 1 is supported for shape variables (var = a, dilation = 2)")):
+      core.dilate_shape((da, 3), (2, 3))
+
+  def test_stride_shape(self):
+    da, = shape_poly.parse_spec("a,", (2,))
+
+    self.assertEqual((8, 9), core.stride_shape((10, 20), (3, 3), (1, 2)))
+    self.assertEqual((da, 9), core.stride_shape((da, 20), (1, 3), (1, 2)))
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                re.escape("Only striding with window_size == window_stride == 1 is supported for shape variables (var = a, window_size = 2, stride = 1")):
+      core.stride_shape((da, 20), (2, 3), (1, 2))
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                re.escape("Only striding with window_size == window_stride == 1 is supported for shape variables (var = a, window_size = 1, stride = 2")):
+      core.stride_shape((da, 20), (1, 3), (2, 2))
 
 
 class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
