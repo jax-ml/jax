@@ -1259,14 +1259,12 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  in_axes_, out_axes_ = tree_leaves(in_axes), tree_leaves(out_axes)
-  if not all(isinstance(l, (type(None), int)) for l in in_axes_):
+  if not all(type(l) is int for l in tree_leaves(in_axes)):
     raise TypeError("vmap in_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {in_axes}.")
-  if not all(isinstance(l, (type(None), int)) for l in out_axes_):
+  if not all(type(l) is int for l in tree_leaves(out_axes)):
     raise TypeError("vmap out_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {out_axes}.")
-  del in_axes_, out_axes_
 
   @wraps(fun, docstr=docstr)
   @api_boundary
@@ -1559,6 +1557,13 @@ def pmap(
   static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
   donate_tuple = rebase_donate_argnums(_ensure_index_tuple(donate_argnums),
                                        static_broadcasted_tuple)
+
+  if not all(type(l) is int for l in tree_leaves(in_axes)):
+    raise TypeError("pmap in_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {in_axes}.")
+  if not all(type(l) is int for l in tree_leaves(out_axes)):
+    raise TypeError("pmap out_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {out_axes}.")
 
   @wraps(fun)
   @api_boundary
