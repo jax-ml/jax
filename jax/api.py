@@ -201,10 +201,17 @@ def _infer_argnums_and_argnames(
   return argnums, argnames
 
 
+# Static kwargs require jaxlib 0.1.66 or newer. (Technically the Python jit
+# implementation works with any jaxlib, but we want consistency between C++ and
+# Python implementations.)
+# TODO(phawkins): remove when jaxlib 0.1.66 is the minimum.
+_ALLOW_STATIC_ARGNAMES = lib._xla_extension_version >= 14
+
 def jit(
   fun: F,
   *,
-  static_argnums: Union[int, Iterable[int]] = (),
+  static_argnums: Union[int, Iterable[int], None] = None,
+  static_argnames: Union[str, Iterable[str], None] = None,
   device: Optional[xc.Device] = None,
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
@@ -219,21 +226,36 @@ def jit(
       all, provided they are hashable and have an equality operation defined.
       Static arguments are included as part of a compilation cache key, which is
       why hash and equality operators must be defined.
-    static_argnums: An int or collection of ints specifying which positional
-      arguments to treat as static (compile-time constant). Operations that only
-      depend on static arguments will be constant-folded in Python (during
-      tracing), and so the corresponding argument values can be any Python
-      object. Static arguments should be hashable, meaning both ``__hash__`` and
+    static_argnums: An optional int or collection of ints that specify which
+      positional arguments to treat as static (compile-time constant).
+      Operations that only depend on static arguments will be constant-folded in
+      Python (during tracing), and so the corresponding argument values can be
+      any Python object.
+
+      Static arguments should be hashable, meaning both ``__hash__`` and
       ``__eq__`` are implemented, and immutable. Calling the jitted function
-      with different values for these constants will trigger recompilation. If
-      the jitted function is called with fewer positional arguments than
-      indicated by ``static_argnums`` then an error is raised. Arguments that
-      are not arrays or containers thereof must be marked as static.
-      Defaults to ().
+      with different values for these constants will trigger recompilation.
+      Arguments that are not arrays or containers thereof must be marked as
+      static.
+
+      If neither ``static_argnums`` nor ``static_argnames`` is provided, no
+      arguments are treated as static. If ``static_argnums`` is not provided but
+      ``static_argnames`` is, or vice versa, JAX uses ``inspect.signature(fun)``
+      to find any positional arguments that correspond to ``static_argnames``
+      (or vice versa). If both ``static_argnums`` and ``static_argnames`` are
+      provided, ``inspect.signature`` is not used, and only actual
+      parameters listed in either ``static_argnums`` or ``static_argnames`` will
+      be treated as static.
+    static_argnames: An optional string or collection of strings specifying
+      which named arguments to treat as static (compile-time constant). See the
+      comment on ``static_argnums`` for details. If not
+      provided but ``static_argnums`` is set, the default is based on calling
+      ``inspect.signature(fun)`` to find corresponding named arguments.
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
-      can be retrieved via :py:func:`jax.devices`.) The default is inherited from
-      XLA's DeviceAssignment logic and is usually to use ``jax.devices()[0]``.
+      can be retrieved via :py:func:`jax.devices`.) The default is inherited
+      from XLA's DeviceAssignment logic and is usually to use
+      ``jax.devices()[0]``.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend: ``'cpu'``, ``'gpu'``, or
       ``'tpu'``.
@@ -263,65 +285,21 @@ def jit(
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
+  if not _ALLOW_STATIC_ARGNAMES:
+    if static_argnames is not None:
+      raise ValueError("static_argnames requires jaxlib 0.1.65 or newer")
+    static_argnames = ()
   if FLAGS.experimental_cpp_jit:
-    return _cpp_jit(fun, static_argnums, device, backend, donate_argnums)
+    return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
+                    donate_argnums)
   else:
-    return _python_jit(fun, static_argnums, device, backend, donate_argnums)
+    return _python_jit(fun, static_argnums, static_argnames, device, backend,
+                       donate_argnums)
 
 
 def _python_jit(
     fun: F,
-    static_argnums: Union[int, Iterable[int]] = (),
-    device: Optional[xc.Device] = None,
-    backend: Optional[str] = None,
-    donate_argnums: Union[int, Iterable[int]] = ()
-) -> F:
-  """The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit."""
-  _check_callable(fun)
-  static_argnums = _ensure_index_tuple(static_argnums)
-  donate_argnums = _ensure_index_tuple(donate_argnums)
-  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
-
-  @wraps(fun)
-  @api_boundary
-  def f_jitted(*args, **kwargs):
-    if config.jax_disable_jit:
-      return fun(*args, **kwargs)
-    if max(static_argnums + donate_argnums, default=-1) >= len(args):
-      raise ValueError(f"jitted function has static_argnums={static_argnums}, "
-                       f"donate_argnums={donate_argnums} but "
-                       f"was called with only {len(args)} positional arguments.")
-    f = lu.wrap_init(fun)
-    if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
-    else:
-      dyn_args = args
-    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
-    if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
-    else:
-      donated_invars = (False,) * len(args_flat)
-    for arg in args_flat:
-      _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(
-        flat_fun,
-        *args_flat,
-        device=device,
-        backend=backend,
-        name=flat_fun.__name__,
-        donated_invars=donated_invars)
-    return tree_unflatten(out_tree(), out)
-
-  return f_jitted
-
-
-# TODO(shoyer): fix C++ JIT to handle static_argnames; then switch _python_jit
-# to this implementation. Note that changed default argument value for
-# static_argnums.
-def _python_jit_with_static_argnames(
-    fun: F,
-    static_argnums: Union[int, Iterable[int]] = None,
+    static_argnums: Union[int, Iterable[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
@@ -340,11 +318,21 @@ def _python_jit_with_static_argnames(
   def f_jitted(*args, **kwargs):
     if config.jax_disable_jit:
       return fun(*args, **kwargs)
-    if max(donate_argnums, default=-1) >= len(args):
-      raise ValueError(f"jitted function has donate_argnums={donate_argnums} but "
-                       f"was called with only {len(args)} positional arguments.")
+    if _ALLOW_STATIC_ARGNAMES:
+      if max(donate_argnums, default=-1) >= len(args):
+        raise ValueError(
+            f"jitted function has donate_argnums={donate_argnums} but "
+            f"was called with only {len(args)} positional arguments.")
+    else:
+      if max(static_argnums + donate_argnums, default=-1) >= len(args):
+        raise ValueError(
+            f"jitted function has static_argnums={static_argnums}, "
+            f"donate_argnums={donate_argnums} but "
+            f"was called with only {len(args)} positional arguments.")
+
     f = lu.wrap_init(fun)
-    f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
+    f, args = argnums_partial_except(f, static_argnums, args,
+                                     allow_invalid=True)
     f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
     args_flat, in_tree = tree_flatten((args, kwargs))
     if donate_argnums:
@@ -373,7 +361,8 @@ class _BackendAndDeviceInfo(NamedTuple):
 
 def _cpp_jit(
     fun: F,
-    static_argnums: Union[int, Iterable[int]] = (),
+    static_argnums: Union[int, Iterable[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
@@ -388,6 +377,8 @@ def _cpp_jit(
   feature.
   """
   _check_callable(fun)
+  static_argnums, static_argnames = _infer_argnums_and_argnames(
+      fun, static_argnums, static_argnames)
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
@@ -402,18 +393,23 @@ def _cpp_jit(
     # An alternative would be for cache_miss to accept from C++ the arguments
     # (dyn_args, donated_invars, args_flat, in_tree), since otherwise we have
     # work/code that is redundant between C++ and Python. We can try that later.
-    if max(static_argnums + donate_argnums, default=-1) >= len(args):
-      msg = ("jitted function has static_argnums={}, donate_argnums={} but "
-             "was called with only {} positional arguments.")
-      raise ValueError(msg.format(static_argnums, donate_argnums, len(args)))
-    f = lu.wrap_init(fun)
-    if static_argnums:
-      f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
+    if _ALLOW_STATIC_ARGNAMES:
+      if max(donate_argnums, default=-1) >= len(args):
+        raise ValueError(
+            f"jitted function has donate_argnums={donate_argnums} but "
+            f"was called with only {len(args)} positional arguments.")
     else:
-      dyn_args = args
-    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
+      if max(static_argnums + donate_argnums, default=-1) >= len(args):
+        raise ValueError(
+            f"jitted function has static_argnums={static_argnums}, "
+            f"donate_argnums={donate_argnums} but "
+            f"was called with only {len(args)} positional arguments.")
+    f = lu.wrap_init(fun)
+    f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
+    f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
+    args_flat, in_tree = tree_flatten((args, kwargs))
     if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
+      donated_invars = donation_vector(donate_argnums, args, kwargs)
     else:
       donated_invars = (False,) * len(args_flat)
 
@@ -506,9 +502,13 @@ def _cpp_jit(
       else:
         return cpp_jitted_f(context, *args, **kwargs)
     f_jitted._cpp_jitted_f = cpp_jitted_f
+  elif lib._xla_extension_version < 14:
+    cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info, static_argnums)
+    f_jitted = wraps(fun)(cpp_jitted_f)
   else:
     cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
-                               tuple(static_argnums))
+                               static_argnums=static_argnums,
+                               static_argnames=static_argnames)
     f_jitted = wraps(fun)(cpp_jitted_f)
 
   return f_jitted

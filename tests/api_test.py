@@ -47,6 +47,7 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
 import jax._src.util
+from jax.api import _ALLOW_STATIC_ARGNAMES
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -306,6 +307,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f(2)
     assert len(effects) == 3
 
+  # TODO(phawkins): delete this test after jaxlib 0.1.66 is the minimum.
+  @unittest.skipIf(_ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
   def test_static_argnum_errors_on_keyword_arguments(self):
     f = self.jit(lambda x: x, static_argnums=0)
     msg = ("jitted function has static_argnums=(0,), donate_argnums=() but was "
@@ -517,20 +520,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     actual = jit_add(x, 1)
     self.assertArraysEqual(expected, actual)
 
-
-class PythonJitTest(CPPJitTest):
-
-  @property
-  def jit(self):
-    return jax.api._python_jit
-
-
-class PythonJitWithStaticArgnamesTest(CPPJitTest):
-
-  @property
-  def jit(self):
-    return jax.api._python_jit_with_static_argnames
-
   def test__infer_argnums_and_argnames(self):
     def f(x, y=1):
       pass
@@ -571,6 +560,7 @@ class PythonJitWithStaticArgnamesTest(CPPJitTest):
     assert argnums == ()
     assert argnames == ('foo', 'bar')
 
+  @unittest.skipIf(not _ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
   def test_jit_with_static_argnames(self):
 
     def f(x):
@@ -585,20 +575,54 @@ class PythonJitWithStaticArgnamesTest(CPPJitTest):
     assert f_names('foo') == 1
     assert f_names(x='foo') == 1
 
-  def test_static_argnum_errors_on_keyword_arguments(self):
-    # disable this test -- there is intentionally new behavior after adding
-    # static_argnames
-    pass
-
+  @unittest.skipIf(not _ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
   def test_new_static_argnum_on_keyword_arguments(self):
     f = self.jit(lambda x: x, static_argnums=0)
     y = f(x=4)
     assert y == 4
 
+  @unittest.skipIf(not _ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
   def test_new_static_argnum_with_default_arguments(self):
     f = self.jit(lambda x=4: x, static_argnums=0)
     y = f()
     assert y == 4
+
+  @unittest.skipIf(not _ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
+  def test_jit_with_mismatched_static_argnames(self):
+    x_is_tracer, y_is_tracer = False, False
+    def f(x, y):
+      assert isinstance(x, core.Tracer) == x_is_tracer
+      assert isinstance(y, core.Tracer) == y_is_tracer
+      return 1
+
+    # If both static_argnums and static_argnames are provided, they are allowed
+    # to disagree and `jit` will respect the user's choices.
+    f_nums = self.jit(f, static_argnums=1, static_argnames=())
+    x_is_tracer, y_is_tracer = True, False
+    assert f_nums(2, 'foo') == 1
+    x_is_tracer, y_is_tracer = True, True
+    assert f_nums(1, y=2) == 1
+
+    f_names = self.jit(f, static_argnums=(), static_argnames='y')
+    x_is_tracer, y_is_tracer = True, True
+    assert f_names(2, 3) == 1
+    x_is_tracer, y_is_tracer = True, False
+    assert f_names(1, y='foo') == 1
+
+    f_mixed = self.jit(f, static_argnums=(1,), static_argnames='x')
+    x_is_tracer, y_is_tracer = True, False
+    assert f_mixed(2, 'foo') == 1
+    x_is_tracer, y_is_tracer = True, True
+    assert f_mixed(1, y=3) == 1
+    x_is_tracer, y_is_tracer = False, True
+    assert f_mixed(x='foo', y=3) == 1
+
+
+class PythonJitTest(CPPJitTest):
+
+  @property
+  def jit(self):
+    return jax.api._python_jit
 
 
 class APITest(jtu.JaxTestCase):
