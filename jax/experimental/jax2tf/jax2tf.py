@@ -39,7 +39,7 @@ from jax.lib import xla_client
 from . import shape_poly
 
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf  # type: ignore[import]
 
 # These don't have public equivalents.
 # pylint: disable=g-direct-tensorflow-import

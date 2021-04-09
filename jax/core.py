@@ -1226,7 +1226,11 @@ class DimensionHandler:
   Dimension sizes are normally integer constants, but can also be symbolic,
   e.g., masking.Poly or jax2tf.shape_poly.DimVar.
 
-  The base class works for integers only.
+  The base class works for integers only. Subclasses are invoked when at
+  least one of the operands has a type registered in _SPECIAL_DIMENSION_HANDLERS.
+  In that case, all operands are guaranteed to be either the special dimension
+  type, or Python integer scalars.
+
   Subclasses should raise InconclusiveDimensionOperation if the result cannot
   be computed in some contexts.
   """
@@ -1283,80 +1287,83 @@ class DimensionHandler:
 _dimension_handler_int = DimensionHandler()
 _SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
 
-def _get_dim_handler(*dlist: DimSize) -> DimensionHandler:
-  """Finds the handler that works for all dimension sizes.
-  At most one special dimension type is allowed. Non-special dimension
-  must be convertible to integers.
+def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple[DimSize, ...]]:
+  """Finds the handler for the given dimensions; also returns the canonical dimensions.
+
+  A dimension is canonical if it is a Python integer scalar, or has a type
+  registered in _SPECIAL_DIMENSION_HANDLERS.
   """
   special_handlers = set()
+  canonical = []
   for d in dlist:
     handler = _SPECIAL_DIMENSION_HANDLERS.get(type(d))
     if handler:
       special_handlers.add(handler)
+      canonical.append(d)
+    else:
+      try:
+        canonical.append(operator.index(d))
+      except TypeError:
+        raise _invalid_shape_error(dlist)
 
-  if special_handlers:
-    handler, *others = special_handlers
-    if others:
-      msg = (f"Dimension size operation involves multiple non-int types {dlist}")
-      raise TypeError(msg)
-    return handler
-  else:
-    return _dimension_handler_int
+  if len(special_handlers) > 1:
+    msg = (f"Dimension size operation involves multiple special dimension types {dlist}")
+    raise ValueError(msg)
+  return next(iter(special_handlers), _dimension_handler_int), tuple(canonical)
 
 def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
-  d1, d2 = canonicalize_shape((d1, d2))
-  return _get_dim_handler(d1, d2).symbolic_equal(d1, d2)
+  handler, ds = _dim_handler_and_canonical(d1, d2)
+  return handler.symbolic_equal(*ds)
 
 def symbolic_equal_one_of_dim(d1: DimSize, dlist: Sequence[DimSize]) -> bool:
-  d1, *dlist = canonicalize_shape((d1, *dlist))
-  handler = _get_dim_handler(d1, *dlist)
-  return any([handler.symbolic_equal(d1, d2) for d2 in dlist])
+  handler, ds = _dim_handler_and_canonical(d1, *dlist)
+  return any([handler.symbolic_equal(ds[0], d) for d in ds[1:]])
 
 def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
-  """See DimensionHandler.symbolic_equal."""
   return (len(s1) == len(s2) and
           all(map(symbolic_equal_dim, s1, s2)))
 
 def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
-  d1, d2 = canonicalize_shape((d1, d2))
-  return _get_dim_handler(d1, d2).greater_equal(d1, d2)
+  handler, ds = _dim_handler_and_canonical(d1, d2)
+  return handler.greater_equal(*ds)
 
 def greater_equal_shape(s1: Shape, s2: Shape) -> bool:
   return all(map(greater_equal_dim, s1, s2))
 
 def sum_dim(*ds: DimSize) -> DimSize:
-  ds_tuple = canonicalize_shape(ds)
-  return _get_dim_handler(*ds_tuple).sum(*ds_tuple)
+  handler, ds = _dim_handler_and_canonical(*ds)
+  return handler.sum(*ds)
 
 def sum_shapes(*ss: Shape) -> Shape:
   return tuple(map(sum_dim, *ss))
 
 def diff_dim(d1: DimSize, d2: DimSize) -> DimSize:
-  d1, d2 = canonicalize_shape((d1, d2))
-  return _get_dim_handler(d1, d2).diff(d1, d2)
+  handler, ds = _dim_handler_and_canonical(d1, d2)
+  return handler.diff(*ds)
 
 def diff_shape(s1: Shape, s2: Shape) -> Shape:
   return tuple(map(diff_dim, s1, s2))
 
 def divide_shape_sizes(s1: Shape, s2: Shape) -> int:
-  s1 = canonicalize_shape(s1) or (1,)
-  s2 = canonicalize_shape(s2) or (1,)
-  return _get_dim_handler(*s1, *s2).divide_shape_sizes(s1, s2)
+  s1 = s1 or (1,)
+  s2 = s2 or (1,)
+  handler, ds = _dim_handler_and_canonical(*s1, *s2)
+  return handler.divide_shape_sizes(ds[:len(s1)], ds[len(s1):])
 
 def same_shape_sizes(s1: Shape, s2: Shape) -> bool:
   return 1 == divide_shape_sizes(s1, s2)
 
 def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
   """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
-  d, dilation = canonicalize_shape((d, dilation))
-  return _get_dim_handler(d, dilation).dilate(d, dilation)
+  handler, ds = _dim_handler_and_canonical(d, dilation)
+  return handler.dilate(*ds)
 
 def dilate_shape(s: Shape, dilations: Sequence[int]) -> Shape:
   return tuple(map(dilate_dim, s, dilations))
 
 def stride_dim(d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
-  d, window_size, window_stride = canonicalize_shape((d, window_size, window_stride))
-  return _get_dim_handler(d, window_size, window_stride).stride(d, window_size, window_stride)
+  handler, ds = _dim_handler_and_canonical(d, window_size, window_stride)
+  return handler.stride(*ds)
 
 def stride_shape(s: Shape, window_size: Shape, window_stride: Shape) -> Shape:
   """(s - window_size) // window_stride + 1"""
@@ -1382,13 +1389,16 @@ def canonicalize_shape(shape: Shape) -> Shape:
     return tuple(map(_canonicalize_dimension, shape))
   except TypeError:
     pass
+  raise _invalid_shape_error(shape)
+
+def _invalid_shape_error(shape: Shape):
   msg = ("Shapes must be 1D sequences of concrete values of integer type, "
          "got {}.")
   if any(isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
          and not isinstance(get_aval(x), ConcreteArray) for x in shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
-  raise TypeError(msg.format(shape))
+  return TypeError(msg.format(shape))
 
 # ------------------- Named shapes -------------------
 

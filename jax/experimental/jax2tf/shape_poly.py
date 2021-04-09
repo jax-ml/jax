@@ -79,7 +79,8 @@ class DimensionHandlerVar(core.DimensionHandler):
       return 0
     if d2 in {0}:
       return d1
-    raise core.InconclusiveDimensionOperation(f"Subtracting shape variables is not supported ({d1} - {d2})")
+    raise core.InconclusiveDimensionOperation(
+        f"Subtracting shape variables is not supported ({d1} - {d2})")
 
   def divide_shape_sizes(self, s1: Shape, s2: Shape) -> int:
     s1_ints, s1_vars = _split_shape_ints(s1)
@@ -92,13 +93,18 @@ class DimensionHandlerVar(core.DimensionHandler):
   def dilate(self, d: DimSize, dilation: DimSize) -> DimSize:
     """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
     if dilation not in {1}:
-      raise core.InconclusiveDimensionOperation(f"Dilation is not supported for shape variables (d = {dilation})")
+      raise core.InconclusiveDimensionOperation(
+          f"Only dilation == 1 is supported for shape variables (var = {d}, "
+          f"dilation = {dilation})")
     return d
 
   def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
     """Implements `(d - window_size) // window_stride + 1`"""
     if {window_size, window_stride} != {1}:
-      raise core.InconclusiveDimensionOperation(f"Striding is not supported for shape variables (window_size = {window_size}, stride = {window_stride}")
+      raise core.InconclusiveDimensionOperation(
+          "Only striding with window_size == window_stride == 1 is supported "
+          f"for shape variables (var = {d}, window_size = {window_size}, "
+          f"stride = {window_stride}")
     return d
 
 
