@@ -34,7 +34,6 @@ from .errors import (ConcretizationTypeError, TracerArrayConversionError,
                      TracerIntegerConversionError)
 from . import linear_util as lu
 
-from . import lib
 from .lib import jax_jit
 from jax._src import source_info_util
 from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
@@ -709,9 +708,8 @@ def extra_jit_context(trace_stack):
 class ThreadLocalState(threading.local):
   def __init__(self):
     self.trace_state = TraceState()
-    if lib._xla_extension_version >= 11:
-      jax_jit.thread_local_state().extra_jit_context = extra_jit_context(
-          self.trace_state.trace_stack)
+    jax_jit.thread_local_state().extra_jit_context = extra_jit_context(
+        self.trace_state.trace_stack)
 thread_local_state = ThreadLocalState()
 
 def trace_state_clean() -> bool:
@@ -744,8 +742,7 @@ def new_main(trace_type: Type[Trace],
   if dynamic:
     jit_tls = jax_jit.thread_local_state()
     prev_dynamic, stack.dynamic = stack.dynamic, main
-    if lib._xla_extension_version >= 11:
-      jit_tls.extra_jit_context = extra_jit_context(stack)
+    jit_tls.extra_jit_context = extra_jit_context(stack)
 
   try:
     yield main
@@ -753,8 +750,7 @@ def new_main(trace_type: Type[Trace],
     stack.pop()
     if dynamic:
       stack.dynamic = prev_dynamic
-      if lib._xla_extension_version >= 11:
-        jit_tls.extra_jit_context = extra_jit_context(stack)
+      jit_tls.extra_jit_context = extra_jit_context(stack)
 
   if config.jax_check_tracer_leaks:
     t = ref(main)
@@ -770,15 +766,13 @@ def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
   prev_dynamic, stack.dynamic = stack.dynamic, main
   prev_base, stack.stack[0] = stack.stack[0], main
   jit_tls = jax_jit.thread_local_state()
-  if lib._xla_extension_version >= 11:
-    jit_tls.extra_jit_context = extra_jit_context(stack)
+  jit_tls.extra_jit_context = extra_jit_context(stack)
   try:
     yield main
   finally:
     stack.dynamic = prev_dynamic
     stack.stack[0] = prev_base
-    if lib._xla_extension_version >= 11:
-      jit_tls.extra_jit_context = extra_jit_context(stack)
+    jit_tls.extra_jit_context = extra_jit_context(stack)
 
   if config.jax_check_tracer_leaks:
     t = ref(main)

@@ -124,25 +124,23 @@ def _nan_check_posthook(fun, args, kwargs, output):
           "function. Calling the de-optimized version.")
     fun._cache_miss(*args, **kwargs)[0]  # probably won't return
 
-# TODO(phawkins): make this unconditional when jaxlib 0.1.65 is the minimum.
-if lib._xla_extension_version >= 12:
-  def _update_debug_special_global(_):
-    if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
-      jax_jit.global_state().post_hook = _nan_check_posthook
-    else:
-      jax_jit.global_state().post_hook = None
+def _update_debug_special_global(_):
+  if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
+    jax_jit.global_state().post_hook = _nan_check_posthook
+  else:
+    jax_jit.global_state().post_hook = None
 
-  def _update_debug_special_thread_local(_):
-    if (getattr(config_thread_local_state, "jax_debug_nans", False) or
-        getattr(config_thread_local_state, "jax_debug_infs", False)):
-      jax_jit.thread_local_state().post_hook = _nan_check_posthook
-    else:
-      jax_jit.thread_local_state().post_hook = None
+def _update_debug_special_thread_local(_):
+  if (getattr(config_thread_local_state, "jax_debug_nans", False) or
+      getattr(config_thread_local_state, "jax_debug_infs", False)):
+    jax_jit.thread_local_state().post_hook = _nan_check_posthook
+  else:
+    jax_jit.thread_local_state().post_hook = None
 
-  config_debug_nans._add_hooks(_update_debug_special_global,
-                               _update_debug_special_thread_local)
-  config_debug_infs._add_hooks(_update_debug_special_global,
-                               _update_debug_special_thread_local)
+config_debug_nans._add_hooks(_update_debug_special_global,
+                             _update_debug_special_thread_local)
+config_debug_infs._add_hooks(_update_debug_special_global,
+                             _update_debug_special_thread_local)
 
 
 float0 = dtypes.float0
@@ -287,7 +285,7 @@ def jit(
   """
   if not _ALLOW_STATIC_ARGNAMES:
     if static_argnames is not None:
-      raise ValueError("static_argnames requires jaxlib 0.1.65 or newer")
+      raise ValueError("static_argnames requires jaxlib 0.1.66 or newer")
     static_argnames = ()
   if FLAGS.experimental_cpp_jit:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
@@ -469,40 +467,7 @@ def _cpp_jit(
 
     return _BackendAndDeviceInfo(default_device, committed_to_device)
 
-  # TODO(phawkins): Remove this branch when jaxlib 0.1.65 is the minimum
-  # version.
-  if lib._xla_extension_version < 13:
-
-    def cache_miss_wrapper(_, *args, **kw): return cache_miss(*args, **kw)
-    static_argnums_ = (0,) + tuple(i + 1 for i in static_argnums)
-    cpp_jitted_f = jax_jit.jit(fun, cache_miss_wrapper, get_device_info,
-                               static_argnums_)
-
-    # TODO(mattjj): make cpp callable follow descriptor protocol for bound methods
-    @wraps(fun)
-    def f_jitted(*args, **kwargs):
-      context = (getattr(core.thread_local_state.trace_state.trace_stack,
-                         "dynamic", None), config.x64_enabled)
-      if (config.jax_debug_nans or config.jax_debug_infs) and not config.jax_disable_jit:
-        device_arrays = cpp_jitted_f(context, *args, **kwargs)
-        try:
-          xla.check_special(xla.xla_call_p, [
-              da.device_buffer
-              for da in tree_leaves(device_arrays)
-              if hasattr(da, "device_buffer")
-          ])
-          return device_arrays
-        except FloatingPointError:
-          assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
-          print("Invalid nan value encountered in the output of a C++-jit "
-                "function. Calling the de-optimized version.")
-          return cache_miss(*args, **kwargs)[0]  # probably won't return
-      elif config.jax_disable_jit:
-        return cpp_jitted_f(*args, **kwargs)
-      else:
-        return cpp_jitted_f(context, *args, **kwargs)
-    f_jitted._cpp_jitted_f = cpp_jitted_f
-  elif lib._xla_extension_version < 14:
+  if lib._xla_extension_version < 14:
     cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info, static_argnums)
     f_jitted = wraps(fun)(cpp_jitted_f)
   else:
