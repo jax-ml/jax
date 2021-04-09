@@ -38,7 +38,6 @@ jobs:
             python-version: 3.8
             os: ubuntu-latest
             enable-x64: 0
-            enable-omnistaging: 1
             package-overrides: "none"
             num_generated_cases: 25
 # TODO: re-enable this for numpy 1.20
@@ -46,7 +45,6 @@ jobs:
 #            python-version: 3.7
 #            os: ubuntu-latest
 #            enable-x64: 1
-#            enable-omnistaging: 1
 #            # Test experimental NumPy dispatch
 #            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
 #            num_generated_cases: 10
@@ -54,7 +52,6 @@ jobs:
             python-version: 3.6
             os: ubuntu-latest
             enable-x64: 1
-            enable-omnistaging: 1
             # Test with numpy version that matches Google-internal version
             package-overrides: "numpy==1.16.4 scipy==1.2.1"
             num_generated_cases: 10
@@ -62,7 +59,6 @@ jobs:
             python-version: 3.7
             os: ubuntu-latest
             enable-x64: 0
-            enable-omnistaging: 1
             package-overrides: "none"
             num_generated_cases: 8
     steps:
@@ -99,12 +95,10 @@ jobs:
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
         JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
-        JAX_OMNISTAGING: ${{ matrix.enable-omnistaging }}
       run: |
         pip install -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-        echo "JAX_OMNISTAGING=$JAX_OMNISTAGING"
         pytest -n auto tests examples
 
 
