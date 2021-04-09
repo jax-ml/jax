@@ -149,7 +149,7 @@ def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
         out_axes=['left', 'right', ...],
         axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
   """
-  old_env = thread_resources.env
+  old_env = getattr(thread_resources, "env", None)
   thread_resources.env = ResourceEnv(Mesh(devices, axis_names))
   try:
     yield
