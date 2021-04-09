@@ -99,6 +99,9 @@ jobs:
         pip install -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
+        cat /proc/cpuinfo
+        ulimit -a
+        lscpu
         pytest -n auto tests examples
 
 
