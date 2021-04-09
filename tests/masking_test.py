@@ -742,7 +742,7 @@ class MaskingTest(jtu.JaxTestCase):
     'testcase_name': "operator={}".format(operator.__name__), 'operator': operator}
     for operator in [jnp.sum, jnp.prod, jnp.max, jnp.min]]))
   def test_reduce(self, operator):
-    self.check(operator, ['(m, n)'], '', {'m': 3, 'n': 4}, [(4, 5)], ['float_'],
+    self.check(operator, ['(m+1, n+1)'], '', {'m': 3, 'n': 4}, [(4, 5)], ['float_'],
                jtu.rand_default(self.rng()))
 
   def test_output_shape_error(self):
