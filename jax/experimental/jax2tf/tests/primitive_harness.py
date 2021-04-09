@@ -13,11 +13,12 @@
 # limitations under the License.
 """Defines test inputs and invocations for JAX primitives.
 
-The idea is that we want to list all the JAX numeric primitives and for
-each a set of inputs that should cover their use cases. We want these separate
-from any particular test suite so we can reuse it to build multiple kinds of
-tests. For example, we can use the harnesses to check that each primitive is
-compiled correctly, or that we can apply a certain transformation, e.g., `vmap`.
+The idea is that we want to list all the JAX numeric primitives along with
+a set of inputs that should cover the use cases for each primitive.
+We want these separate from any particular test suite so we can reuse it
+to build multiple kinds of tests. For example, we can use the harnesses to check
+that each primitive is compiled correctly, or that we can apply a certain
+transformation, e.g., `vmap`.
 
 See the `Harness` class below for how to define a harness, describing one
 use case of one primitive.
@@ -34,7 +35,6 @@ primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3
 
 The limitations are used to filter out from tests the harnesses that are known
 to fail. A Limitation is specific to a harness.
-
 """
 
 import operator
@@ -87,6 +87,7 @@ class CustomArg(NamedTuple):
   """
   make: Callable[[Rng], Any]  # Called with a Rng to make a tensor
 
+ArgDescriptor = Union[RandArg, StaticArg, CustomArg, Any]
 
 class Harness:
   """Specifies inputs and callable for a primitive.
@@ -101,22 +102,27 @@ class Harness:
   descriptor can be:
     * a numeric value or ndarray, or
     * an instance of ``RandArg(shape, dtype)`` to be used with a PRNG to
-    generate
-      random tensor of the given shape and type, or
+    generate random tensor of the given shape and type, or
     * an instance of ``CustomArg(fun)`` to be used with a PRNG, or
-    * an instance of ``StaticArg(value)``. These are values that specialize the
-      callable, but are not exposed as external arguments.
+    * an instance of ``StaticArg(value)``. Often these are the non-array
+      arguments, e.g., a shape.
+
+  The given callable will be passed one argument corresponding to each
+  argument descriptor, e.g., `harness.fun(* harness.args_maker(rng))`.
+  However, in many applications we only care about the non-static arguments.
+  For that purpose, you can use `harness.dyn_fun(* harness.dyn_args_maked(rng))`,
+  where `harness.dyn_fun` is `harness.fun` specialized to the static arguments.
+
 
   For example, a harness for ``lax.take(arr, indices, axis=None)`` may want
-  to expose as external (dynamic) argument the array and the indices, and
+  to expose as external (non-static) argument the array and the indices, and
   keep the axis as a static argument (technically specializing the `take` to
   a axis):
 
     Harness(lax.slice_p,
             f"take_axis={axis}",
             lax.take,
-            [RandArg((2, 4), np.float32), np.array([-1, 0, 1]),
-            StaticArg(axis)],
+            [RandArg((2, 4), np.float32), np.array([-1, 0, 1]), StaticArg(axis)],
             axis=axis)
 
   Each harness can have a list of Limitations that describe the cases when
@@ -129,7 +135,7 @@ class Harness:
   # The function taking all arguments (static and dynamic).
   fun: Callable
   # Describes how to construct arguments, see the class docstring.
-  arg_descriptors: Sequence[Union[RandArg, StaticArg, CustomArg, Any]]
+  arg_descriptors: Sequence[ArgDescriptor]
   dtype: DType
   # A set of limitations describing the cases that are not supported or
   # partially implemented in JAX for this harness.

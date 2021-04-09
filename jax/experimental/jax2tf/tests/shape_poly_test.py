@@ -14,11 +14,11 @@
 """Tests for the shape-polymorphic jax2tf conversion."""
 
 from absl.testing import absltest
-from absl.testing import parameterized
-from typing import Dict, Optional, Sequence, Union
+from typing import Callable, Dict, List, Optional, Sequence, Union
 
 import collections
 import functools
+from functools import partial
 import operator
 import re
 
@@ -43,6 +43,7 @@ config.parse_flags_with_absl()
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import primitive_harness
+from jax.experimental.jax2tf.tests.primitive_harness import Harness, CustomArg, RandArg, StaticArg
 from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
 
 PS = jax2tf.PolyShape
@@ -636,7 +637,183 @@ class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(jnp.mean(x), f_tf(x))
 
 
-def _all_shape_poly_harnesses() -> Sequence[primitive_harness.Harness]:
+###
+### We define primitive harnesses for which we will test shape-polymorphic
+### conversion.
+def _make_harness(group_name: str, name: str,
+                  func: Callable,
+                  args: primitive_harness.ArgDescriptor,
+                  *,
+                  poly_axes: Sequence[Optional[int]],
+                  check_result=True,
+                  **params) -> Harness:
+  """The `poly_axes` must correspond to the non-static arguments, and for each
+  one it must specify which axes are: None, or an int.
+
+  `check_result` specifies if we want to check that the result of the shape
+  polymorphic conversion produces the same result and the JAX function.
+  """
+  return Harness(group_name,
+                 name,
+                 func, args,
+                 dtype=np.float32,
+                 poly_axes=poly_axes,
+                 check_result=check_result,
+                 **params)
+
+
+_f32 = np.float32
+
+_POLY_SHAPE_TEST_HARNESSES = [
+    _make_harness("jnp_add", "",
+                  jnp.add,
+                  [RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
+                  poly_axes=[0, 1]),
+
+    _make_harness("jnp_broadcast_to", "",
+                  lambda x: jnp.broadcast_to(x, [x.shape[0], x.shape[0], 4]),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+
+    _make_harness("clamp", "",
+                  lax.clamp,
+                  [RandArg((3, 4, 5), _f32), RandArg((3, 4, 5), _f32),
+                   RandArg((3, 4, 5), _f32)],
+                  poly_axes=[0, 0, 0]),
+
+    _make_harness("conv_general_dilated", "0",
+                  lambda lhs, rhs: lax.conv_general_dilated(lhs, rhs,
+                                                            window_strides=(2, 3),
+                                                            padding=((0, 0), (0, 0)),
+                                                            lhs_dilation=(1, 1),
+                                                            rhs_dilation=(1, 2),
+                                                            dimension_numbers=("NCHW", "OIHW", "NCHW"),
+                                                            feature_group_count=1,
+                                                            batch_group_count=1,
+                                                            precision=None),
+                  [RandArg((7, 3, 9, 10), _f32), RandArg((3, 3, 4, 5), _f32)],
+                  poly_axes=[0, None]),
+
+    _make_harness("cummax", "1",
+                  lambda x: lax_control_flow.cummax(x, axis=1, reverse=False),
+                  [RandArg((3, 4, 5), _f32)],
+                  poly_axes=[0]),
+
+    _make_harness("dot_general", "",
+                  lambda lhs, rhs: lax.dot_general(lhs, rhs,
+                                                   dimension_numbers=(((2,), (1,)), ((0,), (0,)))),
+                  [RandArg((3, 4, 4), _f32), RandArg((3, 4), _f32)],
+                  poly_axes=[0, 0]),
+
+    _make_harness("dynamic_slice", "",
+                  # x:shape: (b, 4)
+                  lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+
+    _make_harness("jnp_take", "",
+                  lambda a, i: jnp.take(a, i, axis=1),
+                  [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
+                  poly_axes=[0, None]),
+
+    _make_harness("iota", "",
+                  lambda x: x + lax.iota(_f32, x.shape[0]),
+                  [RandArg((3,), _f32)],
+                  poly_axes=[0]),
+
+    _make_harness("jnp_matmul", "",
+                  jnp.matmul,
+                  [RandArg((7, 8, 4), _f32), RandArg((7, 4, 5), _f32)],
+                  poly_axes=[0, 0]),
+
+    _make_harness("jnp_where", "",
+                  jnp.where,
+                  [RandArg((2,), np.bool_), RandArg((), _f32), RandArg((2,), _f32)],
+                  poly_axes=[0, None, 0]),
+
+    _make_harness("pad", "",
+                  lax.pad,
+                  [RandArg((3, 2, 5), _f32), np.float32(5.),
+                   StaticArg(((0, 0, 0), (0, 0, 0), (1, 1, 1)))],
+                  poly_axes=[0, None]),
+
+    _make_harness("jnp_ones", "",
+                  lambda x: jnp.ones(x.shape, dtype=_f32),
+                  [RandArg((3, 2, 4), _f32)],
+                  poly_axes=[0]),
+
+    # TODO: random_gamma does not work yet.
+    # _make_harness("random_gamma", "",
+    #               lambda  key, a: jax.random.gamma(key, a),
+    #               [RandArg((3, 2), np.uint32), RandArg((3, 3), _f32)],
+    #               poly_axes=[0, 0]),
+
+    _make_harness("reshape", "",
+                  lambda x: x.reshape([x.shape[0], -1]),
+                  [RandArg((3, 2, 3), _f32)],
+                  poly_axes=[0]),
+
+    # TODO: support multiple poly axes
+    # _make_harness("reshape", "multi",
+    #               lambda x: x.reshape([x.shape[0], -1, x.shape[3], x.shape[2]]),
+    #               [RandArg((3, 4, 5, 6, 7), _f32)],
+    #               poly_axes=[(0, 2, 3)]),
+
+    _make_harness("jnp_squeeze", "axis=None",
+                  jnp.squeeze,
+                  [RandArg((5,), _f32), StaticArg(())],
+                  poly_axes=[0]),
+
+    _make_harness("jnp_squeeze", "axis=1",
+                  jnp.squeeze,
+                  [RandArg((4, 1), _f32), StaticArg((1,))],
+                  poly_axes=[0]),
+
+    _make_harness("scatter_add", "",
+                  partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True),
+                  [RandArg((7, 4), _f32),
+                   np.array([[1], [2]], np.int32),  # indices
+                   RandArg((7, 2), _f32),  # upd
+                   StaticArg(lax.ScatterDimensionNumbers((0,), (1,), (1,)))],
+                  poly_axes=[0, None, 0]),
+
+    _make_harness("slice", "entire_axis",
+                  lambda x: lax.slice(x, start_indices=(0, 1), limit_indices=(x.shape[0], 3)),
+                  [RandArg((7, 3), _f32)],
+                  poly_axes=[0]),
+
+    _make_harness("select", "0",
+                  # x.shape = (b, 3)
+                  lambda x: lax.select(x > 5., x, x),
+                  [RandArg((7, 3), _f32)],
+                  poly_axes=[0]),
+
+    _make_harness("select", "1",
+                  # x.shape = (b, 3); y.shape = (3,)
+                  jax.vmap(lambda x, y: lax.select(x > 5., x, y), in_axes=[0, None]),
+                  [RandArg((7, 3), _f32), RandArg((3,), _f32)],
+                  poly_axes=[0, None]),
+
+    _make_harness("squeeze", "axis=1_2",
+                  jnp.squeeze,
+                  [RandArg((4, 1, 1), _f32), StaticArg((1, 2))],
+                  poly_axes=[0]),
+]
+
+for reduce_op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]:
+  _POLY_SHAPE_TEST_HARNESSES.append(
+      _make_harness("reduce", reduce_op.__name__,
+                    lambda x: reduce_op(x, axis=-1, keepdims=True),
+                    [RandArg((3, 5), _f32)],
+                    poly_axes=[0])
+  )
+
+
+### We add to the test harnesses some that are obtained from the
+### primitive harnesses by applying vmap to the function and then asserting
+### that we can convert shape polymorphically the result.
+
+def _add_vmap_primitive_harnesses():
   """For each harness group, pick a single dtype.
 
   Ignore harnesses that fail in graph mode in jax2tf.
@@ -645,464 +822,133 @@ def _all_shape_poly_harnesses() -> Sequence[primitive_harness.Harness]:
 
   # Index by group
   harness_groups: Dict[
-      str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
+    str, Sequence[primitive_harness.Harness]] = collections.defaultdict(list)
   device = jtu.device_under_test()
 
   for h in all_h:
     # Drop the the JAX limitations
     if not h.filter(device_under_test=device, include_jax_unimpl=False):
       continue
-    # And the jax2tf limitations
-    if _get_jax2tf_limitations(device, h):
+    # And the jax2tf limitations that are known to result in TF error.
+    if any(l.expect_tf_error for l in _get_jax2tf_limitations(device, h)):
       continue
     harness_groups[h.group_name].append(h)
 
-  res = []
+  selected_harnesses = []
   for group_name, hlist in harness_groups.items():
     # Pick the dtype with the most harnesses in this group. Some harness
     # groups only test different use cases at a few dtypes.
     c = collections.Counter([h.dtype for h in hlist])
     (dtype, _), = c.most_common(1)
-    res.extend([h for h in hlist if h.dtype == dtype])
-  return res
+    selected_harnesses.extend([h for h in hlist if h.dtype == dtype])
+
+  # We do not yet support shape polymorphism for vmap for some primitives
+  _NOT_SUPPORTED_YET = frozenset([
+      # In the random._gamma_impl we do reshape(-1, 2) for the keys
+      "random_gamma",
+
+      # In linalg._lu_python we do reshape(-1, ...)
+      "lu",
+      "custom_linear_solve",
+
+      # We do *= shapes in the batching rule for conv_general_dilated
+      "conv_general_dilated",
+
+      # vmap(clamp) fails in JAX
+      "clamp",
+
+      "iota",  # vmap does not make sense for 0-argument functions
+  ])
+
+  batch_size = 3
+  for h in selected_harnesses:
+    if h.group_name in _NOT_SUPPORTED_YET:
+      continue
+
+    def make_batched_arg_descriptor(
+        ad: primitive_harness.ArgDescriptor) -> Optional[primitive_harness.ArgDescriptor]:
+      if isinstance(ad, RandArg):
+        return RandArg((batch_size,) + ad.shape, ad.dtype)
+      elif isinstance(ad, CustomArg):
+        def wrap_custom(rng):
+          arg = ad.make(rng)
+          return np.stack([arg] * batch_size)
+
+        return CustomArg(wrap_custom)
+      else:
+        assert isinstance(ad, np.ndarray), ad
+        return np.stack([ad] * batch_size)
+
+    new_args = [make_batched_arg_descriptor(ad)
+                for ad in h.arg_descriptors
+                if not isinstance(ad, StaticArg)]
+
+    # We do not check the result of harnesses that require custom assertions.
+    check_result = all(not l.custom_assert and not l.skip_comparison and l.tol is None
+                       for l in _get_jax2tf_limitations(device, h))
+    vmap_harness = _make_harness(h.group_name, f"vmap_{h.name}",
+                                 jax.vmap(h.dyn_fun, in_axes=0, out_axes=0),
+                                 new_args,
+                                 poly_axes=[0] * len(new_args),
+                                 check_result=check_result,
+                                 **h.params)
+    _POLY_SHAPE_TEST_HARNESSES.append(vmap_harness)
 
 
 def _get_jax2tf_limitations(
     device, h: primitive_harness.Harness) -> Sequence[Jax2TfLimitation]:
   # And the jax2tf limitations
   def applicable_jax2tf_limitation(l: Jax2TfLimitation) -> bool:
-    return (l.filter(device=device, dtype=h.dtype, mode="graph") and
-            l.expect_tf_error)
+    # The CheckShapePolymorphism uses tf.function, so we care about "graph"
+    return l.filter(device=device, dtype=h.dtype, mode="graph")
 
   limitations = Jax2TfLimitation.limitations_for_harness(h)
   return tuple(filter(applicable_jax2tf_limitation, limitations))
 
 
-# We do not yet support shape polymorphism for vmap for some primitives
-_VMAP_NOT_POLY_YET = frozenset([
-    # In the random._gamma_impl we do reshape(-1, 2) for the keys
-    "random_gamma",
-
-    # In linalg._lu_python we do reshape(-1, ...)
-    "lu",
-    "custom_linear_solve",
-
-    # We do *= shapes in the batching rule for conv_general_dilated
-    "conv_general_dilated",
-
-    # vmap(clamp) fails in JAX
-    "clamp",
-])
+_add_vmap_primitive_harnesses()
 
 
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   """Tests for primitives that take shape values as parameters."""
 
-  # This test runs for all primitive harnesses, and verifies that the result
-  # of vmap over a primitive harness can be converted batch-polymorphically.
-  @primitive_harness.parameterized(
-      _all_shape_poly_harnesses(), include_jax_unimpl=False)
-  @jtu.ignore_warning(
-      category=UserWarning, message="Using reduced precision for gradient.*")
-  def test_prim_vmap(self, harness: primitive_harness.Harness):
-    if harness.group_name in _VMAP_NOT_POLY_YET:
-      raise unittest.SkipTest(
-          f"TODO: vmap({harness.group_name}) not yet supported")
-    func_jax = harness.dyn_fun
+  # This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES.
+  @primitive_harness.parameterized(_POLY_SHAPE_TEST_HARNESSES)
+  def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())
-    if len(args) == 0:
-      # vmap not defined for functions with no args
-      return
+    poly_axes = harness.params["poly_axes"]
+    assert len(args) == len(poly_axes)
+    # Make the polymorphic_shapes and input_signature
+    polymorphic_shapes: List[Optional[str]] = []
+    input_signature: List[tf.TensorSpec] = []
+    for i, (arg, poly_axis) in enumerate(zip(args, poly_axes)):
+      if poly_axis is None:
+        polymorphic_shapes.append(None)
+        input_signature.append(tf.TensorSpec(np.shape(arg), arg.dtype))
+      else:
+        polymorphic_shapes.append(
+            ", ".join([str(d) if i != poly_axis else "b"
+                       for i, d in enumerate(arg.shape)]))
+        input_signature.append(tf.TensorSpec([d if i != poly_axis else None
+                                              for i, d in enumerate(arg.shape)],
+                                             arg.dtype))
 
-    res_jax = func_jax(*args)
-
-    # Replicate all arguments
-    batch_size = 3
-    batched_args = [np.stack([a] * batch_size) for a in args]
-    func_jax_vmap = jax.vmap(func_jax, in_axes=0, out_axes=0)
-    # Check that batching works
-    res_jax_vmap = func_jax_vmap(*batched_args)
-
-    def arr_to_shape_spec(a):
-      return "b, " + ", ".join(str(d) for d in a.shape)
-
-    func_jax_vmap_polymorphic_shapes = jax.tree_map(arr_to_shape_spec,
-                                                    tuple(args))
-
-    def arr_to_tf_tensor_spec(a):
-      return tf.TensorSpec((None,) + a.shape, a.dtype)
-
-    func_jax_vmap_input_signature = jax.tree_map(arr_to_tf_tensor_spec,
-                                                 tuple(args))
-    func_jax_vmap_output_signature = jax.tree_map(arr_to_tf_tensor_spec,
-                                                  res_jax)
+    res_jax = harness.dyn_fun(*args)
     f_tf = self.CheckShapePolymorphism(
-        func_jax_vmap,
-        input_signature=func_jax_vmap_input_signature,
-        polymorphic_shapes=func_jax_vmap_polymorphic_shapes,
-        expected_output_signature=func_jax_vmap_output_signature)
-
-    limitations = _get_jax2tf_limitations(jtu.device_under_test(), harness)
-    if any([l.custom_assert or l.skip_comparison for l in limitations]):
-      self.assertAllClose(res_jax_vmap, f_tf(*batched_args))
-
-  def test_add_with_broadcast(self):
-
-    def f_jax(x, y):
-      return jnp.add(x, y)
-
-    x = np.arange(12.).reshape((3, 4))
-    y = np.arange(24).reshape((2, 3, 4))
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec([None, 4], dtype=x.dtype),
-            tf.TensorSpec([None, None, 4], dtype=y.dtype)
-        ],
-        polymorphic_shapes=["(d, _)", "(batch, d, _)"],
-        expected_output_signature=tf.TensorSpec([None, None, 4]))
-
-    self.assertAllClose(f_jax(x, y), f_tf(x, y))
-
-  def test_broadcast(self):
-
-    def f_jax(x):
-      return jnp.broadcast_to(x, [x.shape[0], x.shape[0], x.shape[1]])
-
-    x = np.arange(12.).reshape((3, 4))
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, 4], dtype=x.dtype)],
-        polymorphic_shapes=[("batch, _")],
-        expected_output_signature=tf.TensorSpec([None, None, 4]))
-
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_ones(self):
-
-    def f_jax(x):
-      return jnp.ones(x.shape, dtype=x.dtype)
-
-    x_shape = (5, 6, 4)
-    x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, None, 4], dtype=x.dtype)],
-        polymorphic_shapes=[("width, height, _")],
-        expected_output_signature=tf.TensorSpec([None, None, 4]))
-
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_clamp(self):
-
-    @jax.vmap
-    def f_jax(mi, x, ma):
-      return lax.clamp(mi, x, ma)
-
-    x = np.ones((7, 2, 3))
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec([None, 2, 3], dtype=x.dtype),
-            tf.TensorSpec([None, 2, 3], dtype=x.dtype),
-            tf.TensorSpec([None, 2, 3], dtype=x.dtype),
-        ],
-        polymorphic_shapes=["b, _, _", "b, _, _", "b, _, _"],
-        expected_output_signature=tf.TensorSpec([None, 2, 3], dtype=x.dtype))
-    self.assertAllClose(f_jax(x, x, x), f_tf(x, x, x))
-
-  def test_conv_general_dilated(self):
-    batch_size = 7
-    lhs_shape = (batch_size, 3, 9, 10)  # 2 spatial dimensions (9, 10)
-    rhs_shape = (3, 3, 4, 5)
-    window_strides = (2, 3)
-    padding = ((0, 0), (0, 0))
-    lhs_dilation = (1, 1)
-    rhs_dilation = (1, 2)
-    dimension_numbers = ("NCHW", "OIHW", "NCHW")
-    feature_group_count = 1
-    batch_group_count = 1
-    precision = None
-
-    lhs = np.random.rand(*lhs_shape)
-    rhs = np.random.rand(*rhs_shape)
-
-    def f_jax(lhs, rhs):
-      return lax.conv_general_dilated(lhs, rhs, window_strides, padding,
-                                      lhs_dilation, rhs_dilation,
-                                      dimension_numbers, feature_group_count,
-                                      batch_group_count, precision)
-
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec(lhs_shape, dtype=lhs.dtype),
-                         tf.TensorSpec(rhs_shape, dtype=rhs.dtype)],
-        polymorphic_shapes=["B, ...", None],
-        expected_output_signature=tf.TensorSpec([None, 3, 3, 1],
-                                                dtype=lhs.dtype))
-    self.assertAllClose(f_jax(lhs, rhs), f_tf(lhs, rhs))
-
-  def test_conv_general_dilated_vmap(self):
-    raise unittest.SkipTest(
-        "TODO: vmap(conv_general_dilated) not yet supported")
-    lhs_shape = (2, 3, 9, 10)
-    rhs_shape = (3, 3, 4, 5)
-    window_strides = (2, 3)
-    padding = ((0, 0), (0, 0))
-    lhs_dilation = (1, 1)
-    rhs_dilation = (1, 2)
-    dimension_numbers = ("NCHW", "OIHW", "NCHW")
-    feature_group_count = 1
-    batch_group_count = 1
-    precision = None
-
-    batch_size = 7
-
-    lhs = np.random.rand(batch_size, *lhs_shape)
-    rhs = np.random.rand(batch_size, *rhs_shape)
-
-    @jax.vmap
-    def f_jax(lhs, rhs):
-      return lax.conv_general_dilated(lhs, rhs, window_strides, padding,
-                                      lhs_dilation, rhs_dilation,
-                                      dimension_numbers, feature_group_count,
-                                      batch_group_count, precision)
-
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec((None,) + lhs_shape),
-            tf.TensorSpec((None,) + rhs_shape)
-        ],
-        polymorphic_shapes=["b, _, _, _, _", "b, _, _, _, _"],
-        expected_output_signature=tf.TensorSpec([None, 2, 3]))
-    self.assertAllClose(f_jax(lhs, rhs), f_tf(lhs, rhs))
-
-  def test_cummax(self):
-
-    @jax.vmap
-    def f_jax(x):
-      return lax_control_flow.cummax(x, axis=0, reverse=False)
-
-    batch_size = 7
-    x = np.random.rand(batch_size, 8, 9)
-
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, 8, 9], dtype=x.dtype)],
-        polymorphic_shapes=["b, _, _"],
-        expected_output_signature=tf.TensorSpec([None, 8, 9], dtype=x.dtype))
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_dot_general(self):
-    dimension_numbers = (((2,), (1,)), ((0,), (0,)))
-
-    def f_jax(lhs, rhs):  # lhs: [b, 4, 4], rhs: [b, 4]
-      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
-
-    batch_size = 7
-    lhs = np.random.rand(batch_size, 4, 4)
-    rhs = np.random.rand(batch_size, 4)
-
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, 4, 4], dtype=lhs.dtype),
-                         tf.TensorSpec([None, 4], dtype=rhs.dtype)],
-        polymorphic_shapes=["b, _, _", "b, _"],
-        expected_output_signature=tf.TensorSpec([None, 4], dtype=lhs.dtype))
-    self.assertAllClose(f_jax(lhs, rhs), f_tf(lhs, rhs))
-
-  def test_dynamic_slice(self):
-
-    def f_jax(x):  # x:shape: (b, 4)
-      return lax.dynamic_slice(x, (
-          0,
-          1,
-      ), (
-          x.shape[0],
-          2,
-      ))
-
-    batch_size = 7
-    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
-
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec((None, 4))],
-        polymorphic_shapes=["b, _"],
-        expected_output_signature=tf.TensorSpec([None, 2]))
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_dynamic_slice_vmap(self):
-
-    @jax.vmap
-    def f_jax(x, idx):  # x.shape : (4,)
-      return lax.dynamic_slice(x, idx, slice_sizes=(2,))
-
-    batch_size = 7
-    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
-    idx = np.arange(batch_size, dtype=np.int32).reshape((batch_size, 1))
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec([None, 4]),
-            tf.TensorSpec([None, 1], dtype=idx.dtype)
-        ],
-        polymorphic_shapes=["b, _", "b, _"],
-        expected_output_signature=tf.TensorSpec([None, 2]))
-    self.assertAllClose(f_jax(x, idx), f_tf(x, idx))
-
-  def test_gather(self):
-
-    def f(a, i):
-      return jnp.take(a, i, axis=1)
-
-    x = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))[:2, :3, :4]
-    i = np.array([1, 2], np.int32)
-
-    f_tf = self.CheckShapePolymorphism(
-        f,
-        input_signature=[
-            tf.TensorSpec([None, 3, 4], dtype=x.dtype),
-            tf.TensorSpec([2], np.int32)
-        ],
-        polymorphic_shapes=["(batch, _, _)", "(_)"],
-        expected_output_signature=tf.TensorSpec([None, 2, 4], dtype=x.dtype))
-
-    self.assertAllClose(f(x, i), f_tf(x, i))
-
-    # Does not yet work
-    # f_tf = self.CheckShapePolymorphism(
-    #   f,
-    #   input_signature=[tf.TensorSpec([None, 3, 4]), tf.TensorSpec([None], np.int32)],
-    #   polymorphic_shapes=["batch, _, _", "batch"],
-    #   expected_output_signature=tf.TensorSpec([None, None, 4]))
-    # self.assertAllClose(f(x, i), f_tf(x, i))
-
-  def test_gather_vmap(self):
-
-    @jax.vmap
-    def f(a, i):
-      return jnp.take(a, i, axis=0)
-
-    x = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))[:2, :3, :4]
-    i = np.array([1, 2], np.int32)
-
-    f_tf = self.CheckShapePolymorphism(
-        f,
-        input_signature=[
-            tf.TensorSpec([None, 3, 4], dtype=x.dtype),
-            tf.TensorSpec([None], np.int32)
-        ],
-        polymorphic_shapes=["batch, _, _", "batch"],
-        expected_output_signature=tf.TensorSpec([None, 4], dtype=x.dtype))
-
-    self.assertAllClose(f(x, i), f_tf(x, i))
-
-  def test_iota(self):
-
-    def f_jax(x):
-      x + lax.iota(np.float32, x.shape[0])
-
-    x = np.arange(12.)
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None], dtype=x.dtype)],
-        polymorphic_shapes=["d"],
+        harness.dyn_fun,
+        input_signature=input_signature,
+        polymorphic_shapes=polymorphic_shapes,
         expected_output_signature=None)
 
-    self.assertAllClose(f_jax(x), f_tf(x))
+    if harness.params["check_result"]:
+      self.assertAllClose(res_jax, f_tf(*args))
 
-  def test_matmul(self):
 
-    def f_jax(x, y):
-      return jnp.matmul(x, y)
-
-    x = np.random.rand(7, 8, 4)
-    y = np.random.rand(7, 4, 5)
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec([None, 8, 4], dtype=x.dtype),
-            tf.TensorSpec([None, 4, None], dtype=y.dtype)
-        ],
-        polymorphic_shapes=["(batch, _, 4)", "(batch, 4, w)"],
-        expected_output_signature=tf.TensorSpec([None, 8, None], dtype=x.dtype))
-
-    self.assertAllClose(f_jax(x, y), f_tf(x, y))
-
-  def test_pad(self):
-
-    def f_jax(x):
-      return lax.pad(x, np.float_(5.), ((0, 0, 0), (0, 0, 0), (1, 1, 1)))
-
-    batch_size = 7
-    x = np.random.rand(batch_size, 2, 3)
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, 2, 3], dtype=x.dtype)],
-        polymorphic_shapes=["(batch, _, _)"],
-        expected_output_signature=tf.TensorSpec([None, 2, 7], dtype=x.dtype))
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_random_gamma(self):
-    assert "random_gamma" in _VMAP_NOT_POLY_YET
-    raise unittest.SkipTest("TODO: vmap(random_gamma) not yet supported")
-
-    def f_jax(key, a):
-      return jax.random.gamma(key, a)
-
-    batch_size = 7
-    key = np.random.rand(batch_size, 2)
-    a = np.random.rand(batch_size, 3)
-
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec([None, 2], dtype=key.dtype),
-            tf.TensorSpec([None, 3], dtype=a.dtype)
-        ],
-        polymorphic_shapes=["(batch, _)", "(batch, _)"],
-        expected_output_signature=tf.TensorSpec([None, 3]))
-    self.assertAllClose(f_jax(key, a), f_tf(key, a))
-
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(testcase_name=f"_{op.__name__}", op=op)
-          for op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]))
-  def test_reduce(self, op=jnp.max):
-    f_jax = lambda x: op(x, axis=-1, keepdims=True)
-
-    x = np.random.rand(7, 8)
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec([None, 8], dtype=x.dtype),
-        ],
-        polymorphic_shapes=["(batch, ...)"],
-        expected_output_signature=tf.TensorSpec([None, 1], dtype=x.dtype))
-
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_reshape(self):
-
-    self.CheckShapePolymorphism(
-        lambda x: x.reshape([x.shape[0], -1]),
-        input_signature=[tf.TensorSpec([None, 2, 3])],
-        polymorphic_shapes=["batch, _, _"],
-        expected_output_signature=tf.TensorSpec([None, 6]))
-
-    self.CheckShapePolymorphism(
-        lambda x: x.reshape([x.shape[0], -1, x.shape[3], x.shape[2]]),
-        input_signature=[tf.TensorSpec([None, 2, None, None, 3])],
-        polymorphic_shapes=["batch, 2, batch, height, 3"],
-        expected_output_signature=tf.TensorSpec([None, 6, None, None]))
-
+  def test_reshape_error(self):
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
-        re.escape(
-            "Shapes (batch, 2, batch, height, 3) and (batch, -1, batch) must have the same set of shape variables"
-        )):
+        re.escape("Shapes (batch, 2, batch, height, 3) and (batch, -1, batch) "
+                  "must have the same set of shape variables")):
       self.CheckShapePolymorphism(
           lambda x: x.reshape([x.shape[0], -1, x.shape[2]]),
           input_signature=[tf.TensorSpec([None, 2, None, None, 3])],
@@ -1152,117 +998,14 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_jax, f_tf(x))
     self.assertFalse(traced)  # We are not tracing again
 
-  def test_scatter(self):
-    batch_size = 7
-    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :4]
-    idx = np.array([[1], [2]], np.int32)
-    upd = -np.arange(100, dtype=np.float32).reshape((10, 10))[:batch_size, :2]
-    dimension_numbers = ((0,), (1,), (1,))
-
-    def f_jax(x, upd):
-      return lax.scatter_add(
-          x,
-          scatter_indices=idx,
-          updates=upd,
-          dimension_numbers=lax.ScatterDimensionNumbers(*dimension_numbers),
-          indices_are_sorted=False,
-          unique_indices=True)
-
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec([None, 4], dtype=x.dtype),
-            tf.TensorSpec([None, 2], dtype=upd.dtype)
-        ],
-        polymorphic_shapes=["b, _", "b, _"],
-        expected_output_signature=tf.TensorSpec([None, 4]))
-
-    self.assertAllClose(f_jax(x, upd), f_tf(x, upd))
-
-  def test_select(self):
-
-    def f_jax(x):  # x.shape = (b, 3)
-      return lax.select(x > 5., x, x)
-
-    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:7, :3]
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, 3], dtype=x.dtype)],
-        polymorphic_shapes=["(b, _)"],
-        expected_output_signature=tf.TensorSpec([None, 3]))
-
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_select_vmap_0(self):
-
-    @jax.vmap
-    def f_jax(x):  # x.shape = (3,)
-      return lax.select(x > 5., x, x)
-
-    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:7, :3]
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, 3], dtype=x.dtype)],
-        polymorphic_shapes=["(b, _)"],
-        expected_output_signature=tf.TensorSpec([None, 3]))
-
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_select_vmap_1(self):
-
-    @functools.partial(jax.vmap, in_axes=(0, None))
-    def f_jax(x, y):  # x.shape = (3,)
-      return lax.select(x > 5., x, y)
-
-    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:7, :3]
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[
-            tf.TensorSpec([None, 3], dtype=x.dtype),
-            tf.TensorSpec([3], dtype=x.dtype)
-        ],
-        polymorphic_shapes=["(b, _)", "_"],
-        expected_output_signature=tf.TensorSpec([None, 3]))
-
-    self.assertAllClose(f_jax(x, x[0]), f_tf(x, x[0]))
-
-  def test_slice(self):
-
-    def f_jax(x):  # x.shape = (b, 3)
-      return lax.slice(x, start_indices=(0, 1), limit_indices=(x.shape[0], 3))
-
-    x = np.arange(100, dtype=np.float32).reshape((10, 10))[:7, :3]
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, 3], dtype=x.dtype)],
-        polymorphic_shapes=["(b, _)"],
-        expected_output_signature=tf.TensorSpec([None, 2]))
-
-    self.assertAllClose(f_jax(x), f_tf(x))
-
-  def test_squeeze(self):
-
-    def f_jax(x):
-      return jnp.squeeze(x, axis=1)
-
-    x = np.random.rand(4, 1)
-    res_jax = f_jax(x)
-
-    # Trace with a known dimension to squeeze
-    f_tf = self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([None, 1], dtype=x.dtype)],
-        polymorphic_shapes=[PS("b", ...)],
-        expected_output_signature=tf.TensorSpec([None]))
-
-    self.assertAllClose(res_jax, f_tf(x))
+  def test_squeeze_error(self):
 
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
         re.escape("Shape variable comparison b2 == 1 is inconclusive")):
       # Trace with unknown dimension to squeeze
       self.CheckShapePolymorphism(
-          f_jax,
+          lambda x: jnp.squeeze(x, axis=1),
           input_signature=[tf.TensorSpec([None, None])],
           polymorphic_shapes=[PS("b1", "b2")],
           expected_output_signature=tf.TensorSpec([None]))

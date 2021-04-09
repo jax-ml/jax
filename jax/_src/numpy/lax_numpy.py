@@ -1679,7 +1679,7 @@ def _where(condition, x=None, y=None):
     condition = lax.ne(condition, zeros_like(condition))
   x, y = _promote_dtypes(x, y)
   condition, x, y = broadcast_arrays(condition, x, y)
-  return lax.select(condition, x, y) if np.size(x) else x
+  return lax.select(condition, x, y) if not core.is_empty_shape(np.shape(x)) else x
 
 
 _WHERE_DOC = """\
