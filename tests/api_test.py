@@ -2269,8 +2269,6 @@ class APITest(jtu.JaxTestCase):
       f()
 
   def test_xla_computation_zeros_doesnt_device_put(self):
-    raise unittest.SkipTest("broken test")  # TODO(mattjj): fix
-
     with jtu.count_device_put() as count:
       api.xla_computation(lambda: jnp.zeros(3))()
     self.assertEqual(count[0], 0)
@@ -2666,6 +2664,10 @@ class APITest(jtu.JaxTestCase):
     jtu.check_grads(batched_scan_over_mul, (x_batch, coeff), order=2,
                     modes=['rev'])
 
+  def test_jnp_array_doesnt_device_put(self):
+    with jtu.count_device_put() as count:
+      api.make_jaxpr(lambda: jnp.array(3))()
+    self.assertEqual(count[0], 0)
 
 class RematTest(jtu.JaxTestCase):
 

@@ -47,7 +47,6 @@ from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_sha
 from jax.config import config
 from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
 from jax import lax
-from jax._src.lax.lax import _device_put_raw
 from jax import ops
 from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
@@ -2932,12 +2931,16 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     # large integers; see discussion in https://github.com/google/jax/pull/6047.
     object = _np_array(object, dtype=dtype, ndmin=ndmin, copy=False)
 
+    # call _np_array a second time with canonicalized dtype
+    dtype = dtypes.canonicalize_dtype(object.dtype)
+    object = _np_array(object, dtype=dtype, copy=False)
+
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
     _inferred_dtype = object.dtype and dtypes.canonicalize_dtype(object.dtype)
     lax._check_user_dtype_supported(_inferred_dtype, "array")
-    out = np.array(object, copy=copy, dtype=dtype)
+    out = _np_array(object, copy=copy, dtype=dtype)
     if dtype: assert _dtype(out) == dtype
   elif isinstance(object, (DeviceArray, core.Tracer)):
     if isinstance(object, DeviceArray) and copy:
