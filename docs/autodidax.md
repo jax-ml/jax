@@ -32,9 +32,10 @@ limitations under the License.
 ---
 ```
 
-```{code-cell}
+[![Open in
+Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/autodidax.ipynb)
 
-```
++++
 
 # Autodidax: JAX core from scratch
 
@@ -423,7 +424,9 @@ impl_rules[greater_p] = lambda x, y: [np.greater(x, y)]
 impl_rules[transpose_p] = lambda x, *, perm: [np.transpose(x, perm)]
 
 def broadcast_impl(x, *, shape, axes):
-  return [np.broadcast_to(np.expand_dims(x, axes), shape)]
+  for axis in sorted(axes):
+    x = np.expand_dims(x, axis)
+  return [np.broadcast_to(x, shape)]
 impl_rules[broadcast_p] = broadcast_impl
 ```
 
