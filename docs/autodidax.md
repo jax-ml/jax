@@ -728,7 +728,7 @@ def _tree_unflatten(treedef: PyTreeDef, xs: Iterator) -> Any:
     return treedef.node_type.from_iterable(treedef.node_metadata, children)
 ```
 
-With this pytree-handling `jvp` impelmentation, we can now handle arbitrary
+With this pytree-handling `jvp` implementation, we can now handle arbitrary
 input and output containers. That'll come in handy with future transformations
 too!
 
