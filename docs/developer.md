@@ -203,7 +203,7 @@ And then run:
 sphinx-build -b html docs docs/build/html
 ```
 This can take a long time because it executes many of the notebooks in the documentation source;
-if you'd prefer to build the docs without exeuting the notebooks, you can run:
+if you'd prefer to build the docs without executing the notebooks, you can run:
 ```
 sphinx-build -b html -D jupyter_execute_notebooks=off docs docs/build/html
 ```
