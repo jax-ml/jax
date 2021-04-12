@@ -89,6 +89,8 @@ from .api import (
   tree_transpose,
   tree_unflatten,
   value_and_grad,
+  value_and_jacfwd,
+  value_and_jacrev,
   vjp,
   vmap,
   xla,  # TODO(phawkins): update users to avoid this.
