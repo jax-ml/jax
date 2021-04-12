@@ -4714,7 +4714,13 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
 
   use_64bit_index = _any([not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape])
   index_dtype = int64 if use_64bit_index else int32
-  gather_indices = np.zeros((0,), dtype=index_dtype)  # use np to save a compilation
+
+  # Gather indices.
+  # Pairs of (array, start_dim) values. These will be broadcast into
+  # gather_indices_shape, with the array dimensions aligned to start_dim, and
+  # then concatenated.
+  gather_indices = []
+  gather_indices_shape = []
 
   # We perform three transformations to y before the scatter op, in order:
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to
@@ -4740,15 +4746,12 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       advanced_indexes = broadcast_arrays(*advanced_indexes)
       shape = advanced_indexes[0].shape
       ndim = len(shape)
-      advanced_indexes = [
-        lax.convert_element_type(lax.reshape(a, shape + (1,)), index_dtype)
-        for a in advanced_indexes]
 
-      # Broadcast gather_indices from [..., k] to [..., 1, 1, ..., 1, k].
-      gather_indices = lax.broadcast_in_dim(
-        gather_indices, np.insert(gather_indices.shape, -1, shape),
-        tuple(range(gather_indices.ndim - 1)) + (gather_indices.ndim + ndim - 1,))
-      gather_indices = concatenate([gather_indices] + advanced_indexes, -1)
+      start_dim = len(gather_indices_shape)
+      gather_indices += ((lax.convert_element_type(a, index_dtype), start_dim)
+                         for a in advanced_indexes)
+      gather_indices_shape += shape
+
       start_index_map.extend(x_advanced_axes)
       collapsed_slice_dims.extend(x_advanced_axes)
       slice_shape.extend(shape)
@@ -4772,8 +4775,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
       i = lax.convert_element_type(i, index_dtype)
-      i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
-      gather_indices = concatenate((gather_indices, i), -1)
+      gather_indices.append((i, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
       start_index_map.append(x_axis)
@@ -4807,8 +4809,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
         reversed_y_dims.append(collapsed_y_axis)
       if stride == 1:
         i = lax.convert_element_type(start, index_dtype)
-        i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
-        gather_indices = concatenate((gather_indices, i), -1)
+        gather_indices.append((i, len(gather_indices_shape)))
         slice_shape.append(limit - start)
         gather_slice_shape.append(limit - start)
         offset_dims.append(collapsed_y_axis)
@@ -4818,18 +4819,9 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
         size = i.shape[0]
         slice_shape.append(size)
         gather_slice_shape.append(1)
-        gather_indices_shape = tuple(gather_indices.shape[:-1]) + (size,)
-        i = lax.broadcast_in_dim(
-            i, shape=gather_indices_shape + (1,),
-            broadcast_dimensions=(len(gather_indices_shape) - 1,))
-        gather_indices = lax.broadcast_in_dim(
-            gather_indices,
-            shape=gather_indices_shape + (len(start_index_map),),
-            broadcast_dimensions=(
-              tuple(range(len(gather_indices_shape) - 1)) +
-              (len(gather_indices_shape),)))
-        gather_indices = concatenate(
-          (gather_indices, i), len(gather_indices_shape))
+        gather_indices.append((i, len(gather_indices_shape)))
+        gather_indices_shape.append(size)
+
         start_index_map.append(x_axis)
         collapsed_slice_dims.append(x_axis)
 
@@ -4846,6 +4838,19 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       msg = "Indexing mode not yet supported. Open a feature request!\n{}"
       raise IndexError(msg.format(idx))
 
+  if len(gather_indices) == 0:
+    gather_indices_array = np.zeros((0,), dtype=index_dtype)
+  elif len(gather_indices) == 1:
+    g, _ = gather_indices[0]
+    gather_indices_array = lax.expand_dims(g, (g.ndim,))
+  else:
+    last_dim = len(gather_indices_shape)
+    gather_indices_shape.append(1)
+    gather_indices_array = lax.concatenate([
+      lax.broadcast_in_dim(g, gather_indices_shape, tuple(range(i, i + g.ndim)))
+      for g, i in gather_indices],
+      last_dim)
+
   dnums = lax.GatherDimensionNumbers(
     offset_dims = tuple(offset_dims),
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
@@ -4857,7 +4862,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     gather_slice_shape=gather_slice_shape,
     reversed_y_dims=reversed_y_dims,
     dnums=dnums,
-    gather_indices=gather_indices)
+    gather_indices=gather_indices_array)
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
