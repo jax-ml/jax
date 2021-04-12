@@ -629,7 +629,9 @@ def _allreduce_abstract_eval(*args, axes, axis_index_groups):
     named_shapes = [{name: size for name, size in arg.named_shape.items()
                      if name not in named_axes} for arg in args]
   else:
-    assert len(pos_axes) == 0
+    if len(pos_axes) != 0:
+      raise ValueError(f"axis_index_groups can only be used with reductions over "
+                       f"named axes, but got: {axes}")
   return [ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
                       arg.dtype, named_shape=named_shape)
           for arg, named_shape in zip(args, named_shapes)]
@@ -1036,11 +1038,13 @@ def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_
                     axis_index_groups=axis_index_groups, axis_size=axis_size, axis_env=axis_env, platform=platform)
 
 def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+  if not isinstance(axis_name, (list, tuple)):
+    axis_name = (axis_name,)
   x_aval = raise_to_shaped(x)
   new_shape = list(x_aval.shape)
   new_shape.insert(all_gather_dimension, axis_size)
   new_named_shape = {name: size for name, size in x_aval.named_shape.items()
-                     if name != axis_name}
+                     if name not in axis_name}
   return x_aval.update(shape=new_shape, named_shape=new_named_shape)
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
@@ -1152,8 +1156,9 @@ def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch):
   pos_aval = lax.dot_general_p.abstract_eval(
       x, y, dimension_numbers=[pos_contract, pos_batch],
       precision=None, preferred_element_type=None)
+  common_named_shape = core.join_named_shapes(x.named_shape, y.named_shape)
   named_shape = {name: size
-                 for aval in (x, y) for name, size in aval.named_shape.items()
+                 for name, size in common_named_shape.items()
                  if name not in axis_name}
   return pos_aval.update(named_shape=named_shape)
 
