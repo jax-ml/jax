@@ -296,7 +296,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "dtype": dtype, "shape": shape}
       for dtype in jtu.dtypes.floating + jtu.dtypes.integer
-      for shape in [100, (10, 10), (10, 5, 2)]))
+      for shape in [100, (10, 10), (10, 5, 2), 0, 1, (0, 5), (1, 5)]))
   def testPermutationArray(self, dtype, shape):
     key = random.PRNGKey(0)
     x = jnp.arange(np.prod(shape)).reshape(shape).astype(dtype)
@@ -307,7 +307,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm2 = crand(key)
 
     self.assertAllClose(perm1, perm2)
-    self.assertFalse(np.all(perm1 == x))  # seems unlikely!
+    if x.shape[0] > 1:
+      self.assertFalse(np.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(np.sort(perm1.ravel()), x.ravel(), check_dtypes=False)
     self.assertArraysAllClose(
       x, jnp.arange(np.prod(shape)).reshape(shape).astype(dtype))
