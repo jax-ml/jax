@@ -93,11 +93,15 @@ _XLA_EXTENSION_STUBS = [
 def patch_copy_xla_extension_stubs(dst_dir):
   # This file is required by PEP-561. It marks jaxlib as package containing
   # type stubs.
-  with open(os.path.join(dst_dir, "py.typed"), "w") as f:
+  with open(os.path.join(dst_dir, "py.typed"), "w"):
     pass
   # The -stubs suffix is required by PEP-561.
   xla_extension_dir = os.path.join(dst_dir, "xla_extension-stubs")
   os.makedirs(xla_extension_dir)
+  # Create a dummy __init__.py to convince setuptools that
+  # xla_extension-stubs is a package.
+  with open(os.path.join(xla_extension_dir, "__init__.py"), "w"):
+    pass
   for stub_name in _XLA_EXTENSION_STUBS:
     with open(r.Rlocation(
         "org_tensorflow/tensorflow/compiler/xla/python/xla_extension/" + stub_name)) as f:
