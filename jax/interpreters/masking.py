@@ -310,6 +310,10 @@ class DimensionHandlerPoly(core.DimensionHandler):
 
   Most methods are inherited.
   """
+  def is_constant(self, d: DimSize) -> bool:
+    assert isinstance(d, Poly)
+    return False
+
   def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
     try:
       return d1 == d2

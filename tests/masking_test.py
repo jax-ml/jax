@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-import itertools as it
 from unittest import SkipTest
 
 import numpy as np
@@ -23,7 +22,6 @@ from jax import lax
 from jax import core
 from jax import test_util as jtu
 from jax.config import config
-from jax._src.numpy.lax_numpy import _polymorphic_slice_indices
 from jax._src.util import safe_map, safe_zip
 from jax.tree_util import tree_flatten
 
@@ -796,24 +794,6 @@ class MaskingTest(jtu.JaxTestCase):
     ans = fun([x, ns], dict(m=2))
     expected = 3+1 + 5+9+2
     self.assertAllClose(ans, expected, check_dtypes=False)
-
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_start={}_stop={}_step={}_length={}"
-       .format(start, stop, step, length),
-       "start": start, "stop": stop, "step": step, "length": length}
-      for length in range(1, 5)
-      for start, stop, step
-      in it.product(it.chain([None], range(-10, 10)), repeat=3)
-      if step != 0))
-  def test_slice_indices(self, start, stop, step, length):
-    s = slice(start, stop, step)
-    assert _polymorphic_slice_indices(s, length) == s.indices(length)
-
-  def test_slice_index_poly_start(self):
-    n = Poly({Mon({'n': 1}): 1})
-    s = slice(n, None, None)
-    assert (n, 2 * n, 1) == _polymorphic_slice_indices(s, 2 * n)
 
 
   def test_slice_oob_indexing(self):

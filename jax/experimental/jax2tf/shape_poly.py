@@ -56,6 +56,10 @@ class DimVar:
 
 class DimensionHandlerVar(core.DimensionHandler):
   """See core.DimensionHandler."""
+  def is_constant(self, d: DimSize) -> bool:
+    assert isinstance(d, DimVar)
+    return False
+
   def symbolic_equal(self, d1: DimSize, d2: DimSize) -> bool:
     # We compare hashes first, to avoid InconclusiveDimensionOperation.
     return hash(d1) == hash(d2) and d1 == d2

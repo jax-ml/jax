@@ -3863,10 +3863,7 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice limit_indices must have the same length as start_indices, "
            "got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
-  # TODO(necula): remove this check for is_polymorphic. It is unsound.
-  if (not masking.is_polymorphic(limit_indices) and
-      not masking.is_polymorphic(operand.shape) and
-      not core.greater_equal_shape(operand.shape, limit_indices)):
+  if not core.greater_equal_shape(operand.shape, limit_indices):
     msg = ("slice limit_indices must be less than or equal to operand shape, "
            "got limit_indices {} for operand shape {}.")
     raise TypeError(msg.format(limit_indices, operand.shape))
