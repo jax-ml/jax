@@ -78,8 +78,8 @@ are structured.
 ```{code-cell} ipython3
 :id: RSxEiWi-EeYW
 
-def examine_jaxpr(typed_jaxpr):
-  jaxpr = typed_jaxpr.jaxpr
+def examine_jaxpr(closed_jaxpr):
+  jaxpr = closed_jaxpr.jaxpr
   print("invars:", jaxpr.invars)
   print("outvars:", jaxpr.outvars)
   print("constvars:", jaxpr.constvars)
@@ -156,7 +156,7 @@ from jax._src.util import safe_map
 
 +++ {"id": "CpTml2PTrzZ4"}
 
-This function first flattens its arguments into a list, which are the abstracted and wrapped as partial values. The `pe.trace_to_jaxpr` function is used to then trace a function into a Jaxpr
+This function first flattens its arguments into a list, which are the abstracted and wrapped as partial values. The `jax.make_jaxpr` function is used to then trace a function into a Jaxpr
 from a list of partial value inputs.
 
 ```{code-cell} ipython3
@@ -226,7 +226,7 @@ eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.literals, jnp.ones(5))
 
 Notice that `eval_jaxpr` will always return a flat list even if the original function does not.
 
-Furthermore, this interpreter does not handle `subjaxprs`, which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/google/jax/blob/master/jax/core.py#L185-L212)) to see the edge cases that this interpreter does not cover.
+Furthermore, this interpreter does not handle `subjaxprs`, which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/google/jax/blob/master/jax/core.py)) to see the edge cases that this interpreter does not cover.
 
 +++ {"id": "0vb2ZoGrCMM4"}
 
