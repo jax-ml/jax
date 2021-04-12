@@ -59,10 +59,12 @@ class ProfilerTest(unittest.TestCase):
 
   def testProgrammaticProfiling(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      jax.profiler.start_trace(tmpdir)
-      jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
-          jnp.ones(jax.local_device_count()))
-      jax.profiler.stop_trace()
+      try:
+        jax.profiler.start_trace(tmpdir)
+        jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+            jnp.ones(jax.local_device_count()))
+      finally:
+        jax.profiler.stop_trace()
 
       proto_path = glob.glob(os.path.join(tmpdir, "**/*.xplane.pb"),
                              recursive=True)
@@ -79,12 +81,16 @@ class ProfilerTest(unittest.TestCase):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
       jax.profiler.stop_trace()
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-      jax.profiler.start_trace(tmpdir)
-      with self.assertRaisesRegex(RuntimeError,
-                                  "Profile has already been started. Only one "
-                                  "profile may be run at a time."):
+    try:
+      with tempfile.TemporaryDirectory() as tmpdir:
         jax.profiler.start_trace(tmpdir)
+        with self.assertRaisesRegex(
+          RuntimeError,
+          "Profile has already been started. Only one profile may be run at a "
+          "time."):
+          jax.profiler.start_trace(tmpdir)
+    finally:
+      jax.profiler.stop_trace()
 
   def testProgrammaticProfilingContextManager(self):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -134,6 +140,7 @@ class ProfilerTest(unittest.TestCase):
     self.assertEqual(1, len(glob.glob(path)),
                      'Expected one path match: ' + path)
 
+  @unittest.skip("Test causes OOMs")
   @unittest.skipIf(not (portpicker and profiler_client and tf_profiler),
     "Test requires tensorflow.profiler and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
