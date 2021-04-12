@@ -171,7 +171,7 @@ def split_merge(predicate, xs):
 
   return lhs, rhs, merge
 
-def cache(max_size=4096):
+def cache(max_size=1024):
   def wrap(f):
     @functools.lru_cache(max_size)
     def cached(_, *args, **kwargs):
