@@ -15,7 +15,6 @@
 Parallelization primitives.
 """
 
-import collections
 import string
 import warnings
 from typing import Union
@@ -646,49 +645,6 @@ def _allreduce_translation_rule(prim, pos_prim, c, *args, axes, axis_index_group
   if not named_axes:
     return xops.Tuple(c, args)
 
-  if platform in ("cpu", "tpu"):
-    return _notuple_allreduce_translation_rule(
-        prim, c, *args, named_axes=named_axes,
-        axis_index_groups=axis_index_groups, axis_env=axis_env,
-        platform=platform)
-
-  # XLA's tuple all-reduce doesn't support different dtypes in the same
-  # allreduce. Instead, we perform once all-reduce for each argument input type.
-  args_by_type = collections.defaultdict(lambda: ([], []))
-  for i, arg in enumerate(args):
-    indices, dtype_args = args_by_type[c.get_shape(arg).numpy_dtype()]
-    indices.append(i)
-    dtype_args.append(arg)
-
-  # The outputs, in the original argument order.
-  out = [None] * len(args)
-  replica_groups = _replica_groups(axis_env, named_axes, axis_index_groups)
-  replica_groups_protos = xc.make_replica_groups(replica_groups)
-  for dtype, (indices, dtype_args) in sorted(args_by_type.items()):
-    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
-    n = len(dtype_args)
-    if is_complex and prim is lax.add_p:
-      # TODO(b/141575627): we handle complex-dtype sum-reduction directly as a
-      # special case because it's not currently handled by XLA:GPU
-      dtype_args = ([xops.Real(x) for x in dtype_args] +
-                    [xops.Imag(x) for x in dtype_args])
-    scalar = ShapedArray((), c.get_shape(dtype_args[0]).numpy_dtype())
-    computation = xla.primitive_subcomputation(prim, scalar, scalar)
-    all_reduce = xops.AllReduce(xops.Tuple(c, dtype_args), computation,
-                                replica_groups_protos, None, None)
-    if is_complex and prim is lax.add_p:
-      xs = [xops.Complex(xops.GetTupleElement(all_reduce, i),
-                         xops.GetTupleElement(all_reduce, n + i)) for i in range(n)]
-    else:
-      xs = [xops.GetTupleElement(all_reduce, i) for i in range(n)]
-    for i, x in zip(indices, xs):
-      out[i] = x
-  return xops.Tuple(c, out)
-
-# TODO(b/155446630): An XLA:TPU optimization pass also doesn't support
-# tuple all-reduce yet. Meanwhile, rely on deterministic compiler behavior.
-def _notuple_allreduce_translation_rule(prim, c, *args, named_axes, axis_env,
-                                        axis_index_groups, platform):
   def all_reduce(x):
     replica_groups_protos = xc.make_replica_groups(
         _replica_groups(axis_env, named_axes, axis_index_groups))
