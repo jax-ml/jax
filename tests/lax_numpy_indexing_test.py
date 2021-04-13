@@ -889,20 +889,20 @@ class UpdateOps(enum.Enum):
 
 class IndexedUpdateTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list({
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
           name, jtu.format_shape_dtype_string(shape, dtype), indexer,
           jtu.format_shape_dtype_string(update_shape, update_dtype), sugared, op.name),
        "shape": shape, "dtype": dtype, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
        "op": op, "sugared": sugared
-  } for name, index_specs in STATIC_INDEXING_TESTS
-    for shape, indexer in index_specs
-    for op in UpdateOps
-    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
-    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
-    for sugared in [True, False]))
+  } for name, index_specs in s(STATIC_INDEXING_TESTS)
+    for shape, indexer in s(index_specs)
+    for op in s(UpdateOps)
+    for dtype in s(all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+    for update_shape in s(_broadcastable_shapes(_update_shape(shape, indexer)))
+    for update_dtype in s([dtype] if op == UpdateOps.ADD else all_dtypes)
+    for sugared in s([True, False]))))
   def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
                          indexer, sugared, op):
     rng = jtu.rand_default(self.rng())
@@ -915,20 +915,20 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
     self._CompileAndCheck(jax_fn, args_maker)
 
-  @parameterized.named_parameters(jtu.cases_from_list({
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
           name, jtu.format_shape_dtype_string(shape, dtype), indexer,
           jtu.format_shape_dtype_string(update_shape, update_dtype), sugared, op.name),
        "shape": shape, "dtype": dtype, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
        "op": op, "sugared": sugared
-  } for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS
-    for shape, indexer in index_specs
-    for op in UpdateOps
-    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
-    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
-    for sugared in [True, False]))
+  } for name, index_specs in s(ADVANCED_INDEXING_TESTS_NO_REPEATS)
+    for shape, indexer in s(index_specs)
+    for op in s(UpdateOps)
+    for dtype in s(all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+    for update_shape in s(_broadcastable_shapes(_update_shape(shape, indexer)))
+    for update_dtype in s([dtype] if op == UpdateOps.ADD else all_dtypes)
+    for sugared in s([True, False]))))
   def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                            indexer, sugared, op):
     rng = jtu.rand_default(self.rng())
@@ -941,20 +941,20 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
     self._CompileAndCheck(jax_fn, args_maker)
 
-  @parameterized.named_parameters(jtu.cases_from_list({
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
           name, jtu.format_shape_dtype_string(shape, dtype), indexer,
           jtu.format_shape_dtype_string(update_shape, update_dtype), sugared, op.name),
        "shape": shape, "dtype": dtype, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
        "op": op, "sugared": sugared
-  } for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS_SORTED
-    for shape, indexer in index_specs
-    for op in UpdateOps
-    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
-    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
-    for sugared in [True, False]))
+  } for name, index_specs in s(ADVANCED_INDEXING_TESTS_NO_REPEATS_SORTED)
+    for shape, indexer in s(index_specs)
+    for op in s(UpdateOps)
+    for dtype in s(all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+    for update_shape in s(_broadcastable_shapes(_update_shape(shape, indexer)))
+    for update_dtype in s([dtype] if op == UpdateOps.ADD else all_dtypes)
+    for sugared in s([True, False]))))
   def testAdvancedIndexingSorted(self, shape, dtype, update_shape, update_dtype,
                            indexer, sugared, op):
     rng = jtu.rand_default(self.rng())
@@ -969,20 +969,20 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True)
     self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list({
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}_sugared={}".format(
           name, jtu.format_shape_dtype_string(shape, dtype), indexer,
           jtu.format_shape_dtype_string(update_shape, update_dtype), op.name, sugared),
        "shape": shape, "dtype": dtype, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
        "op": op, "sugared": sugared
-  } for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS
-    for shape, indexer in index_specs
-    for op in UpdateOps
-    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
-    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
-    for sugared in [True, False]))
+  } for name, index_specs in s(MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS)
+    for shape, indexer in s(index_specs)
+    for op in s(UpdateOps)
+    for dtype in s(all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+    for update_shape in s(_broadcastable_shapes(_update_shape(shape, indexer)))
+    for update_dtype in s([dtype] if op == UpdateOps.ADD else all_dtypes)
+    for sugared in s([True, False]))))
   def testMixedAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                                 indexer, sugared, op):
     rng = jtu.rand_default(self.rng())

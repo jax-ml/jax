@@ -2729,19 +2729,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-       {"testcase_name":
-           "_shape={}_n={}_axis={}_prepend={}_append={}".format(
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+      "testcase_name": "_shape={}_n={}_axis={}_prepend={}_append={}".format(
            jtu.format_shape_dtype_string(shape, dtype),
            n, axis, prepend, append),
         "shape": shape, "dtype": dtype, "n": n, "axis": axis,
-        "prepend": prepend, "append": append}
-       for shape, dtype in _shape_and_dtypes(nonempty_nonscalar_array_shapes, default_dtypes)
-       for n in [0, 1, 2]
-       for axis in list(range(-len(shape), max(1, len(shape))))
-       for prepend in [None, 1, np.zeros(shape, dtype=dtype)]
-       for append in [None, 1, np.zeros(shape, dtype=dtype)]
-       ))
+        "prepend": prepend, "append": append
+    } for shape, dtype in s(_shape_and_dtypes(nonempty_nonscalar_array_shapes, default_dtypes))
+      for n in s([0, 1, 2])
+      for axis in s(list(range(-len(shape), max(1, len(shape)))))
+      for prepend in s([None, 1, np.zeros(shape, dtype=dtype)])
+      for append in s([None, 1, np.zeros(shape, dtype=dtype)])
+      )))
   def testDiff(self, shape, dtype, n, axis, prepend, append):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -2787,20 +2786,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.ones((-1, 1))
 
   @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_filldtype={}_fillshape={}_outdtype={}_outshape={}".format(
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name": "_inshape={}_filldtype={}_fillshape={}_outdtype={}_outshape={}".format(
           jtu.format_shape_dtype_string(shape, in_dtype),
           np.dtype(fill_value_dtype).name, fill_value_shape,
           np.dtype(out_dtype).name, out_shape),
        "shape": shape, "in_dtype": in_dtype,
        "fill_value_dtype": fill_value_dtype, "fill_value_shape": fill_value_shape,
-       "out_dtype": out_dtype, "out_shape": out_shape}
-      for shape in array_shapes
-      for out_shape in [None] + array_shapes
-      for in_dtype in default_dtypes
-      for fill_value_dtype in default_dtypes
-      for fill_value_shape in _compatible_shapes(shape if out_shape is None else out_shape)
-      for out_dtype in default_dtypes))
+       "out_dtype": out_dtype, "out_shape": out_shape
+    } for shape in s(array_shapes)
+      for out_shape in s([None] + array_shapes)
+      for in_dtype in s(default_dtypes)
+      for fill_value_dtype in s(default_dtypes)
+      for fill_value_shape in s(_compatible_shapes(shape if out_shape is None else out_shape))
+      for out_dtype in s(default_dtypes))))
   def testFullLike(self, shape, in_dtype, fill_value_dtype, fill_value_shape, out_dtype, out_shape):
     if numpy_version < (1, 19) and out_shape == ():
       raise SkipTest("Numpy < 1.19 treats out_shape=() like out_shape=None")
@@ -4134,14 +4133,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_{}".format("_".join(
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+      "testcase_name": "_{}".format("_".join(
         jtu.format_shape_dtype_string(shape, dtype)
         for shape, dtype in zip(shapes, dtypes))),
-     "shapes": shapes, "dtypes": dtypes}
-    for shapes in filter(_shapes_are_broadcast_compatible,
-                         itertools.combinations_with_replacement(all_shapes, 3))
-    for dtypes in itertools.combinations_with_replacement(all_dtypes, 3)))
+      "shapes": shapes, "dtypes": dtypes
+    } for shapes in s(filter(_shapes_are_broadcast_compatible,
+                         itertools.combinations_with_replacement(all_shapes, 3)))
+      for dtypes in s(itertools.combinations_with_replacement(all_dtypes, 3)))))
   def testWhereThreeArgument(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
@@ -4155,15 +4154,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                   jnp.ones((2,), dtype=jnp.float32))
     self.assertEqual(x.dtype, np.dtype(np.float32))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix(
-            "", shapes, (np.bool_,) * n + dtypes),
-         "shapes": shapes, "dtypes": dtypes}
-        for n in range(1, 3)
-        for shapes in filter(
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+      "testcase_name": jtu.format_test_name_suffix("", shapes, (np.bool_,) * n + dtypes),
+      "shapes": shapes, "dtypes": dtypes
+    } for n in s(range(1, 3))
+      for shapes in s(filter(
           _shapes_are_broadcast_compatible,
-          itertools.combinations_with_replacement(all_shapes, 2 * n + 1))
-        for dtypes in itertools.combinations_with_replacement(all_dtypes, n + 1)))
+          itertools.combinations_with_replacement(all_shapes, 2 * n + 1)))
+      for dtypes in s(itertools.combinations_with_replacement(all_dtypes, n + 1)))))
   def testSelect(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
     n = len(dtypes) - 1

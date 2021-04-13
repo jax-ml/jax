@@ -455,25 +455,25 @@ class XMapTest(XMapTestCase):
                   axis_resources=dict(axis_resources))()
     self.assertAllClose(result, jnp.arange(6, dtype=result.dtype))
 
-  def VmapOfXmapCases():
+  def VmapOfXmapCases(s):
     xmap_in_axes = ([{}] +
                     [{i: 'x'} for i in range(3)] +
                     [{i: 'x', j: 'y'} for i in range(4) for j in range(4) if i != j])
-    for xmap_dim_x, xmap_dim_y in product(xmap_in_axes, repeat=2):
+    for xmap_dim_x, xmap_dim_y in s(product(xmap_in_axes, repeat=2)):
       xmap_axes = sorted(set(xmap_dim_x.values()) | set(xmap_dim_y.values()))
       num_axes = len(xmap_axes)
       if xmap_axes is None:
         continue
       xmap_out_axes = [dict(zip(dims, xmap_axes))
                        for dims in permutations(range(2 + num_axes), num_axes)]
-      for xmap_dim_z in xmap_out_axes:
-        for vmap_dim_x in [*range(2 + len(xmap_dim_x)), None]:
-          for vmap_dim_y in [*range(2 + len(xmap_dim_y)), None]:
+      for xmap_dim_z in s(xmap_out_axes):
+        for vmap_dim_x in s([*range(2 + len(xmap_dim_x)), None]):
+          for vmap_dim_y in s([*range(2 + len(xmap_dim_y)), None]):
             if vmap_dim_x is None and vmap_dim_y is None:
               continue
-            for vmap_dim_result in range(3):
-              for vmap_dim_z in range(2 + len(xmap_axes)):
-                for vmap_as_xmap in [False, True]:
+            for vmap_dim_result in s(range(3)):
+              for vmap_dim_z in s(range(2 + len(xmap_axes))):
+                for vmap_as_xmap in s([False, True]):
                   yield {"testcase_name":
                              f"_xin={(sorted(xmap_dim_x.items()), sorted(xmap_dim_y.items()))}_"
                              f"xout={sorted(xmap_dim_z.items())}_vin={(vmap_dim_x, vmap_dim_y)}_"
@@ -485,7 +485,7 @@ class XMapTest(XMapTestCase):
                          "vmap_result_axis": vmap_dim_result,
                          "vmap_as_xmap": vmap_as_xmap}
 
-  @parameterized.named_parameters(jtu.cases_from_list(VmapOfXmapCases()))
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(VmapOfXmapCases))
   @ignore_xmap_warning()
   def testNestedMap(self,
                     xmap_in_axes, xmap_out_axes,
@@ -879,17 +879,16 @@ class PDotTests(XMapTestCase):
 
     self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_{next(test_counter)}",
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name": f"_{next(test_counter)}",
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "pdot_spec": pdot_spec,
-       "axis_resources": axis_resources, "mesh_data": mesh_data}
-      for test_counter in [it.count()]
-      for lhs_shape, rhs_shape in product(
-          [(2,), (2, 4, 2, 1)],
-          repeat=2)
-      for pdot_spec in all_pdot_specs(lhs_shape, rhs_shape)
-      for axis_resources, mesh_data in schedules_from_pdot_spec(
-          pdot_spec, lhs_shape, rhs_shape)))
+       "axis_resources": axis_resources, "mesh_data": mesh_data
+    } for test_counter in [it.count()]
+      for lhs_shape, rhs_shape in s(product([(2,), (2, 4, 2, 1)], repeat=2))
+      for pdot_spec in s(all_pdot_specs(lhs_shape, rhs_shape))
+      for axis_resources, mesh_data in s(schedules_from_pdot_spec(
+          pdot_spec, lhs_shape, rhs_shape))
+  )))
   @ignore_xmap_warning()
   def testPdotSystematic(self, lhs_shape, rhs_shape, pdot_spec, axis_resources,
                          mesh_data):
@@ -918,17 +917,16 @@ class PDotTests(XMapTestCase):
     self.assertAllClose(result, expected, check_dtypes=False,
                         atol=tol, rtol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_{next(test_counter)}",
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name": f"_{next(test_counter)}",
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "pdot_spec": pdot_spec,
-       "axis_resources": axis_resources, "mesh_data": mesh_data}
-      for test_counter in [it.count()]
-      for lhs_shape, rhs_shape in product(
-          [(2,), (2, 4, 2, 1)],
-          repeat=2)
-      for pdot_spec in all_pdot_specs(lhs_shape, rhs_shape)
-      for axis_resources, mesh_data in schedules_from_pdot_spec(
-          pdot_spec, lhs_shape, rhs_shape)))
+       "axis_resources": axis_resources, "mesh_data": mesh_data
+    } for test_counter in [it.count()]
+      for lhs_shape, rhs_shape in s(product([(2,), (2, 4, 2, 1)], repeat=2))
+      for pdot_spec in s(all_pdot_specs(lhs_shape, rhs_shape))
+      for axis_resources, mesh_data in s(schedules_from_pdot_spec(
+          pdot_spec, lhs_shape, rhs_shape))
+  )))
   @ignore_xmap_warning()
   def testPdotVJPSystematic(self, lhs_shape, rhs_shape, pdot_spec,
                             axis_resources, mesh_data):

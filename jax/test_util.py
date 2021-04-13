@@ -52,6 +52,14 @@ flags.DEFINE_integer(
   int(os.getenv('JAX_NUM_GENERATED_CASES', 10)),
   help='Number of generated cases to test')
 
+flags.DEFINE_integer(
+  'max_cases_sampling_retries',
+  int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', 100)),
+  'Number of times a failed test sample should be retried. '
+  'When an unseen case cannot be generated in this many trials, the '
+  'sampling process is terminated.'
+)
+
 flags.DEFINE_bool(
     'jax_skip_slow_tests',
     bool_env('JAX_SKIP_SLOW_TESTS', False),
@@ -793,6 +801,29 @@ def cases_from_gens(*gens):
   for size in sizes:
     for i in range(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
+
+def named_cases_from_sampler(gen):
+  seen = set()
+  retries = 0
+  rng = npr.RandomState(42)
+  def choose_one(x):
+    if not isinstance(x, (list, tuple)):
+      x = list(x)
+    return [x[rng.randint(len(x))]]
+  while (len(seen) < FLAGS.num_generated_cases and
+         retries < FLAGS.max_cases_sampling_retries):
+    retries += 1
+    cases = list(gen(choose_one))
+    if not cases:
+      continue
+    if len(cases) > 1:
+      raise RuntimeError("Generator is expected to only return a single case when sampling")
+    case = cases[0]
+    if case["testcase_name"] in seen:
+      continue
+    retries = 0
+    seen.add(case["testcase_name"])
+    yield case
 
 
 class JaxTestLoader(absltest.TestLoader):

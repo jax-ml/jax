@@ -459,8 +459,8 @@ class LaxTest(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(numpy_fun, fun, args_maker)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_lhs_shape={}_rhs_shape={}_strides={}_padding={}"
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name": "_lhs_shape={}_rhs_shape={}_strides={}_padding={}"
        "_lhs_dilation={}_rhs_dilation={}"
        "_dims={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
@@ -471,22 +471,23 @@ class LaxTest(jtu.JaxTestCase):
        "strides": strides, "padding": padding, "lhs_dilation": lhs_dilation,
        "rhs_dilation": rhs_dilation, "dimension_numbers": dim_nums,
        "feature_group_count": feature_group_count,
-       "batch_group_count": batch_group_count, "perms": perms}
-      for batch_group_count, feature_group_count in [(1, 1), (2, 1), (1, 2)]
-      for lhs_shape, rhs_shape in [
+       "batch_group_count": batch_group_count, "perms": perms
+    } for batch_group_count, feature_group_count in s([(1, 1), (2, 1), (1, 2)])
+      for lhs_shape, rhs_shape in s([
           ((b * batch_group_count, i * feature_group_count, 9, w),
            (j * feature_group_count * batch_group_count, i, 4, 5))
           for w in [0, 10]
-          for b, i, j in itertools.product([2, 3], repeat=3)]
-      for dtype in all_dtypes for strides in [(1, 1), (2, 1)]
-      for padding in [((1, 2), (2, 0)), ((10, 8), (7, 13))]
-      for lhs_dilation, rhs_dilation in itertools.product(
-          [(1, 1), (1, 2), (1, 4)], repeat=2)
-      for dim_nums, perms in [
+          for b, i, j in itertools.product([2, 3], repeat=3)])
+      for dtype in s(all_dtypes)
+      for strides in s([(1, 1), (2, 1)])
+      for padding in s([((1, 2), (2, 0)), ((10, 8), (7, 13))])
+      for lhs_dilation, rhs_dilation in s(itertools.product(
+          [(1, 1), (1, 2), (1, 4)], repeat=2))
+      for dim_nums, perms in s([
         (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
         (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
         (("NCHW", "HWIO", "NHWC"), ([0, 1, 2, 3], [2, 3, 1, 0])),
-      ]))
+      ]))))
   def testConvGeneralDilated(self, lhs_shape, rhs_shape, dtype, strides,
                              padding, lhs_dilation, rhs_dilation,
                              feature_group_count, batch_group_count,
