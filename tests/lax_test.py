@@ -2170,11 +2170,12 @@ class LaxTest(jtu.JaxTestCase):
   def testScatterShapeCheckingRule(self, operand_shape, scatter_indices,
                                    update_shape, dimension_numbers, msg):
 
-    operand = np.ones(operand_shape, dtype=np.int32)
-    updates = np.ones(update_shape, dtype=np.int32)
-
+    def f(x, y):
+      operand = lax.broadcast(x, operand_shape)
+      updates = lax.broadcast(y, update_shape)
+      return lax.scatter(operand, scatter_indices, updates, dimension_numbers)
     with self.assertRaisesRegex(TypeError, msg):
-      lax.scatter(operand, scatter_indices, updates, dimension_numbers)
+      jax.eval_shape(f, np.int32(1), np.int32(1))
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler
