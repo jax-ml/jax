@@ -563,7 +563,7 @@ def _shuffle(key, x, axis) -> jnp.ndarray:
   # another analysis (where the keys are generated one bit at a time).
   exponent = 3  # see tjablin@'s analysis for explanation of this parameter
   uint32max = jnp.iinfo(np.uint32).max
-  num_rounds = int(np.ceil(exponent * np.log(x.size) / np.log(uint32max)))
+  num_rounds = int(np.ceil(exponent * np.log(max(1, x.size)) / np.log(uint32max)))
 
   for _ in range(num_rounds):
     key, subkey = split(key)
