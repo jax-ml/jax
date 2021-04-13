@@ -16,7 +16,7 @@ import functools
 import re
 from typing import Any, Callable, Dict, List, Tuple
 
-from jax import api
+from jax._src import api
 from jax import lax
 from . import lax_numpy as jnp
 from jax._src.util import safe_map as map, safe_zip as zip

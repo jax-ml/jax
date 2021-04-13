@@ -28,7 +28,7 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
-from . import api
+from ._src import api
 from . import core
 from ._src import dtypes as _dtypes
 from . import lax

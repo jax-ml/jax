@@ -18,8 +18,7 @@ from functools import partial
 import scipy.linalg
 import textwrap
 
-from jax import jit, vmap
-from jax import api
+from jax import jit, vmap, jvp
 from jax import lax
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy.util import _wraps
@@ -406,7 +405,7 @@ def _expm_frechet(A, E, method=None, compute_expm=True):
     method = 'SPS'
   if method == 'SPS':
     bound_fun = partial(expm, upper_triangular=False, max_squarings=16)
-    expm_A, expm_frechet_AE = api.jvp(bound_fun, (A,), (E,))
+    expm_A, expm_frechet_AE = jvp(bound_fun, (A,), (E,))
   else:
     raise ValueError('only method=\'SPS\' is supported')
   if compute_expm:

@@ -21,7 +21,7 @@ import numpy as np
 import scipy as osp
 import scipy.stats as osp_stats
 
-from jax import api
+from jax._src import api
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit

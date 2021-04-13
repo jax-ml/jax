@@ -348,7 +348,7 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence,
 import typing
 from absl import logging
 
-from jax import api
+from jax._src import api
 from jax import core
 from jax.config import config
 from jax import custom_derivatives

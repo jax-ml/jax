@@ -33,7 +33,7 @@ del _cloud_tpu_init
 from .config import (config, enable_checks, check_tracer_leaks, checking_leaks,
                      debug_nans, debug_infs, log_compiles,
                      default_matmul_precision, numpy_rank_promotion)
-from .api import (
+from ._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
   checkpoint,
   closure_convert,
@@ -99,6 +99,7 @@ from .version import __version__
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
+from . import api
 from . import dtypes
 from . import errors
 from . import image

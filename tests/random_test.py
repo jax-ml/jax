@@ -24,7 +24,7 @@ import scipy.linalg
 import scipy.special
 import scipy.stats
 
-from jax import api
+from jax._src import api
 from jax import core
 from jax import dtypes
 from jax import grad

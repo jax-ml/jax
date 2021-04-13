@@ -25,7 +25,7 @@ from unittest import SkipTest
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import api
+from jax._src import api
 from jax.config import config
 from jax import dtypes
 from jax.experimental import host_callback as hcb

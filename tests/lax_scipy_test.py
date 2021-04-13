@@ -25,7 +25,7 @@ from absl.testing import parameterized
 import numpy as np
 import scipy.special as osp_special
 
-from jax import api
+from jax._src import api
 from jax import test_util as jtu
 from jax.scipy import special as lsp_special
 

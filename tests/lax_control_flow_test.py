@@ -28,7 +28,7 @@ import numpy as np
 import numpy.random as npr
 
 import jax
-from jax import api
+from jax._src import api
 from jax import core
 from jax import lax
 from jax import random

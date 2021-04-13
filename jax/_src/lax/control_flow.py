@@ -28,7 +28,7 @@ from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar
 import numpy as np
 
 import jax
-from jax import api
+from jax._src import api
 from jax import core
 from jax._src import dtypes
 from jax._src import source_info_util

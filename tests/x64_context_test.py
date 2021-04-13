@@ -19,7 +19,7 @@ import time
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import api
+from jax._src import api
 from jax import lax
 from jax import partial
 from jax import random

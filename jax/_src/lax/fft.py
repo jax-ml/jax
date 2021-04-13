@@ -17,7 +17,7 @@ from functools import partial
 
 import numpy as np
 
-from jax.api import jit, linear_transpose, ShapeDtypeStruct
+from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
 from jax.core import Primitive
 from jax.interpreters import xla
 from jax._src.util import prod

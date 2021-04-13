@@ -25,7 +25,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax import api
+from jax._src import api
 from jax import dtypes
 from jax import numpy as jnp
 from jax import ops

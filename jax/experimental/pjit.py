@@ -19,7 +19,7 @@ from warnings import warn
 from . import maps
 from .. import core
 from .. import linear_util as lu
-from ..api import _check_callable, _check_arg
+from .._src.api import _check_callable, _check_arg
 from ..api_util import (argnums_partial_except, flatten_axes,
                         flatten_fun_nokwargs, _ensure_index_tuple,
                         donation_vector, rebase_donate_argnums)

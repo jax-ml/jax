@@ -19,7 +19,8 @@ from absl.testing import absltest
 import numpy as np
 import re
 
-from jax import api, lax, ops
+from jax._src import api
+from jax import lax, ops
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental import loops

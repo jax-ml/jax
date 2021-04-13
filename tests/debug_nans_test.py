@@ -20,6 +20,7 @@ import jax
 import numpy as np
 from unittest import SkipTest
 
+from jax._src import api
 from jax import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit
@@ -75,7 +76,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans.block_until_ready()
 
   def testCallDeoptimized(self):
-    for jit in [jax.api._python_jit, jax.api._cpp_jit]:
+    for jit in [api._python_jit, api._cpp_jit]:
 
       @jit
       def f(x):
@@ -181,7 +182,7 @@ class DebugInfsTest(jtu.JaxTestCase):
       ans.block_until_ready()
 
   def testCallDeoptimized(self):
-    for jit in [jax.api._python_jit, jax.api._cpp_jit]:
+    for jit in [api._python_jit, api._cpp_jit]:
 
       @jit
       def f(x):

@@ -25,8 +25,8 @@ from jax import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
 from jax import random
-from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
-from jax.api import vmap
+from jax import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
+from jax import vmap
 from jax._src.util import partial
 import jax.ops
 

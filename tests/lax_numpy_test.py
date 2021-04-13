@@ -35,7 +35,7 @@ except ImportError:
 
 import jax
 import jax.ops
-from jax import api
+from jax._src import api
 from jax import lax
 from jax import linear_util
 from jax import numpy as jnp

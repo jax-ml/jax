@@ -37,7 +37,8 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import api, core, dtypes, lax
+from jax import core, dtypes, lax
+from jax._src import api
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
@@ -47,7 +48,7 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
 import jax._src.util
-from jax.api import _ALLOW_STATIC_ARGNAMES
+from jax._src.api import _ALLOW_STATIC_ARGNAMES
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -68,7 +69,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
     # This is in the future, because we are making a breaking change to
     # Tensorflow.
-    return jax.api._cpp_jit
+    return api._cpp_jit
 
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
@@ -154,7 +155,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertLen(side, 1)
     self.assertEqual(f1(1, A()), 100)
     self.assertLen(side, 1)
-    if self.jit == jax.api._cpp_jit:
+    if self.jit == api._cpp_jit:
       f1_cpp = getattr(f1, "_cpp_jitted_f", f1)
       self.assertEqual(f1_cpp._cache_size(), 1)
 
@@ -415,7 +416,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     assert x() is None      # x is gone
 
   def test_jit_raises_on_first_invocation_on_non_hashable_static_argnum(self):
-    if self.jit != jax.api._python_jit:
+    if self.jit != api._python_jit:
       raise unittest.SkipTest("this test only applies to _python_jit")
     f = lambda x, y: x + 3
     jitted_f = self.jit(f, static_argnums=(1,))
@@ -427,11 +428,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       jitted_f(1, np.asarray(1))
 
   def test_cpp_jit_raises_on_non_hashable_static_argnum(self):
-    if self.jit != jax.api._cpp_jit:
+    if self.jit != api._cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     f = lambda x, y: x + 3
-    jitted_f = jax.api._cpp_jit(f, static_argnums=[1])
+    jitted_f = api._cpp_jit(f, static_argnums=[1])
 
     jitted_f(1, 1)
 
@@ -457,7 +458,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       jitted_f(1, HashableWithoutEq())
 
   def test_cpp_jitted_function_returns_PyBuffer(self):
-    if self.jit != jax.api._cpp_jit:
+    if self.jit != api._cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     jitted_f = self.jit(lambda a: a + 1)
@@ -622,7 +623,7 @@ class PythonJitTest(CPPJitTest):
 
   @property
   def jit(self):
-    return jax.api._python_jit
+    return api._python_jit
 
 
 class APITest(jtu.JaxTestCase):

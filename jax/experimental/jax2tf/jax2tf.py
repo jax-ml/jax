@@ -18,7 +18,8 @@ import string
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import jax
-from jax import ad_util, api, api_util, config
+from jax import ad_util, api_util, config
+from jax._src import api
 from jax import core, custom_derivatives, dtypes
 from jax import linear_util as lu
 from jax import numpy as jnp

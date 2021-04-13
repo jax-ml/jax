@@ -17,7 +17,8 @@ from functools import partial
 import numpy as np
 import scipy.special as osp_special
 
-from jax import api, lax, core
+from jax._src import api
+from jax import lax, core
 from jax.interpreters import ad
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,

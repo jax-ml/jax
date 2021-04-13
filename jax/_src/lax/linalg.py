@@ -18,7 +18,7 @@ import numpy as np
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.vectorize import vectorize
 from jax import ad_util
-from jax import api
+from jax._src import api
 from jax import lax
 from jax import ops
 from jax._src import dtypes

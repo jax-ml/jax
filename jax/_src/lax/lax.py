@@ -29,7 +29,7 @@ import numpy as np
 import jax
 from jax import core
 from jax import ad_util
-from jax import api
+from jax._src import api
 from jax import api_util
 from jax import linear_util as lu
 from jax._src import dtypes

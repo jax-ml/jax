@@ -17,6 +17,7 @@ import inspect
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import api
 from jax import dtypes
 from jax import lib as jaxlib
 from jax import numpy as jnp
@@ -199,7 +200,7 @@ class JaxJitTest(parameterized.TestCase):
     def f(a, b, c):
       return a + b + c
 
-    jitted_f = jax.api._cpp_jit(f)
+    jitted_f = api._cpp_jit(f)
     self.assertEqual(inspect.signature(f), inspect.signature(jitted_f))
 
 
