@@ -71,11 +71,13 @@ class ProfilerTest(unittest.TestCase):
       self.assertEqual(len(proto_path), 1)
       with open(proto_path[0], "rb") as f:
         proto = f.read()
-      # Sanity check that serialized proto contains host and device traces
-      # without deserializing.
+      # Sanity check that serialized proto contains host, device, and
+      # Python traces without deserializing.
       self.assertIn(b"/host:CPU", proto)
       if jtu.device_under_test() == "tpu":
         self.assertIn(b"/device:TPU", proto)
+      if jax.lib.version >= (0, 1, 65):
+        self.assertIn(b"pxla.py", proto)
 
   def testProgrammaticProfilingErrors(self):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
