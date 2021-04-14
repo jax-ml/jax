@@ -13,7 +13,7 @@ build_cuda_wheels() {
       for CUDA_VARIANT in $CUDA_VARIANTS
       do
         mkdir -p dist/${CUDA_VARIANT}${CUDA_VERSION//.}
-        docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION $CUDA_VARIANT $CUDA_VERSION
+        docker run --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION $CUDA_VARIANT $CUDA_VERSION
         mv -f dist/*.whl dist/${CUDA_VARIANT}${CUDA_VERSION//.}/
       done
     done
@@ -27,7 +27,7 @@ build_nocuda_wheels() {
   for PYTHON_VERSION in $PYTHON_VERSIONS
   do
     mkdir -p dist/nocuda/
-    docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION nocuda
+    docker run --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION nocuda
     mv -f dist/*.whl dist/nocuda/
   done
 }
