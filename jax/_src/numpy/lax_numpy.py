@@ -5170,9 +5170,10 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
 
   a_shape = shape(a)
-  a = lax.sort(a, dimension=axis)
 
   if squash_nans:
+    a = where(isnan(a), nan, a) # Ensure nans are positive so they sort to the end.
+    a = lax.sort(a, dimension=axis)
     counts = sum(logical_not(isnan(a)), axis=axis, dtype=q.dtype,
                  keepdims=keepdims)
     shape_after_reduction = counts.shape
@@ -5200,6 +5201,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     index[axis] = high
     high_value = a[tuple(index)]
   else:
+    a = lax.sort(a, dimension=axis)
     n = a_shape[axis]
     q = lax.mul(q, _constant_like(q, n - 1))
     low = lax.floor(q)
