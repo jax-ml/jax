@@ -31,6 +31,7 @@ from ..tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
 from .._src.tree_util import _replace_nones
 from ..api_util import (flatten_fun_nokwargs, flatten_axes, _ensure_index_tuple,
                         donation_vector)
+from .._src import source_info_util
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
 from ..interpreters import xla
@@ -553,9 +554,10 @@ def make_xmap_callable(fun: lu.WrappedFun,
   mapped_in_avals = [_delete_aval_axes(aval, in_axes)
                      for aval, in_axes in zip(in_avals, in_axes)]
   with core.extend_axis_env_nd(global_axis_sizes.items()):
-    jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
   out_axes = out_axes_thunk()
-  jaxpr = core.subst_axis_names_jaxpr(jaxpr, plan.axis_subst)
+  _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
+  jaxpr = plan.subst_axes_with_resources(jaxpr)
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
@@ -582,6 +584,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
+  resource_env: ResourceEnv
   physical_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
   axis_subst_dict: Dict[AxisName, Tuple[ResourceAxisName, ...]]
   axis_vmap_size: Dict[AxisName, Optional[int]]
@@ -589,6 +592,16 @@ class EvaluationPlan(NamedTuple):
   @property
   def axis_subst(self) -> core.AxisSubst:
     return lambda name: self.axis_subst_dict.get(name, (name,))
+
+  @property
+  def resource_axis_env(self):
+    env = dict(self.resource_env.shape)
+    for axis, size in self.axis_vmap_size.items():
+      if size is None:
+        continue
+      vmap_axis = self.axis_subst_dict[axis][-1]
+      env[vmap_axis] = size
+    return env
 
   @classmethod
   def from_axis_resources(cls,
@@ -611,7 +624,25 @@ class EvaluationPlan(NamedTuple):
         axis_subst_dict[naxis] += (fresh_resource_name(naxis),)
       else:
         axis_vmap_size[naxis] = None
-    return cls(physical_axis_resources, axis_subst_dict, axis_vmap_size)
+    return cls(resource_env, physical_axis_resources, axis_subst_dict, axis_vmap_size)
+
+  def subst_axes_with_resources(self, jaxpr):
+    try:
+      with core.extend_axis_env_nd(self.resource_axis_env.items()):
+        return core.subst_axis_names_jaxpr(jaxpr, self.axis_subst)
+    except core.DuplicateAxisNameError as e:
+      resource_to_axis = {}
+      for axis in e.var.aval.named_shape:
+        for resource in self.physical_axis_resources[axis]:
+          if resource in resource_to_axis:
+            other_axis = resource_to_axis[resource]
+            axis, other_axis = sorted([str(axis), str(other_axis)])
+            raise TypeError(f"Axes `{axis}` and `{other_axis}` are both mapped to the "
+                            f"resource `{resource}`, but they coincide in the named_shape "
+                            f"of a value returned from a primitive {e.eqn.primitive} created "
+                            f"at {source_info_util.summarize(e.eqn.source_info)}")
+          resource_to_axis[resource] = axis
+      raise AssertionError("Failed to find the duplicate axis? Please open a bug report!")
 
   def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
     for naxis, raxes in self.axis_subst_dict.items():
@@ -635,6 +666,23 @@ class EvaluationPlan(NamedTuple):
                          for physical_axis in self.physical_axis_resources[logical_axis])
     return (tuple(unsafe_map(to_mesh, in_axes)),
             tuple(unsafe_map(to_mesh, out_axes)))
+
+def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
+                                 out_axes: Sequence[AxisNamePos],
+                                 global_axis_sizes: Dict[AxisName, int]):
+  defined_axes = set(global_axis_sizes)
+  for aval, axes in zip(out_avals, out_axes):
+    if not isinstance(aval, core.ShapedArray):
+      if axes:
+        raise AssertionError(f"Only array abstract values can have non-empty "
+                             f"out_axes, but {aval} has {axes}")
+      continue
+    undeclared_axes = (set(aval.named_shape) - set(axes)) & defined_axes
+    if undeclared_axes:
+      undeclared_axes_str = sorted([str(axis) for axis in undeclared_axes])
+      raise TypeError(f"One of xmap results has an out_axes specification of "
+                      f"{axes.user_repr}, but is actually mapped along more axes "
+                      f"defined by this xmap call: {', '.join(undeclared_axes_str)}")
 
 # -------- xmap primitive and its transforms --------
 
@@ -664,7 +712,8 @@ core.Trace.process_xmap = _process_xmap_default  # type: ignore
 def _xmap_axis_subst(params, subst):
   def shadowed_subst(name):
     return (name,) if name in params['global_axis_sizes'] else subst(name)
-  new_jaxpr = core.subst_axis_names_jaxpr(params['call_jaxpr'], shadowed_subst)
+  with core.extend_axis_env_nd(params['global_axis_sizes'].items()):
+    new_jaxpr = core.subst_axis_names_jaxpr(params['call_jaxpr'], shadowed_subst)
   return dict(params, call_jaxpr=new_jaxpr)
 core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
 
@@ -784,14 +833,15 @@ def _xmap_translation_rule_replica(c, axis_env,
                  in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
   # We have to substitute before tracing, because we want the vectorized
   # axes to be used in the jaxpr.
-  resource_call_jaxpr = core.subst_axis_names_jaxpr(call_jaxpr, plan.axis_subst)
+  resource_call_jaxpr = plan.subst_axes_with_resources(call_jaxpr)
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
   f = plan.vectorize(f, in_axes, out_axes)
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
-  vectorized_jaxpr, _, consts = pe.trace_to_jaxpr_final(f, local_avals)
+  vectorized_jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(f, local_avals)
+  _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
   assert not consts
 
   tiled_ins = (
@@ -890,16 +940,20 @@ def _xmap_translation_rule_spmd(c, axis_env,
 def _delete_aval_axes(aval, axes: AxisNamePos):
   assert isinstance(aval, core.ShapedArray)
   shape = list(aval.shape)
-  for i in sorted(axes.values(), reverse=True):
-    del shape[i]
-  return aval.update(shape=tuple(shape))
+  named_shape = dict(aval.named_shape)
+  for name, axis in sorted(axes.items(), key=lambda x: x[1], reverse=True):
+    named_shape[name] = shape[axis]
+    del shape[axis]
+  return aval.update(shape=tuple(shape), named_shape=named_shape)
 
 def _insert_aval_axes(aval, axes: AxisNamePos, axis_sizes):
   assert isinstance(aval, core.ShapedArray)
   shape = list(aval.shape)
+  named_shape = dict(aval.named_shape)
   for name, axis in sorted(axes.items(), key=lambda x: x[1]):
     shape.insert(axis, axis_sizes[name])
-  return aval.update(shape=tuple(shape))
+    del named_shape[name]
+  return aval.update(shape=tuple(shape), named_shape=named_shape)
 
 
 class ResourceCount(namedtuple('ResourceCount', ['nglobal', 'nlocal'])):

@@ -1124,6 +1124,32 @@ class XMapErrorTest(jtu.JaxTestCase):
       xmap(lambda x: x.reshape((2, 2)),
            in_axes=['i', None], out_axes=['i', None])(jnp.ones((5, 4)))
 
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testResourceConflict(self):
+    fm = xmap(lambda x, y: x + y,
+              in_axes=(['a', ...], ['b', ...]), out_axes=['a', 'b', ...],
+              axis_resources={'a': 'x', 'b': 'x'})
+    x = np.arange(12).reshape(4, 3)
+    y = np.arange(6).reshape(2, 3)
+    with self.assertRaisesRegex(TypeError,
+                                r"Axes `a` and `b` are both mapped to the "
+                                r"resource `x`, but they coincide in the named_shape "
+                                r".*primitive add created at.*xmap_test"):
+
+      fm(x, y)
+
+  @ignore_xmap_warning()
+  def testReturnExtraMappedAxes(self):
+    fm = xmap(lambda x, y: x + y,
+              in_axes=(['a', ...], ['b', ...]), out_axes=['a', ...])
+    x = np.arange(12).reshape((4, 3))
+    y = np.arange(6).reshape((2, 3))
+    error = (r"One of xmap results has an out_axes specification of \['a', ...\], but "
+             r"is actually mapped along more axes defined by this xmap call: b")
+    with self.assertRaisesRegex(TypeError, error):
+      fm(x, y)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
