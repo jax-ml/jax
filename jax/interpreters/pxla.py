@@ -553,16 +553,16 @@ class ShardedDeviceArray(xla.DeviceArray):  # type: ignore
       cidx = (idx,) + (slice(None),) * (len(self.aval.shape) - 1)
     else:
       cidx = idx + (slice(None),) * (len(self.aval.shape) - len(idx))
-    if self._npy_value is None:
-      try:
-        buf_idx = self.indices.index(cidx)
-      except ValueError:
-        buf_idx = None
-      if buf_idx is not None:
-        buf = self.device_buffers[buf_idx]
-        aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
-        return xla.make_device_array(aval, None, buf)
-    return xla.DeviceArray.__getitem__(self, idx)
+    try:
+      buf_idx = self.indices.index(cidx)
+    except ValueError:
+      # NOTE: Slow path, this will materialize the sharded array on a single
+      # device and use XLA's Gather to index into the resulting array.
+      return xla.DeviceArray.__getitem__(self, idx)
+    else:
+      buf = self.device_buffers[buf_idx]
+      aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
+      return xla.make_device_array(aval, None, buf)
 
 
 def _hashable_index(idx):

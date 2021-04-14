@@ -220,6 +220,32 @@ def pmap_simple_8_devices(state):
     d.block_until_ready()
 
 
+def _run_sda_index_bench(state, num_devices):
+  x = jax.pmap(jnp.sin)(jnp.arange(num_devices))
+  jax.device_get(x)
+  while state:
+    for i in range(num_devices):
+      _ = x[i]
+
+
+@google_benchmark.register
+@required_devices(1)
+def sda_index_1(state):
+  _run_sda_index_bench(state, 1)
+
+
+@google_benchmark.register
+@required_devices(2)
+def sda_index_2(state):
+  _run_sda_index_bench(state, 2)
+
+
+@google_benchmark.register
+@required_devices(8)
+def sda_index_8(state):
+  _run_sda_index_bench(state, 8)
+
+
 def swap(a, b):
   return b, a
 
