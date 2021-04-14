@@ -100,8 +100,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng,
                         atol=tol, rtol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
        "rhs_dilation={}_dims={}_feature_group_count={}_batch_group_count={}"
        "_lhs_bdim={}_rhs_bdim={}"
@@ -115,31 +115,30 @@ class LaxVmapTest(jtu.JaxTestCase):
        "perms": perms, "lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim,
        "feature_group_count": feature_group_count,
        "batch_group_count": batch_group_count,
-       }
-      for batch_group_count, feature_group_count in ([(1, 1), (2, 1), (1, 2)])
-      for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
-          ((b * batch_group_count, i * feature_group_count, 6, 7),  # lhs_shape
-           (j * batch_group_count * feature_group_count, i, 1, 2),  # rhs_shape
-           [(1, 1), (1, 2), (2, 1)],  # strides
-           [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
-           [(1, 1), (2, 1)],  # lhs_dils
-           [(1, 1), (2, 2)])  # rhs_dils
-          for b, i, j in itertools.product([1, 2], repeat=3)]
-      for strides in all_strides
-      for rhs_dil in rhs_dils
-      for lhs_dil in lhs_dils
-      for dtype in [np.float32]
-      for padding in all_pads
-      for dim_nums, perms in [
-          (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
-          (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
-          (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
-      for lhs_bdim in itertools.chain([cast(Optional[int], None)],
-                                      range(len(lhs_shape) + 1))
-      for rhs_bdim in itertools.chain([cast(Optional[int], None)],
-                                      range(len(rhs_shape) + 1))
-      if (lhs_bdim, rhs_bdim) != (None, None)
-  ))
+     } for batch_group_count, feature_group_count in s([(1, 1), (2, 1), (1, 2)])
+       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in s([
+           ((b * batch_group_count, i * feature_group_count, 6, 7),  # lhs_shape
+            (j * batch_group_count * feature_group_count, i, 1, 2),  # rhs_shape
+            [(1, 1), (1, 2), (2, 1)],  # strides
+            [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
+            [(1, 1), (2, 1)],  # lhs_dils
+            [(1, 1), (2, 2)])  # rhs_dils
+           for b, i, j in itertools.product([1, 2], repeat=3)])
+       for strides in s(all_strides)
+       for rhs_dil in s(rhs_dils)
+       for lhs_dil in s(lhs_dils)
+       for dtype in s([np.float32])
+       for padding in s(all_pads)
+       for dim_nums, perms in s([
+           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
+           (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
+           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))])
+       for lhs_bdim in s(itertools.chain([cast(Optional[int], None)],
+                                         range(len(lhs_shape) + 1)))
+       for rhs_bdim in s(itertools.chain([cast(Optional[int], None)],
+                                         range(len(rhs_shape) + 1)))
+       if (lhs_bdim, rhs_bdim) != (None, None)
+       )))
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
       dimension_numbers, perms, feature_group_count, batch_group_count,

@@ -1651,19 +1651,20 @@ class PmapTest(jtu.JaxTestCase):
 
 class VmapOfPmapTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"{shapes}_{vmap_in_axes}_{vmap_out_axes}_{pmap_in_axes}_{pmap_out_axes}",
+  # TODO(apaszke)
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name": f"{shapes}_{vmap_in_axes}_{vmap_out_axes}_{pmap_in_axes}_{pmap_out_axes}",
        "shapes": shapes,
        "vmap_in_axes": vmap_in_axes, "vmap_out_axes": vmap_out_axes,
-       "pmap_in_axes": pmap_in_axes, "pmap_out_axes": pmap_out_axes}
-      for arg_shapes in compatible_shapes
-      for num_args in range(1, 4)
-      for shapes in list(it.combinations_with_replacement(arg_shapes, num_args))
-      for vmap_in_axes in all_bdims(*shapes, pmap=False)
-      for pmap_in_axes in all_bdims(*shapes, pmap=True)
-      for vmap_out_axes in out_bdims(shapes[0], False)
-      for pmap_out_axes in out_bdims(shapes[0], True)
-  ))
+       "pmap_in_axes": pmap_in_axes, "pmap_out_axes": pmap_out_axes
+    } for arg_shapes in s(compatible_shapes)
+      for num_args in s(range(1, 4))
+      for shapes in s(list(it.combinations_with_replacement(arg_shapes, num_args)))
+      for vmap_in_axes in s(all_bdims(*shapes, pmap=False))
+      for pmap_in_axes in s(all_bdims(*shapes, pmap=True))
+      for vmap_out_axes in s(out_bdims(shapes[0], False))
+      for pmap_out_axes in s(out_bdims(shapes[0], True))
+  )))
   def testVmapOfPmap(self, shapes, vmap_in_axes, pmap_in_axes, vmap_out_axes, pmap_out_axes):
     vmapped_size = 3
     pmapped_size = xla_bridge.device_count()
