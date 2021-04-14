@@ -1441,15 +1441,31 @@ impl_rules[xla_call_p] = xla_call_impl
 @lru_cache()
 def xla_callable(hashable_jaxpr: IDHashable, hashable_consts: Tuple[IDHashable]):
   jaxpr: Jaxpr = hashable_jaxpr.val
-  consts = [x.val for x in hashable_consts]
-  in_avals = [v.aval for v in jaxpr.in_binders[len(consts):]]
+  jaxpr, keep_idx = _prune_unused_inputs(jaxpr)
+  consts = [x.val for i, x in enumerate(hashable_consts) if i in keep_idx]
+  num_consts = len(consts)
+  in_avals = [v.aval for v in jaxpr.in_binders[num_consts:]]
   c = xb.make_computation_builder('xla_call')
   xla_consts = _xla_consts(c, consts)
   xla_params = _xla_params(c, in_avals)
   outs = jaxpr_subcomp(c, jaxpr, xla_consts + xla_params)
   out = xops.Tuple(c, outs)
   compiled = xb.get_backend(None).compile(c.build(out))
-  return partial(execute_compiled, compiled, [v.aval for v in jaxpr.outs])
+  return partial(execute_compiled, compiled, [v.aval for v in jaxpr.outs],
+                 {i - len(hashable_consts) for i in keep_idx})
+
+def _prune_unused_inputs(jaxpr: Jaxpr) -> Tuple[Jaxpr, Set[int]]:
+  used = {v for v in jaxpr.outs if isinstance(v, Var)}
+  new_eqns = []
+  for eqn in jaxpr.eqns[::-1]:
+    if set(eqn.out_binders) & used:
+      new_eqns.append(eqn)
+      used.update(v for v in eqn.inputs if isinstance(v, Var))
+  new_eqns = new_eqns[::-1]
+  keep_idx, new_invars = unzip2((i, v) for i, v in enumerate(jaxpr.in_binders) if v in used)
+  new_jaxpr = Jaxpr(new_invars, new_eqns, jaxpr.outs)
+  typecheck_jaxpr(new_jaxpr)
+  return new_jaxpr, keep_idx
 
 def _xla_consts(c: xe.XlaBuilder, consts: List[Any]) -> List[xe.XlaOp]:
   unique_consts = {id(cnst): cnst for cnst in consts}
@@ -1488,8 +1504,9 @@ def jaxpr_subcomp(c: xe.XlaBuilder, jaxpr: Jaxpr, args: List[xe.XlaOp]
     map(write, eqn.out_binders, out_vals)
   return map(read, jaxpr.outs)
 
-def execute_compiled(compiled, out_avals, *args):
-  input_bufs = [input_handlers[type(x)](x) for x in args]
+def execute_compiled(compiled, out_avals, keep_idx, *args):
+  input_bufs = [input_handlers[type(x)](x) for i, x in enumerate(args)
+                if i in keep_idx]
   out_bufs = compiled.execute(input_bufs)
   return [handle_result(aval, buf) for aval, buf in zip(out_avals, out_bufs)]
 
@@ -2477,3 +2494,10 @@ _, hess5 = jvp(grad(f), (3.,), (1.,))
 _, hess6 = jvp(jit(grad(f)), (3.,), (1.,))
 _, hess7 = jvp(jit(grad(f)), (3.,), (1.,))
 assert_allclose(hess1, hess2, hess3, hess4, hess5, hess6, hess7)
+
+# Test pruning of unused inputs.
+@jit
+def two_arg_f(x, y):
+  z = x + 3 + 5
+  return y + 2
+assert_allclose(two_arg_f(2, 3), 5)
