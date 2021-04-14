@@ -37,7 +37,7 @@ from . import linear_util as lu
 from .lib import jax_jit
 from jax._src import source_info_util
 from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
-                   tuple_insert, tuple_delete, as_hashable_function, unzip2,
+                   tuple_insert, tuple_delete, as_hashable_function,
                    HashableFunction)
 from ._src.pprint_util import pp, vcat, PrettyPrint
 
@@ -1038,7 +1038,7 @@ class ShapedArray(UnshapedArray):
   def __init__(self, shape, dtype, weak_type=False, named_shape={}):
     super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
-    self.named_shape = canonicalize_named_shape(named_shape)
+    self.named_shape = dict(named_shape)
 
   def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
     if shape is None:
@@ -1468,25 +1468,14 @@ class NamedShape:
   def __hash__(self):
     return hash((self.__positional, tuple(self.__named.items())))
 
-def canonicalize_named_shape(named_shape):
-  return dict(sorted(named_shape.items()))
-
 def join_named_shapes(*named_shapes):
-  named_shape_tuples = sorted(set(
-      item for named_shape in named_shapes for item in named_shape.items()))
-  if not named_shape_tuples:
-    return {}
-  names, sizes = unzip2(named_shape_tuples)
-  if len(set(names)) != len(names):
-    seen = set()
-    for name in names:
-      if name in seen:
-        break
-      seen.add(name)
-    raise TypeError(
-        f"Axis name {name} used with inconsistent sizes "
-        f"{[item[1] for item in named_shape_tuples if item[0] == name]}")
-  return dict(zip(names, sizes))
+  result = {}
+  for named_shape in named_shapes:
+    for name, size in named_shape.items():
+      if result.setdefault(name, size) != size:
+        raise TypeError(
+            f"Axis name {name} used with inconsistent sizes: {result[name]} != {size}")
+  return result
 
 # TODO: Make canonicalize_shape return named shapes?
 def as_named_shape(shape) -> NamedShape:
