@@ -19,8 +19,8 @@ from typing import (Tuple, List, Sequence, Set, Dict, Any, Callable, Union,
                     Optional)
 
 from jax import core
+from jax.core import Var, Literal, Atom, Tracer, AbstractValue
 from jax._src import dtypes
-from jax.core import Var, Literal, Atom, Tracer
 from jax._src.util import (safe_zip, safe_map, curry, unzip2, split_list,
                            tuple_delete)
 from jax._src.pprint_util import pp, vcat, PrettyPrint
@@ -36,6 +36,9 @@ NDArray = Any
 # Dynamic shape jaxprs
 
 ## Element types
+
+# TODO EltTy = Union[BoundedIntTy, DType]
+# at some point, we want to add in UnitTy
 
 class EltTy: pass
 
@@ -66,7 +69,7 @@ class BoundedIntTy(EltTy):
 
 ## Array types
 
-class AbsArray(core.AbstractValue):
+class AbsArray(AbstractValue):
   def __init__(self, shape, eltTy):
     assert isinstance(shape, tuple)
     assert isinstance(eltTy, EltTy)
@@ -136,9 +139,9 @@ class DimIndexingExpr:
 
 class DJaxprTy:
   in_dim_binders: List[Var]
-  in_types: List[core.AbstractValue]
+  in_types: List[AbstractValue]
   out_dim_binders: List[Var]
-  out_types: List[core.AbstractValue]
+  out_types: List[AbstractValue]
 
   def __init__(self, in_dim_binders, in_types, out_dim_binders, out_types):
     self.in_dim_binders = in_dim_binders
@@ -228,7 +231,7 @@ def typecheck_jaxpr(jaxpr: DJaxpr):
         aval = substitute(subst, t.aval)
         if v.aval != aval: raise TypeError(f'{v.aval} != {aval}')
         subst[t] = v
-      elif isinstance(t, core.AbstractValue):
+      elif isinstance(t, AbstractValue):
         aval = substitute(subst, t)
         if v.aval.strip_weak_type() != aval:
           raise TypeError(f'{v.aval} != {aval}')
@@ -446,7 +449,7 @@ def make_djaxpr(fun, *args, **kwargs):
   in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args]
   return trace_to_jaxpr_dynamic(f, in_avals)
 
-def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
+def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
   with core.new_main(DJaxprTrace, dynamic=True) as main:
     main.jaxpr_stack = ()  # type: ignore
     outs = trace_to_subjaxpr_dynamic(fun, main, in_avals)
@@ -454,7 +457,7 @@ def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[core.AbstractV
   return outs
 
 def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
-                              in_avals: Sequence[core.AbstractValue]):
+                              in_avals: Sequence[AbstractValue]):
   frame = DJaxprStackFrame()
   with pe.extend_jaxpr_stack(main, frame):
     trace = DJaxprTrace(main, core.cur_sublevel())
@@ -605,6 +608,9 @@ from jax.lib import xla_client as xc
 xe = xc._xla
 xops = xc._xla.ops
 
+XlaOp = xla.XlaOp
+XlaComputationBuilder = xla.XlaComputationBuilder
+
 def _abstractify_array_to_type_level(x: Array):
   return core.raise_to_shaped(core.get_aval(x))
 xla.pytype_aval_mappings[Array] = _abstractify_array_to_type_level
@@ -646,32 +652,61 @@ def _xla_consts(c, consts):
       id_: [xb.constant(c, const)] for id_, const in unique_consts.items()}
   return [xla_consts[id(const)] for const in consts]
 
+def _xla_reduce_max(c, x):
+  scalar = xc.Shape.array_shape(np.dtype('int32'), ())
+  subc = xb.make_computation_builder("reduce_max")
+  a = xb.parameter(subc, 0, scalar)
+  b = xb.parameter(subc, 1, scalar)
+  reducer = subc.build(xops.Max(a, b))
+  return xops.Reduce(c, [x], [xb.constant(c, np.array(0, np.int32))], reducer,
+                     list(range(len(c.get_shape(x).dimensions()))))
+
 def djaxpr_subcomp(c, jaxpr, dim_args, args):
-  env: Dict[Var, Sequence[xe.XlaOp]] = {}
+  env: Dict[Var, List[XlaOp]] = {}
 
-  def aval(v):
-    return xla.abstractify(v.val) if type(v) is core.Literal else v.aval
+  def aval(v: Atom) -> AbstractValue:
+    return xla.abstractify(v.val) if isinstance(v, core.Literal) else v.aval
 
-  def read(v):
-    if type(v) is core.Literal:
+  def read(v: Atom) -> List[XlaOp]:
+    if isinstance(v, core.Literal):
       return [xb.constant(c, xla.canonicalize_dtype(v.val))]
     else:
       return env[v]
 
-  def write(v, nodes):
-    env[v] = nodes
+  def write(v: Var, nodes: List[List[XlaOp]]) -> None:
+    if isinstance(v.aval, AbsArray):
+      x, = nodes
+      for i, d in enumerate(v.aval.shape):
+        if isinstance(d, Var):
+          x = xops.SetDimensionSize(x, read(d)[0], i)
+        elif isinstance(d, DimIndexingExpr):
+          x = xops.SetDimensionSize(x, _xla_reduce_max(c, read(d.name)[0]), i)
+      env[v] = [x]
+    else:
+      env[v] = nodes
+
+  def read_padded(v: Atom) -> List[XlaOp]:
+    if isinstance(v, Var) and isinstance(v.aval, AbsArray):
+      x, = read(v)
+      for i, d in enumerate(v.aval.shape):
+        if isinstance(d, (Var, DimIndexingExpr)):
+          x = xops.RemoveDynamicDimension(x, i)
+      return [x]
+    else:
+      return read(v)
 
   write(core.unitvar, xla._make_unit_constant(c))
   map(write, jaxpr.in_dim_binders, dim_args)
   map(write, jaxpr.in_binders, args)
   for eqn in jaxpr.eqns:
     in_vals, in_avals = map(read, eqn.invars), map(aval, eqn.invars)
-    in_dims = {v:read(v) for a in in_avals if isinstance(a, AbsArray)
-               for v in a.shape if isinstance(v, Var)}
+    in_dims = {v:read(v)[0] if isinstance(v, Var) else read(v.name)[0]
+               for a in in_avals if isinstance(a, AbsArray)
+               for v in a.shape if isinstance(v, (Var, DimIndexingExpr))}
     rule = translations[eqn.primitive]
     out_vals = rule(c, in_dims, in_avals, in_vals, **eqn.params)
     map(write, eqn.outvars, out_vals)
-  return map(read, jaxpr.out_dims), map(read, jaxpr.outs)
+  return map(read_padded, jaxpr.out_dims), map(read_padded, jaxpr.outs)
 
 def execute_compiled(compiled, partitioner, handlers, dim_vals, args):
   input_bufs = list(it.chain(
@@ -757,7 +792,7 @@ def djit(fun):
     f, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
     # TODO we shouldn't dedup avals one array at a time; need to do it for the
     # full argument list!
-    # unique_avals: Dict[int, core.AbstractValue] = {}
+    # unique_avals: Dict[int, AbstractValue] = {}
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args]
     jaxpr, consts, unconverted_binders = trace_to_jaxpr_dynamic(f, in_avals)
     num_consts = len(consts)
@@ -795,7 +830,7 @@ def traceable_to_padded_translation(traceable):
     in_avals = [*dim_avals, *padded_avals]
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
 
-    operands_ = it.chain.from_iterable([*dims.values(), *operands])
+    operands_ = [*dims.values(), *it.chain.from_iterable(operands)]
     outs = xla.jaxpr_subcomp(c, jaxpr, None, xla.AxisEnv(1, (), ()),
                              xla._xla_consts(c, consts), '', *operands_)
     return xla._partition_outputs(out_avals, outs)
@@ -1084,6 +1119,8 @@ def _sum_abstract_eval(operand, *, axes):
         isinstance(operand._eltTy, BaseType)):
       return core.ShapedArray(tuple(new_shape), operand._eltTy._dtype)
     else:
+      if any(isinstance(d, DimIndexingExpr) for d in new_shape):
+        raise TypeError("reduction summing unevely-shaped ragged data")
       return AbsArray(tuple(new_shape), operand._eltTy)
   else:
     return lax.reduce_sum_p.reduce_sum_abstract_eval(operand, axes=axes)
@@ -1093,8 +1130,7 @@ def _reduce_sum_typecheck_rule(x, *, axes):
 typecheck_rules[reduce_sum_p] = _reduce_sum_typecheck_rule
 
 def _reduce_sum_translation_traceable(logical_shapes, x, *, axes):
-  shape, = logical_shapes
-  x = _replace_masked_values(shape, x, 0, axes=axes)
+  del logical_shapes  # Unused.
   return [lax._reduce_sum(x, axes=axes)]
 translations[reduce_sum_p] = traceable_to_padded_translation(
     _reduce_sum_translation_traceable)
@@ -1164,9 +1200,7 @@ def _dot_general_typecheck_rule(x, y, *, contract, batch):
 typecheck_rules[dot_general_p] = _dot_general_typecheck_rule
 
 def _dot_general_trans(logical_shapes, x, y, *, contract, batch):
-  x_shape, _ = logical_shapes
-  lhs_contract, _ = contract
-  x = _replace_masked_values(x_shape, x, 0, axes=lhs_contract)
+  del logical_shapes  # Unused.
   return [lax.dot_general(x, y, dimension_numbers=(contract, batch))]
 translations[dot_general_p] = traceable_to_padded_translation(_dot_general_trans)
 

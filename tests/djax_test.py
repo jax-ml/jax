@@ -24,7 +24,7 @@ from jax.util import safe_map, safe_zip
 
 from jax.experimental import djax
 from jax.experimental.djax import (
-    bbarray, ones_like, sin, add, iota, nonzero, reduce_sum, broadcast)
+    bbarray, ones_like, sin, add, iota, nonzero, reduce_sum, broadcast, dot)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -118,6 +118,16 @@ class DJaxXLATests(jtu.JaxTestCase):
     n = djax.BoundedInt(4, 5)
     ans = f(x, n)
     expected = np.broadcast_to(np.nonzero(x)[0], (4, 2))
+    self.assertAllClose(np.array(ans), expected, check_dtypes=False)
+
+  def test_dot(self):
+    @djax.djit
+    def f(x):
+      return dot(x, x)
+    x = bbarray((4, 4), np.arange(9., dtype=np.float32).reshape(3, 3))
+    ans = f(x)
+    y = np.arange(9.).reshape(3, 3)
+    expected = np.dot(y, y)
     self.assertAllClose(np.array(ans), expected, check_dtypes=False)
 
 
