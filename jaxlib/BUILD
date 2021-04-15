@@ -119,6 +119,7 @@ py_library(
         "cuda_linalg.py",
         "cuda_prng.py",
         "cusolver.py",
+        "cusparse.py",
     ]) + if_rocm_is_configured([
         "rocsolver.py",
     ]),
@@ -137,6 +138,7 @@ py_library(
         ":cuda_lu_pivot_kernels",
         ":cuda_prng_kernels",
         ":cusolver_kernels",
+        ":cusparse_kernels",
     ],
 )
 
@@ -185,6 +187,36 @@ pybind_extension(
         ":kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cusolver_lib",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@pybind11",
+    ],
+)
+
+pybind_extension(
+    name = "cusparse_kernels",
+    srcs = ["cusparse.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "cusparse_kernels",
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":handle_pool",
+        ":kernel_pybind11_helpers",
+        "//third_party/gpus/cuda:cusparse_static",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cusparse_lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",

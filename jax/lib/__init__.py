@@ -70,6 +70,11 @@ except ImportError:
   cusolver = None
 
 try:
+  from jaxlib import cusparse  # pytype: disable=import-error
+except ImportError:
+  cusparse = None
+
+try:
   from jaxlib import rocsolver  # pytype: disable=import-error
 except ImportError:
   rocsolver = None
