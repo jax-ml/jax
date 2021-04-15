@@ -471,13 +471,12 @@ def add_tangents(x, y):
     return add_jaxvals(x, y)
 
 
-def defbilinear_broadcasting(bcast, prim, lhs_rule, rhs_rule):
+def defbilinear(prim, lhs_rule, rhs_rule):
   assert isinstance(prim, Primitive)
-  lhs_jvp = lambda g, x, y, **kwargs: prim.bind(bcast(g, y), y, **kwargs)
-  rhs_jvp = lambda g, x, y, **kwargs: prim.bind(x, bcast(g, x), **kwargs)
+  lhs_jvp = lambda g, x, y, **kwargs: prim.bind(g, y, **kwargs)
+  rhs_jvp = lambda g, x, y, **kwargs: prim.bind(x, g, **kwargs)
   defjvp(prim, lhs_jvp, rhs_jvp)
   primitive_transposes[prim] = partial(bilinear_transpose, lhs_rule, rhs_rule)
-defbilinear: Callable = partial(defbilinear_broadcasting, lambda g, x: g)
 
 def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
   assert is_undefined_primal(x) ^ is_undefined_primal(y)

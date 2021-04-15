@@ -3782,6 +3782,186 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = 2. * jnp.ones(3)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_custom_jvp_vmap_broadcasting_interaction(self):
+    # https://github.com/google/jax/issues/6452
+    def f2(y, z):
+      v1 = z
+      v2 = jnp.sum(y) + z
+      return jnp.logaddexp(v1, v2)
+
+    def f1(y, z):
+      v = api.vmap(lambda _y: f2(_y, z))(y)
+      return jnp.sum(v)
+
+    y = jnp.ones((3, 2))
+    f = lambda z: f1(y, z)
+    z = 0.1
+    val, g = api.value_and_grad(f)(z)
+    self.assertEqual(val.shape, ())
+    self.assertEqual(g.shape, ())
+
+  def test_custom_jvp_vmap_broadcasting_interaction_2(self):
+    # https://github.com/google/jax/issues/5849
+    @api.custom_jvp
+    def transform(box, R):
+      if jnp.isscalar(box) or box.size == 1:
+        return R * box
+      elif box.ndim == 2:
+        return jnp.einsum('ij,j->i', box, R)
+      raise ValueError()
+
+    @transform.defjvp
+    def transform_jvp(primals, tangents):
+      box, R = primals
+      dbox, dR = tangents
+      return (transform(box, R), dR + transform(dbox, R))
+
+    def periodic_general(box):
+      def displacement_fn(Ra, Rb, **kwargs):
+        _box = kwargs.get('box', box)
+        return transform(_box, Ra - Rb)
+
+      return displacement_fn
+
+    N = 250
+
+    scalar_box = 1.0
+    displacement = periodic_general(scalar_box)
+
+    key = jax.random.PRNGKey(0)
+    R = jax.random.uniform(key, (N, 2))
+
+    def energy_fn(box):
+      d = partial(displacement, box=box)
+      d = api.vmap(api.vmap(d, (None, 0)), (0, None))
+      return jnp.sum(d(R, R) ** 2)
+
+    self.assertEqual(grad(energy_fn)(scalar_box).shape, ())
+
+  def test_custom_jvp_implicit_broadcasting(self):
+    # https://github.com/google/jax/issues/6357
+    if config.x64_enabled:
+      raise unittest.SkipTest("test only applies when x64 is disabled")
+
+    @jax.custom_jvp
+    def projection_unit_simplex(x: jnp.ndarray) -> jnp.ndarray:
+      """Projection onto the unit simplex."""
+      s = 1.0
+      n_features = x.shape[0]
+      u = jnp.sort(x)[::-1]
+      cssv = jnp.cumsum(u) - s
+      ind = jnp.arange(n_features) + 1
+      cond = u - cssv / ind > 0
+      idx = jnp.count_nonzero(cond)
+      threshold = cssv[idx - 1] / idx.astype(x.dtype)
+      return jax.nn.relu(x - threshold)
+
+
+    @projection_unit_simplex.defjvp
+    def projection_unit_simplex_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = projection_unit_simplex(x)
+      supp = primal_out > 0
+      card = jnp.count_nonzero(supp)
+      tangent_out = supp * x_dot - (jnp.dot(supp, x_dot) / card) * supp
+      return primal_out, tangent_out
+
+    rng = np.random.RandomState(0)
+    x = rng.rand(5).astype(np.float32)
+
+    J_rev = jax.jacrev(projection_unit_simplex)(x)
+    J_fwd = jax.jacfwd(projection_unit_simplex)(x)
+
+    p = projection_unit_simplex(x)
+    support = (p > 0).astype(jnp.int32)
+    cardinality = jnp.count_nonzero(support)
+    J_true = jnp.diag(support) - jnp.outer(support, support) / cardinality
+    self.assertAllClose(J_true, J_fwd)
+    self.assertAllClose(J_true, J_rev)
+
+    proj = jax.vmap(projection_unit_simplex)
+
+    def fun(X):
+      return jnp.sum(proj(X) ** 2)
+
+    rng = np.random.RandomState(0)
+    X = rng.rand(4, 5).astype(np.float32)
+    U = rng.rand(4, 5)
+    U /= np.sqrt(np.sum(U ** 2))
+    U = U.astype(np.float32)
+
+    eps = 1e-3
+    dir_deriv_num = (fun(X + eps * U) - fun(X - eps * U)) / (2 * eps)
+    dir_deriv = jnp.vdot(jax.grad(fun)(X), U)
+    self.assertAllClose(dir_deriv, dir_deriv_num, atol=1e-3)
+
+  def test_vmap_inside_defjvp(self):
+    # https://github.com/google/jax/issues/3201
+    seed = 47
+    key = jax.random.PRNGKey(seed)
+    mat = jax.random.normal(key, (2, 3))
+
+    @jax.custom_jvp
+    def f(mat, aux):
+        num_rows, num_cols = mat.shape
+        return jnp.ones((num_rows, 1)) / num_cols
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+        mat, aux = primals
+        vec, _ = tangents
+        output = f(*primals)
+        num_rows, num_cols = mat.shape
+        size = num_rows * num_cols
+        # -----
+        bd_mat = mat.reshape(1, 1, num_rows, num_cols)
+        bd_mat = jnp.tile(bd_mat, reps=(num_rows, num_cols))
+        bd_mat = bd_mat.reshape(size, num_rows, num_cols)
+        # -----
+        rowsum = jnp.sum(mat, axis=1, keepdims=True)
+        colsum = jnp.sum(mat, axis=0, keepdims=True)
+        bd_rowsum = jnp.tile(rowsum, reps=(1, num_rows))
+        bd_colsum = jnp.tile(colsum, reps=(num_cols, 1))
+        # -----
+        bd_vec = vec.reshape(size, 1)
+        # -----
+        def operate(mx, val):
+            buf = 0
+            for i in range(2):
+                buf = buf + jnp.matmul(mx, bd_colsum) / jnp.power(aux, i)
+            buf = jnp.matmul(bd_rowsum, buf)
+            return buf * val
+        # -----
+        # Vertorizing will raise shape error
+        bd_buf = jax.vmap(operate, in_axes=(0, 0), out_axes=0)(bd_mat, bd_vec)
+        # -----
+        bd_buf = bd_buf / aux
+        jvp = jnp.sum(bd_buf, axis=0)
+        jvp = jnp.mean(jvp, axis=1, keepdims=True)
+        # -----
+        # JVP ends successfully, but still raise an error
+        return (output, jvp)
+
+    jax.grad(lambda mat, aux: jnp.sum(f(mat, aux)))(mat, 0.5)  # doesn't crash
+
+  def test_custom_jvp_unbroadcasting(self):
+    # https://github.com/google/jax/issues/3056
+    a = jnp.array([1., 1.])
+
+    @jax.custom_jvp
+    def f(x):
+      return a * x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      dx, = tangents
+      return a * x, a * dx
+
+    shape = grad(lambda x: jnp.sum(f(x)))(jnp.array(1.)).shape
+    self.assertEqual(shape, ())
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 

@@ -36,7 +36,9 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
+compatible_shapes = [[(3,)],
+                     [(), (3, 4), (3, 1), (1, 4)],
+                     [(2, 3, 4), (2, 1, 4)]]
 
 
 GradTestSpec = collections.namedtuple(
