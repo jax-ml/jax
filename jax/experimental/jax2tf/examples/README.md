@@ -68,7 +68,7 @@ one using Flax (`FlaxMNIST`). Other Flax models can be arranged similarly,
 and the same strategy should work for other neural-network libraries for JAX.
 
 If your Flax model takes multiple inputs, then you need to change the last
-line above to:
+line in the example above to:
 
   ```python
   predict_fn = lambda params, input: model.apply({"params": params}, *input)

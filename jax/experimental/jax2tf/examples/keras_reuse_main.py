@@ -20,8 +20,8 @@ See README.md.
 import logging
 from absl import app
 from absl import flags
-from jax.experimental.jax2tf.examples import mnist_lib
-from jax.experimental.jax2tf.examples import saved_model_main
+from jax.experimental.jax2tf.examples import mnist_lib  # type: ignore
+from jax.experimental.jax2tf.examples import saved_model_main  # type: ignore
 import tensorflow as tf  # type: ignore
 import tensorflow_datasets as tfds  # type: ignore
 import tensorflow_hub as hub  # type: ignore

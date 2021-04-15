@@ -15,7 +15,8 @@
 
 By default, uses a pure JAX implementation of MNIST. There are flags to choose
 a Flax CNN version of MNIST, or to skip the training and just test a
-previously saved SavedModel.
+previously saved SavedModel. It is possible to save a batch-polymorphic
+version of the model, or a model prepared for specific batch sizes.
 
 Try --help to see all flags.
 
@@ -47,11 +48,18 @@ flags.DEFINE_string("model_path", "/tmp/jax2tf/saved_models",
                     "Path under which to save the SavedModel.")
 flags.DEFINE_integer("model_version", 1,
                      ("The version number for the SavedModel. Needed for "
-                      "serving, larger versions will take precedence"))
-flags.DEFINE_integer("serving_batch_size", 1,
-                     "For what batch size to prepare the serving signature. ",
+                      "serving, larger versions will take precedence"),
                      lower_bound=1)
-flags.DEFINE_integer("num_epochs", 3, "For how many epochs to train.")
+flags.DEFINE_integer("serving_batch_size", 1,
+                     "For what batch size to prepare the serving signature. "
+                     "Use -1 for converting and saving with batch polymorphism.")
+flags.register_validator(
+    "serving_batch_size",
+    lambda serving_batch_size: serving_batch_size > 0 or serving_batch_size == -1,
+    message="--serving_batch_size must be either -1 or a positive integer.")
+
+flags.DEFINE_integer("num_epochs", 3, "For how many epochs to train.",
+                     lower_bound=1)
 flags.DEFINE_boolean(
     "generate_model", True,
     "Train and save a new model. Otherwise, use an existing SavedModel.")
@@ -92,15 +100,23 @@ def train_and_save():
         FLAGS.num_epochs,
         with_classifier=FLAGS.model_classifier_layer)
 
-    input_signatures = [
-        # The first one will be the serving signature
-        tf.TensorSpec((FLAGS.serving_batch_size,) + mnist_lib.input_shape,
-                      tf.float32),
-        tf.TensorSpec((mnist_lib.train_batch_size,) + mnist_lib.input_shape,
-                      tf.float32),
-        tf.TensorSpec((mnist_lib.test_batch_size,) + mnist_lib.input_shape,
-                      tf.float32),
-    ]
+    if FLAGS.serving_batch_size == -1:
+      # Batch-polymorphic SavedModel
+      input_signatures = [
+          tf.TensorSpec((None,) + mnist_lib.input_shape, tf.float32),
+      ]
+      polymorphic_shapes = "(batch, ...)"
+    else:
+      input_signatures = [
+          # The first one will be the serving signature
+          tf.TensorSpec((FLAGS.serving_batch_size,) + mnist_lib.input_shape,
+                        tf.float32),
+          tf.TensorSpec((mnist_lib.train_batch_size,) + mnist_lib.input_shape,
+                        tf.float32),
+          tf.TensorSpec((mnist_lib.test_batch_size,) + mnist_lib.input_shape,
+                        tf.float32),
+      ]
+      polymorphic_shapes = None
 
     logging.info(f"Saving model for {model_descr}")
     saved_model_lib.convert_and_save_model(
@@ -108,6 +124,7 @@ def train_and_save():
         predict_params,
         model_dir,
         input_signatures=input_signatures,
+        polymorphic_shapes=polymorphic_shapes,
         compile_model=FLAGS.compile_model)
 
     if FLAGS.test_savedmodel:
