@@ -25,6 +25,7 @@ from unittest import SkipTest
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax._src import api
 from jax.config import config
 from jax import dtypes
@@ -203,6 +204,9 @@ def assertMultiDeviceOutputEqual(tst: jtu.JaxTestCase,
 class HostCallbackIdTapTest(jtu.JaxTestCase):
 
   def setUp(self):
+    if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
+      raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
+
     testing_stream.reset()
     testing_stream.test_method_name = self._testMethodName
     self.old_flags = os.getenv("XLA_FLAGS", "")
@@ -1719,6 +1723,9 @@ class HostCallbackCallTest(jtu.JaxTestCase):
   """Tests for hcb.call"""
 
   def setUp(self):
+    if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
+      raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
+
     testing_stream.reset()
     testing_stream.test_method_name = self._testMethodName
     super().setUp()
@@ -2047,6 +2054,9 @@ class CallJaxTest(jtu.JaxTestCase):
   """Tests using `call_jax_other_device`."""
 
   def setUp(self):
+    if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
+      raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
+
     if jtu.device_under_test() != "cpu":
       assert api.devices("cpu")
       self.outside_device = api.devices("cpu")[0]
@@ -2115,6 +2125,11 @@ class CallJaxTest(jtu.JaxTestCase):
 
 
 class OutfeedRewriterTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
+      raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
+    super().setUp()
 
   def assertRewrite(self, expected: str, func: Callable, args: Sequence,
                     has_input_token=True, has_output_token=True):
