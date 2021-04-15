@@ -543,6 +543,14 @@ class XMapTest(XMapTestCase):
     y = rng.randn(*yshape)
     self.assertAllClose(fm(x, y), fref(x, y))
 
+  def testJVP(self):
+    f = xmap(lambda x, y: jnp.cos(lax.dot(x, jnp.sin(y),
+                                          precision=lax.Precision.HIGHEST)),
+             in_axes=[['i', ...], {}], out_axes=['i', ...])
+    x = jnp.arange(12, dtype=jnp.float32).reshape((3, 4)) / 100
+    y = jnp.arange(20, dtype=jnp.float32).reshape((4, 5)) / 100
+    jtu.check_grads(f, (x, y), order=2, modes=['fwd'])
+
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):
   """Re-executes all basic tests with the SPMD partitioner enabled"""
