@@ -23,7 +23,7 @@ import requests
 from absl import app
 from absl import flags
 
-from jax.experimental.jax2tf.examples import mnist_lib
+from jax.experimental.jax2tf.examples import mnist_lib  # type: ignore
 
 import numpy as np
 import tensorflow as tf  # type: ignore

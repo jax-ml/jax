@@ -58,8 +58,12 @@ again using a recent "nightly" version. Install Docker and then run.
     MODEL_PATH=/tmp/jax2tf/saved_models
     # The example model. The options are "mnist_flax" and "mnist_pure_jax"
     MODEL=mnist_flax
-    # The batch size for the SavedModel.
-    SERVING_BATCH_SIZE=1
+    # The batch size for the SavedModel. Use -1 for batch-polymorphism,
+    # or a strictly positive value for a fixed batch size.
+    SERVING_BATCH_SIZE_SAVE=-1
+    # The batch size to send to the model. Must be equal to SERVING_BATCH_SIZE_SAVE
+    # if not -1.
+    SERVING_BATCH_SIZE=16
     # Increment this when you make changes to the model parameters after the
     # initial model generation (Step 1 below).
     MODEL_VERSION=$(( 1 + ${MODEL_VERSION:-0} ))
@@ -71,7 +75,7 @@ again using a recent "nightly" version. Install Docker and then run.
     ```shell
     python ${JAX2TF_EXAMPLES}/saved_model_main.py --model=${MODEL} \
         --model_path=${MODEL_PATH} --model_version=${MODEL_VERSION} \
-        --serving_batch_size=${SERVING_BATCH_SIZE} \
+        --serving_batch_size=${SERVING_BATCH_SIZE_SAVE} \
         --compile_model \
         --noshow_model
     ```
@@ -82,6 +86,9 @@ again using a recent "nightly" version. Install Docker and then run.
     ```shell
     saved_model_cli show --all --dir ${MODEL_PATH}/${MODEL}/${MODEL_VERSION}
     ```
+
+    If you see a `-1` as the first element of the `shape`, then you have
+    a batch polymorphic model.
 
 3.  *Start a local model server* with XLA compilation enabled. Execute:
 
@@ -113,14 +120,18 @@ again using a recent "nightly" version. Install Docker and then run.
     then your serving batch size is 16 (= 12544 / 784) while the model loaded
     in the model server has batch size 1 (= 784 / 784). You should check that
     you are using the same --serving_batch_size for the model generation and
-    for sending the requests.
+    for sending the requests (or are using batch-polymorphic model generation.)
 
 5.  *Experiment with different models and batch sizes*.
 
     - You can set `MODEL=mnist_pure_jax` to use a simpler model, using just
     pure JAX, then restart from Step 1.
 
+    - If you created a batch-polymorphic models (`SERVING_BATCH_SIZE_SAVE=-1`)
+    then you can vary `SERVING_BATCH_SIZE` and retry from Step 4.
+
     - You can change the batch size at which the model is converted from JAX
-    and saved. Set `SERVING_BATCH_SIZE=16` and restart from Step 2.
+    and saved. Set `SERVING_BATCH_SIZE_SAVE=16` and `SERVING_BATCH_SIZE=16` 
+    and redo Step 2 and Step 4 (do not need to restart the model server).
     In Step 4, you should pass a `--count_images`
     parameter that is a multiple of the serving batch size you choose.

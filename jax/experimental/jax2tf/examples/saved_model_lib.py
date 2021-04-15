@@ -25,7 +25,7 @@ uses you will probably want to copy and expand this function as needed.
 
 """
 
-from typing import Any, Callable, Sequence, Optional
+from typing import Any, Callable, Sequence, Optional, Union
 
 from jax.experimental import jax2tf  # type: ignore[import]
 import tensorflow as tf  # type: ignore[import]
@@ -37,6 +37,7 @@ def convert_and_save_model(
     model_dir: str,
     *,
     input_signatures: Sequence[tf.TensorSpec],
+    polymorphic_shapes: Optional[Union[str, jax2tf.PolyShape]] = None,
     with_gradient: bool = False,
     enable_xla: bool = True,
     compile_model: bool = True,
@@ -84,13 +85,22 @@ def convert_and_save_model(
       exception if it is not possible. (default: True)
     compile_model: use TensorFlow jit_compiler on the SavedModel. This
       is needed if the SavedModel will be used for TensorFlow serving.
+    polymorphic_shapes: if given then it will be used as the
+      `polymorphic_shapes` argument to jax2tf.convert for the second parameter of
+      `jax_fn`. In this case, a single `input_signatures` is supported, and
+      should have `None` in the polymorphic dimensions.
     save_model_options: options to pass to savedmodel.save.
   """
   if not input_signatures:
     raise ValueError("At least one input_signature must be given")
+  if polymorphic_shapes is not None:
+    if len(input_signatures) > 1:
+      raise ValueError("For shape-polymorphic conversion a single "
+                       "input_signature is supported.")
   tf_fn = jax2tf.convert(
     jax_fn,
     with_gradient=with_gradient,
+    polymorphic_shapes=[None, polymorphic_shapes],
     enable_xla=enable_xla)
 
   # Create tf.Variables for the parameters. If you want more useful variable

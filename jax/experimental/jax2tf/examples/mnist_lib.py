@@ -113,9 +113,7 @@ class PureJaxMNIST:
       either the predictions (B, 10) if with_classifier=True, or the
       final set of logits of shape (B, 512).
     """
-    # TODO: replace inputs.shape[1:] with -1 once we fix shape polymorphic bug
-    x = inputs.reshape(
-      (inputs.shape[0], np.prod(inputs.shape[1:])))  # flatten to f32[B, 784]
+    x = inputs.reshape((inputs.shape[0], -1))  # flatten to f32[B, 784]
     for w, b in params[:-1]:
       x = jnp.dot(x, w) + b
       x = jnp.tanh(x)
@@ -206,8 +204,7 @@ class FlaxMNIST:
       x = nn.Conv(features=64, kernel_size=(3, 3))(x)
       x = nn.relu(x)
       x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-      # TODO: replace np.prod(x.shape[1:]) with -1 once we fix shape_polymorphism
-      x = x.reshape((x.shape[0], np.prod(x.shape[1:])))  # flatten
+      x = x.reshape((x.shape[0], -1))  # flatten
       x = nn.Dense(features=256)(x)
       x = nn.relu(x)
       if not with_classifier:

@@ -36,16 +36,16 @@ class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
     FLAGS.test_savedmodel = True
     FLAGS.mock_data = True
 
-  # @parameterized.named_parameters(
-  #     dict(
-  #         testcase_name=f"_{model}_batch={serving_batch_size}",
-  #         model=model,
-  #         serving_batch_size=serving_batch_size)
-  #     for model in ["mnist_pure_jax", "mnist_flax"]
-  #     for serving_batch_size in [1])
+  @parameterized.named_parameters(
+      dict(
+          testcase_name=f"_{model}_batch={serving_batch_size}",
+          model=model,
+          serving_batch_size=serving_batch_size)
+      for model in ["mnist_pure_jax", "mnist_flax"]
+      for serving_batch_size in [1, -1])
   def test_train_and_save_full(self,
-                               model="mnist_flax",
-                               serving_batch_size=1):
+                               model="mnist_pure_jax",
+                               serving_batch_size=-1):
     FLAGS.model = model
     FLAGS.model_classifier_layer = True
     FLAGS.serving_batch_size = serving_batch_size
