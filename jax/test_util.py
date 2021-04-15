@@ -666,10 +666,13 @@ def rand_some_nan(rng):
       return base_rand(shape, dtype)
 
     dims = _dims_of_shape(shape)
-    nan_flips = rng.rand(*dims) < 0.1
+    r = rng.rand(*dims)
+    nan_flips = r < 0.1
+    neg_nan_flips = r < 0.05
 
     vals = base_rand(shape, dtype)
     vals = np.where(nan_flips, np.array(np.nan, dtype=dtype), vals)
+    vals = np.where(neg_nan_flips, np.array(-np.nan, dtype=dtype), vals)
 
     return _cast_to_shape(np.asarray(vals, dtype=dtype), shape, dtype)
 
