@@ -646,6 +646,7 @@ def _make_harness(group_name: str, name: str,
                   *,
                   poly_axes: Sequence[Optional[int]],
                   check_result=True,
+                  tol=None,
                   **params) -> Harness:
   """The `poly_axes` must correspond to the non-static arguments, and for each
   one it must specify which axes are: None, or an int.
@@ -659,6 +660,7 @@ def _make_harness(group_name: str, name: str,
                  dtype=np.float32,
                  poly_axes=poly_axes,
                  check_result=check_result,
+                 tol=tol,
                  **params)
 
 
@@ -724,7 +726,8 @@ _POLY_SHAPE_TEST_HARNESSES = [
     _make_harness("jnp_matmul", "",
                   jnp.matmul,
                   [RandArg((7, 8, 4), _f32), RandArg((7, 4, 5), _f32)],
-                  poly_axes=[0, 0]),
+                  poly_axes=[0, 0],
+                  tol=1e-5),
 
     _make_harness("jnp_where", "",
                   jnp.where,
@@ -921,7 +924,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     # Make the polymorphic_shapes and input_signature
     polymorphic_shapes: List[Optional[str]] = []
     input_signature: List[tf.TensorSpec] = []
-    for i, (arg, poly_axis) in enumerate(zip(args, poly_axes)):
+    for arg, poly_axis in zip(args, poly_axes):
       if poly_axis is None:
         polymorphic_shapes.append(None)
         input_signature.append(tf.TensorSpec(np.shape(arg), arg.dtype))
@@ -941,8 +944,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         expected_output_signature=None)
 
     if harness.params["check_result"]:
-      self.assertAllClose(res_jax, f_tf(*args))
-
+      tol = harness.params["tol"]
+      self.assertAllClose(res_jax, f_tf(*args), atol=tol, rtol=tol)
 
   def test_reshape_error(self):
     with self.assertRaisesRegex(
