@@ -688,9 +688,14 @@ def djaxpr_subcomp(c, jaxpr, dim_args, args):
   def read_padded(v: Atom) -> List[XlaOp]:
     if isinstance(v, Var) and isinstance(v.aval, AbsArray):
       x, = read(v)
-      for i, d in enumerate(v.aval.shape):
-        if isinstance(d, (Var, DimIndexingExpr)):
-          x = xops.RemoveDynamicDimension(x, i)
+      # TODO(mattjj): did RemoveDynamicDimension stop working?
+      static_shape = [
+          d.aval._eltTy._bound if isinstance(d, Var) else
+          d.name.aval._eltTy._bound if isinstance(d, DimIndexingExpr) else
+          d._bound if isinstance(d, BoundedInt) else d for d in v.aval.shape]
+      dummy_dynamic_shape = [xb.constant(c, np.int32(0))] * len(static_shape)
+      x = xops.DynamicReshape(x, dummy_dynamic_shape, static_shape,
+                              [False] * len(static_shape))
       return [x]
     else:
       return read(v)
