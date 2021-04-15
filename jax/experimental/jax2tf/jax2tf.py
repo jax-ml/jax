@@ -918,8 +918,16 @@ def _div(lhs, rhs):
 
 
 def _rem(lhs, rhs):
-  return tf.math.sign(lhs) * tf.math.floormod(tf.math.abs(lhs),
-                                              tf.math.abs(rhs))
+  # TODO(b/175464151): simplify when TF improve rem support.
+  if not lhs.dtype.is_unsigned:
+    sign = tf.math.sign(lhs)
+    lhs = tf.math.abs(lhs)
+  else:
+    sign = tf.ones_like(lhs)
+  if not rhs.dtype.is_unsigned:
+    rhs = tf.math.abs(rhs)
+  return sign * tf.math.floormod(lhs, rhs)
+
 
 tf_impl[lax.div_p] = _div
 tf_impl[lax.rem_p] = _rem

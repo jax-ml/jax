@@ -516,6 +516,13 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
                                                    jnp.bfloat16))
 
+  def test_randint(self):
+    def randint():
+      return jax.random.randint(
+          jax.random.PRNGKey(42), shape=(), minval=0, maxval=1)
+
+    self.ConvertAndCompare(randint)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
