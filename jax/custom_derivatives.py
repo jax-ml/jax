@@ -16,7 +16,7 @@
 from functools import update_wrapper, reduce, partial
 import inspect
 import operator as op
-from typing import Callable, Sequence, Tuple, Any
+from typing import Callable, Generic, Optional, Sequence, Tuple, TypeVar, Any
 
 from . import core
 from ._src import dtypes
@@ -77,8 +77,9 @@ def _stop_gradient(x):
 
 
 ### JVPs
+ReturnValue = TypeVar('ReturnValue')
 
-class custom_jvp:
+class custom_jvp(Generic[ReturnValue]):
   """Set up a JAX-transformable function for a custom JVP rule definition.
 
   This class is meant to be used as a function decorator. Instances are
@@ -116,13 +117,15 @@ class custom_jvp:
   .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
 
-  def __init__(self, fun, nondiff_argnums=()):
+  def __init__(self,
+               fun: Callable[..., ReturnValue],
+               nondiff_argnums: Tuple[int, ...] = ()):
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
-    self.jvp = None
+    self.jvp: Optional[Callable[..., Tuple[ReturnValue, ReturnValue]]] = None
     update_wrapper(self, fun)
 
-  def defjvp(self, jvp):
+  def defjvp(self, jvp: Callable[..., Tuple[ReturnValue, ReturnValue]]) -> None:
     """Define a custom JVP rule for the function represented by this instance.
 
     Args:
@@ -154,7 +157,7 @@ class custom_jvp:
     """
     self.jvp = jvp
 
-  def defjvps(self, *jvps):
+  def defjvps(self, *jvps: Optional[Callable[..., ReturnValue]]):
     """Convenience wrapper for defining JVPs for each argument separately.
 
     This convenience wrapper cannot be used together with ``nondiff_argnums``.
@@ -190,15 +193,15 @@ class custom_jvp:
 
     self.defjvp(jvp)
 
-  def __call__(self, *args, **kwargs):
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
     if not self.jvp:
       msg = "No JVP defined for custom_jvp function {} using defjvp."
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
       nondiff_argnums = set(self.nondiff_argnums)
-      args = [_stop_gradient(x) if i in nondiff_argnums else x
-              for i, x in enumerate(args)]
+      args = tuple(_stop_gradient(x) if i in nondiff_argnums else x
+                   for i, x in enumerate(args))
       diff_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), diff_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
@@ -368,7 +371,7 @@ ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transp
 
 ### VJPs
 
-class custom_vjp:
+class custom_vjp(Generic[ReturnValue]):
   """Set up a JAX-transformable function for a custom VJP rule definition.
 
   This class is meant to be used as a function decorator. Instances are
@@ -402,14 +405,18 @@ class custom_vjp:
   .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
 
-  def __init__(self, fun, nondiff_argnums=()):
+  def __init__(self,
+               fun: Callable[..., ReturnValue],
+               nondiff_argnums: Tuple[int, ...] = ()):
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
-    self.fwd = None
-    self.bwd = None
+    self.fwd: Optional[Callable[..., Tuple[ReturnValue, Any]]] = None
+    self.bwd: Optional[Callable[..., Tuple[Any, ...]]] = None
     update_wrapper(self, fun)
 
-  def defvjp(self, fwd, bwd):
+  def defvjp(self,
+             fwd: Callable[..., Tuple[ReturnValue, Any]],
+             bwd: Callable[..., Tuple[Any, ...]]) -> None:
     """Define a custom VJP rule for the function represented by this instance.
 
     Args:
@@ -452,7 +459,7 @@ class custom_vjp:
     self.fwd = fwd
     self.bwd = bwd
 
-  def __call__(self, *args, **kwargs):
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
     if not self.fwd or not self.bwd:
       msg = "No VJP defined for custom_vjp function {} using defvjp."
       raise AttributeError(msg.format(self.__name__))
