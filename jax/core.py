@@ -1353,6 +1353,9 @@ def divide_shape_sizes(s1: Shape, s2: Shape) -> int:
 def same_shape_sizes(s1: Shape, s2: Shape) -> bool:
   return 1 == divide_shape_sizes(s1, s2)
 
+def is_empty_shape(s: Shape) -> bool:
+  return any(symbolic_equal_dim(d, 0) for d in s)
+
 def dilate_dim(d: DimSize, dilation: DimSize) -> DimSize:
   """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
   handler, ds = _dim_handler_and_canonical(d, dilation)
