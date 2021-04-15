@@ -44,9 +44,9 @@ flags.DEFINE_integer("num_epochs", 5,
                      ("Number of epochs to train for."))
 flags.DEFINE_integer("num_classes", 100, "Number of classification classes.")
 
-flags.register_validator('num_classes',
+flags.register_validator("num_classes",
                          lambda value: value >= 1 and value <= 100,
-                         message='--num_classes must be in range [1, 100]')
+                         message="--num_classes must be in range [1, 100]")
 
 FLAGS = flags.FLAGS
 
