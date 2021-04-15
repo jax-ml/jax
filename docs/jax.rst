@@ -82,8 +82,7 @@ Parallelization (:code:`pmap`)
     device_count
     local_device_count
     host_count
-
-
+ 
 .. autofunction:: jit
 .. autofunction:: disable_jit
 .. autofunction:: xla_computation
