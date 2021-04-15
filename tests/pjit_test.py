@@ -18,6 +18,7 @@ from typing import Generator, List, Tuple
 from unittest import SkipTest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import numpy as np
 
 import jax
@@ -28,7 +29,7 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import mesh
 from jax.experimental.pjit import pjit, with_sharding_constraint
 from jax.interpreters import pxla
-from jax._src.util import unzip2, prod
+from jax._src.util import unzip2, prod, curry
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -51,6 +52,10 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   mesh_devices = np.array(local_devices[:size]).reshape(shape)
   with mesh(mesh_devices, axis_names):
     yield
+
+def with_mesh_from_kwargs(f):
+  return lambda *args, **kwargs: with_mesh(kwargs['mesh'])(f)(*args, **kwargs)
+
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
 class PJitTest(jtu.BufferDonationTestCase):
@@ -201,8 +206,92 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
-
   # TODO(skye): add more unit tests once API is more finalized
+
+@curry
+def check_1d_2d_mesh(f, set_mesh):
+  return parameterized.named_parameters(
+    {"testcase_name": "_" + name, "mesh": mesh, "resources": resources}
+    for name, mesh, resources in (
+      ("2", (("x", 2),), "x"),
+      ("2x1", (("x", 2), ("y", 1)), ("x", "y")),
+      ("2x2", (("x", 2), ("y", 2)), ("x", "y")),
+    ))(with_mesh_from_kwargs(f) if set_mesh else f)
+
+def spec_regex(s):
+  return str(s).replace(r"(", r"\(").replace(r")", r"\)")
+
+class PJitErrorTest(jtu.JaxTestCase):
+  @check_1d_2d_mesh(set_mesh=True)
+  @ignore_pjit_warning()
+  def testNonDivisibleArgs(self, mesh, resources):
+    x = jnp.ones((3,))
+    spec = P(resources, None)
+    mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
+    with self.assertRaisesRegex(ValueError,
+                                r"One of pjit arguments.*" + spec_regex(spec) + r".*"
+                                r"implies that the size of its dimension 0 should be "
+                                r"divisible by " + mesh_size + r", but it is equal to 3"):
+      pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
+
+  @check_1d_2d_mesh(set_mesh=True)
+  @ignore_pjit_warning()
+  def testNonDivisibleOuts(self, mesh, resources):
+    x = jnp.ones((3,))
+    spec = P(resources, None)
+    mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
+    with self.assertRaisesRegex(ValueError,
+                                r"One of pjit outputs.*" + spec_regex(spec) + r".*"
+                                r"implies that the size of its dimension 0 should be "
+                                r"divisible by " + mesh_size + r", but it is equal to 3"):
+      pjit(lambda x: x, in_axis_resources=None, out_axis_resources=P(resources, None))(x)
+
+  @check_1d_2d_mesh(set_mesh=True)
+  @ignore_pjit_warning()
+  def testNonDivisibleConstraint(self, mesh, resources):
+    x = jnp.ones((3,))
+    spec = P(resources,)
+    mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
+    with self.assertRaisesRegex(ValueError,
+                                r"One of with_sharding_constraint arguments"
+                                r".*" + spec_regex(spec) + r".*implies that the size of "
+                                r"its dimension 0 should be divisible by " + mesh_size +
+                                r", but it is equal to 3"):
+      pjit(lambda x: with_sharding_constraint(x, spec),
+           in_axis_resources=None, out_axis_resources=None)(x)
+
+  @check_1d_2d_mesh(set_mesh=False)
+  @ignore_pjit_warning()
+  def testUndefinedResourcesArgs(self, mesh, resources):
+    x = jnp.ones((2,))
+    spec = P(resources,)
+    with self.assertRaisesRegex(ValueError,
+                                r"One of pjit arguments.*" + spec_regex(spec) + r", "
+                                r"but resource axis x is undefined."):
+      pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
+
+  @check_1d_2d_mesh(set_mesh=False)
+  @ignore_pjit_warning()
+  def testUndefinedResourcesOuts(self, mesh, resources):
+    x = jnp.ones((2,))
+    spec = P(resources,)
+    with self.assertRaisesRegex(ValueError,
+                                r"One of pjit outputs.*" + spec_regex(spec) + r", "
+                                r"but resource axis x is undefined."):
+      pjit(lambda x: x, in_axis_resources=None, out_axis_resources=spec)(x)
+
+  @check_1d_2d_mesh(set_mesh=False)
+  @ignore_pjit_warning()
+  def testUndefinedResourcesConstraint(self, mesh, resources):
+    x = jnp.ones((2,))
+    spec = P(resources,)
+    with self.assertRaisesRegex(ValueError,
+                                r"One of with_sharding_constraint arguments"
+                                r".*" + spec_regex(spec) + r", but resource axis "
+                                r"x is undefined."):
+      pjit(lambda x: with_sharding_constraint(x, spec),
+           in_axis_resources=None, out_axis_resources=None)(x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

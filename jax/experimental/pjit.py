@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 from collections import OrderedDict
 from typing import (Callable, Optional, Sequence, Tuple, Union)
 from warnings import warn
@@ -88,6 +89,10 @@ def pjit(fun: Callable,
         lambda: tuple(flatten_axes("pjit out_axis_resources", out_tree(),
                                    out_axis_resources)),
         closure=out_axis_resources)
+    _check_shapes_against_resources("pjit arguments", resource_env,
+                                    args_flat, in_axis_resources_flat)
+    flat_fun = _check_output_shapes(flat_fun, resource_env,
+                                    out_axis_resources_thunk)
 
     out = pjit_call_p.bind(
         flat_fun,
@@ -100,6 +105,36 @@ def pjit(fun: Callable,
     return tree_unflatten(out_tree(), out)
 
   return wrapped
+
+@lu.transformation
+def _check_output_shapes(resource_env, out_axis_resources_thunk, *args, **kwargs):
+  outputs = yield (args, kwargs)
+  _check_shapes_against_resources("pjit outputs", resource_env, outputs, out_axis_resources_thunk())
+  yield outputs
+
+def _check_shapes_against_resources(what: str, resource_env, flat_avals, flat_axis_resources):
+  resource_sizes = resource_env.shape
+  for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
+    if aval_axis_resources is None:
+      continue
+    shape = aval.shape
+    for i, axis_resources in enumerate(aval_axis_resources):
+      if axis_resources is None:
+        continue
+      try:
+        if isinstance(axis_resources, (list, tuple)):
+          size = int(np.prod([resource_sizes[resource] for resource in axis_resources], dtype=np.int64))
+        else:
+          size = resource_sizes[axis_resources]
+      except KeyError as e:
+        raise ValueError(f"One of {what} was given the resource assignment "
+                         f"of {aval_axis_resources}, but resource axis {e.args[0]} "
+                         f"is undefined. Did you forget to declare the mesh?")
+      if shape[i] % size != 0:
+        raise ValueError(f"One of {what} was given the resource assignment "
+                         f"of {aval_axis_resources}, which implies that the size of "
+                         f"its dimension {i} should be divisible by {size}, but it "
+                         f"is equal to {shape[i]}")
 
 def _pjit_call_impl(fun: lu.WrappedFun, *args, in_axis_resources,
                     out_axis_resources_thunk, resource_env, donated_invars,
@@ -139,7 +174,7 @@ pjit_call_p.def_impl(_pjit_call_impl)
 xla.call_translations[pjit_call_p] = _pjit_translation_rule
 
 # None indicates unpartitioned dimension
-ArrayAxisPartitioning = Union[pxla.MeshAxisName, Tuple[pxla.MeshAxisName, ...], None]
+ArrayAxisPartitioning = Optional[Union[pxla.MeshAxisName, Tuple[pxla.MeshAxisName, ...]]]
 # None indicates fully replicated array value
 ArrayPartitioning = Optional[Tuple[ArrayAxisPartitioning, ...]]
 
@@ -167,8 +202,11 @@ def with_sharding_constraint(x, axis_resources):
   axis_resources_flat = tuple(
       flatten_axes("with_sharding_constraint axis_resources",
                    tree, axis_resources))
-  env = maps.thread_resources.env
-  outs = [sharding_constraint_p.bind(y, axis_resources=r, resource_env=env)
+  resource_env = maps.thread_resources.env
+  _check_shapes_against_resources(
+      "with_sharding_constraint arguments",
+      resource_env, x_flat, axis_resources_flat)
+  outs = [sharding_constraint_p.bind(y, axis_resources=r, resource_env=resource_env)
           for y, r in safe_zip(x_flat, axis_resources_flat)]
   return tree_unflatten(tree, outs)
 
@@ -206,7 +244,6 @@ def _array_mapping_entries(partitioning: ArrayAxisPartitioning, i: int):
     yield (partitioning, i)
   else:
     for axis in partitioning:
-      assert isinstance(axis, str)
       yield (axis, i)
 
 def get_sharding_proto(c, xla_op, axis_resources, mesh):
