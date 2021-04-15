@@ -40,6 +40,8 @@ More involved examples, including using jax2tf with
 Flax models and their use with TensorFlow Hub and Keras, are described in the
 [examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
 
+For details on saving a batch-polymorphic SavedModel see [below](#shape-polymorphic-conversion).
+
 See also some internal ongoing design discussions at `go/jax2tf-doc`.
 
 ## Usage: converting basic functions.
@@ -129,6 +131,260 @@ computation is attempted.
 
 Currently, there is a bug that prevents using custom gradients with SavedModel
 (see [Caveats](#caveats) below).
+
+## Shape-polymorphic conversion
+
+**The shape polymorphism support is work in progress. It is meant to be sound,
+but it may fail to convert some programs. Please report any bugs you encounter.**
+
+We described above how to include in the SavedModel several specializations
+of a converted function for a few specific input shapes. The converter can
+also produce a shape-polymorphic TensorFlow graph that is usable with inputs
+of any shape matching
+certain constraints. This is useful, e.g., to allow a single SavedModel
+to be used for multiple batch sizes.
+
+The standard TensorFlow technique for producing a shape-polymorphic graph is
+to warm the function on partially-specified (shape-polymorphic) inputs, e.g.,
+`tf.TensorSpec([None, 28, 28], tf.float32)` for a function that processes a
+batch (of unspecified batch size) of 28x28 images.
+For jax2tf it is also necessary to specify an additional `polymorphic_shapes` parameter
+for the `jax2tf.convert` function:
+
+```
+f_tf = tf.function(jax2tf.convert(f_jax,
+                                  polymorphic_shapes=["(b, 28, 28)"]),
+                                  autograph=False)
+f_tf.get_concrete_function(tf.TensorSpec([None, 28, 28], tf.float32))
+```
+
+The `polymorphic_shapes` parameter, in the form of a list of strings corresponding
+to the list of
+arguments, introduces one or more shape variables, e.g., `b`, to stand for shape
+dimensions that are unknown at JAX tracing time.
+In this particular example, we can
+also use the `polymorphic_shapes=["(b, _, _)"]`,
+because the `_` placeholders take their value
+from the corresponding dimension of the `tf.TensorSpec` (which must be known).
+As a shortcut for a series of `_` at the end of a shape specification you can
+use `...`: `polymorphic_shapes=["(b, ...)"]`
+
+In the example above, the `polymorphic_shapes` specification does
+not convey more information than the partial `tf.TensorSpec`,
+except that it gives a name to the unknown dimension so that it
+can be recognized in the error messages. The need for named shape
+variables arises when there are
+multiple unknown dimensions and there is a relationship between them.
+For example,
+if the function to be converted is also polymorphic on the size of each
+image while requiring the images to be square,
+we would add a shape variable `d` to stand for
+the unknown image size:
+
+```
+f_tf = tf.function(jax2tf.convert(f_jax, polymorphic_shapes=["(b, d, d)"]), autograph=False)
+f_tf.get_concrete_function(tf.TensorSpec([None, None, None], tf.float32))
+```
+
+The JAX tracing mechanism performs shape checking using the same strict rules as
+when the shapes are fully known. For example, given the `"(b, d, d)"`
+specification for the argument `x` of a function, JAX will know that a conditional
+`x.shape[-2] == x.shape[-1]` is `True`, will know that `x` and `jnp.sin(x)` have the
+same shape of a batch of square matrices that can be passed to `jnp.matmul`.
+
+
+### Correctness of shape-polymorphic tracing
+
+We want to trust that the converted program produces the same results as the
+original JAX program:
+
+For any function `f_jax` and any input signature `abs_sig` containing partially
+known `tf.TensorSpec`, and any concrete input `x` whose shape matches `abs_sig`:
+
+ * If the conversion to TensorFlow succeeds: `f_tf = tf.function(jax2tf.convert(f_jax, polymorphic_shapes)).get_concrete_function(abs_sig)`
+ * and if the TensorFlow execution succeeds with result `y`: `f_tf(x) = y`
+ * then the JAX execution would produce the same result: `f_jax(x) = y`,
+
+It is crucial to understand that `f_jax(x)` has the freedom to re-invoke the JAX tracing machinery,
+and in fact it does so for each distinct concrete input shape, while the generation of `f_tf`
+uses JAX tracing only once, and invoking `f_tf(x)` does not use JAX tracing anymore. In fact,
+invoking the latter invocation may happen after the `f_tf` has been serialized
+to a SavedModel and reloaded in an environment where `f_jax` and the JAX
+tracing machinery are not available anymore.
+
+Correctness is very important because it would be nasty to debug a subtle discrepancy
+of the code running in production from the expected behavior written in JAX.
+We help ensure correctness
+by reusing the same JAX tracing and shape checking mechanism as when the shapes are fully known.
+
+### Coverage of shape-polymorphic tracing
+
+A complementary goal is to be able to convert many shape-polymorphic programs, but at the very
+least batch-size-polymorphic programs, so that one SavedModel can be used for any batch sizes.
+For example, we want to ensure that any function written using `jax.vmap` at the top level can be
+converted with the batch dimension polymorphic and the remaining dimensions concrete.
+
+It is reasonable to expect that there will be JAX programs for which there is a
+shape-polymorphic TensorFlow graph, but which will give an error when converting with jax2tf.
+
+### Details
+
+In order to be able to use shape polymorphism effectively with jax2tf, it
+is worth considering what happens under the hood. When the converted function
+is invoked with a `TensorSpec`, the jax2tf converter will combine the
+`TensorSpec` from the actual argument with the `polymorphic_shapes` parameter to
+obtain a shape abstraction to be used to specialize the converted function.
+Normally, the shape abstraction contains the dimension sizes, but in the
+presence of shape polymorphism, some dimensions may be dimension variables.
+
+The `polymorphic_shapes` parameter must be either `None`,
+or a sequence (one per argument) of shape specifiers.
+(A value `None` for `polymorphic_shapes` is equivalent to a list of `None`.
+See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).)
+A shape specifier is combined with a `TensorSpec` as follows:
+
+  * A shape specifier of `None` means that the shape is given
+    by the actual argument `TensorSpec`, which must be fully known.
+  * Otherwise, the specifier must be a comma-separated string of dimension specifiers: `(dim_1, ..., dim_n)`, denoting
+    an n-dimensional array. The `TensorSpec` must also be of rank ``n``.
+    An `...` at the end of the shape specifier is expanded to a list of `_` or appropriate length.
+    The
+    corresponding dimensions from the shape specifier and the `TensorSpec` are matched:
+
+       * the dimension specifier of `_` means that the size of the dimension is given by
+         the actual `TensorSpec`, which must have a known size in the corresponding dimension.
+       * a dimension specifier can also be a lowercase identifier, denoting a dimension-size
+         variable ranging over strictly positive integers.
+         The abstract value of the dimension is going to be set to this variable.
+         The corresponding dimension in `TensorSpec` can be `None` or can be a
+         constant.
+       * All occurrences of a shape variable in any dimension
+         for any argument are assumed to be equal.
+
+Note that `polymorphic_shapes` controls the shape abstraction used by JAX when tracing
+the function (with `_` placeholders given by the `TensorSpec`). The `TensorSpec`
+gives the shape abstraction that TensorFlow will associate with the produced
+graph, and can be more specific.
+
+A few examples of shape specifications and uses:
+
+  * `polymorphic_shapes=["(b, _, _)", None]` can be used for a function with two arguments, the first
+    having a batch leading dimension that should be polymorphic. The other dimensions for the
+    first argument and the shape of the second argument are specialized based on the actual
+    `TensorSpec`, which must be known. The converted function can be used, e.g.,
+    with `TensorSpec`s `[None, 28, 28]` and `[28, 16]` for the first and second argument
+    respectively. An alternative `TensorSpec` pair can be `[1, 28, 28]` and `[28, 16]`,
+    in which case the JAX tracing is done for the same polymorphic shape given by
+    `polymorphic_shapes=["(b, 28, 28)", "(28, 16)"]` but the TensorFlow graph is monomorphic
+    for the shapes given by `TensorSpec`.
+
+  * `polymorphic_shapes=["(batch, _)", "(batch,)"]`: the leading dimensions of the two arguments
+     must match, and are assumed to be greater than 0.
+     The second dimension of the first argument is taken from the
+     actual `TensorSpec`. This can be used with a `TensorSpec` pair `[None, 16]`
+     and `[None]`. It can also be used with a pair `[8, 16]` and `[5]`.
+
+### Shape variables used in the computation
+
+There are some situations when shape variables arise in the computation itself.
+You can see in the following example how elements from the input shapes
+`(1024, 28, 28)` and `(28, 28)` appear in the computation and specifically
+in the `shape` parameter of the `broadcast_in_dim` JAX primitive.
+
+```
+def image_mask_jax(images, mask):
+  # images: f32[B, W, W]  and mask: f32[W, W]
+  return images * mask
+
+print(jax.make_jaxpr(image_mask_jax)(np.ones((1024, 28, 28)), np.ones((28, 28))))
+>> { lambda  ; a b.
+>>   let c = broadcast_in_dim[ broadcast_dimensions=(1, 2)
+>>                            shape=(1, 28, 28) ] b
+>>      d = mul a c
+>>   in (d,) }
+
+# will invoke broadcast_in_dim with shape=(1, w, w)
+jax2tf.convert(image_mask_jax, polymorphic_shapes=["(b, w, w)", "(w, w)"])
+```
+
+When tracing and converting with abstract shapes some primitive parameters will be dimension variables
+instead of just constants, e.g., the `shape` parameter of `broadcast_in_dim` will be `(1, w, w)`.
+Note that JAX primitives distinguish the inputs, which are array values,
+e.g., `b` for `broadcast_in_dim` above, and the parameters, e.g., `broadcast_dimensions` and `shape`.
+
+The conversion of `image_mask_jax` would use `tf.shape` to compute the
+values of the dimension variables `b` and `w`:
+
+```
+def image_mask_tf(images, mask):
+  b, w, _ = tf.shape(images) # Compute the dynamic values for the shape variables "b" and "w"
+  return tf.math.multiply(images,
+                          tf.broadcast_to(tf.reshape(mask, [1, w, w]),
+                                          [b, w, w]))
+```
+
+To achieve this, when we start converting a function we construct a shape environment,
+mapping the shape variables in the `polymorphic_shapes` specification to TensorFlow expressions
+using `tf.shape` on the input parameters.
+
+
+### Errors in presence of shape polymorphism
+
+When tracing with shape polymorphism we can encounter shape errors:
+
+```
+four_ones = np.ones((4,))
+jax2tf.convert(lambda x, y: x + y,
+               polymorphic_shapes=["(v,)", "(4,)"])(four_ones, four_ones)
+```
+
+with result in the error `'add got incompatible shapes for broadcasting: (v,), (4,)'`
+because the shape abstraction is given by the `polymorphic_shapes`, even though the
+actual arguments are more specific and would actually work.
+
+Also,
+```
+jax2tf.convert(lambda x: jnp.matmul(x, x),
+             polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
+```
+
+will result in the error `Shape variable comparison v == 4 is inconclusive`. What is
+happening here is that in the process of type checking the `matmul` operation, JAX
+will want to ensure the size of the two axes is the same (`v == 4`).
+Note that `v` can stand for any integer greater than 0, so the value of the
+equality expression can be true or false. In this case you will see
+the `core.InconclusiveDimensionOperation` exception with the above message.
+Since the converted function work only for square matrices, the correct
+`polymorphic_shapes` is `["(v, v)"]`.
+
+You would also encounter shape errors if the code attempts to use the
+dimension variables in arithmetic operations, such as in the code
+below that attempts to flatten an array with a polymorphic batch
+dimension:
+
+```
+jax2tf.convert(lambda x: jnp.reshape(x, np.prod(x.shape)),
+             polymorphic_shapes=["(b, ...)"])(np.ones((3, 4, 5)))
+```
+
+In this case you will see the error `TypeError: unsupported operand type(s) for *: 'DimVar' and 'int'`.
+The most flattening you can do is on the known dimensions, keeping the variable
+dimension intact:
+
+```
+jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0], np.prod(x.shape[1:]))),
+               polymorphic_shapes=["(b, _, _)"])(np.ones((3, 4, 5)))
+```
+
+
+Finally, certain codes that use shapes in the actual computation may not yet work
+if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
+will have the value of the shape variable `v`. This case is not yet implemented:
+
+```
+jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
+               polymorphic_shapes=["(v, _)"])(np.ones((4, 4)))
+```
 
 ## Caveats
 

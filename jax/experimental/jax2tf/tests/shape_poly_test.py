@@ -391,6 +391,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         res_jax,
         jax2tf.convert(f, polymorphic_shapes=["(b, h)", "h"])(x, y))
 
+  def test_example(self):
+    """Some of the examples from the README."""
+    def image_mask_jax(images, mask):
+      # images: f32[B, W, W]  and mask: f32[W, W]
+      return images * mask
+
+    print(jax.make_jaxpr(image_mask_jax)(np.ones((1024, 28, 28)), np.ones((28, 28))))
+
+    # will invoke broadcast_in_dim with shape=(1, w, w)
+    jax2tf.convert(image_mask_jax, polymorphic_shapes=["(b, w, w)", "(w, w)"])
+
   def test_shape_error(self):
     """Some of the examples from the README."""
     with self.assertRaisesRegex(
@@ -412,12 +423,24 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           lambda x, y: x + y, polymorphic_shapes=["(v,)", "(4,)"])(four_ones,
                                                                    four_ones)
 
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                re.escape("Shape variable comparison v == 4 is inconclusive")):
+      jax2tf.convert(lambda x: jnp.matmul(x, x),
+                     polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
+
+    with self.assertRaisesRegex(TypeError,
+                                re.escape("unsupported operand type(s) for *: 'DimVar' and 'int'")):
+      jax2tf.convert(lambda x: jnp.reshape(x, np.prod(x.shape)),
+                     polymorphic_shapes=["(b, ...)"])(np.ones((3, 4, 5)))
+
+    jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0], np.prod(x.shape[1:]))),
+                   polymorphic_shapes=["(b, _, _)"])(np.ones((3, 4, 5)))
+
     with self.assertRaisesRegex(
-        core.InconclusiveDimensionOperation,
-        re.escape("Shape variable comparison v == 4 is inconclusive")):
-      jax2tf.convert(
-          lambda x: jnp.matmul(x, x), polymorphic_shapes=["(v, 4)"])(
-              np.ones((4, 4)))
+        TypeError,
+        re.escape("unsupported operand type(s) for /: 'TensorFlowTracer' and 'DimVar'")):
+      jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
+                     polymorphic_shapes=["(v, _)"])(np.ones((4, 4)))
 
   def test_parse_poly_spec(self):
     self.assertEqual((2, 3), shape_poly.parse_spec(None, (2, 3)))
