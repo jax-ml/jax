@@ -1430,7 +1430,20 @@ def mesh_callable(fun: lu.WrappedFun,
     # TODO: Warn about unused donations?
   built = c.Build(out_tuple)
 
-  # 4. Compile the HLO
+  return compile_and_wrap_mesh_hlo(built, backend, mesh, local_in_untiled_avals,
+                                   local_out_untiled_avals, in_axes, out_axes,
+                                   spmd_lowering, tuple_args)
+
+
+def compile_and_wrap_mesh_hlo(computation: xc.XlaComputation, backend,
+                              mesh: Mesh,
+                              local_in_untiled_avals: Sequence[ShapedArray],
+                              local_out_untiled_avals: Sequence[ShapedArray],
+                              in_axes: Sequence[ArrayMapping],
+                              out_axes: Sequence[ArrayMapping],
+                              spmd_lowering: bool, tuple_args: bool):
+  local_mesh = mesh.local_mesh
+  local_axis_sizes = local_mesh.shape
   if spmd_lowering:
     num_replicas, num_partitions = 1, mesh.size
     num_local_replicas, num_local_partitions = 1, local_mesh.size
@@ -1445,9 +1458,8 @@ def mesh_callable(fun: lu.WrappedFun,
       use_spmd_partitioning=spmd_lowering,
   )
   compile_options.parameter_is_tupled_arguments = tuple_args
-  compiled = xla.backend_compile(backend, built, compile_options)
+  compiled = xla.backend_compile(backend, computation, compile_options)
 
-  # 5. Argument sharding / output wrapping
   local_sharding_spec = mesh_sharding_specs(local_axis_sizes, mesh.axis_names)
   local_input_specs = [local_sharding_spec(aval, aval_in_axes)
                        if aval is not core.abstract_unit else None
