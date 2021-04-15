@@ -27,8 +27,10 @@ operations that will work on any backend, although they are not particularly
 performant. On GPU runtimes with jaxlib 0.1.66 or newer built against CUDA 11.0
 or newer, each operation is computed efficiently via cusparse.
 """
+import functools
 
 from jax import core
+from jax import jit
 from jax.interpreters import xla
 from jax.lib import cusparse
 from jax.lib import xla_bridge
@@ -38,6 +40,13 @@ import numpy as np
 
 xb = xla_bridge
 xops = xla_client.ops
+
+#--------------------------------------------------------------------
+# utilities
+@functools.partial(jit, static_argnums=1)
+def _nonzero_indices(x, N):
+  """Find min(N, x.size) indices of nonzero elements of x."""
+  return jnp.cumsum(jnp.bincount(jnp.cumsum(x != 0), length=min(N, x.size)))
 
 #--------------------------------------------------------------------
 # csr_todense
@@ -61,8 +70,7 @@ def csr_todense(data, indices, indptr, *, shape):
 @csr_todense_p.def_impl
 def _csr_todense_impl(data, indices, indptr, *, shape):
   row = jnp.zeros_like(indices).at[indptr].add(1).cumsum() - 1
-  col = indices
-  return jnp.zeros(shape, data.dtype).at[row, col].add(data)
+  return _coo_todense_impl(data, row, indices, shape=shape)
 
 @csr_todense_p.def_abstract_eval
 def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
@@ -107,23 +115,10 @@ def csr_fromdense(mat, *, nnz, index_dtype=np.int32):
 
 @csr_fromdense_p.def_impl
 def _csr_fromdense_impl(mat, *, nnz, index_dtype):
-  mat = jnp.asarray(mat)
-  assert mat.ndim == 2
-
-  data = jnp.zeros(nnz, dtype=mat.dtype)
-  indices = jnp.zeros(nnz, dtype=index_dtype)
-  indptr = jnp.zeros(mat.shape[0] + 1, dtype=index_dtype)
-
-  mat_flat = jnp.ravel(mat)
-  ind = jnp.sort(jnp.argsort(-abs(mat_flat))[:nnz])
-  i, j = jnp.meshgrid(
-      jnp.arange(mat.shape[0]), jnp.arange(mat.shape[1]), indexing='ij')
-  row, col = jnp.ravel(i)[ind], jnp.ravel(j)[ind]
-
-  data = data.at[:mat.size].set(mat_flat[ind])
-  indices = indices.at[:mat.size].set(col)
-  indptr = indptr.at[1:].set(jnp.cumsum(jnp.bincount(row, length=mat.shape[0])))
-  return data, indices, indptr
+  m = mat.shape[0]
+  data, row, col = _coo_fromdense_impl(mat, nnz=nnz, index_dtype=index_dtype)
+  indptr = jnp.zeros(m + 1, dtype=index_dtype).at[1:].set(jnp.cumsum(jnp.bincount(row, length=m)))
+  return data, col, indptr
 
 @csr_fromdense_p.def_abstract_eval
 def _csr_fromdense_abstract_eval(mat, *, nnz, index_dtype):
@@ -169,14 +164,8 @@ def csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
 
 @csr_matvec_p.def_impl
 def _csr_matvec_impl(data, indices, indptr, v, *, shape, transpose):
-  v = jnp.asarray(v)
-  out_shape = shape[1] if transpose else shape[0]
   row = jnp.cumsum(jnp.zeros_like(indices).at[indptr].add(1)) - 1
-  col = indices
-  if transpose:
-    row, col = col, row
-  dv = data * v[col]
-  return jnp.zeros(out_shape, dv.dtype).at[row].add(dv)
+  return _coo_matvec_impl(data, row, indices, v, shape=shape, transpose=transpose)
 
 @csr_matvec_p.def_abstract_eval
 def _csr_matvec_abstract_eval(data, indices, indptr, v, *, shape, transpose):
@@ -226,14 +215,8 @@ def csr_matmat(data, indices, indptr, B, *, shape, transpose=False):
 
 @csr_matmat_p.def_impl
 def _csr_matmat_impl(data, indices, indptr, B, *, shape, transpose):
-  B = jnp.asarray(B)
-  out_shape = shape[1] if transpose else shape[0]
   row = jnp.cumsum(jnp.zeros_like(indices).at[indptr].add(1)) - 1
-  col = indices
-  if transpose:
-    row, col = col, row
-  dB = data[:, None] * B[col]
-  return jnp.zeros((out_shape, B.shape[1]), dB.dtype).at[row].add(dB)
+  return _coo_matmat_impl(data, row, indices, B, shape=shape, transpose=transpose)
 
 @csr_matmat_p.def_abstract_eval
 def _csr_matmat_abstract_eval(data, indices, indptr, B, *, shape, transpose):
@@ -318,8 +301,9 @@ def coo_fromdense(mat, *, nnz, index_dtype=jnp.int32):
 def _coo_fromdense_impl(mat, *, nnz, index_dtype):
   mat = jnp.asarray(mat)
   m, n = mat.shape
-  ind = jnp.sort(jnp.argsort(abs(jnp.ravel(mat)))[m * n - nnz:]).astype(index_dtype)
-  return mat.ravel()[ind], ind // n, ind % n
+  mat_flat = jnp.ravel(mat)
+  ind = _nonzero_indices(mat_flat, nnz).astype(index_dtype)
+  return mat_flat[ind], ind // n, ind % n
 
 @coo_fromdense_p.def_abstract_eval
 def _coo_fromdense_abstract_eval(mat, *, nnz, index_dtype):
