@@ -3899,7 +3899,10 @@ def _select_jvp(primals, tangents):
   _, on_true_dot, on_false_dot = tangents
   out = select(pred, on_true, on_false)
   if type(on_true_dot) is ad_util.Zero:
-    out_dot = select(pred, _zeros(on_false_dot), on_false_dot)
+    if type(on_false_dot) is ad_util.Zero:
+      out_dot = ad_util.Zero(on_true_dot.aval)
+    else:
+      out_dot = select(pred, _zeros(on_false_dot), on_false_dot)
   elif type(on_false_dot) is ad_util.Zero:
     out_dot = select(pred, on_true_dot, _zeros(on_true_dot))
   else:
