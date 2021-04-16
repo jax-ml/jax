@@ -141,7 +141,7 @@ def nextafter(x1: Array, x2: Array) -> Array:
 
   For the smallest usable (i.e. normal) float, use ``tiny`` of ``jnp.finfo``.
   """
-  return nextafter_p.bind(_brcast(x1, x2), _brcast(x2, x1))
+  return nextafter_p.bind(x1, x2)
 
 def floor(x: Array) -> Array:
   r"""Elementwise floor: :math:`\left\lfloor x \right\rfloor`."""
@@ -287,7 +287,7 @@ def complex(x: Array, y: Array) -> Array:
 
   Builds a complex number from real and imaginary parts.
   """
-  return complex_p.bind(_brcast(x, y), _brcast(y, x))
+  return complex_p.bind(x, y)
 
 def conj(x: Array) -> Array:
   r"""Elementwise complex conjugate function: :math:`\overline{x}`."""
@@ -2146,55 +2146,48 @@ def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
   return prim
 standard_naryop = partial(naryop, _input_dtype)
 
-
+# Decorator for translation rules which adds explicit broadcasting of positional
+# arguments. This is necessary only for a handful of primitives whose XLA
+# implementations do not support broadcasting.
 def _broadcast_translate(translate: Callable):
-  # Decorator for translation rules which adds explicit broadcasting of
-  # positional arguments. This is necessary only for a handful of primitives
-  # whose XLA implementations do not support broadcasting.
-  def _broadcast_array(array, array_shape, result_shape):
-    if array_shape == result_shape:
-      return array
-    bcast_dims = tuple(range(len(result_shape) - len(array_shape),
-                             len(result_shape)))
-    result = xops.BroadcastInDim(array, result_shape, bcast_dims)
+  def _broadcast_array(x, shape, result_shape):
+    if shape == result_shape:
+      return x
+    bcast_dims = tuple(range(len(result_shape) - len(shape), len(result_shape)))
+    result = xops.BroadcastInDim(x, result_shape, bcast_dims)
     return result
 
   def _broadcasted_translation_rule(c, *args, **kwargs):
-    shapes = [c.get_shape(arg).dimensions() for arg in args]
+    shapes = [c.get_shape(x).dimensions() for x in args]
     result_shape = broadcast_shapes(*shapes)
-    args = [_broadcast_array(arg, arg_shape, result_shape)
-            for arg, arg_shape in zip(args, shapes)]
+    args = [_broadcast_array(x, s, result_shape) for x, s in zip(args, shapes)]
     return translate(c, *args, **kwargs)
   return _broadcasted_translation_rule
 
-# NOTE(mattjj): this isn't great for orchestrate fwd mode because it means JVPs
-# get two extra ops in them: a reshape and a broadcast_in_dim (or sometimes just
-# a broadcast). but saving the shape info with the primitives isn't great either
-# because then we can't trace these ops without shape data.
-def _brcast(x, *others):
-  # Used in jvprules to make naryop broadcasting explicit for transposability.
-  # Requires shape info during jvp tracing, which isn't strictly necessary.
-  # We don't need full numpy broadcasting, but otherwise the logic is the same
-  # so we reuse the broadcast_shapes function after filtering out scalars.
-  shapes = tuple(filter(None, map(np.shape, (x,) + others)))
-  shape = shapes and broadcast_shapes(*shapes)
-  if np.shape(x) != shape:
-    return _brcast_to(x, shape)
-  else:
-    return x
-
-
-def _brcast_to(x, shape):
+# Like autograd.numpy.numpy_vjps.unbroadcast, this utility handles transposition
+# involving linear primitives with implicit broadcasting.
+def _unbroadcast(aval, x):
+  if not isinstance(aval, ShapedArray):
+    raise TypeError("transpose with implicit broadcasting of unshaped values")
   x_shape = np.shape(x)
-  assert x_shape != shape
-  if x_shape:
-    assert len(x_shape) == len(shape)
-    broadcast_dimensions, = np.where(np.equal(x_shape, shape))
-    squeezed_dimensions, = np.where(np.not_equal(x_shape, shape))
-    squeezed = squeeze(x, squeezed_dimensions)
-    return broadcast_in_dim(squeezed, shape, broadcast_dimensions)
+  if aval.shape == x_shape:
+    return x
+  assert not aval.shape or len(x_shape) == len(aval.shape)
+  if not aval.shape:
+    return _reduce_sum(x, list(range(len(x_shape))))
   else:
-    return broadcast(x, shape)
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if a != b]
+    if config.jax_enable_checks: assert all(aval.shape[i] == 1 for i in dims)
+    return reshape(_reduce_sum(x, dims), aval.shape)
+
+def _maybe_broadcast(target_shape, x):
+  x_shape = np.shape(x)
+  if x_shape == target_shape:
+    return x
+  else:
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape)) if a == b]
+    squeeze_shape = [x_shape[i] for i in dims]
+    return broadcast_in_dim(reshape(x, squeeze_shape), target_shape, dims)
 
 
 _float = {np.floating}
@@ -2224,9 +2217,10 @@ def _sign_translation_rule(c, x):
 sign_p = standard_unop(_num, 'sign', translation_rule=_sign_translation_rule)
 ad.defjvp_zero(sign_p)
 
-nextafter_p = standard_naryop(
-  [_float, _float], 'nextafter',
-  translation_rule=_broadcast_translate(partial(standard_translate, 'next_after')))
+_nextafter_translation_rule = \
+    _broadcast_translate(partial(standard_translate, 'next_after'))
+nextafter_p = standard_naryop([_float, _float], 'nextafter',
+                              translation_rule=_nextafter_translation_rule)
 
 floor_p = standard_unop(_float, 'floor')
 ad.defjvp_zero(floor_p)
@@ -2346,8 +2340,8 @@ ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
 
 atan2_p = standard_naryop([_float, _float], 'atan2')
 ad.defjvp(atan2_p,
-  lambda g, x, y: _brcast(g, y) * (y / (square(x) + square(y))),
-  lambda g, x, y: _brcast(g, x) * -x / (square(x) + square(y)))
+          lambda g, x, y: g * (y / (square(x) + square(y))),
+          lambda g, x, y: g * -x / (square(x) + square(y)))
 
 sinh_p = standard_unop(_float | _complex, 'sinh')
 ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))
@@ -2398,10 +2392,10 @@ igamma_grad_a_p = standard_naryop([_float, _float], 'igamma_grad_a',
                                                'igamma_grad_a')))
 
 def igamma_gradx(g, a, x):
-  return _brcast(g, a, x) * exp(-x + (a - _ones(a)) * log(x) - lgamma(a))
+  return g * exp(-x + (a - _ones(a)) * log(x) - lgamma(a))
 
 def igamma_grada(g, a, x):
-  return _brcast(g, a, x) * igamma_grad_a(a, x)
+  return g * igamma_grad_a(a, x)
 
 ad.defjvp(igamma_p, igamma_grada, igamma_gradx)
 
@@ -2452,10 +2446,29 @@ ad.deflinear2(real_p, lambda t, _: [complex(t, np.zeros((), _dtype(t)))])
 imag_p = unop(_complex_basetype, _complex, 'imag')
 ad.deflinear2(imag_p, lambda t, _: [complex(np.zeros((), _dtype(t)), neg(t))])
 
+
+def _complex_transpose_rule(t, x, y):
+  assert ad.is_undefined_primal(x) or ad.is_undefined_primal(y)
+  if ad.is_undefined_primal(x) and ad.is_undefined_primal(y):
+    if type(t) is ad_util.Zero:
+      return [ad_util.Zero(x.aval), ad_util.Zero(y.aval)]
+    else:
+      return [_unbroadcast(x.aval, real(t)), _unbroadcast(y.aval, imag(neg(t)))]
+  elif ad.is_undefined_primal(x):
+    if type(t) is ad_util.Zero:
+      return [ad_util.Zero(x.aval), None]
+    else:
+      return [_unbroadcast(x.aval, real(t)), None]
+  else:
+    if type(t) is ad_util.Zero:
+      return [None, ad_util.Zero(y.aval)]
+    else:
+      return [None, _unbroadcast(y.aval, imag(neg(t)))]
+
 _complex_dtype = lambda dtype, *args: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
-ad.deflinear2(complex_p, lambda t, *args: [real(t), imag(neg(t))])
+ad.deflinear2(complex_p, _complex_transpose_rule)
 
 conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
 
@@ -2494,10 +2507,10 @@ pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
 
 def _pow_jvp_lhs(g, ans, x, y):
   jac = mul(y, pow(x, select(eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))
-  return mul(_brcast(g, y), jac)
+  return mul(g, jac)
 
 def _pow_jvp_rhs(g, ans, x, y):
-  return mul(_brcast(g, x), mul(log(_replace_zero(x)), ans))
+  return mul(g, mul(log(_replace_zero(x)), ans))
 
 ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
 
@@ -2554,61 +2567,112 @@ population_count_p = standard_unop(_int, 'population_count')
 
 clz_p = standard_unop(_int, 'clz')
 
-def _add_transpose(t, x, y):
-  # The following linearity assertion is morally true, but because in some cases we
-  # instantiate zeros for convenience, it doesn't always hold.
-  # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  return [t, t]
+def _add_jvp(primals, tangents):
+  x, y = primals
+  xdot, ydot = tangents
+  primal_out = add(x, y)
+  if type(xdot) is type(ydot) is ad_util.Zero:
+    return primal_out, ad_util.Zero.from_value(primal_out)
+  if type(xdot) is ad_util.Zero:
+    return primal_out, _maybe_broadcast(primal_out.shape, ydot)
+  elif type(ydot) is ad_util.Zero:
+    return primal_out, _maybe_broadcast(primal_out.shape, xdot)
+  else:
+    return primal_out, add(xdot, ydot)
 
-add_p = standard_naryop([_num, _num], 'add')
-ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
-ad.primitive_transposes[add_p] = _add_transpose
+def _add_transpose(t, x, y):
+  # Morally the following assertion is true, but because we instantiate zeros in
+  # some places (e.g. in custom_jvp) it may not always hold. For example, see
+  # api_test.py's CustomJVPTest.test_jaxpr_zeros.
+  # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else _abstractify(x)
+  y_aval = y.aval if ad.is_undefined_primal(y) else _abstractify(y)
+  if type(t) is ad_util.Zero:
+    return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
+  else:
+    return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
+
 def _add_inverse(r, x, y):
   xr = r - y
   yr = r - x
   return xr, yr
+
+add_p = standard_naryop([_num, _num], 'add')
+ad.primitive_jvps[add_p] = _add_jvp
+ad.primitive_transposes[add_p] = _add_transpose
 iad.definverse(add_p, _add_inverse)
 
-def _sub_transpose(t, x, y):
-  # The following linearity assertion is morally true, but because in some cases
-  # we instantiate zeros for convenience, it doesn't always hold.
-  # TODO(mattjj): re-enable this assertion, don't return None below
-  # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  if type(t) is ad_util.Zero:
-    x_bar = ad_util.Zero(x.aval) if ad.is_undefined_primal(x) else None
-    y_bar = ad_util.Zero(y.aval) if ad.is_undefined_primal(y) else None
-    return [x_bar, y_bar]
+def _sub_jvp(primals, tangents):
+  x, y = primals
+  xdot, ydot = tangents
+  primal_out = sub(x, y)
+  if type(xdot) is type(ydot) is ad_util.Zero:
+    return primal_out, ad_util.Zero.from_value(primal_out)
+  if type(xdot) is ad_util.Zero:
+    return primal_out, _maybe_broadcast(primal_out.shape, neg(ydot))
+  elif type(ydot) is ad_util.Zero:
+    return primal_out, _maybe_broadcast(primal_out.shape, xdot)
   else:
-    return [t, neg(t)]
+    return primal_out, sub(xdot, ydot)
+
+def _sub_transpose(t, x, y):
+  # Morally the following assertion is true, but see the comment in add_p's
+  # transpose rule.
+  # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
+  x_aval = x.aval if ad.is_undefined_primal(x) else _abstractify(x)
+  y_aval = y.aval if ad.is_undefined_primal(y) else _abstractify(y)
+  if type(t) is ad_util.Zero:
+    return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
+  else:
+    return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, neg(t))]
 
 sub_p = standard_naryop([_num, _num], 'sub')
-ad.defjvp(sub_p,
-          lambda g, x, y: _brcast(g, y),
-          lambda g, x, y: _brcast(neg(g), x))
+ad.primitive_jvps[sub_p] = _sub_jvp
 ad.primitive_transposes[sub_p] = _sub_transpose
 
-mul_p = standard_naryop([_num, _num], 'mul')
-ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
+
+def _mul_transpose(ct, x, y):
+  assert ad.is_undefined_primal(x) ^ ad.is_undefined_primal(y)
+  if ad.is_undefined_primal(x):
+    if type(ct) is ad_util.Zero:
+      return [ad_util.Zero(x.aval), None]
+    else:
+      return [_unbroadcast(x.aval, mul(ct, y)), None]
+  else:
+    if type(ct) is ad_util.Zero:
+      return [None, ad_util.Zero(y.aval)]
+    else:
+      return [None, _unbroadcast(y.aval, mul(x, ct))]
+
 def _mul_inverse(r, x, y):
   xr = r / y
   yr = r / x
   return xr, yr
+
+mul_p = standard_naryop([_num, _num], 'mul')
+ad.defjvp(mul_p,
+          lambda xdot, x, y: mul(xdot, y),
+          lambda ydot, x, y: mul(x, ydot))
+ad.primitive_transposes[mul_p] = _mul_transpose
 iad.definverse(mul_p, _mul_inverse)
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
-  res = ad_util.Zero(x.aval) if type(cotangent) is ad_util.Zero else div(cotangent, y)
-  return res, None
+  if type(cotangent) is ad_util.Zero:
+    return [ad_util.Zero(x.aval), None]
+  else:
+    return [_unbroadcast(x.aval, div(cotangent, y)), None]
 div_p = standard_naryop([_num, _num], 'div')
 ad.defjvp(div_p,
-          lambda g, x, y: div(_brcast(g, y), y),
-          lambda g, x, y: mul(mul(neg(_brcast(g, x)), x), integer_pow(y, -2)))
+          lambda g, x, y: div(g, y),
+          lambda g, x, y: mul(mul(neg(g), x), integer_pow(y, -2)))
 ad.primitive_transposes[div_p] = _div_transpose_rule
 
 rem_p = standard_naryop([_num, _num], 'rem')
-ad.defjvp(rem_p,
-          lambda g, x, y: _brcast(g, y),
-          lambda g, x, y: mul(_brcast(neg(g), x), floor(div(x, y))))
+ad.defjvp(
+    rem_p,
+    lambda g, x, y: _maybe_broadcast(broadcast_shapes(np.shape(x), np.shape(y)), g),
+    lambda g, x, y: mul(neg(g), floor(div(x, y))))
 
 
 def _broadcasting_select(c, which, x, y):
@@ -2639,15 +2703,15 @@ max_p: core.Primitive = standard_naryop(
   [_any, _any], 'max', translation_rule=partial(
     _minmax_translation_rule, minmax=xops.Max, cmp=xops.Gt))
 ad.defjvp2(max_p,
-           lambda g, ans, x, y: mul(_brcast(g, y), _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(_brcast(g, x), _balanced_eq(y, ans, x)))
+           lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
+           lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
 
 min_p: core.Primitive = standard_naryop(
   [_any, _any], 'min', translation_rule=partial(
     _minmax_translation_rule, minmax=xops.Min, cmp=xops.Lt))
 ad.defjvp2(min_p,
-           lambda g, ans, x, y: mul(_brcast(g, y), _balanced_eq(x, ans, y)),
-           lambda g, ans, x, y: mul(_brcast(g, x), _balanced_eq(y, ans, x)))
+           lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
+           lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
 
 shift_left_p = standard_naryop([_int, _int], 'shift_left')
 ad.defjvp_zero(shift_left_p)
@@ -3393,12 +3457,12 @@ clamp_p = standard_primitive(_clamp_shape_rule, _clamp_dtype_rule, 'clamp')
 ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(bitwise_and(gt(min, operand), lt(min, max)),
-                 _brcast(g, operand), _zeros(operand)),
+                 g, _zeros(operand)),
           lambda g, min, operand, max:
           select(bitwise_and(gt(operand, min), lt(operand, max)),
                  g, _zeros(operand)),
           lambda g, min, operand, max:
-          select(lt(max, operand), _brcast(g, operand), _zeros(operand)))
+          select(lt(max, operand), g, _zeros(operand)))
 batching.defbroadcasting(clamp_p)
 
 
