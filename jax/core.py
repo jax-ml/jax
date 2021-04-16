@@ -1434,7 +1434,7 @@ class NamedShape:
 
   @property
   def named_sizes(self):
-    return self._named.values()
+    return self.__named.values()
 
   @property
   def named_items(self):
