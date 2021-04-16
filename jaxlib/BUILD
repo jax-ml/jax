@@ -214,7 +214,6 @@ pybind_extension(
         ":cuda_gpu_kernel_helpers",
         ":handle_pool",
         ":kernel_pybind11_helpers",
-        "//third_party/gpus/cuda:cusparse_static",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cusparse_lib",
         "@com_google_absl//absl/algorithm:container",
