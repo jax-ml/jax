@@ -533,15 +533,18 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           for concurrent in [True, False]))
   def test_tap_multiple(self, concurrent=False):
     """Call id_tap multiple times, concurrently or in sequence. """
-    if concurrent and jtu.device_under_test() == "gpu":
-      # TODO(necula): it seems that on GPU if multiple host threads run
-      # a jit computation, the multiple computations are interleaved on the
-      # GPU. This can result in the outfeed trains being interleaved, which
-      # will trigger an error. The solution is to fix on GPU the receiving
-      # logic so that we can outfeed the train as one tuple, and receive it
-      # one piece as a time. Then the trains should be atomic.
+    if concurrent and jtu.device_under_test() in ["cpu", "gpu"]:
+      # TODO(necula): if there is device side concurrency, outfeeds from
+      # different computations can be interleaved. For example, it seems that
+      # on GPU if multiple host threads run a jit computation, the multiple
+      # computations are interleaved on the GPU. This can result in the outfeed
+      # trains being interleaved, which will trigger an error.
+      # The solution is to fix on GPU the receiving logic so that we can outfeed
+      # the train as one tuple, and receive it one piece as a time. Then the
+      # trains should be atomic.
       # See also b/160692602.
-      raise SkipTest("concurrent id_tap not supported on GPU")
+      raise SkipTest("concurrent id_tap not supported on CPU or GPU")
+
     received = set()
     count = 5
 
@@ -570,7 +573,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     self.assertEqual(received, set(range(count)))
 
   # TODO(necula): see comment for test_multiple_tap.
-  @jtu.skip_on_devices("gpu")
+  @jtu.skip_on_devices("cpu", "gpu")
   def test_tap_multiple_barriers(self):
     """Call barrier_wait concurrently."""
 
