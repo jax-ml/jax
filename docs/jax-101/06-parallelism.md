@@ -56,7 +56,7 @@ jax.devices()
 
 ## The basics
 
-The most basic use of `jax.pmap` is completely analogous to `jax.vmap`, so let's return to the convolution example from the [Vectorisation notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/03-vectorization.ipynb).
+The most basic use of `jax.pmap` is completely analogous to `jax.vmap`, so let's return to the convolution example from the [Automatic Vectorization in JAX](https://jax.readthedocs.io/en/latest/jax-101/03-vectorization.html).
 
 ```{code-cell}
 :id: IIQKBr-CgtD2
@@ -223,7 +223,7 @@ There are two places to pay attention to:
 * the `update()` function
 * the replication of parameters and splitting of data across devices.
 
-If this example is too confusing, you can find the same example, but without parallelism, in the next notebook, [State in JAX](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/07-state-in-jax.ipynb). Once that example makes sense, you can compare the differences to understand how parallelism changes the picture.
+If this example is too confusing, you can find the same example, but without parallelism, in the next tutorial, [Stateful Computations in JAX](https://jax.readthedocs.io/en/latest/jax-101/07-state.html). Once that example makes sense, you can compare the differences to understand how parallelism changes the picture.
 
 ```{code-cell}
 :id: cI8xQqzRrc-4
