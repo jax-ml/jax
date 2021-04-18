@@ -438,7 +438,9 @@ numpy_rank_promotion = config.define_enum_state(
 
 default_matmul_precision = config.define_enum_state(
     name='jax_default_matmul_precision',
-    enum_values=['bfloat16', 'tensorfloat32', 'float32'],
+    enum_values=['bfloat16', 'fastest',
+                 'tensorfloat32', 'bfloat16_3x',
+                 'float32', 'highest'],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
 
@@ -454,5 +456,6 @@ default_matmul_precision = config.define_enum_state(
           'level for computations involved in matrix multiplication and '
           'convolution on 32bit inputs. The levels roughly describe the '
           "precision at which scalar products are computed. The 'bfloat16' "
-          "option is the fastest and least precise; 'float32' is similar to "
-          "full float32 precision; 'tensorfloat32' is intermediate.\n\n"))
+          "option is the fastest and least precise (alias: 'fastest'); "
+          "'float32' is similar to full float32 precision (alias: 'highest'); "
+          "'tensorfloat32' is intermediate (alias: 'bfloat16_3x').\n\n"))
