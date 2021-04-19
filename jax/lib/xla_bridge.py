@@ -23,6 +23,7 @@ XLA. There are also a handful of related casting utilities.
 from functools import partial, lru_cache
 import os
 from typing import Callable, Dict, List, Optional, Tuple, Union
+import warnings
 
 from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
@@ -190,8 +191,9 @@ def device_count(backend: Optional[str] = None) -> int:
   """Returns the total number of devices.
 
   On most platforms, this is the same as :py:func:`jax.local_device_count`.
-  However, on multi-host platforms, this will return the total number of devices
-  across all hosts.
+  However, on multi-process platforms where different devices are associated
+  with different processes, this will return the total number of devices across
+  all processes.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
@@ -200,12 +202,13 @@ def device_count(backend: Optional[str] = None) -> int:
 
   Returns:
     Number of devices.
+
   """
   return int(get_backend(backend).device_count())
 
 
 def local_device_count(backend: Optional[str] = None) -> int:
-  """Returns the number of devices on this host."""
+  """Returns the number of devices addressable by this process."""
   return int(get_backend(backend).local_device_count())
 
 
@@ -214,8 +217,9 @@ def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
 
   Each device is represented by a subclass of :class:`Device` (e.g.
   :class:`CpuDevice`, :class:`GpuDevice`). The length of the returned list is
-  equal to ``device_count(backend)``. Local devices can be identified by comparing
-  :meth:`Device.host_id` to the value returned by :py:func:`jax.host_id`.
+  equal to ``device_count(backend)``. Local devices can be identified by
+  comparing :meth:`Device.process_index` to the value returned by
+  :py:func:`jax.process_index`.
 
   If ``backend`` is ``None``, returns all the devices from the default backend.
   The default backend is generally ``'gpu'`` or ``'tpu'`` if available,
@@ -237,15 +241,15 @@ def default_backend() -> str:
   return get_backend(None).platform
 
 
-def local_devices(host_id: Optional[int] = None,
+def local_devices(process_index: Optional[int] = None,
                   backend: Optional[str] = None) -> List[xla_client.Device]:
-  """Like :py:func:`jax.devices`, but only returns devices local to a given host.
+  """Like :py:func:`jax.devices`, but only returns devices local to a given process.
 
-  If ``host_id`` is ``None``, returns devices local to this host.
+  If ``process_index`` is ``None``, returns devices local to this process.
 
   Args:
-    host_id: the integer ID of the host. Host IDs can be retrieved via
-      :py:func:`jax.host_ids`.
+    process_index: the integer index of the process. Process indices can be
+      retrieved via ``len(jax.process_count())``.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
       ``'tpu'``.
@@ -253,17 +257,17 @@ def local_devices(host_id: Optional[int] = None,
   Returns:
     List of Device subclasses.
   """
-  if host_id is None:
-    host_id = get_backend(backend).host_id()
-  if host_id not in host_ids():
-    raise ValueError(f"Unknown host_id {host_id}")
-  return [d for d in devices(backend) if d.host_id == host_id]
+  if process_index is None:
+    process_index = get_backend(backend).process_index()
+  if not (0 <= process_index < process_count()):
+    raise ValueError(f"Unknown process_index {process_index}")
+  return [d for d in devices(backend) if d.process_index == process_index]
 
 
-def host_id(backend: Optional[str] = None) -> int:
-  """Returns the integer host ID of this host.
+def process_index(backend: Optional[str] = None) -> int:
+  """Returns the integer process index of this process.
 
-  On most platforms, this will always be 0. This will vary on multi-host
+  On most platforms, this will always be 0. This will vary on multi-process
   platforms though.
 
   Args:
@@ -272,19 +276,39 @@ def host_id(backend: Optional[str] = None) -> int:
       ``'tpu'``.
 
   Returns:
-    Integer host ID.
+    Integer process index.
   """
-  return get_backend(backend).host_id()
+  return get_backend(backend).process_index()
 
 
-def host_ids(backend: Optional[str] = None) -> List[int]:
-  """Returns a sorted list of all host IDs."""
-  return sorted({d.host_id for d in devices(backend)})
+# TODO: remove this sometime after jax 0.2.13 is released
+def host_id(backend=None):
+  warnings.warn(
+      "jax.host_id has been renamed to jax.process_index. This alias "
+      "will eventually be removed; please update your code.")
+  return process_index(backend)
 
 
-def host_count(backend: Optional[str] = None) -> int:
-  """Returns the number of hosts."""
-  return len(host_ids(backend))
+def process_count(backend: Optional[str] = None) -> int:
+  """Returns the number of JAX processes associated with the backend."""
+  return max(d.process_index for d in devices(backend)) + 1
+
+
+# TODO: remove this sometime after jax 0.2.13 is released
+def host_count(backend=None):
+  warnings.warn(
+      "jax.host_count has been renamed to jax.process_count. This alias "
+      "will eventually be removed; please update your code.")
+  return process_count(backend)
+
+
+# TODO: remove this sometime after jax 0.2.13 is released
+def host_ids(backend=None):
+  warnings.warn(
+      "jax.host_ids has been deprecated; please use range(jax.process_count()) "
+      "instead. jax.host_ids will eventually be removed; please update your "
+      "code.")
+  return list(range(process_count(backend)))
 
 
 ### utility functions

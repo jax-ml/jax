@@ -683,7 +683,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
         f"compiling computation that requires {nreps} replicas, but only "
         f"{xb.device_count(backend)} XLA devices are available")
 
-  if xb.host_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
+  if xb.process_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
     raise NotImplementedError(
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")

@@ -77,11 +77,10 @@ Parallelization (:code:`pmap`)
     pmap
     devices
     local_devices
-    host_id
-    host_ids
+    process_index
     device_count
     local_device_count
-    host_count
+    process_count
 
 
 .. autofunction:: jit
@@ -124,8 +123,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: pmap
 .. autofunction:: devices
 .. autofunction:: local_devices
-.. autofunction:: host_id
-.. autofunction:: host_ids
+.. autofunction:: process_index
 .. autofunction:: device_count
 .. autofunction:: local_device_count
-.. autofunction:: host_count
+.. autofunction:: process_count

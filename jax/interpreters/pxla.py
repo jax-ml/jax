@@ -634,9 +634,9 @@ def parallel_callable(fun: lu.WrappedFun,
 
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
-  # if xb.host_count() > 1 and global_axis_size is None and inner_pmap:
+  # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
   #   raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
-  if (xb.host_count() == 1 and global_axis_size is not None and
+  if (xb.process_count() == 1 and global_axis_size is not None and
       global_axis_size != axis_size):
     raise ValueError(
         f"Specified axis_size {global_axis_size} doesn't match received "
@@ -645,7 +645,7 @@ def parallel_callable(fun: lu.WrappedFun,
   must_run_on_all_devices = False
   no_nested_sharding = False
   if global_axis_size is None:
-    if xb.host_count() == 1:
+    if xb.process_count() == 1:
       global_axis_size = axis_size
     elif devices:
       # This allows each host in a multi-host pmap to run on a different number
@@ -658,13 +658,13 @@ def parallel_callable(fun: lu.WrappedFun,
       # this assumption is true by requiring that the pmap is run on all devices
       # (and making the further assumption that each host has the same number of
       # devices). Nested sharding is ok in this case.
-      global_axis_size = axis_size * xb.host_count()
-      assert all(len(xb.local_devices(host_id)) == xb.local_device_count()
-                 for host_id in xb.host_ids())
+      global_axis_size = axis_size * xb.process_count()
+      assert all(len(xb.local_devices(process_index)) == xb.local_device_count()
+                 for process_index in range(xb.process_count()))
       must_run_on_all_devices = True
 
   if devices:
-    local_devices = [d for d in devices if d.host_id == xb.host_id()]
+    local_devices = [d for d in devices if d.process_index == xb.process_index()]
     assert len(local_devices) > 0
   else:
     local_devices = None  # type: ignore
@@ -694,7 +694,7 @@ def parallel_callable(fun: lu.WrappedFun,
   if devices is not None:
     is_multi_host_pmap = len(local_devices) != len(devices)
   else:
-    is_multi_host_pmap = xb.host_count() > 1
+    is_multi_host_pmap = xb.process_count() > 1
   if is_multi_host_pmap:
     check_multihost_collective_allowlist(jaxpr)
 
@@ -728,7 +728,7 @@ def parallel_callable(fun: lu.WrappedFun,
   num_local_shards = num_local_replicas * local_num_partitions
   num_global_shards = num_global_replicas * num_partitions
 
-  if (xb.host_count() > 1 and must_run_on_all_devices and
+  if (xb.process_count() > 1 and must_run_on_all_devices and
       num_local_shards != xb.local_device_count()):
     if num_local_shards == axis_size:
       raise ValueError(
@@ -797,8 +797,8 @@ def parallel_callable(fun: lu.WrappedFun,
     if num_global_shards > num_local_shards:
       # TODO(skye): use a locality-aware assignment that satisfies the above
       # constraint.
-      devices = [d for host_id in xb.host_ids()
-                 for d in xb.local_devices(host_id)]
+      devices = [d for process_index in range(xb.process_count())
+                 for d in xb.local_devices(process_index)]
     else:
       devices = xb.get_backend(backend).get_default_device_assignment(
           num_global_replicas, num_partitions)
@@ -1277,8 +1277,9 @@ class Mesh:
   def local_mesh(self):
     if not self.devices.ndim:
       return self
-    host_id = xb.host_id()
-    is_local_device = np.vectorize(lambda d: d.host_id == host_id, otypes=[bool])(self.devices)
+    process_index = xb.process_index()
+    is_local_device = np.vectorize(
+        lambda d: d.process_index == process_index, otypes=[bool])(self.devices)
     subcube_indices = []
     # We take the smallest slice of each dimension that doesn't skip any local device.
     for axis in range(self.devices.ndim):
