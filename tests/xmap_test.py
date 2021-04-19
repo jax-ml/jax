@@ -551,6 +551,31 @@ class XMapTest(XMapTestCase):
     y = jnp.arange(20, dtype=jnp.float32).reshape((4, 5)) / 100
     jtu.check_grads(f, (x, y), order=2, modes=['fwd'])
 
+  @with_and_without_mesh
+  def testNamedShape(self, mesh, axis_resources):
+    x = np.arange(4,)
+    y = 2
+    f = xmap(lambda x, y: (x + y, y * lax.axis_index('i')),
+             in_axes=(['i', ...], {}),
+             out_axes=(['i', ...], ['i', ...]),
+             axis_resources=dict(axis_resources))
+    z, w = f(x, y)
+    self.assertEqual(z.aval.named_shape, {})
+    self.assertEqual(w.aval.named_shape, {})
+
+  @with_and_without_mesh
+  def testBroadcast(self, mesh, axis_resources):
+    x = jnp.asarray(2.0)
+    f = xmap(lambda x: x, in_axes={}, out_axes=['i'],
+             axis_sizes={'i': 4}, axis_resources=dict(axis_resources))
+    self.assertAllClose(f(x), jnp.asarray([2.0, 2.0, 2.0, 2.0]))
+
+  def testNestedBroadcast(self):
+    x = jnp.asarray(2.0)
+    f = xmap(lambda x: x, in_axes={}, out_axes=['i'], axis_sizes={'i': 4})
+    g = xmap(f, in_axes={}, out_axes=['j', ...], axis_sizes={'j': 7})
+    self.assertAllClose(g(x), jnp.tile(x.reshape((1, 1)), (7, 4)))
+
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):
   """Re-executes all basic tests with the SPMD partitioner enabled"""
@@ -558,6 +583,7 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
   skipped_tests = {
     "NestedMesh",  # Nesting xmap calls is not supported in the SPMD lowering yet
     "NestedMap",  # Same as above
+    "NestedBroadcast",  # Same as above
     "CollectivePermute2D"  # vmap of multidimensional permute not implemented yet
   }
 
@@ -1123,6 +1149,30 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, error):
       xmap(lambda x: x.reshape((2, 2)),
            in_axes=['i', None], out_axes=['i', None])(jnp.ones((5, 4)))
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testResourceConflict(self):
+    fm = xmap(lambda x, y: x + y,
+              in_axes=(['a', ...], ['b', ...]), out_axes=['a', 'b', ...],
+              axis_resources={'a': 'x', 'b': 'x'})
+    x = np.arange(12).reshape(4, 3)
+    y = np.arange(6).reshape(2, 3)
+    error = (r"Axes `a` and `b` are both mapped to the resource `x`, but they "
+             r"coincide in the named_shape.*primitive add created at")
+    with self.assertRaisesRegex(TypeError, error):
+      fm(x, y)
+
+  @ignore_xmap_warning()
+  def testReturnExtraMappedAxes(self):
+    fm = xmap(lambda x, y: x + y,
+              in_axes=(['a', ...], ['b', ...]), out_axes=['a', ...])
+    x = np.arange(12).reshape((4, 3))
+    y = np.arange(6).reshape((2, 3))
+    error = (r"One of xmap results has an out_axes specification of \['a', ...\], but "
+             r"is actually mapped along more axes defined by this xmap call: b")
+    with self.assertRaisesRegex(TypeError, error):
+      fm(x, y)
 
 
 if __name__ == '__main__':

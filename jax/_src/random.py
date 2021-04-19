@@ -121,7 +121,8 @@ def _threefry2x32_abstract_eval(*args):
                     .format(args))
   if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax._broadcasting_shape_rule(*args)
-    aval = core.ShapedArray(shape, jnp.dtype(jnp.uint32))
+    named_shape = core.join_named_shapes(*(a.named_shape for a in args))
+    aval = core.ShapedArray(shape, jnp.dtype(jnp.uint32), named_shape=named_shape)
   else:
     aval = core.UnshapedArray(jnp.dtype(jnp.uint32))
   return (aval,) * 2

@@ -1705,14 +1705,48 @@ def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst) 
     new_params[name] = subst_axis_names_jaxpr(jaxpr, shadowed_subst)
   return new_params
 
+class DuplicateAxisNameError(Exception):
+  def __init__(self, var):
+    self.var = var
+    self.eqn = None
+
+def subst_axis_names_var(v: Var, subst: AxisSubst, var_map: Dict[Var, Var]) -> Var:
+  # Var identity is load-bearing, so we can't have duplicates!
+  if v is unitvar: return v
+  if v is dropvar: return v
+  assert v not in var_map
+  if not hasattr(v.aval, 'named_shape'):
+    var_map[v] = v
+    return v
+  names = tuple(it.chain.from_iterable(subst(name) for name in v.aval.named_shape))
+  named_shape = {name: axis_frame(name).size for name in names}
+  if len(named_shape) != len(names):
+    raise DuplicateAxisNameError(v)
+  new_v = Var(v.count, v.suffix, v.aval.update(named_shape=named_shape))
+  var_map[v] = new_v
+  return new_v
+
+def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: Dict[Var, Var]) -> JaxprEqn:
+  invars: List[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in eqn.invars]
+  try:
+    outvars = [subst_axis_names_var(v, subst, var_map) for v in eqn.outvars]
+  except DuplicateAxisNameError as e:
+    e.eqn = eqn
+    raise
+  params = subst_axis_names(eqn.primitive, eqn.params, subst)
+  return JaxprEqn(invars, outvars, eqn.primitive, params, eqn.source_info)
+
 def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   consts = None
   if isinstance(jaxpr, ClosedJaxpr):
     consts = jaxpr.consts
     jaxpr = jaxpr.jaxpr
-  eqns = [eqn._replace(params=subst_axis_names(eqn.primitive, eqn.params, subst))
-          for eqn in jaxpr.eqns]
-  new_jaxpr = Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, eqns)
+  var_map: Dict[Var, Var] = {}
+  invars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.invars]
+  constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]
+  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]
+  outvars: List[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]
+  new_jaxpr = Jaxpr(constvars, invars, outvars, eqns)
   if consts is not None:
     return ClosedJaxpr(new_jaxpr, consts)
   return new_jaxpr
