@@ -1818,12 +1818,13 @@ class APITest(jtu.JaxTestCase):
 
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
+    value_tree = jnp.ones(3)
     self.assertRaisesRegex(
         ValueError,
         "vmap in_axes specification must be a tree prefix of the corresponding "
         r"value, got specification \(0, 0\) for value tree "
-        r"PyTreeDef\(tuple, \[\*\]\).",
-        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(jnp.ones(3))
+        + re.escape(f"{tree_util.tree_structure((value_tree,))}."),
+        lambda: api.vmap(lambda x: x, in_axes=(0, 0))(value_tree)
     )
 
   def test_vmap_in_axes_leaf_types(self):

@@ -33,6 +33,7 @@ from jax.experimental import host_callback as hcb
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
+from jax import tree_util
 from jax.lib import xla_bridge
 
 import numpy as np
@@ -898,21 +899,22 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     # making the Jaxpr does not print anything
     hcb.barrier_wait()
 
-    assertMultiLineStrippedEqual(self, """
-        { lambda  ; a.
+    treedef = tree_util.tree_structure(arg)
+    assertMultiLineStrippedEqual(self, f"""
+      {{ lambda  ; a.
           let b = mul a 3.00
-              c = outside_call[ arg_treedef=*
+              c = outside_call[ arg_treedef={treedef}
                                 callback=...
                                 identity=True
                                 transforms=(  ) ] b
               _ = mul c 2.00
               d = mul 1.00 2.00
-              e = outside_call[ arg_treedef=*
+              e = outside_call[ arg_treedef={treedef}
                                 callback=...
                                 identity=True
                                 transforms=(('jvp',), ('transpose',)) ] d
               f = mul e 3.00
-          in (f,) }""", jaxpr)
+          in (f,) }}""", jaxpr)
     assertMultiLineStrippedEqual(self, "", testing_stream.output)
     testing_stream.reset()
 

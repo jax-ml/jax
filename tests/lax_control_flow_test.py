@@ -33,6 +33,7 @@ from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu
+from jax import tree_util
 from jax._src.util import unzip2
 from jax.lib import xla_bridge
 from jax.interpreters import xla
@@ -237,14 +238,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testWhileTypeErrors(self):
     """Test typing error messages for while."""
+    tuple_treedef = tree_util.tree_structure((1., 1.))
+    leaf_treedef = tree_util.tree_structure(0.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]).")):
+        re.escape(f"cond_fun must return a boolean scalar, but got pytree {tuple_treedef}.")):
       lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
     with  self.assertRaisesRegex(TypeError,
         re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])].")):
       lax.while_loop(lambda c: np.float32(1.), lambda c: c, np.float32(0.))
     with self.assertRaisesRegex(TypeError,
-        re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
+        re.escape("body_fun output and input must have same type structure, "
+                  f"got {tuple_treedef} and {leaf_treedef}.")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
     with self.assertRaisesWithLiteralMatch(TypeError,
         ("body_fun output and input must have identical types, got\n"
@@ -714,7 +718,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("Pred must be a scalar, got (1.0, 1.0) of type <class 'tuple'>")):
       lax.cond((1., 1.), lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
+        re.escape("true_fun and false_fun output must have same type structure, "
+                  f"got {tree_util.tree_structure(2.)} and {tree_util.tree_structure((3., 3.))}.")):
       lax.cond(True, lambda top: 2., lambda fop: (3., 3.), 1.)
     with self.assertRaisesRegex(
         TypeError, textwrap.dedent(
@@ -743,7 +748,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("Empty branch sequence")):
       lax.switch(0, [], 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("branch 0 and 1 outputs must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
+        re.escape("branch 0 and 1 outputs must have same type structure, "
+                  f"got {tree_util.tree_structure(2.)} and {tree_util.tree_structure((3., 3.))}.")):
       lax.switch(1, [lambda _: 2., lambda _: (3., 3.)], 1.)
     with self.assertRaisesRegex(
         TypeError, textwrap.dedent(
@@ -1587,10 +1593,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.scan(lambda c, x: np.float32(0.), 0, a)
     with  self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, "
-                  "got PyTreeDef(tuple, [*,*,*]) and PyTreeDef(tuple, [*,PyTreeDef(tuple, [*,*])])")):
+                  f"got {tree_util.tree_structure((0, 0, 0,))} "
+                  f"and {tree_util.tree_structure((1, (2, 3)))}")):
       lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a)
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(None, []).")):
+        re.escape("scan carry output and input must have same type structure, "
+                  f"got {tree_util.tree_structure(a)} and {tree_util.tree_structure(None)}.")):
       lax.scan(lambda c, x: (0, x), None, a)
     with self.assertRaisesWithLiteralMatch(
         TypeError,
@@ -1600,8 +1608,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         "ShapedArray(float32[])."):
       lax.scan(lambda c, x: (np.int32(0), x), np.float32(1.0), a)
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
-      lax.scan(lambda c, x: (0, x), (1, 2), jnp.arange(5))
+        re.escape("scan carry output and input must have same type structure, "
+                  f"got {tree_util.tree_structure(a)} and {tree_util.tree_structure((1, 2))}.")):
+      lax.scan(lambda c, x: (0, x), (1, 2), a)
 
 
   @parameterized.named_parameters(
