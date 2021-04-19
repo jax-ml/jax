@@ -25,7 +25,6 @@ import jax.test_util as jtu
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 class InfeedTest(jtu.JaxTestCase):
 

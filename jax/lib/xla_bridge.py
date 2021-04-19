@@ -28,7 +28,7 @@ from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
 logging._warn_preinit_stderr = 0
 
-from ..config import flags
+from .._src.config import flags
 from jax._src import util, traceback_util
 from jax._src import dtypes
 import numpy as np

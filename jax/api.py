@@ -16,8 +16,10 @@
 # TODO(phawkins): fix users of these aliases and delete this file.
 
 # flake8: noqa: F401
-from jax._src.api import (
+from jax._src.config import (
   FLAGS,
+)
+from jax._src.api import (
   AxisName,
   ShapedArray,
   ShapeDtypeStruct,

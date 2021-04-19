@@ -31,11 +31,9 @@ from ..api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
                          HashableFunction)
-from ..config import config, flags
+from .._src.config import config
 
 xops = xc._xla.ops
-
-FLAGS = flags.FLAGS
 
 
 def _map(f, *xs):

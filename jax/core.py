@@ -29,7 +29,7 @@ from typing import (Any, Callable, ClassVar, Dict, Generator,
 import numpy as np
 
 from ._src import dtypes
-from .config import FLAGS, config
+from ._src.config import FLAGS, config
 from .errors import (ConcretizationTypeError, TracerArrayConversionError,
                      TracerIntegerConversionError)
 from . import linear_util as lu

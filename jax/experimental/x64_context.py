@@ -24,7 +24,7 @@
 # uniformity
 
 from contextlib import contextmanager
-from ..config import enable_x64 as _jax_enable_x64
+from .._src.config import enable_x64 as _jax_enable_x64
 
 @contextmanager
 def enable_x64(new_val: bool = True):

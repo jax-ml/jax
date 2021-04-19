@@ -26,7 +26,7 @@ from typing import Any, Dict
 import numpy as np
 
 from jax._src import util
-from jax.config import flags, config
+from jax._src.config import flags, config
 from jax.lib import xla_client
 
 from jax._src import traceback_util

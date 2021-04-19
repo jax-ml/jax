@@ -32,7 +32,7 @@ from ._src import api
 from . import core
 from ._src import dtypes as _dtypes
 from . import lax
-from .config import flags, bool_env, config
+from ._src.config import flags, bool_env, config
 from ._src.util import partial, prod
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge

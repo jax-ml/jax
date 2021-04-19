@@ -40,7 +40,7 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
 from absl import logging
 import numpy as np
 
-from ..config import flags, config
+from .._src.config import config
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import array_types
@@ -63,8 +63,6 @@ else:
   OrderedDictType = Dict
 
 xops = xc.ops
-
-FLAGS = flags.FLAGS
 
 unsafe_map, map = map, safe_map  # type: ignore
 

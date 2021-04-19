@@ -76,10 +76,10 @@ from ..interpreters.invertible_ad import custom_ivjp
 from ..custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
                                   custom_vjp, linear_call)
 
-from ..config import (flags, config, bool_env, disable_jit as _disable_jit,
-                      debug_nans as config_debug_nans,
-                      debug_infs as config_debug_infs,
-                      _thread_local_state as config_thread_local_state)
+from .._src.config import (flags, config, bool_env, disable_jit as _disable_jit,
+                           debug_nans as config_debug_nans,
+                           debug_infs as config_debug_infs,
+                           _thread_local_state as config_thread_local_state)
 
 traceback_util.register_exclusion(__file__)
 

@@ -30,9 +30,18 @@ except Exception as exc:
 del _cloud_tpu_init
 
 # flake8: noqa: F401
-from .config import (config, enable_checks, check_tracer_leaks, checking_leaks,
-                     debug_nans, debug_infs, log_compiles,
-                     default_matmul_precision, numpy_rank_promotion)
+
+# Confusingly there are two things named "config": the module and the class.
+# We want the exported object to be the class, so we first import the module
+# to make sure a later import doesn't overwrite the class.
+from . import config as _config_module
+del _config_module
+
+from ._src.config import (
+  config, enable_checks, check_tracer_leaks, checking_leaks,
+  debug_nans, debug_infs, log_compiles, default_matmul_precision,
+  numpy_rank_promotion
+)
 from ._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
   checkpoint,

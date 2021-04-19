@@ -34,7 +34,7 @@ from jax import api_util
 from jax import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util
-from jax.config import flags, config
+from jax._src.config import config
 from jax.core import (Primitive, _canonicalize_dimension, UnshapedArray,
                       ShapedArray, ConcreteArray, raise_to_shaped,
                       abstract_token, canonicalize_shape)
@@ -56,8 +56,6 @@ from jax.lib import xla_client
 xb = xla_bridge
 xc = xla_client
 xops = xla_client.ops
-
-FLAGS = flags.FLAGS
 
 _max = builtins.max
 _min = builtins.min
