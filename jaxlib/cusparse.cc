@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "third_party/gpus/cuda/includes/cuda_headers/third_party/gpus/cuda/include/cusparse.h"
-
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -25,10 +23,10 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
+#include "third_party/gpus/cuda/include/cuComplex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusparse.h"
-#include "third_party/gpus/cuda/includes/cuda_headers/third_party/gpus/cuda/include/cuComplex.h"
 #include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
