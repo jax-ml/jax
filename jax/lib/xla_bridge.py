@@ -173,11 +173,16 @@ def get_backend(platform=None):
     return platform
 
   with _backend_lock:
-    backend = _backends.get(FLAGS.jax_xla_backend)
-    if backend is None:
+    backend_factory = _backends.get(FLAGS.jax_xla_backend)
+    if backend_factory is None:
       msg = 'Unknown jax_xla_backend value "{}".'
       raise ValueError(msg.format(FLAGS.jax_xla_backend))
-    return backend(platform)
+    backend = backend_factory(platform)
+    util.distributed_debug_log(("Initialized backend", backend.platform),
+                               ("process_index", backend.process_index()),
+                               ("device_count", backend.device_count()),
+                               ("local_devices", backend.local_devices()))
+    return backend
 
 
 def get_device_backend(device=None):

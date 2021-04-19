@@ -31,7 +31,7 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
-                         wrap_name, wraps)
+                         wrap_name, wraps, distributed_debug_log)
 xops = xc._xla.ops
 
 def pjit(fun: Callable,
@@ -145,9 +145,14 @@ def _pjit_call_impl(fun: lu.WrappedFun, *args, in_axis_resources,
                     out_axis_resources_thunk, resource_env, donated_invars,
                     name):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  return _pjit_callable(
+  pjit_callable = _pjit_callable(
       fun, in_axis_resources, out_axis_resources_thunk, resource_env,
-      donated_invars, name, *in_avals)(*args)
+      donated_invars, name, *in_avals)
+  distributed_debug_log(("Running pjit'd function", name),
+                        ("python function", fun.f),
+                        ("mesh", resource_env.physical_mesh),
+                        ("abstract args", in_avals))
+  return pjit_callable(*args)
 
 def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
                            call_jaxpr, in_axis_resources, out_axis_resources_thunk,

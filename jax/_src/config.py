@@ -174,8 +174,9 @@ class Config:
     update_thread_local_hook: Optional[Callable[[Optional[bool]], None]] = None):
     """Set up thread-local state and return a contextmanager for managing it.
 
-    This function is a convenience wrapper. It defines a flag and corresponding
-    thread-local state, which can be managed via the contextmanager it returns.
+    This function is a convenience wrapper. It defines a flag, environment
+    variable, and corresponding thread-local state, which can be managed via the
+    contextmanager it returns.
 
     The thread-local state value can be read via the ``config.<option_name>``
     attribute, where ``config`` is the singleton ``Config`` instance.
@@ -396,6 +397,13 @@ log_compiles = config.define_bool_state(
           'computation. Logging is performed with `absl.logging`. When this '
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
+
+distributed_debug = config.define_bool_state(
+    name="jax_distributed_debug",
+    default=False,
+    help=('Enable logging useful for debugging multi-process distributed '
+          'computations. Logging is performed with `absl.logging` at WARNING '
+          'level.'))
 
 def _update_x64_global(val):
   lib.jax_jit.global_state().enable_x64 = val
