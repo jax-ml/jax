@@ -113,7 +113,7 @@ def _check_output_shapes(resource_env, out_axis_resources_thunk, *args, **kwargs
   yield outputs
 
 def _check_shapes_against_resources(what: str, resource_env, flat_avals, flat_axis_resources):
-  resource_sizes = resource_env.shape
+  resource_sizes = resource_env.local_shape
   for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
     if aval_axis_resources is None:
       continue

@@ -115,7 +115,10 @@ pytype_library(
     name = "pjit",
     srcs = ["experimental/pjit.py"],
     srcs_version = "PY3",
-    deps = [":jax"],
+    deps = [
+        ":experimental",
+        ":jax",
+    ],
 )
 
 pytype_library(
