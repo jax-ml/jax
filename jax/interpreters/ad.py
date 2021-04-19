@@ -176,8 +176,8 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
     if config.jax_enable_checks:
       ct_aval = core.get_aval(ct_env[v])
-      joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type()
-      assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
+      joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type().strip_named_shape()
+      assert v.aval.strip_weak_type().strip_named_shape() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.pop(v, Zero(v.aval))
