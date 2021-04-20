@@ -206,6 +206,26 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
+  def testCaching(self):
+    def f(x):
+      assert should_be_tracing
+      return jnp.sin(x) * 2
+
+    x = np.arange(16).reshape(4, 4)
+    devices = np.array(list(jax.local_devices())[:4])
+    if devices.size < 4:
+      raise SkipTest("Test requires 4 devices")
+    devices = devices.reshape((2, 2))
+    with mesh(devices, ('x', 'y')):
+      should_be_tracing = True
+      pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
+      should_be_tracing = False
+      pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
+    # Re-create the mesh to make sure that has no influence on caching
+    with mesh(devices, ('x', 'y')):
+      should_be_tracing = False
+      pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
+
   # TODO(skye): add more unit tests once API is more finalized
 
 @curry

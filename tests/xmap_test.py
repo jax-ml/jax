@@ -362,19 +362,25 @@ class XMapTest(XMapTestCase):
     self.assertAllClose(run({'i': 'x'}), run({'i': 'y'}))
 
   @ignore_xmap_warning()
-  @with_mesh([('x', 2)])
-  def testCompilationCache(self):
+  def testCaching(self):
     def f(x):
       assert python_should_be_executing
       return x * 2
-    fm = xmap(f,
-              in_axes=['a', ...], out_axes=['a', ...],
-              axis_resources={'a': 'x'})
+    devices = np.array(jax.local_devices()[:2])
+    if devices.size < 2:
+      raise SkipTest("Test requires 2 devices")
     x = np.arange(8).reshape((2, 2, 2))
-    python_should_be_executing = True
-    fm(x)
-    python_should_be_executing = False
-    fm(x)
+    with mesh(devices, ('x',)):
+      python_should_be_executing = True
+      xmap(f, in_axes=['a', ...], out_axes=['a', ...],
+           axis_resources={'a': 'x'})(x)
+      python_should_be_executing = False
+      xmap(f, in_axes=['a', ...], out_axes=['a', ...],
+           axis_resources={'a': 'x'})(x)
+    with mesh(devices, ('x',)):
+      python_should_be_executing = False
+      xmap(f, in_axes=['a', ...], out_axes=['a', ...],
+           axis_resources={'a': 'x'})(x)
 
   @parameterized.named_parameters(
     {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}

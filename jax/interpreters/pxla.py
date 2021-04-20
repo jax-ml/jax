@@ -1254,15 +1254,32 @@ mesh devices ndarray would have to be transposed before flattening and assignmen
 ArrayMapping = OrderedDictType[MeshAxisName, int]
 
 class Mesh:
-  __slots__ = ('devices', 'axis_names')
+  __slots__ = ('devices', 'axis_names', '_hash')
 
   def __init__(self, devices: np.ndarray, axis_names: Sequence[MeshAxisName]):
     assert devices.ndim == len(axis_names)
     # TODO: Make sure that devices are unique? At least with the quick and
     #       dirty check that the array size is not larger than the number of
     #       available devices?
-    self.devices = devices
+    self.devices = devices.copy()
+    self.devices.flags.writeable = False
     self.axis_names = tuple(axis_names)
+
+  def __eq__(self, other):
+    if not isinstance(other, Mesh):
+      return False
+    return (self.axis_names == other.axis_names and
+            np.array_equal(self.devices, other.devices))
+
+  def __hash__(self):
+    if not hasattr(self, '_hash'):
+      self._hash = hash((self.axis_names, tuple(self.devices.flat)))
+    return self._hash
+
+  def __setattr__(self, name, value):
+    if hasattr(self, name):
+      raise RuntimeError("Cannot reassign attributes of immutable mesh objects")
+    super().__setattr__(name, value)
 
   @property
   def shape(self):
