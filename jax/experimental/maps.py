@@ -720,6 +720,28 @@ core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
 ad.JVPTrace.process_xmap = ad.JVPTrace.process_call  # type: ignore
 ad.call_param_updaters[xmap_p] = ad.call_param_updaters[xla.xla_call_p]
 
+def _typecheck_xmap(
+    *in_avals, call_jaxpr, name, in_axes, out_axes, donated_invars,
+    global_axis_sizes, axis_resources, resource_env, backend,
+    spmd_in_axes, spmd_out_axes):
+  binder_in_avals = [_insert_aval_axes(v.aval, a_in_axes, global_axis_sizes)
+                     for v, a_in_axes in zip(call_jaxpr.invars, in_axes)]
+  for binder_in_aval, in_aval in zip(binder_in_avals, in_avals):
+    core.typecheck_assert(
+        core.typecompat(binder_in_aval, in_aval),
+        f"xmap passes operand {in_aval} to jaxpr expecting {binder_in_aval}")
+
+  mapped_in_avals = [_delete_aval_axes(a, a_in_axes)
+                     for a, a_in_axes in zip(in_avals, in_axes)]
+  with core.extend_axis_env_nd(global_axis_sizes.items()):
+    core._check_jaxpr(call_jaxpr, mapped_in_avals)
+
+  mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
+  out_avals = [_insert_aval_axes(a, a_out_axes, global_axis_sizes)
+               for a, a_out_axes in zip(mapped_out_avals, out_axes)]
+  return out_avals
+core.custom_typechecks[xmap_p] = _typecheck_xmap
+
 # This is DynamicJaxprTrace.process_map with some very minor modifications
 def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   from jax.interpreters.partial_eval import (
