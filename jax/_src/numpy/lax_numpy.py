@@ -1494,21 +1494,10 @@ def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
       # Make all elements where both a and b is NaN to True
       both_nan = logical_and(a_nan, b_nan)
       out = logical_or(out, both_nan)
-    return _maybe_numpy_1_13_isclose_behavior(a, out)
+    return out
   else:
     return lax.eq(a, b)
 
-numpy_version = tuple(map(int, np.version.version.split('.')[:2]))
-if numpy_version < (1, 14):
-  # see discussion at https://github.com/numpy/numpy/pull/9720
-  def _maybe_numpy_1_13_isclose_behavior(a, out):
-    if size(out) == 1 and issubdtype(_dtype(a), complexfloating):
-      return lax.reshape(out, (1,))
-    else:
-      return out
-else:
-  def _maybe_numpy_1_13_isclose_behavior(a, out):
-    return out
 
 @_wraps(np.interp)
 def interp(x, xp, fp, left=None, right=None, period=None):
