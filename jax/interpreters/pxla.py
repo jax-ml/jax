@@ -47,7 +47,7 @@ from ..abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
 from .._src.util import (partial, unzip3, prod, safe_map, safe_zip,
                          extend_name_stack, wrap_name, assert_unreachable,
-                         tuple_insert, tuple_delete)
+                         tuple_insert, tuple_delete, distributed_debug_log)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..lib import pmap_lib
@@ -614,6 +614,12 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
                                    in_axes, out_axes_thunk,
                                    donated_invars, global_arg_shapes,
                                    *abstract_args)
+  # Don't re-abstractify args unless logging is enabled for performance.
+  if config.jax_distributed_debug:
+    distributed_debug_log(("Running pmapped function", name),
+                          ("python function", fun.f),
+                          ("devices", devices),
+                          ("abstract args", map(xla.abstractify, args)))
   return compiled_fun(*args)
 
 @lu.cache

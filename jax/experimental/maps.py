@@ -39,7 +39,8 @@ from ..interpreters import batching
 from ..interpreters import ad
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from .._src.util import safe_map, safe_zip, HashableFunction, as_hashable_function, unzip2
+from .._src.util import (safe_map, safe_zip, HashableFunction,
+                         as_hashable_function, unzip2, distributed_debug_log)
 from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
@@ -538,8 +539,14 @@ def xmap(fun: Callable,
 def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_invars,
               global_axis_sizes, axis_resources, resource_env, backend):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  return make_xmap_callable(fun, name, in_axes, out_axes_thunk, donated_invars, global_axis_sizes,
-                            axis_resources, resource_env, backend, *in_avals)(*args)
+  xmap_callable = make_xmap_callable(
+      fun, name, in_axes, out_axes_thunk, donated_invars, global_axis_sizes,
+      axis_resources, resource_env, backend, *in_avals)
+  distributed_debug_log(("Running xmapped function", name),
+                        ("python function", fun.f),
+                        ("mesh", resource_env.physical_mesh),
+                        ("abstract args", in_avals))
+  return xmap_callable(*args)
 
 @lu.cache
 def make_xmap_callable(fun: lu.WrappedFun,

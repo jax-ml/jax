@@ -19,6 +19,7 @@ import operator
 import types
 from typing import Any, Callable
 
+from absl import logging
 import numpy as np
 
 from jax.config import config
@@ -392,3 +393,22 @@ def maybe_named_axis(axis, if_pos, if_named):
   except TypeError:
     named = True
   return if_named(axis) if named else if_pos(pos)
+
+def distributed_debug_log(*pairs):
+  """Format and log `pairs` if config.jax_distributed_debug is enabled.
+
+  Args:
+    pairs: A sequence of label/value pairs to log. The first pair is treated as
+    a heading for subsequent pairs.
+  """
+  if config.jax_distributed_debug:
+    lines = ["\nDISTRIBUTED_DEBUG_BEGIN"]
+    try:
+      lines.append(f"{pairs[0][0]}: {pairs[0][1]}")
+      for label, value in pairs[1:]:
+        lines.append(f"  {label}: {value}")
+    except Exception as e:
+      lines.append("DISTRIBUTED_DEBUG logging failed!")
+      lines.append(f"{e}")
+    lines.append("DISTRIBUTED_DEBUG_END")
+    logging.warning("\n".join(lines))
