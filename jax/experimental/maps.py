@@ -652,7 +652,7 @@ class EvaluationPlan(NamedTuple):
       vaxis = raxes[-1]
       map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
-      f = pxla.vtile(f, map_in_axes, map_out_axes, tile_size=local_tile_size, axis_name=vaxis)
+      f = batching.vtile(f, map_in_axes, map_out_axes, tile_size=local_tile_size, axis_name=vaxis)
     return f
 
   def to_mesh_axes(self, in_axes, out_axes):

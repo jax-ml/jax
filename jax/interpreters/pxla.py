@@ -47,7 +47,7 @@ from ..abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
 from .._src.util import (partial, unzip3, prod, safe_map, safe_zip,
                          extend_name_stack, wrap_name, assert_unreachable,
-                         tuple_insert, tuple_delete, curry)
+                         tuple_insert, tuple_delete)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..lib import pmap_lib
@@ -1381,10 +1381,10 @@ def mesh_callable(fun: lu.WrappedFun,
     # TODO: Consider handling xmap's 'vectorize' in here. We can vmap once instead of vtile twice!
     for name, size in reversed(mesh.shape.items()):
       if tile_by_mesh_axes:
-        fun = vtile(fun,
-                    tuple(a.get(name, None) for a in in_axes),
-                    tuple(a.get(name, None) for a in out_axes_thunk()),
-                    tile_size=size, axis_name=name)
+        fun = batching.vtile(fun,
+                             tuple(a.get(name, None) for a in in_axes),
+                             tuple(a.get(name, None) for a in out_axes_thunk()),
+                             tile_size=size, axis_name=name)
     global_in_untiled_avals = [untile_aval_nd(global_axis_sizes, aval_in_axes, aval)
                                for aval, aval_in_axes in safe_zip(in_tiled_avals, in_axes)]
     in_jaxpr_avals = global_in_untiled_avals
@@ -1499,37 +1499,6 @@ def compile_and_wrap_mesh_hlo(computation: xc.XlaComputation, backend,
                                            input_indices, local_input_specs,
                                            handle_outs)
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
-
-# NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
-def vtile(f_flat,
-          in_axes_flat: Tuple[Optional[int], ...],
-          out_axes_flat: Tuple[Optional[int], ...],
-          tile_size: Optional[int], axis_name):
-  @curry
-  def tile_axis(arg, axis: Optional[int], tile_size):
-    if axis is None:
-      return arg
-    shape = list(arg.shape)
-    shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
-    return arg.reshape(shape)
-
-  def untile_axis(out, axis: Optional[int]):
-    if axis is None:
-      return out
-    shape = list(out.shape)
-    shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
-    return out.reshape(shape)
-
-  @lu.transformation
-  def _map_to_tile(*args_flat):
-    sizes = (x.shape[i] for x, i in safe_zip(args_flat, in_axes_flat) if i is not None)
-    tile_size_ = tile_size or next(sizes, None)
-    assert tile_size_ is not None, "No mapped arguments?"
-    outputs_flat = yield map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat), {}
-    yield map(untile_axis, outputs_flat, out_axes_flat)
-
-  return _map_to_tile(
-      batching.batch(f_flat, axis_name, tile_size, in_axes_flat, out_axes_flat))
 
 _forbidden_primitives = {
   'xla_pmap': 'pmap',

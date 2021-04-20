@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import numpy as np
-from typing import Any, Callable, Dict, Optional, Tuple, Union, Sequence, Iterable
+from typing import Any, Callable, Dict, Optional, Tuple, Union, Sequence, Iterable, Type
 
 import jax
 from ..config import config
@@ -21,8 +21,8 @@ from .. import core
 from ..core import raise_to_shaped, Trace, Tracer
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
-from .._src.util import (unzip2, partial, safe_map, wrap_name, split_list,
-                         canonicalize_axis, moveaxis, as_hashable_function)
+from .._src.util import (unzip2, partial, safe_map, safe_zip, wrap_name, split_list,
+                         canonicalize_axis, moveaxis, as_hashable_function, curry)
 from . import xla
 from . import partial_eval as pe
 
@@ -30,19 +30,8 @@ map = safe_map
 
 BatchDim = Optional[int]
 BatchDims = Sequence[BatchDim]
-AxesSpec = Union[Callable[[], BatchDims], BatchDims]
-
-def batch(fun: lu.WrappedFun, axis_name: core.AxisName,
-          axis_size: Optional[int], in_dims: AxesSpec, out_dim_dests: AxesSpec,
-          ) -> lu.WrappedFun:
-  # anlogue of `jvp` in ad.py
-  # TODO(mattjj,apaszke): change type of axis_size to be int, not Optional[int]
-  fun, out_dims_thunk = batch_subtrace(fun)
-  return _match_axes(batchfun(fun, axis_name, axis_size, in_dims),
-                     axis_size, in_dims, out_dims_thunk, out_dim_dests)
-
 @lu.transformation
-def batchfun(axis_name, axis_size, in_dims, *in_vals):
+def batchfun(axis_name, axis_size, in_dims, main_type, *in_vals):
   # analogue of `jvpfun` in ad.py
   if axis_size is None:
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
@@ -50,7 +39,7 @@ def batchfun(axis_name, axis_size, in_dims, *in_vals):
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              and not isinstance(core.get_aval(x), core.AbstractUnit)
              else ax for x, ax in zip(in_vals, in_dims)]
-  with core.new_main(BatchTrace, axis_name=axis_name) as main:
+  with core.new_main(main_type, axis_name=axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
       out_vals = yield (main, in_dims, *in_vals), {}
       del main
@@ -137,7 +126,7 @@ class BatchTrace(Trace):
       frame = core.axis_frame(self.axis_name)
       val_out, dim_out = collective_rules[primitive](frame, vals_in, dims_in, **params)
     else:
-      batched_primitive = get_primitive_batcher(primitive, self.axis_name)
+      batched_primitive = get_primitive_batcher(primitive, self)
       val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
     if primitive.multiple_results:
       return map(partial(BatchTracer, self), val_out, dim_out)
@@ -245,7 +234,7 @@ class BatchTrace(Trace):
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims)
     bwd = batch_custom_vjp_bwd(bwd, self.axis_name, axis_size,
-                               out_dims2, in_dims)
+                               out_dims2, in_dims, self.main.trace_type)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
@@ -262,9 +251,9 @@ def _main_trace_for_axis_names(main_trace: core.MainTrace,
   # axis names can shadow, so we use the main trace as a tag.
   return any(main_trace is core.axis_frame(n).main_trace for n in axis_name)
 
-def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests):
+def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests, main_type):
   bwd, out_dims_thunk = batch_subtrace(bwd)
-  return _match_axes_and_sum(batchfun(bwd, axis_name, axis_size, in_dims),
+  return _match_axes_and_sum(batchfun(bwd, axis_name, axis_size, in_dims, main_type),
                              axis_size, out_dims_thunk, out_dim_dests)
 
 @lu.transformation
@@ -274,6 +263,55 @@ def _match_axes_and_sum(axis_size, out_dims_thunk, out_dim_dests, *in_vals):
   yield map(partial(matchaxis, axis_size, sum_match=True),
             out_dims_thunk(), out_dim_dests, out_vals)
 
+### API
+
+AxesSpec = Union[Callable[[], BatchDims], BatchDims]
+
+def batch(fun: lu.WrappedFun,
+          axis_name: core.AxisName,
+          axis_size: Optional[int],
+          in_dims: AxesSpec,
+          out_dim_dests: AxesSpec,
+          main_type: Type[BatchTrace] = BatchTrace,
+          ) -> lu.WrappedFun:
+  # anlogue of `jvp` in ad.py
+  # TODO(mattjj,apaszke): change type of axis_size to be int, not Optional[int]
+  fun, out_dims_thunk = batch_subtrace(fun)
+  return _match_axes(batchfun(fun, axis_name, axis_size, in_dims, main_type),
+                     axis_size, in_dims, out_dims_thunk, out_dim_dests)
+
+# NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
+def vtile(f_flat: lu.WrappedFun,
+          in_axes_flat: Tuple[Optional[int], ...],
+          out_axes_flat: Tuple[Optional[int], ...],
+          tile_size: Optional[int],
+          axis_name: core.AxisName,
+          main_type: Type[BatchTrace] = BatchTrace):
+  @curry
+  def tile_axis(arg, axis: Optional[int], tile_size):
+    if axis is None:
+      return arg
+    shape = list(arg.shape)
+    shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
+    return arg.reshape(shape)
+
+  def untile_axis(out, axis: Optional[int]):
+    if axis is None:
+      return out
+    shape = list(out.shape)
+    shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
+    return out.reshape(shape)
+
+  @lu.transformation
+  def _map_to_tile(*args_flat):
+    sizes = (x.shape[i] for x, i in safe_zip(args_flat, in_axes_flat) if i is not None)
+    tile_size_ = tile_size or next(sizes, None)
+    assert tile_size_ is not None, "No mapped arguments?"
+    outputs_flat = yield map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat), {}
+    yield map(untile_axis, outputs_flat, out_axes_flat)
+
+  return _map_to_tile(batch(
+      f_flat, axis_name, tile_size, in_axes_flat, out_axes_flat, main_type=main_type))
 
 ### primitives
 
@@ -281,9 +319,11 @@ BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
 primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
 initial_style_batchers : Dict[core.Primitive, Any] = {}
 
-def get_primitive_batcher(p, axis_name):
+def get_primitive_batcher(p, trace):
   if p in initial_style_batchers:
-    return partial(initial_style_batchers[p], axis_name=axis_name)
+    return partial(initial_style_batchers[p],
+                   axis_name=trace.axis_name,
+                   main_type=trace.main.trace_type)
   try:
     return primitive_batchers[p]
   except KeyError as err:
@@ -408,10 +448,10 @@ def bdim_at_front(x, bdim, size):
     return moveaxis(x, bdim, 0)
 
 
-def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name):
+def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name, main_type):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_batched = batch_subtrace_instantiate(f, instantiate, axis_size)
-  f = batchfun(f, axis_name, axis_size, [0 if b else None for b in in_batched])
+  f = batchfun(f, axis_name, axis_size, [0 if b else None for b in in_batched], main_type)
   avals_in = [core.unmapped_aval(axis_size, 0, aval) if b else aval
               for aval, b in zip(closed_jaxpr.in_avals, in_batched)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
