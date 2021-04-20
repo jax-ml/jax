@@ -4723,8 +4723,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for retstep in [True, False]
         for dtype in number_dtypes + [None,]))
   def testLinspace(self, start_shape, stop_shape, num, endpoint, retstep, dtype):
-    if num == 1 and not endpoint and numpy_version < (1, 17, 5):
-      raise SkipTest("Numpy < 1.17.5 has a linspace bug.")
+    if num == 1 and not endpoint and numpy_version < (1, 18):
+      raise SkipTest("Numpy < 1.18 has a linspace bug.")
     rng = jtu.rand_default(self.rng())
     # relax default tolerances slightly
     tol = jtu.tolerance(dtype if dtype else np.float32) * 10
