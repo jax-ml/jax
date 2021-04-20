@@ -1647,11 +1647,11 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(param_shapes[0].xla_element_type(),
                      xb.xla_client.PrimitiveType.TUPLE)
 
-  def test_staging_out_multi_replica(self):
-    def f(x):
-      return api.pmap(jnp.mean)(x)
-    xla_comp = api.xla_computation(f)
-    xla_comp(jnp.arange(8)).as_hlo_text()  # doesn't crash
+  def test_xla_computation_of_pmap(self):
+    f = api.pmap(lambda x: x)
+    with self.assertRaisesRegex(
+        ValueError, "To get the xla_computation of a pmap.*axis_env"):
+      api.xla_computation(f)
 
   def test_xla_computation_instantiate_constant_outputs(self):
     def f():

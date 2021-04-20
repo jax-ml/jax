@@ -675,6 +675,15 @@ def xla_computation(fun: Callable,
 
   fun_name = getattr(fun, "__name__", "unknown")
 
+  if getattr(fun, "_is_pmap", False):
+    # TODO(tomhennigan): Unbox the pmap and set axis_env rather than throwing?
+    raise ValueError(
+        "`xla_computation(pmap(f, 'i'))(x)` is equivalent to adding an outer "
+        "jit to your pmap'd computation making it hard to interpret the "
+        "resulting xla computation. To get the xla_computation of a pmap'd "
+        "function you should instead use: "
+        "`xla_computation(f, axis_env=[('i', x.shape[0])])(x[0])`")
+
   def make_axis_env(nreps):
     if axis_env is None:
       return xla.AxisEnv(nreps, (), ())
@@ -1639,6 +1648,8 @@ def pmap(
         name=flat_fun.__name__, donated_invars=tuple(donated_invars),
         global_arg_shapes=tuple(global_arg_shapes_flat))
     return tree_unflatten(out_tree(), out)
+
+  f_pmapped._is_pmap = True
 
   return f_pmapped
 
