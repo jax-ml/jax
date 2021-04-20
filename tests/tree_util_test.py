@@ -14,6 +14,7 @@
 
 
 import collections
+import re
 import unittest
 
 from absl.testing import absltest
@@ -145,6 +146,13 @@ TREE_STRINGS = (
     "PyTreeDef({'a': *, 'b': *})",
 )
 
+# pytest expects "tree_util_test.ATuple"
+STRS = []
+for tree_str in TREE_STRINGS:
+    tree_str = re.escape(tree_str)
+    tree_str = tree_str.replace("__main__", "(__main__|tree_util_test)")
+    STRS.append(tree_str)
+TREE_STRINGS = STRS
 
 LEAVES = (
     ("foo",),
@@ -304,7 +312,7 @@ class TreeTest(jtu.JaxTestCase):
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""
     treedef = tree_util.tree_structure(tree)
-    self.assertEqual(str(treedef), correct_string)
+    self.assertRegex(str(treedef), correct_string)
 
 
 class RavelUtilTest(jtu.JaxTestCase):
