@@ -118,6 +118,11 @@ def _check_shapes_against_resources(what: str, resource_env, flat_avals, flat_ax
     if aval_axis_resources is None:
       continue
     shape = aval.shape
+    if len(shape) < len(aval_axis_resources):
+      raise ValueError(f"One of {what} was given the resource assignment "
+                       f"of {aval_axis_resources}, which implies that it has "
+                       f"a rank of at least {len(aval_axis_resources)}, but "
+                       f"it is {len(shape)}")
     for i, axis_resources in enumerate(aval_axis_resources):
       if axis_resources is None:
         continue

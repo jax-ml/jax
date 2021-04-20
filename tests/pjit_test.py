@@ -245,7 +245,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   @check_1d_2d_mesh(set_mesh=True)
   @ignore_pjit_warning()
   def testNonDivisibleArgs(self, mesh, resources):
-    x = jnp.ones((3,))
+    x = jnp.ones((3, 2))
     spec = P(resources, None)
     mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
     with self.assertRaisesRegex(ValueError,
@@ -257,7 +257,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   @check_1d_2d_mesh(set_mesh=True)
   @ignore_pjit_warning()
   def testNonDivisibleOuts(self, mesh, resources):
-    x = jnp.ones((3,))
+    x = jnp.ones((3, 2))
     spec = P(resources, None)
     mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
     with self.assertRaisesRegex(ValueError,
@@ -269,7 +269,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   @check_1d_2d_mesh(set_mesh=True)
   @ignore_pjit_warning()
   def testNonDivisibleConstraint(self, mesh, resources):
-    x = jnp.ones((3,))
+    x = jnp.ones((3, 2))
     spec = P(resources,)
     mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
     with self.assertRaisesRegex(ValueError,
@@ -283,7 +283,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   @check_1d_2d_mesh(set_mesh=False)
   @ignore_pjit_warning()
   def testUndefinedResourcesArgs(self, mesh, resources):
-    x = jnp.ones((2,))
+    x = jnp.ones((2, 2))
     spec = P(resources,)
     with self.assertRaisesRegex(ValueError,
                                 r"One of pjit arguments.*" + spec_regex(spec) + r", "
@@ -293,7 +293,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   @check_1d_2d_mesh(set_mesh=False)
   @ignore_pjit_warning()
   def testUndefinedResourcesOuts(self, mesh, resources):
-    x = jnp.ones((2,))
+    x = jnp.ones((2, 2))
     spec = P(resources,)
     with self.assertRaisesRegex(ValueError,
                                 r"One of pjit outputs.*" + spec_regex(spec) + r", "
@@ -303,12 +303,44 @@ class PJitErrorTest(jtu.JaxTestCase):
   @check_1d_2d_mesh(set_mesh=False)
   @ignore_pjit_warning()
   def testUndefinedResourcesConstraint(self, mesh, resources):
-    x = jnp.ones((2,))
+    x = jnp.ones((2, 2))
     spec = P(resources,)
     with self.assertRaisesRegex(ValueError,
                                 r"One of with_sharding_constraint arguments"
                                 r".*" + spec_regex(spec) + r", but resource axis "
                                 r"x is undefined."):
+      pjit(lambda x: with_sharding_constraint(x, spec),
+           in_axis_resources=None, out_axis_resources=None)(x)
+
+  @ignore_pjit_warning()
+  @with_mesh([('x', 2), ('y', 1)])
+  def testRankTooLowArgs(self):
+    x = jnp.arange(2)
+    spec = P('x', 'y')
+    error = (r"One of pjit arguments.*" + spec_regex(spec) + r", which implies "
+             r"that it has a rank of at least 2, but it is 1")
+    with self.assertRaisesRegex(ValueError, error):
+      pjit(lambda x: x.sum(), in_axis_resources=spec, out_axis_resources=None)(x)
+
+  @ignore_pjit_warning()
+  @with_mesh([('x', 2), ('y', 1)])
+  def testRankTooLowOuts(self):
+    x = jnp.arange(2)
+    spec = P('x', 'y')
+    error = (r"One of pjit outputs.*" + spec_regex(spec) + r", which implies "
+             r"that it has a rank of at least 2, but it is 0")
+    with self.assertRaisesRegex(ValueError, error):
+      pjit(lambda x: x.sum(), in_axis_resources=None, out_axis_resources=spec)(x)
+
+  @ignore_pjit_warning()
+  @with_mesh([('x', 2), ('y', 1)])
+  def testRankTooLowConstraint(self):
+    x = jnp.arange(2)
+    spec = P('x', 'y')
+    error = (r"One of with_sharding_constraint arguments " +
+             r"was given.*" + spec_regex(spec) + r", which implies "
+             r"that it has a rank of at least 2, but it is 1")
+    with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: with_sharding_constraint(x, spec),
            in_axis_resources=None, out_axis_resources=None)(x)
 
