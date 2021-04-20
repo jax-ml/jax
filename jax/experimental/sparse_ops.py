@@ -27,10 +27,8 @@ operations that will work on any backend, although they are not particularly
 performant. On GPU runtimes with jaxlib 0.1.66 or newer built against CUDA 11.0
 or newer, each operation is computed efficiently via cusparse.
 """
-import functools
 
 from jax import core
-from jax import jit
 from jax.interpreters import xla
 from jax.lib import cusparse
 from jax.lib import xla_bridge
@@ -40,13 +38,6 @@ import numpy as np
 
 xb = xla_bridge
 xops = xla_client.ops
-
-#--------------------------------------------------------------------
-# utilities
-@functools.partial(jit, static_argnums=1)
-def _nonzero_indices(x, N):
-  """Find min(N, x.size) indices of nonzero elements of x."""
-  return jnp.cumsum(jnp.bincount(jnp.cumsum(x != 0), length=min(N, x.size)))
 
 #--------------------------------------------------------------------
 # csr_todense
@@ -302,7 +293,7 @@ def _coo_fromdense_impl(mat, *, nnz, index_dtype):
   mat = jnp.asarray(mat)
   m, n = mat.shape
   mat_flat = jnp.ravel(mat)
-  ind = _nonzero_indices(mat_flat, nnz).astype(index_dtype)
+  ind = jnp.nonzero(mat_flat, size=nnz)[0].astype(index_dtype)
   return mat_flat[ind], ind // n, ind % n
 
 @coo_fromdense_p.def_abstract_eval
