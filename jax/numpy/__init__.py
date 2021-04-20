@@ -49,7 +49,7 @@ from jax._src.numpy.lax_numpy import (
     multiply, nan, nan_to_num, nanargmax, nanargmin, nancumprod, nancumsum,
     nanmedian, nanpercentile, nanquantile,
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,
-    negative, newaxis, nextafter, nonzero, not_equal, number, numpy_version,
+    negative, newaxis, nextafter, nonzero, not_equal, number,
     object_, ogrid, ones, ones_like, operator_name, outer, packbits, pad, percentile,
     pi, piecewise, polyadd, polyder, polyint, polymul, polysub, polyval, positive, power,
     prod, product, promote_types, ptp, quantile,
