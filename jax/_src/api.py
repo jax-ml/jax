@@ -2005,14 +2005,18 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
   flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   in_avals = map(shaped_abstractify, primals_flat)
   in_dtypes = map(dtypes.dtype, in_avals)
-  if any(not np.issubdtype(dtype, np.inexact) for dtype in in_dtypes):
-    raise TypeError("linear_transpose only supports float and complex inputs, "
-                    f"but got {in_dtypes}")
 
   in_pvals = map(pe.PartialVal.unknown, in_avals)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(flat_fun, in_pvals,
                                                instantiate=True)
   out_avals, _ = unzip2(out_pvals)
+  out_dtypes = map(dtypes.dtype, out_avals)
+  if not (all(dtypes.issubdtype(d, np.inexact) for d in in_dtypes + out_dtypes)
+          or all(dtypes.issubdtype(d, np.integer)
+                 for d in in_dtypes + out_dtypes)):
+    raise TypeError("linear_transpose only supports [float or complex] -> "
+                    "[float or complex], and integer -> integer functions, "
+                    f"but got {in_dtypes} -> {out_dtypes}.")
 
   def transposed_fun(out_cotangent):
     out_cotangents, out_tree2 = tree_flatten(out_cotangent)
