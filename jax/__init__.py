@@ -82,8 +82,6 @@ from ._src.api import (
   named_call,
   partial,  # TODO(phawkins): update callers to use functools.partial.
   pmap,
-  process_count,
-  process_index,
   pxla,  # TODO(phawkins): update users to avoid this.
   remat,
   shapecheck,

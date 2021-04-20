@@ -62,8 +62,8 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 # Unused imports to be exported
 from ..lib.xla_bridge import (device_count, local_device_count, devices,
-                              local_devices, process_index, process_count,
-                              host_id, host_ids, host_count, default_backend)
+                              local_devices, host_id, host_ids, host_count,
+                              default_backend)
 from ..core import ConcreteArray, ShapedArray, raise_to_shaped
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
@@ -1372,20 +1372,20 @@ def pmap(
     :py:func:`pmap` compiles ``fun``, so while it can be combined with
     :py:func:`jit`, it's usually unnecessary.
 
-  **Multi-process platforms:** On multi-process platforms such as TPU pods,
+  **Multi-host platforms:** On multi-host platforms such as TPU pods,
   :py:func:`pmap` is designed to be used in SPMD Python programs, where every
-  process is running the same Python code such that all processes run the same
-  pmapped function in the same order. Each process should still call the pmapped
-  function with mapped axis size equal to the number of *local* devices (unless
+  host is running the same Python code such that all hosts run the same pmapped
+  function in the same order. Each host should still call the pmapped function
+  with mapped axis size equal to the number of *local* devices (unless
   ``devices`` is specified, see below), and an array of the same leading axis
   size will be returned as usual. However, any collective operations in ``fun``
   will be computed over *all* participating devices, including those on other
-  processes, via device-to-device communication.  Conceptually, this can be
-  thought of as running a pmap over a single array sharded across processes,
-  where each process "sees" only its local shard of the input and output. The
-  SPMD model requires that the same multi-process pmaps must be run in the same
-  order on all devices, but they can be interspersed with arbitrary operations
-  running in a single process.
+  hosts, via device-to-device communication.  Conceptually, this can be thought
+  of as running a pmap over a single array sharded across hosts, where each host
+  "sees" only its local shard of the input and output. The SPMD model requires
+  that the same multi-host pmaps must be run in the same order on all devices,
+  but they can be interspersed with arbitrary operations running on a single
+  host.
 
   Args:
     fun: Function to be mapped over argument axes. Its arguments and return
@@ -1519,26 +1519,26 @@ def pmap(
   >>> print(doubly_normed.sum((0, 1)))  # doctest: +SKIP
   1.0
 
-  On multi-process platforms, collective operations operate over all devices,
-  including those on other processes. For example, assuming the following code
-  runs on two processes with 4 XLA devices each:
+  On multi-host platforms, collective operations operate over all devices,
+  including those on other hosts. For example, assuming the following code runs
+  on two hosts with 4 XLA devices each:
 
   >>> f = lambda x: x + jax.lax.psum(x, axis_name='i')
-  >>> data = jnp.arange(4) if jax.process_index() == 0 else jnp.arange(4, 8)
+  >>> data = jnp.arange(4) if jax.host_id() == 0 else jnp.arange(4, 8)
   >>> out = pmap(f, axis_name='i')(data)  # doctest: +SKIP
   >>> print(out)  # doctest: +SKIP
-  [28 29 30 31] # on process 0
-  [32 33 34 35] # on process 1
+  [28 29 30 31] # on host 0
+  [32 33 34 35] # on host 1
 
-  Each process passes in a different length-4 array, corresponding to its 4
-  local devices, and the psum operates over all 8 values. Conceptually, the two
+  Each host passes in a different length-4 array, corresponding to its 4 local
+  devices, and the psum operates over all 8 values. Conceptually, the two
   length-4 arrays can be thought of as a sharded length-8 array (in this example
-  equivalent to jnp.arange(8)) that is mapped over, with the length-8 mapped
-  axis given name 'i'. The pmap call on each process then returns the
-  corresponding length-4 output shard.
+  equivalent to jnp.arange(8)) that is mapped over, with the length-8 mapped axis
+  given name 'i'. The pmap call on each host then returns the corresponding
+  length-4 output shard.
 
   The ``devices`` argument can be used to specify exactly which devices are used
-  to run the parallel computation. For example, again assuming a single process
+  to run the parallel computation. For example, again assuming a single host
   with 8 devices, the following code defines two parallel computations, one
   which runs on the first six devices and one on the remaining two:
 
@@ -1556,9 +1556,9 @@ def pmap(
   >>> print(f2(jnp.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
-  # axis_size is an optional integer representing the global axis size.  The
-  # aggregate size (across all processes) size of the mapped axis must match the
-  # given value.
+  # axis_size is an optional integer representing the global axis size.
+  # The aggregate size (across all hosts) size of the mapped axis must match
+  # the given value.
 
   _check_callable(fun)
   axis_name = core._TempAxisName(fun) if axis_name is None else axis_name

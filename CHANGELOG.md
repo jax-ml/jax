@@ -15,14 +15,6 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     keyword arguments. A new `static_argnames` option has been added to specify
     keyword arguments as static.
 * Breaking changes:
-  * The following function names have changed. There are still aliases, so this
-    should not break existing code, but the aliases will eventually be removed
-    so please change your code.
-    * `host_id` --> {func}`~jax.process_index`
-    * `host_count` --> {func}`~jax.process_count`
-    * `host_ids` --> `range(jax.process_count())`
-  * Similarly, the argument to {func}`~jax.local_devices` has been renamed from
-    `host_id` to `process_index`.
   * Arguments to {func}`jax.jit` other than the function are now marked as
     keyword-only. This change is to prevent accidental breakage when arguments
     are added to `jit`.
