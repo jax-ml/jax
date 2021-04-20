@@ -14,6 +14,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * When combined with jaxlib 0.1.66, {func}`jax.jit` now supports static
     keyword arguments. A new `static_argnames` option has been added to specify
     keyword arguments as static.
+  * {func}`jax.nonzero` has a new optional `size` argument that allows it to
+    be used within `jit` ({jax-issue}`6501`)
 * Breaking changes:
   * Arguments to {func}`jax.jit` other than the function are now marked as
     keyword-only. This change is to prevent accidental breakage when arguments
