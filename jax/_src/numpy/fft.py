@@ -25,8 +25,6 @@ from jax import ops as jaxops
 def _fft_core(func_name, fft_type, a, s, axes, norm):
   # TODO(skye): implement padding/cropping based on 's'.
   full_name = "jax.numpy.fft." + func_name
-  if s is not None:
-    raise NotImplementedError("%s only supports s=None, got %s" % (full_name, s))
   if norm is not None:
     raise NotImplementedError("%s only supports norm=None, got %s" % (full_name, norm))
   if s is not None and axes is not None and len(s) != len(axes):
@@ -62,12 +60,42 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
         s += [max(0, 2 * (a.shape[axes[-1]] - 1))]
     else:
       s = [a.shape[axis] for axis in axes]
+  else:
+    if fft_type == xla_client.FftType.IRFFT:
+      _s = tuple(list(s)[:-1] + [max(0, s[-1] // 2 + 1)])
+      a = _fix_shape(a, _s, axes)
+    else:
+      a = _fix_shape(a, s, axes)
 
   transformed = lax.fft(a, fft_type, s)
 
   if orig_axes is not None:
     transformed = jnp.moveaxis(transformed, axes, orig_axes)
   return transformed
+
+
+def _fix_shape(arr, shape, axes):
+  """Slice or pad `arr` according to the given shape."""
+  needs_pad = False
+  index = [slice(None)] * arr.ndim
+  for s, ax in zip(shape, axes):
+    if arr.shape[ax] >= s:
+      index[ax] = slice(0, s)
+    else:
+      index[ax] = slice(0, arr.shape[ax])
+      needs_pad = True
+
+  index = tuple(index)
+
+  if not needs_pad:
+    return arr[index]
+
+  arr_shape = list(arr.shape)
+  for s, ax in zip(shape, axes):
+    arr_shape[ax] = s
+
+  zeros_for_pad = jnp.zeros(arr_shape, arr.dtype)
+  return jaxops.index_update(zeros_for_pad, index, arr[index])
 
 
 @_wraps(np.fft.fftn)

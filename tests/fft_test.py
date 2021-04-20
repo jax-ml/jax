@@ -59,8 +59,8 @@ def _irfft_with_zeroed_inputs(irfft_fun):
   # irfft isn't defined on the full domain of inputs, so in order to have a
   # well defined derivative on the whole domain of the function, we zero-out
   # the imaginary part of the first and possibly the last elements.
-  def wrapper(z, axes):
-    return irfft_fun(_zero_for_irfft(z, axes), axes=axes)
+  def wrapper(z, s=None, axes=None):
+    return irfft_fun(_zero_for_irfft(z, axes=axes), s=s, axes=axes)
   return wrapper
 
 
@@ -89,6 +89,35 @@ class FftTest(jtu.JaxTestCase):
       func = getattr(jnp.fft, name)
       with self.assertRaises(NotImplementedError):
         func()
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inverse={}_real={}_shape={}_fft_shape={}_axes={}".format(
+          inverse, real, jtu.format_shape_dtype_string(shape, dtype), fft_shape, axes),
+       "axes": axes, "shape": shape, "fft_shape": fft_shape, "dtype": dtype, "inverse": inverse, "real": real}
+      for inverse in [False, True]
+      for real in [False, True]
+      for dtype in (real_dtypes if real and not inverse else all_dtypes)
+      for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
+      for axes in [ax for ax in _get_fftn_test_axes(shape) if ax and ax is not None]
+      for fft_shape in itertools.product(
+        *[[shape[ax]+i for i in range(-shape[ax]+1, shape[ax]+1)] for ax in axes])
+  ))
+  def testFftnWithShape(self, inverse, real, shape, fft_shape, dtype, axes):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_op = _get_fftn_func(jnp.fft, inverse, real)
+    np_op = _get_fftn_func(np.fft, inverse, real)
+    jnp_fn = lambda a: jnp_op(a, s=fft_shape, axes=axes)
+    np_fn = lambda a: np_op(a, s=fft_shape, axes=axes)
+    # Numpy promotes to complex128 aggressively.
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker)
+    # Test gradient for differentiable types.
+    if (config.x64_enabled and
+        dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
+      tol = 0.15
+      jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}_shape={}_axes={}".format(

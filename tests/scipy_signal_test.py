@@ -18,6 +18,7 @@ from functools import partial
 from absl.testing import absltest, parameterized
 
 import numpy as np
+import pytest
 
 from jax import lax
 from jax import test_util as jtu
@@ -36,28 +37,78 @@ default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer
 
 
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
-  """Tests for LAX-backed scipy.stats implementations"""
+  """Tests for LAX-backed scipy.signal implementations"""
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_xshape={}_yshape={}_mode={}".format(
+      {"testcase_name": "_op={}_xshape={}_yshape={}_mode={}_method={}".format(
           op,
           jtu.format_shape_dtype_string(xshape, dtype),
           jtu.format_shape_dtype_string(yshape, dtype),
-          mode),
-       "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode,
+          mode,
+          method),
+       "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode, "method": method,
        "jsp_op": getattr(jsp_signal, op),
        "osp_op": getattr(osp_signal, op)}
       for mode in ['full', 'same', 'valid']
+      for method in ['direct', 'fft']
       for op in ['convolve', 'correlate']
       for dtype in default_dtypes
       for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
       for xshape in shapeset
       for yshape in shapeset))
-  def testConvolutions(self, xshape, yshape, dtype, mode, jsp_op, osp_op):
+  def testConvolutions(self, xshape, yshape, dtype, mode, method, jsp_op, osp_op):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    osp_fun = partial(osp_op, mode=mode, method=method)
+    jsp_fun = partial(jsp_op, mode=mode, method=method, precision=lax.Precision.HIGHEST)
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-8}
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_xshape={}_yshape={}_mode={}_method={}".format(
+          op,
+          jtu.format_shape_dtype_string(xshape, dtype),
+          jtu.format_shape_dtype_string(yshape, dtype),
+          mode,
+          method),
+       "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode, "method": method,
+       "jsp_op": getattr(jsp_signal, op),
+       "osp_op": getattr(osp_signal, op)}
+      for mode in ['full', 'same', 'valid']
+      for method in ['auto']
+      for op in ['convolve', 'correlate']
+      for dtype in default_dtypes
+      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
+      for xshape in shapeset
+      for yshape in shapeset))
+  def testConvolutionsAuto(self, xshape, yshape, dtype, mode, method, jsp_op, osp_op):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    osp_fun = partial(osp_op, mode=mode, method=method)
+    jsp_fun = partial(jsp_op, mode=mode, method=method, precision=lax.Precision.HIGHEST)
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-8}
+    with pytest.warns(UserWarning):
+      self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op=fftconvolve_xshape={}_yshape={}_mode={}".format(
+          jtu.format_shape_dtype_string(xshape, dtype),
+          jtu.format_shape_dtype_string(yshape, dtype),
+          mode),
+       "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode}
+      for mode in ['full', 'same', 'valid']
+      for dtype in default_dtypes
+      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
+      for xshape in shapeset
+      for yshape in shapeset))
+  def testFftconvolve(self, xshape, yshape, dtype, mode):
+    jsp_op = jsp_signal.fftconvolve
+    osp_op = osp_signal.fftconvolve
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
-    jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
+    jsp_fun = partial(jsp_op, mode=mode)
     tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-8}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker)
