@@ -4515,9 +4515,7 @@ def _unique1d_sorted_mask(ar, optional_indices=False):
   else:
     aux = ar.sort()
 
-  mask = empty(aux.shape, dtype=bool_)
-  mask = ops.index_update(mask, ops.index[:1], True)
-  mask = ops.index_update(mask, ops.index[1:], aux[1:] != aux[:-1])
+  mask = ones(aux.shape, dtype=bool_).at[1:].set(aux[1:] != aux[:-1])
 
   if optional_indices:
     return aux, mask, perm
@@ -4555,19 +4553,16 @@ def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis: Optional[int] = None):
   ar = core.concrete_or_error(asarray, ar, "The error arose in jnp.unique()")
 
-  if iscomplexobj(ar):
+  if axis is not None:
     raise NotImplementedError(
-          "np.unique is not implemented for complex valued arrays")
+          "np.unique is not implemented for the axis argument")
 
-  if axis is None:
-    ret = _unique1d(ar, return_index, return_inverse, return_counts)
-    if len(ret) == 1:
-      return ret[0]
-    else:
-      return ret
+  ret = _unique1d(ar, return_index, return_inverse, return_counts)
 
-  raise NotImplementedError(
-        "np.unique is not implemented for the axis argument")
+  if len(ret) == 1:
+    return ret[0]
+  else:
+    return ret
 
 ### Indexing
 
