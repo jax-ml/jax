@@ -868,7 +868,7 @@ def _xla_call_partial_eval_update_params(params, in_unknowns):
   return dict(params, donated_invars=new_donated_invars)
 pe.call_param_updaters[xla_call_p] = _xla_call_partial_eval_update_params
 
-def _xla_call_jvp_update_params(params, nz_tangents):
+def _xla_call_jvp_update_params(params, nz_tangents, nz_tangents_out_thunk):
   donated_invars = params['donated_invars']
   donated_tangents = [d for d, nz in zip(donated_invars, nz_tangents) if nz]
   new_donated_invars = (*donated_invars, *donated_tangents)

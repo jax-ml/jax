@@ -32,7 +32,8 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
-                         wrap_name, wraps, distributed_debug_log)
+                         wrap_name, wraps, distributed_debug_log,
+                         as_hashable_function)
 xops = xc._xla.ops
 
 def pjit(fun: Callable,
@@ -232,6 +233,23 @@ def _pjit_partial_eval_update_params(params, in_unknowns):
   del new_params['out_axis_resources_thunk']
   return new_params
 pe.call_param_updaters[pjit_call_p] = _pjit_partial_eval_update_params
+
+def _pjit_jvp_update_params(params, nz_tangents, nz_tangents_out_thunk):
+  donated_invars = params['donated_invars']
+  in_axis_resources = params['in_axis_resources']
+  out_axis_resources_thunk = params['out_axis_resources_thunk']
+  def filter_nonzero_ins(l):
+    return tuple(x for x, nz in zip(l, nz_tangents) if nz)
+  @as_hashable_function(closure=(tuple(nz_tangents), out_axis_resources_thunk))
+  def new_out_axis_resources_thunk():
+    out_axis_resources = out_axis_resources_thunk()
+    return (*out_axis_resources,
+            *(ax for ax, nz in zip(out_axis_resources, nz_tangents_out_thunk()) if nz))
+  return dict(params,
+              donated_invars=(donated_invars + filter_nonzero_ins(donated_invars)),
+              in_axis_resources=(in_axis_resources + filter_nonzero_ins(in_axis_resources)),
+              out_axis_resources_thunk=new_out_axis_resources_thunk)
+ad.call_param_updaters[pjit_call_p] = _pjit_jvp_update_params
 
 
 # -------------------- with_sharding_constraint --------------------

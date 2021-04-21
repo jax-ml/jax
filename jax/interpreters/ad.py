@@ -285,11 +285,11 @@ class JVPTrace(Trace):
     if 'name' in params:
       params = dict(params, name=wrap_name(params['name'], 'jvp'))
     f_jvp = jvp_subtrace(f, self.main)
+    f_jvp, nz_tangents_out = nonzero_tangent_outputs(f_jvp)
     if isinstance(call_primitive, core.MapPrimitive):
       in_axes = params['in_axes']
       tangent_in_axes = [ax for ax, nz in zip(in_axes, nz_tangents) if nz]
       out_axes_thunk = params['out_axes_thunk']
-      f_jvp, nz_tangents_out = nonzero_tangent_outputs(f_jvp)
       # The new thunk depends deterministically on the old thunk and the wrapped function.
       # Any caching already has to include the wrapped function as part of the key, so we
       # only use the previous thunk for equality checks.
@@ -304,7 +304,8 @@ class JVPTrace(Trace):
                     out_axes_thunk=new_out_axes_thunk)
     f_jvp, out_tree_def = traceable(f_jvp, len(primals), tangent_tree_def)
     update_params = call_param_updaters.get(call_primitive)
-    new_params = update_params(params, nz_tangents) if update_params else params
+    new_params = (update_params(params, nz_tangents, nz_tangents_out)
+                  if update_params else params)
     result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
     primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
