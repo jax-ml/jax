@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -70,14 +71,14 @@ void ThrowIfErrorStatus(cusparseStatus_t status) {
 }
 
 union CudaConst {
-  int8 i8[2];
-  int16 i16[2];
-  int32 i32[2];
-  int64 i64[2];
-  uint8 u8[2];
-  uint16 u16[2];
-  uint32 u32[2];
-  uint64 u64[2];
+  int8_t i8[2];
+  int16_t i16[2];
+  int32_t i32[2];
+  int64_t i64[2];
+  uint8_t u8[2];
+  uint16_t u16[2];
+  uint32_t u32[2];
+  uint64_t u64[2];
   float f32[2];
   double f64[2];
 };
