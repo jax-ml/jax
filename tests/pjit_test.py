@@ -227,6 +227,17 @@ class PJitTest(jtu.BufferDonationTestCase):
       should_be_tracing = False
       pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
 
+  @with_mesh([('x', 2), ('y', 1)])
+  def testNested(self):
+    # Add a constant captured by the nested pjit to make things more complicated
+    h = jnp.arange(4)
+    f = pjit(lambda x: x.sum() + h.sum(), in_axis_resources=P('x', 'y'), out_axis_resources=None)
+    g = pjit(lambda x: f(jnp.sin(x)), in_axis_resources=P('x', None), out_axis_resources=None)
+    x = jnp.arange(16).reshape((4, 4))
+    y = g(x)
+    self.assertAllClose(y, jnp.sin(x).sum() + h.sum())
+    self.assertTrue(hasattr(y, "sharding_spec"))
+
   # TODO(skye): add more unit tests once API is more finalized
 
 @curry

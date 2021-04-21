@@ -27,6 +27,7 @@ from ..api_util import (argnums_partial_except, flatten_axes,
 from ..interpreters import ad
 from ..interpreters import pxla
 from ..interpreters import xla
+from ..interpreters import partial_eval as pe
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_unflatten
@@ -154,34 +155,8 @@ def _pjit_call_impl(fun: lu.WrappedFun, *args, in_axis_resources,
                         ("abstract args", in_avals))
   return pjit_callable(*args)
 
-def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
-                           call_jaxpr, in_axis_resources, out_axis_resources_thunk,
-                           resource_env, donated_invars):
-  mesh = resource_env.physical_mesh
-  subc = xc.XlaBuilder(f"pjit_{name}")
-
-  args = []
-  for i, (n, axis_resources) in enumerate(safe_zip(in_nodes, in_axis_resources)):
-    # N.B. inlined calls shouldn't have shardings set directly on the inputs or
-    # outputs (set_sharding_proto adds an identity operation).
-    arg = xb.parameter(subc, i, c.GetShape(n))
-    args.append(xb.set_sharding_proto(subc, arg,
-                                      get_sharding_proto(c, n, axis_resources, mesh)))
-
-  out_nodes = xla.jaxpr_subcomp(
-      subc, call_jaxpr, backend, axis_env, (),
-      extend_name_stack(name_stack, wrap_name(name, "pjit")), *args)
-  out_axis_resources = out_axis_resources_thunk()
-  out_nodes = [xb.set_sharding_proto(subc, out,
-                                     get_sharding_proto(c, n, axis_resources, mesh))
-               for out, axis_resources in safe_zip(out_nodes, out_axis_resources)]
-
-  subc = subc.build(xops.Tuple(subc, out_nodes))
-  return xops.Call(c, subc, list(in_nodes))
-
 pjit_call_p = core.CallPrimitive("pjit_call")
 pjit_call_p.def_impl(_pjit_call_impl)
-xla.call_translations[pjit_call_p] = _pjit_translation_rule
 
 # None indicates unpartitioned dimension
 ArrayAxisPartitioning = Optional[Union[pxla.MeshAxisName, Tuple[pxla.MeshAxisName, ...]]]
@@ -206,6 +181,60 @@ def _pjit_callable(
                             in_axes, out_axes_thunk, donated_invars,
                             True, *in_avals, tile_by_mesh_axes=False)
 
+# -------------------- pjit rules --------------------
+
+def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
+                           call_jaxpr, in_axis_resources, out_axis_resources,
+                           resource_env, donated_invars):
+  mesh = resource_env.physical_mesh
+  subc = xc.XlaBuilder(f"pjit_{name}")
+
+  args = []
+  for i, (n, axis_resources) in enumerate(safe_zip(in_nodes, in_axis_resources)):
+    # N.B. inlined calls shouldn't have shardings set directly on the inputs or
+    # outputs (set_sharding_proto adds an identity operation).
+    arg = xb.parameter(subc, i, c.GetShape(n))
+    args.append(xb.set_sharding_proto(subc, arg,
+                                      get_sharding_proto(c, n, axis_resources, mesh)))
+
+  out_nodes = xla.jaxpr_subcomp(
+      subc, call_jaxpr, backend, axis_env, (),
+      extend_name_stack(name_stack, wrap_name(name, "pjit")), *args)
+  out_nodes = [xb.set_sharding_proto(subc, out,
+                                     get_sharding_proto(c, n, axis_resources, mesh))
+               for out, axis_resources in safe_zip(out_nodes, out_axis_resources)]
+
+  subc = subc.build(xops.Tuple(subc, out_nodes))
+  return xops.Call(c, subc, list(in_nodes))
+xla.call_translations[pjit_call_p] = _pjit_translation_rule
+
+def _pjit_partial_eval_update_params(params, in_unknowns):
+  call_jaxpr = params['call_jaxpr']
+  donated_invars = params['donated_invars']
+  in_axis_resources = params['in_axis_resources']
+  out_axis_resources_thunk = params['out_axis_resources_thunk']
+  if not in_unknowns and donated_invars:
+    # JaxprTrace.post_process_call creates a call with no input tracers
+    new_donated_invars = (False,) * len(call_jaxpr.invars)
+    new_in_axis_resources = (None,) * len(call_jaxpr.invars)
+  else:
+    # JaxprTrace.process_call drops known input tracers and prepends constants
+    num_consts = len(call_jaxpr.invars) - len(donated_invars)
+    def filter_unknown(l):
+      return tuple(x for x, uk in zip(l, in_unknowns) if uk)
+    new_donated_invars = (False,) * num_consts + filter_unknown(donated_invars)
+    new_in_axis_resources = (None,) * num_consts + filter_unknown(in_axis_resources)
+  new_out_axis_resources = out_axis_resources_thunk()
+  new_params = dict(params,
+                    donated_invars=new_donated_invars,
+                    in_axis_resources=new_in_axis_resources,
+                    out_axis_resources=new_out_axis_resources)
+  del new_params['out_axis_resources_thunk']
+  return new_params
+pe.call_param_updaters[pjit_call_p] = _pjit_partial_eval_update_params
+
+
+# -------------------- with_sharding_constraint --------------------
 
 def with_sharding_constraint(x, axis_resources):
   x_flat, tree = tree_flatten(x)
@@ -239,6 +268,7 @@ ad.deflinear2(sharding_constraint_p,
                   with_sharding_constraint(ct, axis_resources),))
 xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
 
+# -------------------- helpers --------------------
 
 def get_array_mapping(axis_resources: ArrayPartitioning) -> pxla.ArrayMapping:
   if axis_resources is None:
