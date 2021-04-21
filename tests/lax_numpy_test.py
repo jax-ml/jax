@@ -2119,22 +2119,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertLessEqual(len(jaxpr.jaxpr.eqns), 6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_ind={}_inv={}_count={}".format(
-          jtu.format_shape_dtype_string(shape, dtype),
+      {"testcase_name": "_{}_axis={}_ind={}_inv={}_count={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis,
           return_index, return_inverse, return_counts),
-       "shape": shape, "dtype": dtype,
+       "shape": shape, "dtype": dtype, "axis": axis,
        "return_index": return_index, "return_inverse": return_inverse,
        "return_counts": return_counts}
       for dtype in number_dtypes
       for shape in all_shapes
+      for axis in [None] + list(range(len(shape)))
       for return_index in [False, True]
       for return_inverse in [False, True]
       for return_counts in [False, True]))
-  def testUnique(self, shape, dtype, return_index, return_inverse, return_counts):
+  def testUnique(self, shape, dtype, axis, return_index, return_inverse, return_counts):
+    if axis is not None and numpy_version < (1, 19) and np.empty(shape).size == 0:
+      self.skipTest("zero-sized axis in unique leads to error in older numpy.")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    np_fun = lambda x: np.unique(x, return_index, return_inverse, return_counts)
-    jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts)
+    np_fun = lambda x: np.unique(x, return_index, return_inverse, return_counts, axis=axis)
+    jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
