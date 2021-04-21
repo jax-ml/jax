@@ -20,7 +20,7 @@ import re
 import threading
 import time
 from typing import Callable, Optional, Sequence
-from unittest import SkipTest
+from unittest import skip, SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -534,7 +534,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           for concurrent in [True, False]))
   def test_tap_multiple(self, concurrent=False):
     """Call id_tap multiple times, concurrently or in sequence. """
-    if concurrent and jtu.device_under_test() in ["cpu", "gpu", "tpu"]:
+    if concurrent and jtu.device_under_test() in ["cpu", "gpu"]:
       # TODO(necula): if there is device side concurrency, outfeeds from
       # different computations can be interleaved. For example, it seems that
       # on GPU if multiple host threads run a jit computation, the multiple
@@ -544,7 +544,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
       # the train as one tuple, and receive it one piece as a time. Then the
       # trains should be atomic.
       # See also b/160692602.
-      raise SkipTest("concurrent id_tap not supported on CPU or GPU")
+      raise SkipTest("concurrent id_tap not supported on CPU, GPU")
 
     received = set()
     count = 5
@@ -574,7 +574,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     self.assertEqual(received, set(range(count)))
 
   # TODO(necula): see comment for test_multiple_tap.
-  @jtu.skip_on_devices("cpu", "gpu")
+  @skip("Concurrency not supported")
   def test_tap_multiple_barriers(self):
     """Call barrier_wait concurrently."""
 
