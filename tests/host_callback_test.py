@@ -534,7 +534,7 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
           for concurrent in [True, False]))
   def test_tap_multiple(self, concurrent=False):
     """Call id_tap multiple times, concurrently or in sequence. """
-    if concurrent and jtu.device_under_test() in ["cpu", "gpu"]:
+    if concurrent and jtu.device_under_test() in ["cpu", "gpu", "tpu"]:
       # TODO(necula): if there is device side concurrency, outfeeds from
       # different computations can be interleaved. For example, it seems that
       # on GPU if multiple host threads run a jit computation, the multiple
