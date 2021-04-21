@@ -5895,8 +5895,11 @@ batching.primitive_batchers[select_and_gather_add_p] = \
 if jax.lib._xla_extension_version >= 15:
   xla.backend_specific_translations['cpu'][select_and_gather_add_p] = \
     _select_and_gather_add_translation_using_variadic_reducewindow
-xla.backend_specific_translations['tpu'][select_and_gather_add_p] = \
-  _select_and_gather_add_translation_using_variadic_reducewindow
+  xla.backend_specific_translations['tpu'][select_and_gather_add_p] = \
+    _select_and_gather_add_translation_using_variadic_reducewindow
+else:
+  xla.backend_specific_translations['tpu'][select_and_gather_add_p] = partial(
+    _select_and_gather_add_translation, max_bits=32)
 
 
 def _sort_abstract_eval(*args, **kwargs):
