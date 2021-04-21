@@ -129,13 +129,6 @@ pytype_library(
 )
 
 pytype_library(
-    name = "experimental_doubledouble",
-    srcs = ["experimental/doubledouble.py"],
-    srcs_version = "PY3",
-    deps = [":jax"],
-)
-
-pytype_library(
     name = "experimental_host_callback",
     srcs = ["experimental/host_callback.py"],
     srcs_version = "PY3",
