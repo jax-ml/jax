@@ -183,7 +183,7 @@ def cache(max_size=4096):
       if config.jax_check_tracer_leaks:
         return f(*args, **kwargs)
       else:
-        return cached(bool(config.x64_enabled), *args, **kwargs)
+        return cached(config._trace_context(), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
@@ -197,7 +197,7 @@ def memoize(f):
 
   @functools.wraps(f)
   def wrapper(*args, **kwargs):
-    return memoized(bool(config.x64_enabled), *args, **kwargs)
+    return memoized(config._trace_context(), *args, **kwargs)
 
   wrapper.cache_clear = memoized.cache_clear
   wrapper.cache_info = memoized.cache_info

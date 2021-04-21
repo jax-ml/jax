@@ -29,12 +29,12 @@ from typing import (Any, Callable, ClassVar, Dict, Generator,
 import numpy as np
 
 from ._src import dtypes
+from ._src import config as jax_config
 from ._src.config import FLAGS, config
 from .errors import (ConcretizationTypeError, TracerArrayConversionError,
                      TracerIntegerConversionError)
 from . import linear_util as lu
 
-from .lib import jax_jit
 from jax._src import source_info_util
 from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
                    tuple_insert, tuple_delete, as_hashable_function,
@@ -699,8 +699,6 @@ class TraceState:
     new.axis_env = self.axis_env[:]
     return new
 
-def extra_jit_context(trace_stack):
-    return trace_stack.dynamic
 
 # The global state of the tracer is accessed by a thread-local object.
 # This allows concurrent tracing in separate threads; passing traced objects
@@ -708,8 +706,8 @@ def extra_jit_context(trace_stack):
 class ThreadLocalState(threading.local):
   def __init__(self):
     self.trace_state = TraceState()
-    jax_jit.thread_local_state().extra_jit_context = extra_jit_context(
-        self.trace_state.trace_stack)
+    jax_config.update_thread_local_jit_state(
+        dynamic_trace_state=self.trace_state.trace_stack.dynamic)
 thread_local_state = ThreadLocalState()
 
 def trace_state_clean() -> bool:
@@ -740,9 +738,8 @@ def new_main(trace_type: Type[Trace],
   main = MainTrace(level, trace_type, **payload)
   stack.push(main)
   if dynamic:
-    jit_tls = jax_jit.thread_local_state()
     prev_dynamic, stack.dynamic = stack.dynamic, main
-    jit_tls.extra_jit_context = extra_jit_context(stack)
+    jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
 
   try:
     yield main
@@ -750,7 +747,7 @@ def new_main(trace_type: Type[Trace],
     stack.pop()
     if dynamic:
       stack.dynamic = prev_dynamic
-      jit_tls.extra_jit_context = extra_jit_context(stack)
+      jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
 
   if config.jax_check_tracer_leaks:
     t = ref(main)
@@ -765,14 +762,13 @@ def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
   main = MainTrace(0, trace_type)
   prev_dynamic, stack.dynamic = stack.dynamic, main
   prev_base, stack.stack[0] = stack.stack[0], main
-  jit_tls = jax_jit.thread_local_state()
-  jit_tls.extra_jit_context = extra_jit_context(stack)
+  jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
   try:
     yield main
   finally:
     stack.dynamic = prev_dynamic
     stack.stack[0] = prev_base
-    jit_tls.extra_jit_context = extra_jit_context(stack)
+    jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
 
   if config.jax_check_tracer_leaks:
     t = ref(main)

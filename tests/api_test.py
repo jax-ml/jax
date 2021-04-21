@@ -2530,6 +2530,94 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('precision=HIGH', str(jaxpr))
     self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
 
+  @unittest.skipIf(jax.lib._xla_extension_version <= 17,
+                   "Test requires jaxlib 0.1.66")
+  def test_dot_precision_forces_retrace(self):
+    num_traces = 0
+
+    def g(x):
+      nonlocal num_traces
+      num_traces += 1
+      return jnp.dot(x, x)
+    def f_cond(x):
+      return lax.cond(True, g, g, x)
+
+    @jax.jit
+    def f_jit(x):
+      nonlocal num_traces
+      num_traces += 1
+      return jnp.dot(x, x)
+
+    for f in [f_jit, f_cond]:
+      precision = config.jax_default_matmul_precision
+      try:
+        num_traces = 0
+        x = jnp.zeros((2, 2))
+        f(x)
+        self.assertEqual(num_traces, 1)
+        f(x)
+        self.assertEqual(num_traces, 1)
+        with jax.default_matmul_precision("tensorfloat32"):
+          f(x)
+          self.assertEqual(num_traces, 2)
+          FLAGS.jax_default_matmul_precision = "float32"
+          f(x)
+          self.assertGreaterEqual(num_traces, 2)
+        nt = num_traces
+        f(x)
+        self.assertEqual(num_traces, nt + 1)
+        f(x)
+        self.assertEqual(num_traces, nt + 1)
+      finally:
+        FLAGS.jax_default_matmul_precision = precision
+
+
+  @unittest.skipIf(jax.lib._xla_extension_version <= 17,
+                   "Test requires jaxlib 0.1.66")
+  def test_rank_promotion_forces_retrace(self):
+    num_traces = 0
+
+    def g(x):
+      nonlocal num_traces
+      num_traces += 1
+      return x + x
+    def f_cond(x):
+      return lax.cond(True, g, g, x)
+
+    @jax.jit
+    def f_jit(x):
+      nonlocal num_traces
+      num_traces += 1
+      return x + x
+
+    for f in [f_jit, f_cond]:
+      allow_promotion = config.jax_numpy_rank_promotion
+      try:
+        num_traces = 0
+        @jax.jit
+        def f(x):
+          nonlocal num_traces
+          num_traces += 1
+          return x + x
+        x = jnp.zeros((2, 2))
+        f(x)
+        self.assertEqual(num_traces, 1)
+        f(x)
+        self.assertEqual(num_traces, 1)
+        with jax.numpy_rank_promotion("warn"):
+          f(x)
+          self.assertEqual(num_traces, 2)
+          FLAGS.jax_numpy_rank_promotion = "raise"
+          f(x)
+          self.assertGreaterEqual(num_traces, 2)
+        nt = num_traces
+        f(x)
+        self.assertEqual(num_traces, nt + 1)
+        f(x)
+        self.assertEqual(num_traces, nt + 1)
+      finally:
+        FLAGS.jax_numpy_rank_promotion = allow_promotion
+
   def test_backward_pass_ref_dropping(self):
     refs = []
 

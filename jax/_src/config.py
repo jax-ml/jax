@@ -20,10 +20,11 @@ import functools
 import os
 import sys
 import threading
-from typing import List, Callable, Optional
+from typing import Any, List, Callable, NamedTuple, Optional
 import warnings
 
 from jax import lib
+from jax.lib import jax_jit
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.
@@ -229,8 +230,11 @@ class Config:
 
     return _BoolStateContextManager(name, help, update_thread_local_hook)
 
-  def define_enum_state(self, name: str, enum_values: List[str],
-                        default: Optional[str], help: str):
+  def define_enum_state(
+      self, name: str, enum_values: List[str], default: Optional[str],
+      help: str, update_global_hook: Optional[Callable[[str], None]] = None,
+      update_thread_local_hook: Optional[Callable[[Optional[str]], None]] \
+        = None):
     """Set up thread-local state and return a contextmanager for managing it.
     Args:
       name: string, converted to lowercase to define the name of the config
@@ -247,7 +251,8 @@ class Config:
     """
     name = name.lower()
     self.DEFINE_enum(name, os.getenv(name.upper(), default),
-                     enum_values=enum_values, help=help)
+                     enum_values=enum_values, help=help,
+                     update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
 
     def get_state(self):
@@ -263,16 +268,29 @@ class Config:
                          f"got {new_val} of type {type(new_val)}.")
       prev_val = getattr(_thread_local_state, name, unset)
       setattr(_thread_local_state, name, new_val)
+      if update_thread_local_hook: update_thread_local_hook(new_val)
       try:
         yield
       finally:
         if prev_val is unset:
           delattr(_thread_local_state, name)
+          if update_thread_local_hook: update_thread_local_hook(None)
         else:
           setattr(_thread_local_state, name, prev_val)
+          if update_thread_local_hook: update_thread_local_hook(prev_val)
     set_state.__name__ = name[4:] if name.startswith('jax_') else name
     set_state.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
     return set_state
+
+  def _trace_context(self):
+    """Returns a tuple of configuration values that affect tracing.
+
+    These values are included in the cache key for linear_util.cache.
+
+    Values included in this set should also most likely be included in
+    the C++ JIT state, which is handled separately."""
+    return (self.x64_enabled, self.jax_numpy_rank_promotion,
+            self.jax_default_matmul_precision)
 
 class _BoolStateContextManager:
   def __init__(self, name, help, update_thread_local_hook):
@@ -329,6 +347,33 @@ flags = config
 FLAGS = flags.FLAGS
 
 already_configured_with_absl = False
+
+
+# The C++ JIT maintains its own copy of several configuration items as
+# a global/thread-local state. These methods allow updates to part of the
+# state when a configuration value changes.
+
+class GlobalJitState(NamedTuple):
+  numpy_rank_promotion: Optional[str] = None
+  default_matmul_precision: Optional[Any] = None
+
+
+def update_global_jit_state(**kw):
+  gs = jax_jit.global_state()
+  context = gs.extra_jit_context or GlobalJitState()
+  gs.extra_jit_context = context._replace(**kw)
+
+
+class ThreadLocalJitState(NamedTuple):
+  dynamic_trace_state: Optional[Any] = None
+  numpy_rank_promotion: Optional[str] = None
+  default_matmul_precision: Optional[Any] = None
+
+
+def update_thread_local_jit_state(**kw):
+  tls = jax_jit.thread_local_state()
+  context = tls.extra_jit_context or ThreadLocalJitState()
+  tls.extra_jit_context = context._replace(**kw)
 
 
 # TODO(mattjj): remove all uses of this flag
@@ -442,7 +487,11 @@ numpy_rank_promotion = config.define_enum_state(
     enum_values=['allow', 'warn', 'raise'],
     default='allow',
     help=('Control NumPy-style automatic rank promotion broadcasting '
-          '("allow", "warn", or "raise").'))
+          '("allow", "warn", or "raise").'),
+    update_global_hook=lambda val: \
+      update_global_jit_state(numpy_rank_promotion=val),
+    update_thread_local_hook=lambda val: \
+      update_thread_local_jit_state(numpy_rank_promotion=val))
 
 default_matmul_precision = config.define_enum_state(
     name='jax_default_matmul_precision',
@@ -463,4 +512,8 @@ default_matmul_precision = config.define_enum_state(
           'convolution on 32bit inputs. The levels roughly describe the '
           "precision at which scalar products are computed. The 'bfloat16' "
           "option is the fastest and least precise; 'float32' is similar to "
-          "full float32 precision; 'tensorfloat32' is intermediate.\n\n"))
+          "full float32 precision; 'tensorfloat32' is intermediate.\n\n"),
+    update_global_hook=lambda val: \
+      update_global_jit_state(default_matmul_precision=val),
+    update_thread_local_hook=lambda val: \
+      update_thread_local_jit_state(default_matmul_precision=val))
