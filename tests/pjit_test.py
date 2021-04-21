@@ -206,6 +206,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
+  @ignore_pjit_warning()
   def testCaching(self):
     def f(x):
       assert should_be_tracing
