@@ -15,7 +15,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     keyword arguments. A new `static_argnames` option has been added to specify
     keyword arguments as static.
   * {func}`jax.nonzero` has a new optional `size` argument that allows it to
-    be used within `jit` ({jax-issue}`6501`)
+    be used within `jit` ({jax-issue}`#6501`)
+  * {func}`jax.numpy.unique` now supports the `axis` argument ({jax-issue}`#6532`).
 * Breaking changes:
   * The following function names have changed. There are still aliases, so this
     should not break existing code, but the aliases will eventually be removed
