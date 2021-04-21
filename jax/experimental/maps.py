@@ -488,9 +488,15 @@ def xmap(fun: Callable,
     # TODO: Check that:
     #         - two axes mapped to the same resource never coincide (even inside f)
     in_axes_flat = flatten_axes("xmap in_axes", in_tree, in_axes)
+
+    # out_axes_thunk closes over the out_axes, they are flattened here to make
+    # them hashable.
+    out_axes_leaves, out_axes_treedef = tree_flatten(out_axes)
     out_axes_thunk = HashableFunction(
-      lambda: tuple(flatten_axes("xmap out_axes", out_tree(), out_axes)),
-      closure=out_axes)
+      lambda: tuple(flatten_axes("xmap out_axes", out_tree(),
+                                 tree_unflatten(out_axes_treedef,
+                                                list(out_axes_leaves)))),
+      closure=(tuple(out_axes_leaves), out_axes_treedef))
 
     axis_resource_count = _get_axis_resource_count(normalized_axis_resources, resource_env)
     for axis, size in axis_sizes.items():
