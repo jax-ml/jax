@@ -53,6 +53,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    :maxdepth: 1
    :caption: Notes
 
+   deprecation
    concurrency
    gpu_memory_allocation
    profiling
