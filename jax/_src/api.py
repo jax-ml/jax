@@ -1627,9 +1627,14 @@ def pmap(
         lambda: (0,) * out_tree().num_leaves,
         closure=out_axes)
     else:
+      # out_axes_thunk closes over the out_axes, they are flattened here to make
+      # them hashable.
+      out_axes_leaves, out_axes_treedef = tree_flatten(out_axes)
       out_axes_thunk = HashableFunction(
-        lambda: tuple(flatten_axes("pmap out_axes", out_tree(), out_axes)),
-        closure=out_axes)
+        lambda: tuple(flatten_axes("pmap out_axes", out_tree(),
+                                   tree_unflatten(out_axes_treedef,
+                                                  list(out_axes_leaves)))),
+        closure=(tuple(out_axes_leaves), out_axes_treedef))
     out = pxla.xla_pmap(
         flat_fun, *args, backend=backend, axis_name=axis_name,
         axis_size=local_axis_size, global_axis_size=axis_size,

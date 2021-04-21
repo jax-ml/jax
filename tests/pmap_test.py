@@ -2033,6 +2033,15 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     self.assertAllClose(f(x, y),
                         (jnp.sin(x.transpose((1, 0, 2)) + y).transpose((1, 2, 0)), y * 2))
 
+  def testPmapDictOutAxes(self):
+    # see issue #6410
+    @partial(pmap, out_axes={'a': 0})
+    def f(x):
+      return {'a': x}
+    device_count = xla_bridge.device_count()
+    x = jnp.arange(device_count)
+    tree_util.tree_multimap(self.assertAllClose, f(x), {'a': x})
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{in_axes}_{out_axes}",
        "in_axes": in_axes, "out_axes": out_axes}

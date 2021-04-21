@@ -1143,6 +1143,12 @@ class XMapErrorTest(jtu.JaxTestCase):
       xmap(lambda x: x, in_axes={0: 'i'}, out_axes={-1: 'i'})(jnp.ones((5,)))
 
   @ignore_xmap_warning()
+  def testDictOutAxes(self):
+    # see issue #6410
+    out = xmap(lambda x: x, in_axes=[...], out_axes={"a": [...]})({"a": 1})
+    self.assertEqual(out, {"a": 1})
+
+  @ignore_xmap_warning()
   def testListAxesRankAssertion(self):
     error = (r"xmap argument has an in_axes specification of \['i', None\], which "
              r"asserts that it should be of rank 2, but the argument has rank 1 "
