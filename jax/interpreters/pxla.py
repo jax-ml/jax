@@ -1362,12 +1362,29 @@ def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
     named_shape.pop(name, None)  # The name might be missing --- it's a broadcast.
   return aval.update(shape=tuple(shape), named_shape=named_shape)
 
+def vtile_by_mesh(fun: lu.WrappedFun,
+                  mesh: Mesh,
+                  in_axes: Sequence[ArrayMapping],
+                  out_axes: Sequence[ArrayMapping]):
+  # We vectorize in reversed order, because vmap is often biased towards
+  # moving the batch axis to the front, and this way of stacking transforms
+  # will order the batch axes according to the mesh axis order.
+  # Not strictly necessary, but seems nicer than reversing it?
+  for name, size in reversed(mesh.shape.items()):
+    fun = batching.vtile(fun,
+                         tuple(a.get(name, None) for a in in_axes),
+                         tuple(a.get(name, None) for a in out_axes),
+                         tile_size=size,
+                         axis_name=name,
+                         main_type=batching.SPMDBatchTrace)
+  return fun
+
 def mesh_callable(fun: lu.WrappedFun,
                   transformed_name: str,
                   backend_name: Optional[str],
                   mesh: Mesh,
                   in_axes: Sequence[ArrayMapping],
-                  out_axes_thunk: Callable[[], Sequence[ArrayMapping]],
+                  out_axes: Union[Sequence[ArrayMapping], Callable[[], Sequence[ArrayMapping]]],
                   donated_invars: Sequence[bool],
                   spmd_lowering: bool,
                   *local_in_untiled_avals,
@@ -1386,12 +1403,9 @@ def mesh_callable(fun: lu.WrappedFun,
                     for aval, aval_in_axes in safe_zip(local_in_untiled_avals, in_axes)]
   if spmd_lowering:
     # TODO: Consider handling xmap's 'vectorize' in here. We can vmap once instead of vtile twice!
-    for name, size in reversed(mesh.shape.items()):
-      if tile_by_mesh_axes:
-        fun = batching.vtile(fun,
-                             tuple(a.get(name, None) for a in in_axes),
-                             tuple(a.get(name, None) for a in out_axes_thunk()),
-                             tile_size=size, axis_name=name)
+    if tile_by_mesh_axes:
+      assert not callable(out_axes)
+      fun = vtile_by_mesh(fun, mesh, in_axes, out_axes)
     global_in_untiled_avals = [untile_aval_nd(global_axis_sizes, aval_in_axes, aval)
                                for aval, aval_in_axes in safe_zip(in_tiled_avals, in_axes)]
     in_jaxpr_avals = global_in_untiled_avals
@@ -1399,7 +1413,8 @@ def mesh_callable(fun: lu.WrappedFun,
     in_jaxpr_avals = in_tiled_avals
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
-  out_axes = out_axes_thunk()
+  if callable(out_axes):
+    out_axes = out_axes()
   assert len(out_axes) == len(out_jaxpr_avals)
   if spmd_lowering:
     global_out_untiled_avals = out_jaxpr_avals

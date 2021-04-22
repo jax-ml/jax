@@ -175,11 +175,10 @@ def _pjit_callable(
     *in_avals):
 
   in_axes = [get_array_mapping(axes) for axes in in_axis_resources]
-  out_axes_thunk = lambda: [get_array_mapping(axes)
-                            for axes in out_axis_resources_thunk()]
+  out_axes = lambda: [get_array_mapping(axes) for axes in out_axis_resources_thunk()]
   # TODO(skye): allow for using a submesh of physical_mesh
   return pxla.mesh_callable(fun, name, None, resource_env.physical_mesh,
-                            in_axes, out_axes_thunk, donated_invars,
+                            in_axes, out_axes, donated_invars,
                             True, *in_avals, tile_by_mesh_axes=False)
 
 # -------------------- pjit rules --------------------

@@ -328,11 +328,21 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
+    # TODO(apaszke): Make this initial -> final style conversion into a rule lookup
     if eqn.primitive.map_primitive:
       out_axes_thunk = HashableFunction(lambda: params['out_axes'],
                                         closure=params['out_axes'])
       bind_params = dict(params, out_axes_thunk=out_axes_thunk)
       del bind_params['out_axes']
+      if 'spmd_out_axes' in params:  # for xmap
+        spmd_out_axes_thunk: Optional[HashableFunction]
+        if params['spmd_out_axes'] is not None:
+          spmd_out_axes_thunk = HashableFunction(lambda: params['spmd_out_axes'],
+                                                 closure=params['spmd_out_axes'])
+        else:
+          spmd_out_axes_thunk = None
+        bind_params['spmd_out_axes_thunk'] = spmd_out_axes_thunk
+        del bind_params['spmd_out_axes']
     else:
       bind_params = params
     with source_info_util.user_context(eqn.source_info):

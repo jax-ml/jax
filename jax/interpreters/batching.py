@@ -243,6 +243,9 @@ class BatchTrace(Trace):
 
   post_process_custom_vjp_call = post_process_custom_jvp_call
 
+class SPMDBatchTrace(BatchTrace):
+  pass
+
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
                                axis_name: Iterable[core.AxisName],
                                ) -> bool:

@@ -37,6 +37,7 @@ from jax import vmap
 from jax import lax
 from jax import core
 from jax.core import NamedShape
+from jax.experimental import maps
 from jax.experimental.maps import Mesh, mesh, xmap
 from jax.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
@@ -407,9 +408,13 @@ class XMapTest(XMapTestCase):
     y = f(x)
     self.assertAllClose(y, ((jnp.sin(x * 2) * np.arange(xshape[-1])).transpose((1, 2, 0)), (x * 2).sum((0, 1))))
     self.assertEqual(y[0].sharding_spec.sharding,
-                      (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
+                     (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
     self.assertEqual(y[0].sharding_spec.mesh_mapping,
-                    (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
+                     (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
+    if maps.EXPERIMENTAL_SPMD_LOWERING:
+      hlo = jax.xla_computation(f)(x).as_hlo_text()
+      # Make sure that there are non-partial sharding specs in the HLO
+      self.assertRegex(hlo, r"sharding={devices=\[[0-9,]+\][0-9,]+}")
 
   @with_and_without_mesh
   @ignore_xmap_warning()
@@ -587,9 +592,6 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
   """Re-executes all basic tests with the SPMD partitioner enabled"""
 
   skipped_tests = {
-    "NestedMesh",  # Nesting xmap calls is not supported in the SPMD lowering yet
-    "NestedMap",  # Same as above
-    "NestedBroadcast",  # Same as above
     "CollectivePermute2D"  # vmap of multidimensional permute not implemented yet
   }
 
