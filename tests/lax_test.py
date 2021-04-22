@@ -62,6 +62,18 @@ python_scalar_types = [bool, int, float, complex]
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
+# We check cases where the preferred type is at least as wide as the input
+# type and where both are either both floating-point or both integral,
+# which are the only supported configurations.
+preferred_type_combinations = [
+  (np.float16, np.float16), (np.float16, np.float32), (np.float16, np.float64),
+  (dtypes.bfloat16, dtypes.bfloat16), (dtypes.bfloat16, np.float32),
+  (dtypes.bfloat16, np.float64), (np.float32, np.float32), (np.float32, np.float64),
+  (np.float64, np.float64), (np.int8, np.int8), (np.int8, np.int16), (np.int8, np.int32),
+  (np.int8, np.int64), (np.int16, np.int16), (np.int16, np.int32), (np.int16, np.int64),
+  (np.int32, np.int32), (np.int32, np.int64), (np.int64, np.int64),
+  (np.complex64, np.complex64), (np.complex64, np.complex128), (np.complex128, np.complex128)]
+
 
 OpRecord = collections.namedtuple(
     "OpRecord", ["op", "nargs", "dtypes", "rng_factory", "tol"])
@@ -377,6 +389,50 @@ class LaxTest(jtu.JaxTestCase):
       return lax.conv(lhs, rhs, strides, padding)
 
     self._CompileAndCheck(fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_preferred_element_type={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype),
+           preferred_element_type),
+          "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+          "preferred_element_type": preferred_element_type}
+      for lhs_shape, rhs_shape in [
+          ((b, i, 9, 10), (j, i, 4, 5))
+          for b, i, j in itertools.product([2, 3], repeat=3)]
+      for dtype, preferred_element_type in preferred_type_combinations))
+  def testConvPreferredElement(self, lhs_shape, rhs_shape, dtype, preferred_element_type):
+    if (not config.x64_enabled and
+       (dtype == np.float64 or preferred_element_type == np.float64
+        or dtype == np.int64 or preferred_element_type == np.int64
+        or dtype == np.complex128 or preferred_element_type == np.complex128)):
+      raise SkipTest("64-bit mode disabled")
+    if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
+      # TODO(b/183565702): Support integer convolutions on CPU/GPU.
+      raise SkipTest("Integer convolution not yet supported on GPU")
+    if (jtu.device_under_test() == "tpu" and
+       (dtype == np.complex128 or preferred_element_type == np.complex128)):
+      raise SkipTest("np.complex128 is not yet supported on TPU")
+    # x64 implementation is only accurate to ~float32 precision for this case.
+    tol = 1e-5 if dtype == np.complex64 and preferred_element_type == np.complex128 else None
+    rng = jtu.rand_default(self.rng())
+    x = rng(lhs_shape, dtype)
+    y = rng(rhs_shape, dtype)
+    # We first compute the conv when both inputs are a lower-precision type and
+    # preferred_element_type is a higher-precision type. We then compute results
+    # where the inputs are first upcast to the higher-precision type and no
+    # `preferred_element_type` is given. We expect the result to be extremely
+    # similar given the semantics of `preferred_element_type`.
+    result_with_preferred_type = lax.conv(
+      x, y, (1, 1), "VALID",
+      preferred_element_type=preferred_element_type)
+    result_with_upcast_inputs = lax.conv(
+      x.astype(preferred_element_type),
+      y.astype(preferred_element_type),
+      (1, 1), "VALID")
+    self.assertArraysAllClose(
+      result_with_preferred_type, result_with_upcast_inputs, rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -921,21 +977,15 @@ class LaxTest(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype, "preferred_element_type": preferred_element_type
      }
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
-      # We check cases where the preferred type is at least as wide as the input
-      # type and where both are either both floating-point or both integral,
-      # which are the only supported configurations.
-      for dtype, preferred_element_type in [
-        (np.float16, np.float16), (np.float16, np.float32), (np.float16, np.float64),
-        (dtypes.bfloat16, dtypes.bfloat16), (dtypes.bfloat16, np.float32),
-        (dtypes.bfloat16, np.float64), (np.float32, np.float32), (np.float32, np.float64),
-        (np.float64, np.float64), (np.int8, np.int8), (np.int8, np.int16), (np.int8, np.int32),
-        (np.int8, np.int64), (np.int16, np.int16), (np.int16, np.int32), (np.int16, np.int64),
-        (np.int32, np.int32), (np.int32, np.int64), (np.int64, np.int64)]))
+      for dtype, preferred_element_type in preferred_type_combinations))
   def testDotPreferredElement(self, lhs_shape, rhs_shape, dtype, preferred_element_type):
     if (not config.x64_enabled and
        (dtype == np.float64 or preferred_element_type == np.float64
         or dtype == np.int64 or preferred_element_type == np.int64)):
       raise SkipTest("64-bit mode disabled")
+    if (jtu.device_under_test() == "tpu" and
+       (dtype == np.complex128 or preferred_element_type == np.complex128)):
+      raise SkipTest("np.complex128 is not yet supported on TPU")
     rng = jtu.rand_default(self.rng())
     x = rng(lhs_shape, dtype)
     y = rng(rhs_shape, dtype)

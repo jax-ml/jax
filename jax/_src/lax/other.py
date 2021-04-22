@@ -13,11 +13,12 @@
 # limitations under the License.
 
 
-from typing import Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple, Union
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.util import prod
 from . import lax
 
+DType = Any
 
 def conv_general_dilated_patches(
     lhs: lax.Array,
@@ -28,6 +29,7 @@ def conv_general_dilated_patches(
     rhs_dilation: Sequence[int] = None,
     dimension_numbers: lax.ConvGeneralDilatedDimensionNumbers = None,
     precision: lax.PrecisionType = None,
+    preferred_element_type: Optional[DType] = None,
 ) -> lax.Array:
   """Extract patches subject to the receptive field of `conv_general_dilated`.
 
@@ -68,6 +70,9 @@ def conv_general_dilated_patches(
     precision: Optional. Either ``None``, which means the default precision for
       the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``).
+    preferred_element_type: Optional. Either ``None``, which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
 
   Returns:
     A rank `n+2` array containing the flattened image patches in the output
@@ -104,6 +109,7 @@ def conv_general_dilated_patches(
       dimension_numbers=dimension_numbers,
       precision=None if precision is None else (precision,
                                                 lax.Precision.DEFAULT),
-      feature_group_count=n_channels
+      feature_group_count=n_channels,
+      preferred_element_type=preferred_element_type
   )
   return out

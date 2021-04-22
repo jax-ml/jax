@@ -1196,7 +1196,7 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
 def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
                           rhs_dilation, dimension_numbers, feature_group_count,
                           batch_group_count, lhs_shape, rhs_shape, precision,
-                          _in_avals, _out_aval):
+                          preferred_element_type, _in_avals, _out_aval):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   if not _enable_xla:
     info_or_result = _try_tf_conv(
