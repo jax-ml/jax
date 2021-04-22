@@ -238,11 +238,32 @@ def _cofactor_solve(a, b):
   return partial_det[..., -1], x
 
 
+def _det_3x3(a):
+  return (a[..., 0, 0] * a[..., 1, 1] * a[..., 2, 2] +
+          a[..., 0, 1] * a[..., 1, 2] * a[..., 2, 0] +
+          a[..., 0, 2] * a[..., 1, 0] * a[..., 2, 1] -
+          a[..., 0, 2] * a[..., 1, 1] * a[..., 2, 0] -
+          a[..., 0, 0] * a[..., 1, 2] * a[..., 2, 1] -
+          a[..., 0, 1] * a[..., 1, 0] * a[..., 2, 2])
+
+@jit
+def _det(a):
+  a = _promote_arg_dtypes(jnp.asarray(a))
+  a_shape = jnp.shape(a)
+  if len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
+    return _det_3x3(a)
+  elif len(a_shape) >= 2 and a_shape[-1] == a_shape[-2]:
+    sign, logdet = slogdet(a)
+    return sign * jnp.exp(logdet)
+  else:
+    msg = "Argument to _det() must have shape [..., n, n], got {}"
+    raise ValueError(msg.format(a_shape))
+    
+
 @custom_jvp
 @_wraps(np.linalg.det)
 def det(a):
-  sign, logdet = slogdet(a)
-  return sign * jnp.exp(logdet)
+  return _det(a)
 
 
 @det.defjvp
