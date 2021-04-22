@@ -238,7 +238,7 @@ def _cofactor_solve(a, b):
   return partial_det[..., -1], x
 
 def _det_2x2(a):
-  return ( a[..., 0, 0] * a[..., 1, 1] -
+  return (a[..., 0, 0] * a[..., 1, 1] -
            a[..., 0, 1] * a[..., 1, 0])
 
 def _det_3x3(a):
