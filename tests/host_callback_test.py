@@ -573,7 +573,9 @@ class HostCallbackIdTapTest(jtu.JaxTestCase):
     hcb.barrier_wait()
     self.assertEqual(received, set(range(count)))
 
-  # TODO(necula): see comment for test_multiple_tap.
+  # TODO(necula): see comment for test_multiple_tap. Here we disable also
+  # on TPU, because the barrier_wait runs on all devices, including on the CPU
+  # where it would run into concurrency problems.
   @skip("Concurrency not supported")
   def test_tap_multiple_barriers(self):
     """Call barrier_wait concurrently."""
