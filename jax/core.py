@@ -328,21 +328,13 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
-    # TODO(apaszke): Make this initial -> final style conversion into a rule lookup
-    if eqn.primitive.map_primitive:
+    if eqn.primitive in initial_to_final_param_rules:
+      bind_params = initial_to_final_param_rules[eqn.primitive](params)
+    elif eqn.primitive.map_primitive:
       out_axes_thunk = HashableFunction(lambda: params['out_axes'],
                                         closure=params['out_axes'])
       bind_params = dict(params, out_axes_thunk=out_axes_thunk)
       del bind_params['out_axes']
-      if 'spmd_out_axes' in params:  # for xmap
-        spmd_out_axes_thunk: Optional[HashableFunction]
-        if params['spmd_out_axes'] is not None:
-          spmd_out_axes_thunk = HashableFunction(lambda: params['spmd_out_axes'],
-                                                 closure=params['spmd_out_axes'])
-        else:
-          spmd_out_axes_thunk = None
-        bind_params['spmd_out_axes_thunk'] = spmd_out_axes_thunk
-        del bind_params['spmd_out_axes']
     else:
       bind_params = params
     with source_info_util.user_context(eqn.source_info):
@@ -352,6 +344,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
     else:
       write(eqn.outvars[0], ans)
   return map(read, jaxpr.outvars)
+
+initial_to_final_param_rules: Dict[Primitive, Callable] = {}
 
 
 # -------------------- tracing --------------------

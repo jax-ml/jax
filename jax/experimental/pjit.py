@@ -251,6 +251,15 @@ def _pjit_jvp_update_params(params, nz_tangents, nz_tangents_out_thunk):
 ad.call_param_updaters[pjit_call_p] = _pjit_jvp_update_params
 
 
+def _pjit_init_to_final_params(params):
+  out_axis_resources_thunk = HashableFunction(lambda: params['out_axis_resources'],
+                                              closure=params['out_axis_resources'])
+  bind_params = dict(params, out_axis_resources_thunk=out_axis_resources_thunk)
+  del bind_params['out_axis_resources']
+  return bind_params
+core.initial_to_final_param_rules[pjit_call_p] = _pjit_init_to_final_params
+
+
 # -------------------- with_sharding_constraint --------------------
 
 def with_sharding_constraint(x, axis_resources):

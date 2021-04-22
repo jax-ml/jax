@@ -247,6 +247,17 @@ class PJitTest(jtu.BufferDonationTestCase):
     jtu.check_grads(g, (jnp.arange(16, dtype=jnp.float32).reshape((4, 4)),),
                     order=2, modes=["fwd"], eps=1)
 
+  @with_mesh([('x', 2), ('y', 1)])
+  def testEvalJaxpr(self):
+    x, y = jnp.arange(4), jnp.arange(5)
+    f = pjit(lambda x, y: x.sum() + jnp.sin(y),
+             in_axis_resources=(P('x'), P('y')),
+             out_axis_resources=P('y'))
+    f_jaxpr = jax.make_jaxpr(f)(x, y)
+    f_eval = jax.core.jaxpr_as_fun(f_jaxpr)
+    r, = f_eval(x, y)
+    self.assertAllClose(r, x.sum() + jnp.sin(y))
+
   # TODO(skye): add more unit tests once API is more finalized
 
 @curry

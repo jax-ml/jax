@@ -904,6 +904,22 @@ batching.BatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, Fals
 batching.SPMDBatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, True)  # type: ignore
 
 
+def _xmap_initial_to_final_params(params):
+  out_axes_thunk = HashableFunction(lambda: params['out_axes'],
+                                    closure=params['out_axes'])
+  if params['spmd_out_axes'] is not None:
+    spmd_out_axes_thunk = HashableFunction(lambda: params['spmd_out_axes'],
+                                           closure=params['spmd_out_axes'])
+  else:
+    spmd_out_axes_thunk = None
+  bind_params = dict(params,
+                     out_axes_thunk=out_axes_thunk,
+                     spmd_out_axes_thunk=spmd_out_axes_thunk)
+  del bind_params['out_axes']
+  del bind_params['spmd_out_axes']
+  return bind_params
+core.initial_to_final_param_rules[xmap_p] = _xmap_initial_to_final_params
+
 # -------- nested xmap handling --------
 
 def _xmap_translation_rule(*args, **kwargs):
