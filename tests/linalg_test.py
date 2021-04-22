@@ -82,7 +82,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype}
-      for n in [0, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
+      for n in [0, 2, 3, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
       for dtype in float_types + complex_types))
   def testDet(self, n, dtype):
     rng = jtu.rand_default(self.rng())
