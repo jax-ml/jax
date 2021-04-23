@@ -846,7 +846,6 @@ def parallel_callable(fun: lu.WrappedFun,
       use_spmd_partitioning=use_spmd_partitioning,
   )
   compile_options.parameter_is_tupled_arguments = tuple_args
-  compiled = xla.backend_compile(backend, built, compile_options)
 
   local_arg_parts_ = local_arg_parts or [None] * len(avals)
   input_sharding_specs = [
@@ -857,7 +856,6 @@ def parallel_callable(fun: lu.WrappedFun,
   input_indices = [spec_to_indices(aval.shape, spec)
                    if spec is not None else None
                    for aval, spec in safe_zip(avals, input_sharding_specs)]
-  handle_args = partial(shard_args, compiled.local_devices(), input_indices)
   nouts = len(out_sharded_avals)
   if out_parts is None:
     out_parts = (None,) * nouts
@@ -878,10 +876,12 @@ def parallel_callable(fun: lu.WrappedFun,
   handle_outs = avals_to_results_handler(
       num_local_replicas, local_num_partitions, out_specs, local_unmapped_avals)
 
-  if hasattr(backend, "wrap_execute_replicated"):
-    return backend.wrap_execute_replicated(compiled, compiled.local_devices(),
-                                           input_indices, input_sharding_specs,
-                                           handle_outs)
+  if hasattr(backend, "compile_replicated"):
+    return backend.compile_replicated(built, compile_options,
+                                      input_indices, input_sharding_specs,
+                                      handle_outs)
+  compiled = xla.backend_compile(backend, built, compile_options)
+  handle_args = partial(shard_args, compiled.local_devices(), input_indices)
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
@@ -1500,7 +1500,6 @@ def compile_and_wrap_mesh_hlo(computation: xc.XlaComputation, backend,
       use_spmd_partitioning=spmd_lowering,
   )
   compile_options.parameter_is_tupled_arguments = tuple_args
-  compiled = xla.backend_compile(backend, computation, compile_options)
 
   local_sharding_spec = mesh_sharding_specs(local_axis_sizes, mesh.axis_names)
   local_input_specs = [local_sharding_spec(aval, aval_in_axes)
@@ -1509,17 +1508,18 @@ def compile_and_wrap_mesh_hlo(computation: xc.XlaComputation, backend,
   input_indices = [spec_to_indices(aval.shape, spec)
                    if spec is not None else None
                    for aval, spec in safe_zip(local_in_untiled_avals, local_input_specs)]
-  handle_args = partial(shard_args, compiled.local_devices(), input_indices)
 
   local_output_specs = [local_sharding_spec(aval, aval_out_axes)
                         for aval, aval_out_axes in safe_zip(local_out_untiled_avals, out_axes)]
   handle_outs = avals_to_results_handler(num_local_replicas, num_local_partitions,
                                          local_output_specs, local_out_untiled_avals)
 
-  if hasattr(backend, "wrap_execute_replicated"):
-    return backend.wrap_execute_replicated(compiled, compiled.local_devices(),
-                                           input_indices, local_input_specs,
-                                           handle_outs)
+  if hasattr(backend, "compile_replicated"):
+    return backend.compile_replicated(computation, compile_options,
+                                      input_indices, local_input_specs,
+                                      handle_outs)
+  compiled = xla.backend_compile(backend, computation, compile_options)
+  handle_args = partial(shard_args, compiled.local_devices(), input_indices)
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
 
 _forbidden_primitives = {
