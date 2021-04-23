@@ -138,8 +138,8 @@ def _fori_body_fun(body_fun):
 @cache()
 def _fori_scan_body_fun(body_fun):
   def scanned_fun(loop_carry, _):
-    i, upper, x = loop_carry
-    return (lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)), None
+    i, x = loop_carry
+    return (i + 1, body_fun(i, x)), None
   return scanned_fun
 
 @api_boundary
@@ -160,9 +160,13 @@ def fori_loop(lower, upper, body_fun, init_val):
         val = body_fun(i, val)
       return val
 
-  Unlike that Python version, ``fori_loop`` is implemented in terms of a call to
-  :func:`jax.lax.while_loop`. See the :func:`jax.lax.while_loop` documentation
-  for more information.
+  Unlike that Python version, ``fori_loop`` is implemented in terms of either a
+  call to :func:`jax.lax.while_loop` or a call to :func:`jax.lax.scan`. If the
+  trip count is static (meaning known at tracing time, perhaps because ``lower``
+  and ``upper` are Python integer literals) then the ``fori_loop`` is
+  implemented in terms of ``scan`` and reverse-mode autodiff is supported;
+  otherwise, a ``while_loop`` is used and reverse-mode autodiff is not
+  supported.  See those functions' docstrings for more information.
 
   Also unlike the Python analogue, the loop-carried value ``val`` must hold a
   fixed shape and dtype across all iterations (and not just be consistent up to
@@ -197,12 +201,11 @@ def fori_loop(lower, upper, body_fun, init_val):
   except TypeError:
     use_scan = False
   else:
-    use_scan = False  # TODO(mattjj): re-enable this
+    use_scan = True
 
   if use_scan:
-    (_, _, result), _ = scan(_fori_scan_body_fun(body_fun),
-                             (lower, upper, init_val), None,
-                             length=upper_ - lower_)
+    (_, result), _ = scan(_fori_scan_body_fun(body_fun), (lower_, init_val),
+                          None, length=upper_ - lower_)
   else:
     _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
                               (lower, upper, init_val))
@@ -1865,8 +1868,7 @@ def scan_bind(*args, **params):
 scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
 scan_p.def_custom_bind(scan_bind)
-scan_p.def_impl(_scan_impl)
-# scan_p.def_impl(partial(xla.apply_primitive, scan_p))  # TODO(mattjj): re-enable
+scan_p.def_impl(partial(xla.apply_primitive, scan_p))
 scan_p.def_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose

@@ -37,12 +37,11 @@ import jax
 import jax.ops
 from jax._src import api
 from jax import lax
-from jax import linear_util
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax._src import dtypes
 from jax import tree_util
-from jax.interpreters import partial_eval, xla
+from jax.interpreters import xla
 from jax.test_util import check_grads
 from jax._src.util import prod
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
@@ -4955,12 +4954,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return x, y
 
     f = lambda y: lax.fori_loop(0, 5, body, (y, y))
-    wrapped = linear_util.wrap_init(f)
-    pv = partial_eval.PartialVal.unknown(jax.ShapedArray((3, 4), np.float32))
-    _, _, consts = partial_eval.trace_to_jaxpr(wrapped, [pv])
+    jaxpr = jax.make_jaxpr(f)(np.zeros((3, 4), np.float32))
     self.assertFalse(
       any(np.array_equal(x, np.full((3, 4), 2., dtype=np.float32))
-          for x in consts))
+          for x in jaxpr.consts))
 
   @parameterized.named_parameters(
       {"testcase_name": "_from={}_to={}".format(from_shape, to_shape),

@@ -1877,25 +1877,29 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loop_lax, (x,), order=2, modes=["fwd"])
 
+  def testStaticForiGrad(self):
+    func = lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x)
+    api.grad(func)(1.)  # doesn't crash
+    api.linearize(func, 1.)  # doesn't crash
+
   @parameterized.named_parameters(
       dict(testcase_name="_loop={}".format(loop), loop=loop)
-      for loop in ["while", "fori", "fori_inside_cond", "fori_inside_scan"])
+      for loop in ["while", "fori_inside_cond", "fori_inside_scan"])
   def testWhileGradError(self, loop: str = "fori_inside_scan"):
     # Raise error for vjp for loops
     if loop == "while":
       func = lambda x: lax.while_loop(lambda i: i < 5., lambda i: i + 1., x)
-    elif loop == "fori":
-      func = lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x)
     elif loop == "fori_inside_jit":
       func = api.jit(lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x))
     elif loop == "fori_inside_cond":
-      func = lambda x: lax.cond(True, x,
-                                lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
-                                 1., lambda x: x)
+      func = lambda x: lax.cond(
+          True,
+          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
+          1., lambda x: x)
     elif loop == "fori_inside_scan":
-      func = lambda x: lax.scan(lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x),
-                                              None),
-                                x, np.ones(2))[0]
+      func = lambda x: lax.scan(
+          lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x), None),
+          x, np.ones(2))[0]
     else:
       assert False
 
@@ -2356,7 +2360,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "compiling a primitive computation `while` that requires {} "
+            "compiling a primitive computation `scan` that requires {} "
             "replicas, but only {} XLA devices are available on backend {}."
             .format(too_big, api.device_count(), jtu.device_under_test())),
         lambda: f_loop(jnp.ones(too_big)))
