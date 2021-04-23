@@ -213,6 +213,23 @@ class cuSparseTest(jtu.JaxTestCase):
     else:
       self.assertIn(sparse_ops.csr_todense_p, xla.backend_specific_translations["gpu"])
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+         jtu.format_shape_dtype_string(shape, dtype), mat_type),
+       "shape": shape, "dtype": dtype, "mat_type": mat_type}
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+      for mat_type in ['csr', 'coo']))
+  def test_extra_nnz(self, shape, dtype, mat_type):
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+    nnz = (M != 0).sum() + 5
+    fromdense = getattr(sparse_ops, f"{mat_type}_fromdense")
+    todense = getattr(sparse_ops, f"{mat_type}_todense")
+    args = fromdense(M, nnz=nnz, index_dtype=jnp.int32)
+    M_out = todense(*args, shape=M.shape)
+    self.assertArraysEqual(M, M_out)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
