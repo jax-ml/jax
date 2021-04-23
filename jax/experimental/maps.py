@@ -32,6 +32,7 @@ from .._src.tree_util import _replace_nones
 from ..api_util import (flatten_fun_nokwargs, flatten_axes, _ensure_index_tuple,
                         donation_vector)
 from .._src import source_info_util
+from ..errors import JAXTypeError
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
 from ..interpreters import xla
@@ -486,8 +487,6 @@ def xmap(fun: Callable,
       donated_invars = donation_vector(donate_argnums, args, ())
     else:
       donated_invars = (False,) * len(args_flat)
-    # TODO: Check that:
-    #         - two axes mapped to the same resource never coincide (even inside f)
     in_axes_flat = flatten_axes("xmap in_axes", in_tree, in_axes)
 
     # out_axes_thunk closes over the out_axes, they are flattened here to make
@@ -577,6 +576,11 @@ def make_xmap_callable(fun: lu.WrappedFun,
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
   out_axes = out_axes_thunk()
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
+  _resource_typing_xmap(dict(axis_resources=axis_resources,
+                             out_axes=out_axes,
+                             call_jaxpr=jaxpr,
+                             name=name),
+                        None, {})
   jaxpr = plan.subst_axes_with_resources(jaxpr)
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
@@ -651,19 +655,8 @@ class EvaluationPlan(NamedTuple):
     try:
       with core.extend_axis_env_nd(self.resource_axis_env.items()):
         return core.subst_axis_names_jaxpr(jaxpr, self.axis_subst)
-    except core.DuplicateAxisNameError as e:
-      resource_to_axis = {}
-      for axis in e.var.aval.named_shape:
-        for resource in self.physical_axis_resources[axis]:
-          if resource in resource_to_axis:
-            other_axis = resource_to_axis[resource]
-            axis, other_axis = sorted([str(axis), str(other_axis)])
-            raise TypeError(f"Axes `{axis}` and `{other_axis}` are both mapped to the "
-                            f"resource `{resource}`, but they coincide in the named_shape "
-                            f"of a value returned from a primitive {e.eqn.primitive} created "
-                            f"at {source_info_util.summarize(e.eqn.source_info)}")
-          resource_to_axis[resource] = axis
-      raise AssertionError("Failed to find the duplicate axis? Please open a bug report!")
+    except core.DuplicateAxisNameError:
+      raise AssertionError("Incomplete resource type-checking? Please open a bug report!")
 
   def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
     for naxis, raxes in self.axis_subst_dict.items():
@@ -765,6 +758,51 @@ def _typecheck_xmap(
   return out_avals
 core.custom_typechecks[xmap_p] = _typecheck_xmap
 
+
+def _resource_typing_xmap(params,
+                          source_info: Optional[source_info_util.Traceback],
+                          outer_axis_resources):
+  def show_axes(axes):
+    return ", ".join(sorted([f"`{a}`" for a in axes]))
+  axis_resources = params['axis_resources']
+  inner_axis_resources = dict(outer_axis_resources)
+  inner_axis_resources.update(axis_resources)
+  if len(inner_axis_resources) < len(outer_axis_resources) + len(axis_resources):
+    overlap = set(outer_axis_resources) & set(axis_resources)
+    raise JAXTypeError(
+        f"Detected disallowed xmap axis name shadowing at "
+        f"{source_info_util.summarize(source_info)} "
+        f"(shadowed axes: {show_axes(overlap)})")
+
+  call_jaxpr = params['call_jaxpr']
+  pxla.resource_typecheck(
+      params['call_jaxpr'], inner_axis_resources,
+      lambda: (f"an xmapped function {params['name']} " +
+               (f"(xmap called at {source_info_util.summarize(source_info)})"
+                if source_info else "")))
+
+  for v, axes in zip(call_jaxpr.outvars, params['out_axes']):
+    broadcast_axes = set(axes) - set(v.aval.named_shape)
+    used_resources = set(it.chain.from_iterable(
+        inner_axis_resources[a] for a in v.aval.named_shape))
+    for baxis in broadcast_axes:
+      baxis_resources = set(inner_axis_resources[baxis])
+      overlap = baxis_resources & used_resources
+      if overlap:
+        resource_to_axis = {}
+        for axis in v.aval.named_shape:
+          for raxis in inner_axis_resources[axis]:
+            resource_to_axis[raxis] = axis
+        partitioning_axes = set(resource_to_axis[raxis] for raxis in overlap)
+        raise JAXTypeError(
+            f"One of xmapped function ({params['name']}) outputs is broadcast "
+            f"along axis `{baxis}` which is assigned to resources "
+            f"{show_axes(baxis_resources)}, but the output is already "
+            f"partitioned along {show_axes(overlap)}, because its "
+            f"named shape contains {show_axes(partitioning_axes)}")
+pxla.custom_resource_typing_rules[xmap_p] = _resource_typing_xmap
+
+
 # This is DynamicJaxprTrace.process_map with some very minor modifications
 def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   from jax.interpreters.partial_eval import (
@@ -801,11 +839,13 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   else:
     new_spmd_in_axes = (None,) * len(consts) + params['spmd_in_axes']
   new_donated_invars = (False,) * len(consts) + params['donated_invars']
+  with core.extend_axis_env_nd(global_axis_sizes.items()):
+    call_jaxpr = convert_constvars_jaxpr(jaxpr)
   new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
                     donated_invars=new_donated_invars,
                     spmd_in_axes=new_spmd_in_axes,
                     spmd_out_axes=spmd_out_axes,
-                    call_jaxpr=convert_constvars_jaxpr(jaxpr))
+                    call_jaxpr=call_jaxpr)
   del new_params['out_axes_thunk']
   del new_params['spmd_out_axes_thunk']
   eqn = new_jaxpr_eqn([*constvars, *invars], outvars, primitive,

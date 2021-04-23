@@ -36,9 +36,10 @@ from jax import test_util as jtu
 from jax import vmap
 from jax import lax
 from jax import core
-from jax.core import NamedShape
+from jax.core import NamedShape, JaxprTypeError
 from jax.experimental import maps
 from jax.experimental.maps import Mesh, mesh, xmap
+from jax.errors import JAXTypeError
 from jax.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
 from jax._src.lax.lax import DotDimensionNumbers
@@ -1165,19 +1166,6 @@ class XMapErrorTest(jtu.JaxTestCase):
            in_axes=['i', None], out_axes=['i', None])(jnp.ones((5, 4)))
 
   @ignore_xmap_warning()
-  @with_mesh([('x', 2)])
-  def testResourceConflict(self):
-    fm = xmap(lambda x, y: x + y,
-              in_axes=(['a', ...], ['b', ...]), out_axes=['a', 'b', ...],
-              axis_resources={'a': 'x', 'b': 'x'})
-    x = np.arange(12).reshape(4, 3)
-    y = np.arange(6).reshape(2, 3)
-    error = (r"Axes `a` and `b` are both mapped to the resource `x`, but they "
-             r"coincide in the named_shape.*primitive add created at")
-    with self.assertRaisesRegex(TypeError, error):
-      fm(x, y)
-
-  @ignore_xmap_warning()
   def testReturnExtraMappedAxes(self):
     fm = xmap(lambda x, y: x + y,
               in_axes=(['a', ...], ['b', ...]), out_axes=['a', ...])
@@ -1187,6 +1175,83 @@ class XMapErrorTest(jtu.JaxTestCase):
              r"is actually mapped along more axes defined by this xmap call: b")
     with self.assertRaisesRegex(TypeError, error):
       fm(x, y)
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testResourceConflictArgs(self):
+    fm = xmap(lambda x: lax.psum(x, ('a', 'b')),
+              in_axes=['a', 'b'], out_axes=[],
+              axis_resources={'a': 'x', 'b': 'x'})
+    x = np.arange(16).reshape(4, 4)
+    error = (r"Axes `a` and `b` are both mapped to the resource `x`, but they "
+             r"coincide in the named_shape of an input to an xmapped function "
+             r"<lambda>")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      fm(x)
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testResourceConflictInner(self):
+    fm = xmap(lambda x, y: x + y,
+              in_axes=(['a', ...], ['b', ...]), out_axes=['a', 'b', ...],
+              axis_resources={'a': 'x', 'b': 'x'})
+    x = np.arange(12).reshape(4, 3)
+    y = np.arange(6).reshape(2, 3)
+    error = (r"Axes `a` and `b` are both mapped to the resource `x`, but they "
+             r"coincide in the named_shape.*primitive add created at")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      fm(x, y)
+
+  @with_mesh([('x', 2)])
+  def testResourceConflictOut(self):
+    fm = xmap(lambda x, y: x,
+              in_axes=(['a', ...], ['b', ...]), out_axes=['a', 'b', ...],
+              axis_resources={'a': 'x', 'b': 'x'})
+    x = np.arange(12).reshape(4, 3)
+    y = np.arange(6).reshape(2, 3)
+    error = (r"One of xmapped function \(<lambda>\) outputs is broadcast along axis "
+             r"`b` which is assigned to resources `x`, but the output is already "
+             r"partitioned along `x`, because its named shape contains `a`")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      fm(x, y)
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testResourceConflictNestArgs(self):
+    f = xmap(lambda x: x, in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
+    h = xmap(f, in_axes=['j', ...], out_axes=['j', ...], axis_resources={'j': 'x'})
+    x = np.arange(16).reshape((4, 4))
+    error = (r"Axes `i` and `j` are both mapped to the resource `x`, but they "
+             r"coincide in the named_shape of an input to an xmapped function "
+             r"<lambda> \(xmap called at .*\)")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      h(x)
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testResourceConflictNestInner(self):
+    f = xmap(lambda x: lax.axis_index('i') + x,
+             in_axes=[], out_axes=['i'], axis_sizes={'i': 4}, axis_resources={'i': 'x'})
+    h = xmap(f, in_axes=['j', ...], out_axes=['j', ...], axis_resources={'j': 'x'})
+    x = np.arange(4)
+    error = (r"Axes `i` and `j` are both mapped to the resource `x`, but they "
+             r"coincide in the named_shape of a value returned from a primitive "
+             r"add created at .*")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      h(x)
+
+  @ignore_xmap_warning()
+  @with_mesh([('x', 2)])
+  def testResourceConflictNestOut(self):
+    f = xmap(lambda x: x,
+             in_axes=[], out_axes=['i'], axis_sizes={'i': 4}, axis_resources={'i': 'x'})
+    h = xmap(f, in_axes=['j', ...], out_axes=['j', ...], axis_resources={'j': 'x'})
+    x = np.arange(4)
+    error = (r"One of xmapped function \(<lambda>\) outputs is broadcast along "
+             r"axis `i` which is assigned to resources `x`, but the output is "
+             r"already partitioned along `x`, because its named shape contains `j`")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      h(x)
 
 
 if __name__ == '__main__':

@@ -45,9 +45,11 @@ from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
+from .._src import source_info_util
 from .._src.util import (partial, unzip3, prod, safe_map, safe_zip,
                          extend_name_stack, wrap_name, assert_unreachable,
                          tuple_insert, tuple_delete, distributed_debug_log)
+from ..errors import JAXTypeError
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..lib import pmap_lib
@@ -1532,6 +1534,46 @@ def _sanitize_mesh_jaxpr(jaxpr):
       raise RuntimeError(f"Nesting {_forbidden_primitives[eqn.primitive.name]} "
                          f"inside xmaps not supported!")
     core.traverse_jaxpr_params(_sanitize_mesh_jaxpr, eqn.params)
+
+
+custom_resource_typing_rules: Dict[core.Primitive, Callable] = {}
+
+def resource_typecheck(jaxpr, axis_resources, what_jaxpr_thunk):
+  def _check_aval(aval, what_thunk):
+    if not hasattr(aval, 'named_shape'):
+      return
+    resource_to_axis = {}
+    for axis in aval.named_shape:
+      for resource in axis_resources[axis]:
+        if resource in resource_to_axis:
+          other_axis = resource_to_axis[resource]
+          axis, other_axis = sorted([str(axis), str(other_axis)])
+          raise JAXTypeError(
+              f"Axes `{axis}` and `{other_axis}` are both mapped to the "
+              f"resource `{resource}`, but they coincide in the named_shape "
+              f"of {what_thunk()}")
+        resource_to_axis[resource] = axis
+
+  what_thunk = lambda: (f"an input to {what_jaxpr_thunk()}")
+  for v in jaxpr.constvars:
+    _check_aval(v.aval, what_thunk)
+  for v in jaxpr.invars:
+    _check_aval(v.aval, what_thunk)
+  what_thunk = lambda: (f"a value returned from a primitive {eqn.primitive} created "
+                        f"at {source_info_util.summarize(eqn.source_info)}")
+  rec_what_jaxpr_thunk = lambda: (f"a primitive {eqn.primitive} created at"
+                                  f"{source_info_util.summarize(eqn.source_info)}")
+  for eqn in jaxpr.eqns:
+    typing_rule = custom_resource_typing_rules.get(eqn.primitive, None)
+    if typing_rule:
+      typing_rule(eqn.params, eqn.source_info, axis_resources)
+    else:
+      core.traverse_jaxpr_params(partial(resource_typecheck,
+                                         axis_resources=axis_resources,
+                                         what_jaxpr_thunk=rec_what_jaxpr_thunk),
+                                 eqn.params)
+    for v in eqn.outvars:
+      _check_aval(v.aval, what_thunk)
 
 
 def mesh_sharding_specs(axis_sizes, axis_names):
