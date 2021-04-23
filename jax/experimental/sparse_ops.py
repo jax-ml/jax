@@ -106,10 +106,20 @@ def csr_fromdense(mat, *, nnz, index_dtype=np.int32):
 
 @csr_fromdense_p.def_impl
 def _csr_fromdense_impl(mat, *, nnz, index_dtype):
+  mat = jnp.asarray(mat)
+  assert mat.ndim == 2
   m = mat.shape[0]
-  data, row, col = _coo_fromdense_impl(mat, nnz=nnz, index_dtype=index_dtype)
-  indptr = jnp.zeros(m + 1, dtype=index_dtype).at[1:].set(jnp.cumsum(jnp.bincount(row, length=m)))
-  return data, col, indptr
+
+  row, col = jnp.nonzero(mat, size=nnz)
+  data = mat[row, col]
+
+  true_nonzeros = jnp.arange(nnz) < (mat != 0).sum()
+  data = jnp.where(true_nonzeros, data, 0)
+  row = jnp.where(true_nonzeros, row, m)
+  indices = col.astype(index_dtype)
+  indptr = jnp.zeros(m + 1, dtype=index_dtype).at[1:].set(
+      jnp.cumsum(jnp.bincount(row, length=m)))
+  return data, indices, indptr
 
 @csr_fromdense_p.def_abstract_eval
 def _csr_fromdense_abstract_eval(mat, *, nnz, index_dtype):
@@ -252,7 +262,7 @@ def coo_todense(data, row, col, *, shape):
 
 @coo_todense_p.def_impl
 def _coo_todense_impl(data, row, col, *, shape):
-  return jnp.zeros(shape, data.dtype).at[row, col].set(data)
+  return jnp.zeros(shape, data.dtype).at[row, col].add(data)
 
 @coo_todense_p.def_abstract_eval
 def _coo_todense_abstract_eval(data, row, col, *, shape):
@@ -291,10 +301,15 @@ def coo_fromdense(mat, *, nnz, index_dtype=jnp.int32):
 @coo_fromdense_p.def_impl
 def _coo_fromdense_impl(mat, *, nnz, index_dtype):
   mat = jnp.asarray(mat)
-  m, n = mat.shape
-  mat_flat = jnp.ravel(mat)
-  ind = jnp.nonzero(mat_flat, size=nnz)[0].astype(index_dtype)
-  return mat_flat[ind], ind // n, ind % n
+  assert mat.ndim == 2
+
+  row, col = jnp.nonzero(mat, size=nnz)
+  data = mat[row, col]
+
+  true_nonzeros = jnp.arange(nnz) < (mat != 0).sum()
+  data = jnp.where(true_nonzeros, data, 0)
+
+  return data, row.astype(index_dtype), col.astype(index_dtype)
 
 @coo_fromdense_p.def_abstract_eval
 def _coo_fromdense_abstract_eval(mat, *, nnz, index_dtype):
