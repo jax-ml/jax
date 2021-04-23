@@ -317,6 +317,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for dtype in [np.float64, np.complex128]
       for preconditioner in [None, 'identity', 'exact', 'random']
       for solve_method in ['incremental', 'batched']))
+  # TODO(b/186133663): test fails on CPU after LLVM change.
+  @jtu.skip_on_devices("cpu")
   def test_gmres_against_scipy(
       self, shape, dtype, preconditioner, solve_method):
     if not config.x64_enabled:
