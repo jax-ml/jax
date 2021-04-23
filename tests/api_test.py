@@ -2207,6 +2207,11 @@ class APITest(jtu.JaxTestCase):
       jax.pmap(self.helper_save_tracer)(jnp.ones((1, 2)))
       _ = self._saved_tracer+1
 
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "transformed by eval_shape"):
+      jax.eval_shape(self.helper_save_tracer, 1)
+      _ = self._saved_tracer+1
+
   def test_pmap_static_kwarg_error_message(self):
     # https://github.com/google/jax/issues/3007
     def f(a, b):
