@@ -212,6 +212,7 @@ def jit(
   device: Optional[xc.Device] = None,
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
+  inline: bool = False,
 ) -> F:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -288,10 +289,10 @@ def jit(
     static_argnames = ()
   if FLAGS.experimental_cpp_jit:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
-                    donate_argnums)
+                    donate_argnums, inline)
   else:
     return _python_jit(fun, static_argnums, static_argnames, device, backend,
-                       donate_argnums)
+                       donate_argnums, inline)
 
 
 def _python_jit(
@@ -300,7 +301,8 @@ def _python_jit(
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
-    donate_argnums: Union[int, Iterable[int]] = ()
+    donate_argnums: Union[int, Iterable[int]] = (),
+    inline: bool = False,
 ) -> F:
   """The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit."""
   _check_callable(fun)
@@ -339,13 +341,8 @@ def _python_jit(
     for arg in args_flat:
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(
-        flat_fun,
-        *args_flat,
-        device=device,
-        backend=backend,
-        name=flat_fun.__name__,
-        donated_invars=donated_invars)
+    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,
+        name=flat_fun.__name__, donated_invars=donated_invars, inline=inline)
     return tree_unflatten(out_tree(), out)
 
   return f_jitted
@@ -366,6 +363,7 @@ def _cpp_jit(
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
+    inline: bool = False,
 ) -> F:
   """An implementation of `jit` that tries to do as much as possible in C++.
 
@@ -417,12 +415,9 @@ def _cpp_jit(
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out_flat = xla.xla_call(
-        flat_fun,
-        *args_flat,
-        device=device,
-        backend=backend,
-        name=flat_fun.__name__,
-        donated_invars=donated_invars)
+        flat_fun, *args_flat,
+        device=device, backend=backend, name=flat_fun.__name__,
+        donated_invars=donated_invars, inline=inline)
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 

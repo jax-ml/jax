@@ -1003,7 +1003,7 @@ def _xmap_translation_rule_replica(c, axis_env,
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
-  vectorized_jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(f, local_avals)
+  vectorized_jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(f, local_avals)
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
   assert not consts
 
@@ -1121,7 +1121,7 @@ def _xmap_translation_rule_spmd(c, axis_env,
   global_in_avals = [core.ShapedArray(xla_type.dimensions(), xla_type.numpy_dtype())
                      for in_node in global_in_nodes
                      for xla_type in (c.get_shape(in_node),)]
-  vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(f, global_in_avals)
+  vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
   assert not consts
 
   global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
