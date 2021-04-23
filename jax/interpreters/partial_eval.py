@@ -400,8 +400,8 @@ call_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 call_param_updaters: Dict[core.Primitive, Callable] = {}
 
 
-def abstract_eval_fun(fun, *avals, **params):
-  _, avals_out, _ = trace_to_jaxpr_dynamic(lu.wrap_init(fun, params), avals)
+def abstract_eval_fun(fun, *avals, transform_name="", **params):
+  _, avals_out, _ = trace_to_jaxpr_dynamic(lu.wrap_init(fun, params), avals, transform_name)
   assert all(isinstance(aval, AbstractValue) for aval in avals_out)
   return avals_out
 
