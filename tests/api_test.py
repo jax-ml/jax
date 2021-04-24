@@ -2274,8 +2274,6 @@ class APITest(jtu.JaxTestCase):
       f()
 
   def test_xla_computation_zeros_doesnt_device_put(self):
-    raise unittest.SkipTest("broken test")  # TODO(mattjj): fix
-
     with jtu.count_device_put() as count:
       api.xla_computation(lambda: jnp.zeros(3))()
     self.assertEqual(count[0], 0)
