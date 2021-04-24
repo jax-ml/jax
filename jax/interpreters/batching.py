@@ -223,8 +223,10 @@ class BatchTrace(Trace):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
     main = self.main
     def todo(vals):
+      assert len(vals) == len(dims) or len(vals) == len(dims) // 2
+      if len(vals) == len(dims) // 2: assert dims == dims[:len(dims) // 2] * 2
       trace = main.with_cur_sublevel()
-      return map(partial(BatchTracer, trace), vals, dims)
+      return map(partial(BatchTracer, trace), vals, dims[:len(vals)])
     return vals, todo
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees):
@@ -241,7 +243,13 @@ class BatchTrace(Trace):
       out_dims = out_dims[-len(out_vals) % len(out_dims):]
     return [BatchTracer(self, v, d) for v, d in zip(out_vals, out_dims)]
 
-  post_process_custom_vjp_call = post_process_custom_jvp_call
+  def post_process_custom_vjp_call(self, out_tracers, params):
+    vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    main = self.main
+    def todo(vals):
+      trace = main.with_cur_sublevel()
+      return map(partial(BatchTracer, trace), vals, dims[:len(vals)])
+    return vals, todo
 
 class SPMDBatchTrace(BatchTrace):
   pass

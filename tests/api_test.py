@@ -4062,6 +4062,41 @@ class CustomJVPTest(jtu.JaxTestCase):
     shape = grad(lambda x: jnp.sum(f(x)))(jnp.array(1.)).shape
     self.assertEqual(shape, ())
 
+  def test_batching_post_process_bug(self):
+    # regression test, repro by ddjohnson@
+
+    @partial(jax.custom_jvp, nondiff_argnums=(0,))
+    def foo_custom_jvp(kernel_closure, aux_args):
+      return kernel_closure(*aux_args)
+
+    @foo_custom_jvp.defjvp
+    def foo_jvp(kernel_closure, primals, tangents):
+      aux_args, = primals
+      aux_args_dot, = tangents
+      out = foo_custom_jvp(kernel_closure, aux_args)
+      out_dot = kernel_closure(*aux_args_dot)
+      return out, out_dot
+
+    def repro(differentiable_arg, batched_arg):
+
+      def kernel_closure(differentiable_arg):
+        return differentiable_arg * batched_arg
+
+      result, *_ = foo_custom_jvp(kernel_closure, [differentiable_arg])
+      return jnp.mean(result)
+
+    def batched_repro(soft_prediction, samples, batch_size):
+      def go(sample):
+        return repro(soft_prediction, sample)
+      return jnp.mean(jax.vmap(go)(samples))
+
+    @partial(jax.jit)
+    def trigger(soft_prediction, samples):
+      grads = jax.grad(batched_repro)(soft_prediction, samples, batch_size=3)
+      return grads
+
+    trigger(jnp.zeros([8, 10]), jnp.zeros([7, 10], dtype=jnp.int32))  # doesn't crash
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -4943,6 +4978,45 @@ class CustomVJPTest(jtu.JaxTestCase):
     g_c, g_x = api.grad(solve, argnums=(0, 1))(c, x)
     self.assertAllClose(g_c, 42. * jnp.ones(2), check_dtypes=False)
     self.assertAllClose(g_x, 17. * jnp.ones(2), check_dtypes=False)
+
+  def test_batching_post_process_bug(self):
+    # regression test, repro by ddjohnson@
+
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def foo_custom_vjp(kernel_closure, aux_args):
+      return kernel_closure(*aux_args)
+
+    def foo_fwd(kernel_closure, aux_args):
+      out = foo_custom_vjp(kernel_closure, aux_args)
+      # Output must be saved for the error to occur.
+      return (out, 2, 3, 4), (out + 1, 2, 3, 4, 5, 6)
+
+    def foo_bwd(kernel_closure, saved, table_bar):
+      return ([jnp.zeros([8, 10])],)  # dummy
+
+    foo_custom_vjp.defvjp(foo_fwd, foo_bwd)
+
+    def repro(differentiable_arg, batched_arg):
+
+      def kernel_closure(differentiable_arg):
+        # This function closes over batched_arg, which is a batched NDArray;
+        # it then gets nondiff-argnumed into foo_custom_vjp
+        return jnp.exp(differentiable_arg + batched_arg)
+
+      result, *_ = foo_custom_vjp(kernel_closure, [differentiable_arg])
+      return jnp.mean(result)
+
+    def batched_repro(soft_prediction, samples, batch_size):
+      def go(sample):
+        return repro(soft_prediction, sample)
+      return jnp.mean(jax.vmap(go)(samples))
+
+    @partial(jax.jit)
+    def trigger(soft_prediction, samples):
+      grads = jax.grad(batched_repro)(soft_prediction, samples, batch_size=3)
+      return grads
+
+    trigger(jnp.zeros([8, 10]), jnp.zeros([7, 10], dtype=jnp.int32))  # doesn't crash
 
 
 class CustomTransposeTest(jtu.JaxTestCase):
