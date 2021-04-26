@@ -24,6 +24,7 @@ from functools import wraps, partial, partialmethod
 
 from .. import numpy as jnp
 from .. import core
+from .. import config
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg
 from ..tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
@@ -42,7 +43,7 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from .._src.util import (safe_map, safe_zip, HashableFunction,
                          as_hashable_function, unzip2, distributed_debug_log,
-                         tuple_replace)
+                         tuple_insert)
 from .._src.lax.parallel import _axis_index_translation_rule
 
 map, unsafe_map = safe_map, map
@@ -859,15 +860,13 @@ def _batch_trace_update_spmd_axes(
   """Extends spmd in and out axes with the position of the trace's batch dimension."""
   not_mapped = batching.not_mapped
   def insert_spmd_axis(axes, nd):
-    if axes is None:
-      axes = ()
-    too_short = (nd + 1) - len(axes)
+    too_short = nd - len(axes)
     if too_short > 0:
-      axes += ((),) * too_short
-    return tuple_replace(axes, nd, (axis_name,) + axes[nd])
+      axes += (None,) * too_short
+    return tuple_insert(axes, nd, axis_name)
 
   if spmd_in_axes is None:
-    spmd_in_axes = (None,) * len(dims)
+    spmd_in_axes = ((),) * len(dims)
   new_spmd_in_axes = tuple(
     spmd_axes if d is not_mapped else insert_spmd_axis(spmd_axes, d)
     for spmd_axes, d in zip(spmd_in_axes, dims))
@@ -876,7 +875,7 @@ def _batch_trace_update_spmd_axes(
   def new_spmd_out_axes_thunk():
     dims_out = dims_out_thunk()
     if spmd_out_axes_thunk is None:
-      spmd_out_axes = (None,) * len(dims_out)
+      spmd_out_axes = ((),) * len(dims_out)
     else:
       spmd_out_axes = spmd_out_axes_thunk()
     return tuple(
@@ -1106,14 +1105,11 @@ def _xmap_translation_rule_spmd(c, axis_env,
     if flat_extra_axes is None:
       return
     for axes, extra in zip(flat_mesh_axes, flat_extra_axes):
-      if extra is None:
-        continue
-      for dim, dim_extra in enumerate(extra):
-        for dim_extra_axis in reversed(dim_extra):
-          axes[dim_extra_axis] = dim
-          # Not strictly necessary, but it feels right to make the outer partitioning
-          # axes more major to the inner axes. Removing this makes them minor.
-          axes.move_to_end(dim_extra_axis, last=False)
+      for dim, dim_extra_axis in enumerate(extra):
+        if dim_extra_axis is None: continue
+        assert dim_extra_axis not in axes
+        assert config.jax_enable_checks and all(v != dim for v in axes.values())
+        axes[dim_extra_axis] = dim
   add_spmd_axes(mesh_in_axes, spmd_in_axes)
   add_spmd_axes(mesh_out_axes, spmd_out_axes)
   # NOTE: We don't extend the resource env with the mesh shape, because those

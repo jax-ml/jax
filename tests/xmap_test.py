@@ -18,6 +18,7 @@ from contextlib import contextmanager
 import functools
 import itertools as it
 import os
+import re
 import unittest
 from itertools import product, permutations
 from typing import (Tuple, List, NamedTuple, Dict, Generator, Sequence, Set,
@@ -583,6 +584,23 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
       if skipped_name in self._testMethodName:
         raise SkipTest
     super().setUp()
+
+  @with_mesh([('x', 2), ('y', 2), ('z', 2)])
+  def testNestedMeshSPMD(self):
+    h = xmap(lambda y: (jnp.sin(y) * np.arange(y.size), lax.psum(y, ('a', 'b', 'c'))),
+             in_axes={0: 'c'}, out_axes=({1: 'c'}, {}),
+             axis_resources={'c': 'z'})
+    f = xmap(lambda x: h(x * 2),
+             in_axes=[None, 'a', 'b', ...], out_axes=(['a', 'b', ...], {}),
+             axis_resources={'a': 'x', 'b': 'y'})
+    xshape = (8, 2, 4, 5)
+    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    y = f(x)
+    hlo = jax.xla_computation(f)(x).as_hlo_text()
+    match = re.search(r"sharding={devices=\[([0-9,]+)\][0-9,]+}", hlo)
+    self.assertIsNot(match, None)
+    tile_factors = [int(s) for s in match.group(1).split(',')]
+    self.assertEqual(set(tile_factors), {1, 2})
 
 
 class NamedNumPyTest(XMapTestCase):
