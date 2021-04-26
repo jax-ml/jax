@@ -246,7 +246,7 @@ def _is_axes_leaf(entry):
 def _prepare_axes(axes, arg_name):
   entries, treedef = tree_flatten(axes, is_leaf=_is_axes_leaf)
   entries = map(partial(_parse_entry, arg_name), entries)
-  return tree_unflatten(treedef, entries), entries
+  return tree_unflatten(treedef, entries), entries, treedef
 
 
 # TODO: Some syntactic sugar to make the API more usable in a single-axis case?
@@ -430,11 +430,12 @@ def xmap(fun: Callable,
   if in_axes == ():  # Allow empty argument lists
     in_axes, in_axes_entries = (), []
   else:
-    in_axes, in_axes_entries = _prepare_axes(in_axes, "in_axes")
+    in_axes, in_axes_entries, _ = _prepare_axes(in_axes, "in_axes")
   if out_axes == ():
     raise ValueError("xmapped functions cannot have no return values")
   else:
-    out_axes, out_axes_entries = _prepare_axes(out_axes, "out_axes")
+    out_axes, out_axes_entries, out_axes_treedef = _prepare_axes(out_axes, "out_axes")
+    out_axes_entries = tuple(out_axes_entries)  # Make entries hashable
 
   axis_sizes_names = set(axis_sizes.keys())
   in_axes_names = set(it.chain(*(spec.keys() for spec in in_axes_entries)))
@@ -489,14 +490,11 @@ def xmap(fun: Callable,
       donated_invars = (False,) * len(args_flat)
     in_axes_flat = flatten_axes("xmap in_axes", in_tree, in_axes)
 
-    # out_axes_thunk closes over the out_axes, they are flattened here to make
-    # them hashable.
-    out_axes_leaves, out_axes_treedef = tree_flatten(out_axes)
+    # Some pytree containers might be unhashable, so we flatten the out_axes
+    # pytree into a treedef and entries which are guaranteed to be hashable.
     out_axes_thunk = HashableFunction(
-      lambda: tuple(flatten_axes("xmap out_axes", out_tree(),
-                                 tree_unflatten(out_axes_treedef,
-                                                list(out_axes_leaves)))),
-      closure=(tuple(out_axes_leaves), out_axes_treedef))
+      lambda: tuple(flatten_axes("xmap out_axes", out_tree(), out_axes)),
+      closure=(out_axes_entries, out_axes_treedef))
 
     axis_resource_count = _get_axis_resource_count(normalized_axis_resources, resource_env)
     for axis, size in axis_sizes.items():
@@ -758,12 +756,12 @@ def _typecheck_xmap(
   return out_avals
 core.custom_typechecks[xmap_p] = _typecheck_xmap
 
+def show_axes(axes):
+  return ", ".join(sorted([f"`{a}`" for a in axes]))
 
 def _resource_typing_xmap(params,
                           source_info: Optional[source_info_util.Traceback],
                           outer_axis_resources):
-  def show_axes(axes):
-    return ", ".join(sorted([f"`{a}`" for a in axes]))
   axis_resources = params['axis_resources']
   inner_axis_resources = dict(outer_axis_resources)
   inner_axis_resources.update(axis_resources)

@@ -357,6 +357,26 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: with_sharding_constraint(x, spec),
            in_axis_resources=None, out_axis_resources=None)(x)
 
+  @with_mesh([('x', 2), ('y', 1)])
+  def testRepeatedInResources(self):
+    x = jnp.arange(2)
+    for spec in [P('x', 'x'), P('x', ('y', 'x'))]:
+      error = (r"A single in_axis_resources specification can map every mesh "
+               r"axis to at most one positional dimension, but " +
+               spec_regex(spec) + " has duplicate entries for `x`")
+      with self.assertRaisesRegex(ValueError, error):
+        pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
+
+  @with_mesh([('x', 2), ('y', 1)])
+  def testRepeatedOutResources(self):
+    x = jnp.arange(2)
+    for spec in [P('x', 'x'), P('x', ('y', 'x'))]:
+      error = (r"A single out_axis_resources specification can map every mesh "
+               r"axis to at most one positional dimension, but " +
+               spec_regex(spec) + " has duplicate entries for `x`")
+      with self.assertRaisesRegex(ValueError, error):
+        pjit(lambda x: x, in_axis_resources=None, out_axis_resources=spec)(x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

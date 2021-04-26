@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import numpy as np
-from collections import OrderedDict
-from typing import (Callable, Optional, Sequence, Tuple, Union)
+from collections import OrderedDict, Counter
+from typing import Callable, Sequence, Tuple, Union
 from warnings import warn
+import itertools as it
 
 from . import maps
+from . import PartitionSpec
 from .. import core
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg
@@ -53,6 +55,12 @@ def pjit(fun: Callable,
     in_axis_resources = tuple(in_axis_resources)
   if isinstance(out_axis_resources, list):
     out_axis_resources = tuple(out_axis_resources)
+
+  in_axis_resources, in_axis_resources_entries, _ = \
+      _prepare_axis_resources(in_axis_resources, "in_axis_resources")
+  out_axis_resources, out_axis_resources_entries, out_axis_treedef = \
+      _prepare_axis_resources(out_axis_resources, "out_axis_resources")
+  out_axis_resources_entries = tuple(out_axis_resources_entries)
 
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
@@ -90,7 +98,7 @@ def pjit(fun: Callable,
     out_axis_resources_thunk = HashableFunction(
         lambda: tuple(flatten_axes("pjit out_axis_resources", out_tree(),
                                    out_axis_resources)),
-        closure=out_axis_resources)
+        closure=(out_axis_resources_entries, out_axis_treedef))
     _check_shapes_against_resources("pjit arguments", resource_env,
                                     args_flat, in_axis_resources_flat)
     flat_fun = _check_output_shapes(flat_fun, resource_env,
@@ -108,6 +116,72 @@ def pjit(fun: Callable,
 
   return wrapped
 
+class ParsedPartitionSpec:
+  def __init__(self, user_spec, partitions):
+    self.partitions = tuple(partitions)
+    self.user_spec = user_spec
+
+  @classmethod
+  def from_user_input(cls, entry, arg_name):
+    if entry is None:
+      return cls(entry, ())
+    if not isinstance(entry, PartitionSpec):
+      raise TypeError(f"{arg_name} are expected to be "
+                      f"PartitionSpec instances or None, but got {entry}")
+    axis_specs = []
+    for axis_spec in entry:
+      if axis_spec is None:
+        axis_spec = ()
+      elif isinstance(axis_spec, (list, tuple)):
+        axis_spec = tuple(axis_spec)
+      else:
+        axis_spec = (axis_spec,)
+      axis_specs.append(axis_spec)
+    return cls(entry, axis_specs)
+
+  def __hash__(self):
+    return hash(self.partitions)
+
+  def __eq__(self, other):
+    return (self.partitions, self.user_spec) == (other.partitions, other.user_spec)
+
+  def __str__(self):
+    return str(self.user_spec)
+
+  def __len__(self):
+    return len(self.partitions)
+
+  def __getitem__(self, i):
+    return self.partitions[i]
+
+  def __iter__(self):
+    return iter(self.partitions)
+
+REPLICATED = ParsedPartitionSpec(None, ())
+
+
+def _prepare_axis_resources(axis_resources, arg_name):
+  if axis_resources is None:
+    return REPLICATED, [REPLICATED], tree_flatten(None)[1]
+  # PyTrees don't treat None values as leaves, so we explicitly need
+  # to explicitly declare them as such
+  entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
+  what = f"{arg_name} leaf specifications"
+  entries = [ParsedPartitionSpec.from_user_input(entry, what) for entry in entries]
+  _check_unique_resources(entries, arg_name)
+  return tree_unflatten(treedef, entries), entries, treedef
+
+def _check_unique_resources(axis_resources, arg_name):
+  for arg_axis_resources in axis_resources:
+    if not arg_axis_resources: continue
+    resource_counts = Counter(it.chain.from_iterable(arg_axis_resources))
+    if resource_counts.most_common(1)[0][1] > 1:
+      multiple_uses = [r for r, c in resource_counts.items() if c > 1]
+      if multiple_uses:
+        raise ValueError(f"A single {arg_name} specification can map every mesh axis "
+                         f"to at most one positional dimension, but {arg_axis_resources} "
+                         f"has duplicate entries for {maps.show_axes(multiple_uses)}")
+
 @lu.transformation
 def _check_output_shapes(resource_env, out_axis_resources_thunk, *args, **kwargs):
   outputs = yield (args, kwargs)
@@ -117,31 +191,24 @@ def _check_output_shapes(resource_env, out_axis_resources_thunk, *args, **kwargs
 def _check_shapes_against_resources(what: str, resource_env, flat_avals, flat_axis_resources):
   resource_sizes = resource_env.local_shape
   for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
-    if aval_axis_resources is None:
-      continue
     shape = aval.shape
     if len(shape) < len(aval_axis_resources):
       raise ValueError(f"One of {what} was given the resource assignment "
-                       f"of {aval_axis_resources}, which implies that it has "
-                       f"a rank of at least {len(aval_axis_resources)}, but "
-                       f"it is {len(shape)}")
+                       f"of {aval_axis_resources}, which implies that "
+                       f"it has a rank of at least {len(aval_axis_resources)}, "
+                       f"but it is {len(shape)}")
     for i, axis_resources in enumerate(aval_axis_resources):
-      if axis_resources is None:
-        continue
       try:
-        if isinstance(axis_resources, (list, tuple)):
-          size = int(np.prod([resource_sizes[resource] for resource in axis_resources], dtype=np.int64))
-        else:
-          size = resource_sizes[axis_resources]
+        size = int(np.prod([resource_sizes[resource] for resource in axis_resources], dtype=np.int64))
       except KeyError as e:
         raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources}, but resource axis {e.args[0]} "
-                         f"is undefined. Did you forget to declare the mesh?")
+                         f"of {aval_axis_resources}, but resource axis "
+                         f"{e.args[0]} is undefined. Did you forget to declare the mesh?")
       if shape[i] % size != 0:
         raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources}, which implies that the size of "
-                         f"its dimension {i} should be divisible by {size}, but it "
-                         f"is equal to {shape[i]}")
+                         f"of {aval_axis_resources}, which implies that "
+                         f"the size of its dimension {i} should be divisible by "
+                         f"{size}, but it is equal to {shape[i]}")
 
 def _pjit_call_impl(fun: lu.WrappedFun, *args, in_axis_resources,
                     out_axis_resources_thunk, resource_env, donated_invars,
@@ -159,16 +226,11 @@ def _pjit_call_impl(fun: lu.WrappedFun, *args, in_axis_resources,
 pjit_call_p = core.CallPrimitive("pjit_call")
 pjit_call_p.def_impl(_pjit_call_impl)
 
-# None indicates unpartitioned dimension
-ArrayAxisPartitioning = Optional[Union[pxla.MeshAxisName, Tuple[pxla.MeshAxisName, ...]]]
-# None indicates fully replicated array value
-ArrayPartitioning = Optional[Tuple[ArrayAxisPartitioning, ...]]
-
 @lu.cache
 def _pjit_callable(
     fun: lu.WrappedFun,
-    in_axis_resources: Tuple[ArrayPartitioning, ...],
-    out_axis_resources_thunk: Callable[[], Tuple[ArrayPartitioning, ...]],
+    in_axis_resources: Tuple[ParsedPartitionSpec, ...],
+    out_axis_resources_thunk: Callable[[], Tuple[ParsedPartitionSpec, ...]],
     resource_env,
     donated_invars,
     name: str,
@@ -216,14 +278,15 @@ def _pjit_partial_eval_update_params(params, in_unknowns):
   if not in_unknowns and donated_invars:
     # JaxprTrace.post_process_call creates a call with no input tracers
     new_donated_invars = (False,) * len(call_jaxpr.invars)
-    new_in_axis_resources = (None,) * len(call_jaxpr.invars)
+    new_in_axis_resources = (REPLICATED,) * len(call_jaxpr.invars)
   else:
     # JaxprTrace.process_call drops known input tracers and prepends constants
     num_consts = len(call_jaxpr.invars) - len(donated_invars)
     def filter_unknown(l):
       return tuple(x for x, uk in zip(l, in_unknowns) if uk)
     new_donated_invars = (False,) * num_consts + filter_unknown(donated_invars)
-    new_in_axis_resources = (None,) * num_consts + filter_unknown(in_axis_resources)
+    new_in_axis_resources = ((REPLICATED,) * num_consts +
+                             filter_unknown(in_axis_resources))
   new_out_axis_resources = out_axis_resources_thunk()
   new_params = dict(params,
                     donated_invars=new_donated_invars,
@@ -264,9 +327,10 @@ core.initial_to_final_param_rules[pjit_call_p] = _pjit_init_to_final_params
 
 def with_sharding_constraint(x, axis_resources):
   x_flat, tree = tree_flatten(x)
+  parsed_axis_resources, entries, _ = _prepare_axis_resources(axis_resources, "axis_resources")
   axis_resources_flat = tuple(
       flatten_axes("with_sharding_constraint axis_resources",
-                   tree, axis_resources))
+                   tree, parsed_axis_resources))
   resource_env = maps.thread_resources.env
   _check_shapes_against_resources(
       "with_sharding_constraint arguments",
@@ -296,21 +360,10 @@ xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
 
 # -------------------- helpers --------------------
 
-def get_array_mapping(axis_resources: ArrayPartitioning) -> pxla.ArrayMapping:
-  if axis_resources is None:
-    return OrderedDict()
-  return OrderedDict(entry
-                     for i, axis_or_axes in enumerate(axis_resources)
-                     for entry in _array_mapping_entries(axis_or_axes, i))
-
-def _array_mapping_entries(partitioning: ArrayAxisPartitioning, i: int):
-  if partitioning is None:
-    return
-  if not isinstance(partitioning, (list, tuple)):
-    yield (partitioning, i)
-  else:
-    for axis in partitioning:
-      yield (axis, i)
+def get_array_mapping(axis_resources: ParsedPartitionSpec) -> pxla.ArrayMapping:
+  return OrderedDict((axis, i)
+                     for i, axes in enumerate(axis_resources)
+                     for axis in axes)
 
 def get_sharding_proto(c, xla_op, axis_resources, mesh):
   xla_shape = c.GetShape(xla_op)
