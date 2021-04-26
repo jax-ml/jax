@@ -558,7 +558,6 @@ def _reduction_with_positional_batcher(prim, vals_in, dims_in, axis_index_groups
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap collectives. "
                               "Please open a feature request!")
-  # TODO: Transpose all dims to 0, increment all axes
   vals_in = [val if d is batching.not_mapped or d == 0 else _moveaxis(d, 0, val)
              for val, d in zip(vals_in, dims_in)]
   mapped_vals_in, unmapped_vals_in = partitioned_vals_in = [], []
@@ -581,6 +580,7 @@ def _reduction_with_positional_batcher(prim, vals_in, dims_in, axis_index_groups
   return vals_out
 
 def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
+  assert prim.multiple_results
   if not any(isinstance(axis, int) for axis in axes):
     return prim.bind(*vals_in, axes=axes, axis_index_groups=axis_index_groups), dims_in
   vals_out = _reduction_with_positional_batcher(
@@ -589,13 +589,20 @@ def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
       lambda d, d_vals_in: (tuple(axis + (axis >= d) if isinstance(axis, int) else axis
                                   for axis in axes),
                             d_vals_in))
-  return vals_out, dims_in
+  # _reduction_with_positional_batcher moves all map dims to 0
+  return vals_out, [d if d is batching.not_mapped else 0 for d in dims_in]
 
 def _batched_reduction_collective(
     prim, if_unmapped, frame, vals_in, dims_in, axes,
     axis_index_groups):
   assert prim.multiple_results
   assert frame.name in axes
+  # Note that we have a choice here. We can either unfuse the reduction into one
+  # that handles the batched dims and then another one that handles the rest.
+  # Alternatively, we can keep the dimension reduction fused with the rest, but
+  # we have to split the primitive into one for unmapped inputs and another
+  # one for mapped, because they differ in their `axes` parameter.
+  # We choose the second strategy here.
   vals_out = _reduction_with_positional_batcher(
       prim, vals_in, dims_in, axis_index_groups,
       lambda d, d_vals_in: (tuple(axis for axis in axes if axis != frame.name),
