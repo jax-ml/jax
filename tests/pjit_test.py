@@ -248,6 +248,21 @@ class PJitTest(jtu.BufferDonationTestCase):
     r, = f_eval(x, y)
     self.assertAllClose(r, x.sum() + jnp.sin(y))
 
+  @with_mesh([('x', 2)])
+  def testNonArrayArg(self):
+    self.assertEqual(pjit(lambda x: x + 2,
+                          in_axis_resources=None,
+                          out_axis_resources=None)(1), 3)
+
+  @with_mesh([('x', 2)])
+  def testGradOfConstraint(self):
+    # Make sure that we can compute grads through sharding constraints
+    h = lambda x: jnp.sin(with_sharding_constraint(x, P('x'))).sum()
+    f = pjit(lambda x: jax.grad(h)(x),
+             in_axis_resources=None, out_axis_resources=None)
+    x = jnp.arange(8, dtype=jnp.float32)
+    self.assertAllClose(f(x), jnp.cos(x))
+
   # TODO(skye): add more unit tests once API is more finalized
 
 @curry

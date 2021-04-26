@@ -188,10 +188,10 @@ def _check_output_shapes(resource_env, out_axis_resources_thunk, *args, **kwargs
   _check_shapes_against_resources("pjit outputs", resource_env, outputs, out_axis_resources_thunk())
   yield outputs
 
-def _check_shapes_against_resources(what: str, resource_env, flat_avals, flat_axis_resources):
+def _check_shapes_against_resources(what: str, resource_env, flat_vals, flat_axis_resources):
   resource_sizes = resource_env.local_shape
-  for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
-    shape = aval.shape
+  for val, aval_axis_resources in zip(flat_vals, flat_axis_resources):
+    shape = core.get_aval(val).shape
     if len(shape) < len(aval_axis_resources):
       raise ValueError(f"One of {what} was given the resource assignment "
                        f"of {aval_axis_resources}, which implies that "
@@ -355,7 +355,8 @@ sharding_constraint_p.def_impl(_sharding_constraint_impl)
 sharding_constraint_p.def_abstract_eval(lambda x, **unused: x)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, axis_resources, resource_env: (
-                  with_sharding_constraint(ct, axis_resources),))
+                  sharding_constraint_p.bind(
+                      ct, axis_resources=axis_resources, resource_env=resource_env),))
 xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
 
 # -------------------- helpers --------------------
