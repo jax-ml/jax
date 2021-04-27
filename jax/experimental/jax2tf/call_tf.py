@@ -226,7 +226,6 @@ def _call_tf_translation_rule(builder, *args_op, func_tf,
         assert next_var_idx < len(func_tf_concrete.variables)
         # TODO(necula): better checking that we are picking the right variable
         var = func_tf_concrete.variables[next_var_idx]
-        assert inp.shape == var.shape
         next_var_idx += 1
         inp_const = np.asarray(var)
       else:
