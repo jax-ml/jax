@@ -265,9 +265,11 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
   out_nodes = xla.jaxpr_subcomp(
       subc, call_jaxpr, backend, axis_env, (),
       extend_name_stack(name_stack, wrap_name(name, "pjit")), *args)
-  out_nodes = [xb.set_sharding_proto(subc, out,
-                                     get_sharding_proto(c, n, axis_resources, mesh))
-               for out, axis_resources in safe_zip(out_nodes, out_axis_resources)]
+  out_nodes = [
+      xb.set_sharding_proto(subc, out,
+                            get_sharding_proto(subc, out, axis_resources, mesh))
+      for out, axis_resources in safe_zip(out_nodes, out_axis_resources)
+  ]
 
   subc = subc.build(xops.Tuple(subc, out_nodes))
   return xops.Call(c, subc, list(in_nodes))
@@ -405,7 +407,11 @@ def get_array_mapping(axis_resources: ParsedPartitionSpec) -> pxla.ArrayMapping:
 
 def get_sharding_proto(c, xla_op, axis_resources, mesh):
   xla_shape = c.GetShape(xla_op)
-  aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.element_type())
+  if xla_shape.is_token():
+    aval = core.abstract_token
+    assert axis_resources is REPLICATED
+  else:
+    aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.element_type())
   array_mapping = get_array_mapping(axis_resources)
   sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(
       aval, array_mapping)

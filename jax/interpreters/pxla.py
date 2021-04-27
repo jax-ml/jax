@@ -1585,8 +1585,11 @@ def mesh_sharding_specs(axis_sizes, axis_names):
   mesh_axis_pos = {name: i for i, name in enumerate(axis_names)}
   # NOTE: This takes in the non-sharded avals!
   def mk_sharding_spec(aval, aval_axes):
-    sharding = [_UNSHARDED_INSTANCE] * len(aval.shape)
     mesh_mapping = [Replicated(axis_size) for axis_size in axis_sizes.values()]
+    if aval is core.abstract_token:
+      assert not aval_axes
+      return ShardingSpec([], mesh_mapping)
+    sharding = [_UNSHARDED_INSTANCE] * len(aval.shape)
     next_sharded_axis = 0
     aval_shape = list(aval.shape)
     # NOTE: sorted is stable, which is important when multiple resources

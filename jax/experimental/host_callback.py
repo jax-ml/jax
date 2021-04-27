@@ -173,11 +173,14 @@ following function definition::
 
   def power3(x):
      y = x * x
+     # Print both 'x' and 'x^2'
      _, y = id_print((x, y), what="x,x^2")  # Must pack multiple arguments
      return y * x
 
   power3(3.)
-  # what: x,x^2 : [3., 9.]
+  # what: x,x^2 : (3., 9.)
+
+(You can see these examples tested in `host_callback_test.HostCallbackIdTapTest.test_tap_transforms`.)
 
 During JAX transformations the special parameter ``transforms`` is added to
 contain a list of transformation descriptors in the form
@@ -189,15 +192,14 @@ batched dimensions (one entry per argument, ``None`` denotes an argument that
 was broadcast)::
 
   jax.vmap(power3)(np.arange(3.))
-  # transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2 : [[0, 1, 2], [0, 1,
-  4]]
+  # transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2 : ([0, 1, 2], [0, 1,
+  4])
 
-For :func:`jax.jvp` there will be two callbacks, one with the values of
-the primals and one with the tangents::
+For :func:`jax.jvp` there will be one callback with a pair, consisting of
+the values of the primals and those of the tangents::
 
   jax.jvp(power3, (3.,), (0.1,))
-  # what: x,x^2: [3., 9.]
-  # transforms: ['jvp'] what: x,x^2 : [0.1, 0.6]
+  # transforms: ['jvp'] what: x,x^2 : ( (3., 9.), (0.1, 0.6) )
 
 For :func:`jax.vjp` or :func:`jax.grad` there will be one callback with the
 values of the adjoints for the arguments. You may also see a callback with
@@ -205,19 +207,48 @@ the values of the primals from the forward pass, if those values are needed for
 the backward pass::
 
   jax.grad(power3)(3.)
-  # what=x,x^2: [3., 9.]  # from forward pass, since y is used in backward pass
-  # transforms: ['jvp', 'transpose'] what: x,x^2 : [0., 3.]  # from backward pass, adjoints of _, y
+  # what=x,x^2: (3., 9.)  # from forward pass, since y is used in backward pass
+  # transforms: ['jvp', 'transpose'] what: x,x^2 : (0., 3.)  # from backward pass, adjoints of _, y
+
+And here is an example of composed transforms. For vmap of grad, we see first
+a callback with the vmap of the forward pass (with just the 'batch' transform),
+and another callback with the vmap of the adjoints of the arguments. Note that
+the first argument is replicated (`batch_dims` is None)::
+
+  jax.vmap(jax.grad(power3))(np.array([2., 3.]))
+  # transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2
+  #    ( [2. 3.]
+  #      [4. 9.] )
+  # transforms: ['jvp', 'transpose', ('batch', {'batch_dims': (None, 0)})] what: x,x^2
+  #    ( 0.
+  #      [2. 3.] )
 
 In presence of :func:`jax.pmap` the code will run on multiple devices and
 each device will tap its values independently.
 It may be helpful to use the ``tap_with_device`` option for :func:`id_print`
 or :func:`id_tap`, so that you see which device is sending which data::
 
-  jax.pmap(power3, devices=jax.devices()[0:2])(np.array([3., 4.])
-  # device=cpu:0 what=x,x^2: [3., 9.]  # from the first device
-  # device=cpu:1 what=x,x^2: [4., 16.]  # from the second device
+  jax.pmap(power3, devices=jax.local_devices()[:2])(np.array([3., 4.])
+  # device=cpu:0 what=x,x^2: (3., 9.)  # from the first device
+  # device=cpu:1 what=x,x^2: (4., 16.)  # from the second device
 
-See documentation for :func:`id_tap` and :func:`id_print`.
+
+When using the experimental :func:`pjit.pjit` the code will run on multiple
+devices on different shards of the input. The current implementation of
+host callbacks will ensure that a single device will collect and outfeed
+the entire operand, in a single callback. The callback function is supposed
+to return the entire array, which will then be sent in a single infeed to the
+same device that issued the outfeed. This device is then responsible for
+sending the required shards to the other devices::
+
+  with maps.mesh(jax.local_devices()[:2], ["d"]):
+    pjit.pjit(power3, in_axis_resources=(P("d"),),
+              out_axis_resources=(P("d"),))(np.array([3., 4.]))
+
+  # device=TPU:0 what=x,x^2: ( [3., 4.],
+  #                            [9., 16.] )
+
+See documentation for :func:`id_tap`, :func:`id_print`, and :func:`call`.
 For more usage example, see tests/host_callback_test.py.
 
 Low-level details and debugging
@@ -354,7 +385,9 @@ from jax.config import config
 from jax import custom_derivatives
 from jax._src import dtypes
 from jax import lax
+from jax.experimental import pjit
 from jax.lib import pytree
+from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.lib import xla_extension
 from jax.interpreters import ad, xla, batching, masking, pxla
@@ -780,7 +813,7 @@ outside_call_p.def_impl(_outside_call_impl)
 def _outside_call_translation_rule(
     comp: XlaComputationBuilder, *args_op: XlaOp, **params):
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
-  assert params["has_token"]
+  assert params["has_token"]  # type: ignore[key-error]
   current_token = args_op[-2]
   current_itoken = args_op[-1]
   # TODO: expose shape.is_token
@@ -790,8 +823,9 @@ def _outside_call_translation_rule(
       "The last two arguments must be tokens")
 
   args_to_outfeed = args_op[:-2]
-  identity = params["identity"]
-  flat_results_aval = params["flat_results_aval"] if not identity else []
+  identity = params["identity"]  # type: ignore[key-error]
+  flat_results_aval = params["flat_results_aval"] if not identity else [
+  ]  # type: ignore[key-error]
   # Many platforms refuse to infeed empty arrays. We generate constants
   # instead.
   non_empty_flat_results_aval = list(filter(lambda aval: not (_aval_is_empty(aval)),
@@ -814,14 +848,36 @@ def _outside_call_translation_rule(
     ]
     if non_empty_flat_results_aval:
       after_outfeed_itoken = xops.AfterAll(comp, [current_itoken, next_token])
+      # We shard the infeed as AssignedDevice(0). This must match the
+      # outfeed (from outfeed_receiver.cc). Since `lax.infeed` does not support
+      # this kind of sharding, we use a custom translation for infeed.
+      array_sharding_proto = xla_client.OpSharding()
+      array_sharding_proto.type = xla_client.OpSharding.Type.MAXIMAL
+      array_sharding_proto.tile_assignment_dimensions = [1]
+      array_sharding_proto.tile_assignment_devices = [0]
 
-      results_and_token = xla.translations[lax.infeed_p](comp, after_outfeed_itoken,
-                                                         shapes=non_empty_flat_results_aval,
-                                                         partitions=None)
+      token_sharding_proto = xla_client.OpSharding()
+      token_sharding_proto.type = xla_client.OpSharding.Type.REPLICATED
+      infeed_sharding_proto = xb.tuple_sharding_proto(
+          [array_sharding_proto] * len(non_empty_flat_results_aval) +
+          [token_sharding_proto])
+
+      shape = tuple(shape.with_major_to_minor_layout_if_absent()
+                    for x in non_empty_flat_results_aval
+                    for shape in xla.aval_to_xla_shapes(x))
+
+      build_infeed = functools.partial(xops.InfeedWithToken,
+                                       after_outfeed_itoken,
+                                       xla_client.Shape.tuple_shape(shape))
+      outs_and_token = xb.with_sharding_proto(comp, infeed_sharding_proto,
+                                              build_infeed)
+      outs = xops.GetTupleElement(outs_and_token, 0)
+      next_itoken = xops.GetTupleElement(outs_and_token, 1)
+      non_empty_results = [
+          xops.GetTupleElement(outs, i)
+          for i in range(len(non_empty_flat_results_aval))
+      ]
       expecting_infeed = True
-      next_itoken = xops.GetTupleElement(results_and_token, len(non_empty_flat_results_aval))
-      non_empty_results = [xops.GetTupleElement(results_and_token, i)
-                           for i in range(len(non_empty_flat_results_aval))]
       results = [
           empty_results.pop(0) if _aval_is_empty(result_aval) else non_empty_results.pop(0)
           for result_aval in flat_results_aval]
@@ -889,7 +945,10 @@ def _outside_call_run_callback(
 
       canonical_flat_results = tuple(util.safe_map(xla.canonicalize_dtype, actual_flat_results))
       actual_flat_results_aval = _values_to_avals(canonical_flat_results)
-      logging.vlog(2, f"Outside call consumer {callback} result {res} : {flat_results_aval}. Sending to infeed.")
+      logging.vlog(
+          2,
+          f"Outside call consumer {callback} result {res} : {flat_results_aval}. Sending to infeed for device {device}."
+      )
 
       if not all(ea.strip_weak_type() == ra.strip_weak_type()
                  for ea, ra in util.safe_zip(flat_results_aval,
@@ -1318,13 +1377,26 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
     eqns.append(
         core.new_jaxpr_eqn(
             eqn.invars + [input_token_var, input_itoken_var],
-            eqn.outvars + [output_token_var, output_itoken_var],
-            eqn.primitive,
+            eqn.outvars + [output_token_var, output_itoken_var], eqn.primitive,
             dict(
                 eqn.params,
                 call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
-            ),
-            eqn.source_info))
+            ), eqn.source_info))
+  elif eqn.primitive is pjit.pjit_call_p:
+    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
+    eqns.append(
+        core.new_jaxpr_eqn(
+            eqn.invars + [input_token_var, input_itoken_var],
+            eqn.outvars + [output_token_var, output_itoken_var], eqn.primitive,
+            dict(
+                eqn.params,
+                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
+                donated_invars=eqn.params["donated_invars"] + (False, False),
+                in_axis_resources=(eqn.params["in_axis_resources"] +
+                                   (pjit.REPLICATED, pjit.REPLICATED)),
+                out_axis_resources=(eqn.params["out_axis_resources"] +
+                                    (pjit.REPLICATED, pjit.REPLICATED)),
+            ), eqn.source_info))
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
 

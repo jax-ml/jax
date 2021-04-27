@@ -14,6 +14,7 @@
 
 from contextlib import contextmanager
 from functools import partial
+import logging
 from typing import Generator, List, Tuple
 from unittest import SkipTest
 
@@ -25,6 +26,7 @@ import jax
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax.errors import JAXTypeError
+from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap, mesh
@@ -277,6 +279,75 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(f(x), jnp.cos(x))
 
   # TODO(skye): add more unit tests once API is more finalized
+
+  def testInfeed(self):
+    devices = np.array(jax.local_devices())
+    nr_devices = len(devices)
+    shape = (nr_devices * 3, nr_devices * 5)
+
+    def f_for_jit(x):
+      token = lax.create_token(x)
+      (y,), token = lax.infeed(
+          token, shape=(jax.ShapedArray(x.shape, np.float32),))
+      (z,), token = lax.infeed(
+          token, shape=(jax.ShapedArray(x.shape, np.float32),))
+      (w,), token = lax.infeed(
+          token, shape=(jax.ShapedArray(x.shape, np.float32),))
+
+      return x + y + z + w
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+
+    # JIT
+    logging.info('Making jit call')
+    res0 = jax.jit(f_for_jit)(x)
+    y = x * 2.
+    z = x * 3.
+    w = x * 4.
+
+    logging.info('Transfering to infeed for the jit call')
+    d = devices[0]
+    d.transfer_to_infeed((y,))
+    d.transfer_to_infeed((z,))
+    d.transfer_to_infeed((w,))
+    self.assertAllClose(res0, x + y + z + w, check_dtypes=True)
+
+    # PJIT
+    def f_for_pjit(x):
+      token = lax.create_token(x)
+      # A replicated infeed
+      (y,), token = lax.infeed(
+          token,
+          shape=(jax.ShapedArray(x.shape, np.float32),),
+          partitions=(None,))
+      # An infeed sharded on first axis
+      (z,), token = lax.infeed(
+          token,
+          shape=(jax.ShapedArray(x.shape, np.float32),),
+          partitions=(P(nr_devices, 1),))
+      # An infeed sharded on second axis
+      (w,), token = lax.infeed(
+          token,
+          shape=(jax.ShapedArray(x.shape, np.float32),),
+          partitions=(P(1, nr_devices),))
+      return x + y + z + w
+
+    with mesh(devices, ['d']):
+      logging.info('Making pjit call')
+      res = pjit(
+          f_for_pjit, in_axis_resources=(P('d'),), out_axis_resources=P('d'))(
+              x)
+
+    logging.info('Transfering to infeed for the pjit call')
+    for didx, d in enumerate(devices):
+      # Transfer the whole array to all devices for replicated.
+      d.transfer_to_infeed((y,))
+      # For sharded infeed, transfer only the needed slices to each device.
+      d.transfer_to_infeed((z[3 * didx:3 * didx + 3, :]))
+      d.transfer_to_infeed((w[:, 5 * didx:5 * didx + 5],))
+
+    self.assertAllClose(res0, res, check_dtypes=True)
+
 
 @curry
 def check_1d_2d_mesh(f, set_mesh):
