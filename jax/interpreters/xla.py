@@ -651,6 +651,12 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args, transform_name="jit")
   if any(isinstance(c, core.Tracer) for c in consts):
     raise core.UnexpectedTracerError("Encountered an unexpected tracer.")
+  jaxpr, keep_const_idx, keep_var_idx = _prune_unused_inputs(jaxpr)
+  consts = [c for i, c in enumerate(consts) if i in keep_const_idx]
+  pruned_arg_specs = (a for i, a in enumerate(arg_specs) if i in keep_var_idx)
+  abstract_args, arg_devices = unzip2(pruned_arg_specs)
+  donated_invars = [x for i, x in enumerate(donated_invars) if i in
+                    keep_var_idx]
   map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
   jaxpr = apply_outfeed_rewriter(jaxpr)
 
@@ -663,7 +669,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
-    return partial(_execute_trivial, jaxpr, device, consts, out_avals, result_handlers)
+    return partial(_execute_trivial, jaxpr, device, consts, out_avals, result_handlers, keep_var_idx)
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -714,9 +720,11 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   options.parameter_is_tupled_arguments = tuple_args
   compiled = backend_compile(backend, built, options)
   if nreps == 1:
-    return partial(_execute_compiled, compiled, out_avals, result_handlers)
+    return partial(_execute_compiled, compiled, out_avals, result_handlers,
+                   keep_var_idx)
   else:
-    return partial(_execute_replicated, compiled, out_avals, result_handlers)
+    return partial(_execute_replicated, compiled, out_avals, result_handlers,
+                   keep_var_idx)
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
   """Configures input/output "must" aliasing based on `donated_args`."""
@@ -745,6 +753,21 @@ def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
       c.setup_alias(output_index, param_number, param_index)
 
   return tuple(out_donated_args)
+
+def _prune_unused_inputs(jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, Set[int], Set[int]]:
+  used = {v for v in jaxpr.outvars if isinstance(v, core.Var)}
+  new_eqns = []
+  for eqn in jaxpr.eqns[::-1]:
+    if set(eqn.outvars) & used:
+      new_eqns.append(eqn)
+      used.update(v for v in eqn.invars if isinstance(v, core.Var))
+  new_eqns = new_eqns[::-1]
+  keep_const_idx, new_constvars = unzip2(
+      (i, v) for i, v in enumerate(jaxpr.constvars) if v in used)
+  keep_var_idx, new_invars = unzip2(
+      (i, v) for i, v in enumerate(jaxpr.invars) if v in used)
+  new_jaxpr = core.Jaxpr(new_constvars, new_invars, jaxpr.outvars, new_eqns)
+  return new_jaxpr, set(keep_const_idx), set(keep_var_idx)
 
 def _xla_callable_device(nreps, backend, device, arg_devices):
   if nreps > 1:
@@ -823,16 +846,20 @@ def _xla_param(builder, param_num, xla_shape, replicated, partitions, parts_prot
   else:
     return with_sharding(builder, partitions, make_param)
 
-def _execute_compiled(compiled: XlaExecutable, avals, handlers, *args):
+def _execute_compiled(compiled: XlaExecutable, avals, handlers, keep_var_idx, *args):
   device, = compiled.local_devices()
-  input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
+  input_bufs = list(it.chain.from_iterable(device_put(x, device) for i, x in
+                                           enumerate(args) if x is not token and
+                                           i in keep_var_idx))
   out_bufs = compiled.execute(input_bufs)
   check_special(xla_call_p.name, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
-def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
+def _execute_replicated(compiled: XlaExecutable, avals, handlers, keep_var_idx, *args):
   input_bufs = [
-      list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
+      list(it.chain.from_iterable(device_put(x, device) for i, x in
+                                  enumerate(args) if x is not token and i in
+                                  keep_var_idx))
       for device in compiled.local_devices()]
   out_bufs = [
       buf[0] for buf in compiled.execute_sharded_on_local_devices(
@@ -841,9 +868,10 @@ def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
   check_special(xla_call_p.name, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
-def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers, *args):
+def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers, keep_var_idx, *args):
   env = {core.unitvar: core.unit}
-  map(env.setdefault, jaxpr.invars, args)
+  pruned_args = (x for i, x in enumerate(args) if i in keep_var_idx)
+  map(env.setdefault, jaxpr.invars, pruned_args)
   map(env.setdefault, jaxpr.constvars, consts)
   outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
           for v in jaxpr.outvars]

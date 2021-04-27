@@ -625,6 +625,14 @@ class PythonJitTest(CPPJitTest):
   def jit(self):
     return api._python_jit
 
+  def test_jit_with_pruned_inputs(self):
+    def f(x, y):
+      x + jnp.array([5])
+      return y + jnp.array([2])
+
+    f_pruned = self.jit(f)
+    np.testing.assert_allclose(f_pruned(2, 3), 5)
+
 
 class APITest(jtu.JaxTestCase):
 
