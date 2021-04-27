@@ -1111,7 +1111,7 @@ def _xmap_translation_rule_spmd(c, axis_env,
       for dim, dim_extra_axis in enumerate(extra):
         if dim_extra_axis is None: continue
         assert dim_extra_axis not in axes
-        assert config.jax_enable_checks and all(v != dim for v in axes.values())
+        assert not config.jax_enable_checks or all(v != dim for v in axes.values())
         axes[dim_extra_axis] = dim
   add_spmd_axes(mesh_in_axes, spmd_in_axes)
   add_spmd_axes(mesh_out_axes, spmd_out_axes)
