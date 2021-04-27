@@ -575,10 +575,11 @@ def make_xmap_callable(fun: lu.WrappedFun,
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
   out_axes = out_axes_thunk()
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
-  _resource_typing_xmap(dict(axis_resources=axis_resources,
-                             out_axes=out_axes,
-                             call_jaxpr=jaxpr,
-                             name=name),
+  # NOTE: We don't use avals and all params, so only pass in the relevant parts (too lazy...)
+  _resource_typing_xmap([], dict(axis_resources=axis_resources,
+                                 out_axes=out_axes,
+                                 call_jaxpr=jaxpr,
+                                 name=name),
                         None, {})
   jaxpr = plan.subst_axes_with_resources(jaxpr)
 
@@ -601,7 +602,8 @@ def make_xmap_callable(fun: lu.WrappedFun,
                               donated_invars,
                               EXPERIMENTAL_SPMD_LOWERING,
                               *in_avals,
-                              tile_by_mesh_axes=True)
+                              tile_by_mesh_axes=True,
+                              do_resource_typecheck=None)
   else:
     return xla._xla_callable(f, None, backend, name, donated_invars,
                              *((a, None) for a in in_avals))
@@ -760,7 +762,8 @@ core.custom_typechecks[xmap_p] = _typecheck_xmap
 def show_axes(axes):
   return ", ".join(sorted([f"`{a}`" for a in axes]))
 
-def _resource_typing_xmap(params,
+def _resource_typing_xmap(avals,
+                          params,
                           source_info: Optional[source_info_util.Traceback],
                           outer_axis_resources):
   axis_resources = params['axis_resources']

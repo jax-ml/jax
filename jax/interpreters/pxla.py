@@ -1390,7 +1390,8 @@ def mesh_callable(fun: lu.WrappedFun,
                   donated_invars: Sequence[bool],
                   spmd_lowering: bool,
                   *local_in_untiled_avals,
-                  tile_by_mesh_axes: bool):
+                  tile_by_mesh_axes: bool,
+                  do_resource_typecheck: Optional[str]):
   local_mesh = mesh.local_mesh
   global_axis_sizes = mesh.shape
   local_axis_sizes = local_mesh.shape
@@ -1412,6 +1413,7 @@ def mesh_callable(fun: lu.WrappedFun,
                                for aval, aval_in_axes in safe_zip(in_tiled_avals, in_axes)]
     in_jaxpr_avals = global_in_untiled_avals
   else:
+    assert tile_by_mesh_axes
     in_jaxpr_avals = in_tiled_avals
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
@@ -1426,6 +1428,8 @@ def mesh_callable(fun: lu.WrappedFun,
     out_tiled_avals = out_jaxpr_avals
   local_out_untiled_avals = [untile_aval_nd(local_axis_sizes, aval_out_axes, aval)
                              for aval, aval_out_axes in safe_zip(out_tiled_avals, out_axes)]
+  if do_resource_typecheck is not None:
+    resource_typecheck(jaxpr, {}, lambda: do_resource_typecheck)
   _sanitize_mesh_jaxpr(jaxpr)
   if local_mesh.shape != mesh.shape:
     check_multihost_collective_allowlist(jaxpr)
@@ -1566,7 +1570,8 @@ def resource_typecheck(jaxpr, axis_resources, what_jaxpr_thunk):
   for eqn in jaxpr.eqns:
     typing_rule = custom_resource_typing_rules.get(eqn.primitive, None)
     if typing_rule:
-      typing_rule(eqn.params, eqn.source_info, axis_resources)
+      typing_rule([v.aval for v in eqn.invars], eqn.params,
+                  eqn.source_info, axis_resources)
     else:
       core.traverse_jaxpr_params(partial(resource_typecheck,
                                          axis_resources=axis_resources,

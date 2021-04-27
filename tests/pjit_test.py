@@ -24,15 +24,28 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import test_util as jtu
+from jax.errors import JAXTypeError
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import PartitionSpec as P
-from jax.experimental.maps import mesh
+from jax.experimental.maps import xmap, mesh
 from jax.experimental.pjit import pjit, with_sharding_constraint
 from jax.interpreters import pxla
 from jax._src.util import unzip2, prod, curry
 
 from jax.config import config
 config.parse_flags_with_absl()
+
+
+def setUpModule():
+  global old_lowering_flag
+  jax.experimental.maps.make_xmap_callable.cache_clear()
+  old_lowering_flag = jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING
+  jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = True
+
+def tearDownModule():
+  jax.experimental.maps.make_xmap_callable.cache_clear()
+  jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = old_lowering_flag
+
 
 # TODO(skye): move into test_util and dedup with xmap_test.py
 MeshSpec = List[Tuple[str, int]]
@@ -391,6 +404,54 @@ class PJitErrorTest(jtu.JaxTestCase):
                spec_regex(spec) + " has duplicate entries for `x`")
       with self.assertRaisesRegex(ValueError, error):
         pjit(lambda x: x, in_axis_resources=None, out_axis_resources=spec)(x)
+
+  @with_mesh([('x', 2)])
+  def testInputShardsXMapAxis(self):
+    spec = P('x')
+    f = xmap(pjit(lambda x: x + 2, in_axis_resources=spec, out_axis_resources=None),
+             in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
+    x = jnp.arange(4).reshape((2, 2))
+    error = (r"pjit input has an axis resources specification of " +
+             spec_regex(spec) + r" that uses one or more mesh axes already used by "
+             r"xmap to partition a named axis appearing in its named_shape \(both "
+             r"use mesh axes `x`\)")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      f(x)
+
+  @with_mesh([('x', 2)])
+  def testOutputShardsXMapAxis(self):
+    spec = P('x')
+    f = xmap(pjit(lambda x: x + 2, in_axis_resources=None, out_axis_resources=spec),
+             in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
+    x = jnp.arange(4).reshape((2, 2))
+    error = (r"pjit output has an axis resources specification of " +
+             spec_regex(spec) + r" that uses one or more mesh axes already used by "
+             r"xmap to partition a named axis appearing in its named_shape \(both "
+             r"use mesh axes `x`\)")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      f(x)
+
+  @with_mesh([('x', 2)])
+  def testConstraintShardsXMapAxis(self):
+    spec = P('x')
+    f = xmap(lambda x: with_sharding_constraint(x, axis_resources=spec),
+             in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
+    x = jnp.arange(4).reshape((2, 2))
+    error = (r"with_sharding_constraint input has an axis resources specification of " +
+             spec_regex(spec) + r" that uses one or more mesh axes already used by "
+             r"xmap to partition a named axis appearing in its named_shape \(both "
+             r"use mesh axes `x`\)")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      f(x)
+
+  @with_mesh([('x', 2)])
+  def testCatchesInnerXMapErrors(self):
+    f = pjit(xmap(lambda x, y: x, in_axes=(['i'], ['j']), out_axes=['i', 'j'],
+                  axis_resources={'i': 'x', 'j': 'x'}),
+             in_axis_resources=None, out_axis_resources=None)
+    x = jnp.arange(4)
+    with self.assertRaises(JAXTypeError):
+      f(x, x)
 
 
 if __name__ == '__main__':

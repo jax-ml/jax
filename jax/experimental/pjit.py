@@ -23,9 +23,11 @@ from . import PartitionSpec
 from .. import core
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg
+from .._src import source_info_util
 from ..api_util import (argnums_partial_except, flatten_axes,
                         flatten_fun_nokwargs, _ensure_index_tuple,
                         donation_vector, rebase_donate_argnums)
+from ..errors import JAXTypeError
 from ..interpreters import ad
 from ..interpreters import pxla
 from ..interpreters import xla
@@ -234,14 +236,15 @@ def _pjit_callable(
     resource_env,
     donated_invars,
     name: str,
-    *in_avals):
+    *local_in_avals):
 
   in_axes = [get_array_mapping(axes) for axes in in_axis_resources]
   out_axes = lambda: [get_array_mapping(axes) for axes in out_axis_resources_thunk()]
   # TODO(skye): allow for using a submesh of physical_mesh
   return pxla.mesh_callable(fun, name, None, resource_env.physical_mesh,
                             in_axes, out_axes, donated_invars,
-                            True, *in_avals, tile_by_mesh_axes=False)
+                            True, *local_in_avals, tile_by_mesh_axes=False,
+                            do_resource_typecheck="pjit")
 
 # -------------------- pjit rules --------------------
 
@@ -322,6 +325,32 @@ def _pjit_init_to_final_params(params):
   return bind_params
 core.initial_to_final_param_rules[pjit_call_p] = _pjit_init_to_final_params
 
+def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources):
+  pjit_resources = set(it.chain.from_iterable(pos_axis_resources))
+  aval_resources = set(it.chain.from_iterable(
+    named_axis_resources[a] for a in aval.named_shape))
+  overlap = pjit_resources & aval_resources
+  if overlap:
+    raise JAXTypeError(
+        f"{what} has an axis resources specification of {pos_axis_resources} "
+        f"that uses one or more mesh axes already used by xmap to partition "
+        f"a named axis appearing in its named_shape (both use mesh axes "
+        f"{maps.show_axes(overlap)})")
+
+def _resource_typing_pjit(avals, params, source_info, named_axis_resources):
+  jaxpr = params['call_jaxpr']
+  what = "pjit input"
+  for v, pos_axis_resources in zip(jaxpr.invars, params['in_axis_resources']):
+    _check_resources_against_named_axes(what, v.aval, pos_axis_resources, named_axis_resources)
+  pxla.resource_typecheck(
+      jaxpr, named_axis_resources,
+      lambda: (f"a pjit'ed function {params['name']} "
+               f"(pjit called at {source_info_util.summarize(source_info)})"))
+  what = "pjit output"
+  for v, pos_axis_resources in zip(jaxpr.outvars, params['out_axis_resources']):
+    _check_resources_against_named_axes(what, v.aval, pos_axis_resources, named_axis_resources)
+pxla.custom_resource_typing_rules[pjit_call_p] = _resource_typing_pjit
+
 
 # -------------------- with_sharding_constraint --------------------
 
@@ -358,6 +387,14 @@ ad.deflinear2(sharding_constraint_p,
                   sharding_constraint_p.bind(
                       ct, axis_resources=axis_resources, resource_env=resource_env),))
 xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
+
+def _resource_typing_sharding_constraint(avals, params, source_info, named_axis_resources):
+  aval, = avals
+  _check_resources_against_named_axes(
+    "with_sharding_constraint input", aval,
+    params['axis_resources'], named_axis_resources)
+pxla.custom_resource_typing_rules[sharding_constraint_p] = \
+    _resource_typing_sharding_constraint
 
 # -------------------- helpers --------------------
 
