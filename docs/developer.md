@@ -125,6 +125,8 @@ repository root, and rebuild by running `build.py` or upgrading `jaxlib` if
 necessary. You shouldn't have to reinstall `jax` because `pip install -e`
 sets up symbolic links from site-packages into the repository.
 
+(running-tests)=
+
 # Running the tests
 
 To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
@@ -208,6 +210,8 @@ if you'd prefer to build the docs without executing the notebooks, you can run:
 sphinx-build -b html -D jupyter_execute_notebooks=off docs docs/build/html
 ```
 You can then see the generated documentation in `docs/build/html/index.html`.
+
+(update-notebooks)=
 
 ## Update notebooks
 
