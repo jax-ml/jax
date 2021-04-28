@@ -17,6 +17,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.nonzero` has a new optional `size` argument that allows it to
     be used within `jit` ({jax-issue}`#6501`)
   * {func}`jax.numpy.unique` now supports the `axis` argument ({jax-issue}`#6532`).
+  * {func}`jax.experimental.host_callback.call` now supports `pjit.pjit` ({jax-issue}`#6569`).
 * Breaking changes:
   * The following function names have changed. There are still aliases, so this
     should not break existing code, but the aliases will eventually be removed
@@ -32,6 +33,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
   * The {func}`jax2tf.convert` now works in presence of gradients for functions
     with integer inputs ({jax-issue}`#6360`).
+  * Fixed assertion failure in {func}`jax2tf.call_tf` when used with captured
+    `tf.Variable` ({jax-issue}`#6572`).
 
 ## jaxlib 0.1.66 (unreleased)
 * New features:
