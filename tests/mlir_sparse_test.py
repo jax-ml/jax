@@ -41,13 +41,11 @@ class MLIRSparseTest(jtu.JaxTestCase):
     # See https://llvm.discourse.group/t/mlir-support-for-sparse-tensors/2020/21
     M = mlir_sparse.MLIRSparse.fromfile(io.StringIO(MAT_FROSTT), format="DDS")
 
-    self.assertIsNone(M.positions[0])
-    self.assertIsNone(M.positions[1])
-    self.assertArraysEqual(M.positions[2], jnp.array([0, 2, 4, 4, 4, 4, 4, 5, 7, 7]))
+    self.assertLen(M.positions, 1)
+    self.assertArraysEqual(M.positions[0], jnp.array([0, 2, 4, 4, 4, 4, 4, 5, 7, 7]))
 
-    self.assertIsNone(M.indices[0])
-    self.assertIsNone(M.indices[1])
-    self.assertArraysEqual(M.indices[2], jnp.array([0, 3, 0, 1, 1, 2, 3]))
+    self.assertLen(M.indices, 1)
+    self.assertArraysEqual(M.indices[0], jnp.array([0, 3, 0, 1, 1, 2, 3]))
 
     self.assertArraysEqual(M.values, jnp.array([1., 2., 3., 4., 5., 6., 7.]))
 
@@ -55,10 +53,12 @@ class MLIRSparseTest(jtu.JaxTestCase):
     # See https://llvm.discourse.group/t/mlir-support-for-sparse-tensors/2020/21
     M = mlir_sparse.MLIRSparse.fromfile(io.StringIO(MAT_FROSTT), format="SSS")
 
+    self.assertLen(M.positions, 3)
     self.assertArraysEqual(M.positions[0], jnp.array([0, 2]))
     self.assertArraysEqual(M.positions[1], jnp.array([0, 2, 4]))
     self.assertArraysEqual(M.positions[2], jnp.array([0, 2, 4, 5, 7]))
 
+    self.assertLen(M.indices, 3)
     self.assertArraysEqual(M.indices[0], jnp.array([0, 2]))
     self.assertArraysEqual(M.indices[1], jnp.array([0, 1, 0, 1]))
     self.assertArraysEqual(M.indices[2], jnp.array([0, 3, 0, 1, 1, 2, 3]))
@@ -69,13 +69,13 @@ class MLIRSparseTest(jtu.JaxTestCase):
     # See https://llvm.discourse.group/t/rfc-introduce-a-sparse-tensor-type-to-core-mlir/2944/35
     M = mlir_sparse.MLIRSparse.fromfile(io.StringIO(MAT_FROSTT), format="SDS")
 
+    self.assertLen(M.positions, 2)
     self.assertArraysEqual(M.positions[0], jnp.array([0, 2]))
-    self.assertIsNone(M.positions[1])
-    self.assertArraysEqual(M.positions[2], jnp.array([0, 2, 4, 4, 5, 7, 7]))
+    self.assertArraysEqual(M.positions[1], jnp.array([0, 2, 4, 4, 5, 7, 7]))
 
+    self.assertLen(M.indices, 2)
     self.assertArraysEqual(M.indices[0], jnp.array([0, 2]))
-    self.assertIsNone(M.indices[1])
-    self.assertArraysEqual(M.indices[2], jnp.array([0, 3, 0, 1, 1, 2, 3]))
+    self.assertArraysEqual(M.indices[1], jnp.array([0, 3, 0, 1, 1, 2, 3]))
 
     self.assertArraysEqual(M.values, jnp.array([1., 2., 3., 4., 5., 6., 7.]))
 
@@ -93,15 +93,11 @@ class MLIRSparseTest(jtu.JaxTestCase):
 
     self.assertIsInstance(M.positions, list)
     self.assertIsInstance(M.indices, list)
-    self.assertLen(M.positions, mat.ndim)
-    self.assertLen(M.indices, mat.ndim)
-    for i in range(mat.ndim):
-      if format[i] == "D":
-        self.assertIsNone(M.positions[i])
-        self.assertIsNone(M.indices[i])
-      else:
-        self.assertIsInstance(M.positions[i], jnp.ndarray)
-        self.assertIsInstance(M.indices[i], jnp.ndarray)
+    self.assertLen(M.positions, format.count("S"))
+    self.assertLen(M.indices, format.count("S"))
+    for pos, ind in zip(M.positions, M.indices):
+      self.assertIsInstance(pos, jnp.ndarray)
+      self.assertIsInstance(ind, jnp.ndarray)
     self.assertIsInstance(M.values, jnp.ndarray)
     self.assertEqual(M.values.dtype, mat.dtype)
 

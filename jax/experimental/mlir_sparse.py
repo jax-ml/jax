@@ -224,7 +224,7 @@ def mlir_fromdense(mat, *, format):
   assert len(format) == mat.ndim
 
   if "S" not in format:
-    return [None] * mat.ndim, [None] * mat.ndim, mat
+    return [], [], mat
 
   last_s = format[::-1].index("S")
   axis = tuple(range(len(format) - last_s, len(format)))
@@ -239,19 +239,21 @@ def mlir_fromdense(mat, *, format):
   for ind, fmt, size in zip(ind_tup, format, mat.shape):
     if fmt == "S":
       position, index, iptr = _compress_indices_sparse(iptr, ind, size)
+      indices.append(index)
+      positions.append(position)
     else:
       position, index, iptr = _compress_indices_dense(iptr, ind, size)
-    indices.append(index)
-    positions.append(position)
-  indices.extend([None] * (mat.ndim - len(indices)))
-  positions.extend([None] * (mat.ndim - len(positions)))
   return positions, indices, values.ravel()
 
 
 def _mlir_tocoo(positions, indices, values, *, shape, format):
-  assert len(positions) == len(indices) == len(shape) == len(format)
+  assert len(format) == len(shape)
+  assert len(positions) == len(indices) == format.count("S")
   if "S" not in format:
     return (), values
+
+  positions = [None if f == "D" else next(it) for it in [iter(positions)] for f in format]
+  indices = [None if f == "D" else next(it) for it in [iter(indices)] for f in format]
 
   last_s = len(shape) - format[::-1].index("S")
   values = values.reshape((-1,) + shape[last_s:])
@@ -293,8 +295,8 @@ def mlir_matvec(positions, indices, values, v, *, shape, format):
     raise NotImplementedError("mlir_matvec only supports 1-dimensional `v`")
   assert v.shape == shape[-1:]
   ind, values = _mlir_tocoo(positions, indices, values, shape=shape, format=format)
-  if indices[-1] is None:
-    return mlir_todense(positions[:-1], indices[:-1], values @ v,
+  if format[-1] == "D":
+    return mlir_todense(positions, indices, values @ v,
                         shape=shape[:-1], format=format[:-1])
   if len(ind) == 1:
     return values @ v[ind[0]]
