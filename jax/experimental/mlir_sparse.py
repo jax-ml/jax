@@ -114,11 +114,11 @@ def _compress_indices_dense(iptr, ind, size, *, full_outputs=False):
     positions = indices = None
   step = jnp.cumsum(jnp.zeros_like(ind).at[iptr[1:]].add(size))
   counts = jnp.bincount(ind + step, length=size * (len(iptr) - 1))
-  iptr = jnp.cumsum(jnp.concatenate([jnp.array([0]), counts]))
-  return positions, indices, iptr
+  new_iptr = jnp.cumsum(jnp.concatenate([jnp.array([0]), counts]))
+  return positions, indices, new_iptr
 
 
-def _uncompress_indices_sparse(positions, indices, iptr):
+def _uncompress_indices_sparse(positions, indices, iptr, *, nnz=None):
   """
   Inverse of _compress_indices_sparse
 
@@ -132,13 +132,12 @@ def _uncompress_indices_sparse(positions, indices, iptr):
     (DeviceArray([0, 3, 7], dtype=int32), DeviceArray([0, 1, 1, 0, 0, 2, 2], dtype=int32))
   """
   sizes = jnp.diff(iptr)
-  # TODO: make this repeat step statically sized
-  ind = jnp.repeat(indices, sizes)
+  ind = jnp.repeat(indices, sizes, total_repeat_length=nnz)
   iptr = iptr[positions]
   return iptr, ind
 
 
-def _uncompress_indices_dense(positions, indices, iptr, size, N):
+def _uncompress_indices_dense(positions, indices, iptr, *, size, N, nnz=None):
   """
   Inverse of _compress_indices_dense.
 
@@ -149,18 +148,18 @@ def _uncompress_indices_dense(positions, indices, iptr, size, N):
     >>> N = len(iptr) - 1
 
     >>> args = _compress_indices_dense(iptr, ind, size, full_outputs=False)
-    >>> _uncompress_indices_dense(*args, size, N)
+    >>> _uncompress_indices_dense(*args, size=size, N=N)
     (DeviceArray([0, 3, 7], dtype=int32), DeviceArray([0, 1, 1, 0, 0, 2, 2], dtype=int32))
 
     >>> args = _compress_indices_dense(iptr, ind, size, full_outputs=True)
-    >>> _uncompress_indices_dense(*args, size, N)
+    >>> _uncompress_indices_dense(*args, size=size, N=N)
     (DeviceArray([0, 3, 7], dtype=int32), DeviceArray([0, 1, 1, 0, 0, 2, 2], dtype=int32))
   """
   assert (positions is None) == (indices is None)
   if positions is None:
     positions = jnp.arange(0, (N + 1) * size, size)
     indices = jnp.tile(jnp.arange(size), N)
-  return _uncompress_indices_sparse(positions, indices, iptr)
+  return _uncompress_indices_sparse(positions, indices, iptr, nnz=nnz)
 
 
 def read_frostt(f: IO) -> np.ndarray:
@@ -224,12 +223,12 @@ mlir_fromdense_p = core.Primitive('mlir_fromdense')
 
 @mlir_fromdense_p.def_abstract_eval
 def _mlir_fromdense_abstract_eval(mat, *, format):
-  # TODO: allow passing static metadata (e.g. nnz) that allow this to be compiled.
+  # TODO: allow passing static metadata (e.g. nnz) to allow this to be
+  # evaluated in abstract.
   raise NotImplementedError("mlir_fromdense_abstract_eval")
 
 @mlir_fromdense_p.def_impl
 def _mlir_fromdense_impl(mat, *, format):
-  # TODO: allow passing static metadata (e.g. nnz) that allow this to be compiled.
   mat = jnp.asarray(mat)
   format = tuple(format)
 
@@ -276,13 +275,15 @@ def _mlir_tocoo(positions, indices, values, *, shape, format):
   values = values.reshape((-1,) + shape[last_s:])
   ind = last_s * [None]
   iptr = jnp.arange(values.shape[0] + 1, dtype=indices[last_s - 1].dtype)
+  nnz = values.shape[0]
   for i in range(last_s)[::-1]:
     size = shape[i]
     if format[i] == "S":
-      iptr, ind[i] = _uncompress_indices_sparse(positions[i], indices[i], iptr)
+      iptr, ind[i] = _uncompress_indices_sparse(positions[i], indices[i], iptr, nnz=nnz)
     else:
       N = 1 if i == 0 else shape[i - 1] if format[i - 1] == "D" else len(indices[i - 1])
-      iptr, ind[i] = _uncompress_indices_dense(positions[i], indices[i], iptr, size=size, N=N)
+      iptr, ind[i] = _uncompress_indices_dense(positions[i], indices[i], iptr,
+                                               size=size, N=N, nnz=nnz)
   return tuple(ind), values
 
 

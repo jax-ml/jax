@@ -103,6 +103,7 @@ class MLIRSparseTest(jtu.JaxTestCase):
     self.assertEqual(M.values.dtype, mat.dtype)
 
     self.assertArraysEqual(mat, M.todense())
+    self.assertArraysEqual(mat, jit(M.todense)())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_format={}".format(
@@ -119,8 +120,7 @@ class MLIRSparseTest(jtu.JaxTestCase):
 
     func = lambda M, v: M @ v
     self.assertAllClose(mat @ v, func(M, v))
-    # TODO(jakevdp): make the tocoo() code JIT-compatible & enable this test.
-    # self.assertAllClose(mat @ v, jit(func)(M, v))
+    self.assertAllClose(mat @ v, jit(func)(M, v))
 
 
 if __name__ == "__main__":
