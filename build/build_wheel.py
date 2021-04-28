@@ -187,6 +187,10 @@ def prepare_wheel(sources_path):
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.pyd"))
   if r.Rlocation("__main__/jaxlib/cusolver.py") is not None:
+    libdevice_dir = os.path.join(jaxlib_dir, "cuda", "nvvm", "libdevice")
+    os.makedirs(libdevice_dir)
+    copy_file(r.Rlocation("local_config_cuda/cuda/cuda/nvvm/libdevice/libdevice.10.bc"),
+              dst_dir=libdevice_dir)
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver.py"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_linalg.py"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng.py"))

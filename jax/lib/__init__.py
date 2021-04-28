@@ -15,6 +15,9 @@
 # This module is largely a wrapper around `jaxlib` that performs version
 # checking on import.
 
+import os
+from typing import Optional
+
 __all__ = [
   'cuda_linalg', 'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
   'pocketfft', 'pytree', 'tpu_client', 'version', 'xla_client'
@@ -99,3 +102,9 @@ try:
   from jaxlib import tpu_client  # pytype: disable=import-error
 except:
   tpu_client = None
+
+
+cuda_path: Optional[str]
+cuda_path = os.path.join(os.path.dirname(jaxlib.__file__), "cuda")
+if not os.path.isdir(cuda_path):
+  cuda_path = None
