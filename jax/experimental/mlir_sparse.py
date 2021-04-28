@@ -154,7 +154,8 @@ def _uncompress_indices_dense(positions, indices, iptr, size, N):
     >>> _uncompress_indices_dense(*args, size, N)
     (DeviceArray([0, 3, 7], dtype=int32), DeviceArray([0, 1, 1, 0, 0, 2, 2], dtype=int32))
   """
-  if positions is None or indices is None:
+  assert (positions is None) == (indices is None)
+  if positions is None:
     positions = jnp.arange(0, (N + 1) * size, size)
     indices = jnp.tile(jnp.arange(size), N)
   return _uncompress_indices_sparse(positions, indices, iptr)
@@ -247,10 +248,8 @@ def mlir_fromdense(mat, *, format):
   return positions, indices, values.ravel()
 
 
-def _mlir_tocoo(positions, indices, values, *, shape):
-  assert len(positions) == len(shape)
-  assert len(indices) == len(shape)
-  format = tuple("D" if p is None else "S" for p in positions)
+def _mlir_tocoo(positions, indices, values, *, shape, format):
+  assert len(positions) == len(indices) == len(shape) == len(format)
   if "S" not in format:
     return (), values
 
@@ -268,7 +267,7 @@ def _mlir_tocoo(positions, indices, values, *, shape):
   return tuple(ind), values
 
 
-def mlir_todense(positions, indices, values, *, shape):
+def mlir_todense(positions, indices, values, *, shape, format):
   """Convert a sparse representation to a dense matrix.
 
   Args:
@@ -278,23 +277,25 @@ def mlir_todense(positions, indices, values, *, shape):
       positions for sparse dimensions.
     values : array of nonzero values in the sparse representation
     shape : tuple representing the matrix shape.
+    format : tuple representing the format
   Returns:
     mat : dense matrix representation of specified shape.
   """
-  ind, values = _mlir_tocoo(positions, indices, values, shape=shape)
+  ind, values = _mlir_tocoo(positions, indices, values, shape=shape, format=format)
   if not ind:
     return values
   return jnp.zeros(shape, values.dtype).at[ind].set(values)
 
 
-def mlir_matvec(positions, indices, values, v, *, shape):
+def mlir_matvec(positions, indices, values, v, *, shape, format):
   v = jnp.asarray(v)
   if v.ndim != 1:
     raise NotImplementedError("mlir_matvec only supports 1-dimensional `v`")
   assert v.shape == shape[-1:]
-  ind, values = _mlir_tocoo(positions, indices, values, shape=shape)
+  ind, values = _mlir_tocoo(positions, indices, values, shape=shape, format=format)
   if indices[-1] is None:
-    return mlir_todense(positions[:-1], indices[:-1], values @ v, shape=shape[:-1])
+    return mlir_todense(positions[:-1], indices[:-1], values @ v,
+                        shape=shape[:-1], format=format[:-1])
   if len(ind) == 1:
     return values @ v[ind[0]]
   elif len(ind) == 2:
@@ -311,17 +312,19 @@ class MLIRSparse:
   indices: List[Optional[Array]]
   values: Array
   shape: Tuple[int, ...]
+  format: str
 
   dtype = property(lambda self: self.values.dtype)
   nnz = property(lambda self: self.values.size)
   ndim = property(lambda self: len(self.shape))
 
-  def __init__(self, args, *, shape):
+  def __init__(self, args, *, shape, format):
     self.positions, self.indices, self.values = args
     self.shape = shape
+    self.format = format
 
   @classmethod
-  def fromfile(cls, f, format=None):
+  def fromfile(cls, f, *, format=None):
     # TODO: avoid trip through dense & pass correct nnz
     return cls.fromdense(read_frostt(f), format=format)
 
@@ -329,10 +332,12 @@ class MLIRSparse:
   def fromdense(cls, mat, *, format=None):
     if format is None:
       format = "S" * mat.ndim
-    return cls(mlir_fromdense(mat, format=format), shape=mat.shape)
+    return cls(mlir_fromdense(mat, format=format), shape=mat.shape, format=format)
 
   def todense(self):
-    return mlir_todense(self.positions, self.indices, self.values, shape=self.shape)
+    return mlir_todense(self.positions, self.indices, self.values,
+                        shape=self.shape, format=self.format)
 
   def __matmul__(self, v):
-    return mlir_matvec(self.positions, self.indices, self.values, v, shape=self.shape)
+    return mlir_matvec(self.positions, self.indices, self.values, v,
+                       shape=self.shape, format=self.format)
