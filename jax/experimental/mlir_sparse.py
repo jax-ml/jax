@@ -19,7 +19,9 @@ from typing import Any, IO, List, Optional, Tuple
 
 import numpy as np
 import jax.numpy as jnp
-
+from jax import core
+from jax import tree_util
+from jax import xla
 
 Array = Any
 
@@ -216,6 +218,17 @@ def mlir_fromdense(mat, *, format):
   Returns:
     positions, indices, values : general sparse representation
   """
+  return mlir_fromdense_p.bind(mat, format=format)
+
+mlir_fromdense_p = core.Primitive('mlir_fromdense')
+
+@mlir_fromdense_p.def_abstract_eval
+def _mlir_fromdense_abstract_eval(mat, *, format):
+  # TODO: allow passing static metadata (e.g. nnz) that allow this to be compiled.
+  raise NotImplementedError("mlir_fromdense_abstract_eval")
+
+@mlir_fromdense_p.def_impl
+def _mlir_fromdense_impl(mat, *, format):
   # TODO: allow passing static metadata (e.g. nnz) that allow this to be compiled.
   mat = jnp.asarray(mat)
   format = tuple(format)
@@ -244,6 +257,10 @@ def mlir_fromdense(mat, *, format):
     else:
       position, index, iptr = _compress_indices_dense(iptr, ind, size)
   return positions, indices, values.ravel()
+
+
+xla.translations[mlir_fromdense_p] = xla.lower_fun(
+    _mlir_fromdense_impl, multiple_results=False)
 
 
 def _mlir_tocoo(positions, indices, values, *, shape, format):
@@ -283,13 +300,48 @@ def mlir_todense(positions, indices, values, *, shape, format):
   Returns:
     mat : dense matrix representation of specified shape.
   """
+  return mlir_todense_p.bind(*positions, *indices, values, shape=shape, format=format)
+
+mlir_todense_p = core.Primitive('mlir_todense')
+
+@mlir_todense_p.def_abstract_eval
+def _mlir_todense_abstract_eval(*args, shape, format):
+  *pos_ind, values = args
+  assert len(pos_ind) == 2 * format.count('S')
+  assert len(shape) == len(format)
+  return core.ShapedArray(shape, values.dtype)
+
+@mlir_todense_p.def_impl
+def _mlir_todense_impl(*args, shape, format):
+  *pos_ind, values = args
+  positions, indices = pos_ind[:len(pos_ind) // 2], pos_ind[len(pos_ind) // 2:]
   ind, values = _mlir_tocoo(positions, indices, values, shape=shape, format=format)
   if not ind:
     return values
   return jnp.zeros(shape, values.dtype).at[ind].set(values)
 
+xla.translations[mlir_todense_p] = xla.lower_fun(
+    _mlir_todense_impl, multiple_results=False)
 
 def mlir_matvec(positions, indices, values, v, *, shape, format):
+  return mlir_matvec_p.bind(*positions, *indices, values, v, shape=shape, format=format)
+
+mlir_matvec_p = core.Primitive('mlir_matvec')
+
+@mlir_matvec_p.def_abstract_eval
+def _mlir_matvec_abstract_eval(*args, shape, format):
+  *pos_ind, values, v = args
+  assert len(pos_ind) == 2 * format.count('S')
+  assert len(shape) == len(format)
+  # TODO(jakevdp): relax this
+  assert values.dtype == v.dtype
+  assert v.shape == shape[-1:]
+  return core.ShapedArray(shape[:-1], values.dtype)
+
+@mlir_matvec_p.def_impl
+def _mlir_matvec_impl(*args, shape, format):
+  *pos_ind, values, v = args
+  positions, indices = pos_ind[:len(pos_ind) // 2], pos_ind[len(pos_ind) // 2:]
   v = jnp.asarray(v)
   if v.ndim != 1:
     raise NotImplementedError("mlir_matvec only supports 1-dimensional `v`")
@@ -308,7 +360,10 @@ def mlir_matvec(positions, indices, values, v, *, shape, format):
     # TODO: implement this case.
     raise NotImplementedError("mlir_matvec only supports 1 or 2 dimensional matrices.")
 
+xla.translations[mlir_matvec_p] = xla.lower_fun(
+    _mlir_matvec_impl, multiple_results=False)
 
+@tree_util.register_pytree_node_class
 class MLIRSparse:
   positions: List[Optional[Array]]
   indices: List[Optional[Array]]
@@ -334,6 +389,7 @@ class MLIRSparse:
   def fromdense(cls, mat, *, format=None):
     if format is None:
       format = "S" * mat.ndim
+    assert isinstance(format, str)
     return cls(mlir_fromdense(mat, format=format), shape=mat.shape, format=format)
 
   def todense(self):
@@ -343,3 +399,12 @@ class MLIRSparse:
   def __matmul__(self, v):
     return mlir_matvec(self.positions, self.indices, self.values, v,
                        shape=self.shape, format=self.format)
+
+  def tree_flatten(self):
+    children = (self.positions, self.indices, self.values)
+    aux_data = {"shape": self.shape, "format": self.format}
+    return children, aux_data
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    return cls(children, **aux_data)

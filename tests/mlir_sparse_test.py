@@ -20,6 +20,7 @@ from absl.testing import parameterized
 
 import jax.numpy as jnp
 from jax.experimental import mlir_sparse
+from jax import jit
 from jax import test_util as jtu
 
 MAT_FROSTT = """
@@ -81,11 +82,11 @@ class MLIRSparseTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_format={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), ''.join(format)),
+          jtu.format_shape_dtype_string(shape, dtype), format),
        "shape": shape, "dtype": dtype, "format": format}
       for shape in [(5,), (4, 5), (4, 3, 5), (5, 3, 4)]
       for dtype in jtu.dtypes.all
-      for format in itertools.product("SD", repeat=len(shape))))
+      for format in map("".join, itertools.product("SD", repeat=len(shape)))))
   def test_round_trip(self, shape, dtype, format):
     rng = jtu.rand_some_zero(self.rng())
     mat = rng(shape, dtype)
@@ -105,18 +106,21 @@ class MLIRSparseTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_format={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), ''.join(format)),
+          jtu.format_shape_dtype_string(shape, dtype), format),
        "shape": shape, "dtype": dtype, "format": format}
       for shape in [(5, 3), (3, 5), (3,), (5,)]
       for dtype in jtu.dtypes.floating
-      for format in itertools.product("SD", repeat=len(shape))))
+      for format in map("".join, itertools.product("SD", repeat=len(shape)))))
   def test_matvec(self, shape, dtype, format):
     rng = jtu.rand_some_zero(self.rng())
     mat = rng(shape, dtype)
     M = mlir_sparse.MLIRSparse.fromdense(mat, format=format)
     v = rng(shape[-1:], dtype)
 
-    self.assertAllClose(mat @ v, M @ v)
+    func = lambda M, v: M @ v
+    self.assertAllClose(mat @ v, func(M, v))
+    # TODO(jakevdp): make the tocoo() code JIT-compatible & enable this test.
+    # self.assertAllClose(mat @ v, jit(func)(M, v))
 
 
 if __name__ == "__main__":
