@@ -817,9 +817,7 @@ def _outside_call_translation_rule(
   current_token = args_op[-2]
   current_itoken = args_op[-1]
   # TODO: expose shape.is_token
-  assert not comp.get_shape(current_token).is_array() and not comp.get_shape(current_token).is_array(), (
-      "The last two arguments must be tokens")
-  assert not comp.get_shape(current_itoken).is_array() and not comp.get_shape(current_itoken).is_array(), (
+  assert comp.get_shape(current_token).is_token() and comp.get_shape(current_itoken).is_token(), (
       "The last two arguments must be tokens")
 
   args_to_outfeed = args_op[:-2]
