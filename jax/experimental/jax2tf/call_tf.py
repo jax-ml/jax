@@ -29,9 +29,9 @@ import jax
 from jax import core
 from jax import dlpack
 from jax import dtypes
-from jax import numpy as jnp
 from jax import tree_util
 from jax._src import util
+from jax._src.lax.lax import _device_put_raw
 from jax.interpreters import xla
 from jax.lib import xla_bridge
 from jax.lib import xla_client
@@ -180,7 +180,7 @@ def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
         return jax.dlpack.from_dlpack(
             res_dlpack, backend=xla_bridge.get_backend(res_jax_platform))
 
-    return jnp.asarray(np.asarray(res_tf))
+    return _device_put_raw(np.asarray(res_tf))
 
   return list(map(_res_tf_to_jax, res_tf_flat))
 
