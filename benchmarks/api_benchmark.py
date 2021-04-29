@@ -141,6 +141,8 @@ for n in [10, 100, 1000, 2000]:
                                 name=f"jit_simple_many_args_dispatch_{n}"),
       google_benchmark.register(partial(jit_simple_many_args, n),
                                 name=f"jit_simple_many_args_{n}")
+      google_benchmark.register(partial(jit_simple_many_args, n),
+                                name=f"jit_simple_many_args_{n}")
   ]
 
 
