@@ -17,6 +17,7 @@ import sys
 import traceback
 import types
 
+from jax.lib import xla_extension
 from jax._src import util
 
 _exclude_paths = [__file__, util.__file__]
@@ -53,14 +54,14 @@ def include_frame(f):
 def ignore_known_hidden_frame(f):
   return 'importlib._bootstrap' in f.f_code.co_filename
 
-def filter_traceback_and_stack(e):
+def filter_traceback_and_stack(tb):
   out = None
 
   # Scan the traceback and collect relevant frames.
 
-  for f, lineno in reversed(list(traceback.walk_tb(e.__traceback__))):
+  for f, lineno in reversed(list(traceback.walk_tb(tb))):
     if include_frame(f):
-      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+      out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
 
   # Continue up the call stack.
   #
@@ -73,13 +74,13 @@ def filter_traceback_and_stack(e):
   # the stack trace we produce will be truncated at F's frame.
 
   reached_module_level = False
-  for f, lineno in traceback.walk_stack(e.__traceback__.tb_frame):
+  for f, lineno in traceback.walk_stack(tb.tb_frame):
     if ignore_known_hidden_frame(f):
       continue
     if reached_module_level and f.f_code.co_name != '<module>':
       break
     if include_frame(f):
-      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+      out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
     if f.f_code.co_name == '<module>':
       reached_module_level = True
 
@@ -104,8 +105,11 @@ def last_cause(e):
 
 class FilteredStackTrace(Exception): pass
 
+make_traceback = (types.TracebackType if sys.version_info >= (3, 7) else
+                  getattr(xla_extension, "make_python_traceback", None))
+
 def filtered_tracebacks_supported():
-  return sys.version_info >= (3, 7)
+  return make_traceback is not None
 
 def api_boundary(fun):
   '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
@@ -141,7 +145,7 @@ def api_boundary(fun):
       if not is_under_reraiser(e):
         filtered_tb, cause, filtered = None, None, None
         try:
-          filtered_tb = filter_traceback_and_stack(e)
+          filtered_tb = filter_traceback_and_stack(e.__traceback__)
           if filtered_tb:
             msg = format_exception_only(e)
             msg = f'{msg}\n\n{_jax_message_append}'
