@@ -123,12 +123,12 @@ class BatchTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
-    if all(bdim is not_mapped for bdim in dims_in):
-      return primitive.bind(*vals_in, **params)
     if (primitive in collective_rules and
           _main_trace_for_axis_names(self.main, core.used_axis_names(primitive, params))):
       frame = core.axis_frame(self.axis_name)
       val_out, dim_out = collective_rules[primitive](frame, vals_in, dims_in, **params)
+    elif all(bdim is not_mapped for bdim in dims_in):
+      return primitive.bind(*vals_in, **params)
     else:
       batched_primitive = get_primitive_batcher(primitive, self)
       val_out, dim_out = batched_primitive(vals_in, dims_in, **params)

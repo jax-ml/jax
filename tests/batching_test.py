@@ -1152,6 +1152,13 @@ class BatchingTest(jtu.JaxTestCase):
     y = vmap(f)(a=jnp.array([1]), b=jnp.array([2]))  # doesn't work
     self.assertAllClose(x, y)
 
+  def testGradOfPsum(self):
+    a = jnp.ones(5)
+    f = vmap(jax.grad(lambda x: -lax.psum(x, 'i')), out_axes=None, axis_name='i')
+    self.assertEqual(
+        f(a),
+        jax.core.jaxpr_as_fun(jax.make_jaxpr(f)(a))(a)[0])
+
   def testAllGatherToUnmapped(self):
     def f(x):
       return lax.all_gather(x, axis_name='i')
