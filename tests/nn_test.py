@@ -175,6 +175,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
     actual = nn.one_hot(jnp.array([1, 2, 0]), 3, axis=-2)
     self.assertAllClose(actual, expected)
 
+  def testTanhExists(self):
+    nn.tanh  # doesn't crash
+
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
   ["name", "initializer", "shapes"])
