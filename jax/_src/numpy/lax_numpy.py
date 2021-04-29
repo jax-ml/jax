@@ -4493,7 +4493,7 @@ def _take_along_axis(arr, indices, axis):
   return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes))
 
 
-@_wraps(getattr(np, "take_along_axis", None), update_doc=False)
+@_wraps(np.take_along_axis, update_doc=False)
 def take_along_axis(arr, indices, axis: Optional[int]):
   _check_arraylike("take_along_axis", arr)
   return _take_along_axis(arr, indices, axis)
@@ -5022,7 +5022,7 @@ def _gcd_body_fn(xs):
             where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
   return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
-@_wraps(getattr(np, "gcd", None))
+@_wraps(np.gcd)
 def gcd(x1, x2):
   _check_arraylike("gcd", x1, x2)
   if (not issubdtype(_dtype(x1), integer) or
@@ -5034,7 +5034,7 @@ def gcd(x1, x2):
   return gcd
 
 
-@_wraps(getattr(np, "lcm", None))
+@_wraps(np.lcm)
 def lcm(x1, x2):
   _check_arraylike("lcm", x1, x2)
   x1, x2 = _promote_dtypes(x1, x2)
@@ -5154,7 +5154,7 @@ def corrcoef(x, y=None, rowvar=True):
   return c
 
 
-@_wraps(getattr(np, "quantile", None), skip_params=['out', 'overwrite_input'])
+@_wraps(np.quantile, skip_params=['out', 'overwrite_input'])
 def quantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
              overwrite_input=False, interpolation="linear", keepdims=False):
   _check_arraylike("quantile", a, q)
@@ -5164,7 +5164,7 @@ def quantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
     raise ValueError(msg)
   return _quantile(a, q, axis, interpolation, keepdims, False)
 
-@_wraps(getattr(np, "nanquantile", None), skip_params=['out', 'overwrite_input'])
+@_wraps(np.nanquantile, skip_params=['out', 'overwrite_input'])
 def nanquantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                 out=None, overwrite_input=False, interpolation="linear",
                 keepdims=False):
