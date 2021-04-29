@@ -5228,6 +5228,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     index[axis] = high
     high_value = a[tuple(index)]
   else:
+    a = where(any(isnan(a), axis=axis, keepdims=True), nan, a)
     a = lax.sort(a, dimension=axis)
     n = a_shape[axis]
     q = lax.mul(q, _constant_like(q, n - 1))

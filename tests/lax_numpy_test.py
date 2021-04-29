@@ -4037,7 +4037,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              jtu.format_shape_dtype_string(q_shape, q_dtype),
              axis, keepdims, interpolation),
-         "a_rng": jtu.rand_some_nan if 'nan' in op else jtu.rand_default,
+         "a_rng": jtu.rand_some_nan,
          "q_rng": q_rng, "op": op,
          "a_shape": a_shape, "a_dtype": a_dtype,
          "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
@@ -4068,6 +4068,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [a_rng(a_shape, a_dtype)]
     else:
       args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+
+    # TODO(jakevdp): remove this ignore_warning when minimum numpy version is 1.17.0
+    @jtu.ignore_warning(category=RuntimeWarning, message="Invalid value encountered.*")
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]
