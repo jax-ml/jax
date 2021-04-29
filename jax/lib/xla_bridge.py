@@ -29,6 +29,7 @@ from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
 logging._warn_preinit_stderr = 0
 
+import jax.lib
 from .._src.config import flags
 from jax._src import util, traceback_util
 from jax._src import dtypes
@@ -113,8 +114,12 @@ def get_compile_options(
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
 
+  debug_options = compile_options.executable_build_options.debug_options
+  if jax.lib.cuda_path is not None:
+    debug_options.xla_gpu_cuda_data_dir = jax.lib.cuda_path
+
   if FLAGS.jax_disable_most_optimizations:
-    debug_options = compile_options.executable_build_options.debug_options
+
     debug_options.xla_backend_optimization_level = 0
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
