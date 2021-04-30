@@ -1952,6 +1952,18 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
   x = where(isneginf(x), _constant_like(x, neginf), x)
   return x
 
+@_wraps(np.real_if_close)
+def real_if_close(a, tol=100):
+  a = a if isinstance(a, ndarray) else array(a)
+  dtype = _dtype(a)
+  if not issubdtype(dtype, complexfloating):
+    return a
+  if tol > 1:
+    tol *= finfo(dtype.type).eps
+  if all(absolute(lax.imag(a)) < tol):
+    return lax.real(a)
+  return a
+
 ### Reducers
 
 def _reduction(a, name, np_fun, op, init_val, has_identity=True,

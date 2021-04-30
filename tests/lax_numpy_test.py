@@ -3991,6 +3991,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.nan_to_num, args_maker,
                           check_dtypes=check_dtypes)
 
+  def testRealIfClose(self):
+    a = self.rng().rand(10).astype(jnp.float32)
+    b = jnp.real_if_close(a+1e-8j)
+    self.assertTrue(jnp.all(jnp.isrealobj(b)))
+    self.assertAllClose(a, b, atol=0, rtol=0)
+    b = jnp.real_if_close(a+1e-4j)
+    self.assertTrue(jnp.all(jnp.iscomplexobj(b)))
+    b = jnp.real_if_close(a+1e-4j, tol=1e-3)
+    self.assertTrue(jnp.all(jnp.isrealobj(b)))
+
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix("ix_", shapes, dtypes),
          "shapes": shapes, "dtypes": dtypes}

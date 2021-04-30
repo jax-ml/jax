@@ -303,6 +303,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     ravel
     ravel_multi_index
     real
+    real_if_close
     reciprocal
     remainder
     repeat
