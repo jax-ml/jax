@@ -89,6 +89,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     broadcast_arrays
     broadcast_shapes
     broadcast_to
+    c_
     can_cast
     cbrt
     cdouble
@@ -298,6 +299,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     promote_types
     ptp
     quantile
+    r_
     rad2deg
     radians
     ravel
