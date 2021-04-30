@@ -25,7 +25,7 @@ from jax._src.numpy.lax_numpy import (
     arcsinh, arctan, arctan2, arctanh, argmax, argmin, argsort, argwhere, around,
     array, array_equal, array_equiv, array_repr, array_split, array_str, asarray, atleast_1d, atleast_2d,
     atleast_3d, average, bartlett, bfloat16, bincount, bitwise_and, bitwise_not,
-    bitwise_or, bitwise_xor, blackman, block, bool_, broadcast_arrays,
+    bitwise_or, bitwise_xor, blackman, block, bool_, broadcast_arrays, broadcast_shapes,
     broadcast_to, can_cast, cbrt, cdouble, ceil, character, choose, clip, column_stack,
     complex128, complex64, complex_, complexfloating, compress, concatenate,
     conj, conjugate, convolve, copysign, corrcoef, correlate, cos, cosh,

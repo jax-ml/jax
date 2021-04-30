@@ -87,6 +87,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     block
     bool_
     broadcast_arrays
+    broadcast_shapes
     broadcast_to
     can_cast
     cbrt

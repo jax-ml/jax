@@ -1733,6 +1733,12 @@ def bincount(x, weights=None, minlength=0, *, length=None):
     raise ValueError("shape of weights must match shape of x.")
   return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights)
 
+@_wraps(getattr(np, "broadcast_shapes", None))
+def broadcast_shapes(*shapes):
+  if not shapes:
+    return ()
+  shapes = [(shape,) if np.ndim(shape) == 0 else tuple(shape) for shape in shapes]
+  return lax.broadcast_shapes(*shapes)
 
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
