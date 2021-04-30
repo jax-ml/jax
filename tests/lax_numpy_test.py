@@ -4980,6 +4980,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{shapes}", "shapes": shapes, "broadcasted_shape": broadcasted_shape}
+      for shapes, broadcasted_shape in [
+        [[], ()],
+        [[()], ()],
+        [[(1, 3), (4, 3)], (4, 3)],
+        [[(3,), (2, 1, 3)], (2, 1, 3)],
+        [[(3,), (3, 3)], (3, 3)],
+        [[(1,), (3,)], (3,)],
+        [[(1,), 3], (3,)],
+        [[(6, 7), (5, 6, 1), (7,), (5, 1, 7)], (5, 6, 7)],
+        [[[1], [0, 1]], (0, 1)],
+        [[(1,), np.array([0, 1])], (0, 1)],
+    ])
+  def testBroadcastShapes(self, shapes, broadcasted_shape):
+    # Test against np.broadcast_shapes once numpy 1.20 is minimum required version
+    np.testing.assert_equal(jnp.broadcast_shapes(*shapes), broadcasted_shape)
+
   def testBroadcastToIssue1522(self):
     self.assertRaisesRegex(
         ValueError, "Incompatible shapes for broadcasting: .*",
@@ -5279,6 +5297,9 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     mismatches = {}
 
     for name, (jnp_fun, np_fun) in func_pairs.items():
+      # broadcast_shapes is not available in numpy < 1.20
+      if np.__version__ < "1.20" and name == "broadcast_shapes":
+        continue
       # Some signatures have changed; skip for older numpy versions.
       if np.__version__ < "1.19" and name in ['einsum_path', 'gradient', 'isscalar']:
         continue
