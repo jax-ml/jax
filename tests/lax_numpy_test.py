@@ -962,7 +962,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       message="Calling nonzero on 0d arrays.*")(np.argwhere)
     jnp_fun = jnp.argwhere
     args_maker = lambda: [rng(shape, dtype)]
-    if shape in (scalar_shapes + [()]) and np.__version__ < "1.18":
+    if shape in (scalar_shapes + [()]) and numpy_version < (1, 18):
       self.skipTest("np.argwhere() result for scalar input changed in numpy 1.18.")
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
@@ -4017,7 +4017,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for sparse in [True, False]))
   def testIndices(self, dimensions, dtype, sparse):
     def args_maker(): return []
-    if np.__version__ < "1.17":
+    if numpy_version < (1, 17):
       if sparse:
         raise SkipTest("indices does not have sparse on numpy < 1.17")
       np_fun = partial(np.indices, dimensions=dimensions,
@@ -5298,10 +5298,10 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     for name, (jnp_fun, np_fun) in func_pairs.items():
       # broadcast_shapes is not available in numpy < 1.20
-      if np.__version__ < "1.20" and name == "broadcast_shapes":
+      if numpy_version < (1, 20) and name == "broadcast_shapes":
         continue
       # Some signatures have changed; skip for older numpy versions.
-      if np.__version__ < "1.19" and name in ['einsum_path', 'gradient', 'isscalar']:
+      if numpy_version < (1, 19) and name in ['einsum_path', 'gradient', 'isscalar']:
         continue
       # Note: can't use inspect.getfullargspec due to numpy issue
       # https://github.com/numpy/numpy/issues/12225
