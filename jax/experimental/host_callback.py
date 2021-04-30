@@ -1380,15 +1380,15 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 eqn.params,
                 call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
             ), eqn.source_info))
-  elif eqn.primitive is pjit.pjit_call_p:
-    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
+  elif eqn.primitive is pjit.pjit_p:
+    jaxpr = cast(core.ClosedJaxpr, eqn.params["jaxpr"])
     eqns.append(
         core.new_jaxpr_eqn(
             eqn.invars + [input_token_var, input_itoken_var],
             eqn.outvars + [output_token_var, output_itoken_var], eqn.primitive,
             dict(
                 eqn.params,
-                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
+                jaxpr=_rewrite_closed_jaxpr(jaxpr, True, True),
                 donated_invars=eqn.params["donated_invars"] + (False, False),
                 in_axis_resources=(eqn.params["in_axis_resources"] +
                                    (pjit.REPLICATED, pjit.REPLICATED)),

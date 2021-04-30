@@ -17,6 +17,7 @@ from collections import OrderedDict, Counter
 from typing import Callable, Sequence, Tuple, Union
 from warnings import warn
 import itertools as it
+from functools import partial
 
 from . import maps
 from . import PartitionSpec
@@ -37,7 +38,7 @@ from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
-                         as_hashable_function)
+                         split_list, cache)
 xops = xc._xla.ops
 
 def pjit(fun: Callable,
@@ -79,6 +80,7 @@ def pjit(fun: Callable,
 
     # Putting this outside of wrapped would make resources lexically scoped
     resource_env = maps.thread_resources.env
+    mesh = resource_env.physical_mesh
 
     f = lu.wrap_init(fun)
     if static_argnums:
@@ -95,28 +97,47 @@ def pjit(fun: Callable,
     else:
       donated_invars = (False,) * len(args_flat)
 
-    in_axis_resources_flat = tuple(flatten_axes("pjit in_axis_resources",
-                                                in_tree, in_axis_resources))
-    out_axis_resources_thunk = HashableFunction(
-        lambda: tuple(flatten_axes("pjit out_axis_resources", out_tree(),
-                                   out_axis_resources)),
-        closure=(out_axis_resources_entries, out_axis_treedef))
-    _check_shapes_against_resources("pjit arguments", resource_env,
-                                    args_flat, in_axis_resources_flat)
-    flat_fun = _check_output_shapes(flat_fun, resource_env,
-                                    out_axis_resources_thunk)
+    local_in_avals = tuple(core.raise_to_shaped(core.get_aval(a)) for a in args_flat)
+    jaxpr, in_axis_resources_flat, out_axis_resources_flat = \
+        _pjit_jaxpr(flat_fun, mesh, local_in_avals,
+                    in_tree, in_axis_resources,
+                    HashableFunction(out_tree, closure=()), out_axis_resources)
 
-    out = pjit_call_p.bind(
-        flat_fun,
+    out = pjit_p.bind(
         *args_flat,
+        jaxpr=jaxpr,
         in_axis_resources=in_axis_resources_flat,
-        out_axis_resources_thunk=out_axis_resources_thunk,
+        out_axis_resources=out_axis_resources_flat,
         resource_env=resource_env,
         donated_invars=donated_invars,
         name=flat_fun.__name__)
     return tree_unflatten(out_tree(), out)
 
   return wrapped
+
+class _ListWithW(list):
+  __slots__ = ('__weakref__',)
+
+@lu.cache
+def _pjit_jaxpr(fun, mesh, local_in_avals,
+                in_tree, in_axis_resources,
+                out_tree, out_axis_resources):
+  in_axis_resources_flat = tuple(flatten_axes("pjit in_axis_resources",
+                                              in_tree, in_axis_resources))
+  _check_shapes_against_resources("pjit arguments", False, mesh.local_mesh.shape,
+                                  local_in_avals, in_axis_resources_flat)
+  global_in_avals = local_to_global(mesh, local_in_avals, in_axis_resources_flat)
+
+  jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
+  jaxpr = core.ClosedJaxpr(jaxpr, consts)
+
+  out_axis_resources_flat = tuple(flatten_axes("pjit out_axis_resources",
+                                               out_tree(), out_axis_resources))
+  _check_shapes_against_resources("pjit outputs", mesh.is_multi_process, mesh.shape,
+                                  global_out_avals, out_axis_resources_flat)
+  # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
+  return _ListWithW([jaxpr, in_axis_resources_flat, out_axis_resources_flat])
+
 
 class ParsedPartitionSpec:
   def __init__(self, user_spec, partitions):
@@ -163,8 +184,6 @@ REPLICATED = ParsedPartitionSpec(None, ())
 
 
 def _prepare_axis_resources(axis_resources, arg_name):
-  if axis_resources is None:
-    return REPLICATED, [REPLICATED], tree_flatten(None)[1]
   # PyTrees don't treat None values as leaves, so we explicitly need
   # to explicitly declare them as such
   entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
@@ -184,72 +203,75 @@ def _check_unique_resources(axis_resources, arg_name):
                          f"to at most one positional dimension, but {arg_axis_resources} "
                          f"has duplicate entries for {maps.show_axes(multiple_uses)}")
 
-@lu.transformation
-def _check_output_shapes(resource_env, out_axis_resources_thunk, *args, **kwargs):
-  outputs = yield (args, kwargs)
-  _check_shapes_against_resources("pjit outputs", resource_env, outputs, out_axis_resources_thunk())
-  yield outputs
-
-def _check_shapes_against_resources(what: str, resource_env, flat_vals, flat_axis_resources):
-  resource_sizes = resource_env.local_shape
-  for val, aval_axis_resources in zip(flat_vals, flat_axis_resources):
-    shape = core.get_aval(val).shape
+def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape, flat_avals, flat_axis_resources):
+  global_str = " global" if is_global_shape else ""
+  for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
+    shape = aval.shape
     if len(shape) < len(aval_axis_resources):
       raise ValueError(f"One of {what} was given the resource assignment "
-                       f"of {aval_axis_resources}, which implies that "
+                       f"of {aval_axis_resources!s}, which implies that "
                        f"it has a rank of at least {len(aval_axis_resources)}, "
                        f"but it is {len(shape)}")
     for i, axis_resources in enumerate(aval_axis_resources):
       try:
-        size = int(np.prod([resource_sizes[resource] for resource in axis_resources], dtype=np.int64))
+        size = int(np.prod([mesh_shape[resource] for resource in axis_resources], dtype=np.int64))
       except KeyError as e:
         raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources}, but resource axis "
-                         f"{e.args[0]} is undefined. Did you forget to declare the mesh?")
+                         f"of {aval_axis_resources!s}, but resource axis "
+                         f"{e.args[0]} is undefined. Did you forget to declare the mesh?") from None
       if shape[i] % size != 0:
         raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources}, which implies that "
-                         f"the size of its dimension {i} should be divisible by "
-                         f"{size}, but it is equal to {shape[i]}")
+                         f"of {aval_axis_resources!s}, which implies that "
+                         f"the{global_str} size of its dimension {i} should be "
+                         f"divisible by {size}, but it is equal to {shape[i]}")
 
-def _pjit_call_impl(fun: lu.WrappedFun, *args, in_axis_resources,
-                    out_axis_resources_thunk, resource_env, donated_invars,
-                    name):
-  in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  pjit_callable = _pjit_callable(
-      fun, in_axis_resources, out_axis_resources_thunk, resource_env,
-      donated_invars, name, *in_avals)
+# -------------------- pjit rules --------------------
+
+pjit_p = core.Primitive("pjit")
+pjit_p.multiple_results = True
+
+
+def _pjit_call_impl(*args, jaxpr,
+                    in_axis_resources, out_axis_resources,
+                    resource_env, donated_invars, name):
+  compiled = pjit_callable(
+      jaxpr, in_axis_resources, out_axis_resources,
+      resource_env, donated_invars, name)
   distributed_debug_log(("Running pjit'd function", name),
-                        ("python function", fun.f),
-                        ("mesh", resource_env.physical_mesh),
-                        ("abstract args", in_avals))
-  return pjit_callable(*args)
+                        ("mesh", resource_env.physical_mesh))
+  return compiled(*args)
+pjit_p.def_impl(_pjit_call_impl)
 
-pjit_call_p = core.CallPrimitive("pjit_call")
-pjit_call_p.def_impl(_pjit_call_impl)
-
-@lu.cache
-def _pjit_callable(
-    fun: lu.WrappedFun,
+@cache()
+def pjit_callable(
+    jaxpr: core.ClosedJaxpr,
     in_axis_resources: Tuple[ParsedPartitionSpec, ...],
-    out_axis_resources_thunk: Callable[[], Tuple[ParsedPartitionSpec, ...]],
+    out_axis_resources: Tuple[ParsedPartitionSpec, ...],
     resource_env,
     donated_invars,
-    name: str,
-    *local_in_avals):
+    name: str):
 
   in_axes = [get_array_mapping(axes) for axes in in_axis_resources]
-  out_axes = lambda: [get_array_mapping(axes) for axes in out_axis_resources_thunk()]
+  out_axes = [get_array_mapping(axes) for axes in out_axis_resources]
+  fun = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+  local_in_avals = global_to_local(resource_env.physical_mesh,
+                                   jaxpr.in_avals, in_axis_resources)
   # TODO(skye): allow for using a submesh of physical_mesh
   return pxla.mesh_callable(fun, name, None, resource_env.physical_mesh,
                             in_axes, out_axes, donated_invars,
                             True, *local_in_avals, tile_by_mesh_axes=False,
                             do_resource_typecheck="pjit")
 
-# -------------------- pjit rules --------------------
+
+
+def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env, **_):
+  return global_to_local(resource_env.physical_mesh,
+                         jaxpr.out_avals, out_axis_resources)
+pjit_p.def_abstract_eval(_pjit_abstract_eval)
+
 
 def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
-                           call_jaxpr, in_axis_resources, out_axis_resources,
+                           jaxpr, in_axis_resources, out_axis_resources,
                            resource_env, donated_invars):
   mesh = resource_env.physical_mesh
   subc = xc.XlaBuilder(f"pjit_{name}")
@@ -262,8 +284,9 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
     args.append(xb.set_sharding_proto(subc, arg,
                                       get_sharding_proto(c, n, axis_resources, mesh)))
 
+  # TODO: Think about how to avoid duplicating constants with the outer jaxpr
   out_nodes = xla.jaxpr_subcomp(
-      subc, call_jaxpr, backend, axis_env, (),
+      subc, jaxpr.jaxpr, backend, axis_env, xla._xla_consts(subc, jaxpr.consts),
       extend_name_stack(name_stack, wrap_name(name, "pjit")), *args)
   out_nodes = [
       xb.set_sharding_proto(subc, out,
@@ -273,59 +296,36 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
 
   subc = subc.build(xops.Tuple(subc, out_nodes))
   return xops.Call(c, subc, list(in_nodes))
-xla.call_translations[pjit_call_p] = _pjit_translation_rule
-
-def _pjit_partial_eval_update_params(params, in_unknowns):
-  call_jaxpr = params['call_jaxpr']
-  donated_invars = params['donated_invars']
-  in_axis_resources = params['in_axis_resources']
-  out_axis_resources_thunk = params['out_axis_resources_thunk']
-  if not in_unknowns and donated_invars:
-    # JaxprTrace.post_process_call creates a call with no input tracers
-    new_donated_invars = (False,) * len(call_jaxpr.invars)
-    new_in_axis_resources = (REPLICATED,) * len(call_jaxpr.invars)
-  else:
-    # JaxprTrace.process_call drops known input tracers and prepends constants
-    num_consts = len(call_jaxpr.invars) - len(donated_invars)
-    def filter_unknown(l):
-      return tuple(x for x, uk in zip(l, in_unknowns) if uk)
-    new_donated_invars = (False,) * num_consts + filter_unknown(donated_invars)
-    new_in_axis_resources = ((REPLICATED,) * num_consts +
-                             filter_unknown(in_axis_resources))
-  new_out_axis_resources = out_axis_resources_thunk()
-  new_params = dict(params,
-                    donated_invars=new_donated_invars,
-                    in_axis_resources=new_in_axis_resources,
-                    out_axis_resources=new_out_axis_resources)
-  del new_params['out_axis_resources_thunk']
-  return new_params
-pe.call_param_updaters[pjit_call_p] = _pjit_partial_eval_update_params
-
-def _pjit_jvp_update_params(params, nz_tangents, nz_tangents_out_thunk):
-  donated_invars = params['donated_invars']
-  in_axis_resources = params['in_axis_resources']
-  out_axis_resources_thunk = params['out_axis_resources_thunk']
-  def filter_nonzero_ins(l):
-    return tuple(x for x, nz in zip(l, nz_tangents) if nz)
-  @as_hashable_function(closure=(tuple(nz_tangents), out_axis_resources_thunk))
-  def new_out_axis_resources_thunk():
-    out_axis_resources = out_axis_resources_thunk()
-    return (*out_axis_resources,
-            *(ax for ax, nz in zip(out_axis_resources, nz_tangents_out_thunk()) if nz))
-  return dict(params,
-              donated_invars=(donated_invars + filter_nonzero_ins(donated_invars)),
-              in_axis_resources=(in_axis_resources + filter_nonzero_ins(in_axis_resources)),
-              out_axis_resources_thunk=new_out_axis_resources_thunk)
-ad.call_param_updaters[pjit_call_p] = _pjit_jvp_update_params
+xla.call_translations[pjit_p] = _pjit_translation_rule
 
 
-def _pjit_init_to_final_params(params):
-  out_axis_resources_thunk = HashableFunction(lambda: params['out_axis_resources'],
-                                              closure=params['out_axis_resources'])
-  bind_params = dict(params, out_axis_resources_thunk=out_axis_resources_thunk)
-  del bind_params['out_axis_resources']
-  return bind_params
-core.initial_to_final_param_rules[pjit_call_p] = _pjit_init_to_final_params
+def _pjit_jvp(primals_in, tangents_in,
+              jaxpr, in_axis_resources, out_axis_resources,
+              resource_env, donated_invars, name):
+  is_nz_tangents_in = [type(t) is not ad.Zero for t in tangents_in]
+  jaxpr_jvp, is_nz_tangents_out = ad.jvp_jaxpr(
+      jaxpr, is_nz_tangents_in, instantiate=False)
+
+  def _filter_zeros(is_nz_l, l):
+    return (x for nz, x in zip(is_nz_l, l) if nz)
+  _filter_zeros_in = partial(_filter_zeros, is_nz_tangents_in)
+  _filter_zeros_out = partial(_filter_zeros, is_nz_tangents_out)
+  outputs = pjit_p.bind(
+      *primals_in, *_filter_zeros_in(tangents_in),
+      jaxpr=jaxpr_jvp,
+      in_axis_resources=(*in_axis_resources, *_filter_zeros_in(in_axis_resources)),
+      out_axis_resources=(*out_axis_resources, *_filter_zeros_out(out_axis_resources)),
+      resource_env=resource_env,
+      donated_invars=(*donated_invars, *_filter_zeros_in(donated_invars)),
+      name=wrap_name(name, 'jvp'))
+
+  primals_out, tangents_out = split_list(outputs, [-len(is_nz_tangents_out)])
+  assert len(primals_out) == len(jaxpr.jaxpr.outvars)
+  tangents_out_it = iter(tangents_out)
+  return primals_out, [next(tangents_out_it) if nz else ad.Zero(aval)
+                       for nz, aval in zip(is_nz_tangents_out, jaxpr.out_avals)]
+ad.primitive_jvps[pjit_p] = _pjit_jvp
+
 
 def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources):
   pjit_resources = set(it.chain.from_iterable(pos_axis_resources))
@@ -340,18 +340,18 @@ def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_ax
         f"{maps.show_axes(overlap)})")
 
 def _resource_typing_pjit(avals, params, source_info, named_axis_resources):
-  jaxpr = params['call_jaxpr']
+  jaxpr = params["jaxpr"]
   what = "pjit input"
-  for v, pos_axis_resources in zip(jaxpr.invars, params['in_axis_resources']):
-    _check_resources_against_named_axes(what, v.aval, pos_axis_resources, named_axis_resources)
+  for aval, pos_axis_resources in zip(jaxpr.in_avals, params['in_axis_resources']):
+    _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources)
   pxla.resource_typecheck(
-      jaxpr, named_axis_resources,
+      jaxpr.jaxpr, named_axis_resources,
       lambda: (f"a pjit'ed function {params['name']} "
                f"(pjit called at {source_info_util.summarize(source_info)})"))
   what = "pjit output"
-  for v, pos_axis_resources in zip(jaxpr.outvars, params['out_axis_resources']):
-    _check_resources_against_named_axes(what, v.aval, pos_axis_resources, named_axis_resources)
-pxla.custom_resource_typing_rules[pjit_call_p] = _resource_typing_pjit
+  for aval, pos_axis_resources in zip(jaxpr.out_avals, params['out_axis_resources']):
+    _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources)
+pxla.custom_resource_typing_rules[pjit_p] = _resource_typing_pjit
 
 
 # -------------------- with_sharding_constraint --------------------
@@ -363,9 +363,11 @@ def with_sharding_constraint(x, axis_resources):
       flatten_axes("with_sharding_constraint axis_resources",
                    tree, parsed_axis_resources))
   resource_env = maps.thread_resources.env
+  mesh = resource_env.physical_mesh
   _check_shapes_against_resources(
       "with_sharding_constraint arguments",
-      resource_env, x_flat, axis_resources_flat)
+      mesh.is_multi_process, mesh.shape,
+      x_flat, axis_resources_flat)
   outs = [sharding_constraint_p.bind(y, axis_resources=r, resource_env=resource_env)
           for y, r in safe_zip(x_flat, axis_resources_flat)]
   return tree_unflatten(tree, outs)
@@ -416,3 +418,11 @@ def get_sharding_proto(c, xla_op, axis_resources, mesh):
   sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(
       aval, array_mapping)
   return sharding_spec.sharding_proto()
+
+def global_to_local(mesh, avals, axes):
+  return [mesh.global_to_local(get_array_mapping(aval_axes), aval)
+          for aval, aval_axes in zip(avals, axes)]
+
+def local_to_global(mesh, avals, axes):
+  return [mesh.local_to_global(get_array_mapping(aval_axes), aval)
+          for aval, aval_axes in zip(avals, axes)]

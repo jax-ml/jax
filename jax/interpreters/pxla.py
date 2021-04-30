@@ -59,6 +59,11 @@ from . import partial_eval as pe
 from . import xla
 from . import ad
 
+if sys.version_info >= (3, 8):
+  from functools import cached_property as maybe_cached_property
+else:
+  maybe_cached_property = property
+
 if sys.version_info >= (3, 9):
   OrderedDictType = OrderedDict
 else:
@@ -1262,7 +1267,6 @@ mesh devices ndarray would have to be transposed before flattening and assignmen
 ArrayMapping = OrderedDictType[MeshAxisName, int]
 
 class Mesh:
-  __slots__ = ('devices', 'axis_names', '_hash')
 
   def __init__(self, devices: np.ndarray, axis_names: Sequence[MeshAxisName]):
     assert devices.ndim == len(axis_names)
@@ -1297,8 +1301,11 @@ class Mesh:
   def size(self):
     return np.prod(list(self.shape.values()))
 
-  # TODO: This is pretty expensive to compute. Cache this on the mesh object?
   @property
+  def is_multi_process(self):
+    return self.shape != self.local_mesh.shape
+
+  @maybe_cached_property
   def local_mesh(self):
     if not self.devices.ndim:
       return self
@@ -1338,6 +1345,14 @@ class Mesh:
 
   def __repr__(self):
     return f"Mesh({self.devices!r}, {self.axis_names!r})"
+
+  def local_to_global(self, axes: ArrayMapping, aval):
+    return untile_aval_nd(self.shape, axes,
+                          tile_aval_nd(self.local_mesh.shape, axes, aval))
+
+  def global_to_local(self, axes: ArrayMapping, aval):
+    return untile_aval_nd(self.local_mesh.shape, axes,
+                          tile_aval_nd(self.shape, axes, aval))
 
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
@@ -1398,7 +1413,7 @@ def mesh_callable(fun: lu.WrappedFun,
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
-              f"Compiling {fun.__name__} ({id(fun)}) for {tuple(global_axis_sizes.items())} "
+              f"Compiling {getattr(fun, '__name__', '<unnamed function>')} ({id(fun)}) for {tuple(global_axis_sizes.items())} "
               f"mesh with args {local_in_untiled_avals}. Argument mapping: {in_axes}.")
 
   # 1. Trace to jaxpr and preprocess/verify it

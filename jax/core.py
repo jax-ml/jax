@@ -117,6 +117,10 @@ class ClosedJaxpr:
   def literals(self):
     return self.consts  # backwards compatible alias
 
+  @property
+  def eqns(self):
+    return self.jaxpr.eqns
+
   def map_jaxpr(self, f):
     return ClosedJaxpr(f(self.jaxpr), self.consts)
 
