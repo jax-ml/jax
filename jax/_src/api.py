@@ -2404,9 +2404,10 @@ def eval_shape(fun: Callable, *args, **kwargs):
   """
   args_flat, in_tree = tree_flatten((args, kwargs))
   wrapped_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+  debug_info = pe.debug_info(fun, in_tree, True, "eval_shape")
   out = pe.abstract_eval_fun(wrapped_fun.call_wrapped,
                              *map(shaped_abstractify, args_flat),
-                             transform_name="eval_shape")
+                             debug_info=debug_info)
   out = [ShapeDtypeStruct(x.shape, x.dtype, x.named_shape) for x in out]
   return tree_unflatten(out_tree(), out)
 

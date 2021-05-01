@@ -2617,7 +2617,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_unexpected_tracer_error(self):
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "transformed by while_loop"):
+                                "for while_loop"):
       lst = []
       def side_effecting_body(val):
         lst.append(val)
@@ -2626,7 +2626,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lst[0] += 1
 
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "transformed by scan"):
+                                "for scan"):
       lst = []
       def side_effecting_scan(carry, val):
         lst.append(val)

@@ -23,7 +23,7 @@ class _JAXErrorMixin:
     error_page = self._error_page
     module_name = self._module_name
     class_name = self.__class__.__name__
-    error_msg = f'{message} ({error_page}#{module_name}.{class_name})'
+    error_msg = f'{message}See {error_page}#{module_name}.{class_name}'
     # https://github.com/python/mypy/issues/5887
     super().__init__(error_msg)  # type: ignore
 
@@ -38,14 +38,15 @@ class JAXIndexError(_JAXErrorMixin, IndexError):
 
 class ConcretizationTypeError(JAXTypeError):
   """
-  This error occurs when a JAX Tracer object is used in a context where a concrete value
-  is required. In some situations, it can be easily fixed by marking problematic values
-  as static; in others, it may indicate that your program is doing operations that are
-  not directly supported by JAX's JIT compilation model.
+  This error occurs when a JAX Tracer object is used in a context where a
+  concrete value is required. In some situations, it can be easily fixed by
+  marking problematic values as static; in others, it may indicate that your
+  program is doing operations that are not directly supported by JAX's JIT
+  compilation model.
 
   Traced value where static value is expected
-    One common cause of this error is using a traced value where a static value is required.
-    For example:
+    One common cause of this error is using a traced value where a static value
+    is required. For example:
 
       >>> from jax import jit, partial
       >>> import jax.numpy as jnp
@@ -56,10 +57,10 @@ class ConcretizationTypeError(JAXTypeError):
       >>> func(jnp.arange(4), 0)  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected:
-      axis argument to jnp.min().
+      ConcretizationTypeError: Abstract tracer value encountered where concrete
+      value is expected: axis argument to jnp.min().
 
-    This can often be fixed by marking the problematic value as static::
+    This can often be fixed by marking the problematic argument as static::
 
         >>> @partial(jit, static_argnums=1)
         ... def func(x, axis):
@@ -69,8 +70,8 @@ class ConcretizationTypeError(JAXTypeError):
         DeviceArray(0, dtype=int32)
 
   Traced value used in control flow
-    Another case where this often arises is when a traced value is used in Python control flow.
-    For example::
+    Another case where this often arises is when a traced value is used in
+    Python control flow. For example::
 
       >>> @jit
       ... def func(x, y):
@@ -79,12 +80,12 @@ class ConcretizationTypeError(JAXTypeError):
       >>> func(jnp.ones(4), jnp.zeros(4))  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected:
-      The problem arose with the `bool` function.
+      ConcretizationTypeError: Abstract tracer value encountered where concrete
+      value is expected: [...]
 
-    In this case, marking the problematic traced quantity as static is not an option, because it
-    is derived from traced inputs. But you can make progress by re-expressing this if statement
-    in terms of :func:`jax.numpy.where`::
+    We could mark both inputs ``x`` and ``y`` as static, but that would defeat
+    the purpose of using :func:`jax.jit` here. Another option is to re-express
+    the if statement in terms of :func:`jax.numpy.where`::
 
       >>> @jit
       ... def func(x, y):
@@ -93,11 +94,12 @@ class ConcretizationTypeError(JAXTypeError):
       >>> func(jnp.ones(4), jnp.zeros(4))
       DeviceArray([0., 0., 0., 0.], dtype=float32)
 
-    For more complicated control flow including loops, see :ref:`lax-control-flow`.
+    For more complicated control flow including loops, see
+    :ref:`lax-control-flow`.
 
   Shape depends on Traced Value
-    Such an error may also arise when a shape in your JIT-compiled computation depends
-    on the values within a traced quantity. For example::
+    Such an error may also arise when a shape in your JIT-compiled computation
+    depends on the values within a traced quantity. For example::
 
       >>> @jit
       ... def func(x):
@@ -109,12 +111,13 @@ class ConcretizationTypeError(JAXTypeError):
       ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected:
       The error arose in jnp.nonzero.
 
-    This is an example of an operation that is incompatible with JAX's JIT compilation model,
-    which requires array sizes to be known at compile-time. Here the size of the returned
-    array depends on the contents of `x`, and such code cannot be JIT compiled.
+    This is an example of an operation that is incompatible with JAX's JIT
+    compilation model, which requires array sizes to be known at compile-time.
+    Here the size of the returned array depends on the contents of `x`, and such
+    code cannot be JIT compiled.
 
-    In many cases it is possible to work around this by modifying the logic used in the function;
-    for example here is code with a similar issue::
+    In many cases it is possible to work around this by modifying the logic used
+    in the function; for example here is code with a similar issue::
 
       >>> @jit
       ... def func(x):
@@ -124,11 +127,11 @@ class ConcretizationTypeError(JAXTypeError):
       >>> func(jnp.arange(4))  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected:
-      The error arose in jnp.nonzero.
+      ConcretizationTypeError: Abstract tracer value encountered where concrete
+      value is expected: The error arose in jnp.nonzero.
 
-    And here is how you might express the same operation in a way that avoids creation of a
-    dynamically-sized index array::
+    And here is how you might express the same operation in a way that avoids
+    creation of a dynamically-sized index array::
 
       >>> @jit
       ... def func(x):
@@ -137,29 +140,31 @@ class ConcretizationTypeError(JAXTypeError):
       >>> func(jnp.arange(4))
       DeviceArray(5, dtype=int32)
 
-  To understand more subtleties having to do with tracers vs. regular values, and
-  concrete vs. abstract values, you may want to read :ref:`faq-different-kinds-of-jax-values`.
+  To understand more subtleties having to do with tracers vs. regular values,
+  and concrete vs. abstract values, you may want to read
+  :ref:`faq-different-kinds-of-jax-values`.
   """
   def __init__(self, tracer: "core.Tracer", context: str = ""):
     super().__init__(
         "Abstract tracer value encountered where concrete value is expected: "
-        f"{tracer}\n{context}\n{tracer._origin_msg()}\n")
+        f"{tracer}\n{context}{tracer._origin_msg()}\n")
 
 
 class NonConcreteBooleanIndexError(JAXIndexError):
   """
   This error occurs when a program attempts to use non-concrete boolean indices
-  in a traced indexing operation. Under JIT compilation, JAX arrays must have static
-  shapes (i.e. shapes that are known at compile-time) and so boolean masks must be
-  used carefully. Some logic implemented via boolean masking is simply not possible
-  under JAX's JIT compilation model; in other cases, the logic can be re-expressed in
-  a JIT-compatible way, often using the three-argument version of :func:`~jax.numpy.where`.
+  in a traced indexing operation. Under JIT compilation, JAX arrays must have
+  static shapes (i.e. shapes that are known at compile-time) and so boolean
+  masks must be used carefully. Some logic implemented via boolean masking is
+  simply not possible in a :func:`jax.jit` function; in other cases, the logic
+  can be re-expressed in a JIT-compatible way, often using the three-argument
+  version of :func:`~jax.numpy.where`.
 
   Following are a few examples of when this error might arise.
 
   Constructing arrays via boolean masking
-    This most commonly arises when attempting to create an array via a boolean mask
-    within a JIT context. For example::
+    This most commonly arises when attempting to create an array via a boolean
+    mask within a JIT context. For example::
 
       >>> import jax
       >>> import jax.numpy as jnp
@@ -173,14 +178,16 @@ class NonConcreteBooleanIndexError(JAXIndexError):
           ...
       NonConcreteBooleanIndexError: Array boolean indices must be concrete: ShapedArray(bool[10])
 
-    This function is attempting to return only the positive values in the input array; the size of
-    this returned array cannot be determined at compile-time unless `x` is marked as static, and so
-    operations like this cannot be performed under JIT compilation.
+    This function is attempting to return only the positive values in the input
+    array; the size of this returned array cannot be determined at compile-time
+    unless `x` is marked as static, and so operations like this cannot be
+    performed under JIT compilation.
 
   Reexpressible Boolean Logic
-    Although creating dynamically sized arrays is not supported directly, in many cases it is
-    possible to re-express the logic of the computation in terms of a JIT-compatible operation.
-    For example, here is another function that fails under JIT for the same reason::
+    Although creating dynamically sized arrays is not supported directly, in
+    many cases it is possible to re-express the logic of the computation in
+    terms of a JIT-compatible operation. For example, here is another function
+    that fails under JIT for the same reason::
 
       >>> @jax.jit
       ... def sum_of_positive(x):
@@ -191,9 +198,9 @@ class NonConcreteBooleanIndexError(JAXIndexError):
           ...
       NonConcreteBooleanIndexError: Array boolean indices must be concrete: ShapedArray(bool[10])
 
-    In this case, however, the problematic array is only an intermediate value, and we can
-    instead express the same logic in terms of the JIT-compatible three-argument version of
-    :func:`jax.numpy.where`::
+    In this case, however, the problematic array is only an intermediate value,
+    and we can instead express the same logic in terms of the JIT-compatible
+    three-argument version of :func:`jax.numpy.where`::
 
       >>> @jax.jit
       ... def sum_of_positive(x):
@@ -202,12 +209,13 @@ class NonConcreteBooleanIndexError(JAXIndexError):
       >>> sum_of_positive(jnp.arange(-5, 5))
       DeviceArray(10, dtype=int32)
 
-    This pattern of replacing boolean masking with three-argument :func:`~jax.numpy.where` is a
-    common solution to this sort of problem.
+    This pattern of replacing boolean masking with three-argument
+    :func:`~jax.numpy.where` is a common solution to this sort of problem.
 
   Boolean indices in :mod:`jax.ops`
-    The other situation where this error often arises is when using boolean indices within functions
-    in :mod:`jax.ops`, such as :func:`jax.ops.index_update`. Here is a simple example::
+    The other situation where this error often arises is when using boolean
+    indices within functions in :mod:`jax.ops`, such as
+    :func:`jax.ops.index_update`. Here is a simple example::
 
       >>> @jax.jit
       ... def manual_clip(x):
@@ -218,8 +226,9 @@ class NonConcreteBooleanIndexError(JAXIndexError):
           ...
       NonConcreteBooleanIndexError: Array boolean indices must be concrete: ShapedArray(bool[4])
 
-    This function is attempting to set values smaller than zero to a scalar fill value. As above,
-    this can be addressed by re-expressing the logic in terms of :func:`~jax.numpy.where`::
+    This function is attempting to set values smaller than zero to a scalar fill
+    value. As above, this can be addressed by re-expressing the logic in terms
+    of :func:`~jax.numpy.where`::
 
       >>> @jax.jit
       ... def manual_clip(x):
@@ -228,8 +237,9 @@ class NonConcreteBooleanIndexError(JAXIndexError):
       >>> manual_clip(jnp.arange(-2, 2))
       DeviceArray([0, 0, 0, 1], dtype=int32)
 
-    These operations also commonly are written in terms of the :ref:`syntactic-sugar-for-ops`;
-    for example, this is syntactic sugar for :func:`~jax.ops.index_mul`, and fails under JIT::
+    These operations also commonly are written in terms of the
+    :ref:`syntactic-sugar-for-ops`; for example, this is syntactic sugar for
+    :func:`~jax.ops.index_mul`, and fails under JIT::
 
       >>> @jax.jit
       ... def manual_abs(x):
@@ -240,7 +250,8 @@ class NonConcreteBooleanIndexError(JAXIndexError):
           ...
       NonConcreteBooleanIndexError: Array boolean indices must be concrete: ShapedArray(bool[4])
 
-    As above, the solution is to re-express this in terms of :func:`~jax.numpy.where`::
+    As above, the solution is to re-express this in terms of
+    :func:`~jax.numpy.where`::
 
       >>> @jax.jit
       ... def manual_abs(x):
@@ -256,12 +267,12 @@ class NonConcreteBooleanIndexError(JAXIndexError):
 
 class TracerArrayConversionError(JAXTypeError):
   """
-  This error occurs when a program attempts to convert a JAX Tracer object into a
-  standard NumPy array. It typically occurs in one of a few situations.
+  This error occurs when a program attempts to convert a JAX Tracer object into
+  a standard NumPy array. It typically occurs in one of a few situations.
 
   Using `numpy` rather than `jax.numpy` functions
-    This error can occur when a JAX Tracer object is passed to a raw numpy function,
-    or a method on a numpy.ndarray object. For example::
+    This error can occur when a JAX Tracer object is passed to a raw numpy
+    function, or a method on a numpy.ndarray object. For example::
 
       >>> from jax import jit, partial
       >>> import numpy as np
@@ -274,9 +285,11 @@ class TracerArrayConversionError(JAXTypeError):
       >>> func(jnp.arange(4))  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      TracerArrayConversionError: The numpy.ndarray conversion method __array__() was called on the JAX Tracer object
+      TracerArrayConversionError: The numpy.ndarray conversion method
+      __array__() was called on the JAX Tracer object
 
-    In this case, check that you are using `jax.numpy` methods rather than `numpy` methods::
+    In this case, check that you are using `jax.numpy` methods rather than
+    `numpy` methods::
 
       >>> @jit
       ... def func(x):
@@ -286,8 +299,9 @@ class TracerArrayConversionError(JAXTypeError):
       DeviceArray([0.        , 0.84147096, 0.9092974 , 0.14112   ], dtype=float32)
 
   Indexing a numpy array with a tracer
-    If this error arises on a line that involves array indexing, it may be that the array being
-    indexed `x` is a raw numpy.ndarray while the indices `idx` are traced. For example::
+    If this error arises on a line that involves array indexing, it may be that
+    the array being indexed `x` is a raw numpy.ndarray while the indices `idx`
+    are traced. For example::
 
       >>> x = np.arange(10)
 
@@ -298,9 +312,11 @@ class TracerArrayConversionError(JAXTypeError):
       >>> func(0)  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      TracerArrayConversionError: The numpy.ndarray conversion method __array__() was called on the JAX Tracer object
+      TracerArrayConversionError: The numpy.ndarray conversion method
+      __array__() was called on the JAX Tracer object
 
-    Depending on the context, you may fix this by converting the numpy array into a JAX array::
+    Depending on the context, you may fix this by converting the numpy array
+    into a JAX array::
 
       >>> @jit
       ... def func(i):
@@ -318,24 +334,24 @@ class TracerArrayConversionError(JAXTypeError):
       >>> func(0)
       DeviceArray(0, dtype=int32)
 
-  To understand more subtleties having to do with tracers vs. regular values, and concrete vs.
-  abstract values, you may want to read :ref:`faq-different-kinds-of-jax-values`.
+  To understand more subtleties having to do with tracers vs. regular values,
+  and concrete vs. abstract values, you may want to read
+  :ref:`faq-different-kinds-of-jax-values`.
   """
   def __init__(self, tracer: "core.Tracer"):
-    # TODO(mattjj, jakevdp): use tracer._origin_msg() here
     super().__init__(
         "The numpy.ndarray conversion method __array__() was called on "
-        f"the JAX Tracer object {tracer}")
+        f"the JAX Tracer object {tracer}{tracer._origin_msg()}")
 
 
 class TracerIntegerConversionError(JAXTypeError):
   """
-  This error can occur when a JAX Tracer object is used in a context where a Python integer
-  is expected. It typically occurs in a few situations.
+  This error can occur when a JAX Tracer object is used in a context where a
+  Python integer is expected. It typically occurs in a few situations.
 
   Passing a tracer in place of an integer
-    This error can occur if you attempt to pass a tracer to a function that requires an integer
-    argument; for example::
+    This error can occur if you attempt to pass a tracer to a function that
+    requires an integer argument; for example::
 
       >>> from jax import jit, partial
       >>> import numpy as np
@@ -347,9 +363,11 @@ class TracerIntegerConversionError(JAXTypeError):
       >>> func(np.arange(4), 0)  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
-      TracerIntegerConversionError: The __index__() method was called on the JAX Tracer object
+      TracerIntegerConversionError: The __index__() method was called on the JAX
+      Tracer object
 
-    When this happens, the solution is often to mark the problematic argument as static::
+    When this happens, the solution is often to mark the problematic argument as
+    static::
 
       >>> @partial(jit, static_argnums=1)
       ... def func(x, axis):
@@ -359,17 +377,19 @@ class TracerIntegerConversionError(JAXTypeError):
       [DeviceArray([0, 1, 2, 3, 4], dtype=int32),
        DeviceArray([5, 6, 7, 8, 9], dtype=int32)]
 
-    An alternative is to apply the transformation to a closure that encapsulates the arguments
-    to be protected, either manually as below or by using :func:`functools.partial`::
+    An alternative is to apply the transformation to a closure that encapsulates
+    the arguments to be protected, either manually as below or by using
+    :func:`functools.partial`::
 
       >>> jit(lambda arr: np.split(arr, 2, 0))(np.arange(4))
       [DeviceArray([0, 1], dtype=int32), DeviceArray([2, 3], dtype=int32)]
 
-    **Note a new closure is created at every invocation, which defeats the compilation
-    caching mechanism, which is why static_argnums is preferred.**
+    **Note a new closure is created at every invocation, which defeats the
+    compilation caching mechanism, which is why static_argnums is preferred.**
 
   Indexing a list with a Tracer
-    This error can occur if you attempt to index a Python list with a traced quantity.
+    This error can occur if you attempt to index a Python list with a traced
+    quantity.
     For example::
 
       >>> import jax.numpy as jnp
@@ -386,8 +406,8 @@ class TracerIntegerConversionError(JAXTypeError):
           ...
       TracerIntegerConversionError: The __index__() method was called on the JAX Tracer object
 
-    Depending on the context, you can generally fix this either by converting the list
-    to a JAX array::
+    Depending on the context, you can generally fix this either by converting
+    the list to a JAX array::
 
       >>> @jit
       ... def func(i):
@@ -405,8 +425,9 @@ class TracerIntegerConversionError(JAXTypeError):
       >>> func(0)
       DeviceArray(1, dtype=int32)
 
-  To understand more subtleties having to do with tracers vs. regular values, and concrete vs.
-  abstract values, you may want to read :ref:`faq-different-kinds-of-jax-values`.
+  To understand more subtleties having to do with tracers vs. regular values,
+  and concrete vs. abstract values, you may want to read
+  :ref:`faq-different-kinds-of-jax-values`.
   """
   def __init__(self, tracer: "core.Tracer"):
     super().__init__(

@@ -64,23 +64,23 @@ Array = Any
 
 @cache()
 def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
-                              transform_name: str = ""):
+                              primitive_name: Optional[str] = None):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals,
-                                               transform_name=transform_name)
+  debug = pe.debug_info(fun, in_tree, False, primitive_name or "<unknown>")
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals, debug)
   return jaxpr, consts, out_tree()
 
 @cache()
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals,
-                         transform_name: str = ""):
-  jaxpr, consts, out_tree = _initial_style_open_jaxpr(fun, in_tree, in_avals,
-                                                      transform_name)
+                         primitive_name: Optional[str] = None):
+  jaxpr, consts, out_tree = _initial_style_open_jaxpr(
+      fun, in_tree, in_avals, primitive_name)
   closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
   return closed_jaxpr, consts, out_tree
 
 @cache()
-def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
-                                             in_tree, in_avals):
+def _initial_style_jaxprs_with_common_consts(
+    funs: Sequence[Callable], in_tree, in_avals, primitive_name: str):
   # When staging the branches of a conditional into jaxprs, constants are
   # extracted from each branch and converted to jaxpr arguments. To use the
   # staged jaxprs as the branches to a conditional *primitive*, we need for
@@ -88,8 +88,9 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
   # for each one, it makes another that accepts *all* constants, but only uses
   # those that it needs (dropping the rest).
 
-  jaxprs, all_consts, all_out_trees = unzip3(
-      _initial_style_open_jaxpr(fun, in_tree, in_avals) for fun in funs)
+  jaxprs, all_consts, all_out_trees = \
+      unzip3(_initial_style_open_jaxpr(fun, in_tree, in_avals, primitive_name)
+             for fun in funs)
 
   newvar = core.gensym(jaxprs, suffix='_')
   all_const_avals = [[raise_to_shaped(core.get_aval(c)) for c in consts]
@@ -195,13 +196,17 @@ def fori_loop(lower, upper, body_fun, init_val):
 
   # If we can specialize on the trip count, call scan instead of a while_loop
   # to enable efficient reverse-mode differentiation.
-  try:
-    lower_ = int(lower)
-    upper_ = int(upper)
-  except TypeError:
-    use_scan = False
+  if (isinstance(core.get_aval(lower), ConcreteArray) and
+      isinstance(core.get_aval(upper), ConcreteArray)):
+    try:
+      lower_ = int(lower)
+      upper_ = int(upper)
+    except TypeError:
+      use_scan = False
+    else:
+      use_scan = True
   else:
-    use_scan = True
+    use_scan = False
 
   if use_scan:
     (_, result), _ = scan(_fori_scan_body_fun(body_fun), (lower_, init_val),
@@ -273,8 +278,10 @@ def while_loop(cond_fun: Callable[[T], bool],
   def _create_jaxpr(init_val):
     init_vals, in_tree = tree_flatten((init_val,))
     init_avals = tuple(_map(_abstractify, init_vals))
-    cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals, "while_cond")
-    body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(body_fun, in_tree, init_avals, "while_loop")
+    cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(
+        cond_fun, in_tree, init_avals, "while_cond")
+    body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(
+        body_fun, in_tree, init_avals, "while_loop")
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
@@ -609,7 +616,7 @@ def switch(index, branches: Sequence[Callable], operand):
   ops_avals = tuple(_map(_abstractify, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      branches, ops_tree, ops_avals)
+      branches, ops_tree, ops_avals, primitive_name='switch')
 
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
     _check_tree_and_avals(f"branch 0 and {i + 1} outputs",
@@ -689,7 +696,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
   ops_avals = tuple(_map(_abstractify, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      (true_fun, false_fun), ops_tree, ops_avals)
+      (true_fun, false_fun), ops_tree, ops_avals, 'cond')
   true_jaxpr, false_jaxpr = jaxprs
   out_tree, false_out_tree = out_trees
 
@@ -1264,7 +1271,8 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     in_flat, in_tree = tree_flatten((init, xs))
 
     carry_avals = tuple(_map(_abstractify, init_flat))
-    jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals, "scan")
+    jaxpr, consts, out_tree = _initial_style_jaxpr(
+        f, in_tree, carry_avals + x_avals, "scan")
     out_tree_children = out_tree.children()
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
@@ -2182,11 +2190,13 @@ def custom_linear_solve(
     return f
 
   matvec_jaxpr, matvec_consts, out_tree = _initial_style_jaxpr(
-      _shape_checked(matvec, "matvec"), in_args_tree, b_avals)
+      _shape_checked(matvec, "matvec"), in_args_tree, b_avals,
+      'custom_linear_solve')
   _check_tree("matvec", "b", out_tree, tree)
 
   solve_jaxpr, solve_consts, out_tree = _initial_style_jaxpr(
-      _shape_checked(partial(solve, matvec), "solve"), in_args_tree, b_avals)
+      _shape_checked(partial(solve, matvec), "solve"), in_args_tree, b_avals,
+      'custom_linear_solve')
   _check_tree("solve", "b", out_tree, tree)
 
   if transpose_solve is None:
@@ -2200,12 +2210,12 @@ def custom_linear_solve(
     else:
       vecmat = _transpose_one_output(matvec, b)
       vecmat_jaxpr, vecmat_consts, out_tree = _initial_style_jaxpr(
-          vecmat, in_args_tree, b_avals)
+          vecmat, in_args_tree, b_avals, 'custom_linear_solve')
       assert out_tree == tree
 
     tr_solve_jaxpr, tr_solve_consts, out_tree = _initial_style_jaxpr(
         _shape_checked(partial(transpose_solve, vecmat), "transpose_solve"),
-        in_args_tree, b_avals)
+        in_args_tree, b_avals, 'custom_linear_solve')
     _check_tree("transpose_solve", "b", out_tree, tree)
 
   all_consts = [matvec_consts, vecmat_consts, solve_consts, tr_solve_consts]
