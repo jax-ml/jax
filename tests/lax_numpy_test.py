@@ -4712,6 +4712,82 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         atol=atol,
                         rtol=rtol)
 
+  def testR_(self):
+    a = np.arange(6).reshape((2,3))
+    self.assertArraysEqual(np.r_[np.array([1,2,3]), 0, 0, np.array([4,5,6])],
+                           jnp.r_[np.array([1,2,3]), 0, 0, np.array([4,5,6])])
+    self.assertArraysEqual(np.r_['-1', a, a], jnp.r_['-1', a, a])
+    self.assertArraysEqual(np.r_['0,2', [1,2,3], [4,5,6]], jnp.r_['0,2', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.r_['0,2,0', [1,2,3], [4,5,6]], jnp.r_['0,2,0', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.r_['1,2,0', [1,2,3], [4,5,6]], jnp.r_['1,2,0', [1,2,3], [4,5,6]])
+    # negative 1d axis start
+    self.assertArraysEqual(np.r_['0,4,-1', [1,2,3], [4,5,6]], jnp.r_['0,4,-1', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.r_['0,4,-2', [1,2,3], [4,5,6]], jnp.r_['0,4,-2', [1,2,3], [4,5,6]])
+
+    # matrix directives
+    with warnings.catch_warnings():
+      warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+      self.assertArraysEqual(np.r_['r',[1,2,3], [4,5,6]], jnp.r_['r',[1,2,3], [4,5,6]])
+      self.assertArraysEqual(np.r_['c', [1, 2, 3], [4, 5, 6]], jnp.r_['c', [1, 2, 3], [4, 5, 6]])
+
+    # bad directive
+    with self.assertRaisesRegex(ValueError, "could not understand directive.*"):
+      jnp.r_["asdfgh",[1,2,3]]
+
+    # Complex number steps
+    atol = 1e-6
+    rtol = 1e-6
+    self.assertAllClose(np.r_[-1:1:6j],
+                        jnp.r_[-1:1:6j],
+                        atol=atol,
+                        rtol=rtol)
+    self.assertAllClose(np.r_[-1:1:6j, [0]*3, 5, 6],
+                        jnp.r_[-1:1:6j, [0]*3, 5, 6],
+                        atol=atol,
+                        rtol=rtol)
+    # Non-integer steps
+    self.assertAllClose(np.r_[1.2:4.8:0.24],
+                        jnp.r_[1.2:4.8:0.24],
+                        atol=atol,
+                        rtol=rtol)
+
+  def testC_(self):
+    a = np.arange(6).reshape((2, 3))
+    self.assertArraysEqual(np.c_[np.array([1,2,3]), np.array([4,5,6])],
+                           jnp.c_[np.array([1,2,3]), np.array([4,5,6])])
+    self.assertArraysEqual(np.c_[np.array([[1,2,3]]), 0, 0, np.array([[4,5,6]])],
+                           jnp.c_[np.array([[1,2,3]]), 0, 0, np.array([[4,5,6]])])
+    self.assertArraysEqual(np.c_['-1', a, a], jnp.c_['-1', a, a])
+    self.assertArraysEqual(np.c_['0,2', [1,2,3], [4,5,6]], jnp.c_['0,2', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.c_['0,2,0', [1,2,3], [4,5,6]], jnp.c_['0,2,0', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.c_['1,2,0', [1,2,3], [4,5,6]], jnp.c_['1,2,0', [1,2,3], [4,5,6]])
+    # negative 1d axis start
+    self.assertArraysEqual(np.c_['0,4,-1', [1,2,3], [4,5,6]], jnp.c_['0,4,-1', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.c_['0,4,-2', [1,2,3], [4,5,6]], jnp.c_['0,4,-2', [1,2,3], [4,5,6]])
+    # matrix directives, avoid numpy deprecation warning
+    with warnings.catch_warnings():
+      warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+      self.assertArraysEqual(np.c_['r',[1,2,3], [4,5,6]], jnp.c_['r',[1,2,3], [4,5,6]])
+      self.assertArraysEqual(np.c_['c', [1, 2, 3], [4, 5, 6]], jnp.c_['c', [1, 2, 3], [4, 5, 6]])
+
+    # bad directive
+    with self.assertRaisesRegex(ValueError, "could not understand directive.*"):
+      jnp.c_["asdfgh",[1,2,3]]
+
+    # Complex number steps
+    atol = 1e-6
+    rtol = 1e-6
+    self.assertAllClose(np.c_[-1:1:6j],
+                        jnp.c_[-1:1:6j],
+                        atol=atol,
+                        rtol=rtol)
+
+    # Non-integer steps
+    self.assertAllClose(np.c_[1.2:4.8:0.24],
+                        jnp.c_[1.2:4.8:0.24],
+                        atol=atol,
+                        rtol=rtol)
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
