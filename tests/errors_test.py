@@ -41,15 +41,18 @@ def get_exception(etype, f):
 def check_filtered_stack_trace(test, etype, f, frame_patterns=[]):
   test.assertRaises(etype, f)
   e = get_exception(etype, f)
-  c = traceback_util.last_cause(e)
-  test.assertIsInstance(c, traceback_util.FilteredStackTrace)
-  c_tb = traceback.format_tb(c.__traceback__)
+  c = e.__cause__
+  test.assertIsInstance(c, traceback_util.UnfilteredStackTrace)
+  c_tb = traceback.format_tb(e.__traceback__)
+  # TODO(phawkins): remove this condition after jaxlib 0.1.66 is the minimum.
+  if traceback_util.replace_thread_exc_traceback is None:
+    c_tb = [t for t in c_tb if "reraise_with_filtered_traceback" not in t]
   if frame_patterns:
     for (fname_pat, line_pat), frame_fmt in zip(
         reversed(frame_patterns), reversed(c_tb)):
-      fname_pat = re.escape(fname_pat)
+      file = '.*' if fname_pat is None else re.escape(__file__)
+      fname_pat = '.*' if fname_pat is None else re.escape(fname_pat)
       line_pat = re.escape(line_pat)
-      file = re.escape(__file__)
       full_pat = (
           f'  File "{file}", line ' r'[0-9]+'
           f', in {fname_pat}' r'\n\s*' f'{line_pat}')
@@ -121,7 +124,9 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     check_filtered_stack_trace(self, TypeError, f, [
         ('<lambda>', 'f = lambda: outermost'),
         ('outermost', 'return 2 + inbetween(x)'),
-        ('inbetween', 'return 1 + grad(innermost)(x)')])
+        ('inbetween', 'return 1 + grad(innermost)(x)'),
+        (None, 'raise TypeError'),
+    ])
 
   def test_lax_cond(self):
     if not traceback_util.filtered_tracebacks_supported():
@@ -304,9 +309,8 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('<lambda>', 'f = lambda: outer'),
         ('outer', 'raise TypeError')])
     e = get_exception(TypeError, f)
-    self.assertIsInstance(e.__cause__, ValueError)
-    self.assertIsInstance(e.__cause__.__cause__,
-                          traceback_util.FilteredStackTrace)
+    self.assertIsInstance(e.__cause__, traceback_util.UnfilteredStackTrace)
+    self.assertIsInstance(e.__cause__.__cause__, ValueError)
 
 
 class CustomErrorsTest(jtu.JaxTestCase):

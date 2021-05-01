@@ -26,8 +26,8 @@ def register_exclusion(path):
   _exclude_paths.append(path)
 
 _jax_message_append = (
-    'The stack trace above excludes JAX-internal frames.\n'
-    'The following is the original exception that occurred, unmodified.\n'
+    'The stack trace below excludes JAX-internal frames.\n'
+    'The preceding is the original exception that occurred, unmodified.\n'
     '\n--------------------')
 
 def path_starts_with(path, path_prefix):
@@ -56,13 +56,13 @@ def ignore_known_hidden_frame(f):
 
 def filter_traceback_and_stack(tb):
   out = None
-
   # Scan the traceback and collect relevant frames.
-
   for f, lineno in reversed(list(traceback.walk_tb(tb))):
-    if include_frame(f):
+    if include_frame(f) or out is None:
       out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+  return out
 
+def add_call_stack_frames(tb):
   # Continue up the call stack.
   #
   # We would like to avoid stepping too far up, e.g. past the exec/eval point of
@@ -72,6 +72,7 @@ def filter_traceback_and_stack(tb):
   # the call stack includes module-level frames from the current module A, and
   # the current module A was imported from within a function F elsewhere, then
   # the stack trace we produce will be truncated at F's frame.
+  out = tb
 
   reached_module_level = False
   for f, lineno in traceback.walk_stack(tb.tb_frame):
@@ -83,7 +84,6 @@ def filter_traceback_and_stack(tb):
       out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
     if f.f_code.co_name == '<module>':
       reached_module_level = True
-
   return out
 
 def is_reraiser_frame(f):
@@ -97,16 +97,13 @@ def is_under_reraiser(e):
 def format_exception_only(e):
   return ''.join(traceback.format_exception_only(type(e), e)).strip()
 
-def last_cause(e):
-  prev, cur = e, e.__cause__
-  while cur is not None:
-    prev, cur = cur, cur.__cause__
-  return prev
-
-class FilteredStackTrace(Exception): pass
+class UnfilteredStackTrace(Exception): pass
 
 make_traceback = (types.TracebackType if sys.version_info >= (3, 7) else
                   getattr(xla_extension, "make_python_traceback", None))
+
+replace_thread_exc_traceback = getattr(
+    xla_extension, "replace_thread_exc_traceback", None)
 
 def filtered_tracebacks_supported():
   return make_traceback is not None
@@ -125,7 +122,7 @@ def api_boundary(fun):
   ``api_boundary(f)`` were to simply call ``g`` instead.
 
   This annotation is primarily useful in wrapping functions output by JAX's
-  transformations. For example, consder ``g = jax.jit(f)``. When ``g`` is
+  transformations. For example, consider ``g = jax.jit(f)``. When ``g`` is
   called, JAX's JIT compilation machinery is invoked, which in turn calls ``f``
   in order to trace and translate it. If the function ``f`` raises an exception,
   the stack unwinds through JAX's JIT internals up to the original call site of
@@ -143,22 +140,35 @@ def api_boundary(fun):
       return fun(*args, **kwargs)
     except Exception as e:
       if not is_under_reraiser(e):
-        filtered_tb, cause, filtered = None, None, None
+        filtered_tb, unfiltered = None, None
         try:
           filtered_tb = filter_traceback_and_stack(e.__traceback__)
-          if filtered_tb:
-            msg = format_exception_only(e)
-            msg = f'{msg}\n\n{_jax_message_append}'
-            filtered = FilteredStackTrace(msg).with_traceback(filtered_tb)
-            cause = last_cause(e)
-            cause.__cause__ = filtered
+          if filtered_tb is None:
+            raise
+          msg = format_exception_only(e)
+          msg = f'{msg}\n\n{_jax_message_append}'
+          unfiltered = UnfilteredStackTrace(msg)
+          unfiltered.with_traceback(add_call_stack_frames(e.__traceback__))
+          unfiltered.__context__ = e.__context__
+          unfiltered.__cause__ = e.__cause__
+          unfiltered.__suppress_context__ = e.__suppress_context__
+          e.__context__ = None
+          e.__cause__ = unfiltered
+          # There seems to be no way to alter the currently raised exception's
+          # traceback, except via the C API. The currently raised exception
+          # is part of the interpreter's thread state: value `e` is a copy.
+          if replace_thread_exc_traceback is not None:
+            replace_thread_exc_traceback(filtered_tb)
             raise
           else:
-            raise
+            # TODO(phawkins): remove this case when jaxlib 0.1.66 is the
+            # minimum.
+
+            # Fallback case for older jaxlibs; includes the current frame.
+            raise e.with_traceback(filtered_tb)
         finally:
           del filtered_tb
-          del cause
-          del filtered
+          del unfiltered
       else:
         raise
   return reraise_with_filtered_traceback
