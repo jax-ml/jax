@@ -102,9 +102,6 @@ class UnfilteredStackTrace(Exception): pass
 make_traceback = (types.TracebackType if sys.version_info >= (3, 7) else
                   getattr(xla_extension, "make_python_traceback", None))
 
-replace_thread_exc_traceback = getattr(
-    xla_extension, "replace_thread_exc_traceback", None)
-
 def filtered_tracebacks_supported():
   return make_traceback is not None
 
@@ -157,8 +154,8 @@ def api_boundary(fun):
           # There seems to be no way to alter the currently raised exception's
           # traceback, except via the C API. The currently raised exception
           # is part of the interpreter's thread state: value `e` is a copy.
-          if replace_thread_exc_traceback is not None:
-            replace_thread_exc_traceback(filtered_tb)
+          if hasattr(xla_extension, 'replace_thread_exc_traceback'):
+            xla_extension.replace_thread_exc_traceback(filtered_tb)
             raise
           else:
             # TODO(phawkins): remove this case when jaxlib 0.1.66 is the

@@ -24,6 +24,7 @@ from jax import core, grad, jit, vmap, lax
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax._src import traceback_util
+from jax.lib import xla_extension
 
 
 from jax.config import config
@@ -45,7 +46,7 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=[]):
   test.assertIsInstance(c, traceback_util.UnfilteredStackTrace)
   c_tb = traceback.format_tb(e.__traceback__)
   # TODO(phawkins): remove this condition after jaxlib 0.1.66 is the minimum.
-  if traceback_util.replace_thread_exc_traceback is None:
+  if not hasattr(xla_extension, "replace_thread_exc_traceback"):
     c_tb = [t for t in c_tb if "reraise_with_filtered_traceback" not in t]
   if frame_patterns:
     for (fname_pat, line_pat), frame_fmt in zip(
