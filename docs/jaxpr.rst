@@ -433,7 +433,6 @@ computation should run. For example
                                  in (g,) }
                     device=None
                     donated_invars=(False, False)
-                    inline=False
                     name=inner ] a b
       d = convert_element_type[ new_dtype=float32
                                 weak_type=False ] a

@@ -15,7 +15,7 @@
 
 import operator
 from operator import attrgetter
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from collections import namedtuple
 from functools import total_ordering
 import itertools as it
@@ -611,13 +611,11 @@ class EvalTrace(Trace):
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
     del primitive, jvp  # Unused.
-    with new_sublevel():
-      return fun.call_wrapped(*tracers)
+    return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
     del primitive, fwd, bwd, out_trees  # Unused.
-    with new_sublevel():
-      return fun.call_wrapped(*tracers)
+    return fun.call_wrapped(*tracers)
 
 
 class MainTrace:
@@ -807,6 +805,11 @@ def new_sublevel() -> Generator[None, None, None]:
     del sublevel
     if t() is not None:
       raise Exception(f'Leaked sublevel {t()}.')
+
+def maybe_new_sublevel(trace):
+  # dynamic traces run the WrappedFun, so we raise the sublevel for them
+  dynamic = thread_local_state.trace_state.trace_stack.dynamic
+  return new_sublevel() if trace.main is dynamic else suppress()
 
 def full_lower(val):
   if isinstance(val, Tracer):
@@ -1549,7 +1552,8 @@ def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
       fun, primitive, top_trace and top_trace.level,
       params_tuple, out_axes_transforms)
   tracers = map(top_trace.full_raise, args)
-  outs = primitive.process(top_trace, fun, tracers, params)
+  with maybe_new_sublevel(top_trace):
+    outs = primitive.process(top_trace, fun, tracers, params)
   return map(full_lower, apply_todos(env_trace_todo(), outs))
 
 
@@ -1568,8 +1572,7 @@ class CallPrimitive(Primitive):
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
-  with new_sublevel():
-    return f.call_wrapped(*args)
+  return f.call_wrapped(*args)
 
 call_p = CallPrimitive('call')
 call = call_p.bind
