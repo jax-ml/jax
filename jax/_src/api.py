@@ -212,6 +212,7 @@ def jit(
   device: Optional[xc.Device] = None,
   backend: Optional[str] = None,
   donate_argnums: Union[int, Iterable[int]] = (),
+  inline: bool = False,
 ) -> F:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
@@ -262,7 +263,10 @@ def jit(
       buffers to reduce the amount of memory needed to perform a computation,
       for example recycling one of your input buffers to store a result. You
       should not reuse buffers that you donate to a computation, JAX will raise
-      an error if you try to.
+      an error if you try to. By default, no arguments are donated.
+    inline: Specify whether this function should be inlined into enclosing
+      jaxprs (rather than being represented as an application of the xla_call
+      primitive with its own subjaxpr). Default False.
 
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation.
@@ -288,10 +292,10 @@ def jit(
     static_argnames = ()
   if FLAGS.experimental_cpp_jit:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
-                    donate_argnums)
+                    donate_argnums, inline)
   else:
     return _python_jit(fun, static_argnums, static_argnames, device, backend,
-                       donate_argnums)
+                       donate_argnums, inline)
 
 
 def _python_jit(
@@ -300,9 +304,10 @@ def _python_jit(
     static_argnames: Union[str, Iterable[str], None] = None,
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
-    donate_argnums: Union[int, Iterable[int]] = ()
+    donate_argnums: Union[int, Iterable[int]] = (),
+    inline: bool = False,
 ) -> F:
-  """The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit."""
+  # The Python implementation of `jax.jit`, being slowly replaced by _cpp_jit.
   _check_callable(fun)
   static_argnums, static_argnames = _infer_argnums_and_argnames(
       fun, static_argnums, static_argnames)
@@ -339,13 +344,8 @@ def _python_jit(
     for arg in args_flat:
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(
-        flat_fun,
-        *args_flat,
-        device=device,
-        backend=backend,
-        name=flat_fun.__name__,
-        donated_invars=donated_invars)
+    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,
+        name=flat_fun.__name__, donated_invars=donated_invars, inline=inline)
     return tree_unflatten(out_tree(), out)
 
   return f_jitted
@@ -366,16 +366,15 @@ def _cpp_jit(
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
+    inline: bool = False,
 ) -> F:
-  """An implementation of `jit` that tries to do as much as possible in C++.
-
-  The goal of this function is to speed up the time it takes to process the
-  arguments, find the correct C++ executable, start the transfer of arguments
-  and schedule the computation.
-  As long as it does not support all features of the Python implementation
-  the C++ code will fallback to `_python_jit` when it faces some unsupported
-  feature.
-  """
+  # An implementation of `jit` that tries to do as much as possible in C++.
+  # The goal of this function is to speed up the time it takes to process the
+  # arguments, find the correct C++ executable, start the transfer of arguments
+  # and schedule the computation.
+  # As long as it does not support all features of the Python implementation
+  # the C++ code will fallback to `_python_jit` when it faces some unsupported
+  # feature.
   _check_callable(fun)
   static_argnums, static_argnames = _infer_argnums_and_argnames(
       fun, static_argnums, static_argnames)
@@ -417,12 +416,9 @@ def _cpp_jit(
       _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out_flat = xla.xla_call(
-        flat_fun,
-        *args_flat,
-        device=device,
-        backend=backend,
-        name=flat_fun.__name__,
-        donated_invars=donated_invars)
+        flat_fun, *args_flat,
+        device=device, backend=backend, name=flat_fun.__name__,
+        donated_invars=donated_invars, inline=inline)
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 

@@ -2343,7 +2343,7 @@ class APITest(jtu.JaxTestCase):
         lst.append(x)
         return x
 
-      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+      with self.assertRaisesRegex(Exception, r"Leaked"):
         f(3)
 
   def test_leak_checker_catches_a_pmap_leak(self):
@@ -2355,7 +2355,7 @@ class APITest(jtu.JaxTestCase):
         lst.append(x)
         return x
 
-      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+      with self.assertRaisesRegex(Exception, r"Leaked"):
         f(np.ones(1))
 
   def test_leak_checker_catches_a_grad_leak(self):
@@ -2677,6 +2677,21 @@ class APITest(jtu.JaxTestCase):
 
     jtu.check_grads(batched_scan_over_mul, (x_batch, coeff), order=2,
                     modes=['rev'])
+
+  def test_jit_inline(self):
+    @partial(api.jit, inline=False)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertIn('xla_call', str(jaxpr))
+
+    @partial(api.jit, inline=True)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertNotIn('xla_call', str(jaxpr))
 
 
 class RematTest(jtu.JaxTestCase):

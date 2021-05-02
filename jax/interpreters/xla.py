@@ -218,7 +218,10 @@ def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
 
 ### op-by-op execution
 
-def arg_spec(x):
+
+ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
+
+def arg_spec(x: Any) -> ArgSpec:
   aval = abstractify(x)
   try:
     return aval, x._device
@@ -240,8 +243,7 @@ def _partition_outputs(avals, outs):
 
 
 @cache()
-def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
-                                                   Optional[Device]], **params):
+def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
   avals, arg_devices = unzip2(arg_specs)
   donated_invars = (False,) * len(arg_specs)
   device = _device_from_arg_devices(arg_devices)
@@ -573,7 +575,9 @@ def jaxpr_collectives(jaxpr):
 
 ### xla_call underlying jit
 
-def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_invars):
+def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
+                   donated_invars, inline):
+  del inline  # Only used at tracing time
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
                                *unsafe_map(arg_spec, args))
   try:
@@ -591,7 +595,8 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_inv
     # intentional here, to avoid "Store occupied" errors we reset the stores to
     # be empty.
     for store in fun.stores: store and store.reset()
-    return fun.call_wrapped(*args)  # probably won't return
+    with core.new_sublevel():
+      return fun.call_wrapped(*args)  # probably won't return
 
 def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
   """Expands a given shape tree into a flat list of indices to arrays.
@@ -692,7 +697,8 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
 
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
   xla_consts = _xla_consts(c, consts)
-  xla_args, donated_invars = _xla_callable_args(c, abstract_args, tuple_args, donated_invars=donated_invars)
+  xla_args, donated_invars = _xla_callable_args(c, abstract_args, tuple_args,
+                                                donated_invars=donated_invars)
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
@@ -789,9 +795,9 @@ def _xla_callable_args(
                 for (a, r, p) in safe_zip(avals, replicated, parts)
                 for xla_shape in aval_to_xla_shapes(a)]
     if donated_invars is not None:
-      donated_invars = [d
-                        for (a, r, p, d) in safe_zip(avals, replicated, parts, donated_invars)
-                        for xla_shape in aval_to_xla_shapes(a)]
+      donated_invars = [
+          d for (a, _, _, d) in zip(avals, replicated, parts, donated_invars)
+          for xla_shape in aval_to_xla_shapes(a)]
     return xla_args, donated_invars
   else:
     if replicated is not None:
@@ -885,8 +891,8 @@ ad.call_transpose_param_updaters[xla_call_p] = _xla_call_transpose_update_params
 
 def _xla_call_translation_rule(c, axis_env,
                                in_nodes, name_stack, backend, name,
-                               call_jaxpr, donated_invars, device=None):
-  del device, donated_invars  # Ignored.
+                               call_jaxpr, donated_invars, inline, device=None):
+  del device, donated_invars, inline  # Ignored.
   subc = xb.make_computation_builder(f"jit_{name}")
   args = [xb.parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),

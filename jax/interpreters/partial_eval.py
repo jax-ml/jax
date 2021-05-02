@@ -242,6 +242,7 @@ class JaxprTrace(Trace):
 
   # We use post_process_call to handle both call and map primitives.
   def post_process_call(self, primitive, out_tracers, params):
+
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
     out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
     out = out_pv_consts + consts
@@ -321,7 +322,8 @@ class JaxprTrace(Trace):
     def jvp_jaxpr_thunk():
       jvp_ = trace_to_subjaxpr(jvp, self.main, True)
       jvp_, aux = partial_eval_wrapper(jvp_, tuple(in_avals) * 2)
-      out_flat = jvp_.call_wrapped(*(in_consts * 2))  # in_consts are units
+      with core.new_sublevel():
+        out_flat = jvp_.call_wrapped(*(in_consts * 2))  # in_consts are units
       out_avals, jaxpr, env = aux()
       _, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
       converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
@@ -360,7 +362,8 @@ class JaxprTrace(Trace):
     def fwd_jaxpr_thunk():
       fwd_ = trace_to_subjaxpr(fwd, self.main, True)
       fwd_, aux = partial_eval_wrapper(fwd_, tuple(in_avals))
-      out_flat = fwd_.call_wrapped(*in_consts)  # in_consts are units
+      with core.new_sublevel():
+        out_flat = fwd_.call_wrapped(*in_consts)  # in_consts are units
       out_avals, jaxpr, env = aux()
       _, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
       converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
@@ -1058,8 +1061,9 @@ class DynamicJaxprTrace(core.Trace):
 
   def process_call(self, call_primitive, f, tracers, params):
     in_avals = [t.aval for t in tracers]
-    jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(f, self.main, in_avals)
-    if not jaxpr.eqns:
+    with core.new_sublevel():
+      jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(f, self.main, in_avals)
+    if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *tracers)
     source_info = source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
@@ -1085,8 +1089,9 @@ class DynamicJaxprTrace(core.Trace):
                         if in_axis is not None else a
                         for a, in_axis in zip(in_avals, params['in_axes'])]
     with core.extend_axis_env(axis_name, axis_size, None):  # type: ignore
-      jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
-          f, self.main, reduced_in_avals)
+      with core.new_sublevel():
+        jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
+            f, self.main, reduced_in_avals)
       out_axes = params['out_axes_thunk']()
       out_avals = [core.unmapped_aval(params['axis_size'], out_axis, a)
                   if out_axis is not None else a
@@ -1113,7 +1118,8 @@ class DynamicJaxprTrace(core.Trace):
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
     in_avals = [t.aval for t in tracers]
-    fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
+    with core.new_sublevel():
+      fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
     jvp_jaxpr_thunk = _memoize(
         lambda: trace_to_subjaxpr_dynamic(jvp, self.main, 2 * in_avals)[::2])
@@ -1134,7 +1140,8 @@ class DynamicJaxprTrace(core.Trace):
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
     in_avals = [t.aval for t in tracers]
-    fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
+    with core.new_sublevel():
+      fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
     fwd_jaxpr_thunk = _memoize(
         lambda: trace_to_subjaxpr_dynamic(fwd, self.main, in_avals)[::2])
@@ -1206,7 +1213,8 @@ def trace_to_jaxpr_final(fun: lu.WrappedFun,
   with core.new_base_main(DynamicJaxprTrace) as main:  # type: ignore
     main.source_info = fun_sourceinfo(fun.f, transform_name)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
-    jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
+    with core.new_sublevel():
+      jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
     del fun, main
   return jaxpr, out_avals, consts
 
