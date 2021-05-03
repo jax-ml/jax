@@ -39,7 +39,7 @@ Follow these steps to contribute code:
    ```bash
    git clone https://github.com/YOUR_USERNAME/jax
    cd jax
-   pip install -r requirements.txt  # Installs all testing requirements.
+   pip install -r build/test-requirements.txt  # Installs all testing requirements.
    pip install -e .  # Installs JAX from the current directory in editable mode.
    ```
 
