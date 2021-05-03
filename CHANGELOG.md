@@ -18,6 +18,9 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     be used within `jit` ({jax-issue}`#6501`)
   * {func}`jax.numpy.unique` now supports the `axis` argument ({jax-issue}`#6532`).
   * {func}`jax.experimental.host_callback.call` now supports `pjit.pjit` ({jax-issue}`#6569`).
+  * Added {func}`jax.scipy.linalg.eigh_tridiagonal` that computes the
+    eigenvalues of a tridiagonal matrix. Only eigenvalues are supported at
+    present.
 * Breaking changes:
   * The following function names have changed. There are still aliases, so this
     should not break existing code, but the aliases will eventually be removed
