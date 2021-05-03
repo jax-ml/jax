@@ -355,6 +355,13 @@ class _BackendAndDeviceInfo(NamedTuple):
   default_device: xc.Device
   committed_to_device: bool
 
+class _FastpathData(NamedTuple):
+  xla_executable: xla.XlaExecutable
+  out_pytree_def: Any
+  sticky_device: xc.Device
+  avals: Iterable[Any]
+  lazy_exprs: Iterable[Any]
+  kept_var_bitvec: Iterable[bool]
 
 if lib._xla_extension_version >= 16:
   _cpp_jit_cache = jax_jit.CompiledFunctionCache()
@@ -442,7 +449,7 @@ def _cpp_jit(
         all(xla.type_is_device_array(x) for x in out_flat))
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
-      xla_executable, _, result_handlers = execute.args
+      xla_executable, _, result_handlers, kept_var_idx = execute.args
       sticky_device = None
       avals = []
       lazy_exprs = [None] * len(result_handlers)
@@ -450,7 +457,14 @@ def _cpp_jit(
         aval, sticky_device = result_handler.args
         avals.append(aval)
       assert len(avals) == len(out_flat)
-      fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals, lazy_exprs)
+      if xla._ALLOW_ARG_PRUNING:
+        kept_var_bitvec = [i in kept_var_idx for i in range(len(args_flat))]
+        fastpath_data = _FastpathData(xla_executable, out_pytree_def,
+                                      sticky_device, avals, lazy_exprs,
+                                      kept_var_bitvec)
+      else:
+        fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals,
+                         lazy_exprs)
     else:
       fastpath_data = None
 

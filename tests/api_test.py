@@ -618,6 +618,23 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     x_is_tracer, y_is_tracer = False, True
     assert f_mixed(x='foo', y=3) == 1
 
+  # TODO(zhangqiaorjc): Test pruning constants after DCE pass prunes primitive
+  # applications.
+  @unittest.skipIf(not xla._ALLOW_ARG_PRUNING, "Test requires jaxlib 0.1.66")
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_num_args={}".format(num_args),
+     "num_args": num_args}
+    for num_args in [2, 3, 4]))
+  def test_jit_with_pruned_args(self, num_args):
+    def f(*args):
+      used = np.array(2)
+      return args[1] + used
+    f_pruned = self.jit(f)
+    args = range(num_args)
+    with jtu.count_device_put() as count:
+      np.testing.assert_allclose(f_pruned(*args), 3)
+    self.assertEqual(count[0], 1)
+
 
 class PythonJitTest(CPPJitTest):
 

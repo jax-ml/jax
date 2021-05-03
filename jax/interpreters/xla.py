@@ -38,6 +38,7 @@ from .._src.util import (partial, partialmethod, cache, prod, unzip2,
                     extend_name_stack, wrap_name, safe_zip, safe_map)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
+from ..lib import _xla_extension_version
 from . import partial_eval as pe
 from . import ad
 from . import masking
@@ -647,10 +648,17 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
 
-  abstract_args, arg_devices = unzip2(arg_specs)
+  abstract_args, _ = unzip2(arg_specs)
   jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args, transform_name="jit")
   if any(isinstance(c, core.Tracer) for c in consts):
     raise core.UnexpectedTracerError("Encountered an unexpected tracer.")
+  jaxpr, kept_const_idx, kept_var_idx = _prune_unused_inputs(jaxpr)
+  consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
+  pruned_arg_specs = (a for i, a in enumerate(arg_specs) if i in kept_var_idx)
+  abstract_args, arg_devices = unzip2(pruned_arg_specs)
+  donated_invars = [
+      x for i, x in enumerate(donated_invars) if i in kept_var_idx
+  ]
   map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
   jaxpr = apply_outfeed_rewriter(jaxpr)
 
@@ -663,7 +671,8 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
-    return partial(_execute_trivial, jaxpr, device, consts, out_avals, result_handlers)
+    return partial(_execute_trivial, jaxpr, device, consts, out_avals,
+                   result_handlers, kept_var_idx)
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -714,9 +723,12 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   options.parameter_is_tupled_arguments = tuple_args
   compiled = backend_compile(backend, built, options)
   if nreps == 1:
-    return partial(_execute_compiled, compiled, out_avals, result_handlers)
+    return partial(_execute_compiled, compiled, out_avals, result_handlers,
+                   kept_var_idx)
   else:
-    return partial(_execute_replicated, compiled, out_avals, result_handlers)
+    return partial(_execute_replicated, compiled, out_avals, result_handlers,
+                   kept_var_idx)
+
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
   """Configures input/output "must" aliasing based on `donated_args`."""
@@ -745,6 +757,33 @@ def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
       c.setup_alias(output_index, param_number, param_index)
 
   return tuple(out_donated_args)
+
+
+# Pruning unused JIT arguments require jaxlib 0.1.66 or newer.
+# TODO(zhangqiaorjc): remove when jaxlib 0.1.66 is the minimum.
+_ALLOW_ARG_PRUNING = _xla_extension_version >= 18
+
+
+def _prune_unused_inputs(
+    jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, Set[int], Set[int]]:
+  if not _ALLOW_ARG_PRUNING:
+    kept_const_idx = range(len(jaxpr.constvars))
+    kept_var_idx = range(len(jaxpr.invars))
+    return jaxpr, set(kept_const_idx), set(kept_var_idx)
+
+  used = {v for v in jaxpr.outvars if isinstance(v, core.Var)}
+  # TODO(zhangqiaorjc): Improve the DCE algorithm by also pruning primitive
+  # applications that do not produce used outputs. Must handle side-effecting
+  # primitives and nested jaxpr.
+  used.update(
+      v for eqn in jaxpr.eqns for v in eqn.invars if isinstance(v, core.Var))
+  kept_const_idx, new_constvars = unzip2(
+      (i, v) for i, v in enumerate(jaxpr.constvars) if v in used)
+  kept_var_idx, new_invars = unzip2(
+      (i, v) for i, v in enumerate(jaxpr.invars) if v in used)
+  new_jaxpr = core.Jaxpr(new_constvars, new_invars, jaxpr.outvars, jaxpr.eqns)
+  return new_jaxpr, set(kept_const_idx), set(kept_var_idx)
+
 
 def _xla_callable_device(nreps, backend, device, arg_devices):
   if nreps > 1:
@@ -823,17 +862,30 @@ def _xla_param(builder, param_num, xla_shape, replicated, partitions, parts_prot
   else:
     return with_sharding(builder, partitions, make_param)
 
-def _execute_compiled(compiled: XlaExecutable, avals, handlers, *args):
+
+def _execute_compiled(compiled: XlaExecutable, avals, handlers, kept_var_idx,
+                      *args):
   device, = compiled.local_devices()
-  input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
+  input_bufs = list(
+      it.chain.from_iterable(
+          device_put(x, device)
+          for i, x in enumerate(args)
+          if x is not token and i in kept_var_idx))
   out_bufs = compiled.execute(input_bufs)
   check_special(xla_call_p.name, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
-def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
+
+def _execute_replicated(compiled: XlaExecutable, avals, handlers, kept_var_idx,
+                        *args):
   input_bufs = [
-      list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
-      for device in compiled.local_devices()]
+      list(
+          it.chain.from_iterable(
+              device_put(x, device)
+              for i, x in enumerate(args)
+              if x is not token and i in kept_var_idx))
+      for device in compiled.local_devices()
+  ]
   out_bufs = [
       buf[0] for buf in compiled.execute_sharded_on_local_devices(
           list(zip(*input_bufs)))
@@ -841,9 +893,12 @@ def _execute_replicated(compiled: XlaExecutable, avals, handlers, *args):
   check_special(xla_call_p.name, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
-def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers, *args):
+
+def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
+                     kept_var_idx, *args):
   env = {core.unitvar: core.unit}
-  map(env.setdefault, jaxpr.invars, args)
+  pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
+  map(env.setdefault, jaxpr.invars, pruned_args)
   map(env.setdefault, jaxpr.constvars, consts)
   outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
           for v in jaxpr.outvars]
