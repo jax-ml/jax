@@ -761,7 +761,7 @@ def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
 
 # Pruning unused JIT arguments require jaxlib 0.1.66 or newer.
 # TODO(zhangqiaorjc): remove when jaxlib 0.1.66 is the minimum.
-_ALLOW_ARG_PRUNING = _xla_extension_version >= 18
+_ALLOW_ARG_PRUNING = _xla_extension_version >= 20
 
 
 def _prune_unused_inputs(
