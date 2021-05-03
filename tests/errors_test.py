@@ -23,6 +23,7 @@ import jax
 from jax import core, grad, jit, vmap, lax
 import jax.numpy as jnp
 from jax import test_util as jtu
+from jax._src import source_info_util
 from jax._src import traceback_util
 from jax.lib import xla_extension
 
@@ -51,8 +52,8 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=[]):
   if frame_patterns:
     for (fname_pat, line_pat), frame_fmt in zip(
         reversed(frame_patterns), reversed(c_tb)):
-      file = '.*' if fname_pat is None else re.escape(__file__)
-      fname_pat = '.*' if fname_pat is None else re.escape(fname_pat)
+      file = re.escape(__file__)
+      fname_pat = re.escape(fname_pat)
       line_pat = re.escape(line_pat)
       full_pat = (
           f'  File "{file}", line ' r'[0-9]+'
@@ -126,7 +127,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('<lambda>', 'f = lambda: outermost'),
         ('outermost', 'return 2 + inbetween(x)'),
         ('inbetween', 'return 1 + grad(innermost)(x)'),
-        (None, 'raise TypeError'),
     ])
 
   def test_lax_cond(self):
@@ -312,6 +312,25 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     e = get_exception(TypeError, f)
     self.assertIsInstance(e.__cause__, traceback_util.UnfilteredStackTrace)
     self.assertIsInstance(e.__cause__.__cause__, ValueError)
+
+
+class UserContextTracebackTest(jtu.JaxTestCase):
+
+  def test_grad_norm(self):
+    e = None
+    try:
+      with jax.debug_nans(True):
+        jax.grad(jnp.linalg.norm)(jnp.zeros((3, 3), jnp.float32))
+    except FloatingPointError as exc:
+      e = exc
+    self.assertIsNot(e, None)
+    self.assertIn("invalid value", str(e))
+    # TODO(phawkins): make this test unconditional after jaxlib 0.1.66 is the
+    # minimum.
+    if jax.lib._xla_extension_version >= 19:
+      self.assertIsInstance(
+          e.__cause__.__cause__,
+          source_info_util.JaxStackTraceBeforeTransformation)
 
 
 class CustomErrorsTest(jtu.JaxTestCase):

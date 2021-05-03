@@ -56,12 +56,16 @@ def include_frame(f):
 def ignore_known_hidden_frame(f):
   return 'importlib._bootstrap' in f.f_code.co_filename
 
-def filter_traceback_and_stack(tb):
+def filter_traceback(tb):
   out = None
   # Scan the traceback and collect relevant frames.
-  for f, lineno in reversed(list(traceback.walk_tb(tb))):
-    if include_frame(f) or out is None:
+  frames = list(traceback.walk_tb(tb))
+  for f, lineno in reversed(frames):
+    if include_frame(f):
       out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+  if out is None and len(frames) > 0:
+    f, lineno = frames[-1]
+    out = make_traceback(out, f, f.f_lasti, lineno)
   return out
 
 def add_call_stack_frames(tb):
@@ -141,7 +145,7 @@ def api_boundary(fun):
       if not is_under_reraiser(e):
         filtered_tb, unfiltered = None, None
         try:
-          filtered_tb = filter_traceback_and_stack(e.__traceback__)
+          filtered_tb = filter_traceback(e.__traceback__)
           if filtered_tb is None:
             raise
           msg = format_exception_only(e)
