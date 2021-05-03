@@ -47,7 +47,7 @@ from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_sha
 from jax.config import config
 from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
 from jax import lax
-from jax._src.lax.lax import _device_put_raw
+from jax._src.lax.lax import _device_put_raw, _validate_preferred_element_type
 from jax import ops
 from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
@@ -4026,7 +4026,7 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
 
 
 @_wraps(np.matmul, lax_description=_PRECISION_DOC)
-def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
+def matmul(a, b, *, casting="same_kind", dtype=None, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   for i, x in enumerate((a, b)):
     if ndim(x) < 1:
@@ -4034,7 +4034,21 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
              f"but it has ndim {ndim(x)}")
       raise ValueError(msg)
 
-  a, b = _promote_dtypes(a, b)
+  preferred_element_type = None
+  if dtype is None:
+    a, b = _promote_dtypes(a, b)
+  else:
+    lax._check_user_dtype_supported(dtype, "matmul")
+    dtype = dtypes.canonicalize_dtype(dtype)
+    promoted_dtype = result_type(a, b)
+    if not can_cast(promoted_dtype, dtype, casting=casting):
+      raise TypeError(f"Cannot cast matmul input from {promoted_dtype} to {dtype} "
+                      f"with casting rule '{casting}'")
+    try:
+      _validate_preferred_element_type(promoted_dtype, dtype)
+      preferred_element_type = dtype
+    except TypeError:
+      a, b = lax.convert_element_type(a, dtype), lax.convert_element_type(b, dtype)
 
   a_is_mat, b_is_mat = (ndim(a) > 1), (ndim(b) > 1)
   a_batch_dims = shape(a)[:-2] if a_is_mat else ()
@@ -4083,7 +4097,7 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   b = lax.squeeze(b, tuple(b_squeeze))
   out = lax.dot_general(
     a, b, (((ndim(a) - 1,), (ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
-    precision=precision)
+    precision=precision, preferred_element_type=preferred_element_type)
   return lax.transpose(out, perm)
 
 

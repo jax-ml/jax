@@ -1123,6 +1123,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.matmul, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{jtu.dtype_str(input_dtype)}_{jtu.dtype_str(dtype)}",
+       "input_dtype": input_dtype, "dtype": dtype}
+      for input_dtype, dtype in itertools.product(default_dtypes, number_dtypes)))
+  def testMatmulDType(self, input_dtype, dtype):
+    rng = jtu.rand_default(self.rng())
+    lhs, rhs = rng((3,), input_dtype), rng((3,), input_dtype)
+    if jnp.can_cast(input_dtype, dtype, casting="same_kind"):
+      result = jnp.matmul(lhs.astype(dtype), rhs.astype(dtype))
+      lax_result = jnp.matmul(lhs, rhs, dtype=dtype)
+      self.assertAllClose(result, lax_result, canonicalize_dtypes=False)
+    else:
+      with self.assertRaisesRegex(TypeError, "Cannot cast matmul input.*same_kind"):
+        jnp.matmul(lhs, rhs, dtype=dtype)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
           jtu.format_shape_dtype_string(rhs_shape, rhs_dtype),
