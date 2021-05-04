@@ -123,6 +123,8 @@ class Config:
                     update_hook=update_hook)
 
   def config_with_absl(self):
+    if self.use_absl:
+      return
     # Run this before calling `app.run(main)` etc
     import absl.flags as absl_FLAGS  # noqa: F401
     from absl import app, flags as absl_flags
