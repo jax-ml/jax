@@ -940,6 +940,7 @@ class JaxprStackFrame:
     outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.items())
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns)
+    jaxpr = _extend_remats(jaxpr)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     out_avals = [t.aval for t in out_tracers]
     return jaxpr, out_avals, constvals
@@ -993,6 +994,44 @@ def _inline_literals(jaxpr, constvals):
   new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
   new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns)
   return new_jaxpr, new_constvals
+
+def _extend_remats(jaxpr):
+  remats = [eqn for eqn in jaxpr.eqns
+            if eqn.primitive is remat_call_p and eqn.params['extend']]
+  newvar = core.gensym(suffix='_remat')
+  for remat in remats:
+    consumers = [eqn for eqn in jaxpr.eqns if any(
+      invar in remat.outvars for invar in eqn.invars)]
+    remat_outvar_map = dict(zip(remat.outvars, remat.params['call_jaxpr'].outvars))
+    old_to_new_invars = dict()
+    old_to_new_outvars = dict()
+    for consumer in consumers:
+      if 'dot_general' in consumer.primitive.name:
+        new_consumer_invars = []
+        for v in consumer.invars:
+          if v in remat_outvar_map:
+            new_v = remat_outvar_map[v]
+          else:
+            new_v = newvar(v.aval)
+            old_to_new_invars[v] = new_v
+          new_consumer_invars.append(new_v)
+        new_consumer_outvars = [newvar(v.aval) for v in consumer.outvars]
+        old_to_new_outvars.update(zip(consumer.outvars, new_consumer_outvars))
+        new_consumer = core.JaxprEqn(
+          new_consumer_invars, new_consumer_outvars, consumer.primitive,
+          consumer.params, consumer.source_info)
+        remat.params['call_jaxpr'].eqns.append(new_consumer)
+        jaxpr.eqns.remove(consumer)
+    new_remat_invars = remat.invars + list(old_to_new_invars.keys())
+    remat.params['call_jaxpr'].invars += old_to_new_invars.values()
+    new_remat_outvars = remat.outvars + list(old_to_new_outvars.keys())
+    remat.params['call_jaxpr'].outvars += old_to_new_outvars.values()
+    new_remat = core.JaxprEqn(
+      new_remat_invars, new_remat_outvars, remat_call_p,
+      remat.params, remat.source_info)
+    jaxpr.eqns[jaxpr.eqns.index(remat):jaxpr.eqns.index(remat) + 1] = [new_remat]
+  # potentially DCE here
+  return jaxpr
 
 class DynamicJaxprTrace(core.Trace):
   __slots__ = []  # type: ignore

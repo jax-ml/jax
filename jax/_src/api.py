@@ -2397,7 +2397,8 @@ def eval_shape(fun: Callable, *args, **kwargs):
   return tree_unflatten(out_tree(), out)
 
 
-def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
+def checkpoint(fun: Callable, concrete: bool = False, extend: bool = False,
+               gadget: bool = True) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
   The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
@@ -2435,6 +2436,16 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
       control flow is optional, and disabled by default, because in some
       edge-case compositions with :func:`jax.jit` it can lead to some extra
       computation.
+    extend: Optional, boolean indicating whether the scope of recomputation
+      should be extended such that the outputs of ``fun`` also won't be stored
+      if they are linearization points for consumer operations not part of
+      ``fun``. Defaults to False.
+    gadget: Optional, boolean indicating whether to insert a control flow
+      block around ``fun`` to prevent XLA from undoing the effect of
+      rematerialization through fusion or common-subexpression elimination.
+      This "gadget" is not needed if the function is already inside a
+      :func:`jax.lax.scan`, or if op-by-op evaluation is being used. Defaults
+      to True.
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -2485,7 +2496,7 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
     out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
-                             concrete=concrete)
+                             concrete=concrete, extend=extend, gadget=gadget)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint

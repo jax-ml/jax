@@ -2699,6 +2699,8 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                                                              f = mul e d
                                                                          in (f, i, j) }
                                                             concrete=False
+                                                            extend=False
+                                                            gadget=True
                                                             name=f ] a c f g
                                     in (d, b, e, h, i) }
                        body_nconsts=0
