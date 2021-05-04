@@ -310,7 +310,9 @@ def _interpret_fun(fun: lu.WrappedFun,
                    ) -> Sequence[Tuple[TfVal, core.AbstractValue]]:
   with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
     fun = _interpret_subtrace(fun, main, in_avals)
-    out_vals: Sequence[Tuple[TfVal, core.AbstractValue]] = fun.call_wrapped(*in_vals)
+    with core.new_sublevel():
+      out_vals: Sequence[Tuple[TfVal, core.AbstractValue]] = \
+          fun.call_wrapped(*in_vals)
     del main
   return tuple(out_vals)
 
@@ -675,14 +677,15 @@ class TensorFlowTrace(core.Trace):
     assert call_primitive.multiple_results
     vals: Sequence[TfVal] = [t.val for t in tracers]
     f = _interpret_subtrace(f, self.main, tuple(t.aval for t in tracers))
-    if call_primitive == core.named_call_p:
-      with tf.name_scope(_sanitize_scope_name(params["name"])):
-        vals_out: Sequence[Tuple[TfVal,
-                                 core.AbstractValue]] = f.call_wrapped(*vals)
-    elif call_primitive == sharded_jit.sharded_call_p:
-      vals_out = _sharded_call(f, vals, **params)
-    else:
-      vals_out = f.call_wrapped(*vals)
+    with core.new_sublevel():
+      if call_primitive == core.named_call_p:
+        with tf.name_scope(_sanitize_scope_name(params["name"])):
+            vals_out: Sequence[Tuple[TfVal, core.AbstractValue]] = \
+                f.call_wrapped(*vals)
+      elif call_primitive == sharded_jit.sharded_call_p:
+        vals_out = _sharded_call(f, vals, **params)
+      else:
+        vals_out = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def post_process_call(self, call_primitive: core.Primitive,
@@ -2173,7 +2176,7 @@ def _sharded_call(f: lu.WrappedFun, vals: Sequence[TfVal],
                   out_parts_thunk,
                   **_) -> Sequence[Tuple[TfVal, core.AbstractValue]]:
   sharded_vals = util.safe_map(split_to_logical_devices, vals, in_parts)
-  vals_out = f.call_wrapped(*sharded_vals)
+  vals_out = f.call_wrapped(*sharded_vals)  # caller handles new_sublevel
   out_parts_flat = out_parts_thunk()
   assert len(out_parts_flat) == len(vals_out), f"expected {len(out_parts_flat)} == {len(vals_out)}"
   sharded_vals_out = [

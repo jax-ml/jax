@@ -1419,7 +1419,8 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
           dict(
               call_jaxpr=transformed_cond_jaxpr.jaxpr,
               name="cond_before",
-              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals)),
+              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals),
+              inline=False),
           eqn.source_info))
   # Make a new cond "lambda pred, carry, token, itoken: pred"
   new_cond_pred_invar = mk_new_var(cond_jaxpr.out_avals[0])
@@ -1462,7 +1463,8 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
           dict(
               call_jaxpr=transformed_body_jaxpr.jaxpr,
               name="body",
-              donated_invars=(False,) * len(transformed_body_jaxpr.in_avals)),
+              donated_invars=(False,) * len(transformed_body_jaxpr.in_avals),
+              inline=False),
           eqn.source_info),
       core.new_jaxpr_eqn(
           new_body_invars_cond_constvars + new_body_carry2 + [new_body_token2, new_body_itoken2],
@@ -1470,7 +1472,8 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
           dict(
               call_jaxpr=transformed_cond_jaxpr.jaxpr,
               name="cond_body",
-              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals)),
+              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals),
+              inline=False),
           eqn.source_info)
   ]
   new_body_jaxpr = core.ClosedJaxpr(
