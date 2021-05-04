@@ -70,6 +70,7 @@ jax.scipy.sparse.linalg
 .. autosummary::
   :toctree: _autosummary
 
+   bicgstab
    cg
    gmres
 
