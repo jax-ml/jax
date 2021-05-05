@@ -21,6 +21,7 @@ from jax._src.scipy.linalg import (
   cho_solve,
   det,
   eigh,
+  eigh_tridiagonal,
   expm,
   expm_frechet,
   inv,
