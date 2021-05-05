@@ -621,12 +621,13 @@ def power(x1, x2):
   # Using lax.pow may be imprecise for floating-point values; the goal of this
   # code path is to make sure we end up with a precise output for the common
   # pattern ``x ** 2`` or similar.
-  try:
-    x2 = core.concrete_or_error(operator.index, x2)
-  except (core.ConcretizationTypeError, TypeError):
-    pass
-  else:
-    return lax.integer_pow(x1, x2)
+  if isinstance(core.get_aval(x2), ConcreteArray):
+    try:
+      x2 = operator.index(x2)
+    except TypeError:
+      pass
+    else:
+      return lax.integer_pow(x1, x2)
 
   x1, x2 = _promote_args("power", x1, x2)
   dtype = _dtype(x1)

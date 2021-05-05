@@ -2224,17 +2224,17 @@ class APITest(jtu.JaxTestCase):
 
   def test_escaped_tracer_transform_name(self):
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "transformed by jit"):
+                                "for jit"):
       jax.jit(self.helper_save_tracer)(1)
       _ = self._saved_tracer+1
 
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "transformed by pmap"):
+                                "for pmap"):
       jax.pmap(self.helper_save_tracer)(jnp.ones((1, 2)))
       _ = self._saved_tracer+1
 
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "transformed by eval_shape"):
+                                "for eval_shape"):
       jax.eval_shape(self.helper_save_tracer, 1)
       _ = self._saved_tracer+1
 
@@ -2278,7 +2278,19 @@ class APITest(jtu.JaxTestCase):
 
     f()  # doesn't crash
 
-  def test_concrete_error_because_arg(self):
+  def test_concrete_error_because_arg_unary(self):
+    @jax.jit
+    def f(x):
+      if x > 0:
+        return x
+      else:
+        return 0
+
+    msg = r"on the value of the argument 'x'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1)
+
+  def test_concrete_error_because_arg_binary(self):
     @jax.jit
     def f(x, y):
       if x > y:
@@ -2286,9 +2298,66 @@ class APITest(jtu.JaxTestCase):
       else:
         return y
 
-    msg = r"at flattened positions \[0, 1\]"
+    msg = r"on the values of the arguments 'x' and 'y'"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(1, 2)
+
+  def test_concrete_error_because_arg_ternary(self):
+    @jax.jit
+    def f(x, y, z):
+      if x > z:
+        return x
+      else:
+        return y
+
+    msg = r"on the values of the arguments 'x' and 'z'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, 2, 3)
+
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, 2, z=3)
+
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, y=2, z=3)
+
+  def test_concrete_error_because_arg_varargs(self):
+    @jax.jit
+    def f(*args):
+      x, y, z = args
+      if x > z:
+        return x
+      else:
+        return y
+
+    msg = r"on the values of the argument 'args'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, 2, 3)
+
+  def test_concrete_error_because_arg_kwargs(self):
+    @jax.jit
+    def f(**kwargs):
+      x, y, z = kwargs['x'], kwargs['y'], kwargs['z']
+      if x > z:
+        return x
+      else:
+        return y
+
+    msg = r"on the values of the argument 'kwargs'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(x=1, y=2, z=3)
+
+  def test_concrete_error_because_arg_pytree(self):
+    @jax.jit
+    def f(xy, z):
+      x, y = xy
+      if x > 0:
+        return x
+      else:
+        return y
+
+    msg = r"on the value of the argument 'xy'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f((1, 2), z=3)
 
   def test_concrete_error_because_const(self):
     @jax.jit

@@ -451,12 +451,12 @@ def escaped_tracer_error(tracer, detail=None):
               'frames (most recent last) excluding JAX-internal frames were:\n'
               f'{source_info_util.summarize(line_info, num_frames=num_frames)}')
   try:
-    fun_source_info = tracer._trace.main.source_info
+    dbg = tracer._trace.main.debug_info
   except AttributeError:
     pass
   else:
     msg += ('\nThe function being traced when the tracer leaked was '
-            f'{fun_source_info}.')
+            f'{dbg.func_src_info} traced for {dbg.traced_for}.')
   msg += ('\nTo catch the leak earlier, try setting the environment variable '
           'JAX_CHECK_TRACER_LEAKS or using the `jax.checking_leaks` context '
           'manager.')
