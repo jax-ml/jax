@@ -100,8 +100,8 @@ def pjit(fun: Callable,
     local_in_avals = tuple(core.raise_to_shaped(core.get_aval(a)) for a in args_flat)
     jaxpr, in_axis_resources_flat, out_axis_resources_flat = \
         _pjit_jaxpr(flat_fun, mesh, local_in_avals,
-                    in_tree, in_axis_resources,
-                    HashableFunction(out_tree, closure=()), out_axis_resources)
+                    in_tree, hashable_pytree(in_axis_resources),
+                    HashableFunction(out_tree, closure=()), hashable_pytree(out_axis_resources))
 
     out = pjit_p.bind(
         *args_flat,
@@ -118,12 +118,18 @@ def pjit(fun: Callable,
 class _ListWithW(list):
   __slots__ = ('__weakref__',)
 
+def hashable_pytree(pytree):
+  vals, treedef = tree_flatten(pytree)
+  vals = tuple(vals)
+  return HashableFunction(lambda: tree_unflatten(treedef, vals),
+                          closure=(treedef, vals))
+
 @lu.cache
 def _pjit_jaxpr(fun, mesh, local_in_avals,
-                in_tree, in_axis_resources,
-                out_tree, out_axis_resources):
+                in_tree, in_axis_resources_thunk,
+                out_tree, out_axis_resources_thunk):
   in_axis_resources_flat = tuple(flatten_axes("pjit in_axis_resources",
-                                              in_tree, in_axis_resources))
+                                              in_tree, in_axis_resources_thunk()))
   _check_shapes_against_resources("pjit arguments", False, mesh.local_mesh.shape,
                                   local_in_avals, in_axis_resources_flat)
   global_in_avals = local_to_global(mesh, local_in_avals, in_axis_resources_flat)
@@ -132,7 +138,7 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   jaxpr = core.ClosedJaxpr(jaxpr, consts)
 
   out_axis_resources_flat = tuple(flatten_axes("pjit out_axis_resources",
-                                               out_tree(), out_axis_resources))
+                                               out_tree(), out_axis_resources_thunk()))
   _check_shapes_against_resources("pjit outputs", mesh.is_multi_process, mesh.shape,
                                   global_out_avals, out_axis_resources_flat)
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple

@@ -270,6 +270,14 @@ class PJitTest(jtu.BufferDonationTestCase):
                           out_axis_resources=None)(1), 3)
 
   @with_mesh([('x', 2)])
+  def testNonHashableAxisResources(self):
+    x = jnp.arange(4)
+    y = pjit(lambda x: {'b': x['a'] + 2},
+             in_axis_resources=({'a': P('x')},),
+             out_axis_resources={'b': P('x')})({'a': x})
+    self.assertAllClose(y, {'b': x + 2})
+
+  @with_mesh([('x', 2)])
   def testGradOfConstraint(self):
     # Make sure that we can compute grads through sharding constraints
     h = lambda x: jnp.sin(with_sharding_constraint(x, P('x'))).sum()
