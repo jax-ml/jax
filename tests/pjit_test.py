@@ -286,7 +286,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = jnp.arange(8, dtype=jnp.float32)
     self.assertAllClose(f(x), jnp.cos(x))
 
-  # TODO(skye): add more unit tests once API is more finalized
+  @with_mesh([('x', 2)])
+  def testNoopPartitionSpecs(self):
+    noops = [P(), P(None), P(()), P((), None), P(None, None, ())]
+    x = jnp.arange(8).reshape((2, 2, 2))
+    for spec in noops:
+      y = pjit(lambda x: x * 2, in_axis_resources=spec, out_axis_resources=spec)(x)
+      self.assertAllClose(y, x * 2)
 
   def testInfeed(self):
     devices = np.array(jax.local_devices())

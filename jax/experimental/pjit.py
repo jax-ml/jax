@@ -202,6 +202,7 @@ def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
     resource_counts = Counter(it.chain.from_iterable(arg_axis_resources))
+    if not resource_counts: continue
     if resource_counts.most_common(1)[0][1] > 1:
       multiple_uses = [r for r, c in resource_counts.items() if c > 1]
       if multiple_uses:
