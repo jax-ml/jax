@@ -948,6 +948,7 @@ class JaxprStackFrame:
     outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.items())
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns)
+    jaxpr, constvals = _prune_convert_element_types(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     out_avals = [t.aval for t in out_tracers]
     return jaxpr, out_avals, constvals
@@ -970,7 +971,28 @@ class JaxprStackFrame:
     const_eqns = [eqn for eqn in self.eqns if set(eqn.invars) & constvars]
     return invar_positions, const_eqns
 
+def _prune_convert_element_types(jaxpr, constvals):
+  consts = dict(zip(jaxpr.constvars, constvals))
+  new_eqns = []
+  for eqn in jaxpr.eqns:
+    if eqn.primitive is core.convert_element_type_p:
+      c = consts.get(eqn.invars[0])
+      if type(c) in core.literalable_types and not np.shape(c):
+        # constant-fold dtype conversion of literals to be inlined
+        consts[eqn.outvars[0]] = np.array(c, eqn.params['new_dtype'])
+        continue
+      if c is not None and dtypes.dtype(c) == eqn.params['new_dtype']:
+        # don't stage out no-op convert_element_type calls as clutter
+        consts[eqn.outvars[0]] = c
+        continue
+    new_eqns.append(eqn)
+  new_constvars, new_constvals = unzip2(consts.items())
+  new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, jaxpr.outvars, new_eqns)
+  return new_jaxpr, new_constvals
+
 def _inline_literals(jaxpr, constvals):
+  # This function also ensures variables are labeled in a canonical ordering,
+  # prunes unused constants, and inserts `dropvar` symbols.
   consts = dict(zip(jaxpr.constvars, constvals))
   newvar = core.gensym()
   newvars = {}
@@ -984,20 +1006,16 @@ def _inline_literals(jaxpr, constvals):
       return None
 
   used = {v for eqn in jaxpr.eqns for v in eqn.invars} | set(jaxpr.outvars)
-  new_constvars = [var(v) for v in jaxpr.constvars if not lit(v)]
-  new_constvals = [c for v, c in zip(jaxpr.constvars, constvals) if not lit(v)]
+  new_constvars = [var(v) for v in jaxpr.constvars if v in used and not lit(v)]
+  new_constvals = [c for v, c in zip(jaxpr.constvars, constvals)
+                   if v in used and not lit(v)]
   new_invars = [var(v) for v in jaxpr.invars]
   new_eqns = []
   for eqn in jaxpr.eqns:
     invars = [lit(v) or var(v) for v in eqn.invars]
-    if (eqn.primitive is core.convert_element_type_p and type(invars[0]) is Literal):
-      # constant-fold dtype conversion of literals to be inlined
-      consts[eqn.outvars[0]] = np.array(invars[0].val, eqn.params['new_dtype'])
-    else:
-      # might do DCE here, but we won't until we're more careful about effects
-      outvars = [var(v) if v in used else dropvar for v in eqn.outvars]
-      new_eqns.append(new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
-                                    eqn.source_info))
+    outvars = [var(v) if v in used else dropvar for v in eqn.outvars]
+    new_eqns.append(new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
+                                  eqn.source_info))
   new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
   new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns)
   return new_jaxpr, new_constvals

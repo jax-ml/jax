@@ -380,10 +380,8 @@ For the example consider the function ``func11`` below
                               f = convert_element_type[ new_dtype=float32
                                                         weak_type=False ] b
                               g = add f e
-                              h = convert_element_type[ new_dtype=float32
-                                                        weak_type=False ] a
-                              i = add g h
-                          in (i, b) }
+                              h = add g a
+                          in (h, b) }
                   length=16
                   linear=(False, False, False, False)
                   num_carry=1
@@ -424,13 +422,11 @@ computation should run. For example
                     call_jaxpr={ lambda  ; a b.
                                  let c = broadcast_in_dim[ broadcast_dimensions=(  )
                                                            shape=(1,) ] 1.0
-                                     d = convert_element_type[ new_dtype=float32
-                                                               weak_type=False ] a
-                                     e = mul d c
-                                     f = convert_element_type[ new_dtype=float32
+                                     d = mul a c
+                                     e = convert_element_type[ new_dtype=float32
                                                                weak_type=False ] b
-                                     g = add f e
-                                 in (g,) }
+                                     f = add e d
+                                 in (f,) }
                     device=None
                     donated_invars=(False, False)
                     inline=False
@@ -461,16 +457,14 @@ captured using the ``xla_pmap`` primitive. Consider this example
                     axis_size=1
                     backend=None
                     call_jaxpr={ lambda  ; a b.
-                                 let c = convert_element_type[ new_dtype=float32
-                                                               weak_type=False ] a
-                                     d = add b c
-                                     e = broadcast_in_dim[ broadcast_dimensions=(  )
+                                 let c = add b a
+                                     d = broadcast_in_dim[ broadcast_dimensions=(  )
                                                            shape=(1,) ] 1.0
-                                     f = add d e
-                                     g = psum[ axes=('rows',)
+                                     e = add c d
+                                     f = psum[ axes=('rows',)
                                                axis_index_groups=None ] b
-                                     h = div f g
-                                 in (h,) }
+                                     g = div e f
+                                 in (g,) }
                     devices=None
                     donated_invars=(False, False)
                     global_arg_shapes=(None,)
