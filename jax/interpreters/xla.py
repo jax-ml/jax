@@ -67,7 +67,7 @@ def identity(x): return x
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 # unit representation
-def _make_unit_constant(c): return xb.constant(c, np.zeros((), dtype=np.dtype('bool')))
+def _make_unit_constant(c): return xb.constant_general(c, np.zeros((), dtype=np.dtype('bool')))
 def _make_unit_shape(_): return (xc.Shape.array_shape(np.dtype('bool'), ()),)
 def _device_put_unit(_, device):
   backend = xb.get_device_backend(device)
@@ -410,7 +410,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
 
   def read(v):
     if type(v) is Literal:
-      return [xb.constant(c, canonicalize_dtype(v.val))]
+      return xb.constant_general(c, canonicalize_dtype(v.val))
     else:
       return env[v]
 
@@ -425,7 +425,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
     env[v] = node
 
   env = {}
-  _partitionmap(write, [core.unitvar], [_make_unit_constant(c)])
+  _partitionmap(write, [core.unitvar], _make_unit_constant(c))
   _partitionmap(write, jaxpr.constvars, consts)
   _partitionmap(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
@@ -644,8 +644,8 @@ def _flatten_shape(s: XlaShape, index: Tuple[int, ...],
 def _xla_consts(c, consts):
   unique_consts = {id(const): const for const in consts}
   xla_consts = {
-      id_: xb.constant(c, const) for id_, const in unique_consts.items()}
-  return [xla_consts[id(const)] for const in consts]
+      id_: xb.constant_general(c, const) for id_, const in unique_consts.items()}
+  return [c for const in consts for c in xla_consts[id(const)]]
 
 @lu.cache
 def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
@@ -1318,7 +1318,7 @@ for device_array in [_CppDeviceArray, _DeviceArray]:
   canonicalize_dtype_handlers[device_array] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
-  return xb.constant(c, val.device_buffer.to_py())
+  return xb.constant_general(c, val.device_buffer.to_py())
 xb.register_constant_handler(_DeviceArray, _device_array_constant_handler)
 xb.register_constant_handler(_CppDeviceArray, _device_array_constant_handler)
 

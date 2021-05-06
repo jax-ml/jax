@@ -20,8 +20,9 @@ from jax import test_util as jtu
 import jax.numpy as jnp
 from jax import core, jit, lax, make_jaxpr
 from jax.interpreters import xla
-from jax.lib import xla_client
+from jax.lib import xla_bridge, xla_client
 xops = xla_client.ops
+xb = xla_bridge
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -118,6 +119,12 @@ def sparse_array_device_put_handler(a, device):
     xla.xb.get_device_backend(device).buffer_from_pyval(a.indices, device)
   )
 
+def sparse_array_constant_handler(c, val, canonicalize_dtypes):
+  return (
+    xb.constant(val.data, canonicalize_dtypes),
+    xb.constant(val.indices, canonicalize_dtypes)
+  )
+
 core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
 xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
@@ -125,6 +132,7 @@ xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
 xla.device_put_handlers[SparseArray] = sparse_array_device_put_handler
 xla.xla_result_handlers[AbstractSparseArray] = sparse_array_result_handler
 xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
+xb.register_constant_handler(SparseArray, sparse_array_constant_handler)
 
 
 sp_indices_p = core.Primitive('sp_indices')
@@ -335,6 +343,18 @@ class CustomObjectTest(jtu.JaxTestCase):
     testfunc = lambda e: None
     args_maker = lambda: [empty]
     self._CompileAndCheck(testfunc, args_maker)
+
+  def testConstantHandler(self):
+    def make_const_array():
+      data = np.arange(3.0)
+      indices = np.arange(3)[:, None]
+      shape = (5,)
+      aval = AbstractSparseArray(shape, data.dtype, indices.dtype, len(indices))
+      return SparseArray(aval, data, indices)
+    out1 = make_const_array()
+    out2 = jit(make_const_array)()
+    self.assertArraysEqual(out1.data, out2.data)
+    self.assertArraysEqual(out1.indices, out2.indices)
 
 
 if __name__ == '__main__':
