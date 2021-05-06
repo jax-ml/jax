@@ -440,11 +440,12 @@ def block_diag(*arrs):
 # TODO(phawkins): use static_argnames when jaxlib 0.1.66 is the minimum and
 # remove this wrapper.
 @_wraps(scipy.linalg.eigh_tridiagonal)
-def eigh_tridiagonal(d, e, tol=None, eigvals_only=False):
-  return _eigh_tridiagonal(d, e, tol, eigvals_only)
+def eigh_tridiagonal(d, e, *, eigvals_only=False, select='a',
+                     select_range=None, tol=None):
+  return _eigh_tridiagonal(d, e, eigvals_only, select, select_range, tol)
 
-@partial(jit, static_argnums=(3,))
-def _eigh_tridiagonal(d, e, tol, eigvals_only):
+@partial(jit, static_argnums=(2, 3, 4))
+def _eigh_tridiagonal(d, e, eigvals_only, select, select_range, tol):
   if not eigvals_only:
     raise NotImplementedError("Calculation of eigenvectors is not implemented")
 
@@ -542,13 +543,22 @@ def _eigh_tridiagonal(d, e, tol, eigvals_only):
   # lambda_est_max = -lambda_est_min, we have to take as many bisection steps
   # as there are bits in the mantissa plus 1.
   # The proof is left as an exercise to the reader.
-  max_it = finfo.nmant + 2
+  max_it = finfo.nmant + 1
 
-  # We want to find [lambda_0, lambda_1, ..., lambda_{n-1}], such that the
-  # number of eigenvalues of T less than lambda_i is i.
-  # TODO(rmlarsen): Extend this logic to support the "select" keyword to
-  # to specify a subset of eigenvalues to compute.
-  target_counts = jnp.arange(n)
+  # Determine the indices of the desired eigenvalues, based on select and
+  # select_range.
+  if select == 'a':
+    target_counts = jnp.arange(n)
+  elif select == 'i':
+    if select_range[0] > select_range[1]:
+      raise ValueError('Got empty index range in select_range.')
+    target_counts = jnp.arange(select_range[0], select_range[1] + 1)
+  elif select == 'v':
+    # TODO(phawkins): requires dynamic shape support.
+    raise NotImplementedError("eigh_tridiagonal(..., select='v') is not "
+                              "implemented")
+  else:
+    raise ValueError("'select must have a value in {'a', 'i', 'v'}.")
 
   # Run binary search for all desired eigenvalues in parallel, starting from
   # the interval lightly wider than the estimated
@@ -557,15 +567,15 @@ def _eigh_tridiagonal(d, e, tol, eigvals_only):
   norm_slack = jnp.array(n, alpha.dtype) * fudge * finfo.eps * t_norm
   lower = lambda_est_min - norm_slack - 2 * fudge * pivmin
   upper = lambda_est_max + norm_slack + fudge * pivmin
-  lower = jnp.broadcast_to(lower, shape=target_counts.shape)
-  upper = jnp.broadcast_to(upper, shape=target_counts.shape)
-  mid = 0.5 * (upper + lower)
 
-  # Pre-broadcast the fixed scalars used in the Sturm sequence for improved
+  # Pre-broadcast the scalars used in the Sturm sequence for improved
   # performance.
-  pivmin = jnp.broadcast_to(pivmin, target_counts.shape)
-  alpha0_perturbation = jnp.broadcast_to(alpha0_perturbation,
-                                               target_counts.shape)
+  target_shape = jnp.shape(target_counts)
+  lower = jnp.broadcast_to(lower, shape=target_shape)
+  upper = jnp.broadcast_to(upper, shape=target_shape)
+  mid = 0.5 * (upper + lower)
+  pivmin = jnp.broadcast_to(pivmin, target_shape)
+  alpha0_perturbation = jnp.broadcast_to(alpha0_perturbation, target_shape)
 
   # Start parallel binary searches.
   def cond(args):
