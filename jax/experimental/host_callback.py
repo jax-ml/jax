@@ -187,7 +187,7 @@ contain a list of transformation descriptors in the form
 ``(transform_name, transform_params)``.
 
 For :func:`jax.vmap` the arguments are batched, and ``transforms`` is extended
-with transformation name ``batch`` and ``batch_dims`` set to the the tuple of
+with transformation name ``batch`` and ``batch_dims`` set to the tuple of
 batched dimensions (one entry per argument, ``None`` denotes an argument that
 was broadcast)::
 
@@ -232,6 +232,12 @@ or :func:`id_tap`, so that you see which device is sending which data::
   # device=cpu:0 what=x,x^2: (3., 9.)  # from the first device
   # device=cpu:1 what=x,x^2: (4., 16.)  # from the second device
 
+When using :func:`jax.pmap` with multiple devices on multiple hosts, every
+host will receive callbacks from all of its local devices, with an operand
+that corresponds to each device slice. For a
+:func:`call`, the callback must return to each device only the slice of the
+result that pertains to the corresponding device.
+
 
 When using the experimental :func:`pjit.pjit` the code will run on multiple
 devices on different shards of the input. The current implementation of
@@ -248,14 +254,23 @@ sending the required shards to the other devices::
   # device=TPU:0 what=x,x^2: ( [3., 4.],
   #                            [9., 16.] )
 
+Note that the collection of the operand on one device may result in OOM if
+the operand was sharded across devices.
+
+When using :func:`pjit.pjit` with multiple devices on multiple hosts, only
+the host for the device 0 (w.r.t. the mesh) will receive the callback, with
+the operand collected
+from all participating devices on all hosts. For a :func:`call`, the callback
+must return the entire array for all devices on all hosts.
+
 See documentation for :func:`id_tap`, :func:`id_print`, and :func:`call`.
 For more usage example, see tests/host_callback_test.py.
 
 Low-level details and debugging
 -------------------------------
 
-The host callback functions will be executed for each device in the order in which
-the send operations were performed on the device.
+The host callback functions will be executed for each device in the order in
+which the send operations were performed on the device.
 
 The host callback functions for multiple devices may be interleaved.
 The data from the devices is received by separate threads managed by the JAX
@@ -274,7 +289,7 @@ runtime mechanism see
 In order to pause the execution until all data from computations already
 started on devices has arrived and has been processed, use :func:`barrier_wait`.
 Note that this is needed only for :func:`id_tap` and :func:`id_print`, which
-are processed asyncronously with the device computation.
+are processed asynchronously with the device computation.
 
 Exceptions from the user-defined callback functions are logged along with their
 stack traces, but the receiving threads are not stopped. Instead the last
@@ -288,7 +303,8 @@ results to the call origin device. In order to avoid the device computation
 being stuck waiting for a result that will never arrive, in case of any
 error during the processing of the callback (whether raised by the user-code
 itself or due to a mismatch of the returned value and the expected return_shape)
-we send the device a "fake" result of shape ``int8[12345]``. This will make the device
+we send the device a "fake" result of shape ``int8[12345]``.
+This will make the device
 computation abort because the received data is different than then one that
 it expects. On CPU the runtime will crash with a distinctive error message:
 
@@ -349,7 +365,8 @@ for the C++ outfeed `receiver backend
   * `TF_CPP_VMODULE=<module_name>=3`` (the module name can be either C++ or
     Python, without the extension).
 
-You should also use the ``--verbosity=2`` flag so that you see the logs from Python.
+You should also use the ``--verbosity=2`` flag so that you see the logs
+from Python.
 
 For example, you can try to enable logging in the ``host_callback`` module:
 ```
@@ -824,7 +841,7 @@ def _outside_call_translation_rule(
   identity = params["identity"]  # type: ignore[key-error]
   flat_results_aval = params["flat_results_aval"] if not identity else [
   ]  # type: ignore[key-error]
-  # Many platforms refuse to infeed empty arrays. We generate constants
+  # Some platforms refuse to infeed empty arrays. We generate constants
   # instead.
   non_empty_flat_results_aval = list(filter(lambda aval: not (_aval_is_empty(aval)),
                                             flat_results_aval))
