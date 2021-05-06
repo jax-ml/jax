@@ -601,7 +601,7 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
 shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array_slow_path
 
 def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
-  return xb.constant(c, np.asarray(val), canonicalize_types=canonicalize_types)
+  return xb.constant_general(c, np.asarray(val), canonicalize_types=canonicalize_types)
 xb.register_constant_handler(ShardedDeviceArray, _sharded_device_array_constant_handler)
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
