@@ -1403,8 +1403,9 @@ def unravel_index(indices, shape):
   total_size = cumulative_sizes[0]
   # Clip so raveling and unraveling an oob index will not change the behavior
   clipped_indices = clip(indices, -total_size, total_size - 1)
-  # Add enough trailing dims to avoid conflict with flat_index
+  # Add enough trailing dims to avoid conflict with clipped_indices
   cumulative_sizes = cumulative_sizes.reshape([-1] + [1] * indices.ndim)
+  clipped_indices = expand_dims(clipped_indices, axis=0)
   idx = clipped_indices % cumulative_sizes[:-1] // cumulative_sizes[1:]
   return tuple(idx)
 
