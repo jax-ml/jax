@@ -1414,6 +1414,23 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
 class EighTridiagonalTest(jtu.JaxTestCase):
 
+  def run_test(self, alpha, beta):
+    n = alpha.shape[-1]
+    # scipy.linalg.eigh_tridiagonal doesn't support complex inputs, so for
+    # this we call the slower numpy.linalg.eigh.
+    if np.issubdtype(alpha.dtype, np.complexfloating):
+      tridiagonal = np.diag(alpha) + np.diag(beta, 1) + np.diag(
+          np.conj(beta), -1)
+      eigvals_expected, _ = np.linalg.eigh(tridiagonal)
+    else:
+      eigvals_expected = scipy.linalg.eigh_tridiagonal(
+          alpha, beta, eigvals_only=True)
+    eigvals = jax.scipy.linalg.eigh_tridiagonal(
+        alpha, beta, eigvals_only=True)
+    finfo = np.finfo(alpha.dtype)
+    atol = 4 * np.sqrt(n) * finfo.eps * np.amax(np.abs(eigvals_expected))
+    self.assertAllClose(eigvals_expected, eigvals, atol=atol, rtol=1e-4)
+
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name": f"_n={n}_dtype={dtype.__name__}",
       "n": n, "dtype": dtype}
@@ -1424,21 +1441,39 @@ class EighTridiagonalTest(jtu.JaxTestCase):
     for a, b in [[2, -1], [1, 0], [0, 1], [-1e10, 1e10], [-1e-10, 1e-10]]:
       alpha = a * np.ones([n], dtype=dtype)
       beta = b * np.ones([n - 1], dtype=dtype)
-      # scipy.linalg.eigh_tridiagonal doesn't support complex inputs, so for
-      # this we call the slower numpy.linalg.eigh.
-      if np.issubdtype(alpha.dtype, np.complexfloating):
-        tridiagonal = np.diag(alpha) + np.diag(beta, 1) + np.diag(
-            np.conj(beta), -1)
-        eigvals_expected, _ = np.linalg.eigh(tridiagonal)
-      else:
-        eigvals_expected = scipy.linalg.eigh_tridiagonal(
-            alpha, beta, eigvals_only=True)
-      eigvals = jax.scipy.linalg.eigh_tridiagonal(
-          alpha, beta, eigvals_only=True)
-      finfo = np.finfo(dtype)
-      atol = 4 * np.sqrt(n) * finfo.eps * np.amax(np.abs(eigvals_expected))
-      self.assertAllClose(eigvals_expected, eigvals, atol=atol, rtol=1e-4)
+      self.run_test(alpha, beta)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name": f"_n={n}_dtype={dtype.__name__}",
+      "n": n, "dtype": dtype}
+     for n in [1, 2, 3, 7, 8, 100]
+     for dtype in float_types + complex_types))
+  def testRandomUniform(self, n, dtype):
+    alpha = jtu.rand_uniform(self.rng())((n,), dtype)
+    beta = jtu.rand_uniform(self.rng())((n - 1,), dtype)
+    self.run_test(alpha, beta)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name": f"_dtype={dtype.__name__}",
+      "dtype": dtype}
+     for dtype in float_types + complex_types))
+  def testSelect(self, dtype):
+    n = 5
+    alpha = jtu.rand_uniform(self.rng())((n,), dtype)
+    beta = jtu.rand_uniform(self.rng())((n - 1,), dtype)
+    eigvals_all = jax.scipy.linalg.eigh_tridiagonal(alpha, beta, select="a",
+                                                    eigvals_only=True)
+    eps = np.finfo(alpha.dtype).eps
+    atol = 2 * n * eps
+    for first in range(n - 1):
+      for last in range(first + 1, n - 1):
+        # Check that we get the expected eigenvalues by selecting by
+        # index range.
+        eigvals_index = jax.scipy.linalg.eigh_tridiagonal(
+            alpha, beta, select="i", select_range=(first, last),
+            eigvals_only=True)
+        self.assertAllClose(
+            eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
 
 if __name__ == "__main__":
