@@ -156,7 +156,7 @@ def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
         axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
   """
   old_env = getattr(thread_resources, "env", None)
-  thread_resources.env = ResourceEnv(Mesh(devices, axis_names))
+  thread_resources.env = ResourceEnv(Mesh(np.asarray(devices, dtype=object), axis_names))
   try:
     yield
   finally:
