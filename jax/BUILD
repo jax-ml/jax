@@ -135,6 +135,8 @@ pytype_library(
     deps = [
         ":jax",
         ":pjit",
+        "//third_party/py/absl/logging",
+        "@org_tensorflow//tensorflow/compiler/xla/python:callback_custom_call",
     ],
 )
 
