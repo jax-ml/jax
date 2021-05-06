@@ -868,8 +868,7 @@ class Bot(AbstractValue): pass
 bot = Bot()
 
 class AbstractUnit(AbstractValue):
-  # TODO(jakevdp): make it possible to set zero buffers
-  # _num_buffers = 0
+  _num_buffers = 0
   def at_least_vspace(self): return self
   def join(self, other):
     if config.jax_enable_checks:

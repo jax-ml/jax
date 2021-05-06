@@ -995,6 +995,8 @@ def _inline_literals(jaxpr, constvals):
       consts[eqn.outvars[0]] = np.array(invars[0].val, eqn.params['new_dtype'])
     else:
       # might do DCE here, but we won't until we're more careful about effects
+      # TODO(jakevdp): this assumes that v lowers to the same number of buffers
+      #                as dropvar.
       outvars = [var(v) if v in used else dropvar for v in eqn.outvars]
       new_eqns.append(new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
                                     eqn.source_info))

@@ -67,12 +67,10 @@ def identity(x): return x
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 # unit representation
-def _make_unit_constant(c): return xb.constant_general(c, np.zeros((), dtype=np.dtype('bool')))
-def _make_unit_shape(_): return (xc.Shape.array_shape(np.dtype('bool'), ()),)
-def _device_put_unit(_, device):
-  backend = xb.get_device_backend(device)
-  return (backend.buffer_from_pyval(np.zeros((), dtype=np.dtype('bool')),
-                                    device),)
+def _make_unit_constant(c): return ()
+def _make_unit_shape(_): return ()
+def _device_put_unit(_, __):
+  return ()
 def _make_array_shape(a):
   if a.dtype is dtypes.float0:
     return (xc.Shape.array_shape(np.dtype('bool'), a.shape),)
@@ -108,7 +106,7 @@ def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
 
 
 xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
-    core.AbstractUnit: lambda _, __: lambda _: core.unit,
+    core.AbstractUnit: lambda _, __: lambda: core.unit,
     ShapedArray: array_result_handler,
     ConcreteArray: array_result_handler,
 }
