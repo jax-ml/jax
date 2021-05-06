@@ -1303,12 +1303,16 @@ class Mesh:
     return np.prod(list(self.shape.values()))
 
   @property
+  def empty(self):
+    return self.devices.ndim == 0
+
+  @property
   def is_multi_process(self):
     return self.shape != self.local_mesh.shape
 
   @maybe_cached_property
   def local_mesh(self):
-    if not self.devices.ndim:
+    if self.empty:
       return self
     process_index = xb.process_index()
     is_local_device = np.vectorize(

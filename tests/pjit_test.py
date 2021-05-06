@@ -413,6 +413,7 @@ class PJitErrorTest(jtu.JaxTestCase):
            in_axis_resources=None, out_axis_resources=None)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
+  @with_mesh([('z', 1)])
   def testUndefinedResourcesArgs(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
@@ -422,6 +423,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
+  @with_mesh([('z', 1)])
   def testUndefinedResourcesOuts(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
@@ -431,6 +433,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: x, in_axis_resources=None, out_axis_resources=spec)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
+  @with_mesh([('z', 1)])
   def testUndefinedResourcesConstraint(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
@@ -537,6 +540,12 @@ class PJitErrorTest(jtu.JaxTestCase):
     x = jnp.arange(4)
     with self.assertRaises(JAXTypeError):
       f(x, x)
+
+  def testEmptyMesh(self):
+    error = (r"pjit requires a non-empty mesh! Are you sure that it's defined "
+             r"at the call site?")
+    with self.assertRaisesRegex(RuntimeError, error):
+      pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(jnp.arange(4))
 
 
 if __name__ == '__main__':

@@ -81,6 +81,9 @@ def pjit(fun: Callable,
     # Putting this outside of wrapped would make resources lexically scoped
     resource_env = maps.thread_resources.env
     mesh = resource_env.physical_mesh
+    if mesh.empty:
+      raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
+                         "it's defined at the call site?")
 
     f = lu.wrap_init(fun)
     if static_argnums:
