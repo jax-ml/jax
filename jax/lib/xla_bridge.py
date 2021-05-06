@@ -29,6 +29,7 @@ from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
 logging._warn_preinit_stderr = 0
 
+import jax.lib
 from .._src.config import flags
 from jax._src import util, traceback_util
 from jax._src import dtypes
@@ -113,8 +114,12 @@ def get_compile_options(
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
 
+  debug_options = compile_options.executable_build_options.debug_options
+  if jax.lib.cuda_path is not None:
+    debug_options.xla_gpu_cuda_data_dir = jax.lib.cuda_path
+
   if FLAGS.jax_disable_most_optimizations:
-    debug_options = compile_options.executable_build_options.debug_options
+
     debug_options.xla_backend_optimization_level = 0
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
@@ -349,7 +354,7 @@ def normalize_to_xla_dtypes(val):
 def _numpy_array_constant(builder, value, canonicalize_types=True):
   if canonicalize_types:
     value = normalize_to_xla_dtypes(value)
-  return xops.ConstantLiteral(builder, value)
+  return [xops.ConstantLiteral(builder, value)]
 
 def parameter(builder, num, shape, name=None, replicated=None):
   if name is None:
@@ -364,6 +369,22 @@ def parameter(builder, num, shape, name=None, replicated=None):
                         replicated)
 
 
+def constant_general(builder, py_val, canonicalize_types=True):
+  """Translate a general constant `py_val` to a constant, canonicalizing its dtype.
+
+  Args:
+    py_val: a Python value to be translated to a constant.
+
+  Returns:
+    A representation of the constant as a list of xla ops.
+  """
+  for t in type(py_val).mro():
+    handler = _constant_handlers.get(t)
+    if handler: return handler(builder, py_val, canonicalize_types)
+  if hasattr(py_val, '__jax_array__'):
+    return constant(builder, py_val.__jax_array__(), canonicalize_types)
+  raise TypeError("No constant handler for type: {}".format(type(py_val)))
+
 def constant(builder, py_val, canonicalize_types=True):
   """Translate constant `py_val` to a constant, canonicalizing its dtype.
 
@@ -373,12 +394,9 @@ def constant(builder, py_val, canonicalize_types=True):
   Returns:
     A representation of the constant, either a ComputationDataHandle or None
   """
-  for t in type(py_val).mro():
-    handler = _constant_handlers.get(t)
-    if handler: return handler(builder, py_val, canonicalize_types)
-  if hasattr(py_val, '__jax_array__'):
-    return constant(builder, py_val.__jax_array__(), canonicalize_types)
-  raise TypeError("No constant handler for type: {}".format(type(py_val)))
+  const = constant_general(builder, py_val, canonicalize_types=canonicalize_types)
+  assert len(const) == 1, f"Internal error: cannot create constant from object of type {type(py_val)}"
+  return const[0]
 
 # HLO instructions optionally can be annotated to say how the output should be
 # spatially partitioned (represented in XLA as OpSharding protos, see
@@ -479,10 +497,10 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
     xla_val = xops.Broadcast(
-        _numpy_array_constant(c, collapsed_val, canonicalize_types),
+        _numpy_array_constant(c, collapsed_val, canonicalize_types)[0],
         np.take(val.shape, zero_stride_axes))
     permutation = np.argsort(tuple(zero_stride_axes) + tuple(other_axes))
-    return xops.Transpose(xla_val, permutation)
+    return [xops.Transpose(xla_val, permutation)]
   else:
     return _numpy_array_constant(c, val, canonicalize_types)
 register_constant_handler(np.ndarray, _ndarray_constant_handler)

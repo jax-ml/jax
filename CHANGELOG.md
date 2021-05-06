@@ -8,8 +8,23 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.13 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.12...master).
+## jax 0.2.14 (unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...master).
+
+## jaxlib 0.1.66 (unreleased)
+* New features:
+  * CUDA 11.1 wheels are now supported on all CUDA 11 versions 11.1 or higher.
+
+    NVidia now promises compatibility between CUDA minor releases starting with
+    CUDA 11.1. This means that JAX can release a single CUDA 11.1 wheel that
+    is compatible with CUDA 11.2 and 11.3.
+
+    There is no longer a separate jaxlib release for CUDA 11.2 (or higher); use
+    the CUDA 11.1 wheel for those versions (cuda111).
+  * Added support for static keyword arguments to the C++ `jit` implementation.
+
+## jax 0.2.13 (May 3 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.12...jax-v0.2.13).
 * New features:
   * When combined with jaxlib 0.1.66, {func}`jax.jit` now supports static
     keyword arguments. A new `static_argnames` option has been added to specify
@@ -17,6 +32,10 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.nonzero` has a new optional `size` argument that allows it to
     be used within `jit` ({jax-issue}`#6501`)
   * {func}`jax.numpy.unique` now supports the `axis` argument ({jax-issue}`#6532`).
+  * {func}`jax.experimental.host_callback.call` now supports `pjit.pjit` ({jax-issue}`#6569`).
+  * Added {func}`jax.scipy.linalg.eigh_tridiagonal` that computes the
+    eigenvalues of a tridiagonal matrix. Only eigenvalues are supported at
+    present.
 * Breaking changes:
   * The following function names have changed. There are still aliases, so this
     should not break existing code, but the aliases will eventually be removed
@@ -32,9 +51,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
   * The {func}`jax2tf.convert` now works in presence of gradients for functions
     with integer inputs ({jax-issue}`#6360`).
-
-## jaxlib 0.1.66 (unreleased)
-  * Added support for static keyword arguments to the C++ `jit` implementation.
+  * Fixed assertion failure in {func}`jax2tf.call_tf` when used with captured
+    `tf.Variable` ({jax-issue}`#6572`).
 
 ## jaxlib 0.1.65 (April 7 2021)
 

@@ -838,6 +838,7 @@ def broadcasting_binop_batching_rule(op, axis_size, vals_in, dims_in):
   if x_bdim != y_bdim:
     if x_bdim is not_mapped:
       x = move_batch_axis(axis_size, x_bdim, y_bdim, x)
+      x_bdim = y_bdim
     else:
       y = move_batch_axis(axis_size, y_bdim, x_bdim, y)
   return [op(x, y)], [x_bdim]

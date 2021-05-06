@@ -65,6 +65,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    :maxdepth: 2
    :caption: Developer documentation
 
+   contributing
    developer
    jax_internal_api
    autodidax

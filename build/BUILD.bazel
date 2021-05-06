@@ -42,6 +42,7 @@ py_binary(
         "//jaxlib:cusparse_kernels",
         "//jaxlib:cuda_lu_pivot_kernels",
         "//jaxlib:cuda_prng_kernels",
+        "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
         "//jaxlib:rocblas_kernels",
     ]),

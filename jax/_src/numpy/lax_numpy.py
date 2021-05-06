@@ -620,12 +620,13 @@ def power(x1, x2):
   # Using lax.pow may be imprecise for floating-point values; the goal of this
   # code path is to make sure we end up with a precise output for the common
   # pattern ``x ** 2`` or similar.
-  try:
-    x2 = core.concrete_or_error(operator.index, x2)
-  except (core.ConcretizationTypeError, TypeError):
-    pass
-  else:
-    return lax.integer_pow(x1, x2)
+  if isinstance(core.get_aval(x2), ConcreteArray):
+    try:
+      x2 = operator.index(x2)
+    except TypeError:
+      pass
+    else:
+      return lax.integer_pow(x1, x2)
 
   x1, x2 = _promote_args("power", x1, x2)
   dtype = _dtype(x1)
@@ -1401,8 +1402,9 @@ def unravel_index(indices, shape):
   total_size = cumulative_sizes[0]
   # Clip so raveling and unraveling an oob index will not change the behavior
   clipped_indices = clip(indices, -total_size, total_size - 1)
-  # Add enough trailing dims to avoid conflict with flat_index
+  # Add enough trailing dims to avoid conflict with clipped_indices
   cumulative_sizes = cumulative_sizes.reshape([-1] + [1] * indices.ndim)
+  clipped_indices = expand_dims(clipped_indices, axis=0)
   idx = clipped_indices % cumulative_sizes[:-1] // cumulative_sizes[1:]
   return tuple(idx)
 
@@ -1732,6 +1734,12 @@ def bincount(x, weights=None, minlength=0, *, length=None):
     raise ValueError("shape of weights must match shape of x.")
   return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights)
 
+@_wraps(getattr(np, "broadcast_shapes", None))
+def broadcast_shapes(*shapes):
+  if not shapes:
+    return ()
+  shapes = [(shape,) if np.ndim(shape) == 0 else tuple(shape) for shape in shapes]
+  return lax.broadcast_shapes(*shapes)
 
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
@@ -3337,6 +3345,205 @@ class _Ogrid(_IndexGrid):
 ogrid = _Ogrid()
 
 
+def _make_1d_grid_from_slice(s: slice):
+  start = s.start or 0
+  stop = s.stop
+  step = s.step or 1
+  if np.iscomplex(step):
+    newobj = linspace(start, stop, int(_abs(step)))
+  else:
+    newobj = arange(start, stop, step)
+
+  return newobj
+
+
+class _AxisConcat:
+  """Concatenates slices, scalars and array-like objects along a given axis."""
+  def __getitem__(self, key):
+    if not isinstance(key, tuple):
+      key = (key,)
+
+    params = [self.axis, self.ndmin, self.trans1d, -1]
+
+    if isinstance(key[0], str):
+      # split off the directive
+      directive, *key = key
+      # check two special cases: matrix directives
+      if directive == "r":
+        params[-1] = 0
+      elif directive == "c":
+        params[-1] = 1
+      else:
+        vec = directive.split(",")
+        k = len(vec)
+        if k < 4:
+          vec += params[k:]
+        else:
+          # ignore everything after the first three comma-separated ints
+          vec = vec[:3] + params[-1]
+        try:
+           params = list(map(int, vec))
+        except ValueError as err:
+          raise ValueError(
+            "could not understand directive {!r}".format(directive)
+          ) from err
+
+    axis, ndmin, trans1d, matrix = params
+
+    output = []
+    for item in key:
+      if isinstance(item, slice):
+        newobj = _make_1d_grid_from_slice(item)
+      elif isinstance(item, str):
+        raise ValueError("string directive must be placed at the beginning")
+      else:
+        newobj = item
+
+      newobj = array(newobj, copy=False, ndmin=ndmin)
+
+      if trans1d != -1 and ndmin - ndim(item) > 0:
+        shape_obj = list(range(ndmin))
+        # Calculate number of left shifts, with overflow protection by mod
+        num_lshifts = ndmin - _abs(ndmin + trans1d + 1) % ndmin
+        shape_obj = tuple(shape_obj[num_lshifts:] + shape_obj[:num_lshifts])
+
+        newobj = transpose(newobj, shape_obj)
+
+      output.append(newobj)
+
+    res = concatenate(tuple(output), axis=axis)
+
+    if matrix != -1 and res.ndim == 1:
+      # insert 2nd dim at axis 0 or 1
+      res = expand_dims(res, matrix)
+
+    return res
+
+  def __len__(self):
+    return 0
+
+
+class RClass(_AxisConcat):
+  """Concatenate slices, scalars and array-like objects along the first axis.
+
+  LAX-backend implementation of :obj:`numpy.r_`.
+
+  See Also:
+    ``jnp.c_``: Concatenates slices, scalars and array-like objects along the last axis.
+
+  Examples:
+    Passing slices in the form ``[start:stop:step]`` generates ``jnp.arange`` objects:
+
+    >>> jnp.r_[-1:5:1, 0, 0, jnp.array([1,2,3])]
+    DeviceArray([-1,  0,  1,  2,  3,  4,  0,  0,  1,  2,  3], dtype=int32)
+
+    An imaginary value for ``step`` will create a ``jnp.linspace`` object instead,
+    which includes the right endpoint:
+
+    >>> jnp.r_[-1:1:6j, 0, jnp.array([1,2,3])]
+    DeviceArray([-1.        , -0.6       , -0.20000002,  0.20000005,
+                  0.6       ,  1.        ,  0.        ,  1.        ,
+                  2.        ,  3.        ], dtype=float32)
+
+    Use a string directive of the form ``"axis,dims,trans1d"`` as the first argument to
+    specify concatenation axis, minimum number of dimensions, and the position of the
+    upgraded array's original dimensions in the resulting array's shape tuple:
+
+    >>> jnp.r_['0,2', [1,2,3], [4,5,6]] # concatenate along first axis, 2D output
+    DeviceArray([[1, 2, 3],
+                 [4, 5, 6]], dtype=int32)
+
+    >>> jnp.r_['0,2,0', [1,2,3], [4,5,6]] # push last input axis to the front
+    DeviceArray([[1],
+                 [2],
+                 [3],
+                 [4],
+                 [5],
+                 [6]], dtype=int32)
+
+    Negative values for ``trans1d`` offset the last axis towards the start
+    of the shape tuple:
+
+    >>> jnp.r_['0,2,-2', [1,2,3], [4,5,6]]
+    DeviceArray([[1],
+                 [2],
+                 [3],
+                 [4],
+                 [5],
+                 [6]], dtype=int32)
+
+    Use the special directives ``"r"`` or ``"c"`` as the first argument on flat inputs
+    to create an array with an extra row or column axis, respectively:
+
+    >>> jnp.r_['r',[1,2,3], [4,5,6]]
+    DeviceArray([[1, 2, 3, 4, 5, 6]], dtype=int32)
+
+    >>> jnp.r_['c',[1,2,3], [4,5,6]]
+    DeviceArray([[1],
+                 [2],
+                 [3],
+                 [4],
+                 [5],
+                 [6]], dtype=int32)
+
+    For higher-dimensional inputs (``dim >= 2``), both directives ``"r"`` and ``"c"``
+    give the same result.
+  """
+  axis = 0
+  ndmin = 1
+  trans1d = -1
+
+
+r_ = RClass()
+
+
+class CClass(_AxisConcat):
+  """Concatenate slices, scalars and array-like objects along the last axis.
+
+  LAX-backend implementation of :obj:`numpy.c_`.
+
+  See Also:
+    ``jnp.r_``: Concatenates slices, scalars and array-like objects along the first axis.
+
+  Examples:
+
+    >>> a = jnp.arange(6).reshape((2,3))
+    >>> jnp.c_[a,a]
+    DeviceArray([[0, 1, 2, 0, 1, 2],
+                 [3, 4, 5, 3, 4, 5]], dtype=int32)
+
+    Use a string directive of the form ``"axis:dims:trans1d"`` as the first argument to specify
+    concatenation axis, minimum number of dimensions, and the position of the upgraded array's
+    original dimensions in the resulting array's shape tuple:
+
+    >>> jnp.c_['0,2', [1,2,3], [4,5,6]]
+    DeviceArray([[1],
+                 [2],
+                 [3],
+                 [4],
+                 [5],
+                 [6]], dtype=int32)
+
+    >>> jnp.c_['0,2,-1', [1,2,3], [4,5,6]]
+    DeviceArray([[1, 2, 3],
+                 [4, 5, 6]], dtype=int32)
+
+    Use the special directives ``"r"`` or ``"c"`` as the first argument on flat inputs
+    to create an array with inputs stacked along the last axis:
+
+    >>> jnp.c_['r',[1,2,3], [4,5,6]]
+    DeviceArray([[1, 4],
+                 [2, 5],
+                 [3, 6]], dtype=int32)
+  """
+  axis = -1
+  ndmin = 2
+  trans1d = 0
+
+
+c_ = CClass()
+
+
 @_wraps(np.i0)
 def i0(x):
   x_orig = x
@@ -4496,7 +4703,7 @@ def _take_along_axis(arr, indices, axis):
   return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes))
 
 
-@_wraps(getattr(np, "take_along_axis", None), update_doc=False)
+@_wraps(np.take_along_axis, update_doc=False)
 def take_along_axis(arr, indices, axis: Optional[int]):
   _check_arraylike("take_along_axis", arr)
   return _take_along_axis(arr, indices, axis)
@@ -5025,7 +5232,7 @@ def _gcd_body_fn(xs):
             where(x2 != 0, lax.rem(x1, x2), lax._const(x2, 0)))
   return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
-@_wraps(getattr(np, "gcd", None))
+@_wraps(np.gcd)
 def gcd(x1, x2):
   _check_arraylike("gcd", x1, x2)
   if (not issubdtype(_dtype(x1), integer) or
@@ -5037,7 +5244,7 @@ def gcd(x1, x2):
   return gcd
 
 
-@_wraps(getattr(np, "lcm", None))
+@_wraps(np.lcm)
 def lcm(x1, x2):
   _check_arraylike("lcm", x1, x2)
   x1, x2 = _promote_dtypes(x1, x2)
@@ -5157,7 +5364,7 @@ def corrcoef(x, y=None, rowvar=True):
   return c
 
 
-@_wraps(getattr(np, "quantile", None), skip_params=['out', 'overwrite_input'])
+@_wraps(np.quantile, skip_params=['out', 'overwrite_input'])
 def quantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
              overwrite_input=False, interpolation="linear", keepdims=False):
   _check_arraylike("quantile", a, q)
@@ -5167,7 +5374,7 @@ def quantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
     raise ValueError(msg)
   return _quantile(a, q, axis, interpolation, keepdims, False)
 
-@_wraps(getattr(np, "nanquantile", None), skip_params=['out', 'overwrite_input'])
+@_wraps(np.nanquantile, skip_params=['out', 'overwrite_input'])
 def nanquantile(a, q, axis: Optional[Union[int, Tuple[int, ...]]] = None,
                 out=None, overwrite_input=False, interpolation="linear",
                 keepdims=False):
@@ -5231,6 +5438,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     index[axis] = high
     high_value = a[tuple(index)]
   else:
+    a = where(any(isnan(a), axis=axis, keepdims=True), nan, a)
     a = lax.sort(a, dimension=axis)
     n = a_shape[axis]
     q = lax.mul(q, _constant_like(q, n - 1))

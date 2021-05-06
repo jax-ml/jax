@@ -26,9 +26,19 @@ These routines have reference implementations defined via XLA scatter/gather
 operations that will work on any backend, although they are not particularly
 performant. On GPU runtimes with jaxlib 0.1.66 or newer built against CUDA 11.0
 or newer, each operation is computed efficiently via cusparse.
-"""
 
+Further down are some examples of potential high-level wrappers for sparse objects.
+(API should be considered unstable and subject to change).
+"""
+import functools
+import operator
+
+from typing import Any, Tuple
+
+from jax import api
 from jax import core
+from jax import jit
+from jax import tree_util
 from jax.interpreters import xla
 from jax.lib import cusparse
 from jax.lib import xla_bridge
@@ -38,6 +48,19 @@ import numpy as np
 
 xb = xla_bridge
 xops = xla_client.ops
+
+Dtype = Any
+
+#--------------------------------------------------------------------
+# utilities
+@functools.partial(jit, static_argnums=1)
+def _csr_to_coo(indptr, nnz):
+  return jnp.cumsum(jnp.zeros_like(indptr, shape=nnz).at[indptr].add(1)) - 1
+
+@functools.partial(jit, static_argnums=1)
+def _coo_to_csr(row, nrows):
+  indptr = jnp.zeros(nrows + 1, row.dtype)
+  return indptr.at[1:].set(jnp.cumsum(jnp.bincount(row, length=nrows)))
 
 #--------------------------------------------------------------------
 # csr_todense
@@ -60,8 +83,7 @@ def csr_todense(data, indices, indptr, *, shape):
 
 @csr_todense_p.def_impl
 def _csr_todense_impl(data, indices, indptr, *, shape):
-  row = jnp.zeros_like(indices).at[indptr].add(1).cumsum() - 1
-  return _coo_todense_impl(data, row, indices, shape=shape)
+  return _coo_todense_impl(data, _csr_to_coo(indptr, len(indices)), indices, shape=shape)
 
 @csr_todense_p.def_abstract_eval
 def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
@@ -99,17 +121,26 @@ def csr_fromdense(mat, *, nnz, index_dtype=np.int32):
     indices : array of shape ``(nnz,)`` and dtype ``index_dtype``
     indptr : array of shape ``(mat.shape[0] + 1,)`` and dtype ``index_dtype``
   """
-  return csr_fromdense_p.bind(
-      mat,
-      nnz=nnz,
-      index_dtype=np.dtype(index_dtype))
+  mat = jnp.asarray(mat)
+  nnz = core.concrete_or_error(operator.index, nnz, "nnz argument of csr_fromdense()")
+  return csr_fromdense_p.bind(mat, nnz=nnz, index_dtype=np.dtype(index_dtype))
 
 @csr_fromdense_p.def_impl
 def _csr_fromdense_impl(mat, *, nnz, index_dtype):
+  mat = jnp.asarray(mat)
+  assert mat.ndim == 2
   m = mat.shape[0]
-  data, row, col = _coo_fromdense_impl(mat, nnz=nnz, index_dtype=index_dtype)
-  indptr = jnp.zeros(m + 1, dtype=index_dtype).at[1:].set(jnp.cumsum(jnp.bincount(row, length=m)))
-  return data, col, indptr
+
+  row, col = jnp.nonzero(mat, size=nnz)
+  data = mat[row, col]
+
+  true_nonzeros = jnp.arange(nnz) < (mat != 0).sum()
+  data = jnp.where(true_nonzeros, data, 0)
+  row = jnp.where(true_nonzeros, row, m)
+  indices = col.astype(index_dtype)
+  indptr = jnp.zeros(m + 1, dtype=index_dtype).at[1:].set(
+      jnp.cumsum(jnp.bincount(row, length=m)))
+  return data, indices, indptr
 
 @csr_fromdense_p.def_abstract_eval
 def _csr_fromdense_abstract_eval(mat, *, nnz, index_dtype):
@@ -155,7 +186,7 @@ def csr_matvec(data, indices, indptr, v, *, shape, transpose=False):
 
 @csr_matvec_p.def_impl
 def _csr_matvec_impl(data, indices, indptr, v, *, shape, transpose):
-  row = jnp.cumsum(jnp.zeros_like(indices).at[indptr].add(1)) - 1
+  row = _csr_to_coo(indptr, len(indices))
   return _coo_matvec_impl(data, row, indices, v, shape=shape, transpose=transpose)
 
 @csr_matvec_p.def_abstract_eval
@@ -206,7 +237,7 @@ def csr_matmat(data, indices, indptr, B, *, shape, transpose=False):
 
 @csr_matmat_p.def_impl
 def _csr_matmat_impl(data, indices, indptr, B, *, shape, transpose):
-  row = jnp.cumsum(jnp.zeros_like(indices).at[indptr].add(1)) - 1
+  row = _csr_to_coo(indptr, len(indices))
   return _coo_matmat_impl(data, row, indices, B, shape=shape, transpose=transpose)
 
 @csr_matmat_p.def_abstract_eval
@@ -252,7 +283,7 @@ def coo_todense(data, row, col, *, shape):
 
 @coo_todense_p.def_impl
 def _coo_todense_impl(data, row, col, *, shape):
-  return jnp.zeros(shape, data.dtype).at[row, col].set(data)
+  return jnp.zeros(shape, data.dtype).at[row, col].add(data)
 
 @coo_todense_p.def_abstract_eval
 def _coo_todense_abstract_eval(data, row, col, *, shape):
@@ -286,15 +317,22 @@ def coo_fromdense(mat, *, nnz, index_dtype=jnp.int32):
     row : array of shape ``(nnz,)`` and dtype ``index_dtype``
     col : array of shape ``(nnz,)`` and dtype ``index_dtype``
   """
+  mat = jnp.asarray(mat)
+  nnz = core.concrete_or_error(operator.index, nnz, "nnz argument of coo_fromdense()")
   return coo_fromdense_p.bind(mat, nnz=nnz, index_dtype=index_dtype)
 
 @coo_fromdense_p.def_impl
 def _coo_fromdense_impl(mat, *, nnz, index_dtype):
   mat = jnp.asarray(mat)
-  m, n = mat.shape
-  mat_flat = jnp.ravel(mat)
-  ind = jnp.nonzero(mat_flat, size=nnz)[0].astype(index_dtype)
-  return mat_flat[ind], ind // n, ind % n
+  assert mat.ndim == 2
+
+  row, col = jnp.nonzero(mat, size=nnz)
+  data = mat[row, col]
+
+  true_nonzeros = jnp.arange(nnz) < (mat != 0).sum()
+  data = jnp.where(true_nonzeros, data, 0)
+
+  return data, row.astype(index_dtype), col.astype(index_dtype)
 
 @coo_fromdense_p.def_abstract_eval
 def _coo_fromdense_abstract_eval(mat, *, nnz, index_dtype):
@@ -415,3 +453,162 @@ xla.translations[coo_matmat_p] = xla.lower_fun(
 if cusparse and cusparse.is_supported:
   xla.backend_specific_translations['gpu'][
       coo_matmat_p] = _coo_matmat_gpu_translation_rule
+
+#----------------------------------------------------------------------
+# Sparse objects (APIs subject to change)
+class JAXSparse:
+  """Base class for high-level JAX sparse objects."""
+  shape: Tuple[int, int]
+  nnz: property
+  dtype: property
+
+  def __init__(self, args, *, shape):
+    self.shape = shape
+
+  def __repr__(self):
+    return f"{self.__class__.__name__}({self.dtype}{list(self.shape)}, nnz={self.nnz})"
+
+  def tree_flatten(self):
+    raise NotImplementedError("tree_flatten")
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    return cls(children, **aux_data)
+
+  def matvec(self, v):
+    raise NotImplementedError("matvec")
+
+  def matmat(self, B):
+    raise NotImplementedError("matmat")
+
+  def transpose(self):
+    raise NotImplementedError()
+
+  @property
+  def T(self):
+    return self.transpose()
+
+  def __matmul__(self, other):
+    if isinstance(other, JAXSparse):
+      raise NotImplementedError("matmul between two sparse objects.")
+    other = jnp.asarray(other)
+    if other.ndim == 1:
+      return self.matvec(other)
+    elif other.ndim == 2:
+      return self.matmat(other)
+    else:
+      raise NotImplementedError(f"matmul with object of shape {other.shape}")
+
+
+@tree_util.register_pytree_node_class
+class CSR(JAXSparse):
+  """Experimental CSR matrix implemented in JAX; API subject to change."""
+  data: jnp.ndarray
+  indices: jnp.ndarray
+  indptr: jnp.ndarray
+  nnz = property(lambda self: self.data.size)
+  dtype = property(lambda self: self.data.dtype)
+
+  def __init__(self, args, *, shape):
+    self.data, self.indices, self.indptr = map(jnp.asarray, args)
+    super().__init__(args, shape=shape)
+
+  @classmethod
+  def fromdense(cls, mat, *, nnz=None, index_dtype=np.int32):
+    if nnz is None:
+      nnz = (mat != 0).sum()
+    return cls(csr_fromdense(mat, nnz=nnz, index_dtype=index_dtype), shape=mat.shape)
+
+  @api.jit
+  def todense(self):
+    return csr_todense(self.data, self.indices, self.indptr, shape=self.shape)
+
+  @api.jit
+  def matvec(self, v):
+    return csr_matvec(self.data, self.indices, self.indptr, v, shape=self.shape)
+
+  @api.jit
+  def matmat(self, B):
+    return csr_matmat(self.data, self.indices, self.indptr, B, shape=self.shape)
+
+  def transpose(self):
+    return CSC((self.data, self.indices, self.indptr), shape=self.shape[::-1])
+
+  def tree_flatten(self):
+    return (self.data, self.indices, self.indptr), {"shape": self.shape}
+
+
+@tree_util.register_pytree_node_class
+class CSC(JAXSparse):
+  """Experimental CSC matrix implemented in JAX; API subject to change."""
+  data: jnp.ndarray
+  indices: jnp.ndarray
+  indptr: jnp.ndarray
+  nnz = property(lambda self: self.data.size)
+  dtype = property(lambda self: self.data.dtype)
+
+  def __init__(self, args, *, shape):
+    self.data, self.indices, self.indptr = map(jnp.asarray, args)
+    super().__init__(args, shape=shape)
+
+  @classmethod
+  def fromdense(cls, mat, *, nnz=None, index_dtype=np.int32):
+    if nnz is None:
+      nnz = (mat != 0).sum()
+    return cls(csr_fromdense(mat.T, nnz=nnz, index_dtype=index_dtype), shape=mat.shape)
+
+  @api.jit
+  def todense(self):
+    return csr_todense(self.data, self.indices, self.indptr, shape=self.shape[::-1]).T
+
+  @api.jit
+  def matvec(self, v):
+    return csr_matvec(self.data, self.indices, self.indptr, v, shape=self.shape[::-1], transpose=True)
+
+  @api.jit
+  def matmat(self, B):
+    return csr_matmat(self.data, self.indices, self.indptr, B, shape=self.shape[::-1], transpose=True)
+
+  def transpose(self):
+    return CSR((self.data, self.indices, self.indptr), shape=self.shape[::-1])
+
+  def tree_flatten(self):
+    return (self.data, self.indices, self.indptr), {"shape": self.shape}
+
+
+@tree_util.register_pytree_node_class
+class COO(JAXSparse):
+  """Experimental COO matrix implemented in JAX; API subject to change."""
+  data: jnp.ndarray
+  row: jnp.ndarray
+  col: jnp.ndarray
+  nnz = property(lambda self: self.data.size)
+  dtype = property(lambda self: self.data.dtype)
+
+  def __init__(self, args, *, shape):
+    self.data, self.row, self.col = map(jnp.asarray, args)
+    super().__init__(args, shape=shape)
+
+  @classmethod
+  def fromdense(cls, mat, *, nnz=None, index_dtype=np.int32):
+    if nnz is None:
+      nnz = (mat != 0).sum()
+    return cls(coo_fromdense(mat, nnz=nnz, index_dtype=index_dtype), shape=mat.shape)
+
+  @api.jit
+  def todense(self):
+    return coo_todense(self.data, self.row, self.col, shape=self.shape)
+
+  @api.jit
+  def matvec(self, v):
+    return coo_matvec(self.data, self.row, self.col, v, shape=self.shape)
+
+  @api.jit
+  def matmat(self, B):
+    return coo_matmat(self.data, self.row, self.col, B, shape=self.shape)
+
+  def transpose(self):
+    return COO((self.data, self.col, self.row), shape=self.shape[::-1])
+
+  def tree_flatten(self):
+    return (self.data, self.row, self.col), {"shape": self.shape}

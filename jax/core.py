@@ -15,7 +15,7 @@
 
 import operator
 from operator import attrgetter
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from collections import namedtuple
 from functools import total_ordering
 import itertools as it
@@ -116,6 +116,10 @@ class ClosedJaxpr:
   @property
   def literals(self):
     return self.consts  # backwards compatible alias
+
+  @property
+  def eqns(self):
+    return self.jaxpr.eqns
 
   def map_jaxpr(self, f):
     return ClosedJaxpr(f(self.jaxpr), self.consts)
@@ -242,6 +246,7 @@ class Primitive:
   multiple_results = False  # set for multi-output primitives
   call_primitive = False    # set for call primitives processed in final style
   map_primitive = False     # set for map primitives processed in final style
+  _dispatch_on_params = False  # whether to include axis names form params in dispatch
 
   def __init__(self, name: str):
     self.name = name
@@ -253,7 +258,8 @@ class Primitive:
   def bind(self, *args, **params):
     assert (not config.jax_enable_checks or
             all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
-    top_trace = find_top_trace(args)
+    top_trace = find_top_trace(
+        args, used_axis_names(self, params) if self._dispatch_on_params else None)
     tracers = map(top_trace.full_raise, args)
     out = top_trace.process_primitive(self, tracers, params)
     return map(full_lower, out) if self.multiple_results else full_lower(out)
@@ -328,7 +334,9 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
-    if eqn.primitive.map_primitive:
+    if eqn.primitive in initial_to_final_param_rules:
+      bind_params = initial_to_final_param_rules[eqn.primitive](params)
+    elif eqn.primitive.map_primitive:
       out_axes_thunk = HashableFunction(lambda: params['out_axes'],
                                         closure=params['out_axes'])
       bind_params = dict(params, out_axes_thunk=out_axes_thunk)
@@ -342,6 +350,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
     else:
       write(eqn.outvars[0], ans)
   return map(read, jaxpr.outvars)
+
+initial_to_final_param_rules: Dict[Primitive, Callable] = {}
 
 
 # -------------------- tracing --------------------
@@ -441,12 +451,12 @@ def escaped_tracer_error(tracer, detail=None):
               'frames (most recent last) excluding JAX-internal frames were:\n'
               f'{source_info_util.summarize(line_info, num_frames=num_frames)}')
   try:
-    fun_source_info = tracer._trace.main.source_info
+    dbg = tracer._trace.main.debug_info
   except AttributeError:
     pass
   else:
     msg += ('\nThe function being traced when the tracer leaked was '
-            f'{fun_source_info}.')
+            f'{dbg.func_src_info} traced for {dbg.traced_for}.')
   msg += ('\nTo catch the leak earlier, try setting the environment variable '
           'JAX_CHECK_TRACER_LEAKS or using the `jax.checking_leaks` context '
           'manager.')
@@ -601,11 +611,13 @@ class EvalTrace(Trace):
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
     del primitive, jvp  # Unused.
-    return fun.call_wrapped(*tracers)
+    with new_sublevel():
+      return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
     del primitive, fwd, bwd, out_trees  # Unused.
-    return fun.call_wrapped(*tracers)
+    with new_sublevel():
+      return fun.call_wrapped(*tracers)
 
 
 class MainTrace:
@@ -796,25 +808,23 @@ def new_sublevel() -> Generator[None, None, None]:
     if t() is not None:
       raise Exception(f'Leaked sublevel {t()}.')
 
-def maybe_new_sublevel(trace):
-  # dynamic traces run the WrappedFun, so we raise the sublevel for them
-  dynamic = thread_local_state.trace_state.trace_stack.dynamic
-  return new_sublevel() if trace.main is dynamic else suppress()
-
 def full_lower(val):
   if isinstance(val, Tracer):
     return val.full_lower()
   else:
     return val
 
-def find_top_trace(xs) -> Trace:
+def find_top_trace(xs, axis_names=None) -> Trace:
+  top_main: Optional[MainTrace] = None
+  if axis_names:
+    top_main = max((axis_frame(a).main_trace for a in axis_names),
+                   default=None, key=lambda t: getattr(t, 'level', -1))
   top_tracer = max((x for x in xs if isinstance(x, Tracer)),
-                    default=None, key=attrgetter('_trace.level'))
+                   default=None, key=attrgetter('_trace.level'))
   if top_tracer is not None:
     top_tracer._assert_live()
-    top_main = top_tracer._trace.main  # type: Optional[MainTrace]
-  else:
-    top_main = None
+    if top_tracer._trace.main.level > getattr(top_main, 'level', -1):
+      top_main = top_tracer._trace.main
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
@@ -1539,8 +1549,7 @@ def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
       fun, primitive, top_trace and top_trace.level,
       params_tuple, out_axes_transforms)
   tracers = map(top_trace.full_raise, args)
-  with maybe_new_sublevel(top_trace):
-    outs = primitive.process(top_trace, fun, tracers, params)
+  outs = primitive.process(top_trace, fun, tracers, params)
   return map(full_lower, apply_todos(env_trace_todo(), outs))
 
 
@@ -1559,7 +1568,8 @@ class CallPrimitive(Primitive):
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
-  return f.call_wrapped(*args)
+  with new_sublevel():
+    return f.call_wrapped(*args)
 
 call_p = CallPrimitive('call')
 call = call_p.bind
@@ -1748,6 +1758,13 @@ def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   return new_jaxpr
 
 axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst], ParamDict]] = {}
+
+# ------------------- AxisPrimitive -------------------
+# Primitives that store axis names in params and want those axis names to
+# participate in dispatch should subclass AxisPrimitive.
+
+class AxisPrimitive(Primitive):
+  _dispatch_on_params = True
 
 # ------------------- Jaxpr checking -------------------
 

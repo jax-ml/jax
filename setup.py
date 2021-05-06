@@ -47,8 +47,8 @@ setup(
         'cpu': [f'jaxlib>={_minimum_jaxlib_version}'],
 
         # CUDA installations require adding jax releases URL; e.g.
-        # $ pip install jax[cuda-110] -f https://storage.googleapis.com/jax-releases/jax_releases.html
-        **{f'cuda-{version}': f"jaxlib=={_current_jaxlib_version}+cuda{version}"
+        # $ pip install jax[cuda110] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+        **{f'cuda{version}': f"jaxlib=={_current_jaxlib_version}+cuda{version}"
            for version in _available_cuda_versions}
     },
     url='https://github.com/google/jax',

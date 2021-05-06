@@ -36,7 +36,7 @@ setup(
     url='https://github.com/google/jax',
     license='Apache-2.0',
     package_data={
-        'jaxlib': ['*.so', '*.pyd*', 'py.typed'],
+        'jaxlib': ['*.so', '*.pyd*', 'py.typed', 'cuda/nvvm/libdevice/libdevice*'],
         'jaxlib.xla_extension-stubs': ['*.pyi'],
     },
     zip_safe=False,

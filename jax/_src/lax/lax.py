@@ -541,7 +541,8 @@ def conv_general_dilated(
   rhs_dilation: Optional[Sequence[int]] = None,
   dimension_numbers: ConvGeneralDilatedDimensionNumbers  = None,
   feature_group_count: int = 1, batch_group_count: int = 1,
-  precision: PrecisionLike = None) -> Array:
+  precision: PrecisionLike = None,
+  preferred_element_type: Optional[DType] = None) -> Array:
   """General n-dimensional convolution operator, with optional dilation.
 
   Wraps XLA's `Conv
@@ -573,6 +574,9 @@ def conv_general_dilated(
       'fastest', see the ``jax.default_matmul_precision`` context manager), or a
       tuple of two ``lax.Precision`` enums or strings indicating precision of
       ``lhs`` and ``rhs``.
+    preferred_element_type: Optional. Either ``None``, which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
 
   Returns:
     An array containing the convolution result.
@@ -625,7 +629,8 @@ def conv_general_dilated(
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count,
       lhs_shape=lhs.shape, rhs_shape=rhs.shape,
-      precision=_canonicalize_precision(precision))
+      precision=_canonicalize_precision(precision),
+      preferred_element_type=preferred_element_type)
 
 def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
         preferred_element_type: Optional[DType] = None) -> Array:
@@ -742,6 +747,35 @@ def reshape(operand: Array, new_sizes: Shape,
   For inserting/removing dimensions of size 1, prefer using ``lax.squeeze`` /
   ``lax.expand_dims``. These preserve information about axis identity that may
   be useful for advanced transformation rules.
+
+  Args:
+    operand: array to be reshaped.
+    new_sizes: sequence of integers specifying the resulting shape. The size
+      of the final array must match the size of the input.
+    dimensions: optional sequence of integers specifying the permutation order of
+      the input shape. If specified, the length must match ``operand.shape``.
+
+  Returns:
+    out: reshaped array.
+
+  Examples:
+    Simple reshaping from one to two dimensions:
+
+    >>> x = jnp.arange(6)
+    >>> y = reshape(x, (2, 3))
+    >>> y
+    DeviceArray([[0, 1, 2],
+                 [3, 4, 5]], dtype=int32)
+
+    Reshaping back to one dimension:
+
+    >>> reshape(y, (6,))
+    DeviceArray([0, 1, 2, 3, 4, 5], dtype=int32)
+
+    Reshaping to one dimension with permutation of dimensions:
+
+    >>> reshape(y, (6,), (1, 0))
+    DeviceArray([0, 3, 1, 4, 2, 5], dtype=int32)
   """
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
@@ -818,6 +852,27 @@ def dynamic_slice(operand: Array, start_indices: Sequence[Array],
 
   Returns:
     An array containing the slice.
+
+  Examples:
+    Here is a simple two-dimensional dynamic slice:
+
+    >>> x = jnp.arange(12).reshape(3, 4)
+    >>> x
+    DeviceArray([[ 0,  1,  2,  3],
+                 [ 4,  5,  6,  7],
+                 [ 8,  9, 10, 11]], dtype=int32)
+
+    >>> dynamic_slice(x, (1, 1), (2, 3))
+    DeviceArray([[ 5,  6,  7],
+                 [ 9, 10, 11]], dtype=int32)
+
+    Note the potentially surprising behavior for the case where the requested slice
+    overruns the bounds of the array; in this case the start index is adjusted to
+    return a slice of the requested size:
+
+    >>> dynamic_slice(x, (1, 1), (2, 4))
+    DeviceArray([[ 4,  5,  6,  7],
+                 [ 8,  9, 10, 11]], dtype=int32)
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   return dynamic_slice_p.bind(operand, *start_indices,
@@ -836,6 +891,32 @@ def dynamic_update_slice(operand: Array, update: Array,
 
   Returns:
     An array containing the slice.
+
+  Examples:
+    Here is an example of updating a one-dimensional slice update:
+
+    >>> x = jnp.zeros(6)
+    >>> y = jnp.ones(3)
+    >>> dynamic_update_slice(x, y, (2,))
+    DeviceArray([0., 0., 1., 1., 1., 0.], dtype=float32)
+
+    If the update slice is too large to fit in the array, the start
+    index will be adjusted to make it fit
+
+    >>> dynamic_update_slice(x, y, (3,))
+    DeviceArray([0., 0., 0., 1., 1., 1.], dtype=float32)
+    >>> dynamic_update_slice(x, y, (5,))
+    DeviceArray([0., 0., 0., 1., 1., 1.], dtype=float32)
+
+    Here is an example of a two-dimensional slice update:
+
+    >>> x = jnp.zeros((4, 4))
+    >>> y = jnp.ones((2, 2))
+    >>> dynamic_update_slice(x, y, (1, 2))
+    DeviceArray([[0., 0., 0., 0.],
+                 [0., 0., 1., 1.],
+                 [0., 0., 1., 1.],
+                 [0., 0., 0., 0.]], dtype=float32)
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   return dynamic_update_slice_p.bind(operand, update, *start_indices)
@@ -1585,7 +1666,8 @@ def stop_gradient(x):
 
 
 def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
-         padding: str, precision: PrecisionLike = None) -> Array:
+         padding: str, precision: PrecisionLike = None,
+         preferred_element_type: Optional[DType] = None) -> Array:
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
@@ -1598,19 +1680,24 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
       the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
       ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+    preferred_element_type: Optional. Either ``None``, which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
 
   Returns:
     An array containing the convolution result.
   """
   return conv_general_dilated(lhs, rhs, window_strides, padding,
-                              precision=precision)
+                              precision=precision,
+                              preferred_element_type=preferred_element_type)
 
 def conv_with_general_padding(lhs: Array, rhs: Array,
                               window_strides: Sequence[int],
                               padding: Union[str, Sequence[Tuple[int, int]]],
                               lhs_dilation: Optional[Sequence[int]],
                               rhs_dilation: Optional[Sequence[int]],
-                              precision: PrecisionLike = None) -> Array:
+                              precision: PrecisionLike = None,
+                              preferred_element_type: Optional[DType] = None) -> Array:
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
@@ -1631,13 +1718,17 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
       the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
       ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+    preferred_element_type: Optional. Either ``None``, which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
 
   Returns:
     An array containing the convolution result.
   """
   return conv_general_dilated(
       lhs, rhs, window_strides, padding, lhs_dilation=lhs_dilation,
-      rhs_dilation=rhs_dilation, precision=precision)
+      rhs_dilation=rhs_dilation, precision=precision,
+      preferred_element_type=preferred_element_type)
 
 
 def _conv_transpose_padding(k, s, padding):
@@ -1678,7 +1769,8 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
                    rhs_dilation: Optional[Sequence[int]] = None,
                    dimension_numbers: ConvGeneralDilatedDimensionNumbers = None,
                    transpose_kernel: bool = False,
-                   precision: PrecisionLike = None) -> Array:
+                   precision: PrecisionLike = None,
+                   preferred_element_type: Optional[DType] = None) -> Array:
   """Convenience wrapper for calculating the N-d convolution "transpose".
 
   This function directly calculates a fractionally strided conv rather than
@@ -1705,6 +1797,9 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
       ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
+    preferred_element_type: Optional. Either ``None``, which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
 
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
@@ -1743,7 +1838,8 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     rhs = _flip_axes(rhs, np.array(dn.rhs_spec)[2:])
     rhs = np.swapaxes(rhs, dn.rhs_spec[0], dn.rhs_spec[1])
   return conv_general_dilated(lhs, rhs, one, pads, strides, rhs_dilation, dn,
-                              precision=precision)
+                              precision=precision,
+                              preferred_element_type=preferred_element_type)
 
 
 def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
@@ -2872,11 +2968,26 @@ def _conv_general_dilated_shape_rule(
                                batch_group_count)
   return tuple(np.take(out_trans, np.argsort(out_perm)))  # type: ignore[arg-type]
 
+def _validate_preferred_element_type(input_dtype, preferred_element_type):
+  allowed_types = (np.integer, np.floating, np.complexfloating)
+  if any(dtypes.issubdtype(input_dtype, t) and not dtypes.issubdtype(preferred_element_type, t) for t in allowed_types):
+    raise TypeError("`preferred_element_type` and the original type must both be integral, both be floating point, or both complex.")
+  if dtypes.issubdtype(input_dtype, np.signedinteger) and not dtypes.issubdtype(preferred_element_type, np.signedinteger):
+    raise TypeError("`preferred_element_type` must have the same signedness as the original type.")
+  input_bitwidth = np.dtype(input_dtype).itemsize
+  preferred_bitwidth = np.dtype(preferred_element_type).itemsize
+  if preferred_bitwidth < input_bitwidth:
+    raise TypeError("`preferred_element_type` must not be narrower than the original type.")
+
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, **unused_kwargs):
-  return naryop_dtype_rule(_input_dtype, [_any, _any],
-                          'conv_general_dilated', lhs, rhs)
+    dimension_numbers, preferred_element_type, **unused_kwargs):
+  input_dtype = naryop_dtype_rule(_input_dtype, [_any, _any],
+                                  'conv_general_dilated', lhs, rhs)
+  if preferred_element_type is None:
+    return input_dtype
+  _validate_preferred_element_type(input_dtype, preferred_element_type)
+  return preferred_element_type
 
 _conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
 _conv_sdims = lambda spec: spec[2:]
@@ -2911,7 +3022,7 @@ _conv_sdims = lambda spec: spec[2:]
 def _conv_general_dilated_transpose_lhs(
     g, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, feature_group_count, batch_group_count,
-    lhs_shape, rhs_shape, precision):
+    lhs_shape, rhs_shape, precision, preferred_element_type):
   assert type(dimension_numbers) is ConvDimensionNumbers
   assert batch_group_count == 1 or feature_group_count == 1
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
@@ -2937,7 +3048,8 @@ def _conv_general_dilated_transpose_lhs(
       lhs_dilation=window_strides, rhs_dilation=rhs_dilation,
       dimension_numbers=trans_dimension_numbers,
       feature_group_count=feature_group_count,
-      batch_group_count=1, precision=precision)
+      batch_group_count=1, precision=precision,
+      preferred_element_type=preferred_element_type)
   if batch_group_count > 1:
     out = _reshape_axis_out_of(lhs_spec[1], batch_group_count, out)
     out = _reshape_axis_into(lhs_spec[1], lhs_spec[0], out)
@@ -2946,7 +3058,8 @@ def _conv_general_dilated_transpose_lhs(
 def _conv_general_dilated_transpose_rhs(
     g, lhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers: ConvDimensionNumbers, feature_group_count: int,
-    batch_group_count: int, lhs_shape, rhs_shape, precision):
+    batch_group_count: int, lhs_shape, rhs_shape, precision,
+    preferred_element_type):
   assert type(dimension_numbers) is ConvDimensionNumbers
   if np.size(g) == 0:
     # Avoids forming degenerate convolutions where the RHS has spatial size 0.
@@ -2976,21 +3089,19 @@ def _conv_general_dilated_transpose_rhs(
       lhs_dilation=lhs_dilation, rhs_dilation=window_strides,
       dimension_numbers=trans_dimension_numbers,
       feature_group_count=feature_group_count,
-      batch_group_count=batch_group_count, precision=precision)
+      batch_group_count=batch_group_count, precision=precision,
+      preferred_element_type=preferred_element_type)
 
 
 def _conv_general_dilated_translation_rule(
     c, lhs, rhs, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
-    batch_group_count, precision, expand_complex_convolutions, **unused_kwargs):
+    batch_group_count, precision, expand_complex_convolutions,
+    preferred_element_type, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   dimension_numbers = _conv_general_proto(dimension_numbers)
   precision_config = _precision_config(precision)
   dtype = c.get_shape(lhs).numpy_dtype()
-  conv = lambda x, y: xops.ConvGeneralDilated(
-      x, y, window_strides, padding, lhs_dilation, rhs_dilation,
-      dimension_numbers, feature_group_count, batch_group_count,
-      precision_config=precision_config)
   if expand_complex_convolutions and np.issubdtype(dtype, np.complexfloating):
     # We use a trick for complex multiplication due to Gauss which uses three
     # multiplications and five additions; instead of the naive method of four
@@ -3002,18 +3113,38 @@ def _conv_general_dilated_translation_rule(
     # error bound (e.g. 1p-24 in case of float32) would be relative to the
     # maximum of real and imaginary parts of the result instead of being
     # satisfied by the real and imaginary parts independently of each other.
+    if preferred_element_type is not None:
+      # Convert complex dtype to types used for real and imaginary parts
+      assert np.issubdtype(preferred_element_type, np.complexfloating)
+      preferred_element_type = xla_client.dtype_to_etype(
+          np.float64 if preferred_element_type == np.complex128 else np.float32)
+
+    conv = lambda x, y: xops.ConvGeneralDilated(
+        x, y, window_strides, padding, lhs_dilation, rhs_dilation,
+        dimension_numbers, feature_group_count, batch_group_count,
+        precision_config=precision_config,
+        preferred_element_type=preferred_element_type)
     lhs_real, lhs_imag = xops.Real(lhs), xops.Imag(lhs)
     rhs_real, rhs_imag = xops.Real(rhs), xops.Imag(rhs)
     k1 = conv(xops.Add(lhs_real, lhs_imag), rhs_real)
     k2 = conv(lhs_real, xops.Sub(rhs_imag, rhs_real))
     k3 = conv(lhs_imag, xops.Add(rhs_real, rhs_imag))
     return xops.Complex(xops.Sub(k1, k3), xops.Add(k1, k2))
-  return conv(lhs, rhs)
+
+  if preferred_element_type is not None:
+    preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
+
+  return xops.ConvGeneralDilated(
+      lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+      dimension_numbers, feature_group_count, batch_group_count,
+      precision_config=precision_config,
+      preferred_element_type=preferred_element_type)
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers,
-    feature_group_count, batch_group_count, precision, **unused_kwargs):
+    feature_group_count, batch_group_count, precision,
+    preferred_element_type, **unused_kwargs):
   assert batch_group_count == 1 or feature_group_count == 1
   lhs, rhs = batched_args
   lhs_bdim, rhs_bdim = batch_dims
@@ -3031,8 +3162,8 @@ def _conv_general_dilated_batch_rule(
     out = conv_general_dilated(
       new_lhs, new_rhs, window_strides, padding, lhs_dilation, rhs_dilation,
       dimension_numbers, feature_group_count=feature_group_count,
-      batch_group_count=batch_group_count,
-      precision=precision)
+      batch_group_count=batch_group_count, precision=precision,
+      preferred_element_type=preferred_element_type)
     out = _reshape_axis_out_of(out_spec[1], lhs.shape[lhs_bdim], out)
     return out, out_spec[1]
 
@@ -3041,7 +3172,8 @@ def _conv_general_dilated_batch_rule(
       new_lhs = _reshape_axis_into(lhs_bdim, lhs_spec[0], lhs)
       out = conv_general_dilated(new_lhs, rhs, window_strides, padding,
                                  lhs_dilation, rhs_dilation, dimension_numbers,
-                                 feature_group_count, precision=precision)
+                                 feature_group_count, precision=precision,
+                                 preferred_element_type=preferred_element_type)
       out = _reshape_axis_out_of(out_spec[0], lhs.shape[lhs_bdim], out)
       return out, out_spec[0]
     else:
@@ -3054,7 +3186,8 @@ def _conv_general_dilated_batch_rule(
       out = conv_general_dilated(new_lhs, rhs, window_strides, padding,
                                  lhs_dilation, rhs_dilation, dimension_numbers,
                                  feature_group_count, batch_group_count,
-                                 precision=precision)
+                                 precision=precision,
+                                 preferred_element_type=preferred_element_type)
       out = _reshape_axis_out_of(out_spec[0], lhs.shape[lhs_bdim], out)
       return out, out_spec[0]
 
@@ -3064,7 +3197,8 @@ def _conv_general_dilated_batch_rule(
       out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
                                  lhs_dilation, rhs_dilation, dimension_numbers,
                                  feature_group_count, batch_group_count,
-                                 precision=precision)
+                                 precision=precision,
+                                 preferred_element_type=preferred_element_type)
       out = _reshape_axis_out_of(out_spec[1], rhs.shape[rhs_bdim], out)
       return out, out_spec[1]
     else:
@@ -3084,7 +3218,8 @@ def _conv_general_dilated_batch_rule(
       out = conv_general_dilated(lhs, new_rhs, window_strides, padding,
                                  lhs_dilation, rhs_dilation, dimension_numbers,
                                  feature_group_count, batch_group_count,
-                                 precision=precision)
+                                 precision=precision,
+                                 preferred_element_type=preferred_element_type)
       out = _reshape_axis_out_of(out_spec[1], group_count, out)
       out = _reshape_axis_out_of(out_spec[1] + 1, rhs.shape[rhs_bdim], out)
       out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
@@ -3108,7 +3243,7 @@ def _masked(padded_value, logical_shape, dimensions, value=0):
 def _conv_general_dilated_masking_rule(
         padded_vals, logical_shapes, window_strides, padding, lhs_dilation,
         rhs_dilation, dimension_numbers, feature_group_count, batch_group_count,
-        lhs_shape, rhs_shape, precision):
+        lhs_shape, rhs_shape, precision, preferred_element_type):
   lhs, rhs = padded_vals
   logical_lhs_shape, logical_rhs_shape = logical_shapes
 
@@ -3127,7 +3262,8 @@ def _conv_general_dilated_masking_rule(
     dimension_numbers=dimension_numbers,
     feature_group_count=feature_group_count,
     batch_group_count=batch_group_count,
-    precision=precision)
+    precision=precision,
+    preferred_element_type=preferred_element_type)
 
 conv_general_dilated_p = standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
@@ -3250,14 +3386,7 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
   input_dtype = naryop_dtype_rule(_input_dtype, [_any, _any], 'dot_general', lhs, rhs)
   if preferred_element_type is None:
     return input_dtype
-  if dtypes.issubdtype(input_dtype, np.integer) and not dtypes.issubdtype(preferred_element_type, np.integer):
-    raise TypeError("`preferred_element_type` and the original type must both be integral or both be floating point.")
-  if dtypes.issubdtype(input_dtype, np.signedinteger) and not dtypes.issubdtype(preferred_element_type, np.signedinteger):
-    raise TypeError("`preferred_element_type` must have the same signedness as the original type.")
-  input_bitwidth = np.dtype(input_dtype).itemsize
-  preferred_bitwidth = np.dtype(preferred_element_type).itemsize
-  if preferred_bitwidth < input_bitwidth:
-    raise TypeError("`preferred_element_type` must not be narrower than the original type.")
+  _validate_preferred_element_type(input_dtype, preferred_element_type)
   return preferred_element_type
 
 def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,

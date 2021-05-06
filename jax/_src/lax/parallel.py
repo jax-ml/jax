@@ -558,7 +558,6 @@ def _reduction_with_positional_batcher(prim, vals_in, dims_in, axis_index_groups
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap collectives. "
                               "Please open a feature request!")
-  # TODO: Transpose all dims to 0, increment all axes
   vals_in = [val if d is batching.not_mapped or d == 0 else _moveaxis(d, 0, val)
              for val, d in zip(vals_in, dims_in)]
   mapped_vals_in, unmapped_vals_in = partitioned_vals_in = [], []
@@ -581,6 +580,7 @@ def _reduction_with_positional_batcher(prim, vals_in, dims_in, axis_index_groups
   return vals_out
 
 def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
+  assert prim.multiple_results
   if not any(isinstance(axis, int) for axis in axes):
     return prim.bind(*vals_in, axes=axes, axis_index_groups=axis_index_groups), dims_in
   vals_out = _reduction_with_positional_batcher(
@@ -589,13 +589,20 @@ def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
       lambda d, d_vals_in: (tuple(axis + (axis >= d) if isinstance(axis, int) else axis
                                   for axis in axes),
                             d_vals_in))
-  return vals_out, dims_in
+  # _reduction_with_positional_batcher moves all map dims to 0
+  return vals_out, [d if d is batching.not_mapped else 0 for d in dims_in]
 
 def _batched_reduction_collective(
     prim, if_unmapped, frame, vals_in, dims_in, axes,
     axis_index_groups):
   assert prim.multiple_results
   assert frame.name in axes
+  # Note that we have a choice here. We can either unfuse the reduction into one
+  # that handles the batched dims and then another one that handles the rest.
+  # Alternatively, we can keep the dimension reduction fused with the rest, but
+  # we have to split the primitive into one for unmapped inputs and another
+  # one for mapped, because they differ in their `axes` parameter.
+  # We choose the second strategy here.
   vals_out = _reduction_with_positional_batcher(
       prim, vals_in, dims_in, axis_index_groups,
       lambda d, d_vals_in: (tuple(axis for axis in axes if axis != frame.name),
@@ -683,7 +690,7 @@ def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
                                axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 
-psum_p = core.Primitive('psum')
+psum_p = core.AxisPrimitive('psum')
 psum_p.multiple_results = True
 psum_p.def_impl(partial(_allreduce_impl, lax._reduce_sum))
 psum_p.def_abstract_eval(_allreduce_abstract_eval)
@@ -715,11 +722,11 @@ def psum_bind(*args, axes, axis_index_groups):
     else:
       size = prod([core.axis_frame(name).size for name in named_axes])  # type: ignore
     return tuple(lax._const(x, size) * pos_reduce(x) for x in args)
-  return core.Primitive.bind(
+  return core.AxisPrimitive.bind(
       psum_p, *args, axes=axes, axis_index_groups=axis_index_groups)
 
 
-pmax_p = core.Primitive('pmax')
+pmax_p = core.AxisPrimitive('pmax')
 pmax_p.multiple_results = True
 pmax_p.def_impl(partial(_allreduce_impl, lax._reduce_max))
 pmax_p.def_abstract_eval(_allreduce_abstract_eval)
@@ -732,7 +739,7 @@ batching.collective_rules[pmax_p] = \
 core.axis_substitution_rules[pmax_p] = partial(_subst_all_names_in_param, 'axes')
 
 
-pmin_p = core.Primitive('pmin')
+pmin_p = core.AxisPrimitive('pmin')
 pmin_p.multiple_results = True
 pmin_p.def_impl(partial(_allreduce_impl, lax._reduce_min))
 pmin_p.def_abstract_eval(_allreduce_abstract_eval)
@@ -784,7 +791,7 @@ def _ppermute_batcher(frame, vals_in, dims_in, axis_name, perm):
 def _collective_batcher(prim, args, dims, **params):
   return prim.bind(*args, **params), dims if prim.multiple_results else dims[0]
 
-ppermute_p = core.Primitive('ppermute')
+ppermute_p = core.AxisPrimitive('ppermute')
 ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
@@ -930,7 +937,7 @@ def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_
   shape[concat_axis] *= axis_size
   return input_aval.update(shape=tuple(shape), weak_type=False)
 
-all_to_all_p = core.Primitive('all_to_all')
+all_to_all_p = core.AxisPrimitive('all_to_all')
 all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
@@ -1016,11 +1023,7 @@ def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_group
   return psum(outs, axis_name, axis_index_groups=axis_index_groups)
 
 def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
-  # Only called when the argument is not mapped.
-  out_shape = list(np.shape(x))
-  out_shape.insert(all_gather_dimension, axis_size)
-  broadcast_dims = [i for i in range(len(out_shape)) if i != all_gather_dimension]
-  return lax.broadcast_in_dim(x, out_shape, broadcast_dims)
+  raise AssertionError("Unexpected call to _all_gather_impl")
 
 def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, axis_env, platform):
   # TODO(cjfj): Enable this for TPU also?
@@ -1078,10 +1081,14 @@ def _all_gather_batched_collective(frame, vals_in, dims_in, all_gather_dimension
     raise NotImplementedError("Please open a feature request!")
   assert axis_name == (frame.name,), "batcher called with wrong axis name"
   (x,), (d,) = vals_in, dims_in
-  assert d is not batching.not_mapped
+  if d is batching.not_mapped:
+    out_shape = list(np.shape(x))
+    out_shape.insert(all_gather_dimension, axis_size)
+    broadcast_dims = [i for i in range(len(out_shape)) if i != all_gather_dimension]
+    return lax.broadcast_in_dim(x, out_shape, broadcast_dims), batching.not_mapped
   return _moveaxis(d, all_gather_dimension, x), batching.not_mapped
 
-all_gather_p = core.Primitive('all_gather')
+all_gather_p = core.AxisPrimitive('all_gather')
 all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
 all_gather_p.def_impl(_all_gather_impl)
 xla.parallel_translations[all_gather_p] = _all_gather_translation_rule
@@ -1141,7 +1148,7 @@ def _vmap_process_axis_index(self, frame):
 batching.BatchTrace.process_axis_index = _vmap_process_axis_index  # type: ignore
 
 
-pdot_p = core.Primitive('pdot')
+pdot_p = core.AxisPrimitive('pdot')
 core.axis_substitution_rules[pdot_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 @pdot_p.def_impl
@@ -1287,7 +1294,7 @@ def _pgather_collective_batcher(frame, vals_in, dims_in, *, axes):
   else:
     return pgather_p.bind(src, idx, axes=new_axes), batching.not_mapped
 
-pgather_p = core.Primitive('pgather')
+pgather_p = core.AxisPrimitive('pgather')
 pgather_p.def_impl(_pgather_impl)
 pgather_p.def_abstract_eval(_pgather_abstract_eval)
 xla.parallel_translations[pgather_p] = _pgather_parallel_translation

@@ -57,7 +57,8 @@ def batch_subtrace(main, in_dims, *in_vals):
   yield out_vals, out_dims
 
 @lu.transformation
-def _match_axes(axis_size, in_dims, out_dims_thunk, out_dim_dests, *in_vals):
+def _match_axes(axis_size, axis_name, in_dims, out_dims_thunk, out_dim_dests,
+                *in_vals):
   if axis_size is None:
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   out_vals = yield in_vals, {}
@@ -65,7 +66,10 @@ def _match_axes(axis_size, in_dims, out_dims_thunk, out_dim_dests, *in_vals):
   out_dims = out_dims_thunk()
   for od, od_dest in zip(out_dims, out_dim_dests):
     if od is not None and not isinstance(od_dest, int):
-      msg = f"vmap has mapped output but out_axes is {od_dest}"
+      if not isinstance(axis_name, core._TempAxisName):
+        msg = f"vmap has mapped output (axis_name={axis_name}) but out_axes is {od_dest}"
+      else:
+        msg = f"vmap has mapped output but out_axes is {od_dest}"
       raise ValueError(msg)
   yield map(partial(matchaxis, axis_size), out_dims, out_dim_dests, out_vals)
 
@@ -119,12 +123,12 @@ class BatchTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
-    if all(bdim is not_mapped for bdim in dims_in):
-      return primitive.bind(*vals_in, **params)
     if (primitive in collective_rules and
           _main_trace_for_axis_names(self.main, core.used_axis_names(primitive, params))):
       frame = core.axis_frame(self.axis_name)
       val_out, dim_out = collective_rules[primitive](frame, vals_in, dims_in, **params)
+    elif all(bdim is not_mapped for bdim in dims_in):
+      return primitive.bind(*vals_in, **params)
     else:
       batched_primitive = get_primitive_batcher(primitive, self)
       val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
@@ -243,6 +247,9 @@ class BatchTrace(Trace):
 
   post_process_custom_vjp_call = post_process_custom_jvp_call
 
+class SPMDBatchTrace(BatchTrace):
+  pass
+
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
                                axis_name: Iterable[core.AxisName],
                                ) -> bool:
@@ -277,8 +284,9 @@ def batch(fun: lu.WrappedFun,
   # anlogue of `jvp` in ad.py
   # TODO(mattjj,apaszke): change type of axis_size to be int, not Optional[int]
   fun, out_dims_thunk = batch_subtrace(fun)
-  return _match_axes(batchfun(fun, axis_name, axis_size, in_dims, main_type),
-                     axis_size, in_dims, out_dims_thunk, out_dim_dests)
+  return _match_axes(
+      batchfun(fun, axis_name, axis_size, in_dims, main_type), axis_size,
+      axis_name, in_dims, out_dims_thunk, out_dim_dests)
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
 def vtile(f_flat: lu.WrappedFun,

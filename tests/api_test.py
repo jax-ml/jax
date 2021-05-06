@@ -618,6 +618,23 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     x_is_tracer, y_is_tracer = False, True
     assert f_mixed(x='foo', y=3) == 1
 
+  # TODO(zhangqiaorjc): Test pruning constants after DCE pass prunes primitive
+  # applications.
+  @unittest.skipIf(not xla._ALLOW_ARG_PRUNING, "Test requires jaxlib 0.1.66")
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_num_args={}".format(num_args),
+     "num_args": num_args}
+    for num_args in [2, 3, 4]))
+  def test_jit_with_pruned_args(self, num_args):
+    def f(*args):
+      used = np.array(2)
+      return args[1] + used
+    f_pruned = self.jit(f)
+    args = range(num_args)
+    with jtu.count_device_put() as count:
+      np.testing.assert_allclose(f_pruned(*args), 3)
+    self.assertEqual(count[0], 1)
+
 
 class PythonJitTest(CPPJitTest):
 
@@ -1908,8 +1925,17 @@ class APITest(jtu.JaxTestCase):
       api.vmap(lambda x: x, in_axes=0, out_axes=(2, 3))(jnp.array([1., 2.]))
 
     with self.assertRaisesRegex(
-        ValueError, "vmap has mapped output but out_axes is None"):
-      # If the output is mapped, then there must be some out_axes specified
+        ValueError,
+        r"vmap has mapped output \(axis_name=foo\) but out_axes is None"):
+      # If the output is mapped (user-named axis), then there must be some
+      # out_axes specified.
+      api.vmap(lambda x: x, out_axes=None, axis_name="foo")(jnp.array([1., 2.]))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "vmap has mapped output but out_axes is None"):
+      # If the output is mapped (unnamed axis), then there must be some out_axes
+      # specified.
       api.vmap(lambda x: x, out_axes=None)(jnp.array([1., 2.]))
 
   def test_vmap_structured_in_axes(self):
@@ -2198,13 +2224,18 @@ class APITest(jtu.JaxTestCase):
 
   def test_escaped_tracer_transform_name(self):
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "transformed by jit"):
+                                "for jit"):
       jax.jit(self.helper_save_tracer)(1)
       _ = self._saved_tracer+1
 
     with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "transformed by pmap"):
+                                "for pmap"):
       jax.pmap(self.helper_save_tracer)(jnp.ones((1, 2)))
+      _ = self._saved_tracer+1
+
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "for eval_shape"):
+      jax.eval_shape(self.helper_save_tracer, 1)
       _ = self._saved_tracer+1
 
   def test_pmap_static_kwarg_error_message(self):
@@ -2247,7 +2278,19 @@ class APITest(jtu.JaxTestCase):
 
     f()  # doesn't crash
 
-  def test_concrete_error_because_arg(self):
+  def test_concrete_error_because_arg_unary(self):
+    @jax.jit
+    def f(x):
+      if x > 0:
+        return x
+      else:
+        return 0
+
+    msg = r"on the value of the argument 'x'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1)
+
+  def test_concrete_error_because_arg_binary(self):
     @jax.jit
     def f(x, y):
       if x > y:
@@ -2255,9 +2298,66 @@ class APITest(jtu.JaxTestCase):
       else:
         return y
 
-    msg = r"at flattened positions \[0, 1\]"
+    msg = r"on the values of the arguments 'x' and 'y'"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(1, 2)
+
+  def test_concrete_error_because_arg_ternary(self):
+    @jax.jit
+    def f(x, y, z):
+      if x > z:
+        return x
+      else:
+        return y
+
+    msg = r"on the values of the arguments 'x' and 'z'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, 2, 3)
+
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, 2, z=3)
+
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, y=2, z=3)
+
+  def test_concrete_error_because_arg_varargs(self):
+    @jax.jit
+    def f(*args):
+      x, y, z = args
+      if x > z:
+        return x
+      else:
+        return y
+
+    msg = r"on the values of the argument 'args'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, 2, 3)
+
+  def test_concrete_error_because_arg_kwargs(self):
+    @jax.jit
+    def f(**kwargs):
+      x, y, z = kwargs['x'], kwargs['y'], kwargs['z']
+      if x > z:
+        return x
+      else:
+        return y
+
+    msg = r"on the values of the argument 'kwargs'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(x=1, y=2, z=3)
+
+  def test_concrete_error_because_arg_pytree(self):
+    @jax.jit
+    def f(xy, z):
+      x, y = xy
+      if x > 0:
+        return x
+      else:
+        return y
+
+    msg = r"on the value of the argument 'xy'"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f((1, 2), z=3)
 
   def test_concrete_error_because_const(self):
     @jax.jit
@@ -2329,7 +2429,7 @@ class APITest(jtu.JaxTestCase):
         lst.append(x)
         return x
 
-      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+      with self.assertRaisesRegex(Exception, r"Leaked"):
         f(3)
 
   def test_leak_checker_catches_a_pmap_leak(self):
@@ -2341,7 +2441,7 @@ class APITest(jtu.JaxTestCase):
         lst.append(x)
         return x
 
-      with self.assertRaisesRegex(Exception, r"Leaked trace"):
+      with self.assertRaisesRegex(Exception, r"Leaked"):
         f(np.ones(1))
 
   def test_leak_checker_catches_a_grad_leak(self):
@@ -2664,10 +2764,26 @@ class APITest(jtu.JaxTestCase):
     jtu.check_grads(batched_scan_over_mul, (x_batch, coeff), order=2,
                     modes=['rev'])
 
+  def test_jit_inline(self):
+    @partial(api.jit, inline=False)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertIn('xla_call', str(jaxpr))
+
+    @partial(api.jit, inline=True)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertNotIn('xla_call', str(jaxpr))
+
   def test_jnp_array_doesnt_device_put(self):
     with jtu.count_device_put() as count:
       api.make_jaxpr(lambda: jnp.array(3))()
     self.assertEqual(count[0], 0)
+
 
 class RematTest(jtu.JaxTestCase):
 

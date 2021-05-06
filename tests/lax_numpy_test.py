@@ -37,12 +37,11 @@ import jax
 import jax.ops
 from jax._src import api
 from jax import lax
-from jax import linear_util
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax._src import dtypes
 from jax import tree_util
-from jax.interpreters import partial_eval, xla
+from jax.interpreters import xla
 from jax.test_util import check_grads
 from jax._src.util import prod
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
@@ -963,7 +962,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       message="Calling nonzero on 0d arrays.*")(np.argwhere)
     jnp_fun = jnp.argwhere
     args_maker = lambda: [rng(shape, dtype)]
-    if shape in (scalar_shapes + [()]) and np.__version__ < "1.18":
+    if shape in (scalar_shapes + [()]) and numpy_version < (1, 18):
       self.skipTest("np.argwhere() result for scalar input changed in numpy 1.18.")
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
@@ -4018,7 +4017,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for sparse in [True, False]))
   def testIndices(self, dimensions, dtype, sparse):
     def args_maker(): return []
-    if np.__version__ < "1.17":
+    if numpy_version < (1, 17):
       if sparse:
         raise SkipTest("indices does not have sparse on numpy < 1.17")
       np_fun = partial(np.indices, dimensions=dimensions,
@@ -4038,7 +4037,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              jtu.format_shape_dtype_string(q_shape, q_dtype),
              axis, keepdims, interpolation),
-         "a_rng": jtu.rand_some_nan if 'nan' in op else jtu.rand_default,
+         "a_rng": jtu.rand_some_nan,
          "q_rng": q_rng, "op": op,
          "a_shape": a_shape, "a_dtype": a_dtype,
          "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
@@ -4069,6 +4068,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [a_rng(a_shape, a_dtype)]
     else:
       args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+
+    # TODO(jakevdp): remove this ignore_warning when minimum numpy version is 1.17.0
+    @jtu.ignore_warning(category=RuntimeWarning, message="Invalid value encountered.*")
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]
@@ -4710,6 +4712,82 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         atol=atol,
                         rtol=rtol)
 
+  def testR_(self):
+    a = np.arange(6).reshape((2,3))
+    self.assertArraysEqual(np.r_[np.array([1,2,3]), 0, 0, np.array([4,5,6])],
+                           jnp.r_[np.array([1,2,3]), 0, 0, np.array([4,5,6])])
+    self.assertArraysEqual(np.r_['-1', a, a], jnp.r_['-1', a, a])
+    self.assertArraysEqual(np.r_['0,2', [1,2,3], [4,5,6]], jnp.r_['0,2', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.r_['0,2,0', [1,2,3], [4,5,6]], jnp.r_['0,2,0', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.r_['1,2,0', [1,2,3], [4,5,6]], jnp.r_['1,2,0', [1,2,3], [4,5,6]])
+    # negative 1d axis start
+    self.assertArraysEqual(np.r_['0,4,-1', [1,2,3], [4,5,6]], jnp.r_['0,4,-1', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.r_['0,4,-2', [1,2,3], [4,5,6]], jnp.r_['0,4,-2', [1,2,3], [4,5,6]])
+
+    # matrix directives
+    with warnings.catch_warnings():
+      warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+      self.assertArraysEqual(np.r_['r',[1,2,3], [4,5,6]], jnp.r_['r',[1,2,3], [4,5,6]])
+      self.assertArraysEqual(np.r_['c', [1, 2, 3], [4, 5, 6]], jnp.r_['c', [1, 2, 3], [4, 5, 6]])
+
+    # bad directive
+    with self.assertRaisesRegex(ValueError, "could not understand directive.*"):
+      jnp.r_["asdfgh",[1,2,3]]
+
+    # Complex number steps
+    atol = 1e-6
+    rtol = 1e-6
+    self.assertAllClose(np.r_[-1:1:6j],
+                        jnp.r_[-1:1:6j],
+                        atol=atol,
+                        rtol=rtol)
+    self.assertAllClose(np.r_[-1:1:6j, [0]*3, 5, 6],
+                        jnp.r_[-1:1:6j, [0]*3, 5, 6],
+                        atol=atol,
+                        rtol=rtol)
+    # Non-integer steps
+    self.assertAllClose(np.r_[1.2:4.8:0.24],
+                        jnp.r_[1.2:4.8:0.24],
+                        atol=atol,
+                        rtol=rtol)
+
+  def testC_(self):
+    a = np.arange(6).reshape((2, 3))
+    self.assertArraysEqual(np.c_[np.array([1,2,3]), np.array([4,5,6])],
+                           jnp.c_[np.array([1,2,3]), np.array([4,5,6])])
+    self.assertArraysEqual(np.c_[np.array([[1,2,3]]), 0, 0, np.array([[4,5,6]])],
+                           jnp.c_[np.array([[1,2,3]]), 0, 0, np.array([[4,5,6]])])
+    self.assertArraysEqual(np.c_['-1', a, a], jnp.c_['-1', a, a])
+    self.assertArraysEqual(np.c_['0,2', [1,2,3], [4,5,6]], jnp.c_['0,2', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.c_['0,2,0', [1,2,3], [4,5,6]], jnp.c_['0,2,0', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.c_['1,2,0', [1,2,3], [4,5,6]], jnp.c_['1,2,0', [1,2,3], [4,5,6]])
+    # negative 1d axis start
+    self.assertArraysEqual(np.c_['0,4,-1', [1,2,3], [4,5,6]], jnp.c_['0,4,-1', [1,2,3], [4,5,6]])
+    self.assertArraysEqual(np.c_['0,4,-2', [1,2,3], [4,5,6]], jnp.c_['0,4,-2', [1,2,3], [4,5,6]])
+    # matrix directives, avoid numpy deprecation warning
+    with warnings.catch_warnings():
+      warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+      self.assertArraysEqual(np.c_['r',[1,2,3], [4,5,6]], jnp.c_['r',[1,2,3], [4,5,6]])
+      self.assertArraysEqual(np.c_['c', [1, 2, 3], [4, 5, 6]], jnp.c_['c', [1, 2, 3], [4, 5, 6]])
+
+    # bad directive
+    with self.assertRaisesRegex(ValueError, "could not understand directive.*"):
+      jnp.c_["asdfgh",[1,2,3]]
+
+    # Complex number steps
+    atol = 1e-6
+    rtol = 1e-6
+    self.assertAllClose(np.c_[-1:1:6j],
+                        jnp.c_[-1:1:6j],
+                        atol=atol,
+                        rtol=rtol)
+
+    # Non-integer steps
+    self.assertAllClose(np.c_[1.2:4.8:0.24],
+                        jnp.c_[1.2:4.8:0.24],
+                        atol=atol,
+                        rtol=rtol)
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
@@ -4955,12 +5033,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return x, y
 
     f = lambda y: lax.fori_loop(0, 5, body, (y, y))
-    wrapped = linear_util.wrap_init(f)
-    pv = partial_eval.PartialVal.unknown(jax.ShapedArray((3, 4), np.float32))
-    _, _, consts = partial_eval.trace_to_jaxpr(wrapped, [pv])
+    jaxpr = jax.make_jaxpr(f)(np.zeros((3, 4), np.float32))
     self.assertFalse(
       any(np.array_equal(x, np.full((3, 4), 2., dtype=np.float32))
-          for x in consts))
+          for x in jaxpr.consts))
 
   @parameterized.named_parameters(
       {"testcase_name": "_from={}_to={}".format(from_shape, to_shape),
@@ -4979,6 +5055,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_op = lambda x: jnp.broadcast_to(x, to_shape)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{shapes}", "shapes": shapes, "broadcasted_shape": broadcasted_shape}
+      for shapes, broadcasted_shape in [
+        [[], ()],
+        [[()], ()],
+        [[(1, 3), (4, 3)], (4, 3)],
+        [[(3,), (2, 1, 3)], (2, 1, 3)],
+        [[(3,), (3, 3)], (3, 3)],
+        [[(1,), (3,)], (3,)],
+        [[(1,), 3], (3,)],
+        [[(6, 7), (5, 6, 1), (7,), (5, 1, 7)], (5, 6, 7)],
+        [[[1], [0, 1]], (0, 1)],
+        [[(1,), np.array([0, 1])], (0, 1)],
+    ])
+  def testBroadcastShapes(self, shapes, broadcasted_shape):
+    # Test against np.broadcast_shapes once numpy 1.20 is minimum required version
+    np.testing.assert_equal(jnp.broadcast_shapes(*shapes), broadcasted_shape)
 
   def testBroadcastToIssue1522(self):
     self.assertRaisesRegex(
@@ -5279,8 +5373,11 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     mismatches = {}
 
     for name, (jnp_fun, np_fun) in func_pairs.items():
+      # broadcast_shapes is not available in numpy < 1.20
+      if numpy_version < (1, 20) and name == "broadcast_shapes":
+        continue
       # Some signatures have changed; skip for older numpy versions.
-      if np.__version__ < "1.19" and name in ['einsum_path', 'gradient', 'isscalar']:
+      if numpy_version < (1, 19) and name in ['einsum_path', 'gradient', 'isscalar']:
         continue
       # Note: can't use inspect.getfullargspec due to numpy issue
       # https://github.com/numpy/numpy/issues/12225

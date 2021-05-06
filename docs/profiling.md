@@ -12,11 +12,23 @@ GPU and TPU. The end result looks something like this:
 
 ### Installation
 
-Install specific nightly versions of TensorBoard, TensorBoard profiler, TensorFlow, as well as the What-If Tool TensorBoard, as follows:
+The TensorBoard profiler is only available with the version of TensorBoard
+bundled with TensorFlow.
+
 ```shell
-# Profiling is known to work with the following packages.
-pip install --upgrade tb-nightly==2.5.0a20201203 tbp-nightly==2.4.0a20201203 tf-nightly==2.5.0.dev20201203 tensorboard-plugin-wit==1.7.0
+pip install tensorflow tbp-nightly
 ```
+
+If you already have TensorFlow installed, you only need to install the
+`tbp-nightly` pip package. Be careful to only install one version of TensorFlow
+or TensorBoard, otherwise you may encounter the "duplicate plugins" error
+described {ref}`below <multiple_installs>`.
+
+(We recommend `tbp-nightly` because `tensorboard-plugin-profile==2.4.0` is
+incompatible with TensorBoard's experimental fast data loading logic. This
+should be resolved with `tensorboard-plugin-profile==2.5.0` when it's
+released. These instructions were tested with `tensorflow==2.4.1` and
+`tbp-nightly==2.5.0a20210428`.)
 
 ### Programmatic capture
 
@@ -62,9 +74,10 @@ with jax.profiler.trace():
 To view the trace, first start TensorBoard if you haven't already:
 
 ```shell
-$ tensorboard --logdir /tmp/tensorboard
+$ tensorboard --logdir=/tmp/tensorboard
+[...]
 Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
-TensorBoard 2.5.0a20210304 at http://localhost:6006/ (Press CTRL+C to quit)
+TensorBoard 2.5.0 at http://localhost:6006/ (Press CTRL+C to quit)
 ```
 
 You should be able to load TensorBoard at <http://localhost:6006/> in this
@@ -166,6 +179,11 @@ Add the path to `libcupti.so` to the environment variable `LD_LIBRARY_PATH`.
 export LD_LIBRARY_PATH=/usr/local/cuda-10.1/extras/CUPTI/lib64/:$LD_LIBRARY_PATH
 ```
 
+If you still get the `Could not load dynamic library` message after doing this,
+check if the GPU trace shows up in the trace viewer anyway. This message
+sometimes occurs even when everything is working, since it looks for the
+`libcupti` library in multiple places.
+
 **If you get an error like: `failed with error CUPTI_ERROR_INSUFFICIENT_PRIVILEGES`**<br />
 Full error:
 ```shell
@@ -196,6 +214,30 @@ machine. Use the following SSH command to forward the default TensorBoard port
 
 ```shell
 ssh -L 6006:localhost:6006 <remote server address>
+```
+
+#### Profiling on a Cloud TPU VM
+
+Cloud TPU VMs come with a special version of TensorFlow pre-installed, so
+there's no need to explicitly install it, and doing so can cause TensorFlow to
+stop working on TPU. Just `pip install tbp-nightly`.
+
+(multiple_installs)=
+#### Multiple TensorBoard installs
+
+**If starting TensorBoard fails with an error like: `ValueError: Duplicate
+plugins for name projector`**
+
+It's often because there are two versions of TensorBoard and/or TensorFlow
+installed (e.g. the `tensorflow`, `tf-nightly`, `tensorboard`, and `tb-nightly`
+pip packages all include TensorBoard). Uninstalling a single pip package can
+result in the `tensorboard` executable being removed which is then hard to
+replace, so it may be necessary to uninstall everything and reinstall a single
+version:
+
+```shell
+pip uninstall tensorflow tf-nightly tensorboard tb-nightly
+pip install tensorflow
 ```
 
 ## Nsight
