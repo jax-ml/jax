@@ -30,7 +30,7 @@ from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap, mesh
-from jax.experimental.pjit import pjit, with_sharding_constraint
+from jax.experimental.pjit import pjit, pjit_p, with_sharding_constraint, SpecSync
 from jax.interpreters import pxla
 from jax._src.util import unzip2, prod, curry
 
@@ -293,6 +293,33 @@ class PJitTest(jtu.BufferDonationTestCase):
     for spec in noops:
       y = pjit(lambda x: x * 2, in_axis_resources=spec, out_axis_resources=spec)(x)
       self.assertAllClose(y, x * 2)
+
+  @with_mesh([('x', 2)])
+  def testVmapModifiesAxisResources(self):
+    h = pjit(lambda x, y: (x + y, x, y), in_axis_resources=P('x'), out_axis_resources=None)
+    x = jnp.arange(4)
+    y = jnp.arange(5*4).reshape((5, 4))
+    jaxpr = jax.make_jaxpr(jax.vmap(h, in_axes=(None, 0)))(x, y).jaxpr
+    eqn = jaxpr.eqns[0]
+    self.assertIs(eqn.primitive, pjit_p)
+    x_sync, y_sync = (spec.sync for spec in eqn.params['in_axis_resources'])
+    self.assertEqual(x_sync, SpecSync.IN_SYNC)
+    self.assertEqual(y_sync, SpecSync.DIM_PERMUTE)
+    x_sync, y_sync, z_sync = (spec.sync for spec in eqn.params['out_axis_resources'])
+    self.assertEqual(x_sync, SpecSync.DIM_PERMUTE)
+    self.assertEqual(y_sync, SpecSync.IN_SYNC)
+    self.assertEqual(z_sync, SpecSync.DIM_PERMUTE)
+
+  @with_mesh([('x', 2)])
+  def testVMap(self):
+    f = pjit(lambda x, y: (x + y, x), in_axis_resources=P('x'), out_axis_resources=P('x'))
+    x = jnp.arange(4)
+    y = jnp.arange(5*4).reshape((5, 4))
+    z, w = jax.vmap(f, in_axes=(None, 0), out_axes=(0, None))(x, y)
+    self.assertAllClose(z, x + y)
+    self.assertAllClose(w, x)
+    self.assertEqual(z.sharding_spec.sharding, (pxla.NoSharding(), pxla.Chunked([2])))
+    self.assertEqual(w.sharding_spec.sharding, (pxla.Chunked([2]),))
 
   def testInfeed(self):
     devices = np.array(jax.local_devices())

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
 from typing import Callable, Sequence, Tuple, Union
@@ -32,13 +33,14 @@ from ..errors import JAXTypeError
 from ..interpreters import ad
 from ..interpreters import pxla
 from ..interpreters import xla
+from ..interpreters import batching
 from ..interpreters import partial_eval as pe
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
-                         split_list, cache)
+                         split_list, cache, tuple_insert)
 xops = xc._xla.ops
 
 def pjit(fun: Callable,
@@ -257,10 +259,40 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   return _ListWithW([jaxpr, in_axis_resources_flat, out_axis_resources_flat])
 
 
+class SpecSync(IntEnum):
+  """Encodes how much out of sync the real value of partitions is compared to the user specified one.
+
+  We use this to make sure we don't show garbage modified values while claiming
+  that the users have specified them like that.
+  """
+  DIM_PERMUTE = 1  # Dimensions permuted, but no new sharding axes
+  IN_SYNC = 2  # Entirely in sync
+
 class ParsedPartitionSpec:
-  def __init__(self, user_spec, partitions):
+  __slots__ = ('partitions', 'unsafe_user_spec', 'sync')
+
+  def __init__(self, user_spec, partitions, sync=SpecSync.IN_SYNC):
     self.partitions = tuple(partitions)
-    self.user_spec = user_spec
+    self.unsafe_user_spec = user_spec
+    self.sync = sync
+
+  @property
+  def user_spec(self):
+    return self.unsynced_user_spec(SpecSync.IN_SYNC)
+
+  def unsynced_user_spec(self, min_sync):
+    if self.sync < min_sync:
+      raise AssertionError(f"Please open a bug report! ({self.sync} >= {min_sync})")
+    return self.unsafe_user_spec
+
+  def insert_axis_partitions(self, dim, val):
+    parts = self.partitions
+    too_short = dim - len(parts)
+    if too_short > 0:
+      parts += ((),) * too_short
+    new_partitions = tuple_insert(parts, dim, val)
+    new_sync = SpecSync.DIM_PERMUTE if val == () else SpecSync.IN_SYNC
+    return ParsedPartitionSpec(self.unsafe_user_spec, new_partitions, sync=new_sync)
 
   @classmethod
   def from_user_input(cls, entry, arg_name):
@@ -281,13 +313,12 @@ class ParsedPartitionSpec:
     return cls(entry, axis_specs)
 
   def __hash__(self):
-    return hash(self.partitions)
+    return hash((self.partitions, self.sync))
 
   def __eq__(self, other):
-    return (self.partitions, self.user_spec) == (other.partitions, other.user_spec)
-
-  def __str__(self):
-    return str(self.user_spec)
+    return (self.partitions == other.partitions and
+            self.unsafe_user_spec == other.unsafe_user_spec and
+            self.sync == other.sync)
 
   def __len__(self):
     return len(self.partitions)
@@ -319,7 +350,7 @@ def _check_unique_resources(axis_resources, arg_name):
       multiple_uses = [r for r, c in resource_counts.items() if c > 1]
       if multiple_uses:
         raise ValueError(f"A single {arg_name} specification can map every mesh axis "
-                         f"to at most one positional dimension, but {arg_axis_resources} "
+                         f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
                          f"has duplicate entries for {maps.show_axes(multiple_uses)}")
 
 def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape, flat_avals, flat_axis_resources):
@@ -328,7 +359,7 @@ def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape
     shape = aval.shape
     if len(shape) < len(aval_axis_resources):
       raise ValueError(f"One of {what} was given the resource assignment "
-                       f"of {aval_axis_resources!s}, which implies that "
+                       f"of {aval_axis_resources.user_spec}, which implies that "
                        f"it has a rank of at least {len(aval_axis_resources)}, "
                        f"but it is {len(shape)}")
     for i, axis_resources in enumerate(aval_axis_resources):
@@ -336,11 +367,11 @@ def _check_shapes_against_resources(what: str, is_global_shape: bool, mesh_shape
         size = int(np.prod([mesh_shape[resource] for resource in axis_resources], dtype=np.int64))
       except KeyError as e:
         raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources!s}, but resource axis "
+                         f"of {aval_axis_resources.user_spec}, but resource axis "
                          f"{e.args[0]} is undefined. Did you forget to declare the mesh?") from None
       if shape[i] % size != 0:
         raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources!s}, which implies that "
+                         f"of {aval_axis_resources.user_spec}, which implies that "
                          f"the{global_str} size of its dimension {i} should be "
                          f"divisible by {size}, but it is equal to {shape[i]}")
 
@@ -418,6 +449,38 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
 xla.call_translations[pjit_p] = _pjit_translation_rule
 
 
+def _pjit_batcher(vals_in, dims_in,
+                  axis_name, main_type,
+                  jaxpr, in_axis_resources, out_axis_resources,
+                  resource_env, donated_invars, name):
+  axis_size, = {x.shape[d] for x, d in zip(vals_in, dims_in) if d is not batching.not_mapped}
+  # batch_jaxpr expects all batching dimensions to be equal to 0
+  vals_in = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
+             else x for x, d in zip(vals_in, dims_in)]
+  is_mapped_in = [d is not batching.not_mapped for d in dims_in]
+  new_jaxpr, is_mapped_out = batching.batch_jaxpr(
+      jaxpr, axis_size, is_mapped_in,
+      instantiate=False, axis_name=axis_name, main_type=main_type)
+
+  in_axis_resources = tuple(
+      spec.insert_axis_partitions(0, ()) if is_mapped else spec
+      for is_mapped, spec in zip(is_mapped_in, in_axis_resources))
+  out_axis_resources = tuple(
+      spec.insert_axis_partitions(0, ()) if is_mapped else spec
+      for is_mapped, spec in zip(is_mapped_out, out_axis_resources))
+  vals_out = pjit_p.bind(
+    *vals_in,
+    jaxpr=new_jaxpr,
+    in_axis_resources=in_axis_resources,
+    out_axis_resources=out_axis_resources,
+    resource_env=resource_env,
+    donated_invars=donated_invars,
+    name=name)
+  dims_out = [0 if batched else batching.not_mapped for batched in is_mapped_out]
+  return vals_out, dims_out
+batching.initial_style_batchers[pjit_p] = _pjit_batcher
+
+
 def _pjit_jvp(primals_in, tangents_in,
               jaxpr, in_axis_resources, out_axis_resources,
               resource_env, donated_invars, name):
@@ -453,7 +516,8 @@ def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_ax
   overlap = pjit_resources & aval_resources
   if overlap:
     raise JAXTypeError(
-        f"{what} has an axis resources specification of {pos_axis_resources} "
+        f"{what} has an axis resources specification of "
+        f"{pos_axis_resources.unsynced_user_spec(SpecSync.DIM_PERMUTE)} "
         f"that uses one or more mesh axes already used by xmap to partition "
         f"a named axis appearing in its named_shape (both use mesh axes "
         f"{maps.show_axes(overlap)})")
