@@ -639,7 +639,7 @@ class EvaluationPlan(NamedTuple):
     axis_resource_count = _get_axis_resource_count(axis_resources, resource_env)
     axis_subst_dict = dict(axis_resources)
     axis_vmap_size: Dict[AxisName, Optional[int]] = {}
-    for naxis, raxes in axis_resources.items():
+    for naxis, raxes in sorted(axis_resources.items(), key=lambda x: str(x[0])):
       num_resources = axis_resource_count[naxis]
       assert global_axis_sizes[naxis] % num_resources.nglobal == 0
       local_tile_size = global_axis_sizes[naxis] // num_resources.nglobal
@@ -660,11 +660,13 @@ class EvaluationPlan(NamedTuple):
       raise AssertionError("Incomplete resource type-checking? Please open a bug report!")
 
   def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
-    for naxis, raxes in self.axis_subst_dict.items():
+    vmap_axes = {
+        naxis: raxes[-1]
+        for naxis, raxes in self.axis_subst_dict.items()
+        if self.axis_vmap_size[naxis] is not None
+    }
+    for naxis, vaxis in sorted(vmap_axes.items(), key=lambda x: x[1].uid):
       local_tile_size = self.axis_vmap_size[naxis]
-      if local_tile_size is None:
-        continue
-      vaxis = raxes[-1]
       map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
       f = batching.vtile(f, map_in_axes, map_out_axes, tile_size=local_tile_size, axis_name=vaxis)
