@@ -666,9 +666,9 @@ def _normal(key, shape, dtype) -> jnp.ndarray:
     sqrt2 = np.array(np.sqrt(2), dtype)
 
     key_re, key_im = split(key)
-    dtype = dtypes.dtype_real(dtype)
-    _re = _normal_real(key_re, shape, dtype)
-    _im = _normal_real(key_im, shape, dtype)
+    real_dtype = np.array(0, dtype).real.dtype
+    _re = _normal_real(key_re, shape, real_dtype)
+    _im = _normal_real(key_im, shape, real_dtype)
     return (_re + 1j * _im) / sqrt2
   else:
     return _normal_real(key, shape, dtype) # type: ignore
