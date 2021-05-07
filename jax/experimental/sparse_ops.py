@@ -29,6 +29,17 @@ or newer, each operation is computed efficiently via cusparse.
 
 Further down are some examples of potential high-level wrappers for sparse objects.
 (API should be considered unstable and subject to change).
+
+## Higher-level objects
+For higher-level sparse objects, two different approaches are demonstrated:
+one is a PyTree based approach, with a specific class for COO, CSR, and CSC
+matrix representations. These objects are meant to be used directly, similar
+to the equivalent `scipy.sparse` objects.
+
+The other is a multi-buffer approach, with a single `SparseArray` object that can
+be used directly in jaxprs. `SparseArray` here should be thought of as similar to
+JAX's `DeviceArray`, in that it is not designed to be constructed directly, but
+rather via primitive functions analogous to `jnp.array`.
 """
 import functools
 import operator
@@ -37,6 +48,7 @@ from typing import Any, Tuple
 
 from jax import api
 from jax import core
+from jax import dtypes
 from jax import jit
 from jax import tree_util
 from jax.interpreters import xla
@@ -44,6 +56,7 @@ from jax.lib import cusparse
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 import jax.numpy as jnp
+from jax._src.util import safe_zip
 import numpy as np
 
 xb = xla_bridge
@@ -612,3 +625,275 @@ class COO(JAXSparse):
 
   def tree_flatten(self):
     return (self.data, self.row, self.col), {"shape": self.shape}
+
+#============================================================================
+# General sparse array class as a valid JAX type.
+#
+# This uses a single jaxpr-compatible object with a flexible multi-buffer
+# representation to implement JAX arrays.
+
+class AbstractSparseArray(core.ShapedArray):
+  buf_avals: Tuple[core.ShapedArray, ...]
+  index_dtype: Any
+  nnz: int
+  format: str
+
+  _num_buffers = property(lambda self: len(self.buf_avals))  # type: ignore
+
+  def __init__(self, shape, dtype, index_dtype, nnz, format="COO", weak_type=False,
+               named_shape={}):
+    super().__init__(shape, dtype, weak_type=weak_type, named_shape=named_shape)
+    self.index_dtype = index_dtype
+    self.nnz = nnz
+    self.format = format
+
+    if format == "COO":
+      self.buf_avals = (
+        core.ShapedArray((nnz,), dtype, weak_type),
+      ) + tuple(
+        core.ShapedArray((nnz,), index_dtype)
+        for i in range(len(shape))
+      )
+    elif format == "CSR":
+      assert len(shape) == 2
+      self.buf_avals = (
+        core.ShapedArray((nnz,), dtype, weak_type),
+        core.ShapedArray((shape[0] + 1,), index_dtype),
+        core.ShapedArray((nnz,), index_dtype),
+      )
+    elif format == "CSC":
+      assert len(shape) == 2
+      self.buf_avals = (
+        core.ShapedArray((nnz,), dtype, weak_type),
+        core.ShapedArray((nnz,), index_dtype),
+        core.ShapedArray((shape[1] + 1,), index_dtype),
+      )
+    else:
+      raise NotImplementedError(f"format={format}")
+
+  def at_least_vspace(self):
+    return AbstractSparseArray(self.shape, core.primal_dtype_to_tangent_dtype(self.dtype),
+                               self.index_dtype, self.nnz, self.format,
+                               self.weak_type, self.named_shape)
+
+
+# TODO: should _bufs here be xla buffers rather than DeviceArrays?
+class SparseArray:
+  """General SparseArray class with multi-buffer jaxpr representations."""
+  aval: AbstractSparseArray
+  _bufs: Tuple[Any, ...]
+
+  shape = property(lambda self: self.aval.shape)
+  dtype = property(lambda self: self.aval.dtype)
+  nnz = property(lambda self: self.aval.nnz)
+  format = property(lambda self: self.aval.format)
+
+  def __init__(self, aval, bufs):
+    self.aval = aval
+    self._bufs = bufs
+
+  def __repr__(self):
+    return f"{self.__class__.__name__}({self.dtype}{list(self.shape)}, nnz={self.nnz}, format={self.format!r})"
+
+  @classmethod
+  def fromdense(cls, mat, *, nnz=None, index_dtype=jnp.int32, format="COO"):
+    assert cls is SparseArray
+    mat = jnp.asarray(mat)
+    if nnz is None:
+      nnz = (mat != 0).sum()
+    nnz = core.concrete_or_error(operator.index, nnz, "nnz argument of fromdense()")
+    return sparse_fromdense_p.bind(mat, nnz=nnz, index_dtype=index_dtype, format=format)
+
+  def transpose(self):
+    assert self.format == "COO"
+    aval = AbstractSparseArray(shape=self.shape[::-1], dtype=self.dtype, index_dtype=self.aval.index_dtype, nnz=self.nnz, format="COO")
+    return SparseArray(aval, self._bufs[:1] + self._bufs[1:][::-1])
+
+  T = property(transpose)
+
+
+def sparse_array_result_handler(device, aval):
+  def build_sparse_array(*bufs):
+    bufs = tuple(
+      xla.make_device_array(aval, device, buf)
+      for aval, buf in safe_zip(aval.buf_avals, bufs)
+    )
+    return SparseArray(aval, bufs)
+  return build_sparse_array
+
+def sparse_array_shape_handler(a):
+  return tuple(
+    xla.xc.Shape.array_shape(aval.dtype, aval.shape)
+    for aval in a.buf_avals
+  )
+
+def sparse_array_device_put_handler(a, device):
+  return tuple(
+    xla.xb.get_device_backend(device).buffer_from_pyval(buf, device)
+    for buf in a.bufs
+  )
+
+def _sparse_array_constant_handler(c, val, canonicalize_types=True):
+  return tuple(xb.constant(buf, canonicalize_types) for buf in val.bufs)
+
+core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
+core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
+xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
+xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
+xla.device_put_handlers[SparseArray] = sparse_array_device_put_handler
+xla.xla_result_handlers[AbstractSparseArray] = sparse_array_result_handler
+xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
+xb.register_constant_handler(SparseArray, _sparse_array_constant_handler)
+
+#----------------------------------------------------------------------
+# sparse_bufs_p: buffer access primitive
+
+sparse_bufs_p = core.Primitive('sparse_bufs')
+sparse_bufs_p.multiple_results = True
+
+def _sparse_bufs(mat):
+  return sparse_bufs_p.bind(mat)
+
+@sparse_bufs_p.def_impl
+def _sparse_bufs_impl(mat):
+  return tuple(mat._bufs)
+
+@sparse_bufs_p.def_abstract_eval
+def _sparse_bufs_abstract_eval(mat):
+  return tuple(mat.buf_avals)
+
+def _sparse_bufs_translation_rule(c, *bufs):
+  return xops.Tuple(c, bufs)
+
+xla.translations[sparse_bufs_p] = _sparse_bufs_translation_rule
+
+
+#----------------------------------------------------------------------
+# sparse_fromdense_p: sparse-from-dense primitive
+
+sparse_fromdense_p = core.Primitive("sparse_fromdense")
+
+@sparse_fromdense_p.def_impl
+def _sparse_fromdense_impl(mat, *, nnz, index_dtype, format):
+  if isinstance(mat, core.Tracer):
+    # TODO: figure out how to implement sparse object from traced arrays.
+    raise NotImplementedError("Creation of SparseArray in a traced context.")
+
+  mat = jnp.asarray(mat)
+  if format == "COO":
+    if mat.ndim == 2:
+      data, *ind = coo_fromdense(mat, nnz=nnz, index_dtype=index_dtype)
+    else:
+      ind = tuple(i.astype(index_dtype) for i in jnp.nonzero(mat, size=nnz))
+      data = mat[ind]
+      true_nonzeros = jnp.arange(nnz) < (mat != 0).sum()
+      data = jnp.where(true_nonzeros, data, 0)
+  elif format == "CSR":
+    data, indices, indptr = csr_fromdense(mat, nnz=nnz, index_dtype=index_dtype)
+    ind = [indptr, indices]
+  elif format == "CSC":
+    data, indices, indptr = csr_fromdense(mat.T, nnz=nnz, index_dtype=index_dtype)
+    ind = [indices, indptr]
+  else:
+    raise ValueError(f"Unrecognized format={format}")
+
+  aval = _sparse_fromdense_abstract_eval(mat, nnz=nnz, index_dtype=index_dtype, format=format)
+  return SparseArray(aval, (data, *ind))
+
+@sparse_fromdense_p.def_abstract_eval
+def _sparse_fromdense_abstract_eval(mat, *, nnz, index_dtype, format):
+  if format not in ["COO", "CSR", "CSC"]:
+    raise ValueError(f"Unrecognized format={format}")
+  if format in ["CSR", "CSC"] and mat.ndim != 2:
+    raise ValueError(f"only two-dimensional arrays supported for format={format}")
+  return AbstractSparseArray(mat.shape, mat.dtype, index_dtype, nnz, format=format)
+
+
+xla.translations_with_avals[sparse_fromdense_p] = xla.lower_fun(
+    _sparse_fromdense_impl, multiple_results=False, with_avals=True)
+# TODO: gpu translation rule for relevant cases
+
+
+#----------------------------------------------------------------------
+# sparse_todense_p: sparse-to-dense primitive
+
+sparse_todense_p = core.Primitive('sparse_todense')
+
+def _sparse_todense(mat):
+  return sparse_todense_p.bind(mat)
+
+@sparse_todense_p.def_impl
+def _sparse_todense_impl(mat):
+  data, *ind = sparse_bufs_p.bind(mat)
+  if mat.format == "COO":
+    if len(ind) == 2:
+      return coo_todense(data, ind[0], ind[1], shape=mat.shape)
+    else:
+      return jnp.zeros(mat.shape, mat.dtype).at[tuple(ind)].add(data)
+  elif mat.format == "CSR":
+    return csr_todense(data, ind[1], ind[0], shape=mat.shape)
+  elif mat.format == "CSC":
+    return csr_todense(data, ind[0], ind[1], shape=mat.shape[::-1]).T
+  else:
+    raise NotImplementedError(f"sparse_todense_impl for format={format}")
+
+@sparse_todense_p.def_abstract_eval
+def _sparse_todense_abstract_eval(mat):
+  return core.ShapedArray(mat.shape, mat.dtype)
+
+
+xla.translations_with_avals[sparse_todense_p] = xla.lower_fun(
+    _sparse_todense_impl, multiple_results=False, with_avals=True)
+# TODO: gpu translation rule for relevant cases
+
+#----------------------------------------------------------------------
+# sparse_matmul_p: sparse matrix multiplication primitive
+
+sparse_matmul_p = core.Primitive("sparse_matmul")
+
+def _sparse_matmul(A, B):
+  return sparse_matmul_p.bind(A, B)
+
+@sparse_matmul_p.def_impl
+def _sparse_matmul_impl(A, B):
+  B = jnp.asarray(B)
+  assert B.ndim == 1, "only matrix-vector multiplication currently supported."
+  data, *ind = sparse_bufs_p.bind(A)
+  if A.format == "COO":
+    if len(ind) == 2:
+      return coo_matvec(data, *ind, B, shape=A.shape)
+    else:
+      *ind, col = ind
+      dB = data * B[col] if ind else data @ B[col]
+      out_shape = A.shape[:-1]
+      return jnp.zeros(out_shape, dB.dtype).at[tuple(ind)].add(dB)
+  elif A.format == "CSR":
+    return csr_matvec(data, ind[1], ind[0], B, shape=A.shape)
+  elif A.format == "CSC":
+    return csr_matvec(data, ind[0], ind[1], B, shape=A.shape[::-1], transpose=True)
+  else:
+    raise NotImplementedError(f"sparse_matmul_impl for format={format}")
+
+@sparse_matmul_p.def_abstract_eval
+def _sparse_matmul_abstract_eval(A, B):
+  assert isinstance(B, jnp.ndarray)
+  assert B.ndim == 1, "only matrix-vector multiplication currently supported."
+  if A.format not in ["COO", "CSR", "CSC"]:
+    raise NotImplementedError(f"sparse_matmul_impl for format={format}")
+  dtype = dtypes.result_type(A.dtype, B.dtype)
+  return core.ShapedArray(A.shape[:-1], dtype)
+
+xla.translations_with_avals[sparse_matmul_p] = xla.lower_fun(
+    _sparse_matmul_impl, multiple_results=False, with_avals=True)
+# TODO: gpu translation rule for relevant cases
+
+#------------------------------------------------------------------------
+# Add relevant methods to SparseArray and AbstractSparseArray
+
+SparseArray.bufs = property(_sparse_bufs)
+SparseArray.todense = _sparse_todense
+SparseArray.__matmul__ = _sparse_matmul  # type: ignore
+
+AbstractSparseArray.bufs = core.aval_property(_sparse_bufs)
+AbstractSparseArray.todense = core.aval_method(_sparse_todense)
+AbstractSparseArray._matmul = staticmethod(_sparse_matmul)

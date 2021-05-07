@@ -13,15 +13,16 @@
 # limitations under the License.
 
 import itertools
+import operator
 import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from jax import api
 from jax import config
 from jax.experimental import sparse_ops
 from jax.lib import cusparse
 from jax.lib import xla_bridge
-from jax import jit
 from jax import test_util as jtu
 from jax import xla
 import jax.numpy as jnp
@@ -68,7 +69,7 @@ class cuSparseTest(jtu.JaxTestCase):
     todense = lambda *args: sparse_ops.csr_todense(*args, shape=M.shape)
 
     self.assertArraysEqual(M.toarray(), todense(*args))
-    self.assertArraysEqual(M.toarray(), jit(todense)(*args))
+    self.assertArraysEqual(M.toarray(), api.jit(todense)(*args))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -89,7 +90,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(indices, M_csr.indices.astype(index_dtype))
     self.assertArraysEqual(indptr, M_csr.indptr.astype(index_dtype))
 
-    data, indices, indptr = jit(fromdense)(M)
+    data, indices, indptr = api.jit(fromdense)(M)
     self.assertArraysEqual(data, M_csr.data.astype(dtype))
     self.assertArraysEqual(indices, M_csr.indices.astype(index_dtype))
     self.assertArraysEqual(indptr, M_csr.indptr.astype(index_dtype))
@@ -112,7 +113,7 @@ class cuSparseTest(jtu.JaxTestCase):
     matvec = lambda *args: sparse_ops.csr_matvec(*args, shape=M.shape, transpose=transpose)
 
     self.assertAllClose(op(M) @ v, matvec(*args), rtol=MATMUL_TOL)
-    self.assertAllClose(op(M) @ v, jit(matvec)(*args), rtol=MATMUL_TOL)
+    self.assertAllClose(op(M) @ v, api.jit(matvec)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
@@ -132,7 +133,7 @@ class cuSparseTest(jtu.JaxTestCase):
     matmat = lambda *args: sparse_ops.csr_matmat(*args, shape=shape, transpose=transpose)
 
     self.assertAllClose(op(M) @ B, matmat(*args), rtol=MATMUL_TOL)
-    self.assertAllClose(op(M) @ B, jit(matmat)(*args), rtol=MATMUL_TOL)
+    self.assertAllClose(op(M) @ B, api.jit(matmat)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -147,7 +148,7 @@ class cuSparseTest(jtu.JaxTestCase):
     todense = lambda *args: sparse_ops.coo_todense(*args, shape=M.shape)
 
     self.assertArraysEqual(M.toarray(), todense(*args))
-    self.assertArraysEqual(M.toarray(), jit(todense)(*args))
+    self.assertArraysEqual(M.toarray(), api.jit(todense)(*args))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -168,7 +169,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(row, M_coo.row.astype(index_dtype))
     self.assertArraysEqual(col, M_coo.col.astype(index_dtype))
 
-    data, indices, indptr = jit(fromdense)(M)
+    data, indices, indptr = api.jit(fromdense)(M)
     self.assertArraysEqual(data, M_coo.data.astype(dtype))
     self.assertArraysEqual(row, M_coo.row.astype(index_dtype))
     self.assertArraysEqual(col, M_coo.col.astype(index_dtype))
@@ -191,7 +192,7 @@ class cuSparseTest(jtu.JaxTestCase):
     matvec = lambda *args: sparse_ops.coo_matvec(*args, shape=M.shape, transpose=transpose)
 
     self.assertAllClose(op(M) @ v, matvec(*args), rtol=MATMUL_TOL)
-    self.assertAllClose(op(M) @ v, jit(matvec)(*args), rtol=MATMUL_TOL)
+    self.assertAllClose(op(M) @ v, api.jit(matvec)(*args), rtol=MATMUL_TOL)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
@@ -211,7 +212,7 @@ class cuSparseTest(jtu.JaxTestCase):
     matmat = lambda *args: sparse_ops.coo_matmat(*args, shape=shape, transpose=transpose)
 
     self.assertAllClose(op(M) @ B, matmat(*args), rtol=MATMUL_TOL)
-    self.assertAllClose(op(M) @ B, jit(matmat)(*args), rtol=MATMUL_TOL)
+    self.assertAllClose(op(M) @ B, api.jit(matmat)(*args), rtol=MATMUL_TOL)
 
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   def test_gpu_translation_rule(self):
@@ -314,6 +315,74 @@ class SparseObjectTest(jtu.JaxTestCase):
     x = jnp.asarray(x)
 
     self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
+
+
+class GeneralSparseObjectTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+    jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+        jtu.format_shape_dtype_string(shape, dtype), format),
+       "shape": shape, "dtype": dtype, "format": format}
+      for shape in [(5, 8), (8, 5)] + ([(5,), (5, 5, 8)] if format == "COO" else [])
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex)
+    for format in ["COO", "CSR", "CSC"]))
+  def test_properties(self, shape, dtype, format):
+    rng = rand_sparse(self.rng())
+    # JIT-compatible function that accesses relevant properties.
+    def use_props(M):
+      return (jnp.zeros(M.shape, M.dtype), jnp.zeros(M.nnz, M.dtype), len(M.format), *M.bufs)
+    args_maker = lambda: [sparse_ops.SparseArray.fromdense(rng(shape, dtype), format=format)]
+    self._CompileAndCheck(use_props, args_maker)
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+    jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+        jtu.format_shape_dtype_string(shape, dtype), format),
+       "shape": shape, "dtype": dtype, "format": format}
+      for shape in [(5, 8), (8, 5)] + ([(5,), (5, 5, 8)] if format == "COO" else [])
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex)
+    for format in ["COO", "CSR", "CSC"]))
+  def testToDense(self, shape, dtype, format):
+    rng = rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    Msp = sparse_ops.SparseArray.fromdense(M, format=format)
+
+    self.assertAllClose(Msp.todense(), M)
+
+    f = lambda M: M.todense()
+    args_maker = lambda: [sparse_ops.SparseArray.fromdense(rng(shape, dtype))]
+    self._CompileAndCheck(f, args_maker)
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+    jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+        jtu.format_shape_dtype_string(shape, dtype), format),
+       "shape": shape, "dtype": dtype, "format": format}
+      for shape in [(5, 8), (8, 5)] + ([(5,), (5, 5, 8)] if format == "COO" else [])
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex)
+    for format in ["COO", "CSR", "CSC"]))
+  def testMatMul(self, shape, dtype, format):
+    rng = rand_sparse(self.rng(), post=jnp.array)
+    rng_v = jtu.rand_default(self.rng())
+    M = rng(shape, dtype)
+    Msp = sparse_ops.SparseArray.fromdense(M, format=format)
+    v = rng(shape[-1:], dtype)
+    args_maker = lambda: [
+      sparse_ops.SparseArray.fromdense(rng(shape, dtype)), rng_v(shape[-1:], dtype)]
+
+    self.assertAllClose(M @ v, Msp @ v)
+    self._CompileAndCheck(operator.matmul, args_maker)
+
+  def testConstHandler(self):
+    def const_array():
+      data = np.arange(3, dtype=np.float32)
+      indices = np.arange(3, dtype=np.int32)
+      aval = sparse_ops.AbstractSparseArray(
+        shape=(indices.max() + 1,), dtype=data.dtype,
+        index_dtype=indices.dtype, nnz=len(data))
+      return sparse_ops.SparseArray(aval, (data, indices))
+    result = api.jit(const_array)()
+    self.assertArraysEqual(result.todense(), np.arange(3, dtype='float32'))
 
 
 if __name__ == "__main__":
