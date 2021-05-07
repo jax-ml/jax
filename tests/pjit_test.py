@@ -321,6 +321,10 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(z.sharding_spec.sharding, (pxla.NoSharding(), pxla.Chunked([2])))
     self.assertEqual(w.sharding_spec.sharding, (pxla.Chunked([2]),))
 
+  # TODO(phawkins): This test currently hangs on GPU and CPU/TFRT, probably
+  # because the client-side infeed needs to be done in a thread due to different
+  # concurrency semantics.
+  @jtu.skip_on_devices("cpu", "gpu")
   def testInfeed(self):
     devices = np.array(jax.local_devices())
     nr_devices = len(devices)
