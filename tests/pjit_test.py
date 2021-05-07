@@ -321,10 +321,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(z.sharding_spec.sharding, (pxla.NoSharding(), pxla.Chunked([2])))
     self.assertEqual(w.sharding_spec.sharding, (pxla.Chunked([2]),))
 
-  # TODO(phawkins): This test currently hangs on GPU and CPU/TFRT, probably
-  # because the client-side infeed needs to be done in a thread due to different
-  # concurrency semantics.
-  @jtu.skip_on_devices("cpu", "gpu")
   def testInfeed(self):
     devices = np.array(jax.local_devices())
     nr_devices = len(devices)
@@ -342,19 +338,23 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x + y + z + w
 
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-
-    # JIT
-    logging.info('Making jit call')
-    res0 = jax.jit(f_for_jit)(x)
     y = x * 2.
     z = x * 3.
     w = x * 4.
 
+    # Transfer data to infeed before executing the function. For GPUs, the
+    # execution of the compiled function is blocking, so transferring data
+    # to infeed before executing ensures that the execution does not deadlock
+    # waiting for the infeed data.
     logging.info('Transfering to infeed for the jit call')
     d = devices[0]
     d.transfer_to_infeed((y,))
     d.transfer_to_infeed((z,))
     d.transfer_to_infeed((w,))
+
+    # JIT
+    logging.info('Making jit call')
+    res0 = jax.jit(f_for_jit)(x)
     self.assertAllClose(res0, x + y + z + w, check_dtypes=True)
 
     # PJIT
@@ -377,12 +377,6 @@ class PJitTest(jtu.BufferDonationTestCase):
           partitions=(P(1, nr_devices),))
       return x + y + z + w
 
-    with mesh(devices, ['d']):
-      logging.info('Making pjit call')
-      res = pjit(
-          f_for_pjit, in_axis_resources=(P('d'),), out_axis_resources=P('d'))(
-              x)
-
     logging.info('Transfering to infeed for the pjit call')
     for didx, d in enumerate(devices):
       # Transfer the whole array to all devices for replicated.
@@ -390,6 +384,12 @@ class PJitTest(jtu.BufferDonationTestCase):
       # For sharded infeed, transfer only the needed slices to each device.
       d.transfer_to_infeed((z[3 * didx:3 * didx + 3, :]))
       d.transfer_to_infeed((w[:, 5 * didx:5 * didx + 5],))
+
+    with mesh(devices, ['d']):
+      logging.info('Making pjit call')
+      res = pjit(
+          f_for_pjit, in_axis_resources=(P('d'),), out_axis_resources=P('d'))(
+              x)
 
     self.assertAllClose(res0, res, check_dtypes=True)
 
