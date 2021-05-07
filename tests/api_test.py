@@ -2779,11 +2779,6 @@ class APITest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(f)(3)
     self.assertNotIn('xla_call', str(jaxpr))
 
-  def test_jnp_array_doesnt_device_put(self):
-    with jtu.count_device_put() as count:
-      api.make_jaxpr(lambda: jnp.array(3))()
-    self.assertEqual(count[0], 0)
-
 
 class RematTest(jtu.JaxTestCase):
 
