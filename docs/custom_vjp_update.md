@@ -75,7 +75,7 @@ def skip_app(f, x):
   return f(x)
 
 def skip_app_fwd(f, x):
-  return skip_bwd(f, x), None
+  return skip_app(f, x), None
 
 def skip_app_bwd(f, _, g):
   return (g,)
