@@ -450,11 +450,8 @@ def escaped_tracer_error(tracer, detail=None):
       msg += (f'When the tracer was created, the final {num_frames} stack '
               'frames (most recent last) excluding JAX-internal frames were:\n'
               f'{source_info_util.summarize(line_info, num_frames=num_frames)}')
-  try:
-    dbg = tracer._trace.main.debug_info
-  except AttributeError:
-    pass
-  else:
+  dbg = getattr(tracer._trace.main, 'debug_info', None)
+  if dbg is not None:
     msg += ('\nThe function being traced when the tracer leaked was '
             f'{dbg.func_src_info} traced for {dbg.traced_for}.')
   msg += ('\nTo catch the leak earlier, try setting the environment variable '
