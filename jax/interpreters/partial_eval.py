@@ -907,6 +907,8 @@ class DynamicJaxprTracer(core.Tracer):
   def _origin_msg(self):
     invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
     dbg = self._trace.main.debug_info
+    if dbg is None:
+      return ""
     if invar_pos:
       origin = (f"While tracing the function {dbg.func_src_info} "
                 f"for {dbg.traced_for}, "
