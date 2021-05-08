@@ -4829,11 +4829,11 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
 
   # Avoid calling gather if the slice shape is empty, both as a fast path and to
   # handle cases like zeros(0)[array([], int32)].
-  if _prod(indexer.slice_shape) == 0:
+  if core.is_empty_shape(indexer.slice_shape):
     return zeros_like(y, shape=indexer.slice_shape)
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
-  if indexer.gather_indices.size:
+  if not core.is_empty_shape(indexer.gather_indices.shape):
     y = lax.gather(y, indexer.gather_indices, indexer.dnums,
                    indexer.gather_slice_shape)
 

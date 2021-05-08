@@ -651,9 +651,17 @@ def _make_harness(group_name: str, name: str,
   """The `poly_axes` must correspond to the non-static arguments, and for each
   one it must specify which axes are: None, or an int.
 
+  The name of the harness within the group will include `poly_axes`.
+  You can add an additional `name`.
+
   `check_result` specifies if we want to check that the result of the shape
   polymorphic conversion produces the same result and the JAX function.
   """
+  poly_axes_name = "poly_axes=" + "_".join(map(str, poly_axes))
+  if name:
+    name = f"{name}_{poly_axes_name}"
+  else:
+    name = poly_axes_name
   return Harness(group_name,
                  name,
                  func, args,
@@ -683,7 +691,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                    RandArg((3, 4, 5), _f32)],
                   poly_axes=[0, 0, 0]),
 
-    _make_harness("conv_general_dilated", "0",
+    _make_harness("conv_general_dilated", "",
                   lambda lhs, rhs: lax.conv_general_dilated(lhs, rhs,
                                                             window_strides=(2, 3),
                                                             padding=((0, 0), (0, 0)),
@@ -696,7 +704,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((7, 3, 9, 10), _f32), RandArg((3, 3, 4, 5), _f32)],
                   poly_axes=[0, None]),
 
-    _make_harness("cummax", "1",
+    _make_harness("cummax", "",
                   lambda x: lax_control_flow.cummax(x, axis=1, reverse=False),
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[0]),
@@ -717,6 +725,17 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda a, i: jnp.take(a, i, axis=1),
                   [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
                   poly_axes=[0, None]),
+
+    _make_harness("jnp_getitem", "",
+                  lambda a, i: a[i],
+                  [RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
+                  poly_axes=[None, 0]),
+
+    # TODO(necula): not supported yet
+    # _make_harness("jnp_getitem", "",
+    #               lambda a, i: a[i],
+    #               [RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
+    #               poly_axes=[0, 0]),
 
     _make_harness("iota", "",
                   lambda x: x + lax.iota(_f32, x.shape[0]),
