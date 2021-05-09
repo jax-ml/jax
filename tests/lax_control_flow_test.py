@@ -2466,6 +2466,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(result.second, np.array([0., 10., 30.]),
                         check_dtypes=False)
 
+  def testAssociativeScanOfBools(self):
+    # Make sure we can do associative scan for non-numeric dtypes.
+    data = np.zeros([100], bool)
+    data[4] = True
+    expected = np.zeros([100], bool)
+    expected[4:] = True
+    result = lax.associative_scan(operator.or_, data)
+    self.assertAllClose(result, expected, check_dtypes=False)
+
   def test_scan_typecheck_param(self):
     d = jnp.ones(2)
     def f(c, a):

@@ -2378,12 +2378,15 @@ batching.initial_style_batchers[linear_solve_p] = _linear_solve_batching_rule
 def _interleave(a, b, axis):
   """Given two Tensors of static shape, interleave them along the first axis."""
   assert a.shape[axis] == b.shape[axis] or a.shape[axis] == b.shape[axis] + 1
-  a_pad = [(0, 0, 0)] * a.ndim
-  b_pad = [(0, 0, 0)] * b.ndim
-  a_pad[axis] = (0, 1 if a.shape[axis] == b.shape[axis] else 0, 1)
-  b_pad[axis] = (1, 0 if a.shape[axis] == b.shape[axis] else 1, 1)
-  return lax.add(lax.pad(a, lax._const(a, 0), a_pad),
-                 lax.pad(b, lax._const(b, 0), b_pad))
+  interleaved_shape = list(a.shape)
+  interleaved_shape[axis] = a.shape[axis] + b.shape[axis]
+  interleaved = lax.full(interleaved_shape, lax._const(a, 0), a.dtype)
+  a_ixr = [slice(None)] * a.ndim
+  b_ixr = [slice(None)] * a.ndim
+  a_ixr[axis] = slice(0, None, 2)  # interleaved[..., 0::2, ...]
+  b_ixr[axis] = slice(1, None, 2)  # interleaved[..., 1::2, ...]
+  return interleaved.at[tuple(a_ixr)].set(a).at[tuple(b_ixr)].set(b)
+
 
 @api_boundary
 def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
