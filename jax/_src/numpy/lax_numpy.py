@@ -5840,18 +5840,20 @@ class _IndexUpdateHelper:
   # Note: this docstring will appear as the docstring for the `at` property.
   """Indexable helper object to call indexed update functions.
 
-  The `at` property is syntactic sugar for calling the indexed update functions
+  The ``at`` property is syntactic sugar for calling the indexed update functions
   defined in :mod:`jax.ops`, and acts as a pure equivalent of in-place
-  modificatons.
+  modificatons. For further information, see `Syntactic Sugar for Index Update Operators
+  <https://jax.readthedocs.io/en/latest/jax.ops.html#syntactic-sugar-for-indexed-update-operators>`_.
 
   In particular:
+
   - ``x = x.at[idx].set(y)`` is a pure equivalent of ``x[idx] = y``.
   - ``x = x.at[idx].add(y)`` is a pure equivalent of ``x[idx] += y``.
   - ``x = x.at[idx].mul(y)`` is a pure equivalent of ``x[idx] *= y``.
   - ``x = x.at[idx].min(y)`` is a pure equivalent of
-      ``x[idx] = minimum(x[idx], y)``.
+    ``x[idx] = minimum(x[idx], y)``.
   - ``x = x.at[idx].max(y)`` is a pure equivalent of
-      ``x[idx] = maximum(x[idx], y)``.
+    ``x[idx] = maximum(x[idx], y)``.
   """
   __slots__ = ("array",)
 
