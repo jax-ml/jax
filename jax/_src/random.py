@@ -501,7 +501,7 @@ def _randint(key, shape, minval, maxval, dtype):
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
 
-def shuffle(key: jnp.ndarray, x: jnp.ndarray, axis: int = 0) -> jnp.ndarray:
+def shuffle(key: jnp.ndarray, x: Array, axis: int = 0) -> jnp.ndarray:
   """Shuffle the elements of an array uniformly at random along an axis.
 
   Args:
@@ -518,7 +518,7 @@ def shuffle(key: jnp.ndarray, x: jnp.ndarray, axis: int = 0) -> jnp.ndarray:
   return _shuffle(key, x, axis)  # type: ignore
 
 
-def permutation(key: jnp.ndarray, x: IntegerArray) -> jnp.ndarray:
+def permutation(key: jnp.ndarray, x: Array) -> jnp.ndarray:
   """
   Permute elements of an array along its first axis or return a permuted range.
 
@@ -1281,7 +1281,7 @@ def _gumbel(key, shape, dtype):
 
 
 def categorical(key: jnp.ndarray,
-                logits: jnp.ndarray,
+                logits: RealArray,
                 axis: int = -1,
                 shape: Optional[Sequence[int]] = None) -> jnp.ndarray:
   """Sample random values from categorical distributions.
