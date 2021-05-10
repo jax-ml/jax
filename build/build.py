@@ -79,17 +79,22 @@ def check_python_version(python_version):
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/3.7.2/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
-    "Linux":
+    ("Linux", "x86_64"):
         BazelPackage(
             file="bazel-3.7.2-linux-x86_64",
             sha256=
             "70dc0bee198a4c3d332925a32d464d9036a831977501f66d4996854ad4e4fc0d"),
-    "Darwin":
+    ("Linux", "aarch64"):
+        BazelPackage(
+            file="bazel-3.7.2-linux-arm64",
+            sha256=
+            "6ebd9eccbcb8f63c92a324c0c86cec11963aa9dcb914dd4718f592fdfeda9823"),
+    ("Darwin", "x86_64"):
         BazelPackage(
             file="bazel-3.7.2-darwin-x86_64",
             sha256=
             "80c82e93a12ba30021692b11c78007807e82383a673be1602573b944beb359ab"),
-    "Windows":
+    ("Windows", "x86_64"):
         BazelPackage(
             file="bazel-3.7.2-windows-x86_64.exe",
             sha256=
@@ -99,7 +104,7 @@ bazel_packages = {
 
 def download_and_verify_bazel():
   """Downloads a bazel binary from Github, verifying its SHA256 hash."""
-  package = bazel_packages.get(platform.system())
+  package = bazel_packages.get((platform.system(), platform.machine()))
   if package is None:
     return None
 
