@@ -35,8 +35,8 @@ limitations under the License.
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
 
-// Some functionality defined here is only available in CUDA 11 or newer.
-#define JAX_USE_CUDA11 (CUDART_VERSION >= 11000)
+// Some functionality defined here is only available in CUSPARSE 11.3 or newer.
+#define JAX_ENABLE_CUSPARSE (CUSPARSE_VERSION >= 11300)
 
 namespace jax {
 namespace {
@@ -93,7 +93,7 @@ CudaConst CudaOne(cudaDataType type) {
   CudaConst c;
   std::memset(&c, 0, sizeof(c));
   switch (type) {
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
     // TODO(jakevdp): 4I/4U here might break on big endian platforms.
     case CUDA_R_4I:
     case CUDA_C_4I:
@@ -102,7 +102,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_8I:
       c.i8[0] = 1;
       break;
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
     case CUDA_R_4U:
     case CUDA_C_4U:
 #endif
@@ -110,7 +110,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_8U:
       c.u8[0] = 1;
       break;
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
     case CUDA_R_16I:
     case CUDA_C_16I:
       c.i16[0] = 1;
@@ -128,7 +128,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_32U:
       c.u32[0] = 1;
       break;
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
     case CUDA_R_64I:
     case CUDA_C_64I:
       c.i64[0] = 1;
@@ -143,7 +143,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_16F:
       c.u16[0] = 0b11110000000000;  // 1.0 in little-endian float16
       break;
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
     case CUDA_R_16BF:
     case CUDA_C_16BF:
       c.u16[0] = 0b11111110000000;  // 1.0 in little-endian bfloat16
@@ -204,7 +204,7 @@ cudaDataType DtypeToCudaDataType(const py::dtype& np_type) {
             {{'c', 16}, CUDA_C_64F}, {{'i', 1}, CUDA_R_8I},
             {{'u', 1}, CUDA_R_8U}, {{'i', 4}, CUDA_R_32I},
             {{'u', 4}, CUDA_R_32U},
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
             {{'V', 2}, CUDA_R_16BF},
 #endif
       });
@@ -255,7 +255,7 @@ DenseVecDescriptor BuildDenseVecDescriptor(const py::dtype& data_dtype,
   return DenseVecDescriptor{value_type, size};
 }
 
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
 // CsrToDense: Convert CSR matrix to dense matrix
 
 // Returns the descriptor for a Sparse matrix.
@@ -863,7 +863,7 @@ void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
 
 py::dict Registrations() {
   py::dict dict;
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
   dict["cusparse_csr_todense"] = EncapsulateFunction(CsrToDense);
   dict["cusparse_csr_fromdense"] = EncapsulateFunction(CsrFromDense);
   dict["cusparse_csr_matvec"] = EncapsulateFunction(CsrMatvec);
@@ -877,9 +877,9 @@ py::dict Registrations() {
 }
 
 PYBIND11_MODULE(cusparse_kernels, m) {
-  m.attr("cusparse_supported") = py::bool_(JAX_USE_CUDA11);
+  m.attr("cusparse_supported") = py::bool_(JAX_ENABLE_CUSPARSE);
   m.def("registrations", &Registrations);
-#if JAX_USE_CUDA11
+#if JAX_ENABLE_CUSPARSE
   m.def("build_csr_todense_descriptor", &BuildCsrToDenseDescriptor);
   m.def("build_csr_fromdense_descriptor", &BuildCsrFromDenseDescriptor);
   m.def("build_csr_matvec_descriptor", &BuildCsrMatvecDescriptor);
