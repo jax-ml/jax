@@ -6,13 +6,39 @@ jax.ops package
 
 .. automodule:: jax.ops
 
+.. _syntactic-sugar-for-ops:
 
 Indexed update operators
 ------------------------
 
-JAX is intended to be used with a functional style of programming, and hence
+JAX is intended to be used with a functional style of programming, and
 does not support NumPy-style indexed assignment directly. Instead, JAX provides
-pure alternatives, namely :func:`jax.ops.index_update` and its relatives.
+alternative pure functional operators for indexed updates to arrays.
+
+JAX array types have a property ``at``, which can be used as
+follows (where ``idx`` is a NumPy index expression).
+
+=========================  ===================================================
+Alternate syntax           Equivalent in-place expression
+=========================  ===================================================
+``x.at[idx].set(y)``       ``x[idx] = y``
+``x.at[idx].add(y)``       ``x[idx] += y``
+``x.at[idx].multiply(y)``  ``x[idx] *= y``
+``x.at[idx].divide(y)``    ``x[idx] /= y``
+``x.at[idx].power(y)``     ``x[idx] **= y``
+``x.at[idx].min(y)``       ``x[idx] = np.minimum(x[idx], y)``
+``x.at[idx].max(y)``       ``x[idx] = np.maximum(x[idx], y)``
+=========================  ===================================================
+
+None of these expressions modify the original `x`; instead they return
+a modified copy of `x`.
+
+
+Indexed update functions (deprecated)
+-------------------------------------
+
+The following functions are aliases for the ``x.at[idx].set(y)``
+style operators. Prefer to use the ``x.at[idx]`` operators instead.
 
 .. autosummary::
   :toctree: _autosummary
@@ -24,27 +50,7 @@ pure alternatives, namely :func:`jax.ops.index_update` and its relatives.
     index_min
     index_max
 
-.. _syntactic-sugar-for-ops:
 
-Syntactic sugar for indexed update operators
---------------------------------------------
-
-JAX also provides an alternate syntax for these indexed update operators.
-Specifically, JAX ndarray types have a property ``at``, which can be used as
-follows (where ``idx`` can be an arbitrary index expression).
-
-====================  ===================================================
-Alternate syntax      Equivalent expression
-====================  ===================================================
-``x.at[idx].set(y)``  ``jax.ops.index_update(x, jax.ops.index[idx], y)``
-``x.at[idx].add(y)``  ``jax.ops.index_add(x, jax.ops.index[idx], y)``
-``x.at[idx].mul(y)``  ``jax.ops.index_mul(x, jax.ops.index[idx], y)``
-``x.at[idx].min(y)``  ``jax.ops.index_min(x, jax.ops.index[idx], y)``
-``x.at[idx].max(y)``  ``jax.ops.index_max(x, jax.ops.index[idx], y)``
-====================  ===================================================
-
-Note that none of these expressions modify the original `x`; instead they return
-a modified copy of `x`.
 
 Other operators
 ---------------
