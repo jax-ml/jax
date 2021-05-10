@@ -440,3 +440,20 @@ jax.numpy.linalg
   svd
   tensorinv
   tensorsolve
+
+JAX DeviceArray
+---------------
+The JAX :class:`~jax.numpy.DeviceArray` is the core array object in JAX: you can
+think of it as the equivalent of a :class:`numpy.ndarray` backed by a memory buffer
+on a single device. Like :class:`numpy.ndarray`, most users will not need to
+instantiate :class:`DeviceArray`s manually, but rather will create them via
+:mod:`jax.numpy` functions like :func:`~jax.numpy.array`, :func:`~jax.numpy.arange`,
+:func:`~jax.numpy.linspace`, and others listed above.
+
+.. autoclass:: jax.numpy.DeviceArray
+
+.. autoclass:: jaxlib.xla_extension.DeviceArrayBase
+
+.. autoclass:: jaxlib.xla_extension.DeviceArray
+   :members:
+   :inherited-members:
