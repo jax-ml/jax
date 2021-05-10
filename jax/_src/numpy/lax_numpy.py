@@ -2286,6 +2286,9 @@ def flatnonzero(a):
 def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
                    axis=None, keepdims=None, **kwargs):
   _check_arraylike(name, a)
+  if not issubdtype(_dtype(a), inexact):
+    return jnp_reduction(a, axis=axis, keepdims=keepdims, **kwargs)
+
   out = jnp_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
                       axis=axis, keepdims=keepdims, **kwargs)
   if nan_if_all_nan:
