@@ -1812,6 +1812,10 @@ class APITest(jtu.JaxTestCase):
     check_warning(lambda: jnp.arange(1.0).astype("int64"),
                   lambda: jnp.arange(1.0).astype(int))
 
+  def test_error_for_invalid_dtype(self):
+    with self.assertRaisesRegex(TypeError, ".*not a valid JAX array type.*"):
+      lax.add(jnp.array(7), np.array("hello"))
+
   def test_vmap_preserves_docstr(self):
     def superfun(a):
       """Does things with stuff."""
