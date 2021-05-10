@@ -54,7 +54,7 @@ case $2 in
     usage
 esac
 
-if ! python -m auditwheel show dist/jaxlib-*.whl  | grep 'platform tag: "manylinux2010_x86_64"' > /dev/null; then
+if ! python -m auditwheel show dist/jaxlib-*.whl  | egrep 'platform tag: "(manylinux2010_x86_64|manylinux_2_12_x86_64)"' > /dev/null; then
   # Print output for debugging
   python -m auditwheel show dist/jaxlib-*.whl
   echo "jaxlib wheel is not manylinux2010 compliant"
