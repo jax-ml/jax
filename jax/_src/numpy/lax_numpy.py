@@ -4210,10 +4210,25 @@ def einsum(*operands, out=None, optimize='greedy', precision=None,
 
   optimize = 'greedy' if optimize is True else optimize
   # using einsum_call=True here is an internal api for opt_einsum
-  operands, contractions = opt_einsum.contract_path(
-      *operands, einsum_call=True, use_blas=True, optimize=optimize)
+
+  # Allow handling of shape polymorphism
+  non_constant_dim_types = {
+      type(d) for op in operands if not isinstance(op, str)
+      for d in np.shape(op) if not core.is_constant_dim(d)
+  }
+  if not non_constant_dim_types:
+    einsum_contract_path_fn = opt_einsum.contract_path
+  else:
+    einsum_contract_path_fn = _polymorphic_einsum_contract_path_handlers[next(iter(non_constant_dim_types))]
+  operands, contractions = einsum_contract_path_fn(
+        *operands, einsum_call=True, use_blas=True, optimize=optimize)
+
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
   return _einsum(operands, contractions, precision)
+
+# Enable other modules to override einsum_contact_path.
+# Indexed by the type of the non constant dimension
+_polymorphic_einsum_contract_path_handlers = {}  # type: ignore
 
 @_wraps(np.einsum_path)
 def einsum_path(subscripts, *operands, optimize='greedy'):
@@ -4258,7 +4273,7 @@ def _einsum(operands: Sequence,
     new_names = []
     for i, d in enumerate(names):
       other_i = other_names.find(d)
-      if s[i] != 1 or other_i == -1 or other_shape[other_i] == 1:
+      if not core.symbolic_equal_dim(s[i], 1) or other_i == -1 or core.symbolic_equal_dim(other_shape[other_i], 1):
         new_shape.append(s[i])
         new_names.append(d)
     return reshape(operand, tuple(new_shape)), "".join(new_names)

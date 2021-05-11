@@ -20,7 +20,11 @@ For usage instructions, read the jax2tf.convert docstring, and the
 import collections
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
+import jax
 from jax import core
+from jax._src.numpy import lax_numpy
+import numpy as np
+import opt_einsum
 
 DimSize = core.DimSize
 Shape = core.Shape
@@ -113,6 +117,49 @@ class DimensionHandlerVar(core.DimensionHandler):
 
 
 core._SPECIAL_DIMENSION_HANDLERS[DimVar] = DimensionHandlerVar()
+
+def _einsum_contract_path(*operands, **kwargs):
+  """Like opt_einsum.contract_path, with support for DimPolynomial shapes.
+
+  We use opt_einsum.contract_path to compute the schedule, using a fixed
+  constant for all dimension variables. This is safe because we throw an
+  error if there are more than 1 contractions. Essentially, we just use
+  opt_einsum.contract_path to parse the specification.
+  """
+
+  # Replace the polymorphic shapes with some concrete shapes for calling
+  # into opt_einsum.contract_path, because the latter wants to compute the
+  # sizes of operands and intermediate results.
+  fake_ops = []
+  for op in operands:
+    if isinstance(op, str):
+      fake_ops.append(op)
+    else:
+      shape = np.shape(op)
+      def fake_dim(d):
+        if core.is_constant_dim(d):
+          return d
+        else:
+          if not isinstance(d, DimVar):
+            raise TypeError(f"Encountered unexpected shape dimension {d}")
+          return 8
+      fake_ops.append(jax.ShapeDtypeStruct(tuple(map(fake_dim, shape)), op.dtype))
+
+  contract_fake_ops, contractions = opt_einsum.contract_path(*fake_ops,
+                                                             **kwargs)
+  if len(contractions) > 1:
+    msg = ("Shape polymorphism is not yet supported for einsum with more than "
+           f"one contraction {contractions}")
+    raise ValueError(msg)
+  contract_operands = []
+  for op in contract_fake_ops:
+    idx = tuple(i for i, fake_op in enumerate(fake_ops) if op is fake_op)
+    assert len(idx) == 1
+    contract_operands.append(operands[idx[0]])
+  return contract_operands, contractions
+
+lax_numpy._polymorphic_einsum_contract_path_handlers[DimVar] = _einsum_contract_path
+
 
 def _split_shape_ints(shape: Shape) -> Tuple[Sequence[int], Sequence[DimVar]]:
   """Splits the shape into an integer sequence and a sequence of vars."""
