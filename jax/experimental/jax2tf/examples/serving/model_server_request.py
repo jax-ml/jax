@@ -15,7 +15,7 @@
 
 See README.md for instructions.
 """
-import grpc
+import grpc  # type: ignore[import]
 import json
 import logging
 import requests
@@ -26,9 +26,9 @@ from absl import flags
 from jax.experimental.jax2tf.examples import mnist_lib  # type: ignore
 
 import numpy as np
-import tensorflow as tf  # type: ignore
-import tensorflow_datasets as tfds  # type: ignore
-from tensorflow_serving.apis import predict_pb2
+import tensorflow as tf  # type: ignore[import]
+import tensorflow_datasets as tfds  # type: ignore[import]
+from tensorflow_serving.apis import predict_pb2  # type: ignore[import]
 from tensorflow_serving.apis import prediction_service_pb2_grpc
 
 

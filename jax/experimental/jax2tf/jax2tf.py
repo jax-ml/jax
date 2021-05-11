@@ -68,6 +68,8 @@ def _sanitize_scope_name(name):
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
 TfVal = Any
 DType = Any
+PrecisionType = int  # Enum xla_data.PrecisionConfig.Precision
+
 def _is_tfval(v: TfVal) -> bool:
   if isinstance(v, (tf.Tensor, tf.Variable)):
     return True
@@ -123,7 +125,6 @@ def _xla_path_disabled_error(primitive_name: str) -> Exception:
 @functools.partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable, *,
             polymorphic_shapes: Optional[Sequence[Any]]=None,
-            in_shapes=None,  # DEPRECATED
             with_gradient=True, enable_xla=True) -> Callable:
   """Transforms `fun` to be executed by TensorFlow.
 
@@ -222,13 +223,13 @@ def convert(fun: Callable, *,
         raise TypeError(msg)
       polymorphic_shapes_ = tuple(polymorphic_shapes)
 
-    # Expand the in_shapes to match the argument pytree
+    # Expand the polymorphic_shapes to match the argument pytree
     polymorphic_shapes_flat = tuple(api_util.flatten_axes("jax2tf.convert polymorphic_shapes",
                                                           in_tree.children()[0],
                                                           polymorphic_shapes_))
 
     # Construct the abstract values for the flat arguments, possibly based on
-    # the input shapes and the in_shapes if given. May create new shape
+    # the input shapes and the polymorphic_shapes if given. May create new shape
     # variables.
     args_avals_flat, shapeenv = _args_to_avals_and_env(args_flat,
                                                        polymorphic_shapes_flat)
@@ -557,11 +558,16 @@ class TensorFlowTracer(core.Tracer):
     elif isinstance(val, (tf.Tensor, tf.Variable)):
       val_shape, val_dtype = _tfval_shape_dtype(val)
       aval_dtype = np.dtype(self._aval.dtype)  # type: ignore[attr-defined]
-      if val_dtype != aval_dtype and (val_dtype == tf.int32 and aval_dtype == jnp.int64 or
-                                      val_dtype == tf.int64 and aval_dtype == jnp.int32 or
-                                      val_dtype == tf.float32 and aval_dtype == jnp.float64 or
-                                      val_dtype == tf.float64 and aval_dtype == jnp.float32):
-        # We expect that x64 values are turned into x32
+      if (val_dtype != aval_dtype and
+          not config.x64_enabled and
+          (val_dtype == tf.int32 and aval_dtype == jnp.int64 or
+           val_dtype == tf.int64 and aval_dtype == jnp.int32 or
+           val_dtype == tf.float32 and aval_dtype == jnp.float64 or
+           val_dtype == tf.float64 and aval_dtype == jnp.float32 or
+           val_dtype == tf.complex128 and aval_dtype == jnp.complex64)):
+        # If JAX does not have x64 bit mode enabled, it will force the 64-bit
+        # values to use 32-bit precision. In order to make the TF conversion
+        # follow JAX's rules, we cast the TF values down to 32-bit mode.
         val = tf.cast(val, dtype=aval_dtype)
         val_dtype = aval_dtype
 
@@ -569,7 +575,8 @@ class TensorFlowTracer(core.Tracer):
         assert aval_dtype == val_dtype, f"expected {aval_dtype} == {val_dtype}"
         for aval_dim, val_dim in util.safe_zip(self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
-            assert isinstance(aval_dim, shape_poly.DimVar), f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
+            assert isinstance(aval_dim,
+                              shape_poly.DimVar), f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           elif not isinstance(aval_dim, shape_poly.DimVar):
             assert aval_dim == val_dim, f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           else:
@@ -1082,13 +1089,14 @@ def _conv_general_dimension_numbers_proto(dimension_numbers):
   return proto
 
 
-def _conv_general_precision_config_proto(precision):
+def _precision_config_proto(precision: Optional[Tuple[PrecisionType, PrecisionType]]):
   """Convert an integer to an XLA.PrecisionConfig."""
   if precision is None:
     return None
 
   proto = xla_data_pb2.PrecisionConfig()
-  proto.operand_precision.append(int(precision))
+  proto.operand_precision.append(int(precision[0]))
+  proto.operand_precision.append(int(precision[1]))
   return proto
 
 # _try_tf_conv returns a Tensor when it succeeds, or a string describing why
@@ -1196,9 +1204,11 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     return error
   return convert_dilation_and_compute_result(tf_padding, tf_dim_nums)
 
-def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
+def _conv_general_dilated(lhs, rhs, *,
+                          window_strides, padding, lhs_dilation,
                           rhs_dilation, dimension_numbers, feature_group_count,
-                          batch_group_count, lhs_shape, rhs_shape, precision,
+                          batch_group_count, lhs_shape, rhs_shape,
+                          precision: Optional[Tuple[PrecisionType, PrecisionType]],
                           preferred_element_type, _in_avals, _out_aval):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   if not _enable_xla:
@@ -1212,7 +1222,7 @@ def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
       raise _xla_path_disabled_error("conv_general_dilated")
 
   dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
-  precision_config_proto = _conv_general_precision_config_proto(precision)
+  precision_config_proto = _precision_config_proto(precision)
   assert batch_group_count == 1  # TODO(phawkins): implement batch_group_count
   out = tfxla.conv(
       lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -1226,24 +1236,38 @@ def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
 tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
-def _dot_general(lhs, rhs, dimension_numbers, precision, preferred_element_type):
+def _dot_general(lhs, rhs, *,
+                 dimension_numbers,
+                 precision: Optional[Tuple[PrecisionType, PrecisionType]],
+                 preferred_element_type: Optional[DType],
+                 _in_avals: Sequence[core.AbstractValue],
+                 _out_aval: core.AbstractValue):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
-  del precision
-  del preferred_element_type
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_ndim, rhs_ndim = len(lhs.shape), len(rhs.shape)
+  if _enable_xla:
+    dnums_proto = xla_data_pb2.DotDimensionNumbers()
+    dnums_proto.lhs_contracting_dimensions.extend(lhs_contracting)
+    dnums_proto.rhs_contracting_dimensions.extend(rhs_contracting)
+    dnums_proto.lhs_batch_dimensions.extend(lhs_batch)
+    dnums_proto.rhs_batch_dimensions.extend(rhs_batch)
+    precision_config_proto = _precision_config_proto(precision)
+    res = tfxla.dot_general(lhs, rhs, dnums_proto, precision_config_proto,
+                            preferred_element_type=preferred_element_type)
+    # TODO: in presence of None dimensions, XlaDot shape inference returns
+    # unknown shape.
+    res.set_shape(_aval_to_tf_shape(_out_aval))
+    return res
+
   # This condition ensures that:
-  # 1) the considered dtype is not tf.bfloat16/tf.int32, which are supported by
-  #    tf.linalg.einsum but not by tf.linalg.matmul;
-  # 2) the batch dimensions are ordered in the same way in lhs and rhs (this is
+  # 1) the batch dimensions are ordered in the same way in lhs and rhs (this is
   #    not strictly necessary, but we would have to reshape the array if that
   #    were not the case;
-  # 3) lhs and rhs have the same number of dimensions +/- 1
-  # 4) the number of non-batch dimensions in both tensors is either 1 or 2
-  # 5) the contracting dimensions are consistent with those of a classic
+  # 2) lhs and rhs have the same number of dimensions +/- 1
+  # 3) the number of non-batch dimensions in both tensors is either 1 or 2
+  # 4) the contracting dimensions are consistent with those of a classic
   #    matrix/matrix, vector/matrix or matrix/vector multiplication.
-  if (not lhs.dtype in [tf.bfloat16, tf.int32]
-      and lhs_batch == rhs_batch == tuple(range(len(lhs_batch)))
+  if (lhs_batch == rhs_batch == tuple(range(len(lhs_batch)))
       and lhs_ndim - rhs_ndim in [-1, 0, 1]
       and 1 <= lhs_ndim - len(lhs_batch) <= 2
       and 1 <= rhs_ndim - len(rhs_batch) <= 2
@@ -1290,16 +1314,16 @@ def _dot_general(lhs, rhs, dimension_numbers, precision, preferred_element_type)
     shared_id = next(new_id)
     lhs_axis_ids[lhs_axis] = shared_id
     rhs_axis_ids[rhs_axis] = shared_id
-    lhs_out_axis_ids[lhs_axis] = None
-    rhs_out_axis_ids[rhs_axis] = None
+    lhs_out_axis_ids[lhs_axis] = None  # type: ignore[call-overload]
+    rhs_out_axis_ids[rhs_axis] = None  # type: ignore[call-overload]
 
   batch_ids = []
   for lhs_axis, rhs_axis in zip(lhs_batch, rhs_batch):
     shared_id = next(new_id)
     lhs_axis_ids[lhs_axis] = shared_id
     rhs_axis_ids[rhs_axis] = shared_id
-    lhs_out_axis_ids[lhs_axis] = None
-    rhs_out_axis_ids[rhs_axis] = None
+    lhs_out_axis_ids[lhs_axis] = None  # type: ignore[call-overload]
+    rhs_out_axis_ids[rhs_axis] = None  # type: ignore[call-overload]
     batch_ids.append(shared_id)
 
   not_none = lambda x: x is not None
@@ -1310,7 +1334,7 @@ def _dot_general(lhs, rhs, dimension_numbers, precision, preferred_element_type)
                             "".join(rhs_axis_ids),
                             "".join(out_axis_ids))
   return tf.linalg.einsum(spec, lhs, rhs)
-tf_impl[lax.dot_general_p] = _dot_general
+tf_impl_with_avals[lax.dot_general_p] = _dot_general
 
 
 def _broadcast(operand, *, sizes):

@@ -1,11 +1,11 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-03-29* (YYYY-MM-DD)
+*Last generated on: 2021-05-12* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2313 test harnesses to test
-the implementation of 122 numeric JAX primitives.
+We use a set of 2418 test harnesses to test
+the implementation of 121 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
 The following table shows the dtypes at which primitives
@@ -76,7 +76,7 @@ be updated.
 | device_put | 16 | all |  |
 | digamma | 4 | floating | bool, complex, integer |
 | div | 20 | inexact, integer | bool |
-| dot_general | 125 | all |  |
+| dot_general | 245 | all |  |
 | dynamic_slice | 32 | all |  |
 | dynamic_update_slice | 21 | all |  |
 | eig | 72 | inexact | bool, integer |
@@ -156,7 +156,6 @@ be updated.
 | svd | 120 | inexact | bool, integer |
 | tan | 6 | inexact | bool, integer |
 | tanh | 6 | inexact | bool, integer |
-| tie_in | 15 | all |  |
 | top_k | 15 | bool, floating, integer | complex |
 | transpose | 17 | all |  |
 | triangular_solve | 26 | inexact | bool, integer |
@@ -188,6 +187,9 @@ and search for "limitation".
 |cummax|unimplemented|complex64|tpu|
 |cummin|unimplemented|complex64|tpu|
 |cumprod|unimplemented|complex64|tpu|
+|dot_general|preferred_element_type=c128 not implemented|complex64|tpu|
+|dot_general|preferred_element_type=f64 crashes (b/187884887)|bfloat16, float16, float32|tpu|
+|dot_general|preferred_element_type=i64 not implemented|int16, int32, int8|tpu|
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|
 |eigh|complex eigh not supported |complex|tpu|
@@ -202,7 +204,6 @@ and search for "limitation".
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|
 |svd|complex not implemented. Works in JAX for CPU and GPU with custom kernels|complex|tpu|
 |svd|unimplemented|bfloat16, float16|cpu, gpu|
-|tie_in|requires omnistaging to be disabled|all|cpu, gpu, tpu|
 |triangular_solve|unimplemented|float16|gpu|
 
 ## Table generation

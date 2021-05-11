@@ -2352,22 +2352,49 @@ def _make_dot_general_harness(name,
                               rhs_shape=(4, 2),
                               dtype=np.float32,
                               precision=None,
-                              dimension_numbers=(((1,), (0,)), ((), ()))):
+                              dimension_numbers=(((1,), (0,)), ((), ())),
+                              preferred_element_type=None):
+  suffix = ""
+  if precision is not None:
+    suffix += f"_precision={precision}"
+  if preferred_element_type is not None:
+    suffix += f"_preferred={jtu.dtype_str(preferred_element_type)}"
   define(
     lax.dot_general_p,
-    f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}_precision={precision}"
+    f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}{suffix}"
       .replace(" ", ""),
     lax.dot_general, [
       RandArg(lhs_shape, dtype),
       RandArg(rhs_shape, dtype),
       StaticArg(dimension_numbers),
-      StaticArg(precision)
+      StaticArg(precision),
+      StaticArg(preferred_element_type)
     ],
     dtype=dtype,
     lhs_shape=lhs_shape,
     rhs_shape=rhs_shape,
     dimension_numbers=dimension_numbers,
-    precision=precision)
+    precision=precision,
+    preferred_element_type=preferred_element_type,
+    jax_unimplemented=[
+        Limitation(
+            "preferred_element_type=c128 not implemented",
+            devices="tpu",
+            dtypes=np.complex64,
+            enabled=(preferred_element_type in [np.complex128])),
+        Limitation(
+            "preferred_element_type=f64 crashes (b/187884887)",
+            devices="tpu",
+            dtypes=(np.float16, jnp.bfloat16, np.float32),
+            enabled=(preferred_element_type in [np.float64]),
+            skip_run=True),
+        Limitation(
+            "preferred_element_type=i64 not implemented",
+            devices="tpu",
+            dtypes=(np.int8, np.int16, np.int32),
+            enabled=(preferred_element_type in [np.int64])),
+    ],
+  )
 
 
 # There are two execution paths in the conversion of dot_general. The main path
@@ -2421,6 +2448,28 @@ for lhs_shape, rhs_shape, dimension_numbers in [
     lhs_shape=lhs_shape,
     rhs_shape=rhs_shape,
     dimension_numbers=dimension_numbers)
+
+# Validate preferred element type
+# From lax_test.py
+preferred_type_combinations = [
+  (np.float16, np.float16), (np.float16, np.float32), (np.float16, np.float64),
+  (dtypes.bfloat16, np.float32),
+  (dtypes.bfloat16, np.float64), (np.float32, np.float32), (np.float32, np.float64),
+  (np.int8, np.int16), (np.int8, np.int32),
+  (np.int8, np.int64), (np.int16, np.int32), (np.int16, np.int64),
+  (np.int32, np.int32), (np.int32, np.int64),
+  (np.complex64, np.complex128)]
+
+for lhs_shape in [(3,), (4, 3)]:
+  for rhs_shape in [(3, ), (3, 6)]:
+    for dtype, preferred_element_type in preferred_type_combinations:
+      _make_dot_general_harness(
+          "preferred",
+          dtype=dtype,
+          lhs_shape=lhs_shape,
+          rhs_shape=rhs_shape,
+          dimension_numbers=(((len(lhs_shape) - 1,), (0,)), ((), ())),
+          preferred_element_type=preferred_element_type)
 
 
 def _make_concatenate_harness(name,
@@ -2520,8 +2569,6 @@ for batch_group_count, feature_group_count in [
       rhs_shape=rhs_shape,
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count)
-
-### XXX
 
 # Validate variations of window_strides
 for window_strides in [(2, 3)]:

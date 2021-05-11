@@ -2591,23 +2591,23 @@ class APITest(jtu.JaxTestCase):
     with jax.default_matmul_precision("bfloat16"):
       x @ x  # doesn't crash
       jaxpr = jax.make_jaxpr(op.matmul)(x, x)
-    self.assertIn('precision=DEFAULT', str(jaxpr))
+    self.assertIn('Precision.DEFAULT', str(jaxpr))
 
     with jax.default_matmul_precision("tensorfloat32"):
       jnp.dot(x, x)  # doesn't crash
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
-    self.assertIn('precision=HIGH\n', str(jaxpr))
+    self.assertIn('Precision.HIGH', str(jaxpr))
 
     with jax.default_matmul_precision("float32"):
       jnp.dot(x, x)  # doesn't crash
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
-    self.assertIn('precision=HIGHEST', str(jaxpr))
+    self.assertIn('Precision.HIGHEST', str(jaxpr))
 
     dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
     with jax.default_matmul_precision("tensorfloat32"):
       dot(x, x)  # doesn't crash
       jaxpr = jax.make_jaxpr(dot)(x, x)
-    self.assertIn('precision=HIGHEST', str(jaxpr))
+    self.assertIn('Precision.HIGHEST', str(jaxpr))
 
   def test_dot_precision_flag(self):
     x = jnp.zeros((2, 2))
@@ -2619,7 +2619,7 @@ class APITest(jtu.JaxTestCase):
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
     finally:
       config.FLAGS.jax_default_matmul_precision = prev_val
-    self.assertIn('precision=HIGH', str(jaxpr))
+    self.assertIn('Precision.HIGH', str(jaxpr))
     self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
 
     prev_val = config._read("jax_default_matmul_precision")
@@ -2629,7 +2629,7 @@ class APITest(jtu.JaxTestCase):
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
     finally:
       config.update('jax_default_matmul_precision', prev_val)
-    self.assertIn('precision=HIGH', str(jaxpr))
+    self.assertIn('Precision.HIGH', str(jaxpr))
     self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
 
   @unittest.skipIf(jax.lib._xla_extension_version <= 17,
