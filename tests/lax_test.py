@@ -17,6 +17,7 @@ import collections
 from functools import partial
 import itertools
 import operator
+import unittest
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -2395,6 +2396,16 @@ class LaxTest(jtu.JaxTestCase):
 
     const = lax._const(val, 0)
     self.assertEqual(dtypes.result_type(val), dtypes.result_type(const))
+
+
+  # TODO(phawkins): make this test unconditional after jaxlib 0.1.67 is the
+  # default.
+  @unittest.skipIf(jax.lib._xla_extension_version < 22,
+                   "Test requires jaxlib 0.1.67 or newer")
+  def testIgammaSpecial(self):
+    self.assertEqual(lax.igamma(1., np.inf), 1.)
+    self.assertEqual(lax.igammac(1., np.inf), 0.)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
