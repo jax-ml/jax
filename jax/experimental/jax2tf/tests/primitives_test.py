@@ -99,7 +99,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(
-      primitive_harness.all_harnesses, include_jax_unimpl=False
+      primitive_harness.all_harnesses, include_jax_unimpl=False,
       )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
@@ -110,7 +110,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                                   dtype=harness.dtype), limitations))
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
-    self.ConvertAndCompare(func_jax, *args, limitations=limitations)
+    enable_xla = harness.params.get("enable_xla", True)
+    self.ConvertAndCompare(func_jax, *args, limitations=limitations,
+                           enable_xla=enable_xla)
 
   def test_primitive_coverage(self):
     """Fail if there are JAX primitives that are not implemented."""

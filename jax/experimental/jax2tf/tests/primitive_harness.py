@@ -1229,17 +1229,20 @@ for dtype in jtu.dtypes.all:
     [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
     [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
   ]:
-    define(
-      lax.pad_p,
-      f"inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_pads={pads}",
-      lax.pad,
-      [RandArg(arg_shape, dtype),
-       np.array(0, dtype),
-       StaticArg(pads)],
-      rng_factory=jtu.rand_small,
-      arg_shape=arg_shape,
-      dtype=dtype,
-      pads=pads)
+    works_without_xla = all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in pads)
+    for enable_xla in ([True, False] if works_without_xla else [True]):
+      define(
+        lax.pad_p,
+        f"inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_pads={pads}_enable_xla={enable_xla}",
+        lax.pad,
+        [RandArg(arg_shape, dtype),
+         np.array(0, dtype),
+         StaticArg(pads)],
+        rng_factory=jtu.rand_small,
+        arg_shape=arg_shape,
+        dtype=dtype,
+        pads=pads,
+        enable_xla=enable_xla)
 
 
 def _make_select_harness(name,

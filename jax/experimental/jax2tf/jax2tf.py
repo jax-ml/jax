@@ -1350,15 +1350,17 @@ def _pad(operand, padding_value, *, padding_config,
          _out_aval: core.AbstractValue):
   del _in_avals
   low, high, interior = util.unzip3(padding_config)
+  if _enable_xla:
+    out = tfxla.pad(operand, padding_value, low, high, interior)
+    # TODO(b/184499027): improve shape inference for XlaPad
+    out.set_shape(_aval_to_tf_shape(_out_aval))
+    return out
+
   if all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in padding_config):
     return tf.pad(operand, util.safe_zip(low, high),
                   mode="CONSTANT", constant_values=padding_value)
-  if not _enable_xla:
-    raise _xla_path_disabled_error("pad")
-  out = tfxla.pad(operand, padding_value, low, high, interior)
-  # TODO(b/184499027): improve shape inference for XlaPad
-  out.set_shape(_aval_to_tf_shape(_out_aval))
-  return out
+  raise _xla_path_disabled_error("pad")
+
 tf_impl_with_avals[lax.pad_p] = _pad
 
 
