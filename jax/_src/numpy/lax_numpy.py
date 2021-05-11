@@ -2658,8 +2658,8 @@ def _broadcast_to_pairs(nvals, nd, name):
     # pad
     return tuple((nvals.flat[0], nvals.flat[0]) for i in range(nd))
   else:
-    raise ValueError(f"{name} given unexpected structure: {nvals}. "
-                     f"See docstring for valid {name} formats.")
+    raise ValueError(f"jnp.pad: {name} with nd={nd} has unsupported shape {nvals.shape}. "
+                     f"Valid shapes are ({nd}, 2), (1, 2), (2,), (1,), or ().")
 
 
 @partial(jit, static_argnums=(1, 2, 4, 5, 6))
