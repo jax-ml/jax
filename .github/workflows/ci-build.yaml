@@ -40,14 +40,13 @@ jobs:
             enable-x64: 0
             package-overrides: "none"
             num_generated_cases: 25
-# TODO: re-enable this for numpy 1.20
-#          - name-prefix: "with numpy-dispatch"
-#            python-version: 3.7
-#            os: ubuntu-latest
-#            enable-x64: 1
-#            # Test experimental NumPy dispatch
-#            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
-#            num_generated_cases: 10
+          - name-prefix: "with numpy-dispatch"
+            python-version: 3.7
+            os: ubuntu-latest
+            enable-x64: 1
+            # Test experimental NumPy dispatch
+            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
+            num_generated_cases: 10
           - name-prefix: "with internal numpy/scipy"
             python-version: 3.6
             os: ubuntu-latest
