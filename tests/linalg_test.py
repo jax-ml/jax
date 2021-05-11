@@ -83,7 +83,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype}
-      for n in [0, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
+      for n in [0, 2, 3, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
       for dtype in float_types + complex_types))
   def testDet(self, n, dtype):
     rng = jtu.rand_default(self.rng())
@@ -138,7 +138,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     b = jnp.array([[ 36, -42,  18],
                   [-42,  49, -21],
                   [ 18, -21,   9]], dtype=jnp.float32)
-    jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1, eps=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
