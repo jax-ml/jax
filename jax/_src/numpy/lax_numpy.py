@@ -49,6 +49,7 @@ from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
 from jax import lax
 from jax._src.lax.lax import _device_put_raw
 from jax import ops
+from jax._src.ops import scatter
 from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
@@ -5842,14 +5843,17 @@ class _IndexUpdateHelper:
 
   The ``at`` property is syntactic sugar for calling the indexed update functions
   defined in :mod:`jax.ops`, and acts as a pure equivalent of in-place
-  modificatons. For further information, see `Syntactic Sugar for Index Update Operators
-  <https://jax.readthedocs.io/en/latest/jax.ops.html#syntactic-sugar-for-indexed-update-operators>`_.
+  modificatons. For further information, see `Indexed Update Operators
+  <https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-operators>`_.
 
   In particular:
 
   - ``x = x.at[idx].set(y)`` is a pure equivalent of ``x[idx] = y``.
   - ``x = x.at[idx].add(y)`` is a pure equivalent of ``x[idx] += y``.
-  - ``x = x.at[idx].mul(y)`` is a pure equivalent of ``x[idx] *= y``.
+  - ``x = x.at[idx].multiply(y)`` (aka ``mul``) is a pure equivalent of
+    ``x[idx] *= y``.
+  - ``x = x.at[idx].divide(y)`` is a pure equivalent of ``x[idx] /= y``.
+  - ``x = x.at[idx].power(y)`` is a pure equivalent of ``x[idx] **= y``.
   - ``x = x.at[idx].min(y)`` is a pure equivalent of
     ``x[idx] = minimum(x[idx], y)``.
   - ``x = x.at[idx].max(y)`` is a pure equivalent of
@@ -5866,6 +5870,8 @@ class _IndexUpdateHelper:
   def __repr__(self):
     return f"_IndexUpdateHelper({repr(self.array)})"
 
+_power = power
+_divide = divide
 
 class _IndexUpdateRef:
   """Helper object to call indexed update functions for an (advanced) index.
@@ -5886,74 +5892,100 @@ class _IndexUpdateRef:
   def set(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] = y``.
 
-    ``x.at[idx].set(y)`` is syntactic sugar for
-    ``jax.ops.index_update(x, jax.ops.index[idx], y)``, and
-    returns the value of ``x`` that would result from the NumPy-style
+    Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] = y``.
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_update(self.array, self.index, values,
-                            indices_are_sorted=indices_are_sorted,
-                            unique_indices=unique_indices)
+    return scatter._scatter_update(self.array, self.index, values, lax.scatter,
+                                   indices_are_sorted=indices_are_sorted,
+                                   unique_indices=unique_indices)
 
   def add(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] += y``.
 
-    ``x.at[idx].add(y)`` is syntactic sugar for
-    ``jax.ops.index_add(x, jax.ops.index[idx], y)``, and
-    returns the value of ``x`` that would result from the NumPy-style
+    Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] += y``.
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_add(self.array, self.index, values,
-                         indices_are_sorted=indices_are_sorted,
-                         unique_indices=unique_indices)
+    return scatter._scatter_update(self.array, self.index, values,
+                                   lax.scatter_add,
+                                   indices_are_sorted=indices_are_sorted,
+                                   unique_indices=unique_indices)
 
-  def mul(self, values, indices_are_sorted=False, unique_indices=False):
-    """Pure equivalent of ``x[idx] += y``.
+  def multiply(self, values, indices_are_sorted=False, unique_indices=False):
+    """Pure equivalent of ``x[idx] *= y``.
 
-    ``x.at[idx].mul(y)`` is syntactic sugar for
-    ``jax.ops.index_mul(x, jax.ops.index[idx], y)``, and
-    returns the value of ``x`` that would result from the NumPy-style
+    Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] *= y``.
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_mul(self.array, self.index, values,
-                         indices_are_sorted=indices_are_sorted,
-                         unique_indices=unique_indices)
+    return scatter._scatter_update(self.array, self.index, values,
+                                   lax.scatter_mul,
+                                   indices_are_sorted=indices_are_sorted,
+                                   unique_indices=unique_indices)
+  mul = multiply
+
+  def divide(self, values, indices_are_sorted=False, unique_indices=False):
+    """Pure equivalent of ``x[idx] /= y``.
+
+    Returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] /= y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return _divide(
+      self.array,
+      scatter._scatter_update(ones_like(self.array), self.index, values,
+                              lax.scatter_mul,
+                              indices_are_sorted=indices_are_sorted,
+                              unique_indices=unique_indices))
+
+  def power(self, values, indices_are_sorted=False, unique_indices=False):
+    """Pure equivalent of ``x[idx] **= y``.
+
+    Returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] **= y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return _power(
+      self.array,
+      scatter._scatter_update(ones_like(self.array), self.index, values,
+                              lax.scatter_mul,
+                              indices_are_sorted=indices_are_sorted,
+                              unique_indices=unique_indices))
 
   def min(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
-    ``x.at[idx].min(y)`` is syntactic sugar for
-    ``jax.ops.index_min(x, jax.ops.index[idx], y)``, and
-    returns the value of ``x`` that would result from the NumPy-style
+    Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>`
     ``x[idx] = minimum(x[idx], y)``.
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_min(self.array, self.index, values,
-                         indices_are_sorted=indices_are_sorted,
-                         unique_indices=unique_indices)
+    return scatter._scatter_update(self.array, self.index, values,
+                                   lax.scatter_min,
+                                   indices_are_sorted=indices_are_sorted,
+                                   unique_indices=unique_indices)
 
   def max(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
-    ``x.at[idx].max(y)`` is syntactic sugar for
-    ``jax.ops.index_max(x, jax.ops.index[idx], y)``, and
-    returns the value of ``x`` that would result from the NumPy-style
+    Returns the value of ``x`` that would result from the NumPy-style
     :mod:indexed assignment <numpy.doc.indexing>`
     ``x[idx] = maximum(x[idx], y)``.
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_max(self.array, self.index, values,
-                         indices_are_sorted=indices_are_sorted,
-                         unique_indices=unique_indices)
+    return scatter._scatter_update(self.array, self.index, values,
+                                   lax.scatter_max,
+                                   indices_are_sorted=indices_are_sorted,
+                                   unique_indices=unique_indices)
+
 
 setattr(_DeviceArray, "at", property(_IndexUpdateHelper))
 setattr(_CppDeviceArray, "at", property(_IndexUpdateHelper))

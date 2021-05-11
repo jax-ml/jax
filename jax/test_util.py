@@ -138,7 +138,10 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
   kw = {}
   if atol: kw["atol"] = atol
   if rtol: kw["rtol"] = rtol
-  np.testing.assert_allclose(a, b, **kw, err_msg=err_msg)
+  with np.errstate(invalid='ignore'):
+    # TODO(phawkins): surprisingly, assert_allclose sometimes reports invalid
+    # value errors. It should not do that.
+    np.testing.assert_allclose(a, b, **kw, err_msg=err_msg)
 
 def tolerance(dtype, tol=None):
   tol = {} if tol is None else tol
