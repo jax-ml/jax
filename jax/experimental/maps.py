@@ -16,7 +16,7 @@ import threading
 import contextlib
 import numpy as np
 import itertools as it
-from collections import OrderedDict, namedtuple
+from collections import OrderedDict, abc, namedtuple
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
                     NamedTuple, Union, Sequence)
 from warnings import warn
@@ -53,24 +53,18 @@ xops = xc.ops
 
 EXPERIMENTAL_SPMD_LOWERING = False
 
-class FrozenDict:  # dataclasses might remove some boilerplate here
+class FrozenDict(abc.Mapping):
   def __init__(self, *args, **kwargs):
     self.contents = dict(*args, **kwargs)
 
-  allowed_methods = {'items', 'values', 'keys', 'get'}
-  def __getattr__(self, name):
-    if name in self.allowed_methods:
-      return getattr(self.contents, name)
-    raise AttributeError(name)
-
   def __iter__(self):
-    return self.contents.__iter__()
+    return iter(self.contents)
 
   def __len__(self):
-    return self.contents.__len__()
+    return len(self.contents)
 
   def __getitem__(self, name):
-    return self.contents.__getitem__(name)
+    return self.contents[name]
 
   def __eq__(self, other):
     return isinstance(other, FrozenDict) and self.contents == other.contents
