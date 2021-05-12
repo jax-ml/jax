@@ -6653,6 +6653,11 @@ def remaining(original, *removed_lists):
 
 
 def _canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[PrecisionType, PrecisionType]]:
+  """Turns an API precision specification, into a pair of enumeration values.
+
+  The API can take the precision as a string, or int, and either as a single
+  value to apply to both operands, or as a sequence of two values.
+  """
   if precision is None:
     if config.jax_default_matmul_precision is None:
       return None
