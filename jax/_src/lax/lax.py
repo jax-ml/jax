@@ -5025,6 +5025,19 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   g_operand = ad.instantiate_zeros(g_operand)
   g_updates = ad.instantiate_zeros(g_updates)
 
+  if unique_indices:
+    # If the user has promised that the updates don't overlap, we can use a much
+    # simpler JVP.
+    val_out = scatter_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
+      update_consts=update_consts, dimension_numbers=dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=True)
+    tangent_out = scatter_p.bind(
+      g_operand, scatter_indices, g_updates, update_jaxpr=update_jaxpr,
+      update_consts=update_consts, dimension_numbers=dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=True)
+    return val_out, tangent_out
+
   # If there are overlapping indices in the scatter, it is unspecified which
   # update "wins". So we use the following perhaps surprising scheme:
   # a) attach a positive ID to each update in updates, and perform the scatter
@@ -5089,11 +5102,55 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
                             unique_indices=unique_indices)
   return val_out, tangent_out
 
+def _scatter_transpose_rule(t, operand, scatter_indices, updates, *,
+                            update_jaxpr, update_consts, dimension_numbers,
+                            indices_are_sorted, unique_indices):
+  if not unique_indices:
+    raise NotImplementedError("scatter transpose is only implemented where"
+                              "unique_indices=True")
+  assert not ad.is_undefined_primal(scatter_indices)
+  if ad.is_undefined_primal(updates):
+    updates_shape = updates.aval.shape
+  else:
+    updates_shape = updates.shape
+  if type(t) is ad_util.Zero:
+    operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
+    update_t = ad_util.Zero(updates.aval) if ad.is_undefined_primal(updates) else None
+  else:
+    operand_t = update_t = None
+    if ad.is_undefined_primal(operand):
+      # Zero out gradient entries that correspond to updated indices.
+      mask = scatter(_ones(t, dtype=np.bool_), scatter_indices,
+                     full(updates_shape, False),
+                     dimension_numbers=dimension_numbers,
+                     indices_are_sorted=indices_are_sorted,
+                     unique_indices=True)
+      operand_t = select(mask, t, _zeros(t))
+
+    if ad.is_undefined_primal(updates):
+      gather_dnums = GatherDimensionNumbers(
+        offset_dims=dimension_numbers.update_window_dims,
+        collapsed_slice_dims=dimension_numbers.inserted_window_dims,
+        start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
+      slice_sizes = []
+      pos = 0
+      for i in range(len(t.shape)):
+        if i in dimension_numbers.inserted_window_dims:
+          slice_sizes.append(1)
+        else:
+          slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
+          pos += 1
+      update_t = gather(t, scatter_indices, dimension_numbers=gather_dnums,
+                        slice_sizes=slice_sizes)
+
+
+  return [operand_t, None, update_t]
 
 scatter_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter',
     _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[scatter_p] = _scatter_jvp
+ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
 

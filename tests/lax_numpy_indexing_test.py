@@ -1023,6 +1023,27 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     y = rng(update_shape, update_dtype)
     check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
 
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+       "shape": shape, "dtype": dtype, "indexer": indexer,
+       "update_shape": update_shape, "update_dtype": update_dtype,
+       "op": op
+  } for name, index_specs in s(ADVANCED_INDEXING_TESTS_NO_REPEATS)
+    for shape, indexer in s(index_specs)
+    for op in s([UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE])
+    for dtype in s(float_dtypes)
+    for update_shape in s(_broadcastable_shapes(_update_shape(shape, indexer)))
+    for update_dtype in s([dtype] if op == UpdateOps.ADD else float_dtypes))))
+  def testAdvancedIndexingGrads(self, shape, dtype, update_shape, update_dtype,
+                                indexer, op):
+    rng = jtu.rand_default(self.rng())
+    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y, unique_indices=True)
+    x = rng(shape, dtype)
+    y = rng(update_shape, update_dtype)
+    check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
+
   def testSegmentSumBehavior(self):
     # testAdvancedIndexing compares against NumPy, and as a result doesn't check
     # repeated indices. This test is just a simple manual check, based on
