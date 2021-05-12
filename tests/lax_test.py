@@ -2406,6 +2406,21 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(lax.igamma(1., np.inf), 1.)
     self.assertEqual(lax.igammac(1., np.inf), 0.)
 
+  @unittest.skipIf(jax.lib.version < (0, 1, 66),
+                   "Test fails on jaxlib 0.1.65 or earlier.")
+  def testRegressionIssue5728(self):
+    # The computation in this test gave garbage data on CPU due to an LLVM bug.
+    @jax.jit
+    def f(inputs):
+      out_action_2 = lax.slice_in_dim(inputs, 0, 15, axis=-1)
+      mask = lax.slice_in_dim(inputs, 7, 22, axis=-1)
+      out_action_2 = lax.select(lax.eq(mask, np.float32(0)),
+                                lax.broadcast(np.float32(42), (1, 15)),
+                                out_action_2)
+      return lax.pad(out_action_2, np.float32(42), [(0, 0, 0), (0, 15, 0)])
+    self.assertArraysEqual(np.full((1, 30), np.float32(42)),
+                           f(np.zeros((1, 24), dtype=np.float32)))
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

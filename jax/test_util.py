@@ -873,7 +873,9 @@ class JaxTestCase(parameterized.TestCase):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
       self.assertDtypesMatch(x, y)
-    np.testing.assert_array_equal(x, y, err_msg=err_msg)
+    # Work around https://github.com/numpy/numpy/issues/18992
+    with np.errstate(over='ignore'):
+      np.testing.assert_array_equal(x, y, err_msg=err_msg)
 
   def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
                            rtol=None, err_msg=''):
