@@ -2466,6 +2466,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(result.second, np.array([0., 10., 30.]),
                         check_dtypes=False)
 
+  def testAssociativeScanOfBools(self):
+    x = jnp.array([False, True, True, True, False, True])
+    y = lax.associative_scan(lax.bitwise_xor, x)
+    self.assertArraysEqual(np.array([False, True, False, True, True, False]), y)
+
   def test_scan_typecheck_param(self):
     d = jnp.ones(2)
     def f(c, a):
