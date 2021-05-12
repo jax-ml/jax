@@ -494,7 +494,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     eps = 0.01 * alpha / (1.0 + np.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
                - scipy.stats.gamma.cdf(z, alpha - eps)) / (2 * eps)
-    pdf = scipy.stats.gamma.pdf(z, alpha)
+    with np.errstate(over='ignore'):
+      pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
     self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
