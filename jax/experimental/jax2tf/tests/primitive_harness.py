@@ -512,14 +512,17 @@ def _make_integer_pow_harness(name, *, shape=(20, 30), dtype=np.int32, y=3):
 
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
-  # Validate dtypes and y values
-  _make_integer_pow_harness("dtypes", dtype=dtype)
+  # Validate dtypes and y values for some special cases.
+  for y in range(-3, 5):
+    if np.issubdtype(dtype, np.integer) and y < 0:
+      continue  # No negative powers for integers
+    _make_integer_pow_harness("dtypes", dtype=dtype, y=y)
   # Validate overflow behavior by dtype. 127
   _make_integer_pow_harness("overflow", y=127, dtype=dtype)
 
 for dtype in jtu.dtypes.all_inexact:
   # Validate negative y by dtype
-  _make_integer_pow_harness("negative_exp", y=-127, dtype=dtype)
+  _make_integer_pow_harness("negative_overflow", y=-127, dtype=dtype)
 
 
 def _make_pow_harness(name,
@@ -2424,6 +2427,7 @@ for dtype in jtu.dtypes.all:
         dimension_numbers=dimension_numbers,
         dtype=dtype)
 
+# The other tests are only for float32.
 # Validate batch dimensions
 for lhs_shape, rhs_shape, dimension_numbers in [
   # Unique pattern that can go through tf.linalg.matmul

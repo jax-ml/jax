@@ -188,26 +188,31 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       assert len(custom_assert_lim) <= 1, f"Expecting at most one applicable limitation with custom_assert, found {custom_assert_lim}"
 
       try:
+        err_msg = f"TF mode {mode}."
+        log_hlo_on_error = mode == "compiled" or jtu.device_under_test() == "tpu"
+        if log_hlo_on_error:
+          err_msg += " See the logs for JAX and TF HLO comparisons."
         if custom_assert_lim:
           logging.info(log_message(f"Running custom_assert with tol={max_tol} due to {custom_assert_lim[0]}"))
-          custom_assert_lim[0].custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
+          custom_assert_lim[0].custom_assert(self, result_jax, result_tf,
+                                             args=args, tol=max_tol,
+                                             err_msg=err_msg)
         else:
           logging.info(log_message(f"Running default assert with tol={max_tol}"))
-          self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
+          self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol,
+                              err_msg=err_msg)
       except AssertionError as e:
-        # Log the optimized HLO for compiled mode, it should match.
-        if mode != "compiled":
-          logging.info(f"[{self._testMethodName}] Not printing HLO because the "
-                      f"mode was {mode}")
+        # Print the HLO for comparison
+        if not log_hlo_on_error:
+          print(f"[{self._testMethodName}] Not logging HLO because the "
+                f"mode was {mode}")
           raise
 
-        logging.info(f"[{self._testMethodName}] Logging HLO "
-                     f"for comparison error {e}")
-
+        logging.info(f"[{self._testMethodName}] Logging HLO for exception in mode {mode}: {e}")
         jax_comp = jax.xla_computation(func_jax)(*args)
         jax_hlo = jax_comp.as_hlo_text()
         logging.info(f"[{self._testMethodName}] "
-                     f"JAX NON-OPT HLO\n{jax_hlo}")
+                     f"JAX NON_OPT HLO\n{jax_hlo}")
 
         tf_func_compiled = tf.function(
             func_tf,
@@ -216,17 +221,17 @@ class JaxToTfTestCase(jtu.JaxTestCase):
             input_signature=_make_tf_input_signature(*tf_args))
         tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
                     stage="hlo")
-        logging.info(f"[{self._testMethodName}] TF NON-OPT HLO\n{tf_hlo}")
+        logging.info(f"[{self._testMethodName}] TF NON OPT HLO\n{tf_hlo}")
 
         backend = jax.lib.xla_bridge.get_backend()
         modules = backend.compile(jax_comp).hlo_modules()
         jax_opt_hlo = modules[0].to_string()
         logging.info(f"[{self._testMethodName}] "
                      f"JAX OPT HLO\n{jax_opt_hlo}")
-
         tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
                     stage="optimized_hlo")
         logging.info(f"[{self._testMethodName}] TF OPT HLO\n{tf_opt_hlo}")
+
         raise
 
     # end "for mode"

@@ -819,7 +819,28 @@ tf_impl[lax.is_finite_p] = tf.math.is_finite
 
 tf_impl[lax.abs_p] = tf.math.abs
 tf_impl[lax.pow_p] = tf.math.pow
-tf_impl[lax.integer_pow_p] = tf.math.pow
+
+
+def _integer_pow(x, *, y: int,
+                 _in_avals: Sequence[core.AbstractValue],
+                 _out_aval: core.AbstractValue):
+  # Follows the implementation in lax._integer_pow_translation_rule
+  if y == 0:
+    return tf.broadcast_to(tf.constant(1, dtype=x.dtype, shape=()),
+                           _eval_shape(_out_aval.shape))
+  is_reciprocal = y < 0
+  if is_reciprocal:
+    y = -y
+  acc = None
+  while y > 0:
+    if y & 1:
+      acc = x if acc is None else tf.math.multiply(acc, x)
+    y >>= 1
+    if y > 0:
+      x = tf.math.multiply(x, x)
+  return tf.math.reciprocal(acc) if is_reciprocal else acc
+
+tf_impl_with_avals[lax.integer_pow_p] = _integer_pow
 tf_impl[lax.exp_p] = tf.math.exp
 tf_impl[lax.expm1_p] = tf.math.expm1
 tf_impl[lax.log_p] = tf.math.log

@@ -2617,6 +2617,7 @@ def _integer_pow_dtype_rule(x, *, y):
   return dtype
 
 def _integer_pow_translation_rule(c, x, *, y):
+  # This should be kept in sync with the jax2tf translation rule.
   if y == 0:
     shape = c.get_shape(x)
     one = xb.constant(c, np.array(1, dtype=shape.numpy_dtype()))

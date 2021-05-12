@@ -60,10 +60,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         tolerance over all the applicable limitations, irrespective of their
         order.
       custom_assert: if given, then execute as
-        `custom_assert(tst, result_jax, result_tf, args=args, tol=tol)`, where
-        `tst` is the current TestCase instance, and args are the input
+        `custom_assert(tst, result_jax, result_tf, args=args, tol=tol, err_msg)`
+        , where `tst` is the current TestCase instance, and args are the input
         arguments that the harness created. The `tol` is the maximum tolerance
-        based on the applicable limitations.
+        based on the applicable limitations. `err_msg` is passed to NumPy
+        assert methods.
         `result_tf` is already converted to NumPy arrays.
     """
     super().__init__(
@@ -142,9 +143,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def helper_get_trig_custom_limitation(cls, np_inverse):
 
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       operand, = args
-      tst.assertAllClose(operand, np_inverse(result_tf), atol=tol, rtol=tol)
+      tst.assertAllClose(operand, np_inverse(result_tf), atol=tol, rtol=tol,
+                         err_msg=err_msg)
 
     return custom_numeric(
         description="May return different but still correct results",
@@ -266,10 +268,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def cholesky(cls, harness: primitive_harness.Harness):
 
-    def custom_assert(tst, result_jax, result_tf, *, tol, **_):
+    def custom_assert(tst, result_jax, result_tf, *, tol, err_msg, **_):
       # cholesky_p returns garbage in the strictly upper triangular part of the
       # result, so we can safely ignore that part.
-      tst.assertAllClose(jnp.tril(result_jax), result_tf, atol=tol)
+      tst.assertAllClose(jnp.tril(result_jax), result_tf, atol=tol,
+                         err_msg=err_msg)
 
     return [
         # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
@@ -397,22 +400,23 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
     # In the bfloat16 case, TF and lax both return NaN in undefined cases.
     # digamma is not defined at 0 and -1
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       # lax.digamma returns NaN and tf.math.digamma returns inf
       arg, = args
       special_cases = (arg == 0.) | (arg == -1.)
       nr_special_cases = np.count_nonzero(special_cases)
       tst.assertAllClose(
           np.full((nr_special_cases,), dtype(np.nan)),
-          result_jax[special_cases])
+          result_jax[special_cases], err_msg=err_msg)
       tst.assertAllClose(
-          np.full((nr_special_cases,), dtype(np.inf)), result_tf[special_cases])
+          np.full((nr_special_cases,), dtype(np.inf)), result_tf[special_cases],
+          err_msg=err_msg)
       # non-special cases are equal
       tst.assertAllClose(
           result_jax[~special_cases],
           result_tf[~special_cases],
           atol=tol,
-          rtol=tol)
+          rtol=tol, err_msg=err_msg)
 
     return [
         missing_tf_kernel(
@@ -468,7 +472,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     compute_right_eigenvectors = harness.params["compute_right_eigenvectors"]
     dtype = harness.dtype
 
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       operand, = args
       inner_dimension = operand.shape[-1]
 
@@ -497,7 +501,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           tol = 1e-13
         closest_diff = min(abs(eigenvalues_array - eigenvalue))
         tst.assertAllClose(
-            closest_diff, np.array(0., closest_diff.dtype), atol=tol)
+            closest_diff, np.array(0., closest_diff.dtype), atol=tol,
+            err_msg=err_msg)
 
       all_w_jax, all_w_tf = result_jax[0], result_tf[0]
       for idx in itertools.product(*map(range, operand.shape[:-2])):
@@ -531,7 +536,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def eigh(cls, harness: primitive_harness.Harness):
     dtype = harness.dtype
 
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       operand, = args
       inner_dimension = operand.shape[-1]
 
@@ -552,7 +557,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             np.zeros(a.shape, dtype=vr.dtype),
             atol=tol,
             # For bfloat16 the np.matmul returns float32 result.
-            check_dtypes=False)
+            check_dtypes=False, err_msg=err_msg)
 
       def check_eigenvalue_is_in_array(eigenvalue, eigenvalues_array):
         tol = None
@@ -562,7 +567,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           tol = 1e-5
         closest_diff = min(abs(eigenvalues_array - eigenvalue))
         tst.assertAllClose(
-            closest_diff, np.array(0., closest_diff.dtype), atol=tol)
+            closest_diff, np.array(0., closest_diff.dtype), atol=tol,
+            err_msg=err_msg)
 
       _, all_w_jax = result_jax
       all_vr_tf, all_w_tf = result_tf
@@ -636,7 +642,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def erf_inv(cls, harness: primitive_harness.Harness):
     # erf_inv is not defined for arg <= -1 or arg >= 1
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):  # noqa: F811
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):  # noqa: F811
       arg, = args
       # for arg < -1 or arg > 1
       # lax.erf_inv returns NaN; tf.math.erf_inv return +/- inf
@@ -646,7 +652,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           result_jax[~special_cases],
           result_tf[~special_cases],
           atol=tol,
-          rtol=tol)
+          rtol=tol, err_msg=err_msg)
 
     return [
         missing_tf_kernel(
@@ -680,27 +686,27 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def _pow_test_util(cls, harness: primitive_harness.Harness):
 
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       # NaNs are mismatched, but assertAllClose will also behave weirdly for
       # complex numbers containing np.inf as one of their components. See
       # https://github.com/numpy/numpy/issues/15959 for more details.
       mask = (
           np.isnan(result_jax) + np.isnan(result_tf) + np.isinf(result_jax) +
           np.isinf(result_tf))
-      tst.assertAllClose(result_jax[~mask], result_tf[~mask], rtol=tol)
+      tst.assertAllClose(result_jax[~mask], result_tf[~mask], rtol=tol,
+                         err_msg=err_msg)
 
     return [
         custom_numeric(
-            dtypes=[np.float32, np.complex64], devices="tpu", tol=1e-2),
-        custom_numeric(
             dtypes=[np.float32, np.complex64], devices=("cpu", "gpu"),
+            modes=("eager", "graph"),
             tol=1e-3),
-        custom_numeric(dtypes=[np.float64, np.complex128], tol=1e-12),
-        custom_numeric(dtypes=np.float16, tol=1),
-        # Values get really small for large negative powers.
-        custom_numeric(dtypes=dtypes.bfloat16, tol=3),
+        custom_numeric(dtypes=[np.float64, np.complex128],
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph"), tol=5e-5),
         custom_numeric(
             dtypes=[np.complex64, np.complex128],
+            modes=("eager", "graph"),
             custom_assert=custom_assert,
         )
     ]
@@ -710,7 +716,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     dtype = harness.dtype
 
     # igamma is not defined when the first argument is <=0
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       arg1, arg2 = args
       # lax.igamma returns NaN when arg1 == arg2 == 0; tf.math.igamma returns 0
       special_cases = (arg1 == 0.) & (arg2 == 0.)
@@ -723,7 +729,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           result_tf[special_cases])
       # non-special cases are equal
       tst.assertAllClose(result_jax[~special_cases], result_tf[~special_cases],
-                         atol=tol, rtol=tol)
+                         atol=tol, rtol=tol, err_msg=err_msg)
 
     return [
         missing_tf_kernel(
@@ -742,23 +748,23 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     dtype = harness.dtype
 
     # igammac is not defined when the first argument is <=0
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):  # noqa: F811
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):  # noqa: F811
       arg1, arg2 = args
       # lax.igammac returns 1. when arg1 <= 0; tf.math.igammac returns NaN
       special_cases = (arg1 <= 0.) | (arg2 <= 0)
       nr_special_cases = np.count_nonzero(special_cases)
       tst.assertAllClose(
           np.full((nr_special_cases,), 1., dtype=dtype),
-          result_jax[special_cases])
+          result_jax[special_cases], err_msg=err_msg)
       tst.assertAllClose(
           np.full((nr_special_cases,), np.nan, dtype=dtype),
-          result_tf[special_cases])
+          result_tf[special_cases], err_msg=err_msg)
       # non-special cases are equal
       tst.assertAllClose(
           result_jax[~special_cases],
           result_tf[~special_cases],
           atol=tol,
-          rtol=tol)
+          rtol=tol, err_msg=err_msg)
 
     return [
         missing_tf_kernel(
@@ -781,14 +787,26 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return [
         missing_tf_kernel(
             dtypes=[
-                np.uint8, np.uint16, np.uint32, np.uint64
+                np.int8, np.int16, np.uint8, np.uint16, np.uint32, np.uint64
             ],),
+        # TODO: on TPU, for f16, we get different results with eager mode
+        # than with compiled mode.
+        Jax2TfLimitation(
+            "Different overflow behavior. ",
+            dtypes=[np.float16, jnp.bfloat16],
+            devices="tpu",
+            expect_tf_error=False,
+            modes=("eager", "graph"),
+            skip_comparison=True),
         Jax2TfLimitation(
             "Different overflow behavior for large exponents. ",
-            dtypes=[np.int8, np.int16, np.int32, np.int64, np.float32, np.complex64],
+            dtypes=[np.int8, np.int16, np.int32, np.int64,
+                    np.float16, jnp.bfloat16, np.float32,
+                    np.complex64, np.complex128],
             enabled=(abs(y) > 10),
             expect_tf_error=False,
-            skip_comparison=True)
+            modes=("eager", "graph"),
+            skip_comparison=True),
     ] + list(cls._pow_test_util(harness))
 
   @classmethod
@@ -825,7 +843,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def lu(cls, harness: primitive_harness.Harness):
     dtype = harness.dtype
 
-    def custom_assert(tst, result_jax, result_tf, *, args, tol):
+    def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
       operand, = args
       lu, pivots, perm = result_tf
       batch_dims = operand.shape[:-2]
@@ -846,7 +864,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       tst.assertArraysEqual(
           lax.linalg.lu_pivots_to_permutation(pivots, m), perm)
       tst.assertAllClose(
-          jnp.matmul(p_mat, operand), jnp.matmul(l, u), atol=tol, rtol=tol)
+          jnp.matmul(p_mat, operand), jnp.matmul(l, u), atol=tol, rtol=tol,
+          err_msg=err_msg)
 
     return [
         missing_tf_kernel(dtypes=[np.complex64], devices="tpu"),
@@ -866,9 +885,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def max(cls, harness: primitive_harness.Harness):
     # TODO(bchetioui): discrepancies between TF & JAX when comparing with NaN;
     # JAX always returns NaN, while TF returns the value NaN is compared with.
-    def custom_assert(tst, result_jax, result_tf, **_):
+    def custom_assert(tst, result_jax, result_tf, err_msg, **_):
       mask = np.isnan(result_jax)
-      tst.assertAllClose(result_jax[~mask], result_tf[~mask])
+      tst.assertAllClose(result_jax[~mask], result_tf[~mask], err_msg=err_msg)
 
     return [
         missing_tf_kernel(
@@ -894,9 +913,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def min(cls, harness: primitive_harness.Harness):
     # TODO(bchetioui): discrepancies between TF & JAX when comparing with NaN;
     # JAX always returns NaN, while TF returns the value NaN is compared with.
-    def custom_assert(tst, result_jax, result_tf, **_):
+    def custom_assert(tst, result_jax, result_tf, *, err_msg, **_):
       mask = np.isnan(result_jax)
-      tst.assertAllClose(result_jax[~mask], result_tf[~mask])
+      tst.assertAllClose(result_jax[~mask], result_tf[~mask], err_msg=err_msg)
 
     return [
         missing_tf_kernel(
@@ -1144,7 +1163,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def svd(cls, harness: primitive_harness.Harness):
     # TODO: slow test
 
-    def custom_assert(tst, r_jax, r_tf, *, args, tol):
+    def custom_assert(tst, r_jax, r_tf, *, args, tol, err_msg):
 
       def _reconstruct_operand(result, is_tf: bool):
         # Reconstructing operand as documented in numpy.linalg.svd (see
@@ -1159,9 +1178,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         r_jax_reconstructed = _reconstruct_operand(r_jax, False)
         r_tf_reconstructed = _reconstruct_operand(r_tf, True)
         tst.assertAllClose(
-            r_jax_reconstructed, r_tf_reconstructed, atol=tol, rtol=tol)
+            r_jax_reconstructed, r_tf_reconstructed, atol=tol, rtol=tol,
+            err_msg=err_msg)
       else:
-        tst.assertAllClose(r_jax, r_tf, atol=tol, rtol=tol)
+        tst.assertAllClose(r_jax, r_tf, atol=tol, rtol=tol, err_msg=err_msg)
 
     return [
         # Works in JAX for complex due to custom calls on cpu and gpu
@@ -1191,16 +1211,17 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def top_k(cls, harness):
 
-    def custom_assert(tst, result_jax, result_tf, **_):
+    def custom_assert(tst, result_jax, result_tf, *, err_msg, **_):
       assert len(result_jax) == len(result_tf)
       # TODO: TF and JAX sort [inf, nan] differently.
       first_arr_jax, first_arr_tf = result_jax[0], result_tf[0]
       if np.all(first_arr_jax == first_arr_tf):
         for arr_jax, arr_tf in zip(result_jax, result_tf):
-          tst.assertArraysEqual(arr_jax, arr_tf)
+          tst.assertArraysEqual(arr_jax, arr_tf, err_msg=err_msg)
       else:
         mask_jax, mask_tf = np.isnan(first_arr_jax), np.isnan(first_arr_tf)
-        tst.assertArraysEqual(first_arr_jax[~mask_jax], first_arr_tf[~mask_tf])
+        tst.assertArraysEqual(first_arr_jax[~mask_jax], first_arr_tf[~mask_tf],
+                              err_msg=err_msg)
 
     return [
         missing_tf_kernel(
