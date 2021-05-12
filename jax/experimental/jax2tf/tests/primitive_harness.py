@@ -2386,12 +2386,6 @@ def _make_dot_general_harness(name,
             dtypes=np.complex64,
             enabled=(preferred_element_type in [np.complex128])),
         Limitation(
-            "preferred_element_type=f64 crashes (b/187884887)",
-            devices="tpu",
-            dtypes=(np.float16, jnp.bfloat16, np.float32),
-            enabled=(preferred_element_type in [np.float64]),
-            skip_run=True),
-        Limitation(
             "preferred_element_type=i64 not implemented",
             devices="tpu",
             dtypes=(np.int8, np.int16, np.int32),
