@@ -6652,28 +6652,35 @@ def remaining(original, *removed_lists):
   return [i for i in original if i not in removed]
 
 
-def _canonicalize_precision(precision):
+def _canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[PrecisionType, PrecisionType]]:
+  """Turns an API precision specification, into a pair of enumeration values.
+
+  The API can take the precision as a string, or int, and either as a single
+  value to apply to both operands, or as a sequence of two values.
+  """
   if precision is None:
     if config.jax_default_matmul_precision is None:
       return None
     try:
-      return _precision_strings[config.jax_default_matmul_precision]
+      precision = _precision_strings[config.jax_default_matmul_precision]
+      return (precision, precision)
     except KeyError:
       raise ValueError(
           "jax_default_matmul_precision flag must be set to None or a value in "
           f"{_precision_strings}, but got {config.jax_default_matmul_precision}"
       ) from None
   elif isinstance(precision, str) and precision in _precision_strings:
-    return _precision_strings.get(precision)
+    precision = _precision_strings.get(precision)
+    return (precision, precision)
   elif isinstance(precision, Precision):
-    return precision
+    return (precision, precision)
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(p, Precision) for p in precision)):
-    return precision
+    return precision  # type: ignore[return-value]
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(s, str) for s in precision)):
     s1, s2 = precision
-    return (_canonicalize_precision(s1), _canonicalize_precision(s2))
+    return (_canonicalize_precision(s1)[0], _canonicalize_precision(s2)[0])  # type: ignore
   else:
     raise ValueError(
         f"Precision argument must be None, a string in {_precision_strings}, "

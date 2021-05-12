@@ -11,9 +11,15 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.14 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...master).
 
+* Bug fixes:
+  * The {func}`jax2tf.convert` now converts `lax.dot_general` using the
+    `XlaDot` TensorFlow op, for better fidelity w.r.t. JAX numerical precision
+    ({jax-issue}`#6717`).
+
 ## jaxlib 0.1.67 (unreleased)
 
 ## jaxlib 0.1.66 (May 11 2021)
+
 * New features:
   * CUDA 11.1 wheels are now supported on all CUDA 11 versions 11.1 or higher.
 

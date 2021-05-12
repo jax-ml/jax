@@ -456,6 +456,7 @@ We use the following TFXLA ops:
    * `XlaPad` (wraps XLA Pad operator). We use this instead of `tf.pad` in order to
      support `lax.pad` interior padding (dilation) or negative edge padding.
    * `XlaConv` (wraps XLA ConvGeneralDilated operator).
+   * `XlaDot` and `XlaDotV2` (wraps XLA DotGeneral operator).
    * `XlaGather` (wraps XLA Gather operator). We could use `tf.gather` in some
      cases but not always. Also, `tf.gather` has a different semantics than `lax.gather`
      for index out of bounds.

@@ -784,7 +784,11 @@ def assert_dot_precision(expected_precision, fun, *args):
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
-    assert precision == expected_precision, msg
+    if isinstance(precision, tuple):
+      assert precision[0] == expected_precision, msg
+      assert precision[1] == expected_precision, msg
+    else:
+      assert precision == expected_precision, msg
 
 
 _CACHED_INDICES: Dict[int, Sequence[int]] = {}

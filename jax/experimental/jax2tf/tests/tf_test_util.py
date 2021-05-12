@@ -36,7 +36,7 @@ DType = Any
 def _make_tf_args(args):
   def _convert_to_tensor(v):
     if hasattr(v, "dtype"):
-      tf.convert_to_tensor(v)
+      return tf.convert_to_tensor(v)
     return v
 
   return tf.nest.map_structure(_convert_to_tensor, args)
@@ -50,7 +50,6 @@ def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
     return tf.TensorSpec(np.shape(tf_arg), tf_arg.dtype)
 
   return tf.nest.map_structure(_make_one_arg_signature, list(tf_args))
-
 
 def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   if mode == "eager":
@@ -188,13 +187,47 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       custom_assert_lim = [l for l in jax2tf_limits if l.custom_assert]
       assert len(custom_assert_lim) <= 1, f"Expecting at most one applicable limitation with custom_assert, found {custom_assert_lim}"
 
-      if custom_assert_lim:
-        logging.info(log_message(f"Running custom_assert with tol={max_tol} due to {custom_assert_lim[0]}"))
-        custom_assert_lim[0].custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
-      else:
-        logging.info(log_message(f"Running default assert with tol={max_tol}"))
-        # In compiled mode we expect the same result as JAX by default
-        self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
+      try:
+        if custom_assert_lim:
+          logging.info(log_message(f"Running custom_assert with tol={max_tol} due to {custom_assert_lim[0]}"))
+          custom_assert_lim[0].custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
+        else:
+          logging.info(log_message(f"Running default assert with tol={max_tol}"))
+          self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
+      except AssertionError as e:
+        # Log the optimized HLO for compiled mode, it should match.
+        if mode != "compiled":
+          logging.info(f"[{self._testMethodName}] Not printing HLO because the "
+                      f"mode was {mode}")
+          raise
+
+        logging.info(f"[{self._testMethodName}] Logging HLO "
+                     f"for comparison error {e}")
+
+        jax_comp = jax.xla_computation(func_jax)(*args)
+        jax_hlo = jax_comp.as_hlo_text()
+        logging.info(f"[{self._testMethodName}] "
+                     f"JAX NON-OPT HLO\n{jax_hlo}")
+
+        tf_func_compiled = tf.function(
+            func_tf,
+            autograph=False,
+            jit_compile=True,
+            input_signature=_make_tf_input_signature(*tf_args))
+        tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+                    stage="hlo")
+        logging.info(f"[{self._testMethodName}] TF NON-OPT HLO\n{tf_hlo}")
+
+        backend = jax.lib.xla_bridge.get_backend()
+        modules = backend.compile(jax_comp).hlo_modules()
+        jax_opt_hlo = modules[0].to_string()
+        logging.info(f"[{self._testMethodName}] "
+                     f"JAX OPT HLO\n{jax_opt_hlo}")
+
+        tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+                    stage="optimized_hlo")
+        logging.info(f"[{self._testMethodName}] TF OPT HLO\n{tf_opt_hlo}")
+        raise
 
     # end "for mode"
 

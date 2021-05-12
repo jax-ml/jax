@@ -398,7 +398,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     result, pullback = api.vjp(dot, lhs, rhs)
     gresult = lax.zeros_like_array(result)
     s = str(api.make_jaxpr(pullback)(gresult))
-    assert "precision=HIGHEST" in s
+    assert "Precision.HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -429,7 +429,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     result, pullback = api.vjp(dot_general, lhs, rhs)
     gresult = lax.zeros_like_array(result)
     s = str(api.make_jaxpr(pullback)(gresult))
-    assert "precision=HIGHEST" in s
+    assert "Precision.HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_dtype={}_broadcast_sizes={}".format(

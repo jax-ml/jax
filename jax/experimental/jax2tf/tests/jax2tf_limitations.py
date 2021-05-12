@@ -460,17 +460,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             modes="compiled",
             # Works for 2D matrices.
             enabled=(len(harness.params["lhs_shape"]) > 2)),
-        custom_numeric(dtypes=dtypes.bfloat16, tol=0.3),
-        custom_numeric(
-            dtypes=[np.complex64, np.float32], devices=("cpu", "gpu"),
-            tol=1e-5),
-        custom_numeric(
-            dtypes=[np.complex128, np.float64], devices=("cpu", "gpu"),
-            tol=1e-12),
-        custom_numeric(dtypes=np.float32, devices="tpu", tol=0.1),
-        custom_numeric(dtypes=np.complex64, devices="tpu", tol=0.3),
-        custom_numeric(dtypes=np.float16, devices=("gpu", "tpu"), tol=0.1),
-        custom_numeric(dtypes=np.float16, devices="cpu", tol=0.01)
     ]
 
   @classmethod
