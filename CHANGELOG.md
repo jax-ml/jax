@@ -29,7 +29,21 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
     There is no longer a separate jaxlib release for CUDA 11.2 (or higher); use
     the CUDA 11.1 wheel for those versions (cuda111).
-  * Added support for static keyword arguments to the C++ `jit` implementation.
+  * Jaxlib now bundles `libdevice.10.bc` in CUDA wheels. There should be no need
+    to point JAX to a CUDA installation to find this file.
+  * Added automatic support for static keyword arguments to the {func}`jit`
+    implementation.
+  * Added support for pretransformation exception traces.
+  * Initial support for pruning unused arguments from {func}`jit` -transformed
+    computations.
+    Pruning is still a work in progress.
+  * Improved the string representation of {class}`PyTreeDef` objects.
+  * Added support for XLA's variadic ReduceWindow.
+* Bug fixes:
+  * Fixed a bug in the remote cloud TPU support when large numbers of arguments
+    are passed to a computation.
+  * Fix a bug that meant that JAX garbage collection was not triggered by
+    {func}`jit` transformed functions.
 
 ## jax 0.2.13 (May 3 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.12...jax-v0.2.13).
@@ -44,6 +58,17 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * Added {func}`jax.scipy.linalg.eigh_tridiagonal` that computes the
     eigenvalues of a tridiagonal matrix. Only eigenvalues are supported at
     present.
+  * The order of the filtered and unfiltered stack traces in exceptions has been
+    changed. The traceback attached to an exception thrown from JAX-transformed
+    code is now filtered, with an `UnfilteredStackTrace` exception
+    containing the original trace as the `__cause__` of the filtered exception.
+    Filtered stack traces now also work with Python 3.6.
+  * If an exception is thrown by code that has been transformed by reverse-mode
+    automatic differentiation, JAX now attempts to attach as a `__cause__` of
+    the exception a `JaxStackTraceBeforeTransformation` object that contains the
+    stack trace that created the original operation in the forward pass.
+    Requires jaxlib 0.1.66.
+
 * Breaking changes:
   * The following function names have changed. There are still aliases, so this
     should not break existing code, but the aliases will eventually be removed
