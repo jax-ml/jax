@@ -422,32 +422,31 @@ Next, run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax jaxlib==0.1.66+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install --upgrade jax jaxlib==0.1.66+cuda111 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
-installation you want to use, with `cuda112` for CUDA 11.2, `cuda111` for CUDA
-11.1, `cuda110` for CUDA 11.0, `cuda102` for CUDA 10.2, and `cuda101` for CUDA
-10.1. You can find your CUDA version with the command:
+installation you want to use:
+* For CUDA 11.1, 11.2, or 11.3, use `cuda111`. The same wheel should work for
+  CUDA 11.x releases from 11.1 onwards.
+* For CUDA 11.0, use `cuda110`.
+* For CUDA 10.2, use `cuda102`.
+* For CUDA 10.1, use `cuda101`.
+* Older CUDA versions are not supported.
+
+You can find your CUDA version with the command:
 
 ```bash
 nvcc --version
 ```
 
-Note that some GPU functionality expects the CUDA installation to be at
+Some GPU functionality expects the CUDA installation to be at
 `/usr/local/cuda-X.X`, where X.X should be replaced with the CUDA version number
 (e.g. `cuda-10.2`). If CUDA is installed elsewhere on your system, you can either
 create a symlink:
 
 ```bash
 sudo ln -s /path/to/cuda /usr/local/cuda-X.X
-```
-
-Alternatively, you can set the following environment variable before importing
-JAX:
-
-```bash
-XLA_FLAGS=--xla_gpu_cuda_data_dir=/path/to/cuda
 ```
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
