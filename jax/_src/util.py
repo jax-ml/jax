@@ -332,7 +332,7 @@ def tuple_delete(t, idx):
 
 def tuple_replace(t, idx, val):
   assert 0 <= idx < len(t), (idx, len(t))
-  return t[:idx] + (val,) + t[idx:]
+  return t[:idx] + (val,) + t[idx+1:]
 
 # TODO(mattjj): replace with dataclass when Python 2 support is removed
 def taggedtuple(name, fields) -> Callable[..., Any]:
