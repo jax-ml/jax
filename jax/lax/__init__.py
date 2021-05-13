@@ -352,6 +352,7 @@ from jax._src.lax.parallel import (
   xeinsum,
 )
 from jax._src.lax.other import (
+  conv_general_dilated_local,
   conv_general_dilated_patches
 )
 from . import linalg
