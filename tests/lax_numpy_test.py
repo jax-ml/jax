@@ -2221,7 +2221,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "np_op": getattr(np, op)}
       for mode in ['full', 'same', 'valid']
       for op in ['convolve', 'correlate']
-      for dtype in default_dtypes
+      for dtype in number_dtypes
       for xshape in one_dim_array_shapes
       for yshape in one_dim_array_shapes))
   def testConvolutions(self, xshape, yshape, dtype, mode, jnp_op, np_op):
