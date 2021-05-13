@@ -261,8 +261,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
 
     with self.assertRaisesRegex(
-        NotImplementedError, "Call to pad can only be converted through "
-                             "TFXLA, but XLA is disabled"):
+        NotImplementedError, "Call to pad cannot be converted with enable_xla=False."):
       self.ConvertAndCompare(
           fun, np.ones((2, 3), dtype=np.float32), enable_xla=False)
 
