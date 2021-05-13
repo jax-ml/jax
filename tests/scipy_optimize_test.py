@@ -57,6 +57,13 @@ def eggholder(np):
   return func
 
 
+def zakharovFromIndices(x, ii):
+  sum1 = (x**2).sum()
+  sum2 = (0.5*ii*x).sum()
+  answer = sum1+sum2**2+sum2**4
+  return answer
+
+
 class TestBFGS(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -93,6 +100,37 @@ class TestBFGS(jtu.JaxTestCase):
       return jnp.mean((A @ x) ** 2)
     results = jax.scipy.optimize.minimize(f, jnp.ones(n), method='BFGS')
     self.assertAllClose(results.x, jnp.zeros(n), atol=1e-6, rtol=1e-6)
+
+  @jtu.skip_on_flag('jax_enable_x64', False)
+  def test_zakharov(self):
+    def zakharov_fn(x):
+      ii = jnp.arange(1, len(x) + 1, step=1)
+      answer = zakharovFromIndices(x=x, ii=ii)
+      return answer
+
+    x0 = jnp.array([600.0, 700.0, 200.0, 100.0, 90.0, 1e4])
+    eval_func = jax.jit(zakharov_fn)
+    jax_res = jax.scipy.optimize.minimize(fun=eval_func, x0=x0, method='BFGS')
+    self.assertLess(jax_res.fun, 1e-6)
+
+  def test_minimize_bad_initial_values(self):
+    # This test runs deliberately "bad" initial values to test that handling
+    # of failed line search, etc. is the same across implementations
+    initial_value = jnp.array([92, 0.001])
+    opt_fn = himmelblau(jnp)
+    jax_res = jax.scipy.optimize.minimize(
+        fun=opt_fn,
+        x0=initial_value,
+        method='BFGS',
+    ).x
+    scipy_res = scipy.optimize.minimize(
+        fun=opt_fn,
+        jac=jax.grad(opt_fn),
+        method='BFGS',
+        x0=initial_value
+    ).x
+    self.assertAllClose(scipy_res, jax_res, atol=2e-5, check_dtypes=False)
+
 
   def test_args_must_be_tuple(self):
     A = jnp.eye(2) * 1e4
