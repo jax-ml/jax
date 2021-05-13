@@ -162,12 +162,13 @@ class DtypesTest(jtu.JaxTestCase):
         self.assertEqual(np.promote_types(t1, t2),
                          dtypes.promote_types(t1, t2))
 
-  def testScalarInstantiation(self):
-    for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:
-      a = t(1)
-      self.assertEqual(a.dtype, jnp.dtype(t))
-      self.assertIsInstance(a, xla.DeviceArray)
-      self.assertEqual(0, jnp.ndim(a))
+  @parameterized.parameters([jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64])
+  def testScalarInstantiation(self, scalar_type):
+    a = scalar_type(1)
+    self.assertEqual(a.dtype, jnp.dtype(scalar_type))
+    self.assertIsInstance(a, xla.DeviceArray)
+    self.assertEqual(0, jnp.ndim(a))
+    self.assertIsInstance(np.dtype(scalar_type).type(1), scalar_type)
 
   def testIsSubdtype(self):
     for t in scalar_types:

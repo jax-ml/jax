@@ -143,6 +143,9 @@ class _ScalarMeta(type):
   def __call__(self, x):
     return array(x, dtype=self.dtype)
 
+  def __instancecheck__(self, instance):
+    return isinstance(instance, self.dtype.type)
+
 def _make_scalar_type(np_scalar_type):
   return _ScalarMeta(np_scalar_type.__name__, (object,),
                      {"dtype": np.dtype(np_scalar_type)})
