@@ -1222,7 +1222,7 @@ print(grad(app2, 1)(lambda x: x ** 3, 3., lambda y: 5 * y))
 
 +++ {"id": "0u0jn4aWC8k1"}
 
-A similar option exists for `jax.custom_vjp`, and similarly the convention is that the non-differentiable arguments are passed as the first arguments to the rules, no matter where they appear in the original function's signature. Here's an example:
+A similar option exists for `jax.custom_vjp`, and, similarly, the convention is that the non-differentiable arguments are passed as the first arguments to the `_bwd` rule, no matter where they appear in the signature of the original function. The signature of the `_fwd` rule remains unchanged - it is the same as the signature of the primal function. Here's an example:
 
 ```{code-cell} ipython3
 :id: yCdu-_9GClWs
