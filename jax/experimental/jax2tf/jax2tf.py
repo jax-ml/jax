@@ -116,13 +116,11 @@ tf_impl_with_avals: Dict[core.Primitive,
 # requiring a TFXLA operation, an exception is thrown instead.
 _enable_xla = True
 
-def _xla_disabled_error(primitive_name: str,
-                        extra_msg: Optional[str] = None) -> Exception:
+def _xla_path_disabled_error(primitive_name: str) -> Exception:
   assert not _enable_xla
-  msg = f"Call to {primitive_name} cannot be converted with enable_xla=False."
-  if extra_msg:
-    msg += f" {extra_msg}"
-  return NotImplementedError(msg)
+  return NotImplementedError(
+    f"Call to {primitive_name} can only be converted through TFXLA, but "
+     "XLA is disabled")
 
 @functools.partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable, *,
@@ -1242,8 +1240,7 @@ def _conv_general_dilated(lhs, rhs, *,
     if not isinstance(info_or_result, str):
       return info_or_result
     else:
-      raise _xla_disabled_error("conv_general_dilated",
-                                "See source code for conditions under which convolutions can be converted without XLA.")
+      raise _xla_path_disabled_error("conv_general_dilated")
 
   dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
   precision_config_proto = _precision_config_proto(precision)
@@ -1398,17 +1395,15 @@ def _pad(operand, padding_value, *, padding_config,
          _out_aval: core.AbstractValue):
   del _in_avals
   low, high, interior = util.unzip3(padding_config)
-  if _enable_xla:
-    out = tfxla.pad(operand, padding_value, low, high, interior)
-    # TODO(b/184499027): improve shape inference for XlaPad
-    out.set_shape(_aval_to_tf_shape(_out_aval))
-    return out
-
   if all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in padding_config):
     return tf.pad(operand, util.safe_zip(low, high),
                   mode="CONSTANT", constant_values=padding_value)
-  raise _xla_disabled_error("pad", "Only use cases without interior or negative padding can be converted without XLA.")
-
+  if not _enable_xla:
+    raise _xla_path_disabled_error("pad")
+  out = tfxla.pad(operand, padding_value, low, high, interior)
+  # TODO(b/184499027): improve shape inference for XlaPad
+  out.set_shape(_aval_to_tf_shape(_out_aval))
+  return out
 tf_impl_with_avals[lax.pad_p] = _pad
 
 
@@ -1536,7 +1531,7 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
                           window_strides, padding, base_dilation,
                           window_dilation, _in_avals, _out_aval):
   if not _enable_xla:
-    raise _xla_disabled_error("reduce_window")
+    raise _xla_path_disabled_error("reduce_window")
   o_spec = tf.TensorSpec((), dtype=operand.dtype)
   reducer_fn = tf.function(reducer, autograph=False).get_concrete_function(o_spec, o_spec)
 
@@ -1756,7 +1751,7 @@ tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
                             window_strides, padding, _in_avals, _out_aval):
   if not _enable_xla:
-    raise _xla_disabled_error("select_and_scatter_add")
+    raise _xla_path_disabled_error("select_and_scatter_add")
   init_value = tf.zeros((), operand.dtype)
   select_fn = (tf.function(tf_impl[select_prim], autograph=False)
                  .get_concrete_function(init_value, init_value))
@@ -1799,7 +1794,7 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
   """Tensorflow implementation of gather."""
   del _in_avals
   if not _enable_xla:
-    raise _xla_disabled_error("gather")
+    raise _xla_path_disabled_error("gather")
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
   slice_sizes_tf = _eval_shape(slice_sizes)
   out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf, False)
@@ -1835,7 +1830,7 @@ def _dynamic_slice(operand, *start_indices, slice_sizes,
   # survive well being put in a SavedModel. Hence, we now use TFXLA slicing
   # and gather ops.
   if not _enable_xla:
-    raise _xla_disabled_error("dynamic_slice")
+    raise _xla_path_disabled_error("dynamic_slice")
   res = tfxla.dynamic_slice(operand, tf.stack(start_indices),
                             size_indices=_eval_shape(slice_sizes))
   # TODO: implement shape inference for XlaDynamicSlice
@@ -1863,7 +1858,7 @@ def _scatter(operand, scatter_indices, updates, *,
   assert len(update_consts) == 0, "Update computation cannot have constants"
 
   if not _enable_xla:
-    raise _xla_disabled_error("scatter")
+    raise _xla_path_disabled_error("scatter")
 
   proto = _scatter_dimensions_proto(scatter_indices.shape, dimension_numbers)
 
@@ -1889,7 +1884,7 @@ tf_impl_with_avals[lax.scatter_add_p] = _scatter
 
 def _dynamic_update_slice(operand, update, *start_indices):
   if not _enable_xla:
-    raise _xla_disabled_error("dynamic_update_slice")
+    raise _xla_path_disabled_error("dynamic_update_slice")
   return tfxla.dynamic_update_slice(operand, update, tf.stack(start_indices))
 tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
@@ -2002,7 +1997,7 @@ tf_impl[lax.top_k_p] = _top_k
 def _sort(*operands: TfVal, dimension: int, is_stable: bool,
           num_keys: int) -> Tuple[TfVal, ...]:
   if not _enable_xla:
-    raise _xla_disabled_error("sort")
+    raise _xla_path_disabled_error("sort")
   assert 1 <= num_keys <= len(operands)
   assert 0 <= dimension < len(
       operands[0].shape
