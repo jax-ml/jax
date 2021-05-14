@@ -28,6 +28,8 @@ partial = functools.partial
 
 
 def safe_zip(*args):
+  if not args:
+    return []
   n = len(args[0])
   for arg in args[1:]:
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
@@ -41,22 +43,10 @@ def safe_map(f, *args):
   return list(map(f, *args))
 
 def unzip2(xys):
-  xs = []
-  ys = []
-  for x, y in xys:
-    xs.append(x)
-    ys.append(y)
-  return tuple(xs), tuple(ys)
+  return tuple(safe_zip(*xys)) or ((), ())
 
 def unzip3(xyzs):
-  xs = []
-  ys = []
-  zs = []
-  for x, y, z in xyzs:
-    xs.append(x)
-    ys.append(y)
-    zs.append(z)
-  return tuple(xs), tuple(ys), tuple(zs)
+  return tuple(safe_zip(*xyzs)) or ((), (), ())
 
 def subvals(lst, replace):
   lst = list(lst)
