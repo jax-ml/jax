@@ -38,8 +38,8 @@ from typing import Any, Tuple
 from jax import api
 from jax import core
 from jax import jit
-from jax import tree_util
 from jax import lax
+from jax import tree_util
 from jax.interpreters import xla
 from jax.lib import cusparse
 from jax.lib import xla_bridge
@@ -54,6 +54,8 @@ Dtype = Any
 
 #--------------------------------------------------------------------
 # utilities
+# TODO: possibly make these utilities into primitives, targeting
+#       csr2coo/coo2csr/SPDDMM
 @functools.partial(jit, static_argnums=1)
 def _csr_to_coo(indptr, nnz):
   return jnp.cumsum(jnp.zeros_like(indptr, shape=nnz).at[indptr].add(1)) - 1
@@ -62,6 +64,16 @@ def _csr_to_coo(indptr, nnz):
 def _coo_to_csr(row, nrows):
   indptr = jnp.zeros(nrows + 1, row.dtype)
   return indptr.at[1:].set(jnp.cumsum(jnp.bincount(row, length=nrows)))
+
+@jit
+def _csr_extract(indices, indptr, mat):
+  """Extract values of dense matrix mat at given CSR indices."""
+  return _coo_extract(_csr_to_coo(indptr, len(indices)), indices, mat)
+
+@jit
+def _coo_extract(row, col, mat):
+  """Extract values of dense matrix mat at given COO indices."""
+  return mat[row, col]
 
 #--------------------------------------------------------------------
 # csr_todense
@@ -293,22 +305,27 @@ def _coo_todense_abstract_eval(data, row, col, *, shape):
 def _coo_todense_gpu_translation_rule(c, data, row, col, *, shape):
   return cusparse.coo_todense(c, data, row, col, shape=shape)
 
+def _coo_todense_jvp(data_dot, data, row, col, *, shape):
+  return coo_todense(data_dot, row, col, shape=shape)
+
+def _coo_todense_transpose(ct, data, row, col, *, shape):
+  # Note: we assume that transpose has the same sparsity pattern.
+  # Can we check this?
+  assert ad.is_undefined_primal(data)
+  if ad.is_undefined_primal(row) or ad.is_undefined_primal(col):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ct.shape == shape
+  assert row.aval.dtype == col.aval.dtype
+  assert ct.dtype == data.aval.dtype
+  return _coo_extract(row, col, ct), row, col
+
+ad.defjvp(coo_todense_p, _coo_todense_jvp, None, None)
+ad.primitive_transposes[coo_todense_p] = _coo_todense_transpose
 xla.translations[coo_todense_p] = xla.lower_fun(
     _coo_todense_impl, multiple_results=False)
 if cusparse and cusparse.is_supported:
   xla.backend_specific_translations['gpu'][
       coo_todense_p] = _coo_todense_gpu_translation_rule
-
-def _coo_todense_jvp_rule(primals_in, tangents_in, **params):
-  vals, rows, cols,  = primals_in
-  mat_dot, rows_dot, cols_dot = tangents_in
-  assert type(rows_dot) is ad_util.Zero
-  assert type(cols_dot) is ad_util.Zero
-
-  primals_out = coo_todense(vals, rows, cols, **params)
-  tangents_out = ad_util.Zero.from_value(primals_out) if type(mat_dot) is ad_util.Zero else coo_todense(mat_dot, rows, cols, **params)
-  return primals_out, tangents_out
-ad.primitive_jvps[coo_todense_p] = _coo_todense_jvp_rule
 
 #--------------------------------------------------------------------
 # coo_fromdense
@@ -357,19 +374,39 @@ def _coo_fromdense_gpu_translation_rule(c, mat, *, nnz, index_dtype):
       c, mat, nnz=nnz, index_dtype=np.dtype(index_dtype))
   return xops.Tuple(c, [data, row, col])
 
+def _coo_fromdense_jvp(primals, tangents, *, nnz, index_dtype):
+  M, = primals
+  Mdot, = tangents
+
+  primals_out = coo_fromdense(M, nnz=nnz, index_dtype=index_dtype)
+  data, row, col = primals_out
+
+  if type(Mdot) is ad.Zero:
+    data_dot = ad.Zero.from_value(data)
+  else:
+    data_dot = _coo_extract(row, col, Mdot)
+
+  tangents_out = (data_dot, ad.Zero.from_value(row), ad.Zero.from_value(col))
+
+  return primals_out, tangents_out
+
+def _coo_fromdense_transpose(ct, M, *, nnz, index_dtype):
+  data, row, col = ct
+  assert len(data) == nnz
+  assert row.dtype == col.dtype == index_dtype
+  if isinstance(row, ad.Zero) or isinstance(col, ad.Zero):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ad.is_undefined_primal(M)
+  return coo_todense(data, row, col, shape=M.aval.shape)
+
+ad.primitive_jvps[coo_fromdense_p] = _coo_fromdense_jvp
+ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
+
 xla.translations[coo_fromdense_p] = xla.lower_fun(
     _coo_fromdense_impl, multiple_results=True)
 if cusparse and cusparse.is_supported:
   xla.backend_specific_translations['gpu'][
       coo_fromdense_p] = _coo_fromdense_gpu_translation_rule
-
-def _coo_fromdense_jvp_rule(primals_in, tangents_in, **params):
-  mat,  = primals_in
-  mat_dot, = tangents_in
-  data, row, col = coo_fromdense(mat, **params)
-  tangents_out = ad_util.Zero.from_value(data) if type(mat_dot) is ad_util.Zero else coo_fromdense(mat_dot, **params)[0]
-  return (data, row, col), (tangents_out, ad_util.Zero.from_value(row), ad_util.Zero.from_value(col))
-ad.primitive_jvps[coo_fromdense_p] = _coo_fromdense_jvp_rule
 
 #--------------------------------------------------------------------
 # coo_matvec
@@ -417,27 +454,30 @@ def _coo_matvec_abstract_eval(data, row, col, v, *, shape, transpose):
 def _coo_matvec_gpu_translation_rule(c, data, row, col, v, *, shape, transpose):
   return cusparse.coo_matvec(c, data, row, col, v, shape=shape, transpose=transpose)
 
+def _coo_matvec_jvp_mat(data_dot, data, row, col, v, *, shape, transpose):
+  return coo_matvec(data_dot, row, col, v, shape=shape, transpose=transpose)
+
+def _coo_matvec_jvp_vec(v_dot, data, row, col, v, *, shape, transpose):
+  return coo_matvec(data, row, col, v_dot, shape=shape, transpose=transpose)
+
+def _coo_matvec_transpose(ct, data, row, col, v, *, shape, transpose):
+  assert not ad.is_undefined_primal(row)
+  assert not ad.is_undefined_primal(col)
+
+  if ad.is_undefined_primal(v):
+    return data, row, col, coo_matvec(data, row, col, ct, shape=shape, transpose=not transpose)
+  else:
+    v = jnp.asarray(v)
+    # return _coo_extract(row, col, jnp.outer(ct, v)), row, col, v
+    return ct[row] * v[col], row, col, v
+
+ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
+ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
 xla.translations[coo_matvec_p] = xla.lower_fun(
     _coo_matvec_impl, multiple_results=False)
 if cusparse and cusparse.is_supported:
   xla.backend_specific_translations['gpu'][
       coo_matvec_p] = _coo_matvec_gpu_translation_rule
-
-def _coo_matvec_jvp_rule(primals_in, tangents_in, **params):
-  vals, rows, cols, vec = primals_in
-  sparse_mat_dot, rows_dot, cols_dot, vec_dot = tangents_in
-  assert type(rows_dot) is ad_util.Zero
-  assert type(cols_dot) is ad_util.Zero
-
-  primals_out = coo_matvec(vals, rows, cols, vec, **params)
-  _zero = lambda p, t: lax.zeros_like_array(p) if isinstance(t, ad_util.Zero) else t
-
-  _sparse_mat_dot = _zero(vals, sparse_mat_dot)
-  _vec_dot = _zero(vec, vec_dot)
-
-  tangents_out = coo_matvec(_sparse_mat_dot, rows, cols, vec, **params) + coo_matvec(vals, rows, cols, _vec_dot, **params)
-  return primals_out, tangents_out
-ad.primitive_jvps[coo_matvec_p] = _coo_matvec_jvp_rule
 
 #--------------------------------------------------------------------
 # coo_matmat
