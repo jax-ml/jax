@@ -17,7 +17,10 @@ import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
+
+from jax import api
 from jax import config
+from jax import dtypes
 from jax.experimental import sparse_ops
 from jax.lib import cusparse
 from jax.lib import xla_bridge
@@ -148,16 +151,6 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.toarray(), todense(*args))
     self.assertArraysEqual(M.toarray(), jit(todense)(*args))
 
-    todense = lambda data: sparse_ops.coo_todense(data, M.row, M.col, shape=M.shape)
-    tangent = jnp.ones_like(M.data)
-    y, dy = jvp(todense, (M.data, ), (tangent, ))
-    self.assertArraysEqual(M.toarray(), y)
-    self.assertArraysEqual(todense(tangent), dy)
-
-    y, dy = jit(lambda prim, tan: jvp(todense, prim, tan))((M.data, ), (tangent, ))
-    self.assertArraysEqual(M.toarray(), y)
-    self.assertArraysEqual(todense(tangent), dy)
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
@@ -182,13 +175,6 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(row, M_coo.row.astype(index_dtype))
     self.assertArraysEqual(col, M_coo.col.astype(index_dtype))
 
-    tangent = jnp.ones_like(M)
-    (data, row, col), (data_dot, row_dot, col_dot) = jvp(fromdense, (M, ), (tangent, ))
-    self.assertArraysEqual(data, M_coo.data.astype(dtype))
-    self.assertArraysEqual(row, M_coo.row.astype(index_dtype))
-    self.assertArraysEqual(col, M_coo.col.astype(index_dtype))
-    self.assertArraysEqual(data_dot, fromdense(tangent)[0])
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
        "shape": shape, "dtype": dtype, "transpose": transpose}
@@ -209,11 +195,6 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(op(M) @ v, matvec(*args), rtol=MATMUL_TOL)
     self.assertAllClose(op(M) @ v, jit(matvec)(*args), rtol=MATMUL_TOL)
 
-    y, dy = jvp(lambda x: sparse_ops.coo_matvec(M.data, M.row, M.col, x, shape=shape, transpose=transpose).sum(), (v, ), (jnp.ones_like(v), ))
-    self.assertAllClose((op(M) @ v).sum(), y, rtol=MATMUL_TOL)
-
-    y, dy = jvp(lambda x: sparse_ops.coo_matvec(x, M.row, M.col, v, shape=shape, transpose=transpose).sum(), (M.data, ), (jnp.ones_like(M.data), ))
-    self.assertAllClose((op(M) @ v).sum(), y, rtol=MATMUL_TOL)
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
@@ -240,6 +221,7 @@ class cuSparseTest(jtu.JaxTestCase):
 
     y, dy = jvp(lambda x: sparse_ops.coo_matmat(x, M.row, M.col, B, shape=shape, transpose=transpose).sum(), (M.data, ), (jnp.ones_like(M.data), ))
     self.assertAllClose((op(M) @ B).sum(), y, rtol=MATMUL_TOL)
+
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   def test_gpu_translation_rule(self):
     version = xla_bridge.get_backend().platform_version
@@ -267,6 +249,108 @@ class cuSparseTest(jtu.JaxTestCase):
     args = fromdense(M, nnz=nnz, index_dtype=jnp.int32)
     M_out = todense(*args, shape=M.shape)
     self.assertArraysEqual(M, M_out)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_coo_todense_ad(self, shape, dtype):
+    rng = rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    data, row, col = sparse_ops.coo_fromdense(M, nnz=(M != 0).sum())
+    f = lambda data: sparse_ops.coo_todense(data, row, col, shape=M.shape)
+
+    # Forward-mode
+    primals, tangents = api.jvp(f, [data], [jnp.ones_like(data)])
+    self.assertArraysEqual(primals, f(data))
+    self.assertArraysEqual(tangents, jnp.zeros_like(M).at[row, col].set(1))
+
+    # Reverse-mode
+    primals, vjp_fun = api.vjp(f, data)
+    data_out, = vjp_fun(primals)
+    self.assertArraysEqual(primals, f(data))
+    self.assertArraysEqual(data_out, data)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_coo_fromdense_ad(self, shape, dtype):
+    rng = rand_sparse(self.rng(), post=jnp.array)
+    M = rng(shape, dtype)
+    nnz = (M != 0).sum()
+    f = lambda M: sparse_ops.coo_fromdense(M, nnz=nnz)
+
+    # Forward-mode
+    primals, tangents = api.jvp(f, [M], [jnp.ones_like(M)])
+    self.assertArraysEqual(primals[0], f(M)[0])
+    self.assertArraysEqual(primals[1], f(M)[1])
+    self.assertArraysEqual(primals[2], f(M)[2])
+    self.assertArraysEqual(tangents[0], jnp.ones(nnz, dtype=dtype))
+    self.assertEqual(tangents[1].dtype, dtypes.float0)
+    self.assertEqual(tangents[2].dtype, dtypes.float0)
+
+    # Reverse-mode
+    primals, vjp_fun = api.vjp(f, M)
+    M_out, = vjp_fun(primals)
+    self.assertArraysEqual(primals[0], f(M)[0])
+    self.assertArraysEqual(primals[1], f(M)[1])
+    self.assertArraysEqual(primals[2], f(M)[2])
+    self.assertArraysEqual(M_out, M)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+        jtu.format_shape_dtype_string(shape, dtype),
+        jtu.format_shape_dtype_string(bshape, dtype)),
+       "shape": shape, "dtype": dtype, "bshape": bshape}
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for bshape in [shape[-1:] + s for s in [()]]  # TODO: matmul autodiff
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))  # TODO: other types
+
+  def test_coo_matvec_ad(self, shape, dtype, bshape):
+    rng = rand_sparse(self.rng(), post=jnp.array)
+    rng_b = jtu.rand_default(self.rng())
+
+    M = rng(shape, dtype)
+    data, row, col = sparse_ops.coo_fromdense(M, nnz=(M != 0).sum())
+    x = rng_b(bshape, dtype)
+    xdot = rng_b(bshape, dtype)
+
+    # Forward-mode with respect to the vector
+    f_dense = lambda x: M @ x
+    f_sparse = lambda x: sparse_ops.coo_matvec(data, row, col, x, shape=M.shape)
+    v_sparse, t_sparse = api.jvp(f_sparse, [x], [xdot])
+    v_dense, t_dense = api.jvp(f_dense, [x], [xdot])
+    self.assertAllClose(v_sparse, v_dense)
+    self.assertAllClose(t_sparse, t_dense)
+
+    # Reverse-mode with respect to the vector
+    primals_dense, vjp_dense = api.vjp(f_dense, x)
+    primals_sparse, vjp_sparse = api.vjp(f_sparse, x)
+    out_dense, = vjp_dense(primals_dense)
+    out_sparse, = vjp_sparse(primals_sparse)
+    self.assertAllClose(primals_dense[0], primals_sparse[0])
+    self.assertAllClose(out_dense, out_sparse)
+
+    # Forward-mode with respect to nonzero elements of the matrix
+    f_sparse = lambda data: sparse_ops.coo_matvec(data, row, col, x, shape=M.shape)
+    f_dense = lambda data: sparse_ops.coo_todense(data, row, col, shape=M.shape) @ x
+    data = rng((len(data),), data.dtype)
+    data_dot = rng((len(data),), data.dtype)
+    v_sparse, t_sparse = api.jvp(f_sparse, [data], [data_dot])
+    v_dense, t_dense = api.jvp(f_dense, [data], [data_dot])
+    self.assertAllClose(v_sparse, v_dense)
+    self.assertAllClose(t_sparse, t_dense)
+
+    # Reverse-mode with respect to nonzero elements of the matrix
+    primals_dense, vjp_dense = api.vjp(f_dense, data)
+    primals_sparse, vjp_sparse = api.vjp(f_sparse, data)
+    out_dense, = vjp_dense(primals_dense)
+    out_sparse, = vjp_sparse(primals_sparse)
+    self.assertAllClose(primals_dense[0], primals_sparse[0])
+    self.assertAllClose(out_dense, out_sparse)
 
 
 class SparseObjectTest(jtu.JaxTestCase):
