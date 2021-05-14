@@ -989,7 +989,7 @@ def _tuple_output(*args, **kwargs):
   ans = yield args, kwargs
   yield (ans,)
 
-def lower_fun(fun, multiple_results, parallel=False, with_avals=False):
+def lower_fun(fun, multiple_results, parallel=False, with_avals=False, backend=None):
   # TODO(jakevdp): migrate dependent code & always use the with_avals=True.
   def f(c, *xla_args, **params):
     avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
@@ -1005,7 +1005,7 @@ def lower_fun(fun, multiple_results, parallel=False, with_avals=False):
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-    outs = jaxpr_subcomp(c, jaxpr, None, axis_env, _xla_consts(c, consts), '',
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts), '',
                          *xla_args)
     if multiple_results or any(v.aval._num_buffers > 1 for v in jaxpr.outvars):
       return xops.Tuple(c, outs)

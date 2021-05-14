@@ -1002,7 +1002,7 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
-def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
+def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand, backend):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
   m = shape.dimensions()[-2]
@@ -1013,7 +1013,7 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   lu = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), lu,
                             _nan_like(c, lu))
   perm = xla.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
-                       multiple_results=False)(c, pivot)
+                       multiple_results=False, backend=backend)(c, pivot)
   return xops.Tuple(c, [lu, pivot, perm])
 
 
@@ -1034,11 +1034,11 @@ ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
 xla.backend_specific_translations['cpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, lapack.getrf)
+  _lu_cpu_gpu_translation_rule, lapack.getrf, backend='cpu')
 
 if cusolver is not None:
   xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, cusolver.getrf)
+    _lu_cpu_gpu_translation_rule, cusolver.getrf, backend='gpu')
 
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][lu_p] = partial(
