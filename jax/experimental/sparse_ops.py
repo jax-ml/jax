@@ -31,8 +31,8 @@ Further down are some examples of potential high-level wrappers for sparse objec
 (API should be considered unstable and subject to change).
 """
 import functools
+import itertools
 import operator
-
 from typing import Any, Tuple
 
 from jax import api
@@ -41,6 +41,7 @@ from jax import jit
 from jax import lax
 from jax import tree_util
 from jax.interpreters import xla
+from jax.interpreters import batching
 from jax.lib import cusparse
 from jax.lib import xla_bridge
 from jax.lib import xla_client
@@ -302,6 +303,16 @@ def _coo_todense_impl(data, row, col, *, shape):
 def _coo_todense_abstract_eval(data, row, col, *, shape):
   return core.ShapedArray(shape, data.dtype)
 
+def _coo_todense_batching_rule(batched_args, batch_dims, *, shape):
+  def _batched(x, bdim):
+    if bdim is None:
+      return itertools.repeat(x)
+    else:
+      return list(jnp.rollaxis(x, bdim))
+  batched = tuple(_batched(x, bdim) for x, bdim in zip(batched_args, batch_dims))
+  results = [coo_todense(*args, shape=shape) for args in zip(*batched)]
+  return jnp.stack(results), 0
+
 def _coo_todense_gpu_translation_rule(c, data, row, col, *, shape):
   return cusparse.coo_todense(c, data, row, col, shape=shape)
 
@@ -323,6 +334,7 @@ ad.defjvp(coo_todense_p, _coo_todense_jvp, None, None)
 ad.primitive_transposes[coo_todense_p] = _coo_todense_transpose
 xla.translations[coo_todense_p] = xla.lower_fun(
     _coo_todense_impl, multiple_results=False)
+batching.primitive_batchers[coo_todense_p] = _coo_todense_batching_rule
 if cusparse and cusparse.is_supported:
   xla.backend_specific_translations['gpu'][
       coo_todense_p] = _coo_todense_gpu_translation_rule
@@ -369,6 +381,13 @@ def _coo_fromdense_abstract_eval(mat, *, nnz, index_dtype):
   row = col = core.ShapedArray((nnz,), index_dtype)
   return data, row, col
 
+def _coo_fromdense_batching_rule(batched_args, batch_dims, *, nnz, index_dtype):
+  mat, = batched_args
+  bdim, = batch_dims
+  mat = jnp.rollaxis(mat, bdim)
+  results = zip(*(coo_fromdense(row, nnz=nnz, index_dtype=index_dtype) for row in mat))
+  return tuple(map(jnp.stack, results)), (0, 0, 0)
+
 def _coo_fromdense_gpu_translation_rule(c, mat, *, nnz, index_dtype):
   data, row, col = cusparse.coo_fromdense(
       c, mat, nnz=nnz, index_dtype=np.dtype(index_dtype))
@@ -404,6 +423,7 @@ ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
 
 xla.translations[coo_fromdense_p] = xla.lower_fun(
     _coo_fromdense_impl, multiple_results=True)
+batching.primitive_batchers[coo_fromdense_p] = _coo_fromdense_batching_rule
 if cusparse and cusparse.is_supported:
   xla.backend_specific_translations['gpu'][
       coo_fromdense_p] = _coo_fromdense_gpu_translation_rule
@@ -431,6 +451,16 @@ def coo_matvec(data, row, col, v, *, shape, transpose=False):
       the matrix vector product.
   """
   return coo_matvec_p.bind(data, row, col, v, shape=shape, transpose=transpose)
+
+def _coo_matvec_batching_rule(batched_args, batch_dims, *, shape, transpose):
+  def _batched(x, bdim):
+    if bdim is None:
+      return itertools.repeat(x)
+    else:
+      return list(jnp.rollaxis(x, bdim))
+  batched = tuple(_batched(x, bdim) for x, bdim in zip(batched_args, batch_dims))
+  results = [coo_matvec(*args, shape=shape, transpose=transpose) for args in zip(*batched)]
+  return jnp.stack(results), 0
 
 @coo_matvec_p.def_impl
 def _coo_matvec_impl(data, row, col, v, *, shape, transpose):
@@ -475,6 +505,7 @@ ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
 ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
 xla.translations[coo_matvec_p] = xla.lower_fun(
     _coo_matvec_impl, multiple_results=False)
+batching.primitive_batchers[coo_matvec_p] = _coo_matvec_batching_rule
 if cusparse and cusparse.is_supported:
   xla.backend_specific_translations['gpu'][
       coo_matvec_p] = _coo_matvec_gpu_translation_rule
