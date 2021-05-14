@@ -310,6 +310,8 @@ class cuSparseTest(jtu.JaxTestCase):
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))  # TODO: other types
 
   def test_coo_matvec_ad(self, shape, dtype, bshape):
+    tol = {np.float32: 1E-6, np.float64: 1E-13, np.complex64: 1E-6, np.complex128: 1E-13}
+
     rng = rand_sparse(self.rng(), post=jnp.array)
     rng_b = jtu.rand_default(self.rng())
 
@@ -323,16 +325,16 @@ class cuSparseTest(jtu.JaxTestCase):
     f_sparse = lambda x: sparse_ops.coo_matvec(data, row, col, x, shape=M.shape)
     v_sparse, t_sparse = api.jvp(f_sparse, [x], [xdot])
     v_dense, t_dense = api.jvp(f_dense, [x], [xdot])
-    self.assertAllClose(v_sparse, v_dense)
-    self.assertAllClose(t_sparse, t_dense)
+    self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
+    self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
 
     # Reverse-mode with respect to the vector
     primals_dense, vjp_dense = api.vjp(f_dense, x)
     primals_sparse, vjp_sparse = api.vjp(f_sparse, x)
     out_dense, = vjp_dense(primals_dense)
     out_sparse, = vjp_sparse(primals_sparse)
-    self.assertAllClose(primals_dense[0], primals_sparse[0])
-    self.assertAllClose(out_dense, out_sparse)
+    self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
+    self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
     # Forward-mode with respect to nonzero elements of the matrix
     f_sparse = lambda data: sparse_ops.coo_matvec(data, row, col, x, shape=M.shape)
@@ -341,16 +343,17 @@ class cuSparseTest(jtu.JaxTestCase):
     data_dot = rng((len(data),), data.dtype)
     v_sparse, t_sparse = api.jvp(f_sparse, [data], [data_dot])
     v_dense, t_dense = api.jvp(f_dense, [data], [data_dot])
-    self.assertAllClose(v_sparse, v_dense)
-    self.assertAllClose(t_sparse, t_dense)
+
+    self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
+    self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
 
     # Reverse-mode with respect to nonzero elements of the matrix
     primals_dense, vjp_dense = api.vjp(f_dense, data)
     primals_sparse, vjp_sparse = api.vjp(f_sparse, data)
     out_dense, = vjp_dense(primals_dense)
     out_sparse, = vjp_sparse(primals_sparse)
-    self.assertAllClose(primals_dense[0], primals_sparse[0])
-    self.assertAllClose(out_dense, out_sparse)
+    self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
+    self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
 
 class SparseObjectTest(jtu.JaxTestCase):

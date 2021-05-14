@@ -40,7 +40,6 @@ from jax import core
 from jax import jit
 from jax import lax
 from jax import tree_util
-from jax import lax
 from jax.interpreters import xla
 from jax.lib import cusparse
 from jax.lib import xla_bridge
