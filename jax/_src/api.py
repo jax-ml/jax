@@ -2397,8 +2397,8 @@ def eval_shape(fun: Callable, *args, **kwargs):
   return tree_unflatten(out_tree(), out)
 
 
-def checkpoint(fun: Callable, concrete: bool = False, extend: bool = False,
-               gadget: bool = True) -> Callable:
+def checkpoint(fun: Callable, concrete: bool = False,
+               checkpoint_dots: bool = False, gadget: bool = True) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
   The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
@@ -2426,6 +2426,13 @@ def checkpoint(fun: Callable, concrete: bool = False, extend: bool = False,
 
   See the examples below.
 
+  The "checkpoint_dots" option triggers an evaluation strategy intermediate
+  between checkpointing everything and rematerializing everything: storing as
+  few linearization points as possible without resulting in additional dot/conv
+  evaluations in the backward pass. This is a good fit for situations where 
+  dot/conv operations are expensive, but other operations can be cheaply fused
+  into them.
+
   Args:
     fun: Function for which the autodiff evaluation strategy is to be changed
       from the default of storing all intermediate linearization points to
@@ -2436,10 +2443,12 @@ def checkpoint(fun: Callable, concrete: bool = False, extend: bool = False,
       control flow is optional, and disabled by default, because in some
       edge-case compositions with :func:`jax.jit` it can lead to some extra
       computation.
-    extend: Optional, boolean indicating whether the scope of recomputation
-      should be extended such that the outputs of ``fun`` also won't be stored
-      if they are linearization points for consumer operations not part of
-      ``fun``. Defaults to False.
+    checkpoint_dots: Optional, boolean indicating whether reverse-mode
+      differentiating ``fun`` should still store linearization points
+      corresponding to the outputs of dot and conv primitives (but avoid
+      storing others). This is often the optimal evaluation schedule for 
+      platforms where other operations can be cheaply fused into matmuls. 
+      Defaults to False.
     gadget: Optional, boolean indicating whether to insert a control flow
       block around ``fun`` to prevent XLA from undoing the effect of
       rematerialization through fusion or common-subexpression elimination.
@@ -2495,8 +2504,9 @@ def checkpoint(fun: Callable, concrete: bool = False, extend: bool = False,
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
-                             concrete=concrete, extend=extend, gadget=gadget)
+    out_flat = pe.remat_call(
+        flat_fun, *args_flat, name=flat_fun.__name__, concrete=concrete,
+        checkpoint_dots=checkpoint_dots, gadget=gadget)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint

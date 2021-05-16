@@ -3080,6 +3080,26 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(num_calls, 2)
 
 
+  def test_reblake(self):
+    def f(x, W1, W2):
+      def body(x, _):
+        return jnp.dot(jnp.sin(jnp.dot(x, W1)), W2), None
+      return lax.scan(api.remat(body, checkpoint_dots=True), x, None, length=2)[0].sum()
+
+    # We swap out sin_p's impl rule to count how many times it's invoked
+    called = []
+    sin_impl = lax.sin_p.impl
+    try:
+      lax.sin_p.def_impl(lambda x: called.append(1) or sin_impl(x))
+      with jax.disable_jit():
+        api.grad(f, argnums=(0, 1, 2))(jnp.ones((5,)), jnp.ones((5, 5)), jnp.ones((5, 5)))
+    finally:
+      lax.sin_p.def_impl(sin_impl)
+    num_calls = len(called)
+    # Should be invoked once in forward pass and once in backward for each step
+    self.assertEqual(num_calls, 4)
+
+
 class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):
