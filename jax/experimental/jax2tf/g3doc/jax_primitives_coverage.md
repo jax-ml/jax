@@ -1,10 +1,10 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-05-12* (YYYY-MM-DD)
+*Last generated on: 2021-05-17* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2418 test harnesses to test
+We use a set of 2492 test harnesses to test
 the implementation of 121 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
@@ -95,7 +95,7 @@ be updated.
 | igamma | 6 | floating | bool, complex, integer |
 | igammac | 6 | floating | bool, complex, integer |
 | imag | 2 | complex | bool, floating, integer |
-| integer_pow | 34 | inexact, integer | bool |
+| integer_pow | 108 | inexact, integer | bool |
 | iota | 16 | inexact, integer | bool |
 | is_finite | 4 | floating | bool, complex, integer |
 | le | 15 | bool, floating, integer | complex |
@@ -184,11 +184,7 @@ and search for "limitation".
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
 | --- | --- | --- | --- |
 |cholesky|unimplemented|float16|cpu, gpu|
-|cummax|unimplemented|complex64|tpu|
-|cummin|unimplemented|complex64|tpu|
-|cumprod|unimplemented|complex64|tpu|
 |dot_general|preferred_element_type=c128 not implemented|complex64|tpu|
-|dot_general|preferred_element_type=f64 crashes (b/187884887)|bfloat16, float16, float32|tpu|
 |dot_general|preferred_element_type=i64 not implemented|int16, int32, int8|tpu|
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|
@@ -196,9 +192,6 @@ and search for "limitation".
 |eigh|unimplemented|bfloat16, float16|cpu, gpu|
 |lu|unimplemented|bfloat16, float16|cpu, gpu, tpu|
 |qr|unimplemented|bfloat16, float16|cpu, gpu|
-|reduce_window_max|unimplemented in XLA|complex64|tpu|
-|reduce_window_min|unimplemented in XLA|complex64|tpu|
-|reduce_window_mul|unimplemented in XLA|complex64|tpu|
 |scatter_max|unimplemented|complex64|tpu|
 |scatter_min|unimplemented|complex64|tpu|
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|

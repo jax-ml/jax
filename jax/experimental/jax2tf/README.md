@@ -585,17 +585,17 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
 ## Notes:
 
   * The TF function must be compileable (`tf.function(func, jit_compile=True`)
-    when used in a JAX staging context. 
+    when used in a JAX staging context.
   * All the metadata inserted by TF during tracing and compilation, e.g.,
     source location information and op names, is carried through to the
     JAX XLA computation.
   * The TF custom gradients are respected, since it is TF that generates the
     gradient computation.
-  * In op-by-op mode, when we call TensorFlow in eager mode, we use 
+  * In op-by-op mode, when we call TensorFlow in eager mode, we use
     DLPack to try to avoid copying the data. This works for CPU (for
     DeviceArray data or for np.ndarray that are aligned on 16-byte
-    boundaries) and on GPU (for DeviceArray). 
-    The zero-copy does not yet work on TPU.   
+    boundaries) and on GPU (for DeviceArray).
+    The zero-copy does not yet work on TPU.
   * ``call_tf`` works best with pure TF functions that do not capture
     ``tf.Variable``s or tensors from the environment, and all such
     context is passed in explicitly through arguments, and if variables
@@ -622,7 +622,7 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
           new_var1 = 11.
           return x + new_var1, new_var1
 ```
-    
+
    This use case is likely to be revisited.
 
 ## TODO
@@ -645,3 +645,29 @@ To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
 for CUDA. One must be mindful to install a version of CUDA that is compatible
 with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
 [TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
+
+## Updating the limitations documentation
+
+The jax2tf tests are parameterized by a set of limitations
+(see `tests/primitive_harness.py` and `tests/jax2tf_limitations.py`).
+The limitations specify test harnesses that are known to fail, by
+JAX primitive, data type, device type, and TensorFlow execution mode (`eager`,
+`graph`, or `compiled`). These limitations are also used
+to generate tables of limitations, e.g.,
+
+   * [List of primitives not supported in JAX](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primtives_coverage.md),
+     e.g., due to unimplemented cases in the XLA compiler, and
+   * [List of primitives not supported in jax2tf](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md),
+     e.g., due to unimplemented cases in TensorFlow. This list is incremental
+     on top of the unsupported JAX primitives.
+
+There are instructions for updating those documents at the end of each
+document.
+
+The set of limitations is an over-approximation, in the sense that if XLA
+or TensorFlow improves and support more cases, no test will fail. Instead,
+periodically, we check for unnecessary limitations. We do this by uncommenting
+two assertions (in `tests/jax_primitives_coverage_test.py` and in
+`tests/tf_test_util.py`) and runing all the tests. With these assertions enabled
+the tests will fail and point out unnecessary limitations. We remove limitations
+until the tests pass. Then we re-generate the documentation.
