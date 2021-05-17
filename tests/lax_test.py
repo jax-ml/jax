@@ -2560,6 +2560,10 @@ class LazyConstantTest(jtu.JaxTestCase):
     x_out_jit = api.jit(op)(x_in)
     self.assertEqual(dtypes.is_weakly_typed(x_out_jit), False)
 
+  def testArgMaxOfNanChoosesNaN(self):
+    self.assertEqual(lax.argmax(np.array([0., np.nan]), axis=0,
+                                index_dtype=np.int32), 1)
+
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name": "_{}".format(rec.op),
          "op_name": rec.op, "rec_dtypes": rec.dtypes}

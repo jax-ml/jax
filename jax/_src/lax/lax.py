@@ -5382,7 +5382,8 @@ def _argminmax_translation_rule(value_comparator, identity,
   x_index = xb.parameter(subc, 1, index_shape)
   y_value = xb.parameter(subc, 2, value_shape)
   y_index = xb.parameter(subc, 3, index_shape)
-  which_value = value_comparator(x_value, y_value)
+  which_value = xops.Or(value_comparator(x_value, y_value),
+                        xops.Ne(x_value, x_value))
   which_index = xops.Or(which_value, xops.And(xops.Eq(x_value, y_value),
                                               xops.Lt(x_index, y_index)))
   xops.Tuple(subc, [xops.Select(which_value, x_value, y_value),
@@ -5402,8 +5403,8 @@ def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
   idxs = tie_in(a, broadcasted_iota(index_dtype, a.shape, axis))
   maxval = np.array(dtypes.iinfo(index_dtype).max, dtype=index_dtype)
   maxval = broadcast(tie_in(a, maxval), a.shape)
-  mask_idxs = select(eq(a, expand_dims(op(a, (axis,)), (axis,))), idxs,
-                     maxval)
+  maxvals = expand_dims(op(a, (axis,)), (axis,))
+  mask_idxs = select(eq(a, maxvals) | ne(a, a), idxs, maxval)
   return _reduce_min(mask_idxs, (axis,))
 
 _argmin_translation_rule = partial(_argminmax_translation_rule, xops.Lt,
