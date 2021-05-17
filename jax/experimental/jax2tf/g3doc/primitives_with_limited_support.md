@@ -72,7 +72,6 @@ More detailed information can be found in the
 | cholesky | TF error: op not defined for dtype | complex | tpu | compiled, graph |
 | clamp | TF error: op not defined for dtype | int8, uint16, uint32, uint64 | cpu, gpu, tpu | compiled, eager, graph |
 | conv_general_dilated | TF error: jax2tf BUG: batch_group_count > 1 not yet converted | all | cpu, gpu, tpu | compiled, eager, graph |
-| conv_general_dilated | TF error: op not defined for dtype | complex | gpu | compiled, eager, graph |
 | cosh | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
 | cummax | TF error: op not defined for dtype | complex128 | cpu, gpu | compiled, eager, graph |
 | cummax | TF error: op not defined for dtype | complex64 | cpu, gpu, tpu | compiled, eager, graph |

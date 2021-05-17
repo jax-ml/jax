@@ -3272,7 +3272,8 @@ conv_general_dilated_p = standard_primitive(
                                     expand_complex_convolutions=False))
 
 # TODO(b/161124619, b/161126248): XLA does not support complex convolution on
-# CPU or GPU; on these backends, lower complex convolutions away.
+# GPU, and on CPU it uses a slow loop-based implementation;
+# on these backends, lower complex convolutions away.
 xla.backend_specific_translations['cpu'][conv_general_dilated_p] = partial(
     _conv_general_dilated_translation_rule, expand_complex_convolutions=True)
 xla.backend_specific_translations['gpu'][conv_general_dilated_p] = partial(

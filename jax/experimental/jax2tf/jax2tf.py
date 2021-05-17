@@ -582,9 +582,9 @@ class TensorFlowTracer(core.Tracer):
           else:
             # We have a TF value with known shape, and the abstract shape is a shape variable.
             try:
-             aval_int = int(_eval_shape([aval_dim]))  # type: ignore
+              aval_int = int(_eval_shape([aval_dim]))  # type: ignore
             except TypeError:
-             continue
+              continue
             assert aval_int == val_dim, f"expected {self._aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
 
       self.val = val
@@ -687,8 +687,8 @@ class TensorFlowTrace(core.Trace):
     with core.new_sublevel():
       if call_primitive == core.named_call_p:
         with tf.name_scope(_sanitize_scope_name(params["name"])):
-            vals_out: Sequence[Tuple[TfVal, core.AbstractValue]] = \
-                f.call_wrapped(*vals)
+          vals_out: Sequence[Tuple[TfVal, core.AbstractValue]] = \
+              f.call_wrapped(*vals)
       elif call_primitive == sharded_jit.sharded_call_p:
         vals_out = _sharded_call(f, vals, **params)
       else:
@@ -1232,10 +1232,11 @@ def _conv_general_dilated(lhs, rhs, *,
                           precision: Optional[Tuple[PrecisionType, PrecisionType]],
                           preferred_element_type, _in_avals, _out_aval):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
+  out_tf_shape = _aval_to_tf_shape(_out_aval)
   if not _enable_xla:
     info_or_result = _try_tf_conv(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-        dimension_numbers, feature_group_count, batch_group_count, _aval_to_tf_shape(_out_aval)
+        dimension_numbers, feature_group_count, batch_group_count, out_tf_shape
     )
     if not isinstance(info_or_result, str):
       return info_or_result
@@ -1244,14 +1245,30 @@ def _conv_general_dilated(lhs, rhs, *,
 
   dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
   precision_config_proto = _precision_config_proto(precision)
-  assert batch_group_count == 1  # TODO(phawkins): implement batch_group_count
-  out = tfxla.conv(
-      lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-      dnums_proto, feature_group_count=feature_group_count,
-      precision_config=precision_config_proto)
-  # TODO: implement shape inference for XlaConv
-  out.set_shape(_aval_to_tf_shape(_out_aval))
-  return out
+  assert batch_group_count == 1  # TODO(necula): implement batch_group_count
+
+  def gen_conv(lhs, rhs):
+    out = tfxla.conv(
+        lhs, rhs, window_strides, padding,
+        lhs_dilation, rhs_dilation, dnums_proto,
+        feature_group_count=feature_group_count,
+        precision_config=precision_config_proto)
+    # TODO: implement shape inference for XlaConv
+    out.set_shape(out_tf_shape)
+    return out
+
+  # Follow the lowering for complex convolutions from
+  # lax._conv_general_dilated_translation. We can use the same conversion on all
+  # platforms because on XLA:TPU the compiler does the same as a rewrite.
+  if np.issubdtype(_in_avals[0].dtype, np.complexfloating):
+    lhs_real, lhs_imag = tf.math.real(lhs), tf.math.imag(lhs)
+    rhs_real, rhs_imag = tf.math.real(rhs), tf.math.imag(rhs)
+    k1 = gen_conv(_add(lhs_real, lhs_imag), rhs_real)
+    k2 = gen_conv(lhs_real, tf.math.subtract(rhs_imag, rhs_real))
+    k3 = gen_conv(lhs_imag, _add(rhs_real, rhs_imag))
+    return tf.complex(tf.math.subtract(k1, k3), _add(k1, k2))
+  else:
+    return gen_conv(lhs, rhs)
 
 
 tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
