@@ -348,7 +348,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.complex128],
             devices=("cpu", "gpu"),
         ),
-        missing_tf_kernel(dtypes=[np.complex64], devices=("cpu", "gpu")),
+        missing_tf_kernel(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu")),
         custom_numeric(dtypes=np.float16, tol=0.1),
         custom_numeric(dtypes=dtypes.bfloat16, tol=0.5)
     ]
@@ -376,7 +376,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def cumsum(cls, harness):
     return [
-        missing_tf_kernel(dtypes=[np.complex64], devices="tpu"),
         custom_numeric(dtypes=np.float16, tol=0.1),
         custom_numeric(dtypes=dtypes.bfloat16, tol=0.5),
     ]
@@ -456,14 +455,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return [
         missing_tf_kernel(
             dtypes=[
-                np.bool_, np.uint8, np.uint16, np.uint32, np.uint64, np.int8,
-                np.int16
+                np.bool_,
             ],),
-        missing_tf_kernel(
-            dtypes=np.int64, devices=("cpu", "gpu"),
-            modes="compiled",
-            # Works for 2D matrices.
-            enabled=(len(harness.params["lhs_shape"]) > 2)),
     ]
 
   @classmethod
@@ -788,7 +781,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         missing_tf_kernel(
             dtypes=[
                 np.int8, np.int16, np.uint8, np.uint16, np.uint32, np.uint64
-            ],),
+            ],
+            modes="graph",
+            enabled=(y not in [0, 1]),  # These are special-cased
+            devices=("cpu", "gpu")),
         # TODO: on TPU, for f16, we get different results with eager mode
         # than with compiled mode.
         Jax2TfLimitation(
@@ -989,7 +985,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def reduce_window_add(cls, harness):
     assert "add" == harness.params["computation"].__name__
     return [
-        missing_tf_kernel(dtypes=[np.complex64], devices="tpu"),
     ]
 
   @classmethod
@@ -1103,14 +1098,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def select_and_gather_add(cls, harness):
     return [
-        missing_tf_kernel(
-            dtypes=[np.float32],
-            devices="tpu",
-            description=(
-                "This JAX primitives is not not exposed directly in the JAX API "
-                "but arises from JVP of `lax.reduce_window` for reducers "
-                "`lax.max` or `lax.min`. It also arises from second-order "
-                "VJP of the same. Implemented using XlaReduceWindow")),
+        # This JAX primitives is not not exposed directly in the JAX API
+        # but arises from JVP of `lax.reduce_window` for reducers
+        # `lax.max` or `lax.min`. It also arises from second-order
+        # VJP of the same. Implemented using XlaReduceWindow.
         Jax2TfLimitation((
             "jax2tf unimplemented for 64-bit inputs because the current implementation "
             "relies on packing two values into a single value. This can be "

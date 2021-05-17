@@ -1306,13 +1306,6 @@ def _make_cumreduce_harness(name,
                             axis=0,
                             reverse=False):
   limitations = []
-  if f_jax.__name__ != "cumsum":
-    limitations.append(
-      Limitation(
-        "unimplemented",
-        devices="tpu",
-        dtypes=np.complex64,
-      ))
   define(
     f_jax.__name__,
     f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}_reverse={reverse}",
@@ -2166,9 +2159,6 @@ def _make_reduce_window_harness(name,
                                 padding=((0, 0), (0, 0))):
   prim_name = f"reduce_window_{computation.__name__}"
   limitations = []
-  if computation.__name__ in ("max", "mul", "min"):
-    limitations.append(
-      Limitation("unimplemented in XLA", devices="tpu", dtypes=np.complex64))
   define(
     prim_name,
     f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}"
