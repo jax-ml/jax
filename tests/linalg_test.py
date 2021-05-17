@@ -1065,6 +1065,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(ls, actual_ls, rtol=5e-6)
     self.assertAllClose(us, actual_us)
 
+  @jtu.skip_on_devices("cpu", "tpu")
+  def testLuCPUBackendOnGPU(self):
+    # tests running `lu` on cpu when a gpu is present.
+    jit(jsp.linalg.lu, backend="cpu")(np.ones((2, 2)))  # does not crash
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
