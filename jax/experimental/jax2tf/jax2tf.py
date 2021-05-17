@@ -1120,40 +1120,41 @@ def _precision_config_proto(precision: Optional[Tuple[PrecisionType, PrecisionTy
   proto.operand_precision.append(int(precision[1]))
   return proto
 
-# _try_tf_conv returns a Tensor when it succeeds, or a string describing why
-# it did not succeed otherwise.
 def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
                  dimension_numbers, feature_group_count, batch_group_count,
-                 out_shape) -> Union[str, TfVal]:
+                 out_shape) -> TfVal:
+
+  class ConvError(Exception):
+    def __init__(self, e):
+      super().__init__("Couldn't convert conv_general_dilated without XLA: "
+                       f"{e}")
+
   # TODO(bchetioui): this function is not exhaustive wrt which convolution cases
   # can be translated into TF primitives. Further investigation is needed to
   # fully flesh it out.
   if not lhs.dtype in [tf.float16, tf.float32, tf.float64]:
-    return f"tf.nn.convolution is not supported for dtype {lhs.dtype}"
+    raise ConvError(f"tf.nn.convolution is not supported for dtype {lhs.dtype}")
   if feature_group_count != 1:
-    return "tf.nn.convolution does not support grouped convolutions"
+    raise ConvError("tf.nn.convolution does not support grouped convolutions")
   # TODO(bchetioui): is there something to do with batch_group_count?
   if batch_group_count != 1:
-    return "Unimplemented support for batch_group_count != 1"
+    raise ConvError("Unimplemented support for batch_group_count != 1")
   nb_spatial_dimensions = len(lhs.shape) - 2
   # TF can only deal with 1D, 2D and 3D convolution
   if nb_spatial_dimensions < 1 or nb_spatial_dimensions > 3:
-    return ("TensorFlow can only handle convolutions with 1, 2, or 3 "
-            "spatial dimensions")
+    raise ConvError("TensorFlow can only handle convolutions with 1, 2, or 3 "
+                    "spatial dimensions")
   # TODO(bchetioui): handle different stride cases
   if list(window_strides) != [1] * nb_spatial_dimensions:
-    return ("Unimplemented support for window_strides != "
-            f"{tuple([1] * nb_spatial_dimensions)}")
-
-  success = lambda res: (res, None)
-  failure = lambda msg: (None, msg)
+    raise ConvError("Unimplemented support for window_strides != "
+                    f"{tuple([1] * nb_spatial_dimensions)}")
 
   def convert_padding():
     # TODO(bchetioui): in this instance, we can not use padtype_to_pads as
     # string padding is not implemented for transposed convolution.
     if list(lhs_dilation) != [1] * nb_spatial_dimensions:
-      return failure("Padding conversion is not supported for transposed "
-                     "convolution.")
+      raise ConvError("Padding conversion is not supported for transposed "
+                      "convolution.")
     lhs_perm, rhs_perm, _ = dimension_numbers
     effective_rhs_shape = [(k-1) * r + 1 for k, r in
                            zip(np.take(rhs.shape, rhs_perm)[2:], rhs_dilation)]
@@ -1163,8 +1164,9 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
       gen_padding = lax.padtype_to_pads(
           lhs_shape, effective_rhs_shape, window_strides, pad_str)
       if list(gen_padding) == list(padding):
-        return success(pad_str)
-    return failure("Input padding not supported in TensorFlow.")
+        return pad_str
+
+    raise ConvError("Input padding not supported in TensorFlow.")
 
   def convert_dim_nums():
     lhs_spec, rhs_spec, out_spec = dimension_numbers
@@ -1175,12 +1177,12 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     supported_rhs_shape = ([nb_spatial_dimensions + 1, nb_spatial_dimensions] +
                            list(range(nb_spatial_dimensions)))
     if list(rhs_spec) != supported_rhs_shape:
-      return failure("Input filter (RHS) shape format not supported in "
-                     "TensorFlow")
+      raise ConvError("Input filter (RHS) shape format not supported in "
+                      "TensorFlow")
     # TF only supports same LHS and output data format
     if lhs_spec != out_spec:
-      return failure("TensorFlow requires the same data format for LHS and "
-                     "output.")
+      raise ConvError("TensorFlow requires the same data format for LHS and "
+                      "output.")
     # Alphabet extracted from the documentation of tf.conv{1,2,3}d
     spatial_dim_alphabet = 'DHW'[-nb_spatial_dimensions:]
     # TF only supports the following data formats:
@@ -1194,8 +1196,8 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     # - [batch_size] + input_spatial_shape + [in_channels]
     if list(lhs_spec) == ([0, len(lhs_spec) - 1] +
                           list(range(1, len(lhs_spec) - 1))):
-      return success("N" + spatial_dim_alphabet + "C")
-    return failure("Data format is unsupported by TensorFlow")
+      return "N" + spatial_dim_alphabet + "C"
+    raise ConvError("Data format is unsupported by TensorFlow")
 
   def convert_dilation_and_compute_result(tf_padding, tf_dim_nums):
     no_dilation = [1] * nb_spatial_dimensions
@@ -1203,7 +1205,7 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     # convolution in TensorFlow?
     if not (list(lhs_dilation) == no_dilation or
             list(rhs_dilation) == no_dilation):
-      return "Both LHS and RHS dilations are set"
+      raise ConvError("Both LHS and RHS dilations are set")
     # This is a non-dilated or atrous convolution
     if list(lhs_dilation) == no_dilation:
       return tf.nn.convolution(
@@ -1217,12 +1219,8 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
         lhs, rhs, out_shape, window_strides, padding=tf_padding,
         data_format=tf_dim_nums, dilations=lhs_dilation)
 
-  tf_padding, error = convert_padding()
-  if tf_padding is None:
-    return error
-  tf_dim_nums, error = convert_dim_nums()
-  if tf_dim_nums is None:
-    return error
+  tf_padding = convert_padding()
+  tf_dim_nums = convert_dim_nums()
   return convert_dilation_and_compute_result(tf_padding, tf_dim_nums)
 
 def _conv_general_dilated(lhs, rhs, *,
@@ -1233,15 +1231,10 @@ def _conv_general_dilated(lhs, rhs, *,
                           preferred_element_type, _in_avals, _out_aval):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   if not _enable_xla:
-    info_or_result = _try_tf_conv(
+    return _try_tf_conv(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
         dimension_numbers, feature_group_count, batch_group_count, _aval_to_tf_shape(_out_aval)
     )
-    if not isinstance(info_or_result, str):
-      return info_or_result
-    else:
-      raise NotImplementedError("Could not convert conv_general_dilated "
-                                f"without XLA, reason: {info_or_result}")
 
   dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
   precision_config_proto = _precision_config_proto(precision)
