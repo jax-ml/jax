@@ -151,8 +151,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return custom_numeric(
         description="May return different but still correct results",
         dtypes=[np.complex64, np.complex128],
-        custom_assert=custom_assert,
-        modes=("eager", "graph"))
+        custom_assert=custom_assert)
 
   @classmethod
   def acos(cls, harness: primitive_harness.Harness):
@@ -165,10 +164,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.complex128],
             devices=("cpu", "gpu"),
             modes=("eager", "graph")),
-        custom_numeric(dtypes=np.complex128, tol=1e-13),
-        custom_numeric(dtypes=np.complex64, devices="tpu", tol=1e-3),
-        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4),
-        cls.helper_get_trig_custom_limitation(np.cos),
+        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4,
+                       modes=("eager", "graph", "compiled")),
+        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-13,
+                       modes=("eager", "graph", "compiled")),
     ]
 
   @classmethod
@@ -287,17 +286,23 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.complex64, np.complex128],
             devices="tpu",
             modes=("graph", "compiled")),
-        # TODO(bchetioui): very high discrepancy in the float32/complex64 case
-        custom_numeric(dtypes=[np.float32, np.complex64], tol=1e-2),
-        custom_numeric(dtypes=[np.float64, np.complex128], tol=1e-6),
-        custom_numeric(dtypes=[dtypes.bfloat16, np.float16], tol=5e-2),
+        # TODO: very high tolerance
+        custom_numeric(dtypes=[np.float32, np.complex64], tol=1e-2,
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled")),
+        custom_numeric(dtypes=[np.float64, np.complex128], tol=1e-6,
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled")),
+        custom_numeric(dtypes=[dtypes.bfloat16, np.float16], tol=5e-2,
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled")),
         custom_numeric(
             custom_assert=custom_assert,
             description=(
                 "May return different values in the strictly upper triangular "
                 "part of the result. This does not matter for correctness, "
                 "because this part of the matrix is not considered in the result."
-            ))
+            ), modes=("eager", "graph", "compiled"))
     ]
 
   @classmethod
@@ -340,8 +345,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
         ),
         missing_tf_kernel(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu")),
-        custom_numeric(dtypes=np.float16, tol=0.1),
-        custom_numeric(dtypes=dtypes.bfloat16, tol=0.5)
     ]
 
   @classmethod
@@ -353,22 +356,28 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         ),
         missing_tf_kernel(
             dtypes=[np.uint16, np.uint32, np.int8, np.complex64],),
-        custom_numeric(dtypes=np.float16, tol=0.1),
-        custom_numeric(dtypes=dtypes.bfloat16, tol=0.5),
     ]
 
   @classmethod
   def cumprod(cls, harness):
     return [
-        custom_numeric(dtypes=np.float16, tol=0.1),
-        custom_numeric(dtypes=dtypes.bfloat16, tol=0.5),
+        # TODO: very high tolerance
+        custom_numeric(dtypes=np.float16,
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled"),
+                       tol=1e-1)
     ]
 
   @classmethod
   def cumsum(cls, harness):
     return [
-        custom_numeric(dtypes=np.float16, tol=0.1),
-        custom_numeric(dtypes=dtypes.bfloat16, tol=0.5),
+        # TODO: very high tolerance
+        custom_numeric(dtypes=np.float16, tol=0.1,
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled")),
+        custom_numeric(dtypes=dtypes.bfloat16, tol=0.5,
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled")),
     ]
 
   @classmethod
@@ -420,8 +429,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             custom_assert=custom_assert,
             description=(
                 "May return different results at singularity points 0 and -1."
-                "JAX returns nan and TF returns inf"),
-            modes=("eager", "graph"))
+                "JAX returns nan and TF returns inf"))
     ]
 
   @classmethod
@@ -512,8 +520,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             custom_assert=custom_assert,
             description=("May return the eigenvalues and eigenvectors in a "
                          "potentially different order. The eigenvectors may "
-                         "also be different, but equally valid."),
-            modes=("eager", "graph"))
+                         "also be different, but equally valid."))
     ]
 
   @classmethod
@@ -594,7 +601,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             custom_assert=custom_assert,
             description=("May return the eigenvalues and eigenvectors in a "
                          "potentially different order. The eigenvectors may "
-                         "also be different, but equally valid."))
+                         "also be different, but equally valid."),
+            modes=("eager", "graph", "compiled"))
     ]
 
   @classmethod
@@ -664,7 +672,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
             dtypes=[np.float64, np.complex128],
             modes="compiled"),
-        custom_numeric(tol=1e-3)
+        # TODO: very high tolerance
+        custom_numeric(tol=1e-3, modes=("eager", "graph", "compiled")),
     ]
 
   @classmethod
@@ -683,14 +692,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return [
         custom_numeric(
             dtypes=[np.float32, np.complex64], devices=("cpu", "gpu"),
-            modes=("eager", "graph"),
             tol=1e-3),
         custom_numeric(dtypes=[np.float64, np.complex128],
-                       devices=("cpu", "gpu"),
-                       modes=("eager", "graph"), tol=5e-5),
+                       devices=("cpu", "gpu"), tol=5e-5),
         custom_numeric(
             dtypes=[np.complex64, np.complex128],
-            modes=("eager", "graph"),
             custom_assert=custom_assert,
         )
     ]
@@ -723,8 +729,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             description=(
                 "May return different results at undefined points "
                 "(both arguments 0). JAX returns `NaN` and TF returns 0 or "
-                "JAX returns 1 and TF returns `NaN`"),
-            modes=("eager", "graph"))
+                "JAX returns 1 and TF returns `NaN`"))
     ]
 
   @classmethod
@@ -758,7 +763,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(
             custom_assert=custom_assert,
             devices=("cpu", "gpu"),
-            modes=("eager", "graph"),
             description=(
                 "May return different results at undefined points "
                 "(both arguments less or equal 0). JAX returns `NaN` and TF returns 0 or "
@@ -865,7 +869,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(
             custom_assert=custom_assert,
             description=("May return different, but also correct, results when "
-                         "the decomposition is not unique")),
+                         "the decomposition is not unique"),
+            devices=("cpu", "gpu"),
+            modes=("eager", "graph", "compiled")),
     ]
 
   @classmethod
@@ -893,7 +899,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             description=(
                 "May return different values when one of the values is NaN. "
                 "JAX always returns NaN, while TF returns the value NaN is compared with."
-            ))
+            ), modes=("eager", "graph", "compiled"))
     ]
 
   @classmethod
@@ -917,7 +923,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             description=(
                 "May return different values when one of the values is NaN. "
                 "JAX always returns NaN, while TF returns the value NaN is compared with."
-            ))
+            ), modes=("eager", "graph", "compiled"))
     ]
 
   @classmethod
@@ -947,7 +953,14 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     #   compiling with TF is expected to have worse performance than the
     #   custom calls made in JAX.
     return [
-        custom_numeric(tol=1e-4),
+        custom_numeric(dtypes=[np.float64, np.complex128],
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled"),
+                       tol=1e-13),
+        custom_numeric(dtypes=[np.float32, np.complex64],
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled"),
+                       tol=1e-4),
         missing_tf_kernel(
             dtypes=[dtypes.bfloat16],
             devices="tpu",
@@ -1144,7 +1157,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def svd(cls, harness: primitive_harness.Harness):
     # TODO: slow test
-
+    compute_uv = harness.params["compute_uv"]
     def custom_assert(tst, r_jax, r_tf, *, args, tol, err_msg):
 
       def _reconstruct_operand(result, is_tf: bool):
@@ -1156,7 +1169,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         S = s[..., None, :]
         return jnp.matmul(U * S, V), s.shape, u.shape, v.shape
 
-      if harness.params["compute_uv"]:
+      if compute_uv:
         r_jax_reconstructed = _reconstruct_operand(r_jax, False)
         r_tf_reconstructed = _reconstruct_operand(r_tf, True)
         tst.assertAllClose(
@@ -1173,8 +1186,18 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
             modes=("compiled",)),
         missing_tf_kernel(dtypes=[dtypes.bfloat16], devices="tpu"),
-        custom_numeric(tol=1e-4),
-        custom_numeric(custom_assert=custom_assert)
+        custom_numeric(tol=1e-4, dtypes=[np.float32, np.complex64],
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled")),
+        # TODO: this is very low tolerance for f64
+        custom_numeric(tol=1e-4, dtypes=[np.float64, np.complex128],
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled")),
+        custom_numeric(description="custom numeric comparison when compute_uv",
+                       custom_assert=custom_assert,
+                       devices=("cpu", "gpu"),
+                       modes=("eager", "graph", "compiled"),
+                       enabled=(compute_uv == True))
     ]
 
   @classmethod
@@ -1234,9 +1257,11 @@ def custom_numeric(
     *,
     description="custom numeric comparison",
     dtypes=(),  # All
-    modes=("eager", "graph", "compiled"),
+    modes=("eager", "graph",),  # By default we should not need tolerance for
+                                # "compiled"
     devices=("cpu", "gpu", "tpu"),
     custom_assert=None,
+    enabled=True,
     tol=None) -> Jax2TfLimitation:
 
   return Jax2TfLimitation(
@@ -1246,6 +1271,7 @@ def custom_numeric(
       devices=devices,
       modes=modes,
       custom_assert=custom_assert,
+      enabled=enabled,
       tol=tol)
 
 
