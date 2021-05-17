@@ -1209,7 +1209,8 @@ def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
     if not isinstance(info_or_result, str):
       return info_or_result
     else:
-      raise _xla_path_disabled_error("conv_general_dilated")
+      raise NotImplementedError("Could not convert conv_general_dilated "
+                                f"without XLA, reason: {info_or_result}")
 
   dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
   precision_config_proto = _conv_general_precision_config_proto(precision)
