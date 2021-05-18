@@ -2381,6 +2381,7 @@ ad.defjvp2(tanh_p, lambda g, ans, x: mul(add(g, mul(g, ans)),
                                          sub(_one(x), ans)))
 
 sin_p = standard_unop(_float | _complex, 'sin')
+sin_p.effectful = True
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
 
 cos_p = standard_unop(_float | _complex, 'cos')

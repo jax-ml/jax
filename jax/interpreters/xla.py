@@ -790,17 +790,19 @@ def _prune_unused_inputs(
     kept_var_idx = range(len(jaxpr.invars))
     return jaxpr, set(kept_const_idx), set(kept_var_idx)
 
-  used = {v for v in jaxpr.outvars if isinstance(v, core.Var)}
-  # TODO(zhangqiaorjc): Improve the DCE algorithm by also pruning primitive
-  # applications that do not produce used outputs. Must handle side-effecting
-  # primitives and nested jaxpr.
-  used.update(
-      v for eqn in jaxpr.eqns for v in eqn.invars if isinstance(v, core.Var))
+  needed_vars = {v for v in jaxpr.outvars if isinstance(v, core.Var)}
+  new_eqns = []
+  for eqn in jaxpr.eqns[::-1]:
+    if len(set(eqn.outvars) & needed_vars) > 0 or eqn.effectful:
+      new_eqns.append(eqn)
+      needed_vars.update(v for v in eqn.invars if isinstance(v, core.Var))
+
+  new_eqns = new_eqns[::-1]
   kept_const_idx, new_constvars = unzip2(
-      (i, v) for i, v in enumerate(jaxpr.constvars) if v in used)
+      (i, v) for i, v in enumerate(jaxpr.constvars) if v in needed_vars)
   kept_var_idx, new_invars = unzip2(
-      (i, v) for i, v in enumerate(jaxpr.invars) if v in used)
-  new_jaxpr = core.Jaxpr(new_constvars, new_invars, jaxpr.outvars, jaxpr.eqns)
+      (i, v) for i, v in enumerate(jaxpr.invars) if v in needed_vars)
+  new_jaxpr = core.Jaxpr(new_constvars, new_invars, jaxpr.outvars, new_eqns)
   return new_jaxpr, set(kept_const_idx), set(kept_var_idx)
 
 

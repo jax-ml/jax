@@ -656,6 +656,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       np.testing.assert_allclose(f_pruned(*args), 3)
     self.assertEqual(count[0], 1)
 
+  def test_effectful(self):
+    @jit
+    def f(x):
+      sin(x)
+      return
+
+    f_pruned =
+
 
 class PythonJitTest(CPPJitTest):
 

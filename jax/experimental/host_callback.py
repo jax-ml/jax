@@ -1203,10 +1203,10 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
     # We need tokens but none is given in input; make one depending on all invars
     eqns.append(
         core.new_jaxpr_eqn(jaxpr.invars, [last_token_var],
-                           lax.create_token_p, {}, source_info_util.current()))
+                           lax.create_token_p, {}, True, source_info_util.current()))
     eqns.append(
         core.new_jaxpr_eqn(jaxpr.invars, [last_itoken_var],
-                           lax.create_token_p, {}, source_info_util.current()))
+                           lax.create_token_p, {}, True, source_info_util.current()))
 
   for eqn in jaxpr.eqns:
     if not xla.primitive_uses_outfeed(eqn.primitive, eqn.params):
@@ -1261,7 +1261,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 eqn.params,
                 body_jaxpr=_rewrite_closed_jaxpr(body_jaxpr, True, True),
                 cond_jaxpr=_rewrite_closed_jaxpr(cond_jaxpr, True,
-                                                 False)), eqn.source_info))
+                                                 False)), True, eqn.source_info))
   elif eqn.primitive is lax.cond_p:
     branches, linear = util.split_dict(eqn.params, ["branches", "linear"])
     index, *operands = eqn.invars
@@ -1273,7 +1273,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 eqn.params,
                 branches=tuple(_rewrite_closed_jaxpr(jaxpr, True, True)
                                for jaxpr in branches),
-                linear=(*linear, False, False)), eqn.source_info))
+                linear=(*linear, False, False)), True, eqn.source_info))
   elif eqn.primitive is lax.scan_p:
     num_consts, num_carry, carry_jaxpr, linear, _, _, _ = util.split_dict(
         eqn.params,
@@ -1320,6 +1320,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
                 donated_invars=eqn.params["donated_invars"] + (False, False)
             ),
+            True,
             eqn.source_info))
   elif eqn.primitive is pxla.xla_pmap_p:
     # We broadcast the input token into an array of tokens
@@ -1337,6 +1338,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 in_axes=eqn.params["in_axes"] + (0, 0),
                 out_axes=eqn.params["out_axes"] + (0, 0)
             ),
+            True,
             eqn.source_info))
   elif eqn.primitive is pe.remat_call_p:
     call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
@@ -1349,6 +1351,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 eqn.params,
                 call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
             ),
+            True,
             eqn.source_info))
   elif eqn.primitive is custom_derivatives.custom_jvp_call_jaxpr_p:
     fun_jaxpr = eqn.params["fun_jaxpr"]
@@ -1365,6 +1368,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 fun_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
                 jvp_jaxpr_thunk=unreachable_thunk
             ),
+            True,
             eqn.source_info))
   elif eqn.primitive is custom_derivatives.custom_vjp_call_jaxpr_p:
     fun_jaxpr = eqn.params["fun_jaxpr"]
@@ -1386,6 +1390,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 bwd="illegal param",
                 out_trees="illegal param"
             ),
+            True,
             eqn.source_info))
   elif eqn.primitive is core.named_call_p:
     call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
@@ -1411,7 +1416,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                                    (pjit.REPLICATED, pjit.REPLICATED)),
                 out_axis_resources=(eqn.params["out_axis_resources"] +
                                     (pjit.REPLICATED, pjit.REPLICATED)),
-            ), eqn.source_info))
+            ), True, eqn.source_info))
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
 
@@ -1438,6 +1443,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
               name="cond_before",
               donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals),
               inline=False),
+          True,
           eqn.source_info))
   # Make a new cond "lambda pred, carry, token, itoken: pred"
   new_cond_pred_invar = mk_new_var(cond_jaxpr.out_avals[0])
@@ -1482,6 +1488,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
               name="body",
               donated_invars=(False,) * len(transformed_body_jaxpr.in_avals),
               inline=False),
+          True,
           eqn.source_info),
       core.new_jaxpr_eqn(
           new_body_invars_cond_constvars + new_body_carry2 + [new_body_token2, new_body_itoken2],
@@ -1491,6 +1498,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
               name="cond_body",
               donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals),
               inline=False),
+          True,
           eqn.source_info)
   ]
   new_body_jaxpr = core.ClosedJaxpr(
@@ -1511,7 +1519,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
               cond_jaxpr=new_cond_jaxpr,
               cond_nconsts=0,
               body_jaxpr=new_body_jaxpr,
-              body_nconsts=cond_nconsts + body_nconsts), eqn.source_info))
+              body_nconsts=cond_nconsts + body_nconsts), True, eqn.source_info))
 
 
 # We need an identity primitive to simplify rewriting

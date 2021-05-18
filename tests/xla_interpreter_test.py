@@ -19,6 +19,7 @@ from absl.testing import absltest
 from jax import test_util as jtu
 from jax._src import api
 from jax.interpreters import xla
+import jax.numpy as jnp
 
 
 class XlaInterpreterTest(jtu.JaxTestCase):
@@ -34,6 +35,18 @@ class XlaInterpreterTest(jtu.JaxTestCase):
     assert len(pruned_jaxpr.invars) == 1
     assert kept_const_idx == set()
     assert kept_var_idx == {0}
+
+  def test_dce_effectful_primitives(self):
+
+    def f(x):
+      jnp.sin(x)
+      return
+
+    closed_jaxpr = api.make_jaxpr(f)(1)
+    print(closed_jaxpr.jaxpr)
+    pruned_jaxpr, kept_const_idx, kept_var_idx = xla._prune_unused_inputs(
+        closed_jaxpr.jaxpr)
+    print(pruned_jaxpr, kept_const_idx, kept_var_idx)
 
 
 if __name__ == '__main__':

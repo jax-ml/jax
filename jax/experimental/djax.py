@@ -943,7 +943,7 @@ def partial_eval_jaxpr(jaxpr, in_unknowns):
     if any(unks):
       invars = [v if unk else new_res(v) for unk, v in zip(unks, eqn.invars)]
       eqns2.append(pe.new_jaxpr_eqn(invars, eqn.outvars, eqn.primitive,
-                                    eqn.params, None))
+                                    eqn.params, eqn.effectful, None))
       map(partial(write, True), eqn.outvars)
     else:
       eqns1.append(eqn)
@@ -1258,7 +1258,7 @@ def _nonzero_staging_rule(trace, tracers, params):
   out_val_tracer = pe.DynamicJaxprTracer(trace, out_val_aval, None)
   invars = map(trace.getvar, tracers)
   outvars = map(trace.makevar, [out_dim_tracer, out_val_tracer])
-  eqn = pe.new_jaxpr_eqn(invars, outvars, nonzero_p, {}, None)
+  eqn = pe.new_jaxpr_eqn(invars, outvars, nonzero_p, {}, False, None)
   trace.frame.eqns.append(eqn)
   return out_val_tracer
 custom_staging_rules[nonzero_p] = _nonzero_staging_rule
@@ -1312,7 +1312,7 @@ def _iota_staging_rule(trace, tracers, params):
     out_aval = core.ShapedArray((n,), np.dtype('int32'))
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     outvar = trace.makevar(out_tracer)
-    eqn = pe.new_jaxpr_eqn([], [outvar], iota_p, dict(size=n), None)
+    eqn = pe.new_jaxpr_eqn([], [outvar], iota_p, dict(size=n), False, None)
   else:
     aval = tracer.aval
     if not isinstance(aval, AbsArray): raise TypeError
@@ -1325,7 +1325,7 @@ def _iota_staging_rule(trace, tracers, params):
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     outvar = trace.makevar(out_tracer)
     invar = trace.getvar(tracer)
-    eqn = pe.new_jaxpr_eqn([invar], [outvar], iota_p, {}, None)
+    eqn = pe.new_jaxpr_eqn([invar], [outvar], iota_p, {}, False, None)
   trace.frame.eqns.append(eqn)
   return out_tracer
 custom_staging_rules[iota_p] = _iota_staging_rule
@@ -1374,7 +1374,7 @@ def _broadcast_staging_rule(trace, tracers, params):
     out_aval = AbsArray((d, *x.shape), BaseType(dtype))
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     eqn = pe.new_jaxpr_eqn([trace.getvar(x), trace.getvar(d)],
-                           [trace.makevar(out_tracer)], broadcast_p, {}, None)
+                           [trace.makevar(out_tracer)], broadcast_p, {}, False, None)
     trace.frame.eqns.append(eqn)
     return out_tracer
 custom_staging_rules[broadcast_p] = _broadcast_staging_rule
