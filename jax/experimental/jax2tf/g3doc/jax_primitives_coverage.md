@@ -4,7 +4,7 @@
 
 ## Supported data types for primitives
 
-We use a set of 2492 test harnesses to test
+We use a set of 2507 test harnesses to test
 the implementation of 121 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
@@ -64,7 +64,7 @@ be updated.
 | complex | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
 | concatenate | 17 | all |  |
 | conj | 5 | complex, float32, float64 | bfloat16, bool, float16, integer |
-| conv_general_dilated | 58 | inexact | bool, integer |
+| conv_general_dilated | 73 | inexact, int16, int32, int8 | bool, int64, unsigned |
 | convert_element_type | 201 | all |  |
 | cos | 6 | inexact | bool, integer |
 | cosh | 6 | inexact | bool, integer |
@@ -184,6 +184,10 @@ and search for "limitation".
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
 | --- | --- | --- | --- |
 |cholesky|unimplemented|float16|cpu, gpu|
+|conv_general_dilated|preferred_element_type not implemented for integers|int16, int32, int8|gpu|
+|conv_general_dilated|preferred_element_type=c128 not implemented|complex64|tpu|
+|conv_general_dilated|preferred_element_type=f64 not implemented|bfloat16, float16, float32|tpu|
+|conv_general_dilated|preferred_element_type=i64 not implemented|int16, int32, int8|tpu|
 |dot_general|preferred_element_type=c128 not implemented|complex64|tpu|
 |dot_general|preferred_element_type=i64 not implemented|int16, int32, int8|tpu|
 |eig|only supported on CPU in JAX|all|tpu, gpu|

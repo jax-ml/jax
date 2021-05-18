@@ -1124,6 +1124,7 @@ def _precision_config_proto(precision: Optional[Tuple[PrecisionType, PrecisionTy
 # it did not succeed otherwise.
 def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
                  dimension_numbers, feature_group_count, batch_group_count,
+                 preferred_element_type: Optional[DType],
                  out_shape) -> Union[str, TfVal]:
   # TODO(bchetioui): this function is not exhaustive wrt which convolution cases
   # can be translated into TF primitives. Further investigation is needed to
@@ -1144,6 +1145,9 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
   if list(window_strides) != [1] * nb_spatial_dimensions:
     return ("Unimplemented support for window_strides != "
             f"{tuple([1] * nb_spatial_dimensions)}")
+
+  if preferred_element_type is not None and preferred_element_type != lhs.dtype:
+    return ("Unimplemented support for preferred_element_type")
 
   success = lambda res: (res, None)
   failure = lambda msg: (None, msg)
@@ -1227,17 +1231,23 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
 
 def _conv_general_dilated(lhs, rhs, *,
                           window_strides, padding, lhs_dilation,
-                          rhs_dilation, dimension_numbers, feature_group_count,
-                          batch_group_count, lhs_shape, rhs_shape,
+                          rhs_dilation,
+                          dimension_numbers: lax.ConvDimensionNumbers,
+                          feature_group_count: int,
+                          batch_group_count: int,
+                          lhs_shape: Sequence[int],
+                          rhs_shape: Sequence[int],
                           precision: Optional[Tuple[PrecisionType, PrecisionType]],
-                          preferred_element_type, _in_avals, _out_aval):
+                          preferred_element_type: Optional[DType],
+                          _in_avals: Sequence[core.AbstractValue],
+                          _out_aval: core.AbstractValue):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   out_tf_shape = _aval_to_tf_shape(_out_aval)
   if not _enable_xla:
     info_or_result = _try_tf_conv(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-        dimension_numbers, feature_group_count, batch_group_count, out_tf_shape
-    )
+        dimension_numbers, feature_group_count, batch_group_count,
+        preferred_element_type, out_tf_shape)
     if not isinstance(info_or_result, str):
       return info_or_result
     else:
@@ -1247,12 +1257,13 @@ def _conv_general_dilated(lhs, rhs, *,
   precision_config_proto = _precision_config_proto(precision)
   assert batch_group_count == 1  # TODO(necula): implement batch_group_count
 
-  def gen_conv(lhs, rhs):
+  def gen_conv(lhs, rhs, preferred_element_type: Optional[DType]):
     out = tfxla.conv(
         lhs, rhs, window_strides, padding,
         lhs_dilation, rhs_dilation, dnums_proto,
         feature_group_count=feature_group_count,
-        precision_config=precision_config_proto)
+        precision_config=precision_config_proto,
+        preferred_element_type=preferred_element_type)
     # TODO: implement shape inference for XlaConv
     out.set_shape(out_tf_shape)
     return out
@@ -1261,14 +1272,21 @@ def _conv_general_dilated(lhs, rhs, *,
   # lax._conv_general_dilated_translation. We can use the same conversion on all
   # platforms because on XLA:TPU the compiler does the same as a rewrite.
   if np.issubdtype(_in_avals[0].dtype, np.complexfloating):
+    if preferred_element_type is not None:
+      # Convert complex dtype to types used for real and imaginary parts
+      assert np.issubdtype(preferred_element_type, np.complexfloating)
+      preferred_float_et = (
+          np.float64 if preferred_element_type == np.complex128 else np.float32)
+    else:
+      preferred_float_et = None
     lhs_real, lhs_imag = tf.math.real(lhs), tf.math.imag(lhs)
     rhs_real, rhs_imag = tf.math.real(rhs), tf.math.imag(rhs)
-    k1 = gen_conv(_add(lhs_real, lhs_imag), rhs_real)
-    k2 = gen_conv(lhs_real, tf.math.subtract(rhs_imag, rhs_real))
-    k3 = gen_conv(lhs_imag, _add(rhs_real, rhs_imag))
+    k1 = gen_conv(_add(lhs_real, lhs_imag), rhs_real, preferred_float_et)
+    k2 = gen_conv(lhs_real, tf.math.subtract(rhs_imag, rhs_real), preferred_float_et)
+    k3 = gen_conv(lhs_imag, _add(rhs_real, rhs_imag), preferred_float_et)
     return tf.complex(tf.math.subtract(k1, k3), _add(k1, k2))
   else:
-    return gen_conv(lhs, rhs)
+    return gen_conv(lhs, rhs, preferred_element_type)
 
 
 tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated

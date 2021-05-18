@@ -2502,35 +2502,64 @@ def _make_conv_harness(name,
                        feature_group_count=1,
                        dimension_numbers=("NCHW", "OIHW", "NCHW"),
                        batch_group_count=1,
+                       preferred_element_type=None,
                        enable_xla=True):
   define(
-    lax.conv_general_dilated_p,
-    f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_windowstrides={window_strides}_padding={padding}_lhsdilation={lhs_dilation}_rhsdilation={rhs_dilation}_dimensionnumbers={dimension_numbers}_featuregroupcount={feature_group_count}_batchgroupcount={batch_group_count}_precision={precision}_enablexla={enable_xla}"
+      lax.conv_general_dilated_p,
+      f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_windowstrides={window_strides}_padding={padding}_lhsdilation={lhs_dilation}_rhsdilation={rhs_dilation}_dimensionnumbers={dimension_numbers}_featuregroupcount={feature_group_count}_batchgroupcount={batch_group_count}_precision={precision}_preferred={jtu.dtype_str(preferred_element_type)}_enablexla={enable_xla}"
       .replace(" ", ""),
-    lax.conv_general_dilated, [
-      RandArg(lhs_shape, dtype),
-      RandArg(rhs_shape, dtype),
-      StaticArg(window_strides),
-      StaticArg(padding),
-      StaticArg(lhs_dilation),
-      StaticArg(rhs_dilation),
-      StaticArg(dimension_numbers),
-      StaticArg(feature_group_count),
-      StaticArg(batch_group_count),
-      StaticArg(precision)
-    ],
-    lhs_shape=lhs_shape,
-    rhs_shape=rhs_shape,
-    dtype=dtype,
-    window_strides=window_strides,
-    padding=padding,
-    lhs_dilation=lhs_dilation,
-    rhs_dilation=rhs_dilation,
-    dimension_numbers=dimension_numbers,
-    feature_group_count=feature_group_count,
-    batch_group_count=batch_group_count,
-    precision=precision,
-    enable_xla=enable_xla)
+      lax.conv_general_dilated,
+      [
+          RandArg(lhs_shape, dtype),
+          RandArg(rhs_shape, dtype),
+          StaticArg(window_strides),
+          StaticArg(padding),
+          StaticArg(lhs_dilation),
+          StaticArg(rhs_dilation),
+          StaticArg(dimension_numbers),
+          StaticArg(feature_group_count),
+          StaticArg(batch_group_count),
+          StaticArg(precision),
+          StaticArg(preferred_element_type),
+      ],
+      lhs_shape=lhs_shape,
+      rhs_shape=rhs_shape,
+      dtype=dtype,
+      window_strides=window_strides,
+      padding=padding,
+      lhs_dilation=lhs_dilation,
+      rhs_dilation=rhs_dilation,
+      dimension_numbers=dimension_numbers,
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+      enable_xla=enable_xla,
+      jax_unimplemented=[
+          Limitation(
+              "preferred_element_type=i64 not implemented",
+              devices="tpu",
+              dtypes=(np.int8, np.int16, np.int32),
+              enabled=(preferred_element_type in [np.int64])),
+          # b/183565702 - no integer convolutions for GPU
+          Limitation(
+              "preferred_element_type not implemented for integers",
+              devices="gpu",
+              dtypes=(np.int8, np.int16, np.int32),
+              enabled=(preferred_element_type in [np.int16, np.int32,
+                                                  np.int64])),
+          Limitation(
+              "preferred_element_type=f64 not implemented",
+              devices="tpu",
+              dtypes=(np.float16, jnp.bfloat16, np.float32),
+              enabled=(preferred_element_type in [np.float64])),
+          Limitation(
+              "preferred_element_type=c128 not implemented",
+              devices="tpu",
+              dtypes=np.complex64,
+              enabled=(preferred_element_type in [np.complex128])),
+      ],
+  )
 
 
 # Validate dtypes and precision
@@ -2542,6 +2571,12 @@ for dtype in jtu.dtypes.all_inexact:
     # default values for all the other parameters. Variations of other parameters
     # can thus safely skip testing their corresponding default value.
     _make_conv_harness("dtype_precision", dtype=dtype, precision=precision)
+
+# Validate preferred_element_type
+for dtype, preferred_element_type in preferred_type_combinations:
+  _make_conv_harness(
+      "preferred", dtype=dtype, preferred_element_type=preferred_element_type)
+
 # Validate variations of feature_group_count and batch_group_count
 for batch_group_count, feature_group_count in [
   (1, 2),  # feature_group_count != 1
