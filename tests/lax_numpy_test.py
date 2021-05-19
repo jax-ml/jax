@@ -2230,8 +2230,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     precision = lax.Precision.HIGHEST if jtu.device_under_test() == "tpu" else None
     np_fun = partial(np_op, mode=mode)
     jnp_fun = partial(jnp_op, mode=mode, precision=precision)
-    tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-14}
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
+    tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-14,
+           np.complex128: 1e-14}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
