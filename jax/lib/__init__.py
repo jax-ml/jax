@@ -58,6 +58,10 @@ def _check_jaxlib_version():
 
 _check_jaxlib_version()
 
+if version >= (0, 1, 68):
+  from jaxlib import cpu_feature_guard
+  cpu_feature_guard.check_cpu_features()
+
 from jaxlib import xla_client
 from jaxlib import lapack
 from jaxlib import pocketfft

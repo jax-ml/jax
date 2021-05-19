@@ -346,3 +346,12 @@ pybind_extension(
         "@pybind11",
     ],
 )
+
+pybind_extension(
+    name = "cpu_feature_guard",
+    srcs = ["cpu_feature_guard.c"],
+    module_name = "cpu_feature_guard",
+    deps = [
+        "@org_tensorflow//third_party/python_runtime:headers",
+    ],
+)

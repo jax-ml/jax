@@ -154,9 +154,9 @@ def verify_mac_libraries_dont_reference_chkstack():
   if nm.returncode != 0:
     raise RuntimeError(f"nm process failed: {nm.stdout} {nm.stderr}")
   if "____chkstk_darwin" in nm.stdout:
-      raise RuntimeError(
-        "Mac wheel incorrectly depends on symbol ____chkstk_darwin, which "
-        "means that it isn't compatible with older MacOS versions.")
+    raise RuntimeError(
+      "Mac wheel incorrectly depends on symbol ____chkstk_darwin, which "
+      "means that it isn't compatible with older MacOS versions.")
 
 
 def prepare_wheel(sources_path):
@@ -172,6 +172,7 @@ def prepare_wheel(sources_path):
   copy_file(r.Rlocation("__main__/jaxlib/setup.cfg"), dst_dir=sources_path)
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/init.py"),
                  dst_filename="__init__.py")
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cpu_feature_guard.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/lapack.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_pocketfft.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py"))

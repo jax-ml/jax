@@ -46,6 +46,7 @@ pytype_library(
     srcs_version = "PY3",
     deps = [
         "//third_party/py/jax/jaxlib:_pocketfft",
+        "//third_party/py/jax/jaxlib:cpu_feature_guard",
         "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
     ],
 )
