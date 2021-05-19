@@ -99,13 +99,13 @@ def eigh(x, lower: bool = True, symmetrize_input: bool = True):
       eigendecomposition by computing :math:`\\frac{1}{2}(x + x^H)`.
 
   Returns:
-    A tuple ``(v, w)``.
-
-    ``v`` is an array with the same dtype as ``x`` (or its real counterpart if
-    complex) with shape ``[..., n]`` containing the eigenvalues of ``x``.
+    A tuple ``(w, v)``.
 
     ``w`` is an array with the same dtype as ``x`` such that ``w[..., :, i]`` is
     the eigenvector corresponding to ``v[..., i]``.
+
+    ``v`` is an array with the same dtype as ``x`` (or its real counterpart if
+    complex) with shape ``[..., n]`` containing the eigenvalues of ``x``.
   """
   if symmetrize_input:
     x = symmetrize(x)
@@ -475,11 +475,8 @@ def eigh_translation_rule(c, operand, lower):
   shape = c.get_shape(operand)
   dims = shape.dimensions()
   if dims[-1] == 0:
-    return xops.Tuple(c, [operand, xops.Reshape(operand, dims[:-1])])
-  if not lower:
-    n = len(dims)
-    operand = xops.Transpose(operand, list(range(n - 2)) + [n - 1, n - 2])
-  return xops.Tuple(c, xops.Eigh(operand))
+    return xops.Tuple(c, [operand, xops.Real(xops.Reshape(operand, dims[:-1]))])
+  return xops.Tuple(c, xops.Eigh(operand, lower=lower))
 
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
@@ -507,14 +504,6 @@ def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
   return xops.Tuple(c, [v, w])
-
-def _eigh_tpu_translation_rule(c, operand, lower):
-  # Fail gracefully for complex dtype (unsupported on TPU).
-  shape = c.get_shape(operand)
-  dtype = shape.element_type().type
-  if np.issubdtype(dtype, np.complexfloating):
-    raise NotImplementedError("eigh is not implemented on TPU for complex inputs.")
-  return eigh_translation_rule(c, operand, lower)
 
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
@@ -569,8 +558,6 @@ if cusolver is not None:
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][eigh_p] = partial(
     _eigh_cpu_gpu_translation_rule, rocsolver.syevd)
-
-xla.backend_specific_translations['tpu'][eigh_p] = _eigh_tpu_translation_rule
 
 
 triangular_solve_dtype_rule = partial(
