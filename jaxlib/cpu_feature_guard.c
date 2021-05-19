@@ -155,6 +155,12 @@ static struct PyModuleDef cpu_feature_guard_module = {
                  or -1 if the module keeps state in global variables. */
     cpu_feature_guard_methods};
 
-PyMODINIT_FUNC PyInit_cpu_feature_guard(void) {
+#if defined(WIN32) || defined(_WIN32)
+#define EXPORT_SYMBOL __declspec(dllexport)
+#else
+#define EXPORT_SYMBOL __attribute__ ((visibility("default")))
+#endif
+
+EXPORT_SYMBOL PyMODINIT_FUNC PyInit_cpu_feature_guard(void) {
   return PyModule_Create(&cpu_feature_guard_module);
 }
