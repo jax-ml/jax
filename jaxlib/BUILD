@@ -15,7 +15,7 @@
 # JAX is Autograd and XLA
 
 load(
-    "//jax:jax.bzl",
+    "//jaxlib:jax.bzl",
     "cuda_library",
     "flatbuffer_cc_library",
     "flatbuffer_py_library",
