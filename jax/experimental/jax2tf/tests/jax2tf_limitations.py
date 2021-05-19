@@ -326,6 +326,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(dtypes=np.float32, devices="gpu",
                        modes=("eager", "graph", "compiled"),
                        tol=1e-5),
+        custom_numeric(description="higher numeric inaccuracy when `enable_xla=False`",
+                       modes=("eager", "graph", "compiled"),
+                       enabled=(not harness.params["enable_xla"]),
+                       tol=1e-4)
     ]
 
   @classmethod
