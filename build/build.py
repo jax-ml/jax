@@ -77,25 +77,36 @@ def check_python_version(python_version):
 # Bazel
 
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/3.7.2/"
-BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
+BazelPackage = collections.namedtuple("BazelPackage",
+                                      ["base_uri", "file", "sha256"])
 bazel_packages = {
     ("Linux", "x86_64"):
         BazelPackage(
+            base_uri=None,
             file="bazel-3.7.2-linux-x86_64",
             sha256=
             "70dc0bee198a4c3d332925a32d464d9036a831977501f66d4996854ad4e4fc0d"),
     ("Linux", "aarch64"):
         BazelPackage(
+            base_uri=None,
             file="bazel-3.7.2-linux-arm64",
             sha256=
             "6ebd9eccbcb8f63c92a324c0c86cec11963aa9dcb914dd4718f592fdfeda9823"),
     ("Darwin", "x86_64"):
         BazelPackage(
+            base_uri=None,
             file="bazel-3.7.2-darwin-x86_64",
             sha256=
             "80c82e93a12ba30021692b11c78007807e82383a673be1602573b944beb359ab"),
+    ("Darwin", "arm64"):
+        BazelPackage(
+            base_uri="https://releases.bazel.build/4.1.0/rc4/",
+            file="bazel-4.1.0rc4-darwin-arm64",
+            sha256=
+            "998466a73295e4a03a9f3ef06feeab87029d500b2f262655600c5dccce7113ba"),
     ("Windows", "x86_64"):
         BazelPackage(
+            base_uri=None,
             file="bazel-3.7.2-windows-x86_64.exe",
             sha256=
             "ecb696b1b9c9da6728d92fbfe8410bafb4b3a65c358980e49742233f33f74d10"),
@@ -109,7 +120,7 @@ def download_and_verify_bazel():
     return None
 
   if not os.access(package.file, os.X_OK):
-    uri = BAZEL_BASE_URI + package.file
+    uri = (package.base_uri or BAZEL_BASE_URI) + package.file
     sys.stdout.write("Downloading bazel from: {}\n".format(uri))
 
     def progress(block_count, block_size, total_size):
