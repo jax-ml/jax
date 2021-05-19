@@ -130,6 +130,55 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     arr = np.arange(10, dtype=np.float32)
     self._compare_with_saved_model(f_jax, arr)
 
+  # Test does not work on GPU/TPU; would need something like TPU inference
+  # converter to separate the model on what needs to run on CPU or accelerator.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def test_tf_mix_jax_with_uncompileable(self):
+    """Show how to combine TF-uncompileable code with compiled JAX-converted code."""
+    def tf_fn(x_str, compute_tf_fn=lambda x: x):
+      # Some TF preprocessing code that cannot be compiled with XLA because it
+      # uses strings.
+      numbers_f32 = tf.strings.to_number(x_str, out_type=tf.float32)
+      numbers_f16 = tf.cast(numbers_f32, tf.float16)
+      return compute_tf_fn(numbers_f16)
+
+    x_str = np.array(["3.14", "2.78"])
+
+    # Test that we get an error if we try to TF-compile `tf_fn`
+    with self.assertRaisesRegex(
+        Exception,
+        "Detected unsupported operations when trying to compile graph"):
+      tf.function(tf_fn, jit_compile=True)(x_str)
+
+    def compute_jax_fn(x):
+      # A JAX function whose conversion does not run in TF without XLA because
+      # tf.math.atan is not supported on float16 without XLA.
+      return lax.atan(x) + lax.atan(x)
+
+    with self.assertRaisesRegex(
+        tf.errors.NotFoundError,
+        "Could not find device for node.*Atan.*DT_HALF"):
+      tf_fn(x_str, compute_tf_fn=jax2tf.convert(compute_jax_fn))
+
+    # Plug in the TF-compiled JAX-converted `compute_jax_fn`.
+    composed_fn = lambda x_str: tf_fn(
+        x_str,
+        compute_tf_fn=tf.function(jax2tf.convert(compute_jax_fn),
+                                  autograph=True,
+                                  jit_compile=True))
+    res_tf = composed_fn(x_str)
+    self.assertAllClose(res_tf.numpy(),
+                        compute_jax_fn(np.array([3.14, 2.78], dtype=np.float16)))
+
+    # Save and restore SavedModel
+    model = tf.Module()
+    model.f = tf.function(
+        composed_fn,
+        input_signature=[tf.TensorSpec((2,), dtype=tf.string)])
+    restored_model = self.save_and_load_model(model)
+    res_tf_restored = restored_model.f(x_str)
+    self.assertAllClose(res_tf_restored.numpy(), res_tf.numpy())
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
