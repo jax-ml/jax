@@ -81,6 +81,11 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
                                  normalize_indices=normalize_indices)
 
+  # Avoid calling scatter if the slice shape is empty, both as a fast path and
+  # to handle cases like zeros(0)[array([], int32)].
+  if core.is_empty_shape(indexer.slice_shape):
+    return x
+
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
   # Collapse any `None`/`jnp.newaxis` dimensions.
