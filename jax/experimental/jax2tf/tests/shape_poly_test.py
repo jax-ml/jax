@@ -13,8 +13,8 @@
 # limitations under the License.
 """Tests for the shape-polymorphic jax2tf conversion."""
 
-from absl.testing import absltest
-from typing import Callable, Dict, List, Optional, Sequence, Union
+from absl.testing import absltest, parameterized
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import collections
 import functools
@@ -47,6 +47,211 @@ from jax.experimental.jax2tf.tests.primitive_harness import Harness, CustomArg, 
 from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
 
 PS = jax2tf.PolyShape
+
+
+class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
+
+  def test_parse_poly_spec(self):
+    self.assertEqual((2, 3), shape_poly.parse_spec(None, (2, 3)))
+    self.assertEqual((2, 3), shape_poly.parse_spec("2, 3", (2, 3)))
+    self.assertEqual((2, 3), shape_poly.parse_spec("2, _", (2, 3)))
+    self.assertEqual((2, 3), shape_poly.parse_spec("2, ...", (2, 3)))
+    self.assertEqual((2, 3), shape_poly.parse_spec("...", (2, 3)))
+    self.assertEqual((2, 3), shape_poly.parse_spec(" ( 2 , 3 ) ", (2, 3)))
+
+  def test_dim_vars(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    self.assertEqual(True, a == a)
+    self.assertEqual(False, a != a)
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        "Dimension polynomial comparison 'a' == 'b' is inconclusive"):
+      a.eq(b)
+
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        "Dimension polynomial comparison 'a' == 'b' is inconclusive"):
+      a == b
+
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        "Dimension polynomial comparison 'a' == 'b' is inconclusive"):
+      a != b
+
+    self.assertLen({a, a}, 1)
+    self.assertLen({a, b}, 2)
+    self.assertIn(a, {a, b})
+    self.assertIn(b, {a, b})
+    self.assertIn(a, [a, b])
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                "Dimension polynomial comparison 'b' == 'a' is inconclusive"):
+      b in [a, b]
+
+  def test_get_vars(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+
+    self.assertEqual({"a"}, a.get_vars())
+    self.assertEqual({"a", "b"}, (a * b * a).get_vars())
+
+  def test_evaluate(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+
+    self.assertEqual(1, (a * a - b).evaluate(dict(a=2, b=3)))
+    self.assertEqual(2, (a * a - b + 1).evaluate(dict(a=-2, b=3)))
+
+  def test_dim_vars_symbolic_equal(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    self.assertTrue(core.symbolic_equal_dim(a, a))
+    self.assertFalse(core.symbolic_equal_dim(a, 1))
+    self.assertFalse(core.symbolic_equal_dim(a, b))
+
+    self.assertTrue(core.symbolic_equal_one_of_dim(a, [2, a]))
+    self.assertFalse(core.symbolic_equal_one_of_dim(a, [2, b]))
+    self.assertFalse(core.symbolic_equal_one_of_dim(a, []))
+
+    self.assertTrue(core.symbolic_equal_one_of_dim(2, [a, 3, 2]))
+    self.assertFalse(core.symbolic_equal_one_of_dim(1, [2, b]))
+    self.assertFalse(core.symbolic_equal_one_of_dim(3, []))
+
+    self.assertTrue(core.symbolic_equal_dim(1, jnp.add(0, 1)))  # A DeviceArray
+    with self.assertRaisesRegex(TypeError,
+                                re.escape("Shapes must be 1D sequences of concrete values of integer type, got (1, 'a').")):
+      self.assertTrue(core.symbolic_equal_dim(1, "a"))
+
+  def test_poly_bounds(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    self.assertEqual(a.bounds(), (1, None))
+    self.assertEqual((2 * a).bounds(), (2, None))
+    self.assertEqual((2 * a - 3).bounds(), (-1, None))
+    self.assertEqual((-2 * a - 3).bounds(), (None, -5))
+    self.assertEqual((3 * a * b * b + 5 * a - 7).bounds(), (1, None))
+    self.assertEqual((3 * a * b * b - 5 * a - 7).bounds(), (None, None))
+    self.assertEqual((a + b - a * b + a * b * a).bounds(), (None, None))
+    self.assertEqual((a + 2 * b - a).bounds(), (2, None))
+
+  def test_poly_equal(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    poly3 = a + 3 - a
+    self.assertTrue(poly3 == 3)
+    self.assertTrue(poly3 == np.array(3, np.int64))
+    self.assertTrue(poly3 == np.array(3, np.int64)[()])
+    self.assertFalse((poly3 + 1) == 3)
+    self.assertFalse(poly3 == poly3 + 1)
+    self.assertTrue((2 * a * b * a + 3).eq(1 + b * a * a + a * a * b + 2))
+    self.assertFalse((2 * a * b * a + 3).eq(a * b * a + 3))
+
+    self.assertFalse((a * b * a + 3).eq(a * b * a + 4))
+    self.assertFalse((2 * a * b * a).eq(a * b * a))
+    self.assertFalse((2 * a * b * a + 1).eq(a * b * a))
+    self.assertFalse((3 * a * b * a - 1).eq(a * b * a))
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                re.escape("Dimension polynomial comparison '3 a^2 b + -2' == 'a^2 b' is inconclusive")):
+      (3 * a * b * a - 2).eq(a * b * a)
+
+  def test_poly_compare(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    poly = 4 * a + b + 3
+    self.assertTrue(poly.ge(0))
+    self.assertTrue(poly.ge(8))
+    self.assertTrue(poly.ge(poly))
+    self.assertTrue(poly.ge(poly - 1))
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
+      poly.ge(9)
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
+      (4 * a - b).ge(0)
+
+  def test_poly_compare_overload(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    poly = 4 * a + b + 3
+    self.assertTrue(poly >= 0)
+    self.assertTrue(poly >= 8)
+    self.assertTrue(poly > 7)
+    self.assertTrue(poly >= poly)
+    self.assertTrue(poly >= poly - 1)
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
+      poly >= 9
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, "inconclusive"):
+      (4 * a - b) >= 0
+
+  def test_core_greater_equal(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    self.assertTrue(core.greater_equal_dim(a, a))
+    self.assertTrue(core.greater_equal_dim(a, 0))
+    self.assertTrue(core.greater_equal_dim(a, 1))
+
+    self.assertTrue(core.greater_equal_shape((a, 2), (1, 1)))
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                "Dimension polynomial comparison .* is inconclusive"):
+      core.greater_equal_dim(a, 2)
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                "Dimension polynomial comparison .* is inconclusive"):
+      core.greater_equal_dim(a, b)
+
+  def test_poly_int_results(self):
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    self.assertEqual(a + 2 - a, 2)
+    self.assertIsInstance(a + 2 - a, int)
+    self.assertEqual(a + (2 - a), 2)
+    self.assertIsInstance(a + (2 - a), int)
+    self.assertEqual(a * 2 // a, 2)
+    self.assertIsInstance(a * 2 // a, int)
+
+  a, b = shape_poly.parse_spec("a, b", (2, 3))
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_D={dividend}_d={divisor}_q={quotient}_r={remainder}",
+           dividend=dividend, divisor=divisor, quotient=quotient,
+           remainder=remainder)
+      for dividend, divisor, quotient, remainder in [
+          (a, 1, a, 0),
+          (3 * a, 3, a, 0),
+          (3 * a + 3, 3, a + 1, 0),
+          (3 * a + 2, 3, a, 2),
+          (3 * a + 5, 3, a + 1, 2),
+          (3 * a - 2, 3, a - 1, 1),
+          (3 * a * a * b + 2 * b * b * a, a * b, 3 * a + 2 * b, 0),
+          (a * a - b * b, a + b, a - b, 0),
+          (a, b, None, None),
+          (3 * a, 2, None, None),
+          (2 * a * b + b * b, a + b, None, None),
+  ])
+  def test_poly_divmod(self, dividend, quotient, divisor, remainder):
+    if quotient is None:
+      with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                  "Dimension polynomial .* is not a multiple of .*"):
+        dividend.divmod(divisor)
+    else:
+      self.assertEqual((quotient, remainder), dividend.divmod(divisor))
+
+  def test_dilate_shape(self):
+    """0 if d == 0 else 1 + dilation * (d - 1))"""
+    a, = shape_poly.parse_spec("a,", (2,))
+
+    self.assertEqual((4, 7), core.dilate_shape((2, 3), (3, 3)))
+    self.assertEqual((0, 7), core.dilate_shape((0, 3), (3, 3)))
+    self.assertEqual((a, 7), core.dilate_shape((a, 3), (1, 3)))
+    self.assertEqual((2 * a - 1, 7), core.dilate_shape((a, 3), (2, 3)))
+
+  def test_stride_shape(self):
+    """(s - window_size) // window_stride + 1"""
+    a, stride = shape_poly.parse_spec("a, s", (2, 3))
+
+    self.assertEqual((8, 9), core.stride_shape((10, 20), window_size=(3, 3), window_stride=(1, 2)))
+    self.assertEqual((a, 9), core.stride_shape((a, 20), (1, 3), (1, 2)))
+
+    self.assertEqual((a - 1, 9), core.stride_shape((a, 20), (2, 3), (1, 2)))
+    self.assertEqual((a + 1, 9), core.stride_shape((a * stride + 2, 20), (2, 3), (stride, 2)))
+
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        re.escape(
+          "Cannot compute stride for dimension 'a', window_size '1', stride '2'. Reason: Dimension polynomial 'a + -1' is not a multiple of '2'")):
+      core.stride_shape((a, 20), (1, 3), (2, 2))
 
 
 class ShapePolyTest(tf_test_util.JaxToTfTestCase):
@@ -249,6 +454,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           polymorphic_shapes=["(a, a)"],
           expected_avals=None)
 
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape(
+            "PolyShape '(a,)' has dimension variable 'a' corresponding to 0, "
+            "for argument shape (0,)"
+        )):
+      check_avals(
+          args=[tf_var([0], initializer_shape=(0))],
+          polymorphic_shapes=["(a,)"],
+          expected_avals=None)
+
   def test_pytree(self):
     """Arguments and polymorphic_shapes are pytrees."""
 
@@ -393,7 +609,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         res_jax,
         jax2tf.convert(f, polymorphic_shapes=["(b, h)", "h"])(x, y))
 
-  def test_example(self):
+  def test_readme_example(self):
     """Some of the examples from the README."""
     def image_mask_jax(images, mask):
       # images: f32[B, W, W]  and mask: f32[W, W]
@@ -404,7 +620,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # will invoke broadcast_in_dim with shape=(1, w, w)
     jax2tf.convert(image_mask_jax, polymorphic_shapes=["(b, w, w)", "(w, w)"])
 
-  def test_shape_error(self):
+  def test_readme_shape_error(self):
     """Some of the examples from the README."""
     with self.assertRaisesRegex(
         TypeError,
@@ -425,110 +641,71 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           lambda x, y: x + y, polymorphic_shapes=["(v,)", "(4,)"])(four_ones,
                                                                    four_ones)
 
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                re.escape("Shape variable comparison v == 4 is inconclusive")):
+    with self.assertRaisesRegex(TypeError,
+                                re.escape("dot_general requires contracting dimensions to have the same shape, got [4] and [v]")):
       jax2tf.convert(lambda x: jnp.matmul(x, x),
                      polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
 
-    with self.assertRaisesRegex(TypeError,
-                                re.escape("unsupported operand type(s) for *: 'DimVar' and 'int'")):
-      jax2tf.convert(lambda x: jnp.reshape(x, np.prod(x.shape)),
-                     polymorphic_shapes=["(b, ...)"])(np.ones((3, 4, 5)))
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                re.escape("Cannot divide evenly the sizes of shapes (b, 5, 7) and (2, -1)")):
+      jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+                     polymorphic_shapes=["(b, _, _)"])(np.ones((4, 5, 7)))
 
-    jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0], np.prod(x.shape[1:]))),
-                   polymorphic_shapes=["(b, _, _)"])(np.ones((3, 4, 5)))
+    jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+                   polymorphic_shapes=["(b, _, _)"])(np.ones((4, 5, 6)))
+    jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
+                   polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("unsupported operand type(s) for /: 'TensorFlowTracer' and 'DimVar'")):
+        re.escape("unsupported operand type(s) for /: 'TensorFlowTracer' and '_DimPolynomial'")):
       jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
                      polymorphic_shapes=["(v, _)"])(np.ones((4, 4)))
 
-  def test_parse_poly_spec(self):
-    self.assertEqual((2, 3), shape_poly.parse_spec(None, (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec("2, 3", (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec("2, _", (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec("2, ...", (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec("...", (2, 3)))
-    self.assertEqual((2, 3), shape_poly.parse_spec(" ( 2 , 3 ) ", (2, 3)))
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        re.escape("Dimension polynomial comparison 'a + 1' == 'b' is inconclusive")):
+      jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
+                     polymorphic_shapes=["(a, b)"])(np.ones((4, 4)))
 
-  def test_dim_vars(self):
-    """Unit tests for DimVar."""
-    da, db = shape_poly.parse_spec("a, b", (2, 3))
-    self.assertEqual(True, da == da)
-    self.assertEqual(False, da != da)
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, ""):
-      da == db
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, ""):
-      da != db
+    # Unsoundness: not checking that the shape is 0
+    def f_jax(x):
+      return 0 if x.shape[0] == 0 else 1
 
-    self.assertLen({da, da}, 1)
-    self.assertLen({da, db}, 2)
-    self.assertIn(da, {da, db})
-    self.assertIn(db, {da, db})
-    self.assertIn(da, [da, db])
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation, ""):
-      db in [da, db]
+    x0 = np.array([], np.float32)
+    self.assertEqual(0, f_jax(x0))  # JAX sees that the x.shape[0] == 0
 
-  def test_dim_vars_symbolic_equal(self):
-    da, db = shape_poly.parse_spec("a, b", (2, 3))
-    self.assertTrue(core.symbolic_equal_dim(da, da))
-    self.assertFalse(core.symbolic_equal_dim(da, 1))
-    self.assertFalse(core.symbolic_equal_dim(da, db))
+    # jax2tf catches the broken assumption b >= 1 if the converted function is executed
+    # eagerly.
+    # Raises: ValueError: PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)
+    with self.assertRaisesRegex(ValueError,
+                                re.escape("PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)")):
+      jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0)
 
-    self.assertTrue(core.symbolic_equal_one_of_dim(da, [2, da]))
-    self.assertFalse(core.symbolic_equal_one_of_dim(da, [2, db]))
-    self.assertFalse(core.symbolic_equal_one_of_dim(da, []))
+    # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
+    f_tf = tf.function(
+    jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
+    self.assertEqual(1, f_tf(x0))
 
-    self.assertTrue(core.symbolic_equal_one_of_dim(2, [da, 3, 2]))
-    self.assertFalse(core.symbolic_equal_one_of_dim(1, [2, db]))
-    self.assertFalse(core.symbolic_equal_one_of_dim(3, []))
+    # Unsoundness: not checking that the actual dimensions denoted by the same
+    # shape variables have equal sizes.
+    def f_jax(x):
+      return 0 if x.shape[0] != x.shape[1] else 1
 
-    self.assertTrue(core.symbolic_equal_dim(1, jnp.add(0, 1)))  # A DeviceArray
-    with self.assertRaisesRegex(TypeError,
-                                re.escape("Shapes must be 1D sequences of concrete values of integer type, got (1, 'a').")):
-      self.assertTrue(core.symbolic_equal_dim(1, "a"))
+    x45 = np.ones((4, 5), dtype=np.float32)
+    self.assertEqual(0, f_jax(x45))  # JAX seems that x.shape[0] != x.shape[1]
 
-  def test_dim_vars_greater_equal(self):
-    da, db = shape_poly.parse_spec("a, b", (2, 3))
-    self.assertTrue(core.greater_equal_dim(da, da))
-    self.assertTrue(core.greater_equal_dim(da, 0))
-    self.assertTrue(core.greater_equal_dim(da, 1))
+    # jax2tf catches the broken assumption x.shape[0] == x.shape[1] if the converted
+    # function is executed eagerly.
+    # Raises: ValueError: PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)
+    with self.assertRaisesRegex(ValueError,
+                                re.escape("PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)")):
+      jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
 
-    self.assertTrue(core.greater_equal_shape((da, 2), (1, 1)))
-
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Shape variable comparison .* is inconclusive"):
-      core.greater_equal_dim(da, 2)
-
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Shape variable comparison .* is inconclusive"):
-      core.greater_equal_dim(da, db)
-
-  def test_dilate_shape(self):
-    da, = shape_poly.parse_spec("a,", (2,))
-
-    self.assertEqual((4, 7), core.dilate_shape((2, 3), (3, 3)))
-    self.assertEqual((0, 7), core.dilate_shape((0, 3), (3, 3)))
-    self.assertEqual((da, 7), core.dilate_shape((da, 3), (1, 3)))
-
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                re.escape("Only dilation == 1 is supported for shape variables (var = a, dilation = 2)")):
-      core.dilate_shape((da, 3), (2, 3))
-
-  def test_stride_shape(self):
-    da, = shape_poly.parse_spec("a,", (2,))
-
-    self.assertEqual((8, 9), core.stride_shape((10, 20), (3, 3), (1, 2)))
-    self.assertEqual((da, 9), core.stride_shape((da, 20), (1, 3), (1, 2)))
-
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                re.escape("Only striding with window_size == window_stride == 1 is supported for shape variables (var = a, window_size = 2, stride = 1")):
-      core.stride_shape((da, 20), (2, 3), (1, 2))
-
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                re.escape("Only striding with window_size == window_stride == 1 is supported for shape variables (var = a, window_size = 1, stride = 2")):
-      core.stride_shape((da, 20), (1, 3), (2, 2))
+    # However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
+    f_tf = tf.function(
+        jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
+    self.assertEqual(1, f_tf(x45))
 
 
 class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
@@ -645,12 +822,19 @@ def _make_harness(group_name: str, name: str,
                   func: Callable,
                   args: primitive_harness.ArgDescriptor,
                   *,
-                  poly_axes: Sequence[Optional[int]],
+                  poly_axes: Sequence[Optional[Union[int, Sequence[int]]]],
                   check_result=True,
                   tol=None,
                   **params) -> Harness:
   """The `poly_axes` must correspond to the non-static arguments, and for each
-  one it must specify which axes are: None, or an int.
+  one it must specify which axes are: None, or an int (for the index of the
+  polymorphic axis), or a tuple of ints (for multiple polymorphic axes).
+
+  For each argument, we use its `poly_axes` entry to generate the polymorphic_shapes
+  specification, creating shape variables `b0`, `b1, ..., for each of its
+  polymorphic axes. This means that separate arguments will share the same
+  dimension variable names, in the order in which the axes are listed in
+  poly_axes.
 
   The name of the harness within the group will include `poly_axes`.
   You can add an additional `name`.
@@ -658,7 +842,11 @@ def _make_harness(group_name: str, name: str,
   `check_result` specifies if we want to check that the result of the shape
   polymorphic conversion produces the same result and the JAX function.
   """
-  poly_axes_name = "poly_axes=" + "_".join(map(str, poly_axes))
+  poly_axes_name = f"poly_axes={repr(poly_axes)}"
+  assert isinstance(poly_axes, Sequence)
+  # Make poly_axes: Sequence[Sequence[int]]
+  poly_axes = tuple(map(lambda pa: pa if isinstance(pa, Sequence) or pa is None else (pa,),
+                        poly_axes))
   if name:
     name = f"{name}_{poly_axes_name}"
   else:
@@ -722,6 +910,12 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
 
+    _make_harness("dynamic_update_slice", "",
+                  # x:shape: (b, 4)
+                  lambda x: lax.dynamic_update_slice(x, x, (0, 0)),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+
     _make_harness("einsum", "0",
                   lambda x: jnp.einsum("...i->...", x),
                   [RandArg((3, 4), _f32)],
@@ -736,6 +930,20 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x, y: jnp.einsum("...ij,jk->...ik", x, y),
                   [RandArg((3, 4, 5), _f32), RandArg((5, 6), _f32)],
                   poly_axes=[0, None]),
+
+    _make_harness("einsum", "3",
+                  # Reduced dimension is polymorphic
+                  lambda x, y: jnp.einsum("ij,jk->ik", x, y),
+                  [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
+                  poly_axes=[1, 0]),
+
+    _make_harness("einsum", "4",
+                  # Reduced dimension is polymorphic, and is 2*b
+                  lambda x, y: jnp.einsum("ij,jk->ik",
+                                          jnp.concatenate([x, x], axis=1),
+                                          jnp.concatenate([y, y], axis=0)),
+                  [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
+                  poly_axes=[1, 0]),
 
     _make_harness("jnp_take", "",
                   lambda a, i: jnp.take(a, i, axis=1),
@@ -788,20 +996,29 @@ _POLY_SHAPE_TEST_HARNESSES = [
 
     # TODO: random_gamma does not work yet.
     # _make_harness("random_gamma", "",
-    #               lambda  key, a: jax.random.gamma(key, a),
+    #               lambda key, a: jax.random.gamma(key, a),
     #               [RandArg((3, 2), np.uint32), RandArg((3, 3), _f32)],
     #               poly_axes=[0, 0]),
 
-    _make_harness("reshape", "",
+    _make_harness("reshape", "0",
                   lambda x: x.reshape([x.shape[0], -1]),
                   [RandArg((3, 2, 3), _f32)],
                   poly_axes=[0]),
 
-    # TODO: support multiple poly axes
-    # _make_harness("reshape", "multi",
-    #               lambda x: x.reshape([x.shape[0], -1, x.shape[3], x.shape[2]]),
-    #               [RandArg((3, 4, 5, 6, 7), _f32)],
-    #               poly_axes=[(0, 2, 3)]),
+    _make_harness("reshape", "1",
+                  lambda x: x.reshape([x.shape[0], -1]),
+                  [RandArg((3, 2, 3), _f32)],
+                  poly_axes=[(0, 1)]),
+
+    _make_harness("reshape", "2",
+                  lambda x: x.reshape([x.shape[0], -1, x.shape[3], x.shape[2]]),
+                  [RandArg((3, 4, 5, 6, 7), _f32)],
+                  poly_axes=[(0, 2, 3)]),
+
+    _make_harness("reshape", "3",
+                  lambda x: jnp.reshape(x, [2, -1]),
+                  [RandArg((3, 4, 5, 6, 7), _f32)],
+                  poly_axes=[(0, 2)]),
 
     _make_harness("jnp_squeeze", "axis=None",
                   jnp.squeeze,
@@ -841,6 +1058,17 @@ _POLY_SHAPE_TEST_HARNESSES = [
     _make_harness("squeeze", "axis=1_2",
                   jnp.squeeze,
                   [RandArg((4, 1, 1), _f32), StaticArg((1, 2))],
+                  poly_axes=[0]),
+
+    _make_harness("tile", "0",
+                  lambda x: jnp.tile(x, (1, 2)),
+                  [RandArg((4, 3), _f32)],
+                  poly_axes=[0]),
+
+    _make_harness("tile", "1",
+                  # The repetitions are polys
+                  lambda x: jnp.tile(x, (1, x.shape[0])),
+                  [RandArg((4, 2), _f32)],
                   poly_axes=[0]),
 ]
 
@@ -969,7 +1197,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(_POLY_SHAPE_TEST_HARNESSES)
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())
-    poly_axes = harness.params["poly_axes"]
+    poly_axes = harness.params["poly_axes"]  # type: Sequence[Sequence[int]]
     assert len(args) == len(poly_axes)
     # Make the polymorphic_shapes and input_signature
     polymorphic_shapes: List[Optional[str]] = []
@@ -979,12 +1207,23 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes.append(None)
         input_signature.append(tf.TensorSpec(np.shape(arg), arg.dtype))
       else:
-        polymorphic_shapes.append(
-            ", ".join([str(d) if i != poly_axis else "b"
-                       for i, d in enumerate(arg.shape)]))
-        input_signature.append(tf.TensorSpec([d if i != poly_axis else None
-                                              for i, d in enumerate(arg.shape)],
-                                             arg.dtype))
+        def make_arg_polymorphic_shapes(poly_axis: Sequence[int]) -> Tuple[str, tf.TensorSpec]:
+          idx = -1
+          dims = []
+          tensorspec_dims: List[Optional[int]] = []
+          for i, d in enumerate(arg.shape):
+            if i in poly_axis:
+              idx += 1
+              dims.append(f"b{idx}")
+              tensorspec_dims.append(None)
+            else:
+              dims.append(str(d))
+              tensorspec_dims.append(d)
+          return ", ".join(dims), tf.TensorSpec(tensorspec_dims, arg.dtype)
+
+        arg_polymorphic_shapes, arg_tensorspec = make_arg_polymorphic_shapes(poly_axis)
+        polymorphic_shapes.append(arg_polymorphic_shapes)
+        input_signature.append(arg_tensorspec)
 
     res_jax = harness.dyn_fun(*args)
     f_tf = self.CheckShapePolymorphism(
@@ -998,20 +1237,11 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(res_jax, f_tf(*args), atol=tol, rtol=tol)
 
   def test_reshape_error(self):
-    with self.assertRaisesRegex(
-        core.InconclusiveDimensionOperation,
-        re.escape("Shapes (batch, 2, batch, height, 3) and (batch, -1, batch) "
-                  "must have the same set of shape variables")):
-      self.CheckShapePolymorphism(
-          lambda x: x.reshape([x.shape[0], -1, x.shape[2]]),
-          input_signature=[tf.TensorSpec([None, 2, None, None, 3])],
-          polymorphic_shapes=["batch, 2, batch, height, 3"],
-          expected_output_signature=tf.TensorSpec([None, 6, None]))
 
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
         re.escape(
-            "Cannot divide evenly the sizes of shapes (2, 4) and (-1, 3)")):
+            "Cannot divide evenly the sizes of shapes (batch, 2, 4) and (batch, -1, 3)")):
       self.CheckShapePolymorphism(
           lambda x: x.reshape([x.shape[0], -1, 3]),
           input_signature=[tf.TensorSpec([None, 2, 4])],
@@ -1054,8 +1284,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   def test_squeeze_error(self):
 
     with self.assertRaisesRegex(
-        core.InconclusiveDimensionOperation,
-        re.escape("Shape variable comparison b2 == 1 is inconclusive")):
+        ValueError,
+        re.escape("cannot select an axis to squeeze out which has size not equal to one, got shape=(b1, b2) and dimensions=(1,)")):
       # Trace with unknown dimension to squeeze
       self.CheckShapePolymorphism(
           lambda x: jnp.squeeze(x, axis=1),
@@ -1073,6 +1303,18 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           input_signature=[tf.TensorSpec([None, 2]),
                            tf.TensorSpec([2, 3]), tf.TensorSpec([3, 4])],
           polymorphic_shapes=["(a, 2)", "(2, 3)", "(3, 4)"],
+          expected_output_signature=tf.TensorSpec([None]))
+
+  def test_einsum_incompatible_contractions_error(self):
+
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        "Dimension polynomial comparison 'b' == 'a' is inconclusive"):
+      self.CheckShapePolymorphism(
+          lambda x, y: jnp.einsum("ab,bc->ac", x, y),
+          input_signature=[tf.TensorSpec([2, None]),
+                           tf.TensorSpec([None, 3])],
+          polymorphic_shapes=["(2, a)", "(b, 3)"],
           expected_output_signature=tf.TensorSpec([None]))
 
 

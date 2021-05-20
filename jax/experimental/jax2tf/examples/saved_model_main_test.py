@@ -44,7 +44,7 @@ class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
       for model in ["mnist_pure_jax", "mnist_flax"]
       for serving_batch_size in [1, -1])
   def test_train_and_save_full(self,
-                               model="mnist_pure_jax",
+                               model="mnist_flax",
                                serving_batch_size=-1):
     FLAGS.model = model
     FLAGS.model_classifier_layer = True

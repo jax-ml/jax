@@ -1260,11 +1260,11 @@ class DimensionHandler:
     """
     return d1 - d2
 
-  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> int:
-    """Computes the division of the sizes of the shapes.
+  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
+    """Computes integer "i" such that i  * size(s2) == size(s1).
 
-    Raise InconclusiveDimensionOperation if the result is different in different
-    contexts, or if the division is not even.
+    Raise InconclusiveDimensionOperation if there is no such integer for all
+    contexts,
     """
     sz1 = int(np.prod(s1))
     sz2 = int(np.prod(s2))
@@ -1347,7 +1347,9 @@ def diff_dim(d1: DimSize, d2: DimSize) -> DimSize:
 def diff_shape(s1: Shape, s2: Shape) -> Shape:
   return tuple(map(diff_dim, s1, s2))
 
-def divide_shape_sizes(s1: Shape, s2: Shape) -> int:
+def divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
+  """Returns an integer "i" s.t., i * size(s2) == size(s1).
+  Raises if there is no such integer."""
   s1 = s1 or (1,)
   s2 = s2 or (1,)
   handler, ds = _dim_handler_and_canonical(*s1, *s2)

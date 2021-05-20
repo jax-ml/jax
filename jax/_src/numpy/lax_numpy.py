@@ -2800,7 +2800,8 @@ def tile(A, reps):
     iter(reps)
   except TypeError:
     reps = (reps,)
-  reps = tuple(operator.index(rep) for rep in reps)
+  reps = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
+               for rep in reps)
   A_shape = (1,) * (len(reps) - ndim(A)) + shape(A)
   reps = (1,) * (len(A_shape) - len(reps)) + reps
   result = broadcast_to(reshape(A, [j for i in A_shape for j in [1, i]]),

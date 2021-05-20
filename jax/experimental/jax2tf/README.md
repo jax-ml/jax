@@ -157,10 +157,10 @@ certain constraints. This is useful, e.g., to allow a single SavedModel
 to be used for multiple batch sizes.
 
 The standard TensorFlow technique for producing a shape-polymorphic graph is
-to warm the function on partially-specified (shape-polymorphic) inputs, e.g.,
+to warm the `tf.function` on partially-specified (shape-polymorphic) inputs, e.g.,
 `tf.TensorSpec([None, 28, 28], tf.float32)` for a function that processes a
 batch (of unspecified batch size) of 28x28 images.
-For jax2tf it is also necessary to specify an additional `polymorphic_shapes` parameter
+For jax2tf it is **additionally** necessary to specify an additional `polymorphic_shapes` parameter
 for the `jax2tf.convert` function:
 
 ```
@@ -170,21 +170,24 @@ f_tf = tf.function(jax2tf.convert(f_jax,
 f_tf.get_concrete_function(tf.TensorSpec([None, 28, 28], tf.float32))
 ```
 
-The `polymorphic_shapes` parameter, in the form of a list of strings corresponding
-to the list of
+The `polymorphic_shapes` parameter, in the form of a sequence of strings corresponding
+to the sequence of positional
 arguments, introduces one or more shape variables, e.g., `b`, to stand for shape
-dimensions that are unknown at JAX tracing time.
+dimensions that are assumed to be unknown at JAX tracing time, even if the actual
+parameter value (here `tf.TensorSpec(...)`) happens to have fully known shape.
+Shape variables are assumed to range
+over all strictly positive integers.
 In this particular example, we can
-also use the `polymorphic_shapes=["(b, _, _)"]`,
+also abbreviate `polymorphic_shapes=["(b, _, _)"]`,
 because the `_` placeholders take their value
 from the corresponding dimension of the `tf.TensorSpec` (which must be known).
-As a shortcut for a series of `_` at the end of a shape specification you can
-use `...`: `polymorphic_shapes=["(b, ...)"]`
+As a further shortcut for a series of `_` at the end of a shape specification you can
+use `...`: `polymorphic_shapes=["(b, ...)"]`.
 
 In the example above, the `polymorphic_shapes` specification does
 not convey more information than the partial `tf.TensorSpec`,
-except that it gives a name to the unknown dimension so that it
-can be recognized in the error messages. The need for named shape
+except that it gives a name to the unknown dimension, which improves
+error messages. The real need for named shape
 variables arises when there are
 multiple unknown dimensions and there is a relationship between them.
 For example,
@@ -201,14 +204,14 @@ f_tf.get_concrete_function(tf.TensorSpec([None, None, None], tf.float32))
 The JAX tracing mechanism performs shape checking using the same strict rules as
 when the shapes are fully known. For example, given the `"(b, d, d)"`
 specification for the argument `x` of a function, JAX will know that a conditional
-`x.shape[-2] == x.shape[-1]` is `True`, will know that `x` and `jnp.sin(x)` have the
+`x.shape[-2] == x.shape[-1]` is `True`, and will also know that `x` and `jnp.sin(x)` have the
 same shape of a batch of square matrices that can be passed to `jnp.matmul`.
 
 
 ### Correctness of shape-polymorphic tracing
 
 We want to trust that the converted program produces the same results as the
-original JAX program:
+original JAX program. More precisely:
 
 For any function `f_jax` and any input signature `abs_sig` containing partially
 known `tf.TensorSpec`, and any concrete input `x` whose shape matches `abs_sig`:
@@ -225,13 +228,14 @@ to a SavedModel and reloaded in an environment where `f_jax` and the JAX
 tracing machinery are not available anymore.
 
 Correctness is very important because it would be nasty to debug a subtle discrepancy
-of the code running in production from the expected behavior written in JAX.
+of the code loaded from a SavedModel from the expected behavior written in JAX.
 We help ensure correctness
 by reusing the same JAX tracing and shape checking mechanism as when the shapes are fully known.
 
 ### Coverage of shape-polymorphic tracing
 
-A complementary goal is to be able to convert many shape-polymorphic programs, but at the very
+Besides correctness, a secondary goal is to be able to convert many shape-polymorphic programs,
+but at the very
 least batch-size-polymorphic programs, so that one SavedModel can be used for any batch sizes.
 For example, we want to ensure that any function written using `jax.vmap` at the top level can be
 converted with the batch dimension polymorphic and the remaining dimensions concrete.
@@ -260,8 +264,7 @@ A shape specifier is combined with a `TensorSpec` as follows:
   * Otherwise, the specifier must be a comma-separated string of dimension specifiers: `(dim_1, ..., dim_n)`, denoting
     an n-dimensional array. The `TensorSpec` must also be of rank ``n``.
     An `...` at the end of the shape specifier is expanded to a list of `_` or appropriate length.
-    The
-    corresponding dimensions from the shape specifier and the `TensorSpec` are matched:
+    The corresponding dimensions from the shape specifier and the `TensorSpec` are matched:
 
        * the dimension specifier of `_` means that the size of the dimension is given by
          the actual `TensorSpec`, which must have a known size in the corresponding dimension.
@@ -287,18 +290,42 @@ A few examples of shape specifications and uses:
     with `TensorSpec`s `[None, 28, 28]` and `[28, 16]` for the first and second argument
     respectively. An alternative `TensorSpec` pair can be `[1, 28, 28]` and `[28, 16]`,
     in which case the JAX tracing is done for the same polymorphic shape given by
-    `polymorphic_shapes=["(b, 28, 28)", "(28, 16)"]` but the TensorFlow graph is monomorphic
-    for the shapes given by `TensorSpec`.
+    `polymorphic_shapes=["(b, 28, 28)", "(28, 16)"]`.
 
   * `polymorphic_shapes=["(batch, _)", "(batch,)"]`: the leading dimensions of the two arguments
      must match, and are assumed to be greater than 0.
      The second dimension of the first argument is taken from the
      actual `TensorSpec`. This can be used with a `TensorSpec` pair `[None, 16]`
-     and `[None]`. It can also be used with a pair `[8, 16]` and `[5]`.
+     and `[None]`. It can also be used with a pair of shapes `[8, 16]` and `[8]`.
 
-### Shape variables used in the computation
+### Computing with dimension variables
 
-There are some situations when shape variables arise in the computation itself.
+JAX keeps track of the shape of all intermediate results. When those shapes contain
+dimension variables JAX computes intermediate shapes as multi-variate polynomials
+involving dimension variables, which are assumed to range over strictly positive
+integers.
+The dimension polynomials have the following behavior for arithmetic operations:
+  * addition, subtraction, multiplication are supported without restrictions, and
+    are overloaded, such that `+`, `*`, `np.sum`, `np.prod` work directly on
+    dimension polynomials.
+    These arise, e.g., in `jax.numpy.concatenate` or `jax.numpy.reshape`.
+  * division is a special case. It is also overloaded, but it is only partially
+    supported, when either (a) there is no remainder, or (b) the divisor is a constant
+    in which case there may be a constant remainder. The need for division in JAX core
+    arises in a couple of specific situations, e.g.,
+    `jax.numpy.reshape(-1)` and operations involving striding.
+  * equality and disequality are partially supported. They result in a boolean value only when
+    the same result would be obtained for any valuation of the dimension variables. In
+    other situations, an exception `core.InconclusiveDimensionOperation` is raised.
+    The latter would happen, e.g., when comparing `a == b` or `b == 1`.
+    The `==` and `!=` operations are overloaded for dimension polynomials, to prevent
+    an unsafe default behavior to be used.
+  * inequality is partially supported, in a similar way as equality. However, in this
+    case we take into consideration that dimension variables range over strictly positive
+    integers. E.g., `b >= 1`, `b >= 0`, `2 * a + b >= 3` are `True`, while `b >= 2`,
+    `a >= b`, `a - b >= 0` are inconclusive and result in an exception.
+
+There are some situations when dimension variables arise in the staged computation itself.
 You can see in the following example how elements from the input shapes
 `(1024, 28, 28)` and `(28, 28)` appear in the computation and specifically
 in the `shape` parameter of the `broadcast_in_dim` JAX primitive.
@@ -315,7 +342,7 @@ print(jax.make_jaxpr(image_mask_jax)(np.ones((1024, 28, 28)), np.ones((28, 28)))
 >>      d = mul a c
 >>   in (d,) }
 
-# will invoke broadcast_in_dim with shape=(1, w, w)
+# The following will invoke broadcast_in_dim with shape=(1, w, w)
 jax2tf.convert(image_mask_jax, polymorphic_shapes=["(b, w, w)", "(w, w)"])
 ```
 
@@ -360,34 +387,50 @@ jax2tf.convert(lambda x: jnp.matmul(x, x),
              polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
 ```
 
-will result in the error `Shape variable comparison v == 4 is inconclusive`. What is
+will result in the error `dot_general requires contracting dimensions to have the same shape, got [4] and [v]`. What is
 happening here is that in the process of type checking the `matmul` operation, JAX
 will want to ensure the size of the two axes is the same (`v == 4`).
 Note that `v` can stand for any integer greater than 0, so the value of the
-equality expression can be true or false. In this case you will see
-the `core.InconclusiveDimensionOperation` exception with the above message.
-Since the converted function work only for square matrices, the correct
+equality expression can be true or false. Since it is not always true
+that `v == 4`, the shape checking rules fail with the above error.
+Since the converted function works only for square matrices, the correct
 `polymorphic_shapes` is `["(v, v)"]`.
 
 You would also encounter shape errors if the code attempts to use the
-dimension variables in arithmetic operations, such as in the code
-below that attempts to flatten an array with a polymorphic batch
-dimension:
+dimension variables in unsupported arithmetic operations, such as in the code
+below that fails to compute the inferred dimension for a `reshape` operations:
 
 ```
-jax2tf.convert(lambda x: jnp.reshape(x, np.prod(x.shape)),
-             polymorphic_shapes=["(b, ...)"])(np.ones((3, 4, 5)))
+jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+               polymorphic_shapes=["(b, ...)"])(np.ones((4, 5, 7)))
 ```
 
-In this case you will see the error `TypeError: unsupported operand type(s) for *: 'DimVar' and 'int'`.
-The most flattening you can do is on the known dimensions, keeping the variable
-dimension intact:
+In this case you will see the error `Cannot divide evenly the sizes of shapes (b, 5, 7) and (2, -1)`.
+This is because the shape of `x` is `(b, 5, 7)`, with a total size represented as the
+dimension polynomial `35 b`, which is not divisible by `2`.
+Note that the following will succeed:
 
 ```
-jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0], np.prod(x.shape[1:]))),
-               polymorphic_shapes=["(b, _, _)"])(np.ones((3, 4, 5)))
+## The resulting symbolic shape is (2, 15 b).
+jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+               polymorphic_shapes=["(b, ...)"])(np.ones((4, 5, 6)))
+
+## The resulting symbolic shape is (6 b2, b1).
+jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
+               polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 ```
 
+If the user code happens to perform computations directly on dimension polynomials,
+it can expect it to work as described above for addition, subtraction, and multiplication,
+and partially for comparisons.
+
+```
+jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
+                polymorphic_shapes=["(a, b)"])(np.ones((3, 4))
+```
+
+will raise the exception `core.InconclusiveDimensionOperation` with the message
+`Dimension polynomial comparison 'a + 1' == 'b' is inconclusive`.
 
 Finally, certain codes that use shapes in the actual computation may not yet work
 if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
@@ -561,6 +604,55 @@ same dtype, you should use `jax2tf.dtype_of_val`:
 # independently of the value of JAX_ENABLE_X64.
 jax2tf.convert(jax_fun)(3.14)
 jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14))
+
+
+### Unchecked assumption that the dimension variables take strictly positive values
+
+The shape polymorphic conversion is sound with the assumption that the dimension
+variables take non-zero values. In the following example, the function to be converted
+has different behavior for empty shapes. The broken assumption is caught by jax2tf if
+the converted function is executed eagerly, but not if it is first traced to a
+TensorFlow graph:
+
+```
+def f_jax(x):
+  return 0 if x.shape[0] == 0 else 1
+
+x0 = np.array([], np.float32)
+self.assertEqual(0, f_jax(x0))  # JAX sees that the x.shape[0] == 0
+
+# jax2tf catches the broken assumption b >= 1 if the converted function is executed
+# eagerly.
+# Raises: ValueError: PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)
+jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0))
+
+# However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
+f_tf = tf.function(
+        jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
+self.assertEqual(1, f_tf(x0))
+```
+
+Another possible source of unsoundness is that JAX assumes that all unknown
+dimensions represented by the same dimension variable have equal size. As before,
+this assumption is checked if the converted function is executed eagerly, but
+it may be missed if it is first traced to a TensorFlow graph:
+
+```
+def f_jax(x):
+  return 0 if x.shape[0] != x.shape[1] else 1
+
+x45 = np.ones((4, 5), dtype=np.float32)
+self.assertEqual(0, f_jax(x45))  # JAX seems that x.shape[0] != x.shape[1]
+
+# jax2tf catches the broken assumption x.shape[0] == x.shape[1] if the converted
+# function is executed eagerly.
+# Raises: ValueError: PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)
+jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
+
+# However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
+f_tf = tf.function(
+    jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
+self.assertEqual(1, f_tf(x45))
 ```
 
 ### TensorFlow XLA ops

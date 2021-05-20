@@ -60,6 +60,7 @@ _INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/>-]")
 map = util.safe_map
 zip = util.safe_zip
 
+
 def _sanitize_scope_name(name):
   scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
   if not _VALID_SCOPE_REGEX.match(scope_name):
@@ -402,9 +403,8 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal) -> Sequence[TfVal]:
 
 def _aval_to_tf_shape(aval: core.AbstractValue) -> Tuple[Optional[int], ...]:
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
-  return tuple(
-      map(lambda d: None if isinstance(d, shape_poly.DimVar) else d,
-                    aval.shape))  # type: ignore[attr-defined]
+  return tuple(map(lambda d: None if shape_poly.is_poly_dim(d) else d,
+                   aval.shape))  # type: ignore[attr-defined]
 
 
 def _to_tf_dtype(jax_dtype):
@@ -455,7 +455,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
 # A dimension environment maps dimension variables to TF expressions that
 # compute the value of the dimension. These expressions refer to the TF
 # function arguments.
-_ShapeEnv = Dict[shape_poly.DimVar, TfVal]
+_ShapeEnv = Dict[str, TfVal]
 def _args_to_avals_and_env(
     args: Sequence[TfVal],
     arg_jax_dtypes: Sequence[DType],
@@ -482,11 +482,13 @@ def _args_to_avals_and_env(
     for i, d in enumerate(aval_shape):
       if type(d) is int:
         assert d == arg_shape[i]
-      elif type(d) is shape_poly.DimVar and d not in shapeenv:
+      elif shape_poly.is_poly_dim(d) and d not in shapeenv:
         # Even if the shape of `arg` is known, we still use `tf.shape` for
         # safety, because the promise is that we will convert the function
         # to work for any value of the dimension.
-        shapeenv[d] = tf.shape(arg)[i]  # type: ignore[index]
+        v = d.to_var()  # type: ignore
+        assert v is not None
+        shapeenv[v] = tf.shape(arg)[i]  # type: ignore[index]
       else:
         # TODO: add an assertion tf.shape(arg)[i] == env[d]
         pass
@@ -502,11 +504,9 @@ _shape_env = {}  # type: _ShapeEnv
 
 
 def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
-  assert all(map(
-      lambda x: x is not None, shape)), (f"Argument shape should be a valid JAX shape but got {shape}")
-  return tuple(_shape_env[d]  # type: ignore[index]
-               if type(d) is shape_poly.DimVar else d
-               for d in shape)
+  assert all(map(lambda x: x is not None, shape)), (
+      f"Argument shape should be a valid JAX shape but got {shape}")
+  return shape_poly.eval_shape(shape, _shape_env)
 
 
 def shape_as_value(x):
@@ -633,10 +633,8 @@ class TensorFlowTracer(core.Tracer):
         for aval_dim, val_dim in zip(
             self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
-            assert isinstance(
-                aval_dim, shape_poly.DimVar
-            ), f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
-          elif not isinstance(aval_dim, shape_poly.DimVar):
+            assert shape_poly.is_poly_dim(aval_dim), f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
+          elif not shape_poly.is_poly_dim(aval_dim):
             assert aval_dim == val_dim, f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           else:
             # We have a TF value with known shape, and the abstract shape is a shape variable.
@@ -2058,9 +2056,10 @@ def _slice(operand, start_indices, limit_indices, strides, _in_avals,
            _out_aval):
   if strides is None:
     strides = [1] * len(start_indices)
-  slices = tuple(
-      map(slice, _eval_shape(start_indices), _eval_shape(limit_indices),
-          _eval_shape(strides)))
+  slices = tuple(map(slice,
+                     _eval_shape(start_indices),
+                     _eval_shape(limit_indices),
+                     _eval_shape(strides)))
   out = operand[slices]
   # TODO(b/184503314): improve shape inference for __getitem__
   out.set_shape(_aval_to_tf_shape(_out_aval))
@@ -2622,7 +2621,8 @@ def _register_checkpoint_pytrees():
                                      lambda _, xs: list(xs))
 
   jax.tree_util.register_pytree_node(
-      dict_wrapper, lambda s: (tuple(s.values()), tuple(s.keys())),
+      dict_wrapper,
+      lambda s: (tuple(s.values()), tuple(s.keys())),
       lambda k, xs: dict(zip(k, xs)))
 
 

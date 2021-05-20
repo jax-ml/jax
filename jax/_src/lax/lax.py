@@ -779,7 +779,7 @@ def reshape(operand: Array, new_sizes: Shape,
   """
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
-  same_shape = np.shape(operand) == new_sizes
+  same_shape = core.symbolic_equal_shape(np.shape(operand), new_sizes)
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(np.ndim(operand)))
   if np.shape(operand) and same_shape and same_dims:
     return operand
@@ -3361,13 +3361,13 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
     raise TypeError(msg.format(rhs_batch, rhs_contracting))
   lhs_batch_shape = np.take(lhs.shape, lhs_batch)
   rhs_batch_shape = np.take(rhs.shape, rhs_batch)
-  if not np.all(np.equal(lhs_batch_shape, rhs_batch_shape)):
+  if not core.symbolic_equal_shape(lhs_batch_shape, rhs_batch_shape):
     msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
            "to have the same shape, got {} and {}.")
     raise TypeError(msg.format(lhs_batch_shape, rhs_batch_shape))
   lhs_contracting_shape = np.take(lhs.shape, lhs_contracting)
   rhs_contracting_shape = np.take(rhs.shape, rhs_contracting)
-  if not np.all(np.equal(lhs_contracting_shape, rhs_contracting_shape)):
+  if not core.symbolic_equal_shape(lhs_contracting_shape, rhs_contracting_shape):
     msg = ("dot_general requires contracting dimensions to have the same "
            "shape, got {} and {}.")
     raise TypeError(msg.format(lhs_contracting_shape, rhs_contracting_shape))
@@ -3782,7 +3782,7 @@ def _compute_squeeze_shape(shape, dimensions):
     raise ValueError(f"dimensions are not unique: {dimensions}")
   if not all(0 <= d < len(shape) for d in dims_set):
     raise ValueError(f"dimensions outside range [0, ndim): {dimensions}")
-  if any(shape[d] != 1 for d in dimensions):
+  if any(not core.symbolic_equal_dim(shape[d], 1) for d in dimensions):
     raise ValueError(
         "cannot select an axis to squeeze out which has size not equal to "
         f"one, got shape={shape} and dimensions={dimensions}")
@@ -4243,7 +4243,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
     msg = ("dynamic_update_slice start_indices must have length equal to the "
            "rank of operand, got indices {} for operand shape {}.")
     raise TypeError(msg.format(start_indices, operand.shape))
-  if not np.all(np.less_equal(update.shape, operand.shape)):
+  if not core.greater_equal_shape(operand.shape, update.shape):
     msg = ("dynamic_update_slice update shape must be smaller than operand "
            "shape, got update shape {} for operand shape {}.")
     raise TypeError(msg.format(update.shape, operand.shape))
