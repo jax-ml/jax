@@ -1753,6 +1753,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_rank{}".format(
+        jtu.format_shape_dtype_string(a_shape, dtype), rank),
+       "dtype": dtype, "a_shape": a_shape, "rank": rank}
+      for rank in (1, 2)
+      for dtype in default_dtypes
+      for a_shape in one_dim_array_shapes))
+  def testPoly(self, a_shape, dtype, rank):
+    if dtype in (np.float16, jnp.bfloat16, np.int16):
+      self.skipTest(f"{dtype} gets promoted to {np.float16}, which is not supported.")
+    elif rank == 2 and jtu.device_under_test() in ("tpu", "gpu"):
+      self.skipTest("Nonsymmetric eigendecomposition is only implemented on the CPU backend.")
+    rng = jtu.rand_default(self.rng())
+    tol = { np.int8: 1e-3, np.int32: 1e-3, np.float32: 1e-3, np.float64: 1e-6 }
+    if jtu.device_under_test() == "tpu":
+      tol[np.int32] = tol[np.float32] = 1e-1
+    tol = jtu.tolerance(dtype, tol)
+    args_maker = lambda: [rng(a_shape * rank, dtype)]
+    self._CheckAgainstNumpy(np.poly, jnp.poly, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp.poly, args_maker, check_dtypes=True, rtol=tol, atol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "a_shape={} , b_shape={}".format(
           jtu.format_shape_dtype_string(a_shape, dtype),
           jtu.format_shape_dtype_string(b_shape, dtype)),

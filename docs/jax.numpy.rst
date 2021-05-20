@@ -286,6 +286,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     pad
     percentile
     piecewise
+    poly
     polyadd
     polyder
     polyint

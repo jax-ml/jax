@@ -3847,6 +3847,43 @@ def diagflat(v, k=0):
   res = res.reshape(adj_length,adj_length)
   return res
 
+_POLY_DOC="""\
+This differs from np.poly when an integer array is given.
+np.poly returns a result with dtype float64 in this case.
+jax returns a result with an inexact type, but not necessarily
+float64.
+
+This also differs from np.poly when the input array strictly
+contains pairs of complex conjugates, e.g. [1j, -1j, 1-1j, 1+1j].
+np.poly returns an array with a real dtype in such cases.
+jax returns an array with a complex dtype in such cases.
+"""
+
+@_wraps(np.poly, lax_description=_POLY_DOC)
+def poly(seq_of_zeros):
+  _check_arraylike('poly', seq_of_zeros)
+  seq_of_zeros, = _promote_dtypes_inexact(seq_of_zeros)
+  seq_of_zeros = atleast_1d(seq_of_zeros)
+
+  sh = seq_of_zeros.shape
+  if len(sh) == 2 and sh[0] == sh[1] and sh[0] != 0:
+    # import at runtime to avoid circular import
+    from . import linalg
+    seq_of_zeros = linalg.eigvals(seq_of_zeros)
+
+  if seq_of_zeros.ndim != 1:
+    raise ValueError("input must be 1d or non-empty square 2d array.")
+
+  dt = seq_of_zeros.dtype
+  if len(seq_of_zeros) == 0:
+    return ones((), dtype=dt)
+
+  a = ones((1,), dtype=dt)
+  for k in range(len(seq_of_zeros)):
+    a = convolve(a, array([1, -seq_of_zeros[k]], dtype=dt), mode='full')
+
+  return a
+
 
 @_wraps(np.polyval)
 def polyval(p, x):
