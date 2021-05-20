@@ -48,6 +48,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    notebooks/maml
    notebooks/score_matching
    notebooks/xmap_tutorial
+   multi_process
 
 .. toctree::
    :maxdepth: 1
