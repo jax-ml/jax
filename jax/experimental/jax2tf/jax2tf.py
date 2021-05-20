@@ -170,6 +170,9 @@ def convert(fun: Callable, *,
       The conversion fails if it cannot ensure that the it would produce the same
       sequence of TF ops for any non-zero values of the dimension variables.
 
+      polymorphic_shapes are only supported for positional arguments; shape
+      polymorphism is not support for keyword arguments.
+
       See [the README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
 
@@ -221,8 +224,6 @@ def convert(fun: Callable, *,
     if polymorphic_shapes is None:
       polymorphic_shapes_ = (None,) * len(args)
     else:
-      if kwargs:
-        raise NotImplementedError("polymorphic_shapes not supported with kwargs yet.")
       if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
         msg = ("polymorphic_shapes must be a sequence with the same length as the argument list "
                f"({len(args)}). Got polymorphic_shapes={polymorphic_shapes}.")

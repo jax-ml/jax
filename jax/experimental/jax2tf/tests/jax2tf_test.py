@@ -518,7 +518,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_kwargs(self):
     # Re: https://github.com/google/jax/issues/6791
-    def f_jax(x):
+    def f_jax(*, x):
       return jnp.sum(x)
     f_tf = jax2tf.convert(f_jax)
     self.assertAllClose(
