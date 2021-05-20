@@ -194,7 +194,7 @@ def convert(fun: Callable, *,
   _enable_xla = enable_xla
   api._check_callable(fun)
 
-  def converted_fun(*args: TfVal) -> TfVal:
+  def converted_fun(*args: TfVal, **kwargs: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
     if not core.trace_state_clean():
       raise ValueError("convert must be used outside all JAX transformations."
@@ -206,19 +206,23 @@ def convert(fun: Callable, *,
                "be NumPy array, scalar, tf.Variable, or tf.Tensor")
         raise TypeError(msg)
     tree_util.tree_map(check_arg, args)
+    tree_util.tree_map(check_arg, list(kwargs.values()))
 
     # Name input tensors
     args = tuple(
         tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"), a)  # type: ignore
         for i, a in enumerate(args))
+    kwargs = {k: tf.identity(v, f"jax2tf_arg_{k}") for k, v in kwargs.items()}
 
     # This function may take pytrees of TfVals. We can only set
     # tf.custom_gradient on functions that take a flat argument list.
-    args_flat, in_tree = tree_util.tree_flatten((args, {}))
+    args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
 
     if polymorphic_shapes is None:
       polymorphic_shapes_ = (None,) * len(args)
     else:
+      if kwargs:
+        raise NotImplementedError("polymorphic_shapes not supported with kwargs yet.")
       if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
         msg = ("polymorphic_shapes must be a sequence with the same length as the argument list "
                f"({len(args)}). Got polymorphic_shapes={polymorphic_shapes}.")
@@ -229,6 +233,9 @@ def convert(fun: Callable, *,
     polymorphic_shapes_flat = tuple(api_util.flatten_axes("jax2tf.convert polymorphic_shapes",
                                                           in_tree.children()[0],
                                                           polymorphic_shapes_))
+    # Add kwargs shapes.
+    polymorphic_shapes_flat = polymorphic_shapes_flat + tuple(
+      (None,) * (len(args_flat) - len(polymorphic_shapes_flat)))
 
     # Construct the abstract values for the flat arguments, possibly based on
     # the input shapes and the polymorphic_shapes if given. May create new shape
