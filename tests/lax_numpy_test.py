@@ -3167,6 +3167,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_outshape={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype),
+          jtu.format_shape_dtype_string(out_shape, dtype)),
+       "arg_shape": arg_shape, "out_shape": out_shape, "dtype": dtype}
+      for dtype in default_dtypes
+      for arg_shape, out_shape in itertools.product(all_shapes, array_shapes)))
+  def testResize(self, arg_shape, out_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x: np.resize(x, out_shape)
+    jnp_fun = lambda x: jnp.resize(x, out_shape)
+    args_maker = lambda: [rng(arg_shape, dtype)]
+    if len(out_shape) > 0 or numpy_version >= (1, 20, 0):
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_expanddim={!r}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype), dim),
        "arg_shape": arg_shape, "dtype": dtype, "dim": dim}

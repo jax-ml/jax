@@ -310,6 +310,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     remainder
     repeat
     reshape
+    resize
     result_type
     right_shift
     rint

@@ -50,7 +50,7 @@ from jax import lax
 from jax._src.lax.lax import _device_put_raw
 from jax import ops
 from jax._src.ops import scatter
-from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip,
+from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
@@ -1415,6 +1415,23 @@ def unravel_index(indices, shape):
   idx = clipped_indices % cumulative_sizes[:-1] // cumulative_sizes[1:]
   return tuple(idx)
 
+@_wraps(np.resize)
+def resize(a, new_shape):
+  new_shape = _ensure_index_tuple(new_shape)
+
+  if _any(dim_length < 0 for dim_length in new_shape):
+    raise ValueError("all elements of `new_shape` must be non-negative")
+
+  a = ravel(a)
+
+  new_size = _prod(new_shape)
+  if a.size == 0 or new_size == 0:
+    return zeros_like(a, shape=new_shape)
+
+  repeats = ceil_of_ratio(new_size, a.size)
+  a = tile(a, repeats)[:new_size]
+
+  return reshape(a, new_shape)
 
 @_wraps(np.squeeze)
 def squeeze(a, axis: Optional[Union[int, Tuple[int, ...]]] = None):
