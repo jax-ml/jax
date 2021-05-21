@@ -517,6 +517,15 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
                                                    jnp.bfloat16))
 
+  def test_kwargs(self):
+    # Re: https://github.com/google/jax/issues/6791
+    def f_jax(*, x):
+      return jnp.sum(x)
+    f_tf = jax2tf.convert(f_jax)
+    self.assertAllClose(
+      f_tf(x=np.zeros(3, dtype=np.float32)),  # Call with kwargs.
+      np.zeros((), dtype=np.float32))
+
   def test_enable_xla(self):
     # Tests that enable_xla flag is properly scoped to a conversion.
     def fun(x):
