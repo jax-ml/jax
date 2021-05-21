@@ -477,6 +477,21 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(result_cpu.device_buffer.platform(), "cpu")
 
   @jtu.skip_on_devices("cpu")
+  def test_device_to_device_copy_between_backends(self):
+    # b/186624243
+    f = lambda x: x + 1
+    jitted_f = jit(f, backend=jtu.device_under_test())
+    jitted_f_cpu = jit(f, backend="cpu")
+
+    x = np.arange(30).reshape(1, 10, 3)
+    result = jitted_f(x)
+    result_cpu = jitted_f_cpu(result)
+    result_2 = jitted_f(result_cpu)
+    result_cpu_2 = jitted_f_cpu(result_2)
+    self.assertAllClose(result_2, x + 3)
+    self.assertAllClose(result_cpu_2, x + 4)
+
+  @jtu.skip_on_devices("cpu")
   def test_mismatched_nested_backends(self):
     @partial(jit, backend=jtu.device_under_test())
     def f(x):
