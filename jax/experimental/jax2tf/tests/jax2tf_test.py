@@ -525,7 +525,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(
       f_tf(x=np.zeros(3, dtype=np.float32)),  # Call with kwargs.
       np.zeros((), dtype=np.float32))
-    
+
   def test_enable_xla(self):
     # Tests that enable_xla flag is properly scoped to a conversion.
     def fun(x):
