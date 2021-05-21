@@ -48,8 +48,8 @@ from jax import random
 ```{code-cell} ipython3
 :tags: [remove-cell]
 
-# Execute this to consume & hide the GPU warning.
-jnp.arange(10)
+# Prevent GPU/TPU warning.
+import jax; jax.config.update('jax_platform_name', 'cpu')
 ```
 
 +++ {"id": "FQ89jHCYfhpg"}
