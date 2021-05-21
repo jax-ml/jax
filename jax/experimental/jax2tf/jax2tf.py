@@ -193,8 +193,6 @@ def convert(fun: Callable, *,
     A version of `fun` that expects TfVals as arguments (or
     tuple/lists/dicts) thereof, and returns TfVals as outputs.
   """
-  global _enable_xla
-  _enable_xla = enable_xla
   api._check_callable(fun)
 
   def converted_fun(*args: TfVal, **kwargs: TfVal) -> TfVal:
@@ -284,6 +282,9 @@ def convert(fun: Callable, *,
     try:
       global _shape_env
       assert not _shape_env, f"Unexpected shape environment {_shape_env}"
+      global _enable_xla
+      prev_enable_xla = _enable_xla
+      _enable_xla = enable_xla
       _shape_env = shapeenv
 
       if with_gradient:
@@ -304,6 +305,7 @@ def convert(fun: Callable, *,
                     for o, _ in out_flat_raw]
     finally:
       _shape_env = {}
+      _enable_xla = prev_enable_xla
 
     out_flat = [tf.identity(x, "jax2tf_out") for x in out_flat]
     out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
@@ -1130,57 +1132,59 @@ def _precision_config_proto(precision: Optional[Tuple[PrecisionType, PrecisionTy
   proto.operand_precision.append(int(precision[1]))
   return proto
 
-# _try_tf_conv returns a Tensor when it succeeds, or a string describing why
-# it did not succeed otherwise.
+
 def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
                  dimension_numbers, feature_group_count, batch_group_count,
                  preferred_element_type: Optional[DType],
-                 out_shape) -> Union[TfVal, str]:
+                 out_shape) -> TfVal:
+
+  def error(msg):
+    suffix = ("See source code for the precise conditions under which "
+              "convolutions can be converted without XLA.")
+    return _xla_disabled_error("conv_general_dilated", f"{msg} - {suffix}")
+
   # TODO(bchetioui): this function is not exhaustive wrt which convolution cases
   # can be translated into TF primitives. Further investigation is needed to
   # fully flesh it out.
-  if not lhs.dtype in [tf.float16, tf.float32, tf.float64]:
-    return f"tf.nn.convolution is not supported for dtype {lhs.dtype}"
+  if lhs.dtype not in [tf.float16, tf.float32, tf.float64]:
+    raise error(f"tf.nn.convolution is not supported for dtype {lhs.dtype}")
   if feature_group_count != 1:
-    return "tf.nn.convolution does not support grouped convolutions"
+    raise error("tf.nn.convolution does not support grouped convolutions")
   # TODO(bchetioui): is there something to do with batch_group_count?
   if batch_group_count != 1:
-    return "Unimplemented support for batch_group_count != 1"
+    raise error("Unimplemented support for batch_group_count != 1")
   nb_spatial_dimensions = len(lhs.shape) - 2
   # TF can only deal with 1D, 2D and 3D convolution
   if nb_spatial_dimensions < 1 or nb_spatial_dimensions > 3:
-    return ("TensorFlow can only handle convolutions with 1, 2, or 3 "
-            "spatial dimensions")
+    raise error("TensorFlow can only handle convolutions with 1, 2, or 3 "
+                "spatial dimensions")
   # TODO(bchetioui): handle different stride cases
   if list(window_strides) != [1] * nb_spatial_dimensions:
-    return ("Unimplemented support for window_strides != "
-            f"{tuple([1] * nb_spatial_dimensions)}")
+    raise error("Unimplemented support for window_strides != "
+                f"{tuple([1] * nb_spatial_dimensions)}")
 
   if preferred_element_type is not None and preferred_element_type != lhs.dtype:
-    return ("Unimplemented support for preferred_element_type")
+    raise error("Unimplemented support for preferred_element_type")
 
-  success = lambda res: (res, None)
-  failure = lambda msg: (None, msg)
-
-  def convert_padding() -> Tuple[Optional[TfVal], Optional[str]]:
+  def convert_padding() -> str:
     # TODO(bchetioui): in this instance, we can not use padtype_to_pads as
     # string padding is not implemented for transposed convolution.
     if list(lhs_dilation) != [1] * nb_spatial_dimensions:
-      return failure("Padding conversion is not supported for transposed "
-                     "convolution.")
+      raise error("Padding conversion is not supported for transposed "
+                  "convolution.")
     lhs_perm, rhs_perm, _ = dimension_numbers
     effective_rhs_shape = [(k-1) * r + 1 for k, r in
                            zip(np.take(rhs.shape, rhs_perm)[2:], rhs_dilation)]
     lhs_shape = np.take(lhs.shape, lhs_perm)[2:]
     # TF only allows 'VALID' and 'SAME' padding
-    for pad_str in ['VALID', 'SAME']:
+    for pad_str in ["VALID", "SAME"]:
       gen_padding = lax.padtype_to_pads(
           lhs_shape, effective_rhs_shape, window_strides, pad_str)
       if list(gen_padding) == list(padding):
-        return success(pad_str)
-    return failure("Input padding not supported in TensorFlow.")
+        return pad_str
+    raise error("Input padding not supported in TensorFlow.")
 
-  def convert_dim_nums() -> Tuple[Optional[TfVal], Optional[str]]:
+  def convert_dim_nums() -> str:
     lhs_spec, rhs_spec, out_spec = dimension_numbers
     # TF only allows filters with shape:
     # spatial_filter_shape + [in_channels, out_channels]. In JAX however,
@@ -1189,35 +1193,36 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     supported_rhs_shape = ([nb_spatial_dimensions + 1, nb_spatial_dimensions] +
                            list(range(nb_spatial_dimensions)))
     if list(rhs_spec) != supported_rhs_shape:
-      return failure("Input filter (RHS) shape format not supported in "
-                     "TensorFlow.")
+      raise error("Input filter (RHS) shape format not supported in "
+                  "TensorFlow.")
     # TF only supports same LHS and output data format
     if lhs_spec != out_spec:
-      return failure("TensorFlow requires the same data format for LHS and "
-                     "output.")
+      raise error("TensorFlow requires the same data format for LHS and "
+                  "output.")
     # Alphabet extracted from the documentation of tf.conv{1,2,3}d
-    spatial_dim_alphabet = 'DHW'[-nb_spatial_dimensions:]
+    spatial_dim_alphabet = "DHW"[-nb_spatial_dimensions:]
     # TF only supports the following data formats:
     # - [batch_size, in_channels] + input_spatial_shape
 
     # TODO(bchetioui): TF currently does not support the above on CPU. To avoid
     # failing on this platform, this path is commented out for now.
-    #if list(lhs_spec) == list(range(len(lhs_spec))):
+    # if list(lhs_spec) == list(range(len(lhs_spec))):
     #  return "NC" + spatial_dim_alphabet
 
     # - [batch_size] + input_spatial_shape + [in_channels]
     if list(lhs_spec) == ([0, len(lhs_spec) - 1] +
                           list(range(1, len(lhs_spec) - 1))):
-      return success("N" + spatial_dim_alphabet + "C")
-    return failure("Data format is unsupported by TensorFlow.")
+      return "N" + spatial_dim_alphabet + "C"
+    raise error("Data format is unsupported by TensorFlow.")
 
-  def convert_dilation_and_compute_result(tf_padding, tf_dim_nums) -> Union[TfVal, str]:
+  def convert_dilation_and_compute_result(tf_padding: str,
+                                          tf_dim_nums: str) -> TfVal:
     no_dilation = [1] * nb_spatial_dimensions
     # TODO(bchetioui): is there a generic way to do a transposed atrous
     # convolution in TensorFlow?
     if not (list(lhs_dilation) == no_dilation or
             list(rhs_dilation) == no_dilation):
-      return "Both LHS and RHS dilations are set."
+      raise error("Both LHS and RHS dilations are set.")
     # This is a non-dilated or atrous convolution
     if list(lhs_dilation) == no_dilation:
       return tf.nn.convolution(
@@ -1231,13 +1236,10 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
         lhs, rhs, out_shape, window_strides, padding=tf_padding,
         data_format=tf_dim_nums, dilations=lhs_dilation)
 
-  tf_padding, error = convert_padding()
-  if tf_padding is None:
-    return error
-  tf_dim_nums, error = convert_dim_nums()
-  if tf_dim_nums is None:
-    return error
+  tf_padding = convert_padding()
+  tf_dim_nums = convert_dim_nums()
   return convert_dilation_and_compute_result(tf_padding, tf_dim_nums)
+
 
 def _conv_general_dilated(lhs, rhs, *,
                           window_strides, padding, lhs_dilation,
@@ -1254,16 +1256,10 @@ def _conv_general_dilated(lhs, rhs, *,
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   out_tf_shape = _aval_to_tf_shape(_out_aval)
   if not _enable_xla:
-    info_or_result = _try_tf_conv(
+    return _try_tf_conv(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
         dimension_numbers, feature_group_count, batch_group_count,
         preferred_element_type, out_tf_shape)
-    if not isinstance(info_or_result, str):
-      return info_or_result
-    else:
-      raise _xla_disabled_error(
-          "conv_general_dilated",
-          f"{info_or_result} See source code for the precise conditions under which convolutions can be converted without XLA.")
 
   dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
   precision_config_proto = _precision_config_proto(precision)
@@ -1577,8 +1573,6 @@ def _get_shape_from_tensor_or_array(x):
 def _common_reduce_window(operand, init_val, reducer, window_dimensions,
                           window_strides, padding, base_dilation,
                           window_dilation, _in_avals, _out_aval):
-  if not _enable_xla:
-    raise _xla_disabled_error("reduce_window")
   o_spec = tf.TensorSpec((), dtype=operand.dtype)
   reducer_fn = tf.function(reducer, autograph=False).get_concrete_function(o_spec, o_spec)
 
@@ -1614,6 +1608,9 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
   """
   assert len(consts) == 0, "Reduction computation cannot have constants"
 
+  if not _enable_xla:
+    raise _xla_disabled_error("reduce_window")
+
   def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2)
@@ -1625,39 +1622,44 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
   )
 
 
-# _try_tf_pool returns a Tensor when it succeeds, or a string describing why
-# it did not succeed otherwise. It currently only supports reduce_window_max
-# and reduce_window_sum.
+# _try_tf_pool currently only supports reduce_window_max and reduce_window_sum.
 # TODO(bchetioui): this function is not exhaustive wrt which
 # reduce_window_max or reduce_window_sum cases can be translated into a call to
 # max_pool or avg_pool. Further investigation is needed to fully flesh it out.
 def _try_tf_pool(op_name, operand, window_dimensions, window_strides, padding,
-                 base_dilation, window_dilation) -> Union[str, TfVal]:
+                 base_dilation, window_dilation) -> TfVal:
+
+  def error(msg):
+    suffix = ("See source code for the precise conditions under which "
+              "reduce_window can be converted without XLA.")
+    return _xla_disabled_error("reduce_window", f"{msg} - {suffix}")
+
+  dtype = operand.dtype
   # Contrarily to the main path, tf.int8 is actually a valid type for
   # tf.nn.max_pool.
-  if op_name == "reduce_window_max" and operand.dtype in [
+  if op_name == "reduce_window_max" and dtype in [
       tf.bool, tf.uint32, tf.uint64, tf.complex64, tf.complex128
   ]:
-    return f"tf.nn.max_pool does not support operands of type {operand.dtype}"
+    raise error(f"tf.nn.max_pool does not support operands of type {dtype}")
   if op_name == "reduce_window_sum" and operand.dtype not in [
       tf.float16, tf.float32, tf.float64
   ]:
-    return f"tf.nn.avg_pool does not support operands of type {operand.dtype}"
+    raise error(f"tf.nn.avg_pool does not support operands of type {dtype}")
   has_batch_dim = window_dimensions[0] == 1
   has_channel_dim = window_dimensions[-1] == 1
   nb_spatial_dimensions = len(operand.shape) - has_batch_dim - has_channel_dim
   if nb_spatial_dimensions < 1 or nb_spatial_dimensions > 3:
-    return ("TensorFlow can only handle pooling for arrays with 1, 2, or "
-            "3 spatial dimensions")
+    raise error("TensorFlow can only handle pooling for arrays with 1, 2, or "
+                "3 spatial dimensions")
   # TODO(bchetioui): does a simple conversion with another base dilation exist?
   if list(base_dilation) != [1] * len(operand.shape):
-    return "Unimplemented support for base dilation"
+    raise error("Unimplemented support for base dilation")
   # TODO(bchetioui): does a simple conversion with another window_dilation
   # exist? The whole story seems similar to convolution.
   if list(window_dilation) != [1] * len(operand.shape):
-    return "Unimplemented support for window dilation"
+    raise error("Unimplemented support for window dilation")
   if list(padding) != [(0, 0)] * len(operand.shape):
-    return "Unimplemented support for padding"
+    raise error("Unimplemented support for padding")
   # ReduceWindow in XLA takes an array of rank N as a parameter, but
   # tf.nn.max_pool / tf.nn.avg_pool take an array of rank N+2, with a default
   # shape of the form [batch_size] + input_spatial_shape + [num_channels]
@@ -1682,7 +1684,7 @@ def _try_tf_pool(op_name, operand, window_dimensions, window_strides, padding,
                          tf_padding, tf_data_format)
     result = avg * np.prod(tf_window_dimensions)
   else:
-    return f"Unimplemented support for {op_name}"
+    raise error(f"Unimplemented support for {op_name}")
 
   if not has_batch_dim:
     result = tf.squeeze(result, 0)
@@ -1716,17 +1718,16 @@ def _specialized_reduce_window(reducer, identity, operand, *, window_dimensions,
   Returns:
     The reduced operand.
   """
-  if name in ["reduce_window_max", "reduce_window_sum"]:
-    res = _try_tf_pool(name, operand, window_dimensions, window_strides,
+  if not _enable_xla and name in ["reduce_window_max", "reduce_window_sum"]:
+    return _try_tf_pool(name, operand, window_dimensions, window_strides,
                        padding, base_dilation, window_dilation)
-    if not isinstance(res, str):
-      return res
 
   return _common_reduce_window(
       operand, identity(operand.dtype), reducer, window_dimensions,
       window_strides, padding, base_dilation, window_dilation, _in_avals,
       _out_aval
   )
+
 
 def _get_max_identity(tf_dtype):
   numpy_tf_dtype = tf_dtype.as_numpy_dtype
@@ -1739,6 +1740,7 @@ def _get_max_identity(tf_dtype):
         f"{tf_dtype} has no defined max identity"
     )
     return False
+
 
 def _get_min_identity(tf_dtype):
   numpy_tf_dtype = tf_dtype.as_numpy_dtype
