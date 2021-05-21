@@ -522,7 +522,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sum(x)
     f_tf = jax2tf.convert(f_jax)
     self.assertAllClose(
-      f_tf(x=jnp.zeros(3)),  # Call with kwargs.
+      f_tf(x=np.zeros(3, dtype=np.float32)),  # Call with kwargs.
       np.zeros((), dtype=np.float32))
 
 
