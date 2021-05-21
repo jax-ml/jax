@@ -171,7 +171,7 @@ def convert(fun: Callable, *,
       sequence of TF ops for any non-zero values of the dimension variables.
 
       polymorphic_shapes are only supported for positional arguments; shape
-      polymorphism is not support for keyword arguments.
+      polymorphism is not supported for keyword arguments.
 
       See [the README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
