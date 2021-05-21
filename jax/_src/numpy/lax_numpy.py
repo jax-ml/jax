@@ -1842,7 +1842,7 @@ def clip(a, a_min=None, a_max=None, out=None):
     a = minimum(a_max, a)
   return a
 
-@_wraps(np.round, update_doc=False, skip_params=['out'])
+@_wraps(np.around, skip_params=['out'])
 def round(a, decimals=0, out=None):
   _check_arraylike("round", a)
   decimals = core.concrete_or_error(operator.index, decimals, "'decimals' argument of jnp.round")
@@ -1874,6 +1874,7 @@ def round(a, decimals=0, out=None):
   else:
     return _round_float(a)
 around = round
+round_ = round
 
 
 @_wraps(np.fix, skip_params=['out'])

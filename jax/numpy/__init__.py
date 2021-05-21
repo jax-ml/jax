@@ -54,7 +54,7 @@ from jax._src.numpy.lax_numpy import (
     pi, piecewise, poly, polyadd, polyder, polyint, polymul, polysub, polyval, positive, power,
     prod, product, promote_types, ptp, quantile,
     r_, rad2deg, radians, ravel, ravel_multi_index, real, reciprocal, remainder, repeat, reshape,
-    result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
+    result_type, right_shift, rint, roll, rollaxis, rot90, round, round_, row_stack,
     save, savez, searchsorted, select, set_printoptions, setdiff1d, setxor1d, shape, sign, signbit,
     signedinteger, sin, sinc, single, sinh, size, sometrue, sort, sort_complex, split, sqrt,
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
