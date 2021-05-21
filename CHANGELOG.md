@@ -10,6 +10,16 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.2.14 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...master).
+* New features:
+
+* Breaking changes:
+
+* Bug fixes:
+  * The {func}`jax2tf.convert` now scopes the `enable_xla` conversion parameter
+    properly to apply only during the just-in-time conversion
+    ({jax-issue}`#6720`).
+  * Fixed assertion failure in {func}`jax2tf.call_tf` when used with captured
+    `tf.Variable` ({jax-issue}`#6572`).
 
 * Bug fixes:
   * The {func}`jax2tf.convert` now converts `lax.dot_general` using the

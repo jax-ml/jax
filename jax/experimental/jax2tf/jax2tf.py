@@ -190,8 +190,6 @@ def convert(fun: Callable, *,
     A version of `fun` that expects TfVals as arguments (or
     tuple/lists/dicts) thereof, and returns TfVals as outputs.
   """
-  global _enable_xla
-  _enable_xla = enable_xla
   api._check_callable(fun)
 
   def converted_fun(*args: TfVal) -> TfVal:
@@ -276,6 +274,9 @@ def convert(fun: Callable, *,
     try:
       global _shape_env
       assert not _shape_env, f"Unexpected shape environment {_shape_env}"
+      global _enable_xla
+      prev_enable_xla = _enable_xla
+      _enable_xla = enable_xla
       _shape_env = shapeenv
 
       if with_gradient:
@@ -296,6 +297,7 @@ def convert(fun: Callable, *,
                     for o, _ in out_flat_raw]
     finally:
       _shape_env = {}
+      _enable_xla = prev_enable_xla
 
     out_flat = [tf.identity(x, "jax2tf_out") for x in out_flat]
     out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)

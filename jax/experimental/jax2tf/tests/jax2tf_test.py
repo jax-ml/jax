@@ -22,6 +22,7 @@ from absl.testing import parameterized
 
 import jax
 from jax import dtypes
+from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
@@ -515,6 +516,34 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(
         tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
                                                    jnp.bfloat16))
+
+  def test_enable_xla(self):
+    # Tests that enable_xla flag is properly scoped to a conversion.
+    def fun(x):
+      # Can be converted only if enable_xla is on, due to negative padding.
+      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
+
+    tf_fun_with_xla = jax2tf.convert(fun, enable_xla=True)
+    tf_fun_without_xla = jax2tf.convert(fun, enable_xla=False)
+    x = np.ones((2, 3), dtype=np.float32)
+
+    self.assertAllClose(fun(x), tf_fun_with_xla(x))
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Call to pad cannot be converted with enable_xla=False"):
+      tf_fun_without_xla(x)
+
+    # Now in reverse order
+    def fun2(x):
+      # Can be converted only if enable_xla is on, due to negative padding.
+      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
+
+    tf_fun2_without_xla = jax2tf.convert(fun2, enable_xla=False)
+    tf_fun2_with_xla = jax2tf.convert(fun2, enable_xla=True)
+
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Call to pad cannot be converted with enable_xla=False"):
+      tf_fun2_without_xla(x)
+    self.assertAllClose(fun(x), tf_fun2_with_xla(x))
 
 
 if __name__ == "__main__":
