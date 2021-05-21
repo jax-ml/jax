@@ -225,7 +225,7 @@ def convert(fun: Callable, *,
       polymorphic_shapes_ = (None,) * len(args)
     else:
       if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
-        msg = ("polymorphic_shapes must be a sequence with the same length as the argument list "
+        msg = ("polymorphic_shapes must be a sequence with the same length as the positional argument list "
                f"({len(args)}). Got polymorphic_shapes={polymorphic_shapes}.")
         raise TypeError(msg)
       polymorphic_shapes_ = tuple(polymorphic_shapes)
