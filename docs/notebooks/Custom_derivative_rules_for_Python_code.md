@@ -1049,7 +1049,7 @@ DeviceArray(-0.91113025, dtype=float32)
 
 ### Working with `list` / `tuple` / `dict` containers (and other pytrees)
 
-You should expect standard Python containers like lists, tuples, namedtuples, and dicts to just work, along with nested versions of those. In general, any [pytrees](https://github.com/google/jax/blob/master/docs/notebooks/JAX_pytrees.ipynb) are permissible, so long as their structures are consistent according to the type constraints. 
+You should expect standard Python containers like lists, tuples, namedtuples, and dicts to just work, along with nested versions of those. In general, any [pytrees](https://jax.readthedocs.io/en/latest/pytrees.html) are permissible, so long as their structures are consistent according to the type constraints. 
 
 Here's a contrived example with `jax.custom_jvp`:
 
