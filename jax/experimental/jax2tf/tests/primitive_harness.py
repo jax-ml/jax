@@ -63,6 +63,7 @@ FLAGS = config.FLAGS
 Rng = Any  # A random number generator
 DType = Any
 
+
 class RandArg(NamedTuple):
   """Descriptor for a randomly generated argument.
 
@@ -87,7 +88,9 @@ class CustomArg(NamedTuple):
   """
   make: Callable[[Rng], Any]  # Called with a Rng to make a tensor
 
+
 ArgDescriptor = Union[RandArg, StaticArg, CustomArg, Any]
+
 
 class Harness:
   """Specifies inputs and callable for a primitive.
@@ -110,7 +113,8 @@ class Harness:
   The given callable will be passed one argument corresponding to each
   argument descriptor, e.g., `harness.fun(* harness.args_maker(rng))`.
   However, in many applications we only care about the non-static arguments.
-  For that purpose, you can use `harness.dyn_fun(* harness.dyn_args_maked(rng))`,
+  For that purpose, you can use `harness.dyn_fun(*
+  harness.dyn_args_maked(rng))`,
   where `harness.dyn_fun` is `harness.fun` specialized to the static arguments.
 
 
@@ -122,7 +126,8 @@ class Harness:
     Harness(lax.slice_p,
             f"take_axis={axis}",
             lax.take,
-            [RandArg((2, 4), np.float32), np.array([-1, 0, 1]), StaticArg(axis)],
+            [RandArg((2, 4), np.float32), np.array([-1, 0, 1]),
+            StaticArg(axis)],
             axis=axis)
 
   Each harness can have a list of Limitations that describe the cases when
@@ -188,9 +193,9 @@ class Harness:
   def dyn_args_maker(self, rng: Rng) -> Sequence:
     """A dynamic-argument maker, for use with `dyn_fun`."""
     return [
-      self._arg_maker(ad, rng)
-      for ad in self.arg_descriptors
-      if not isinstance(ad, StaticArg)
+        self._arg_maker(ad, rng)
+        for ad in self.arg_descriptors
+        if not isinstance(ad, StaticArg)
     ]
 
   def dyn_fun(self, *dyn_args):
@@ -217,15 +222,16 @@ class Harness:
              one_containing: Optional[str] = None) -> bool:
     if not include_jax_unimpl:
       if any([
-        device_under_test in l.devices
-        for l in self.jax_unimplemented
-        if l.filter(device=device_under_test, dtype=self.dtype)
+          device_under_test in l.devices
+          for l in self.jax_unimplemented
+          if l.filter(device=device_under_test, dtype=self.dtype)
       ]):
         return False
 
     if one_containing is not None and one_containing not in self.fullname:
       return False
     return True
+
 
 def dtypes_to_str(dtype_list: Sequence[DType], empty_means_all=False) -> str:
   """User-friendly description of a set of dtypes"""
@@ -278,13 +284,15 @@ def define(
     **params):
   """Defines a harness and stores it in `all_harnesses`. See Harness."""
   group_name = str(group_name)
-  h = Harness(group_name, name,
-    fun,
-    arg_descriptors,
-    rng_factory=rng_factory,
-    jax_unimplemented=jax_unimplemented,
-    dtype=dtype,
-    **params)
+  h = Harness(
+      group_name,
+      name,
+      fun,
+      arg_descriptors,
+      rng_factory=rng_factory,
+      jax_unimplemented=jax_unimplemented,
+      dtype=dtype,
+      **params)
   all_harnesses.append(h)
 
 
@@ -304,6 +312,7 @@ class Limitation:
       skip_run: bool = False,
   ):
     """Args:
+
       description: text to augment the harness group name with the description
       of the limitation. Used for reports.
       enabled: whether this limitation is enabled for the harness in which
@@ -334,6 +343,7 @@ class Limitation:
     return (f"\"{self.description}\" devices={self.devices} "
             f"dtypes={[np.dtype(dt).name for dt in self.dtypes]}" +
             (" (skip_run) " if self.skip_run else ""))
+
   __repr__ = __str__
 
   def filter(self,
@@ -360,21 +370,21 @@ def parameterized(harnesses: Iterable[Harness],
   running.
   """
   one_containing = one_containing or os.environ.get(
-    "JAX_TEST_HARNESS_ONE_CONTAINING")
+      "JAX_TEST_HARNESS_ONE_CONTAINING")
   cases = tuple(
-    # Change the testcase name to include the harness name.
-    dict(
-      testcase_name=harness.fullname if one_containing is None else "",
-      harness=harness) for harness in harnesses if harness.filter(
-      jtu.device_under_test(),
-      one_containing=one_containing,
-      include_jax_unimpl=include_jax_unimpl))
+      # Change the testcase name to include the harness name.
+      dict(
+          testcase_name=harness.fullname if one_containing is None else "",
+          harness=harness) for harness in harnesses if harness.filter(
+              jtu.device_under_test(),
+              one_containing=one_containing,
+              include_jax_unimpl=include_jax_unimpl))
   if one_containing is not None:
     if not cases:
       raise ValueError(
-        f"Cannot find test case with name containing {one_containing}."
-        "Names are:"
-        "\n".join([harness.fullname for harness in harnesses]))
+          f"Cannot find test case with name containing {one_containing}."
+          "Names are:"
+          "\n".join([harness.fullname for harness in harnesses]))
     cases = cases[0:1]
   if not cases:
     # We filtered out all the harnesses.
@@ -386,14 +396,15 @@ def parameterized(harnesses: Iterable[Harness],
 ###                    Harness definitions                                  ###
 ###############################################################################
 
+
 def _make_unary_elementwise_harness(*, prim, shape=(20, 20), dtype):
   define(
-    str(prim),
-    f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-    prim.bind, [RandArg(shape, dtype)],
-    prim=prim,
-    dtype=dtype,
-    shape=shape)
+      str(prim),
+      f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+      prim.bind, [RandArg(shape, dtype)],
+      prim=prim,
+      dtype=dtype,
+      shape=shape)
 
 
 for dtype in (set(jtu.dtypes.all) -
@@ -435,6 +446,12 @@ for dtype in jtu.dtypes.all_floating:
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
   _make_unary_elementwise_harness(prim=lax.neg_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.sign_p, dtype=dtype)
+  define(
+      str(lax.sign_p),
+      f"special_0_dtype={jtu.dtype_str(dtype)}",
+      lax.sign_p.bind, [StaticArg(np.zeros((2, 2), dtype=dtype))],
+      prim=lax.sign_p,
+      dtype=dtype)
 
 
 def _make_round_harness(name,
@@ -445,12 +462,12 @@ def _make_round_harness(name,
                         operand=None):
   operand = operand if operand is not None else RandArg(shape, dtype)
   define(
-    "round",
-    f"{name}_shape={jtu.format_shape_dtype_string(operand.shape, operand.dtype)}_roundingmethod={rounding_method}",
-    lax.round, [operand, StaticArg(rounding_method)],
-    dtype=dtype,
-    operand=operand,
-    rounding_method=rounding_method)
+      "round",
+      f"{name}_shape={jtu.format_shape_dtype_string(operand.shape, operand.dtype)}_roundingmethod={rounding_method}",
+      lax.round, [operand, StaticArg(rounding_method)],
+      dtype=dtype,
+      operand=operand,
+      rounding_method=rounding_method)
 
 
 # Validate dtypes
@@ -458,17 +475,17 @@ for dtype in jtu.dtypes.all_floating:
   _make_round_harness("dtypes", dtype=dtype)
 
 for rounding_method in [
-  lax.RoundingMethod.AWAY_FROM_ZERO, lax.RoundingMethod.TO_NEAREST_EVEN
+    lax.RoundingMethod.AWAY_FROM_ZERO, lax.RoundingMethod.TO_NEAREST_EVEN
 ]:
   operand = np.array([[0.5, 1.5, 2.5], [-0.5, -1.5, -2.5]], dtype=np.float32)
   _make_round_harness(
-    "rounding_methods", operand=operand, rounding_method=rounding_method)
+      "rounding_methods", operand=operand, rounding_method=rounding_method)
 
 # Validate edge cases
 for name, operand in [
-  # Checks that https://github.com/google/jax/issues/4952 is resolved
-  ("round_away_from_0",
-   np.array([[0.5, 1.5, 2.5], [-0.5, -1.5, -2.5]], dtype=np.float32)),
+    # Checks that https://github.com/google/jax/issues/4952 is resolved
+    ("round_away_from_0",
+     np.array([[0.5, 1.5, 2.5], [-0.5, -1.5, -2.5]], dtype=np.float32)),
 ]:
   _make_round_harness(f"edge_case_{name}", operand=operand)
 
@@ -479,13 +496,13 @@ def _make_convert_element_type_harness(name,
                                        dtype=np.float32,
                                        new_dtype=np.float32):
   define(
-    "convert_element_type",
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_olddtype={jtu.dtype_str(dtype)}_newdtype={jtu.dtype_str(new_dtype)}",
-    lambda arg: (lax.convert_element_type_p.bind(arg, new_dtype=new_dtype, weak_type=False)),
-    [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype,
-    new_dtype=new_dtype)
+      "convert_element_type",
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_olddtype={jtu.dtype_str(dtype)}_newdtype={jtu.dtype_str(new_dtype)}",
+      lambda arg: (lax.convert_element_type_p.bind(
+          arg, new_dtype=new_dtype, weak_type=False)), [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype,
+      new_dtype=new_dtype)
 
 
 for old_dtype in jtu.dtypes.all:
@@ -493,22 +510,22 @@ for old_dtype in jtu.dtypes.all:
   # point numbers and new_dtype is an unsigned integer. See issue
   # https://github.com/google/jax/issues/5082 for details.
   for new_dtype in (jtu.dtypes.all
-  if not (dtypes.issubdtype(old_dtype, np.floating) or
-          dtypes.issubdtype(old_dtype, np.complexfloating))
-  else set(jtu.dtypes.all) - set(jtu.dtypes.all_unsigned)):
+                    if not (dtypes.issubdtype(old_dtype, np.floating) or
+                            dtypes.issubdtype(old_dtype, np.complexfloating))
+                    else set(jtu.dtypes.all) - set(jtu.dtypes.all_unsigned)):
     _make_convert_element_type_harness(
-      "dtypes_to_dtypes", dtype=old_dtype, new_dtype=new_dtype)
+        "dtypes_to_dtypes", dtype=old_dtype, new_dtype=new_dtype)
 
 
 def _make_integer_pow_harness(name, *, shape=(20, 30), dtype=np.int32, y=3):
   define(
-    "integer_pow",
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_y={y}",
-    lax.integer_pow,
-    [RandArg(shape, dtype), StaticArg(y)],
-    shape=shape,
-    dtype=dtype,
-    y=y)
+      "integer_pow",
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_y={y}",
+      lax.integer_pow,
+      [RandArg(shape, dtype), StaticArg(y)],
+      shape=shape,
+      dtype=dtype,
+      y=y)
 
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
@@ -534,12 +551,12 @@ def _make_pow_harness(name,
   lhs = RandArg(shapes[0], dtype) if lhs is None else lhs
   rhs = RandArg(shapes[1], dtype) if rhs is None else rhs
   define(
-    "pow",
-    f"{name}_lhs={jtu.format_shape_dtype_string(lhs.shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs.shape, dtype)}",
-    lax.pow, [lhs, rhs],
-    lhs=lhs,
-    rhs=rhs,
-    dtype=dtype)
+      "pow",
+      f"{name}_lhs={jtu.format_shape_dtype_string(lhs.shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs.shape, dtype)}",
+      lax.pow, [lhs, rhs],
+      lhs=lhs,
+      rhs=rhs,
+      dtype=dtype)
 
 
 for dtype in jtu.dtypes.all_inexact:
@@ -548,10 +565,10 @@ for dtype in jtu.dtypes.all_inexact:
 
 # Validate broadcasting behavior
 for shapes in [
-  ((), (4, 5, 6)),  # broadcasting lhs
-  ((4, 5, 6), ()),  # broadcasting rhs
-  ((4, 1, 6), (4, 5, 6)),  # broadcasting lhs on a specific axis
-  ((4, 5, 6), (4, 1, 6)),  # broadcasting rhs on a specific axis
+    ((), (4, 5, 6)),  # broadcasting lhs
+    ((4, 5, 6), ()),  # broadcasting rhs
+    ((4, 1, 6), (4, 5, 6)),  # broadcasting lhs on a specific axis
+    ((4, 5, 6), (4, 1, 6)),  # broadcasting rhs on a specific axis
 ]:
   _make_pow_harness("broadcast", shapes=shapes)
 
@@ -563,16 +580,16 @@ def _make_reshape_harness(name,
                           dimensions=(0, 1),
                           dtype=np.float32):
   define(
-    "reshape",
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newsizes={new_sizes}_dimensions={dimensions}",
-    lax.reshape,
-    [RandArg(shape, dtype),
-     StaticArg(new_sizes),
-     StaticArg(dimensions)],
-    shape=shape,
-    dtype=dtype,
-    new_sizes=new_sizes,
-    dimensions=dimensions)
+      "reshape",
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newsizes={new_sizes}_dimensions={dimensions}",
+      lax.reshape,
+      [RandArg(shape, dtype),
+       StaticArg(new_sizes),
+       StaticArg(dimensions)],
+      shape=shape,
+      dtype=dtype,
+      new_sizes=new_sizes,
+      dimensions=dimensions)
 
 
 # Validate dtypes
@@ -581,29 +598,29 @@ for dtype in jtu.dtypes.all:
 
 # Validate new_sizes
 for shape, new_sizes, dimensions in [
-  ((3, 4, 5), (3, 20), (0, 1, 2)),  # merging two dimensions
-  ((3, 4, 5), (4, 15), (0, 1, 2)),  # changing leading dimension
+    ((3, 4, 5), (3, 20), (0, 1, 2)),  # merging two dimensions
+    ((3, 4, 5), (4, 15), (0, 1, 2)),  # changing leading dimension
 ]:
   _make_reshape_harness(
-    "new_sizes", shape=shape, new_sizes=new_sizes, dimensions=dimensions)
+      "new_sizes", shape=shape, new_sizes=new_sizes, dimensions=dimensions)
 # Validate dimensions collapsing order
 for shape, new_sizes, dimensions in [
-  ((3, 4, 5), (3, 20), (2, 1, 0)),  # transpose shape (0, 1, 2) into (2, 1, 0)
-  ((3, 4, 5), (3, 20), (2, 0, 1)),  # transpose shape (0, 1, 2) into (2, 0, 1)
+    ((3, 4, 5), (3, 20), (2, 1, 0)),  # transpose shape (0, 1, 2) into (2, 1, 0)
+    ((3, 4, 5), (3, 20), (2, 0, 1)),  # transpose shape (0, 1, 2) into (2, 0, 1)
 ]:
   _make_reshape_harness(
-    "dimensions", shape=shape, new_sizes=new_sizes, dimensions=dimensions)
+      "dimensions", shape=shape, new_sizes=new_sizes, dimensions=dimensions)
 
 
 def _make_rev_harness(name, *, shape=(4, 5), dtype=np.float32, dimensions=(0,)):
   define(
-    "rev",
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimensions={dimensions}",
-    lax.rev,
-    [RandArg(shape, dtype), StaticArg(dimensions)],
-    shape=shape,
-    dtype=dtype,
-    dimensions=dimensions)
+      "rev",
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimensions={dimensions}",
+      lax.rev,
+      [RandArg(shape, dtype), StaticArg(dimensions)],
+      shape=shape,
+      dtype=dtype,
+      dimensions=dimensions)
 
 
 # Validate dtypes
@@ -611,10 +628,10 @@ for dtype in jtu.dtypes.all:
   _make_rev_harness("dtypes", dtype=dtype)
 # Validate dimensions
 for shape, dimensions in [
-  ((3, 4, 5), ()),  # empty dimensions
-  ((3, 4, 5), (0, 2)),  # some dimensions
-  ((3, 4, 5), (0, 1, 2)),  # all dimensions (ordered)
-  ((3, 4, 5), (2, 0, 1)),  # all dimensions (unordered)
+    ((3, 4, 5), ()),  # empty dimensions
+    ((3, 4, 5), (0, 2)),  # some dimensions
+    ((3, 4, 5), (0, 1, 2)),  # all dimensions (ordered)
+    ((3, 4, 5), (2, 0, 1)),  # all dimensions (unordered)
 ]:
   _make_rev_harness("dimensions", shape=shape, dimensions=dimensions)
 
@@ -626,13 +643,13 @@ def _make_device_put_harness(name,
                              device=None):
   _device_fn = lambda: jax.devices(device)[0] if device is not None else None
   define(
-    "device_put",
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_device={device}",
-    lambda x: xla.device_put_p.bind(x, device=_device_fn()),
-    [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype,
-    device=device)
+      "device_put",
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_device={device}",
+      lambda x: xla.device_put_p.bind(x, device=_device_fn()),
+      [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype,
+      device=device)
 
 
 # Validate dtypes
@@ -648,16 +665,17 @@ def _make_bitcast_convert_type_harness(name,
                                        dtype=np.float32,
                                        new_dtype=np.float32):
   define(
-    "bitcast_convert_type",
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newdtype={np.dtype(new_dtype).name}",
-    lambda x: (lax.bitcast_convert_type_p.bind(x, new_dtype=new_dtype)),
-    [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype,
-    new_dtype=new_dtype)
+      "bitcast_convert_type",
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newdtype={np.dtype(new_dtype).name}",
+      lambda x: (lax.bitcast_convert_type_p.bind(x, new_dtype=new_dtype)),
+      [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype,
+      new_dtype=new_dtype)
 
 
 def _can_bitcast(dtype, target_dtype):
+
   def _to_equivalence_class(dtype):
     if dtypes.issubdtype(dtype, np.integer):
       return dtypes.iinfo(dtype).bits
@@ -675,17 +693,17 @@ def _can_bitcast(dtype, target_dtype):
 for dtype in jtu.dtypes.all:
   for new_dtype in filter(partial(_can_bitcast, dtype), jtu.dtypes.all):
     _make_bitcast_convert_type_harness(
-      "dtypes_to_new_dtypes", dtype=dtype, new_dtype=new_dtype)
+        "dtypes_to_new_dtypes", dtype=dtype, new_dtype=new_dtype)
 
 
 def _make_add_any_harness(name, *, shapes=((2,), (2,)), dtype=np.float32):
   define(
-    ad_util.add_any_p,
-    f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
-    ad_util.add_jaxvals_p.bind,
-    list(map(lambda s: RandArg(s, dtype), shapes)),
-    dtype=dtype,
-    shapes=shapes)
+      ad_util.add_any_p,
+      f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
+      ad_util.add_jaxvals_p.bind,
+      list(map(lambda s: RandArg(s, dtype), shapes)),
+      dtype=dtype,
+      shapes=shapes)
 
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
@@ -694,11 +712,11 @@ for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
 for dtype in jtu.dtypes.all:
   shape: Tuple[int, ...] = (20, 20)
   define(
-    ad_util.stop_gradient_p,
-    f"{jtu.format_shape_dtype_string(shape, dtype)}",
-    ad_util.stop_gradient_p.bind, [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype)
+      ad_util.stop_gradient_p,
+      f"{jtu.format_shape_dtype_string(shape, dtype)}",
+      ad_util.stop_gradient_p.bind, [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype)
 
 _LAX_COMPARATORS = (lax.eq_p, lax.ge_p, lax.gt_p, lax.le_p, lax.lt_p, lax.ne_p)
 
@@ -710,15 +728,15 @@ def _make_comparator_harness(name,
                              lhs_shape=(),
                              rhs_shape=()):
   define(
-    op.name,
-    f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
-    lambda *args: op.bind(*args),
-    [RandArg(lhs_shape, dtype),
-     RandArg(rhs_shape, dtype)],
-    op=op,
-    lhs_shape=lhs_shape,
-    rhs_shape=rhs_shape,
-    dtype=dtype)
+      op.name,
+      f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
+      lambda *args: op.bind(*args),
+      [RandArg(lhs_shape, dtype),
+       RandArg(rhs_shape, dtype)],
+      op=op,
+      lhs_shape=lhs_shape,
+      rhs_shape=rhs_shape,
+      dtype=dtype)
 
 
 for op in _LAX_COMPARATORS:
@@ -729,28 +747,28 @@ for op in _LAX_COMPARATORS:
 
   # Validate broadcasting behavior
   for lhs_shape, rhs_shape in [
-    ((), (2, 3)),  # broadcast scalar
-    ((1, 2), (3, 2)),  # broadcast along specific axis
+      ((), (2, 3)),  # broadcast scalar
+      ((1, 2), (3, 2)),  # broadcast along specific axis
   ]:
     _make_comparator_harness(
-      "broadcasting", lhs_shape=lhs_shape, rhs_shape=rhs_shape, op=op)
+        "broadcasting", lhs_shape=lhs_shape, rhs_shape=rhs_shape, op=op)
 
 for dtype in jtu.dtypes.all:
   shape = (3, 4, 5)
   define(
-    "zeros_like",
-    f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-    ad_util.zeros_like_p.bind, [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype)
+      "zeros_like",
+      f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+      ad_util.zeros_like_p.bind, [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype)
 
 for dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned:
   arg = np.array([-1, -2, 0, 1], dtype=dtype)
   define(
-    "population_count",
-    f"{jtu.dtype_str(dtype)}",
-    lax.population_count, [arg],
-    dtype=dtype)
+      "population_count",
+      f"{jtu.dtype_str(dtype)}",
+      lax.population_count, [arg],
+      dtype=dtype)
 
 
 def _get_max_identity(dtype):
@@ -783,14 +801,14 @@ def _make_argminmax_harness(prim,
   dtype, shape = arr.dtype, arr.shape
   index_dtype = dtypes.canonicalize_dtype(index_dtype)
   define(
-    prim,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axes={axes}_indexdtype={index_dtype}",
-    lambda arg: prim.bind(arg, axes=axes, index_dtype=index_dtype), [arr],
-    shape=shape,
-    dtype=dtype,
-    axes=axes,
-    index_dtype=index_dtype,
-    prim=prim)
+      prim,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axes={axes}_indexdtype={index_dtype}",
+      lambda arg: prim.bind(arg, axes=axes, index_dtype=index_dtype), [arr],
+      shape=shape,
+      dtype=dtype,
+      axes=axes,
+      index_dtype=index_dtype,
+      prim=prim)
 
 
 for prim in [lax.argmin_p, lax.argmax_p]:
@@ -805,7 +823,6 @@ for prim in [lax.argmin_p, lax.argmax_p]:
   for index_dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned:
     _make_argminmax_harness(prim, "index_dtype", index_dtype=index_dtype)
 
-
 # TODO(bchetioui): the below documents a limitation of argmin and argmax when a
 # dimension of the input is too large. However, it is not categorizable as it
 # seems that the converter fails before reaching the actual primitive call. This
@@ -819,16 +836,16 @@ for prim in [lax.argmin_p, lax.argmax_p]:
 
 def _make_iota_harness(name, *, shape=(2, 3), dtype=np.float32, dimension=0):
   define(
-    lax.iota_p,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimension={dimension}",
-    lambda dtype, shape, dim:
-    (lax.iota_p.bind(dtype=dtype, shape=shape, dimension=dim)),
-    [StaticArg(dtype),
-     StaticArg(shape),
-     StaticArg(dimension)],
-    shape=shape,
-    dtype=dtype,
-    dimension=dimension)
+      lax.iota_p,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimension={dimension}",
+      lambda dtype, shape, dim:
+      (lax.iota_p.bind(dtype=dtype, shape=shape, dimension=dim)),
+      [StaticArg(dtype),
+       StaticArg(shape),
+       StaticArg(dimension)],
+      shape=shape,
+      dtype=dtype,
+      dimension=dimension)
 
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
@@ -836,8 +853,8 @@ for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
 
 # Validate broadcasting
 for shape, dimension in [
-  ((4, 8, 1, 1), 1),  # broadcasting along non-major dimension
-  ((4, 8, 1, 1), 2),  # broadcasting along dimension == 1
+    ((4, 8, 1, 1), 1),  # broadcasting along non-major dimension
+    ((4, 8, 1, 1), 2),  # broadcasting along dimension == 1
 ]:
   _make_iota_harness("broadcasting", shape=shape, dimension=dimension)
 
@@ -859,13 +876,13 @@ def _make_div_rem_harness(prim,
   rhs = CustomArg(_make_non_zero) if rhs is None else rhs
 
   define(
-    prim,
-    f"{name}_lhs={jtu.format_shape_dtype_string(lhs.shape, lhs.dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}",
-    prim.bind, [lhs, rhs],
-    dtype=dtype,
-    lhs=lhs,
-    rhs=rhs,
-    prim=prim)
+      prim,
+      f"{name}_lhs={jtu.format_shape_dtype_string(lhs.shape, lhs.dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)}",
+      prim.bind, [lhs, rhs],
+      dtype=dtype,
+      lhs=lhs,
+      rhs=rhs,
+      prim=prim)
 
 
 for prim in [lax.div_p, lax.rem_p]:
@@ -875,24 +892,24 @@ for prim in [lax.div_p, lax.rem_p]:
 
   # Validate broadcasting
   for shapes in [
-    ((2, 1, 3), (2, 4, 3)),  # broadcast dividend
-    ((2, 4, 3), (2, 1, 3)),  # broadcast divisor
+      ((2, 1, 3), (2, 4, 3)),  # broadcast dividend
+      ((2, 4, 3), (2, 1, 3)),  # broadcast divisor
   ]:
     _make_div_rem_harness(prim, "broadcast", shapes=shapes)
 
   # Validate singularity points
   for name, arrs in [
-    ("positive_by_0", (np.ones(
-      (2,), dtype=np.float32), np.zeros((2,), dtype=np.float32))),
-    # TODO: this fails on CPU, different result
-    # ("positive_by_0_int32", (np.ones((2,), dtype=np.int32),
-    #                         np.zeros((2,), dtype=np.int32))),
-    ("negative_by_0", (-np.ones(
-      (2,), dtype=np.float32), np.zeros((2,), dtype=np.float32))),
-    ("0_by_0", (np.zeros(
-      (2,), dtype=np.float32), np.zeros((2,), dtype=np.float32))),
-    ("inf_by_inf", (np.array([np.inf], dtype=np.float32),
-                    np.array([np.inf], dtype=np.float32))),
+      ("positive_by_0", (np.ones(
+          (2,), dtype=np.float32), np.zeros((2,), dtype=np.float32))),
+      # TODO: this fails on CPU, different result
+      # ("positive_by_0_int32", (np.ones((2,), dtype=np.int32),
+      #                         np.zeros((2,), dtype=np.int32))),
+      ("negative_by_0", (-np.ones(
+          (2,), dtype=np.float32), np.zeros((2,), dtype=np.float32))),
+      ("0_by_0", (np.zeros(
+          (2,), dtype=np.float32), np.zeros((2,), dtype=np.float32))),
+      ("inf_by_inf", (np.array([np.inf], dtype=np.float32),
+                      np.array([np.inf], dtype=np.float32))),
   ]:
     _make_div_rem_harness(prim, f"singularity_{name}", arrs=arrs)
 
@@ -901,113 +918,111 @@ def _make_binary_elementwise_harnesses(prim,
                                        dtypes,
                                        default_dtype=np.float32,
                                        jax_unimplemented=lambda **kwargs: []):
+
   def _make(name, *, shapes=((20, 20), (20, 20)), dtype):
     lhs_shape, rhs_shape = shapes
     define(
-      prim,
-      f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
-      prim.bind, [RandArg(lhs_shape, dtype),
-                  RandArg(rhs_shape, dtype)],
-      jax_unimplemented=jax_unimplemented(
-        dtype=dtype, prim=prim, shapes=shapes),
-      prim=prim,
-      dtype=dtype,
-      shapes=shapes)
+        prim,
+        f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
+        prim.bind, [RandArg(lhs_shape, dtype),
+                    RandArg(rhs_shape, dtype)],
+        jax_unimplemented=jax_unimplemented(
+            dtype=dtype, prim=prim, shapes=shapes),
+        prim=prim,
+        dtype=dtype,
+        shapes=shapes)
 
   return (tuple(  # Validate dtypes
-    _make("dtypes", dtype=dtype)
-    for dtype in dtypes) + tuple(  # Validate broadcasting
-    _make("broadcasting", dtype=default_dtype, shapes=shapes)
-    for shapes in [
-      ((20, 20), (1, 20)),  # broadcasting rhs
-      ((1, 20), (20, 20)),  # broadcasting lhs
-    ]))
+      _make("dtypes", dtype=dtype)
+      for dtype in dtypes) + tuple(  # Validate broadcasting
+          _make("broadcasting", dtype=default_dtype, shapes=shapes)
+          for shapes in [
+              ((20, 20), (1, 20)),  # broadcasting rhs
+              ((1, 20), (20, 20)),  # broadcasting lhs
+          ]))
 
 
 _make_binary_elementwise_harnesses(
-  prim=lax.add_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
+    prim=lax.add_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
 
 _make_binary_elementwise_harnesses(
-  prim=lax.mul_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
+    prim=lax.mul_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
 
 _make_binary_elementwise_harnesses(
-  prim=lax.atan2_p, dtypes=jtu.dtypes.all_floating)
+    prim=lax.atan2_p, dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.igamma_p,
-  dtypes=jtu.dtypes.all_floating)
+    prim=lax.igamma_p, dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.igammac_p,
-  dtypes=jtu.dtypes.all_floating)
+    prim=lax.igammac_p, dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.nextafter_p,
-  dtypes=jtu.dtypes.all_floating)
+    prim=lax.nextafter_p, dtypes=jtu.dtypes.all_floating)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.and_p,
-  default_dtype=np.int32,
-  dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
-         jtu.dtypes.boolean)
+    prim=lax.and_p,
+    default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
+    jtu.dtypes.boolean)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.or_p,
-  default_dtype=np.int32,
-  dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
-         jtu.dtypes.boolean)
+    prim=lax.or_p,
+    default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
+    jtu.dtypes.boolean)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.xor_p,
-  default_dtype=np.int32,
-  dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
-         jtu.dtypes.boolean)
+    prim=lax.xor_p,
+    default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
+    jtu.dtypes.boolean)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.shift_left_p,
-  default_dtype=np.int32,
-  dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
+    prim=lax.shift_left_p,
+    default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.shift_right_logical_p,
-  default_dtype=np.int32,
-  dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
+    prim=lax.shift_right_logical_p,
+    default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.shift_right_arithmetic_p,
-  default_dtype=np.int32,
-  dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
+    prim=lax.shift_right_arithmetic_p,
+    default_dtype=np.int32,
+    dtypes=jtu.dtypes.all_integer + jtu.dtypes.all_unsigned)
 
 _make_binary_elementwise_harnesses(
-  prim=lax.sub_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
+    prim=lax.sub_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
 
 _min_max_special_cases = tuple(
-  (lhs, rhs)
-  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
-  for lhs, rhs in [(np.array([np.inf, np.inf], dtype=dtype),
-                    np.array([np.nan, np.nan], dtype=dtype)),
-                   (np.array([-np.inf, -np.inf], dtype=dtype),
-                    np.array([np.nan, np.nan], dtype=dtype))])
+    (lhs, rhs)
+    for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+    for lhs, rhs in [(np.array([np.inf, np.inf], dtype=dtype),
+                      np.array([np.nan, np.nan], dtype=dtype)),
+                     (np.array([-np.inf, -np.inf], dtype=dtype),
+                      np.array([np.nan, np.nan], dtype=dtype))])
 
 _make_binary_elementwise_harnesses(prim=lax.min_p, dtypes=jtu.dtypes.all)
 # Validate special cases
 for lhs, rhs in _min_max_special_cases:
   define(
-    lax.min_p,
-    f"inf_nan_{jtu.dtype_str(lhs.dtype)}_{lhs[0]}_{rhs[0]}",
-    lax.min_p.bind, [lhs, rhs],
-    prim=lax.min_p,
-    dtype=lhs.dtype)
+      lax.min_p,
+      f"inf_nan_{jtu.dtype_str(lhs.dtype)}_{lhs[0]}_{rhs[0]}",
+      lax.min_p.bind, [lhs, rhs],
+      prim=lax.min_p,
+      dtype=lhs.dtype)
 
 _make_binary_elementwise_harnesses(prim=lax.max_p, dtypes=jtu.dtypes.all)
 # Validate special cases
 for lhs, rhs in _min_max_special_cases:
   define(
-    lax.max_p,
-    f"inf_nan_{jtu.dtype_str(lhs.dtype)}_{lhs[0]}_{rhs[0]}",
-    lax.max_p.bind, [lhs, rhs],
-    prim=lax.max_p,
-    dtype=lhs.dtype)
+      lax.max_p,
+      f"inf_nan_{jtu.dtype_str(lhs.dtype)}_{lhs[0]}_{rhs[0]}",
+      lax.max_p.bind, [lhs, rhs],
+      prim=lax.max_p,
+      dtype=lhs.dtype)
 
 
 def _make_broadcast_in_dim_harness(name,
@@ -1017,15 +1032,15 @@ def _make_broadcast_in_dim_harness(name,
                                    outshape=(2,),
                                    broadcast_dimensions=(0,)):
   define(
-    lax.broadcast_in_dim_p,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_outshape={outshape}_broadcastdimensions={broadcast_dimensions}",
-    lambda operand: lax.broadcast_in_dim_p.bind(
-      operand, shape=outshape, broadcast_dimensions=broadcast_dimensions),
-    [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype,
-    outshape=outshape,
-    broadcast_dimensions=broadcast_dimensions)
+      lax.broadcast_in_dim_p,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_outshape={outshape}_broadcastdimensions={broadcast_dimensions}",
+      lambda operand: lax.broadcast_in_dim_p.bind(
+          operand, shape=outshape, broadcast_dimensions=broadcast_dimensions),
+      [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype,
+      outshape=outshape,
+      broadcast_dimensions=broadcast_dimensions)
 
 
 for dtype in jtu.dtypes.all:
@@ -1033,27 +1048,27 @@ for dtype in jtu.dtypes.all:
 
 # Validate parameter combinations
 for shape, outshape, broadcast_dimensions in [
-  [(2,), (3, 2), (1,)],  # add major dimension
-  [(2,), (2, 3), (0,)],  # add inner dimension
-  [(), (2, 3), ()],  # use scalar shape
-  [(1, 2), (4, 3, 2), (0, 2)],  # map size 1 dim to different output dim value
+    [(2,), (3, 2), (1,)],  # add major dimension
+    [(2,), (2, 3), (0,)],  # add inner dimension
+    [(), (2, 3), ()],  # use scalar shape
+    [(1, 2), (4, 3, 2), (0, 2)],  # map size 1 dim to different output dim value
 ]:
   _make_broadcast_in_dim_harness(
-    "parameter_combinations",
-    shape=shape,
-    outshape=outshape,
-    broadcast_dimensions=broadcast_dimensions)
+      "parameter_combinations",
+      shape=shape,
+      outshape=outshape,
+      broadcast_dimensions=broadcast_dimensions)
 
 
 def _make_broadcast_harness(name, *, dtype=np.float32, shape=(2,), sizes=()):
   define(
-    lax.broadcast_p,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_sizes={sizes}",
-    lambda operand: lax.broadcast_p.bind(operand, sizes=sizes),
-    [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype,
-    sizes=sizes)
+      lax.broadcast_p,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_sizes={sizes}",
+      lambda operand: lax.broadcast_p.bind(operand, sizes=sizes),
+      [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype,
+      sizes=sizes)
 
 
 for dtype in jtu.dtypes.all:
@@ -1061,22 +1076,22 @@ for dtype in jtu.dtypes.all:
 
 # Validate sizes
 for sizes in [
-  (2,),  # broadcast 1 dim
-  (1, 2, 3),  # broadcast n > 1 dims
+    (2,),  # broadcast 1 dim
+    (1, 2, 3),  # broadcast n > 1 dims
 ]:
   _make_broadcast_harness("sizes", sizes=sizes)
 
 for dtype in jtu.dtypes.all_floating:
   for arg1, arg2, arg3 in [
-    (np.array([-1.6, -1.4, -1.0, 0.0, 0.1, 0.3, 1, 1.4, 1.6], dtype=dtype),
-     np.array([-1.6, 1.4, 1.0, 0.0, 0.2, 0.1, 1, 1.4, -1.6], dtype=dtype),
-     np.array([1.0, -1.0, 2.0, 1.0, 0.3, 0.3, -1.0, 2.4, 1.6], dtype=dtype))
+      (np.array([-1.6, -1.4, -1.0, 0.0, 0.1, 0.3, 1, 1.4, 1.6], dtype=dtype),
+       np.array([-1.6, 1.4, 1.0, 0.0, 0.2, 0.1, 1, 1.4, -1.6], dtype=dtype),
+       np.array([1.0, -1.0, 2.0, 1.0, 0.3, 0.3, -1.0, 2.4, 1.6], dtype=dtype))
   ]:
     define(
-      lax.regularized_incomplete_beta_p,
-      f"_{jtu.dtype_str(dtype)}",
-      lax.betainc, [arg1, arg2, arg3],
-      dtype=dtype)
+        lax.regularized_incomplete_beta_p,
+        f"_{jtu.dtype_str(dtype)}",
+        lax.betainc, [arg1, arg2, arg3],
+        dtype=dtype)
 
 ## GATHER
 # Validate dtypes
@@ -1085,67 +1100,64 @@ for dtype in set(jtu.dtypes.all):
   shape = (10,)
   axis = 0
   define(
-    lax.gather_p,
-    f"dtypes_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}",
-    lambda a, i, axis: jnp.take(a, i, axis=axis),
-    [
-      RandArg(shape, dtype),
-      indices,
-      StaticArg(axis)
-    ],
-    dtype=dtype)
+      lax.gather_p,
+      f"dtypes_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}",
+      lambda a, i, axis: jnp.take(a, i, axis=axis),
+      [RandArg(shape, dtype), indices,
+       StaticArg(axis)],
+      dtype=dtype)
 
 # Construct gather harnesses using take
 _gather_input = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))
 for indices in [
-  # Ensure each set of indices has a distinct shape
-  np.array(2, dtype=np.int32),
-  np.array([2], dtype=np.int32),
-  np.array([2, 4], dtype=np.int32),
-  np.array([[2, 4], [5, 6]], dtype=np.int32),
-  np.array([0, 1, 10], dtype=np.int32),  # Index out of bounds
-  np.array([0, 1, 2, -1], dtype=np.int32),  # Index out of bounds
+    # Ensure each set of indices has a distinct shape
+    np.array(2, dtype=np.int32),
+    np.array([2], dtype=np.int32),
+    np.array([2, 4], dtype=np.int32),
+    np.array([[2, 4], [5, 6]], dtype=np.int32),
+    np.array([0, 1, 10], dtype=np.int32),  # Index out of bounds
+    np.array([0, 1, 2, -1], dtype=np.int32),  # Index out of bounds
 ]:
   for axis in [0, 1, 2]:
     define(
-      lax.gather_p,
-      f"from_take_indices_shape={indices.shape}_axis={axis}",
-      lambda a, i, axis: jnp.take(a, i, axis=axis),
-      [_gather_input, indices, StaticArg(axis)],
-      dtype=_gather_input.dtype)
+        lax.gather_p,
+        f"from_take_indices_shape={indices.shape}_axis={axis}",
+        lambda a, i, axis: jnp.take(a, i, axis=axis),
+        [_gather_input, indices, StaticArg(axis)],
+        dtype=_gather_input.dtype)
 
 # Directly from lax.gather in lax_test.py.
 for shape, idxs, dnums, slice_sizes in [
-  ((5,), np.array([[0], [2]]),
-   lax.GatherDimensionNumbers(
-     offset_dims=(), collapsed_slice_dims=(0,),
-     start_index_map=(0,)), (1,)),
-  ((10,), np.array([[0], [0], [0]]),
-   lax.GatherDimensionNumbers(
-     offset_dims=(1,), collapsed_slice_dims=(),
-     start_index_map=(0,)), (2,)),
-  ((
-       10,
-       5,
-   ), np.array([[0], [2], [1]]),
-   lax.GatherDimensionNumbers(
-     offset_dims=(1,), collapsed_slice_dims=(0,),
-     start_index_map=(0,)), (1, 3)),
-  ((10, 5), np.array([[0, 2], [1, 0]]),
-   lax.GatherDimensionNumbers(
-     offset_dims=(1,), collapsed_slice_dims=(0,),
-     start_index_map=(0, 1)), (1, 3)),
+    ((5,), np.array([[0], [2]]),
+     lax.GatherDimensionNumbers(
+         offset_dims=(), collapsed_slice_dims=(0,),
+         start_index_map=(0,)), (1,)),
+    ((10,), np.array([[0], [0], [0]]),
+     lax.GatherDimensionNumbers(
+         offset_dims=(1,), collapsed_slice_dims=(),
+         start_index_map=(0,)), (2,)),
+    ((
+        10,
+        5,
+    ), np.array([[0], [2], [1]]),
+     lax.GatherDimensionNumbers(
+         offset_dims=(1,), collapsed_slice_dims=(0,),
+         start_index_map=(0,)), (1, 3)),
+    ((10, 5), np.array([[0, 2], [1, 0]]),
+     lax.GatherDimensionNumbers(
+         offset_dims=(1,), collapsed_slice_dims=(0,),
+         start_index_map=(0, 1)), (1, 3)),
 ]:
   dtype = np.float32
   define(
-    lax.gather_p,
-    f"_shape={shape}_idxs_shape={idxs.shape}_dnums={dnums}_slice_sizes={slice_sizes}",
-    lambda op, idxs, dnums, slice_sizes: lax.gather(
-      op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
-    [RandArg(shape, dtype), idxs,
-     StaticArg(dnums),
-     StaticArg(slice_sizes)],
-    dtype=dtype)
+      lax.gather_p,
+      f"_shape={shape}_idxs_shape={idxs.shape}_dnums={dnums}_slice_sizes={slice_sizes}",
+      lambda op, idxs, dnums, slice_sizes: lax.gather(
+          op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
+      [RandArg(shape, dtype), idxs,
+       StaticArg(dnums),
+       StaticArg(slice_sizes)],
+      dtype=dtype)
 
 
 def _make_scatter_harness(name,
@@ -1160,36 +1172,40 @@ def _make_scatter_harness(name,
                           dimension_numbers=((), (0,), (0,))):
   dimension_numbers = lax.ScatterDimensionNumbers(*dimension_numbers)
   define(
-    f_lax.__name__,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}"
+      f_lax.__name__,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}"
       .replace(" ", ""),
-    partial(
-      f_lax,
+      partial(
+          f_lax,
+          indices_are_sorted=indices_are_sorted,
+          unique_indices=unique_indices), [
+              RandArg(shape, dtype),
+              StaticArg(scatter_indices),
+              RandArg(update_shape, dtype),
+              StaticArg(dimension_numbers)
+          ],
+      jax_unimplemented=[
+          Limitation(
+              "unimplemented",
+              devices="tpu",
+              dtypes=np.complex64,
+              enabled=(f_lax in [lax.scatter_max, lax.scatter_min]))
+      ],
+      f_lax=f_lax,
+      shape=shape,
+      dtype=dtype,
+      scatter_indices=scatter_indices,
+      update_shape=update_shape,
+      dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted,
-      unique_indices=unique_indices), [
-      RandArg(shape, dtype),
-      StaticArg(scatter_indices),
-      RandArg(update_shape, dtype),
-      StaticArg(dimension_numbers)
-    ],
-    jax_unimplemented=[
-      Limitation(
-        "unimplemented", devices="tpu", dtypes=np.complex64,
-        enabled=(f_lax in [lax.scatter_max, lax.scatter_min]))
-    ],
-    f_lax=f_lax,
-    shape=shape,
-    dtype=dtype,
-    scatter_indices=scatter_indices,
-    update_shape=update_shape,
-    dimension_numbers=dimension_numbers,
-    indices_are_sorted=indices_are_sorted,
-    unique_indices=unique_indices)
+      unique_indices=unique_indices)
 
 
 # Validate dtypes
 for dtype in jtu.dtypes.all:
-  for f_lax in [lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min]:
+  for f_lax in [
+      lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min
+  ]:
     if f_lax in [lax.scatter_add, lax.scatter_mul] and dtype == np.bool_:
       continue
     _make_scatter_harness("dtypes", dtype=dtype, f_lax=f_lax)
@@ -1201,15 +1217,15 @@ for dtype in jtu.dtypes.all:
 
 # Validate shapes, dimension numbers and scatter indices
 for shape, scatter_indices, update_shape, dimension_numbers in [
-  ((10,), [[0], [0], [0]], (3, 2), ((1,), (), (0,))),
-  ((10, 5), [[0], [2], [1]], (3, 3), ((1,), (0,), (0,)))
+    ((10,), [[0], [0], [0]], (3, 2), ((1,), (), (0,))),
+    ((10, 5), [[0], [2], [1]], (3, 3), ((1,), (0,), (0,)))
 ]:
   _make_scatter_harness(
-    "shapes_and_dimension_numbers",
-    shape=shape,
-    update_shape=update_shape,
-    scatter_indices=np.array(scatter_indices),
-    dimension_numbers=dimension_numbers)
+      "shapes_and_dimension_numbers",
+      shape=shape,
+      update_shape=update_shape,
+      scatter_indices=np.array(scatter_indices),
+      dimension_numbers=dimension_numbers)
 
 # Validate sorted indices
 _make_scatter_harness("indices_are_sorted", indices_are_sorted=True)
@@ -1225,12 +1241,12 @@ _make_scatter_harness("unique_indices", unique_indices=False)
 for dtype in jtu.dtypes.all:
   arg_shape = (2, 3)
   for pads in [
-    [(0, 0, 0), (0, 0, 0)],  # no padding
-    [(1, 1, 0), (2, 2, 0)],  # only positive edge padding
-    [(1, 2, 1), (0, 1, 0)],  # edge padding and interior padding
-    [(0, 0, 0), (-1, -1, 0)],  # negative padding
-    [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
-    [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
+      [(0, 0, 0), (0, 0, 0)],  # no padding
+      [(1, 1, 0), (2, 2, 0)],  # only positive edge padding
+      [(1, 2, 1), (0, 1, 0)],  # edge padding and interior padding
+      [(0, 0, 0), (-1, -1, 0)],  # negative padding
+      [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
+      [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
   ]:
     works_without_xla = all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in pads)
     for enable_xla in ([True, False] if works_without_xla else [True]):
@@ -1254,16 +1270,16 @@ def _make_select_harness(name,
                          shape_args=(2, 3),
                          dtype=np.float32):
   define(
-    lax.select_p,
-    f"{name}_shapepred={jtu.format_shape_dtype_string(shape_pred, np.bool_)}_shapeargs={jtu.format_shape_dtype_string(shape_args, dtype)}",
-    lax.select, [
-      RandArg(shape_pred, np.bool_),
-      RandArg(shape_args, dtype),
-      RandArg(shape_args, dtype)
-    ],
-    shape_pred=shape_pred,
-    shape_args=shape_args,
-    dtype=dtype)
+      lax.select_p,
+      f"{name}_shapepred={jtu.format_shape_dtype_string(shape_pred, np.bool_)}_shapeargs={jtu.format_shape_dtype_string(shape_args, dtype)}",
+      lax.select, [
+          RandArg(shape_pred, np.bool_),
+          RandArg(shape_args, dtype),
+          RandArg(shape_args, dtype)
+      ],
+      shape_pred=shape_pred,
+      shape_args=shape_args,
+      dtype=dtype)
 
 
 for dtype in jtu.dtypes.all:
@@ -1279,14 +1295,14 @@ def _make_transpose_harness(name,
                             permutation=(1, 0),
                             dtype=np.float32):
   define(
-    lax.transpose_p,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_permutation={permutation}"
+      lax.transpose_p,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_permutation={permutation}"
       .replace(" ", ""),
-    lambda x: lax.transpose_p.bind(x, permutation=permutation),
-    [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype,
-    permutation=permutation)
+      lambda x: lax.transpose_p.bind(x, permutation=permutation),
+      [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype,
+      permutation=permutation)
 
 
 for dtype in jtu.dtypes.all:
@@ -1294,8 +1310,8 @@ for dtype in jtu.dtypes.all:
 
 # Validate permutations
 for shape, permutation in [
-  ((2, 3, 4), (0, 1, 2)),  # identity
-  ((2, 3, 4), (1, 2, 0)),  # transposition
+    ((2, 3, 4), (0, 1, 2)),  # identity
+    ((2, 3, 4), (1, 2, 0)),  # transposition
 ]:
   _make_transpose_harness("permutations", shape=shape, permutation=permutation)
 
@@ -1310,23 +1326,23 @@ def _make_cumreduce_harness(name,
                             reverse=False):
   limitations = []
   define(
-    f_jax.__name__,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}_reverse={reverse}",
-    f_jax, [RandArg(shape, dtype),
-            StaticArg(axis),
-            StaticArg(reverse)],
-    jax_unimplemented=limitations,
-    f_jax=f_jax,
-    shape=shape,
-    dtype=dtype,
-    axis=axis,
-    reverse=reverse)
+      f_jax.__name__,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}_reverse={reverse}",
+      f_jax, [RandArg(shape, dtype),
+              StaticArg(axis),
+              StaticArg(reverse)],
+      jax_unimplemented=limitations,
+      f_jax=f_jax,
+      shape=shape,
+      dtype=dtype,
+      axis=axis,
+      reverse=reverse)
 
 
 # Validate dtypes for each function
 for f_jax in [
-  lax_control_flow.cummin, lax_control_flow.cummax, lax_control_flow.cumsum,
-  lax_control_flow.cumprod
+    lax_control_flow.cummin, lax_control_flow.cummax, lax_control_flow.cumsum,
+    lax_control_flow.cumprod
 ]:
   for dtype in jtu.dtypes.all:
     if dtype == np.bool_:
@@ -1341,6 +1357,7 @@ for f_jax in [
   # Validate reverse for each function
   _make_cumreduce_harness("reverse", reverse=True, f_jax=f_jax)
 
+
 ### TOP_K
 def _make_top_k_harness(name,
                         *,
@@ -1351,12 +1368,12 @@ def _make_top_k_harness(name,
   if operand is None:
     operand = RandArg(shape, dtype)
   define(
-    lax.top_k_p,
-    f"{name}_inshape={jtu.format_shape_dtype_string(operand.shape, operand.dtype)}_k={k}",
-    lax.top_k, [operand, StaticArg(k)],
-    shape=operand.shape,
-    dtype=operand.dtype,
-    k=k)
+      lax.top_k_p,
+      f"{name}_inshape={jtu.format_shape_dtype_string(operand.shape, operand.dtype)}_k={k}",
+      lax.top_k, [operand, StaticArg(k)],
+      shape=operand.shape,
+      dtype=operand.dtype,
+      k=k)
 
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex):
@@ -1370,6 +1387,7 @@ for name, operand, k in [("stability",
                           np.array([+np.inf, np.nan, -np.nan, -np.inf, 3],
                                    dtype=np.float32), 5)]:
   _make_top_k_harness(name, operand=operand, k=k)
+
 
 ### SORT
 def _make_sort_harness(name,
@@ -1418,7 +1436,7 @@ for dimension in [0, 1]:
 _make_sort_harness("is_stable", is_stable=True)
 # Potential edge cases
 for operands, dimension in [
-  ([np.array([+np.inf, np.nan, -np.nan, -np.inf, 2], dtype=np.float32)], 0)
+    ([np.array([+np.inf, np.nan, -np.nan, -np.inf, 2], dtype=np.float32)], 0)
 ]:
   _make_sort_harness("edge_cases", operands=operands, dimension=dimension)
 
@@ -1453,38 +1471,36 @@ def _make_cholesky_arg(shape, dtype, rng):
 for dtype in jtu.dtypes.all_inexact:
   for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]:
     define(
-      lax.linalg.cholesky_p,
-      f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-      lambda *args: lax.linalg.cholesky_p.bind(*args),
-      [CustomArg(partial(_make_cholesky_arg, shape, dtype))],
-      jax_unimplemented=[
-        Limitation(
-          "unimplemented",
-          dtypes=[np.float16],
-          devices=("cpu", "gpu"))
-      ],
-      shape=shape,
-      dtype=dtype)
+        lax.linalg.cholesky_p,
+        f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+        lambda *args: lax.linalg.cholesky_p.bind(*args),
+        [CustomArg(partial(_make_cholesky_arg, shape, dtype))],
+        jax_unimplemented=[
+            Limitation(
+                "unimplemented", dtypes=[np.float16], devices=("cpu", "gpu"))
+        ],
+        shape=shape,
+        dtype=dtype)
 
 for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
   for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]:
     for full_matrices in [False, True]:
       define(
-        lax.linalg.qr_p,
-        f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
-        lax.linalg.qr,
-        [RandArg(shape, dtype),
-         StaticArg(full_matrices)],
-        # See jax.lib.lapack.geqrf for the list of compatible types
-        jax_unimplemented=[
-          Limitation(
-            "unimplemented",
-            devices=("cpu", "gpu"),
-            dtypes=[np.float16, dtypes.bfloat16]),
-        ],
-        shape=shape,
-        dtype=dtype,
-        full_matrices=full_matrices)
+          lax.linalg.qr_p,
+          f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
+          lax.linalg.qr,
+          [RandArg(shape, dtype),
+           StaticArg(full_matrices)],
+          # See jax.lib.lapack.geqrf for the list of compatible types
+          jax_unimplemented=[
+              Limitation(
+                  "unimplemented",
+                  devices=("cpu", "gpu"),
+                  dtypes=[np.float16, dtypes.bfloat16]),
+          ],
+          shape=shape,
+          dtype=dtype,
+          full_matrices=full_matrices)
 
 
 def _make_fft_harness(name,
@@ -1493,6 +1509,7 @@ def _make_fft_harness(name,
                       dtype=np.float32,
                       fft_type=xla_client.FftType.FFT,
                       fft_lengths=(17,)):
+
   def _fft_rng_factory(dtype):
     _all_integers = (
         jtu.dtypes.all_integer + jtu.dtypes.all_unsigned + jtu.dtypes.boolean)
@@ -1503,105 +1520,105 @@ def _make_fft_harness(name,
       return jtu.rand_default
 
   define(
-    lax.fft_p,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
-    lambda *args: lax.fft_p.bind(
-      args[0], fft_type=args[1], fft_lengths=args[2]),
-    [RandArg(shape, dtype),
-     StaticArg(fft_type),
-     StaticArg(fft_lengths)],
-    rng_factory=_fft_rng_factory(dtype),
-    shape=shape,
-    dtype=dtype,
-    fft_type=fft_type,
-    fft_lengths=fft_lengths)
+      lax.fft_p,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+      lambda *args: lax.fft_p.bind(
+          args[0], fft_type=args[1], fft_lengths=args[2]),
+      [RandArg(shape, dtype),
+       StaticArg(fft_type),
+       StaticArg(fft_lengths)],
+      rng_factory=_fft_rng_factory(dtype),
+      shape=shape,
+      dtype=dtype,
+      fft_type=fft_type,
+      fft_lengths=fft_lengths)
 
 
 # FFT, IFFT, RFFT, IRFFT
 for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3])):
   # Validate dtypes per FFT type
   for dtype in (jtu.dtypes.floating
-  if fft_type == xla_client.FftType.RFFT else jtu.dtypes.complex):
+                if fft_type == xla_client.FftType.RFFT else jtu.dtypes.complex):
     shape = (14, 15, 16, 17)
     for fft_lengths in [
-      (shape[-1],) if fft_type != xla_client.FftType.IRFFT else
-      ((shape[-1] - 1) * 2,)
+        (shape[-1],) if fft_type != xla_client.FftType.IRFFT else
+        ((shape[-1] - 1) * 2,)
     ]:
       _make_fft_harness(
-        "dtypes",
-        shape=shape,
-        dtype=dtype,
-        fft_type=fft_type,
-        fft_lengths=fft_lengths)
+          "dtypes",
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
 
   # Validate dimensions per FFT type
   for dtype in [
-    np.float32 if fft_type == xla_client.FftType.RFFT else np.complex64
+      np.float32 if fft_type == xla_client.FftType.RFFT else np.complex64
   ]:
     for dims in [1, 2, 3]:
       for fft_lengths in [
-        shape[-dims:] if fft_type != xla_client.FftType.IRFFT else
-        shape[-dims:-1] + ((shape[-1] - 1) * 2,)
+          shape[-dims:] if fft_type != xla_client.FftType.IRFFT else
+          shape[-dims:-1] + ((shape[-1] - 1) * 2,)
       ]:
         _make_fft_harness(
-          "dims",
-          shape=shape,
-          fft_type=fft_type,
-          fft_lengths=fft_lengths,
-          dtype=dtype)
+            "dims",
+            shape=shape,
+            fft_type=fft_type,
+            fft_lengths=fft_lengths,
+            dtype=dtype)
 
 for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
   for shape in [(2, 2), (2, 7), (29, 29), (2, 3, 53), (2, 3, 29, 7)]:
     for full_matrices in [False, True]:
       for compute_uv in [False, True]:
         define(
-          lax.linalg.svd_p,
-          f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",
-          lambda *args: lax.linalg.svd_p.bind(
-            args[0], full_matrices=args[1], compute_uv=args[2]), [
-            RandArg(shape, dtype),
-            StaticArg(full_matrices),
-            StaticArg(compute_uv)
-          ],
-          jax_unimplemented=[
-            Limitation(
-              "unimplemented",
-              devices=("cpu", "gpu"),
-              dtypes=[np.float16, dtypes.bfloat16]),
-            Limitation(
-              "complex not implemented. Works in JAX for CPU and GPU with custom kernels",
-              devices="tpu",
-              dtypes=[np.complex64, np.complex128])
-          ],
-          shape=shape,
-          dtype=dtype,
-          full_matrices=full_matrices,
-          compute_uv=compute_uv)
+            lax.linalg.svd_p,
+            f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",
+            lambda *args: lax.linalg.svd_p.bind(
+                args[0], full_matrices=args[1], compute_uv=args[2]), [
+                    RandArg(shape, dtype),
+                    StaticArg(full_matrices),
+                    StaticArg(compute_uv)
+                ],
+            jax_unimplemented=[
+                Limitation(
+                    "unimplemented",
+                    devices=("cpu", "gpu"),
+                    dtypes=[np.float16, dtypes.bfloat16]),
+                Limitation(
+                    "complex not implemented. Works in JAX for CPU and GPU with custom kernels",
+                    devices="tpu",
+                    dtypes=[np.complex64, np.complex128])
+            ],
+            shape=shape,
+            dtype=dtype,
+            full_matrices=full_matrices,
+            compute_uv=compute_uv)
 
 for dtype in jtu.dtypes.all_inexact:
   for shape in [(0, 0), (5, 5), (2, 6, 6)]:
     for compute_left_eigenvectors in [False, True]:
       for compute_right_eigenvectors in [False, True]:
         define(
-          lax.linalg.eig_p,
-          f"shape={jtu.format_shape_dtype_string(shape, dtype)}_computelefteigenvectors={compute_left_eigenvectors}_computerighteigenvectors={compute_right_eigenvectors}",
-          lax.linalg.eig, [
-            RandArg(shape, dtype),
-            StaticArg(compute_left_eigenvectors),
-            StaticArg(compute_right_eigenvectors)
-          ],
-          jax_unimplemented=[
-            Limitation(
-              "only supported on CPU in JAX", devices=("tpu", "gpu")),
-            Limitation(
-              "unimplemented",
-              devices="cpu",
-              dtypes=[np.float16, dtypes.bfloat16])
-          ],
-          shape=shape,
-          dtype=dtype,
-          compute_left_eigenvectors=compute_left_eigenvectors,
-          compute_right_eigenvectors=compute_right_eigenvectors)
+            lax.linalg.eig_p,
+            f"shape={jtu.format_shape_dtype_string(shape, dtype)}_computelefteigenvectors={compute_left_eigenvectors}_computerighteigenvectors={compute_right_eigenvectors}",
+            lax.linalg.eig, [
+                RandArg(shape, dtype),
+                StaticArg(compute_left_eigenvectors),
+                StaticArg(compute_right_eigenvectors)
+            ],
+            jax_unimplemented=[
+                Limitation(
+                    "only supported on CPU in JAX", devices=("tpu", "gpu")),
+                Limitation(
+                    "unimplemented",
+                    devices="cpu",
+                    dtypes=[np.float16, dtypes.bfloat16])
+            ],
+            shape=shape,
+            dtype=dtype,
+            compute_left_eigenvectors=compute_left_eigenvectors,
+            compute_right_eigenvectors=compute_right_eigenvectors)
 
 
 def _make_triangular_eigh_operand(shape, dtype, lower: bool, rng: Rng):
@@ -1617,48 +1634,48 @@ for dtype in jtu.dtypes.all_inexact:
   for shape in [(0, 0), (50, 50), (2, 20, 20)]:
     for lower in [False, True]:
       define(
-        lax.linalg.eigh_p,
-        f"shape={jtu.format_shape_dtype_string(shape, dtype)}_lower={lower}",
-        # Make operand lower/upper triangular
-        lambda operand, lower, symmetrize_input: (lax.linalg.eigh(
-          jnp.tril(operand)
-          if lower else jnp.triu(operand), lower, symmetrize_input)),
-        # lax.linalg.eigh,
-        [
-          CustomArg(
-            partial(_make_triangular_eigh_operand, shape, dtype, lower)),
-          StaticArg(lower),
-          StaticArg(False)
-        ],
-        jax_unimplemented=[
-          Limitation(
-            "complex eigh not supported ",
-            devices="tpu",
-            dtypes=[np.complex64, np.complex128]),
-          Limitation(
-            "unimplemented", devices=("cpu", "gpu"),
-            dtypes=[np.float16, dtypes.bfloat16]),
-        ],
-        shape=shape,
-        dtype=dtype,
-        lower=lower)
+          lax.linalg.eigh_p,
+          f"shape={jtu.format_shape_dtype_string(shape, dtype)}_lower={lower}",
+          # Make operand lower/upper triangular
+          lambda operand, lower, symmetrize_input: (lax.linalg.eigh(
+              jnp.tril(operand)
+              if lower else jnp.triu(operand), lower, symmetrize_input)),
+          # lax.linalg.eigh,
+          [
+              CustomArg(
+                  partial(_make_triangular_eigh_operand, shape, dtype, lower)),
+              StaticArg(lower),
+              StaticArg(False)
+          ],
+          jax_unimplemented=[
+              Limitation(
+                  "complex eigh not supported ",
+                  devices="tpu",
+                  dtypes=[np.complex64, np.complex128]),
+              Limitation(
+                  "unimplemented",
+                  devices=("cpu", "gpu"),
+                  dtypes=[np.float16, dtypes.bfloat16]),
+          ],
+          shape=shape,
+          dtype=dtype,
+          lower=lower)
 
 for dtype in jtu.dtypes.all_inexact:
   for shape in [
-    (5, 5),  # square
-    (3, 5, 5),  # batched
-    (3, 5),  # non-square
+      (5, 5),  # square
+      (3, 5, 5),  # batched
+      (3, 5),  # non-square
   ]:
     define(
-      lax.linalg.lu_p,
-      f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-      lax.linalg.lu, [RandArg(shape, dtype)],
-      jax_unimplemented=[
-        Limitation(
-          "unimplemented", dtypes=[np.float16, dtypes.bfloat16])
-      ],
-      shape=shape,
-      dtype=dtype)
+        lax.linalg.lu_p,
+        f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+        lax.linalg.lu, [RandArg(shape, dtype)],
+        jax_unimplemented=[
+            Limitation("unimplemented", dtypes=[np.float16, dtypes.bfloat16])
+        ],
+        shape=shape,
+        dtype=dtype)
 
 
 def _make_triangular_solve_harness(name,
@@ -1672,32 +1689,31 @@ def _make_triangular_solve_harness(name,
                                    unit_diagonal=False):
   a_shape, b_shape = ab_shapes
   f_lax = lambda a, b: (
-    lax.linalg.triangular_solve_p.bind(
-      a,
-      b,
-      left_side=left_side,
-      lower=lower,
-      transpose_a=transpose_a,
-      conjugate_a=conjugate_a,
-      unit_diagonal=unit_diagonal))
+      lax.linalg.triangular_solve_p.bind(
+          a,
+          b,
+          left_side=left_side,
+          lower=lower,
+          transpose_a=transpose_a,
+          conjugate_a=conjugate_a,
+          unit_diagonal=unit_diagonal))
 
   define(
-    lax.linalg.triangular_solve_p,
-    f"{name}_a={jtu.format_shape_dtype_string(a_shape, dtype)}_b={jtu.format_shape_dtype_string(b_shape, dtype)}_leftside={left_side}_lower={lower}_transposea={transpose_a}_conjugatea={conjugate_a}_unitdiagonal={unit_diagonal}",
-    f_lax, [RandArg(a_shape, dtype),
-            RandArg(b_shape, dtype)],
-    jax_unimplemented=[
-      Limitation(
-        "unimplemented", devices="gpu", dtypes=[np.float16]),
-    ],
-    dtype=dtype,
-    a_shape=a_shape,
-    b_shape=b_shape,
-    left_side=left_side,
-    lower=lower,
-    tranpose_a=transpose_a,
-    conjugate_a=conjugate_a,
-    unit_diagonal=unit_diagonal)
+      lax.linalg.triangular_solve_p,
+      f"{name}_a={jtu.format_shape_dtype_string(a_shape, dtype)}_b={jtu.format_shape_dtype_string(b_shape, dtype)}_leftside={left_side}_lower={lower}_transposea={transpose_a}_conjugatea={conjugate_a}_unitdiagonal={unit_diagonal}",
+      f_lax, [RandArg(a_shape, dtype),
+              RandArg(b_shape, dtype)],
+      jax_unimplemented=[
+          Limitation("unimplemented", devices="gpu", dtypes=[np.float16]),
+      ],
+      dtype=dtype,
+      a_shape=a_shape,
+      b_shape=b_shape,
+      left_side=left_side,
+      lower=lower,
+      tranpose_a=transpose_a,
+      conjugate_a=conjugate_a,
+      unit_diagonal=unit_diagonal)
 
 
 # Validate dtypes
@@ -1709,38 +1725,39 @@ def _make_triangular_solve_harness(name,
 for dtype in jtu.dtypes.all_inexact:
   for unit_diagonal in [False, True]:
     _make_triangular_solve_harness(
-      "dtypes", dtype=dtype, unit_diagonal=unit_diagonal)
+        "dtypes", dtype=dtype, unit_diagonal=unit_diagonal)
 
 # Validate shapes when solving on the right
 for ab_shapes in [
-  ((4, 4), (1, 4)),  # standard
-  ((2, 8, 8), (2, 10, 8)),  # batched
+    ((4, 4), (1, 4)),  # standard
+    ((2, 8, 8), (2, 10, 8)),  # batched
 ]:
   _make_triangular_solve_harness(
-    "shapes_right", ab_shapes=ab_shapes, left_side=False)
+      "shapes_right", ab_shapes=ab_shapes, left_side=False)
 # Validate transformations of a complex matrix
 for lower in [False, True]:
   for transpose_a in [False, True]:
     for conjugate_a in [False, True]:
       _make_triangular_solve_harness(
-        "complex_transformations",
-        dtype=np.complex64,
-        lower=lower,
-        transpose_a=transpose_a,
-        conjugate_a=conjugate_a)
+          "complex_transformations",
+          dtype=np.complex64,
+          lower=lower,
+          transpose_a=transpose_a,
+          conjugate_a=conjugate_a)
 
 # Validate transformations of a real matrix
 for lower in [False, True]:
   for transpose_a in [False, True]:
     # conjugate_a is irrelevant for real dtypes, and is thus omitted
     _make_triangular_solve_harness(
-      "real_transformations",
-      dtype=np.float32,
-      lower=lower,
-      transpose_a=transpose_a)
+        "real_transformations",
+        dtype=np.float32,
+        lower=lower,
+        transpose_a=transpose_a)
 
 
 def _make_linear_solve_harnesses():
+
   def linear_solve(a, b, solve, transpose_solve=None, symmetric=False):
     matvec = partial(lax.dot, a, precision=lax.Precision.HIGHEST)
     return lax.custom_linear_solve(matvec, b, solve, transpose_solve, symmetric)
@@ -1764,20 +1781,20 @@ def _make_linear_solve_harnesses():
       return a
 
     define(
-      lax.linear_solve_p,
-      f"{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_b={jtu.format_shape_dtype_string(shape[:-1], dtype)}_solve={solve.__name__}_transposesolve={transpose_solve_name}_symmetric={symmetric}",
-      linear_solve, [
-        CustomArg(_make_first_argument),
-        RandArg(shape[:-1], dtype),
-        StaticArg(solve),
-        StaticArg(transpose_solve),
-        StaticArg(symmetric)
-      ],
-      shape=shape,
-      dtype=dtype,
-      solve=solve,
-      transpose_solve=transpose_solve,
-      symmetric=symmetric)
+        lax.linear_solve_p,
+        f"{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_b={jtu.format_shape_dtype_string(shape[:-1], dtype)}_solve={solve.__name__}_transposesolve={transpose_solve_name}_symmetric={symmetric}",
+        linear_solve, [
+            CustomArg(_make_first_argument),
+            RandArg(shape[:-1], dtype),
+            StaticArg(solve),
+            StaticArg(transpose_solve),
+            StaticArg(symmetric)
+        ],
+        shape=shape,
+        dtype=dtype,
+        solve=solve,
+        transpose_solve=transpose_solve,
+        symmetric=symmetric)
 
   for dtype in jtu.dtypes.all_floating:
     if not dtype in [np.float16, dtypes.bfloat16]:
@@ -1798,20 +1815,20 @@ def _make_slice_harness(name,
                         strides=None,
                         dtype=np.float32):
   define(
-    lax.slice_p,
-    f"{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",
-    # type: ignore
-    lax.slice,
-    [
-      RandArg(shape, dtype),  # type: ignore
-      StaticArg(start_indices),  # type: ignore
-      StaticArg(limit_indices),  # type: ignore
-      StaticArg(strides)
-    ],  # type: ignore
-    dtype=dtype,
-    shape=shape,  # type: ignore
-    start_indices=start_indices,  # type: ignore
-    limit_indices=limit_indices)  # type: ignore
+      lax.slice_p,
+      f"{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",
+      # type: ignore
+      lax.slice,
+      [
+          RandArg(shape, dtype),  # type: ignore
+          StaticArg(start_indices),  # type: ignore
+          StaticArg(limit_indices),  # type: ignore
+          StaticArg(strides)
+      ],  # type: ignore
+      dtype=dtype,
+      shape=shape,  # type: ignore
+      start_indices=start_indices,  # type: ignore
+      limit_indices=limit_indices)  # type: ignore
 
 
 # Test first all dtypes
@@ -1819,33 +1836,33 @@ for dtype in jtu.dtypes.all:
   _make_slice_harness("dtypes", dtype=dtype)
 # Now test many shapes
 for shape, start_indices, limit_indices, strides in [
-  ((3,), (1,), (2,), None),
-  ((7,), (4,), (7,), None),
-  ((5,), (1,), (5,), (2,)),
-  ((8,), (1,), (6,), (2,)),
-  ((5, 3), (1, 1), (3, 2), None),
-  ((5, 3), (1, 1), (3, 1), None),
-  ((7, 5, 3), (4, 0, 1), (7, 1, 3), None),
-  ((5, 3), (1, 1), (2, 1), (1, 1)),
-  ((5, 3), (1, 1), (5, 3), (2, 1)),
+    ((3,), (1,), (2,), None),
+    ((7,), (4,), (7,), None),
+    ((5,), (1,), (5,), (2,)),
+    ((8,), (1,), (6,), (2,)),
+    ((5, 3), (1, 1), (3, 2), None),
+    ((5, 3), (1, 1), (3, 1), None),
+    ((7, 5, 3), (4, 0, 1), (7, 1, 3), None),
+    ((5, 3), (1, 1), (2, 1), (1, 1)),
+    ((5, 3), (1, 1), (5, 3), (2, 1)),
 ]:
   _make_slice_harness(
-    "shapes",
-    shape=shape,
-    start_indices=start_indices,
-    limit_indices=limit_indices,
-    strides=strides)
+      "shapes",
+      shape=shape,
+      start_indices=start_indices,
+      limit_indices=limit_indices,
+      strides=strides)
 
 
 def _make_complex_harness(name, *, shapes=((3, 4), (3, 4)), dtype=np.float32):
   define(
-    lax.complex_p,
-    f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
-    lax.complex_p.bind,
-    [RandArg(shapes[0], dtype),
-     RandArg(shapes[1], dtype)],
-    shapes=shapes,
-    dtype=dtype)
+      lax.complex_p,
+      f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
+      lax.complex_p.bind,
+      [RandArg(shapes[0], dtype),
+       RandArg(shapes[1], dtype)],
+      shapes=shapes,
+      dtype=dtype)
 
 
 for dtype in jtu.dtypes.floating:
@@ -1853,21 +1870,21 @@ for dtype in jtu.dtypes.floating:
 
 # Validate broadcasting
 for shapes in [
-  ((3, 2), (3, 1)),  # broadcast imaginary part
-  ((3, 1), (3, 2)),  # broadcast real part
+    ((3, 2), (3, 1)),  # broadcast imaginary part
+    ((3, 1), (3, 2)),  # broadcast real part
 ]:
   _make_complex_harness("broadcast", shapes=shapes)
 
 
 def _make_conj_harness(name, *, shape=(3, 4), dtype=np.float32, **kwargs):
   define(
-    lax.conj_p,
-    f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}_kwargs={kwargs}"
+      lax.conj_p,
+      f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}_kwargs={kwargs}"
       .replace(" ", ""),
-    lambda x: lax.conj_p.bind(x, **kwargs), [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype,
-    **kwargs)
+      lambda x: lax.conj_p.bind(x, **kwargs), [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype,
+      **kwargs)
 
 
 for dtype in jtu.dtypes.floating + jtu.dtypes.complex:
@@ -1879,12 +1896,12 @@ _make_conj_harness("kwargs", _input_dtype=np.float32)
 
 def _make_real_imag_harness(prim, name, *, shape=(2, 3), dtype=np.float32):
   define(
-    prim,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
-    prim.bind, [RandArg(shape, dtype)],
-    shape=shape,
-    dtype=dtype,
-    prim=prim)
+      prim,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+      prim.bind, [RandArg(shape, dtype)],
+      shape=shape,
+      dtype=dtype,
+      prim=prim)
 
 
 for dtype in jtu.dtypes.complex:
@@ -1898,19 +1915,19 @@ def _make_dynamic_slice_harness(name,
                                 limit_indices=(2,),
                                 dtype=np.float32):
   define(
-    lax.dynamic_slice_p,
-    f"{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_start_indices={start_indices}_limit_indices={limit_indices}",
-    # type: ignore
-    lax.dynamic_slice,
-    [
-      RandArg(shape, dtype),  # type: ignore
-      np.array(list(start_indices)),
-      StaticArg(tuple(map(operator.sub, limit_indices, start_indices)))
-    ],  # type: ignore
-    dtype=dtype,
-    shape=shape,  # type: ignore
-    start_indices=start_indices,  # type: ignore
-    limit_indices=limit_indices)  # type: ignore
+      lax.dynamic_slice_p,
+      f"{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_start_indices={start_indices}_limit_indices={limit_indices}",
+      # type: ignore
+      lax.dynamic_slice,
+      [
+          RandArg(shape, dtype),  # type: ignore
+          np.array(list(start_indices)),
+          StaticArg(tuple(map(operator.sub, limit_indices, start_indices)))
+      ],  # type: ignore
+      dtype=dtype,
+      shape=shape,  # type: ignore
+      start_indices=start_indices,  # type: ignore
+      limit_indices=limit_indices)  # type: ignore
 
 
 # Test first all dtypes
@@ -1918,30 +1935,30 @@ for dtype in jtu.dtypes.all:
   _make_dynamic_slice_harness("dtypes", dtype=dtype)
 # Now test many shapes
 for shape, start_indices, limit_indices in [
-  ((3,), (1,), (2,)),
-  ((7,), (4,), (7,)),
-  ((5,), (1,), (5,)),
-  ((8,), (1,), (6,)),
-  ((5, 3), (1, 1), (3, 2)),
-  ((7, 5, 3), (4, 0, 1), (7, 1, 3)),
-  ((5, 3), (1, 1), (2, 1)),
-  # out-of-bounds cases, allowed for dynamic_slice
-  ((5,), (-1,), (0,)),
-  ((5,), (-1,), (1,)),
-  ((5,), (-4,), (-2,)),
-  ((5,), (-5,), (-2,)),
-  ((5,), (-6,), (-5,)),
-  ((5,), (-10,), (-9,)),
-  ((5,), (-100,), (-99,)),
-  ((5,), (5,), (6,)),
-  ((5,), (10,), (11,)),
-  ((5,), (3,), (6,))
+    ((3,), (1,), (2,)),
+    ((7,), (4,), (7,)),
+    ((5,), (1,), (5,)),
+    ((8,), (1,), (6,)),
+    ((5, 3), (1, 1), (3, 2)),
+    ((7, 5, 3), (4, 0, 1), (7, 1, 3)),
+    ((5, 3), (1, 1), (2, 1)),
+    # out-of-bounds cases, allowed for dynamic_slice
+    ((5,), (-1,), (0,)),
+    ((5,), (-1,), (1,)),
+    ((5,), (-4,), (-2,)),
+    ((5,), (-5,), (-2,)),
+    ((5,), (-6,), (-5,)),
+    ((5,), (-10,), (-9,)),
+    ((5,), (-100,), (-99,)),
+    ((5,), (5,), (6,)),
+    ((5,), (10,), (11,)),
+    ((5,), (3,), (6,))
 ]:
   _make_dynamic_slice_harness(
-    "shapes",
-    shape=shape,
-    start_indices=start_indices,
-    limit_indices=limit_indices)
+      "shapes",
+      shape=shape,
+      start_indices=start_indices,
+      limit_indices=limit_indices)
 
 
 def _make_dynamic_update_slice_harness(name,
@@ -1950,21 +1967,21 @@ def _make_dynamic_update_slice_harness(name,
                                        dtype=np.float32,
                                        update_shape=(1,)):
   define(
-    lax.dynamic_update_slice_p,
-    (
-      f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}"  # type: ignore
-      f"_update={jtu.format_shape_dtype_string(update_shape, dtype)}"
-      f"_start_indices={start_indices}"),
-    lax.dynamic_update_slice,
-    [
-      RandArg(shape, dtype),  # type: ignore
-      RandArg(update_shape, dtype),  # type: ignore
-      np.array(start_indices)
-    ],  # type: ignore
-    dtype=dtype,
-    shape=shape,  # type: ignore
-    start_indices=start_indices,  # type: ignore
-    update_shape=update_shape)  # type: ignore
+      lax.dynamic_update_slice_p,
+      (
+          f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}"  # type: ignore
+          f"_update={jtu.format_shape_dtype_string(update_shape, dtype)}"
+          f"_start_indices={start_indices}"),
+      lax.dynamic_update_slice,
+      [
+          RandArg(shape, dtype),  # type: ignore
+          RandArg(update_shape, dtype),  # type: ignore
+          np.array(start_indices)
+      ],  # type: ignore
+      dtype=dtype,
+      shape=shape,  # type: ignore
+      start_indices=start_indices,  # type: ignore
+      update_shape=update_shape)  # type: ignore
 
 
 # Test first all dtypes
@@ -1972,29 +1989,32 @@ for dtype in jtu.dtypes.all:
   _make_dynamic_update_slice_harness("dtypes", dtype=dtype)
 # Now test many shapes
 for shape, start_indices, update_shape in [
-  ((3,), (1,), (1,)),
-  ((5, 3), (1, 1), (3, 1)),
-  ((7, 5, 3), (4, 1, 0), (2, 0, 1)),
-  ((3,), (-1,), (1,)),  # out-of-bounds
-  ((3,), (10,), (1,)),  # out-of-bounds
-  ((3,), (10,), (2,)),  # out-of-bounds
+    ((3,), (1,), (1,)),
+    ((5, 3), (1, 1), (3, 1)),
+    ((7, 5, 3), (4, 1, 0), (2, 0, 1)),
+    ((3,), (-1,), (1,)),  # out-of-bounds
+    ((3,), (10,), (1,)),  # out-of-bounds
+    ((3,), (10,), (2,)),  # out-of-bounds
 ]:
   _make_dynamic_update_slice_harness(
-    "shapes",
-    shape=shape,
-    start_indices=start_indices,
-    update_shape=update_shape)
+      "shapes",
+      shape=shape,
+      start_indices=start_indices,
+      update_shape=update_shape)
 
 
-def _make_squeeze_harness(name, shape=(1, 2), dimensions=(0,), dtype=np.float32):
+def _make_squeeze_harness(name,
+                          shape=(1, 2),
+                          dimensions=(0,),
+                          dtype=np.float32):
   define(
-    lax.squeeze_p,
-    f"{name}_inshape={jtu.format_shape_dtype_string(shape, dtype)}_dimensions={dimensions}",  # type: ignore
-    lax.squeeze,
-    [RandArg(shape, dtype), StaticArg(dimensions)],  # type: ignore[has-type]
-    dtype=dtype,
-    arg_shape=shape,
-    dimensions=dimensions)  # type: ignore[has-type]
+      lax.squeeze_p,
+      f"{name}_inshape={jtu.format_shape_dtype_string(shape, dtype)}_dimensions={dimensions}",  # type: ignore
+      lax.squeeze,
+      [RandArg(shape, dtype), StaticArg(dimensions)],  # type: ignore[has-type]
+      dtype=dtype,
+      arg_shape=shape,
+      dimensions=dimensions)  # type: ignore[has-type]
 
 
 # Test first all dtypes
@@ -2002,14 +2022,14 @@ for dtype in set(jtu.dtypes.all):
   _make_squeeze_harness("dtypes", dtype=dtype)
 # Now test many shapes
 for shape, dimensions in [
-  ((1,), (0,)),
-  ((1,), (-1,)),
-  ((2, 1, 4), (1,)),
-  ((2, 1, 4), (-2,)),
-  ((2, 1, 3, 1), (1,)),
-  ((2, 1, 3, 1), (1, 3)),
-  ((2, 1, 3, 1), (3,)),
-  ((2, 1, 3, 1), (1, -1)),
+    ((1,), (0,)),
+    ((1,), (-1,)),
+    ((2, 1, 4), (1,)),
+    ((2, 1, 4), (-2,)),
+    ((2, 1, 3, 1), (1,)),
+    ((2, 1, 3, 1), (1, 3)),
+    ((2, 1, 3, 1), (3,)),
+    ((2, 1, 3, 1), (1, -1)),
 ]:
   _make_squeeze_harness("shapes", shape=shape, dimensions=dimensions)
 
@@ -2025,32 +2045,32 @@ def _make_select_and_scatter_add_harness(name,
                                          nb_inactive_dims=0):
   ones = (1,) * len(shape)
   cotangent_shape = jax.api.eval_shape(
-    lambda x: lax._select_and_gather_add(x, x, lax.ge_p, window_dimensions,
-                                         window_strides, padding, ones, ones),
-    np.ones(shape, dtype)).shape
+      lambda x: lax._select_and_gather_add(x, x, lax.ge_p, window_dimensions,
+                                           window_strides, padding, ones, ones),
+      np.ones(shape, dtype)).shape
   define(
-    lax.select_and_scatter_add_p,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}",
-    lax._select_and_scatter_add, [
-      RandArg(cotangent_shape, dtype),
-      RandArg(shape, dtype),
-      StaticArg(select_prim),
-      StaticArg(window_dimensions),
-      StaticArg(window_strides),
-      StaticArg(padding)
-    ],
-    jax_unimplemented=[
-      Limitation(
-        "works only for 2 or more inactive dimensions",
-        devices="tpu",
-        enabled=(nb_inactive_dims < 2))
-    ],
-    shape=shape,
-    dtype=dtype,
-    select_prim=select_prim,
-    window_dimensions=window_dimensions,
-    window_strides=window_strides,
-    padding=padding)
+      lax.select_and_scatter_add_p,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}",
+      lax._select_and_scatter_add, [
+          RandArg(cotangent_shape, dtype),
+          RandArg(shape, dtype),
+          StaticArg(select_prim),
+          StaticArg(window_dimensions),
+          StaticArg(window_strides),
+          StaticArg(padding)
+      ],
+      jax_unimplemented=[
+          Limitation(
+              "works only for 2 or more inactive dimensions",
+              devices="tpu",
+              enabled=(nb_inactive_dims < 2))
+      ],
+      shape=shape,
+      dtype=dtype,
+      select_prim=select_prim,
+      window_dimensions=window_dimensions,
+      window_strides=window_strides,
+      padding=padding)
 
 
 for dtype in set(jtu.dtypes.all) - set([np.complex64, np.complex128]):
@@ -2061,16 +2081,16 @@ _make_select_and_scatter_add_harness("select_prim", select_prim=lax.le_p)
 
 # Validate padding
 for padding in [
-  # TODO(bchetioui): commented out the test based on
-  # https://github.com/google/jax/issues/4690
-  # ((1, 2), (2, 3), (3, 4)) # non-zero padding
-  ((1, 1), (1, 1), (1, 1))  # non-zero padding
+    # TODO(bchetioui): commented out the test based on
+    # https://github.com/google/jax/issues/4690
+    # ((1, 2), (2, 3), (3, 4)) # non-zero padding
+    ((1, 1), (1, 1), (1, 1))  # non-zero padding
 ]:
   _make_select_and_scatter_add_harness("padding", padding=padding)
 
 # Validate window_dimensions; uneven dimensions
 _make_select_and_scatter_add_harness(
-  "window_dimensions", window_dimensions=(1, 2, 3))
+    "window_dimensions", window_dimensions=(1, 2, 3))
 
 # Validate window_strides
 # smaller than/same as/bigger than corresponding window dimension
@@ -2082,11 +2102,11 @@ for dtype in set(jtu.dtypes.all) - set(
   for window_strides, window_dimensions, nb_inactive_dims in [((1, 2, 1),
                                                                (1, 3, 1), 2)]:
     _make_select_and_scatter_add_harness(
-      "tpu_dtypes",
-      dtype=dtype,
-      nb_inactive_dims=nb_inactive_dims,
-      window_strides=window_strides,
-      window_dimensions=window_dimensions)
+        "tpu_dtypes",
+        dtype=dtype,
+        nb_inactive_dims=nb_inactive_dims,
+        window_strides=window_strides,
+        window_dimensions=window_dimensions)
 
 
 def _make_select_and_gather_add_harness(name,
@@ -2101,38 +2121,39 @@ def _make_select_and_gather_add_harness(name,
                                         window_dilation=(1, 1)):
   if isinstance(padding, str):
     padding = tuple(
-      lax.padtype_to_pads(shape, window_dimensions, window_strides, padding))
+        lax.padtype_to_pads(shape, window_dimensions, window_strides, padding))
   define(
-    lax.select_and_gather_add_p,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}",
-    lax._select_and_gather_add, [
-      RandArg(shape, dtype),
-      RandArg(shape, dtype),
-      StaticArg(select_prim),
-      StaticArg(window_dimensions),
-      StaticArg(window_strides),
-      StaticArg(padding),
-      StaticArg(base_dilation),
-      StaticArg(window_dilation)
-    ],
-    shape=shape,
-    dtype=dtype,
-    window_dimensions=window_dimensions,
-    window_strides=window_strides,
-    padding=padding,
-    base_dilation=base_dilation,
-    window_dilation=window_dilation)
+      lax.select_and_gather_add_p,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}",
+      lax._select_and_gather_add, [
+          RandArg(shape, dtype),
+          RandArg(shape, dtype),
+          StaticArg(select_prim),
+          StaticArg(window_dimensions),
+          StaticArg(window_strides),
+          StaticArg(padding),
+          StaticArg(base_dilation),
+          StaticArg(window_dilation)
+      ],
+      shape=shape,
+      dtype=dtype,
+      window_dimensions=window_dimensions,
+      window_strides=window_strides,
+      padding=padding,
+      base_dilation=base_dilation,
+      window_dilation=window_dilation)
 
 
 for dtype in jtu.dtypes.all_floating:
   for select_prim in [lax.ge_p, lax.le_p]:
-    _make_select_and_gather_add_harness("dtypes", dtype=dtype, select_prim=select_prim)
+    _make_select_and_gather_add_harness(
+        "dtypes", dtype=dtype, select_prim=select_prim)
 
 # Validate selection primitives
 _make_select_and_gather_add_harness("select_prim", select_prim=lax.ge_p)
 # Validate window dimensions
 _make_select_and_gather_add_harness(
-  "window_dimensions", window_dimensions=(2, 3))
+    "window_dimensions", window_dimensions=(2, 3))
 
 # Validate window strides
 _make_select_and_gather_add_harness("window_strides", window_strides=(2, 3))
@@ -2141,12 +2162,12 @@ _make_select_and_gather_add_harness("padding", padding="SAME")
 
 # Validate dilations
 for base_dilation, window_dilation in [
-  ((2, 3), (1, 1)),  # base dilation, no window dilation
-  ((1, 1), (2, 3)),  # no base dilation, window dilation
-  ((2, 3), (3, 2))  # base dilation, window dilation
+    ((2, 3), (1, 1)),  # base dilation, no window dilation
+    ((1, 1), (2, 3)),  # no base dilation, window dilation
+    ((2, 3), (3, 2))  # base dilation, window dilation
 ]:
   _make_select_and_gather_add_harness(
-    "dilations", base_dilation=base_dilation, window_dilation=window_dilation)
+      "dilations", base_dilation=base_dilation, window_dilation=window_dilation)
 
 
 def _make_reduce_window_harness(name,
@@ -2163,31 +2184,31 @@ def _make_reduce_window_harness(name,
   prim_name = f"reduce_window_{computation.__name__}"
   limitations = []
   define(
-    prim_name,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}"
+      prim_name,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}"
       .replace(" ", ""),
-    lax.reduce_window,
-    [
-      RandArg(shape, dtype),
-      # Must be static to trigger the picking of the reducers
-      StaticArg(np.array(init_value, dtype=dtype)),
-      StaticArg(computation),
-      StaticArg(window_dimensions),
-      StaticArg(window_strides),
-      StaticArg(padding),
-      StaticArg(base_dilation),
-      StaticArg(window_dilation)
-    ],
-    jax_unimplemented=limitations,
-    shape=shape,
-    dtype=dtype,
-    init_value=np.array(init_value, dtype=dtype),
-    computation=computation,
-    window_dimensions=window_dimensions,
-    window_strides=window_strides,
-    padding=padding,
-    base_dilation=base_dilation,
-    window_dilation=window_dilation)
+      lax.reduce_window,
+      [
+          RandArg(shape, dtype),
+          # Must be static to trigger the picking of the reducers
+          StaticArg(np.array(init_value, dtype=dtype)),
+          StaticArg(computation),
+          StaticArg(window_dimensions),
+          StaticArg(window_strides),
+          StaticArg(padding),
+          StaticArg(base_dilation),
+          StaticArg(window_dilation)
+      ],
+      jax_unimplemented=limitations,
+      shape=shape,
+      dtype=dtype,
+      init_value=np.array(init_value, dtype=dtype),
+      computation=computation,
+      window_dimensions=window_dimensions,
+      window_strides=window_strides,
+      padding=padding,
+      base_dilation=base_dilation,
+      window_dilation=window_dilation)
 
 
 # Validate dtypes across all execution paths
@@ -2197,19 +2218,19 @@ def _make_reduce_window_harness(name,
 # skip testing their corresponding default value.
 for dtype in jtu.dtypes.all:
   for computation, init_value in [
-    (lax.min, _get_min_identity(dtype)),  # path through reduce_window_min
-    (lax.max, _get_max_identity(dtype)),  # path through TF reduce_window_max
-    (lax.max, 1),  # path through reduce_window
-    (lax.add, 0),  # path_through reduce_window_sum
-    (lax.add, 1),  # path through reduce_window
-    (lax.mul, 0),  # path through reduce_window
-    (lax.mul, 1),  # path through reduce_window
-    (lax.mul, 2),  # path through reduce_window
+      (lax.min, _get_min_identity(dtype)),  # path through reduce_window_min
+      (lax.max, _get_max_identity(dtype)),  # path through TF reduce_window_max
+      (lax.max, 1),  # path through reduce_window
+      (lax.add, 0),  # path_through reduce_window_sum
+      (lax.add, 1),  # path through reduce_window
+      (lax.mul, 0),  # path through reduce_window
+      (lax.mul, 1),  # path through reduce_window
+      (lax.mul, 2),  # path through reduce_window
   ]:
     if dtype == np.bool_ and (computation in [lax.add, lax.mul]):
       continue
     _make_reduce_window_harness(
-      "dtypes", dtype=dtype, computation=computation, init_value=init_value)
+        "dtypes", dtype=dtype, computation=computation, init_value=init_value)
 # Validate window_dimensions
 _make_reduce_window_harness("window_dimensions", window_dimensions=(1, 1))
 # Validate window_strides
@@ -2222,25 +2243,25 @@ _make_reduce_window_harness("base_dilation", base_dilation=(1, 2))
 _make_reduce_window_harness("window_dilation", window_dilation=(1, 2))
 # Validate squeezing behavior and dimensions in tf.nn.max_pool
 for shape, window_dimensions in [
-  ((2,), (2,)),  # 1 spatial dimension, left and right squeeze
-  ((2, 1), (2, 1)),  # 1 spatial dimension, left squeeze
-  ((1, 2), (1, 2)),  # 1 spatial dimension, right squeeze
-  ((1, 2, 1), (1, 2, 1)),  # 1 spatial dimension no squeeze
-  ((2, 4), (2, 2)),  # 2 spatial dimensions, left and right squeeze
-  ((2, 4, 3), (2, 2, 2)),  # 3 spatial dimensions, left and right squeeze
-  ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1))  # 3 spatial dimensions, no squeeze
+    ((2,), (2,)),  # 1 spatial dimension, left and right squeeze
+    ((2, 1), (2, 1)),  # 1 spatial dimension, left squeeze
+    ((1, 2), (1, 2)),  # 1 spatial dimension, right squeeze
+    ((1, 2, 1), (1, 2, 1)),  # 1 spatial dimension no squeeze
+    ((2, 4), (2, 2)),  # 2 spatial dimensions, left and right squeeze
+    ((2, 4, 3), (2, 2, 2)),  # 3 spatial dimensions, left and right squeeze
+    ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1))  # 3 spatial dimensions, no squeeze
 ]:
   _make_reduce_window_harness(
-    "squeeze_dim",
-    computation=lax.max,
-    shape=shape,
-    dtype=np.float32,
-    init_value=-np.inf,
-    base_dilation=tuple([1] * len(shape)),
-    window_dilation=tuple([1] * len(shape)),
-    padding=tuple([(0, 0)] * len(shape)),
-    window_strides=tuple([1] * len(shape)),
-    window_dimensions=window_dimensions)
+      "squeeze_dim",
+      computation=lax.max,
+      shape=shape,
+      dtype=np.float32,
+      init_value=-np.inf,
+      base_dilation=tuple([1] * len(shape)),
+      window_dilation=tuple([1] * len(shape)),
+      padding=tuple([(0, 0)] * len(shape)),
+      window_strides=tuple([1] * len(shape)),
+      window_dimensions=window_dimensions)
 
 
 def _make_reducer_harness(prim,
@@ -2250,51 +2271,51 @@ def _make_reducer_harness(prim,
                           axes=(0,),
                           dtype=np.int32):
   define(
-    prim,
-    f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
-    lambda arg: prim.bind(arg, axes=axes), [RandArg(shape, dtype)],
-    prim=prim,
-    shape=shape,
-    dtype=dtype,
-    axes=axes)
+      prim,
+      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+      lambda arg: prim.bind(arg, axes=axes), [RandArg(shape, dtype)],
+      prim=prim,
+      shape=shape,
+      dtype=dtype,
+      axes=axes)
 
 
 for prim in [
-  lax.reduce_sum_p, lax.reduce_prod_p, lax.reduce_max_p, lax.reduce_min_p,
-  lax.reduce_or_p, lax.reduce_and_p
+    lax.reduce_sum_p, lax.reduce_prod_p, lax.reduce_max_p, lax.reduce_min_p,
+    lax.reduce_or_p, lax.reduce_and_p
 ]:
   for dtype in {
-    lax.reduce_sum_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
-    lax.reduce_prod_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
-    lax.reduce_max_p: jtu.dtypes.all,
-    lax.reduce_min_p: jtu.dtypes.all,
-    lax.reduce_or_p: jtu.dtypes.boolean,
-    lax.reduce_and_p: jtu.dtypes.boolean
+      lax.reduce_sum_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
+      lax.reduce_prod_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
+      lax.reduce_max_p: jtu.dtypes.all,
+      lax.reduce_min_p: jtu.dtypes.all,
+      lax.reduce_or_p: jtu.dtypes.boolean,
+      lax.reduce_and_p: jtu.dtypes.boolean
   }[prim]:
     _make_reducer_harness(prim, "dtypes", dtype=dtype)
 
 for dtype in (np.float32, np.float64):
   for shape in ((), (3,)):
     define(
-      "random_gamma",
-      f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-      jax.jit(jax.random.gamma),
-      [np.array([42, 43], dtype=np.uint32),
-       RandArg(shape, dtype)],
-      dtype=dtype)
+        "random_gamma",
+        f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+        jax.jit(jax.random.gamma),
+        [np.array([42, 43], dtype=np.uint32),
+         RandArg(shape, dtype)],
+        dtype=dtype)
 
 for key_i, key in enumerate([
-  np.array([0, 0], dtype=np.uint32),
-  np.array([42, 43], dtype=np.uint32),
-  np.array([0xFFFFFFFF, 0], dtype=np.uint32),
-  np.array([0, 0xFFFFFFFF], dtype=np.uint32),
-  np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)
+    np.array([0, 0], dtype=np.uint32),
+    np.array([42, 43], dtype=np.uint32),
+    np.array([0xFFFFFFFF, 0], dtype=np.uint32),
+    np.array([0, 0xFFFFFFFF], dtype=np.uint32),
+    np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)
 ]):
   define(
-    "random_split",
-    f"i={key_i}",
-    jax.jit(lambda key: jax.random.split(key, 2)), [key],
-    dtype=key.dtype)
+      "random_split",
+      f"i={key_i}",
+      jax.jit(lambda key: jax.random.split(key, 2)), [key],
+      dtype=key.dtype)
 
 
 def _make_clamp_harness(name,
@@ -2305,17 +2326,17 @@ def _make_clamp_harness(name,
                         dtype=np.float32,
                         min_max=None):
   min_arr, max_arr = (
-    min_max if min_max is not None else
-    [RandArg(min_shape, dtype),
-     RandArg(max_shape, dtype)])
+      min_max if min_max is not None else
+      [RandArg(min_shape, dtype),
+       RandArg(max_shape, dtype)])
   define(
-    lax.clamp_p,
-    f"{name}_min={jtu.format_shape_dtype_string(min_arr.shape, min_arr.dtype)}_operand={jtu.format_shape_dtype_string(operand_shape, dtype)}_max={jtu.format_shape_dtype_string(max_arr.shape, max_arr.dtype)}",
-    lax.clamp, [min_arr, RandArg(operand_shape, dtype), max_arr],
-    min_shape=min_arr.shape,
-    operand_shape=operand_shape,
-    max_shape=max_arr.shape,
-    dtype=dtype)
+      lax.clamp_p,
+      f"{name}_min={jtu.format_shape_dtype_string(min_arr.shape, min_arr.dtype)}_operand={jtu.format_shape_dtype_string(operand_shape, dtype)}_max={jtu.format_shape_dtype_string(max_arr.shape, max_arr.dtype)}",
+      lax.clamp, [min_arr, RandArg(operand_shape, dtype), max_arr],
+      min_shape=min_arr.shape,
+      operand_shape=operand_shape,
+      max_shape=max_arr.shape,
+      dtype=dtype)
 
 
 for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex + [np.bool_]):
@@ -2323,23 +2344,23 @@ for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex + [np.bool_]):
 
 # Validate broadcasting of min/max arrays
 for min_shape, operand_shape, max_shape in [
-  ((), (2, 3), (2, 3)),  # no broadcasting for max
-  ((2, 3), (2, 3), ()),  # no broadcasting for min
-  ((2, 3), (2, 3), (2, 3)),  # no broadcasting
+    ((), (2, 3), (2, 3)),  # no broadcasting for max
+    ((2, 3), (2, 3), ()),  # no broadcasting for min
+    ((2, 3), (2, 3), (2, 3)),  # no broadcasting
 ]:
   _make_clamp_harness(
-    "broadcasting",
-    min_shape=min_shape,
-    max_shape=max_shape,
-    operand_shape=operand_shape)
+      "broadcasting",
+      min_shape=min_shape,
+      max_shape=max_shape,
+      operand_shape=operand_shape)
 
 # Validate clamping when minval > maxval, and when minval < maxval
 for is_ordered, min_arr, max_arr in [
-  (False, np.array(4., dtype=np.float32), np.array(1., dtype=np.float32)),
-  (True, np.array(1., dtype=np.float32), np.array(4., dtype=np.float32))
+    (False, np.array(4., dtype=np.float32), np.array(1., dtype=np.float32)),
+    (True, np.array(1., dtype=np.float32), np.array(4., dtype=np.float32))
 ]:
   _make_clamp_harness(
-    f"order={is_ordered}", min_max=(min_arr, max_arr), dtype=np.float32)
+      f"order={is_ordered}", min_max=(min_arr, max_arr), dtype=np.float32)
 
 
 def _make_dot_general_harness(name,
@@ -2356,34 +2377,35 @@ def _make_dot_general_harness(name,
   if preferred_element_type is not None:
     suffix += f"_preferred={jtu.dtype_str(preferred_element_type)}"
   define(
-    lax.dot_general_p,
-    f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}{suffix}"
+      lax.dot_general_p,
+      f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}{suffix}"
       .replace(" ", ""),
-    lax.dot_general, [
-      RandArg(lhs_shape, dtype),
-      RandArg(rhs_shape, dtype),
-      StaticArg(dimension_numbers),
-      StaticArg(precision),
-      StaticArg(preferred_element_type)
-    ],
-    dtype=dtype,
-    lhs_shape=lhs_shape,
-    rhs_shape=rhs_shape,
-    dimension_numbers=dimension_numbers,
-    precision=precision,
-    preferred_element_type=preferred_element_type,
-    jax_unimplemented=[
-        Limitation(
-            "preferred_element_type=c128 not implemented",
-            devices="tpu",
-            dtypes=np.complex64,
-            enabled=(preferred_element_type in [np.complex128])),
-        Limitation(
-            "preferred_element_type=i64 not implemented",
-            devices="tpu",
-            dtypes=(np.int8, np.int16, np.int32),
-            enabled=(preferred_element_type in [np.int64])),
-    ],
+      lax.dot_general,
+      [
+          RandArg(lhs_shape, dtype),
+          RandArg(rhs_shape, dtype),
+          StaticArg(dimension_numbers),
+          StaticArg(precision),
+          StaticArg(preferred_element_type)
+      ],
+      dtype=dtype,
+      lhs_shape=lhs_shape,
+      rhs_shape=rhs_shape,
+      dimension_numbers=dimension_numbers,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+      jax_unimplemented=[
+          Limitation(
+              "preferred_element_type=c128 not implemented",
+              devices="tpu",
+              dtypes=np.complex64,
+              enabled=(preferred_element_type in [np.complex128])),
+          Limitation(
+              "preferred_element_type=i64 not implemented",
+              devices="tpu",
+              dtypes=(np.int8, np.int16, np.int32),
+              enabled=(preferred_element_type in [np.int64])),
+      ],
   )
 
 
@@ -2398,7 +2420,7 @@ def _make_dot_general_harness(name,
 
 for dtype in jtu.dtypes.all:
   for precision in [
-    None, lax.Precision.DEFAULT, lax.Precision.HIGH, lax.Precision.HIGHEST
+      None, lax.Precision.DEFAULT, lax.Precision.HIGH, lax.Precision.HIGHEST
   ]:
     for lhs_shape, rhs_shape, dimension_numbers in [
         ((3, 4), (4, 2), (((1,), (0,)), ((), ()))),
@@ -2407,52 +2429,55 @@ for dtype in jtu.dtypes.all:
         ((7, 3, 4), (7, 4), (((2,), (1,)), ((0,), (0,)))),
     ]:
       _make_dot_general_harness(
-        "dtypes_and_precision",
-        precision=precision,
-        lhs_shape=lhs_shape,
-        rhs_shape=rhs_shape,
-        dimension_numbers=dimension_numbers,
-        dtype=dtype)
+          "dtypes_and_precision",
+          precision=precision,
+          lhs_shape=lhs_shape,
+          rhs_shape=rhs_shape,
+          dimension_numbers=dimension_numbers,
+          dtype=dtype)
 
 # The other tests are only for float32.
 # Validate batch dimensions
 for lhs_shape, rhs_shape, dimension_numbers in [
-  # Unique pattern that can go through tf.linalg.matmul
-  ((4, 4, 3, 3, 4), (4, 4, 3, 4, 2), (((4,), (3,)), ((0, 1, 2), (0, 1, 2)))),
-  # Main path with out of order batch dimensions
-  ((8, 4, 3, 3, 4), (4, 8, 3, 4, 2), (((4, 3), (3, 2)), ((0, 1), (1, 0))))
+    # Unique pattern that can go through tf.linalg.matmul
+    ((4, 4, 3, 3, 4), (4, 4, 3, 4, 2), (((4,), (3,)), ((0, 1, 2), (0, 1, 2)))),
+    # Main path with out of order batch dimensions
+    ((8, 4, 3, 3, 4), (4, 8, 3, 4, 2), (((4, 3), (3, 2)), ((0, 1), (1, 0))))
 ]:
   _make_dot_general_harness(
-    "batch_dimensions",
-    lhs_shape=lhs_shape,
-    rhs_shape=rhs_shape,
-    dimension_numbers=dimension_numbers)
+      "batch_dimensions",
+      lhs_shape=lhs_shape,
+      rhs_shape=rhs_shape,
+      dimension_numbers=dimension_numbers)
 
 # Validate squeezing behavior for matmul path
 for lhs_shape, rhs_shape, dimension_numbers in [
-  ((4,), (4, 4), (((0,), (0,)), ((), ()))),  # (1, 4) -> (4,)
-  ((4, 4), (4,), (((1,), (0,)), ((), ()))),  # (4, 1) -> (4,)
-  ((4,), (4,), (((0,), (0,)), ((), ()))),  # (1, 1) -> ()
+    ((4,), (4, 4), (((0,), (0,)), ((), ()))),  # (1, 4) -> (4,)
+    ((4, 4), (4,), (((1,), (0,)), ((), ()))),  # (4, 1) -> (4,)
+    ((4,), (4,), (((0,), (0,)), ((), ()))),  # (1, 1) -> ()
 ]:
   _make_dot_general_harness(
-    "squeeze",
-    lhs_shape=lhs_shape,
-    rhs_shape=rhs_shape,
-    dimension_numbers=dimension_numbers)
+      "squeeze",
+      lhs_shape=lhs_shape,
+      rhs_shape=rhs_shape,
+      dimension_numbers=dimension_numbers)
 
 # Validate preferred element type
 # From lax_test.py
-preferred_type_combinations = [
-  (np.float16, np.float16), (np.float16, np.float32), (np.float16, np.float64),
-  (dtypes.bfloat16, np.float32),
-  (dtypes.bfloat16, np.float64), (np.float32, np.float32), (np.float32, np.float64),
-  (np.int8, np.int16), (np.int8, np.int32),
-  (np.int8, np.int64), (np.int16, np.int32), (np.int16, np.int64),
-  (np.int32, np.int32), (np.int32, np.int64),
-  (np.complex64, np.complex128)]
+preferred_type_combinations = [(np.float16, np.float16), (np.float16,
+                                                          np.float32),
+                               (np.float16, np.float64),
+                               (dtypes.bfloat16, np.float32),
+                               (dtypes.bfloat16, np.float64),
+                               (np.float32, np.float32),
+                               (np.float32, np.float64), (np.int8, np.int16),
+                               (np.int8, np.int32), (np.int8, np.int64),
+                               (np.int16, np.int32), (np.int16, np.int64),
+                               (np.int32, np.int32), (np.int32, np.int64),
+                               (np.complex64, np.complex128)]
 
 for lhs_shape in [(3,), (4, 3)]:
-  for rhs_shape in [(3, ), (3, 6)]:
+  for rhs_shape in [(3,), (3, 6)]:
     for dtype, preferred_element_type in preferred_type_combinations:
       _make_dot_general_harness(
           "preferred",
@@ -2470,13 +2495,13 @@ def _make_concatenate_harness(name,
                               dtype=np.float32):
   shapes_str = "_".join(jtu.format_shape_dtype_string(s, dtype) for s in shapes)
   define(
-    lax.concatenate_p,
-    f"{name}_shapes={shapes_str}_dimension={dimension}",
-    lambda *args: lax.concatenate_p.bind(*args, dimension=dimension),
-    [RandArg(shape, dtype) for shape in shapes],
-    shapes=shapes,
-    dtype=dtype,
-    dimension=dimension)
+      lax.concatenate_p,
+      f"{name}_shapes={shapes_str}_dimension={dimension}",
+      lambda *args: lax.concatenate_p.bind(*args, dimension=dimension),
+      [RandArg(shape, dtype) for shape in shapes],
+      shapes=shapes,
+      dtype=dtype,
+      dimension=dimension)
 
 
 for dtype in jtu.dtypes.all:
@@ -2487,7 +2512,7 @@ _make_concatenate_harness("dimension", dimension=1)
 
 # Validate > 2 operands
 for shapes in [
-  [(2, 3, 4), (3, 3, 4), (4, 3, 4)],  # 3 operands
+    [(2, 3, 4), (3, 3, 4), (4, 3, 4)],  # 3 operands
 ]:
   _make_concatenate_harness("nb_operands", shapes=shapes)
 
@@ -2568,7 +2593,7 @@ def _make_conv_harness(name,
 # Validate dtypes and precision
 for dtype in jtu.dtypes.all_inexact:
   for precision in [
-    None, lax.Precision.DEFAULT, lax.Precision.HIGH, lax.Precision.HIGHEST
+      None, lax.Precision.DEFAULT, lax.Precision.HIGH, lax.Precision.HIGHEST
   ]:
     # This first harness runs the tests for all dtypes and precisions using
     # default values for all the other parameters. Variations of other parameters
@@ -2582,19 +2607,19 @@ for dtype, preferred_element_type in preferred_type_combinations:
 
 # Validate variations of feature_group_count and batch_group_count
 for batch_group_count, feature_group_count in [
-  (1, 2),  # feature_group_count != 1
-  (2, 1),  # batch_group_count != 1
+    (1, 2),  # feature_group_count != 1
+    (2, 1),  # batch_group_count != 1
 ]:
   for lhs_shape, rhs_shape in [
-    ((2 * batch_group_count, 3 * feature_group_count, 9, 10),
-     (3 * feature_group_count * batch_group_count, 3, 4, 5))
+      ((2 * batch_group_count, 3 * feature_group_count, 9, 10),
+       (3 * feature_group_count * batch_group_count, 3, 4, 5))
   ]:
     _make_conv_harness(
-      "group_counts",
-      lhs_shape=lhs_shape,
-      rhs_shape=rhs_shape,
-      feature_group_count=feature_group_count,
-      batch_group_count=batch_group_count)
+        "group_counts",
+        lhs_shape=lhs_shape,
+        rhs_shape=rhs_shape,
+        feature_group_count=feature_group_count,
+        batch_group_count=batch_group_count)
 
 # Validate variations of window_strides
 for window_strides in [(2, 3)]:
@@ -2602,104 +2627,104 @@ for window_strides in [(2, 3)]:
 
 # Validate variations of padding
 for padding in [
-  ((1, 2), (0, 0)),  # padding only one spatial axis
-  ((1, 2), (2, 1))  # padding on both spatial axes
+    ((1, 2), (0, 0)),  # padding only one spatial axis
+    ((1, 2), (2, 1))  # padding on both spatial axes
 ]:
   _make_conv_harness("padding", padding=padding)
 
 # Validate variations of dilations
 for lhs_dilation, rhs_dilation in [
-  ((2, 2), (1, 1)),  # dilation only on LHS (transposed)
-  ((1, 1), (2, 3)),  # dilation only on RHS (atrous)
-  ((2, 3), (3, 2))  # dilation on both LHS and RHS (transposed & atrous)
+    ((2, 2), (1, 1)),  # dilation only on LHS (transposed)
+    ((1, 1), (2, 3)),  # dilation only on RHS (atrous)
+    ((2, 3), (3, 2))  # dilation on both LHS and RHS (transposed & atrous)
 ]:
   _make_conv_harness(
-    "dilations", lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
+      "dilations", lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
 
 # Dimension numbers and corresponding permutation
 for dimension_numbers, lhs_shape, rhs_shape in [
-  (("NHWC", "HWIO", "NHWC"), (2, 9, 10, 3), (4, 5, 3, 3)),  # TF default
-  (("NCHW", "HWIO", "NHWC"), (2, 3, 9, 10), (4, 5, 3, 3)),  # custom
+    (("NHWC", "HWIO", "NHWC"), (2, 9, 10, 3), (4, 5, 3, 3)),  # TF default
+    (("NCHW", "HWIO", "NHWC"), (2, 3, 9, 10), (4, 5, 3, 3)),  # custom
 ]:
   _make_conv_harness(
-    "dimension_numbers",
-    lhs_shape=lhs_shape,
-    rhs_shape=rhs_shape,
-    dimension_numbers=dimension_numbers)
+      "dimension_numbers",
+      lhs_shape=lhs_shape,
+      rhs_shape=rhs_shape,
+      dimension_numbers=dimension_numbers)
 
 for padding, lhs_dilation, rhs_dilation in [
-  ("VALID", (1,), (1,)),  # no dilation with "VALID" padding
-  ("SAME", (1,), (1,)),  # no dilation with "SAME" padding
-  ("VALID", (1,), (2,)),  # dilation only on RHS with "VALID" padding
-  ("SAME", (1,), (2,)),  # dilation only on RHS with "SAME" padding
-  # TODO(bchetioui): LHS dilation with string padding can never be done using
-  # TF convolution functions for now.
+    ("VALID", (1,), (1,)),  # no dilation with "VALID" padding
+    ("SAME", (1,), (1,)),  # no dilation with "SAME" padding
+    ("VALID", (1,), (2,)),  # dilation only on RHS with "VALID" padding
+    ("SAME", (1,), (2,)),  # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
 ]:
   for dimension_numbers, lhs_shape, rhs_shape in [
-    (("NWC", "WIO", "NWC"), (1, 28, 1), (3, 1, 16)),  # TF default
-    # TODO(bchetioui): the NCW data format is not supported on CPU for TF
-    # for now. That path is thus disabled to allow the code to use XLA instead.
+      (("NWC", "WIO", "NWC"), (1, 28, 1), (3, 1, 16)),  # TF default
+      # TODO(bchetioui): the NCW data format is not supported on CPU for TF
+      # for now. That path is thus disabled to allow the code to use XLA instead.
   ]:
     for enable_xla in [False, True]:
       _make_conv_harness(
-        "tf_conversion_path_1d",
-        lhs_shape=lhs_shape,
-        padding=padding,
-        rhs_shape=rhs_shape,
-        dimension_numbers=dimension_numbers,
-        window_strides=(1,),
-        lhs_dilation=lhs_dilation,
-        rhs_dilation=rhs_dilation,
-        enable_xla=enable_xla)
+          "tf_conversion_path_1d",
+          lhs_shape=lhs_shape,
+          padding=padding,
+          rhs_shape=rhs_shape,
+          dimension_numbers=dimension_numbers,
+          window_strides=(1,),
+          lhs_dilation=lhs_dilation,
+          rhs_dilation=rhs_dilation,
+          enable_xla=enable_xla)
 
 for padding, lhs_dilation, rhs_dilation in [
-  ("VALID", (1, 1), (1, 1)),  # no dilation with "VALID" padding
-  ("SAME", (1, 1), (1, 1)),  # no dilation with "SAME" padding
-  ("VALID", (1, 1), (1, 2)),  # dilation only on RHS with "VALID" padding
-  ("SAME", (1, 1), (1, 2)),  # dilation only on RHS with "SAME" padding
-  # TODO(bchetioui): LHS dilation with string padding can never be done using
-  # TF convolution functions for now.
+    ("VALID", (1, 1), (1, 1)),  # no dilation with "VALID" padding
+    ("SAME", (1, 1), (1, 1)),  # no dilation with "SAME" padding
+    ("VALID", (1, 1), (1, 2)),  # dilation only on RHS with "VALID" padding
+    ("SAME", (1, 1), (1, 2)),  # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
 ]:
   for dimension_numbers, lhs_shape, rhs_shape in [
-    (("NHWC", "HWIO", "NHWC"), (1, 28, 28, 1), (3, 3, 1, 16)),  # TF default
-    # TODO(bchetioui): the NCHW data format is not supported on CPU for TF
-    # for now. That path is thus disabled to allow the code to use XLA instead.
+      (("NHWC", "HWIO", "NHWC"), (1, 28, 28, 1), (3, 3, 1, 16)),  # TF default
+      # TODO(bchetioui): the NCHW data format is not supported on CPU for TF
+      # for now. That path is thus disabled to allow the code to use XLA instead.
   ]:
     for enable_xla in [False, True]:
       _make_conv_harness(
-        "tf_conversion_path_2d",
-        lhs_shape=lhs_shape,
-        padding=padding,
-        rhs_shape=rhs_shape,
-        dimension_numbers=dimension_numbers,
-        window_strides=(1, 1),
-        lhs_dilation=lhs_dilation,
-        rhs_dilation=rhs_dilation,
-        enable_xla=enable_xla)
+          "tf_conversion_path_2d",
+          lhs_shape=lhs_shape,
+          padding=padding,
+          rhs_shape=rhs_shape,
+          dimension_numbers=dimension_numbers,
+          window_strides=(1, 1),
+          lhs_dilation=lhs_dilation,
+          rhs_dilation=rhs_dilation,
+          enable_xla=enable_xla)
 
 for padding, lhs_dilation, rhs_dilation in [
-  ("VALID", (1, 1, 1), (1, 1, 1)),  # no dilation with "VALID" padding
-  ("SAME", (1, 1, 1), (1, 1, 1)),  # no dilation with "SAME" padding
-  ("VALID", (1, 1, 1), (1, 1,
-                        2)),  # dilation only on RHS with "VALID" padding
-  ("SAME", (1, 1, 1), (1, 1, 2)),  # dilation only on RHS with "SAME" padding
-  # TODO(bchetioui): LHS dilation with string padding can never be done using
-  # TF convolution functions for now.
+    ("VALID", (1, 1, 1), (1, 1, 1)),  # no dilation with "VALID" padding
+    ("SAME", (1, 1, 1), (1, 1, 1)),  # no dilation with "SAME" padding
+    ("VALID", (1, 1, 1), (1, 1,
+                          2)),  # dilation only on RHS with "VALID" padding
+    ("SAME", (1, 1, 1), (1, 1, 2)),  # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
 ]:
   for dimension_numbers, lhs_shape, rhs_shape in [
-    # TF default
-    (("NDHWC", "DHWIO", "NDHWC"), (1, 4, 28, 28, 1), (2, 3, 3, 1, 16)),
-    # TODO(bchetioui): the NCDHW data format is not supported on CPU for TF
-    # for now. That path is thus disabled to allow the code to use XLA instead.
+      # TF default
+      (("NDHWC", "DHWIO", "NDHWC"), (1, 4, 28, 28, 1), (2, 3, 3, 1, 16)),
+      # TODO(bchetioui): the NCDHW data format is not supported on CPU for TF
+      # for now. That path is thus disabled to allow the code to use XLA instead.
   ]:
     for enable_xla in [False, True]:
       _make_conv_harness(
-        "tf_conversion_path_3d",
-        lhs_shape=lhs_shape,
-        padding=padding,
-        rhs_shape=rhs_shape,
-        dimension_numbers=dimension_numbers,
-        window_strides=(1, 1, 1),
-        lhs_dilation=lhs_dilation,
-        rhs_dilation=rhs_dilation,
-        enable_xla=enable_xla)
+          "tf_conversion_path_3d",
+          lhs_shape=lhs_shape,
+          padding=padding,
+          rhs_shape=rhs_shape,
+          dimension_numbers=dimension_numbers,
+          window_strides=(1, 1, 1),
+          lhs_dilation=lhs_dilation,
+          rhs_dilation=rhs_dilation,
+          enable_xla=enable_xla)

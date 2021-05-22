@@ -2,20 +2,20 @@
 
 *Last generated on (YYYY-MM-DD): 2021-05-19*
 
-This document summarizes known limitations of the jax2tf conversion.
-There are several kinds of limitations.
+This document summarizes known limitations of the jax2tf conversion. There are
+several kinds of limitations.
 
-  * There are some JAX primitives that are converted to TF ops that have incomplete coverage
-  for data types on different kinds of devices,
-  see [below](#generated-summary-of-primitives-with-unimplemented-support-in-tensorflow).
+*   There are some JAX primitives that are converted to TF ops that have
+    incomplete coverage for data types on different kinds of devices, see
+    [below](#generated-summary-of-primitives-with-unimplemented-support-in-tensorflow).
 
-  * There are some cases when the converted program computes different results than
-  the JAX program, see [below](#generated-summary-of-primitives-with-known-numerical-discrepancies-in-tensorflow).
+*   There are some cases when the converted program computes different results
+    than the JAX program, see
+    [below](#generated-summary-of-primitives-with-known-numerical-discrepancies-in-tensorflow).
 
-Note that automated tests will fail if new limitations appear, but
-they won't when limitations are fixed. If you see a limitation that
-you think it does not exist anymore, please ask for this file to
-be updated.
+Note that automated tests will fail if new limitations appear, but they won't
+when limitations are fixed. If you see a limitation that you think it does not
+exist anymore, please ask for this file to be updated.
 
 ## Generated summary of primitives with unimplemented support in Tensorflow
 
@@ -23,30 +23,31 @@ The following JAX primitives are converted to Tensorflow but the result of the
 conversion may trigger runtime errors when run on certain devices and with
 certain data types.
 
-This table is organized by JAX primitive, but the actual errors described
-in the table are for the Tensorflow ops to which the primitive is converted to.
-In general, each JAX primitive is mapped
-to one Tensorflow op, e.g., `sin` is mapped to `tf.math.sin`.
+This table is organized by JAX primitive, but the actual errors described in the
+table are for the Tensorflow ops to which the primitive is converted to. In
+general, each JAX primitive is mapped to one Tensorflow op, e.g., `sin` is
+mapped to `tf.math.sin`.
 
 The errors apply only for certain devices and compilation modes ("eager",
-"graph", and "compiled"). In general, "eager" and "graph" mode share the same errors.
-On TPU only the "compiled" mode is relevant.
+"graph", and "compiled"). In general, "eager" and "graph" mode share the same
+errors. On TPU only the "compiled" mode is relevant.
 
-This table only shows errors for cases that are working in JAX (see [separate
-list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
+This table only shows errors for cases that are working in JAX (see
+[separate list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
+)
 
-We do not yet have support for `pmap` (with its collective primitives),
-nor for `sharded_jit` (SPMD partitioning).
+We do not yet have support for `pmap` (with its collective primitives), nor for
+`sharded_jit` (SPMD partitioning).
 
 We use the following abbreviations for sets of dtypes:
 
-  * `signed` = `int8`, `int16`, `int32`, `int64`
-  * `unsigned` = `uint8`, `uint16`, `uint32`, `uint64`
-  * `integer` = `signed`, `unsigned`
-  * `floating` = `float16`, `bfloat16`, `float32`, `float64`
-  * `complex` = `complex64`, `complex128`
-  * `inexact` = `floating`, `complex`
-  * `all` = `integer`, `inexact`, `bool`
+*   `signed` = `int8`, `int16`, `int32`, `int64`
+*   `unsigned` = `uint8`, `uint16`, `uint32`, `uint64`
+*   `integer` = `signed`, `unsigned`
+*   `floating` = `float16`, `bfloat16`, `float32`, `float64`
+*   `complex` = `complex64`, `complex128`
+*   `inexact` = `floating`, `complex`
+*   `all` = `integer`, `inexact`, `bool`
 
 More detailed information can be found in the
 [source code for the limitation specification](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/primitives_test.py).
@@ -133,7 +134,7 @@ More detailed information can be found in the
 | scatter_mul | TF error: op not defined for dtype | complex64 | tpu | compiled, eager, graph |
 | select_and_gather_add | TF error: jax2tf unimplemented for 64-bit inputs because the current implementation relies on packing two values into a single value. This can be fixed by using a variadic XlaReduceWindow, when available | float64 | cpu, gpu | compiled, eager, graph |
 | select_and_scatter_add | TF test skipped: Not implemented in JAX: works only for 2 or more inactive dimensions | all | tpu | compiled, eager, graph |
-| sign | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
+| sign | TF error: op not defined for dtype | unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | sinh | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
 | sort | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | svd | TF test skipped: Not implemented in JAX: complex not implemented. Works in JAX for CPU and GPU with custom kernels | complex | tpu | compiled, eager, graph |

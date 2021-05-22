@@ -911,6 +911,10 @@ def _add_vmap_primitive_harnesses():
                 for ad in h.arg_descriptors
                 if not isinstance(ad, StaticArg)]
 
+    # This test does not make sense for nullary functions
+    if not new_args:
+      continue
+
     # We do not check the result of harnesses that require custom assertions.
     check_result = all(not l.custom_assert and not l.skip_comparison and l.tol is None
                        for l in _get_jax2tf_limitations(device, h))
