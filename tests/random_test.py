@@ -210,6 +210,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
+  def testNormalBfloat16(self):
+    # Passing bfloat16 as dtype string.
+    # https://github.com/google/jax/issues/6813
+    res_bfloat16_str = random.normal(random.PRNGKey(0), dtype='bfloat16')
+    res_bfloat16 = random.normal(random.PRNGKey(0), dtype=jnp.bfloat16)
+    self.assertAllClose(res_bfloat16, res_bfloat16_str)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in complex_dtypes))
