@@ -129,6 +129,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "dynamic_update_slice", "exp", "eq", "floor", "log", "gather", "imag",
       "iota", "is_finite", "ne", "not", "or", "pad", "random_split",
       "reduce_and", "reduce_prod", "reduce_or", "reduce_sum", "real", "reshape",
+      "rev",
       "select", "shift_left", "shift_right_logical", "shift_right_arithmetic",
       "sin", "slice", "sqrt", "squeeze", "stop_gradient", "tie_in", "transpose",
       "xor", "zeros_like"
@@ -1049,10 +1050,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             # Only the harnesses with "singularity" will have divide by 0
             enabled=("singularity" in harness.name)),
     ]
-
-  @classmethod
-  def rev(cls, harness: primitive_harness.Harness):
-    return [missing_tf_kernel(dtypes=[np.uint32, np.uint64])]
 
   @classmethod
   def round(cls, harness: primitive_harness.Harness):
