@@ -198,6 +198,8 @@ def _issubclass(a, b):
     return False
 
 def issubdtype(a, b):
+  if a == "bfloat16":
+    a = bfloat16
   if a == bfloat16:
     if isinstance(b, np.dtype):
       return b == _bfloat16_dtype
