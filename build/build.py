@@ -118,10 +118,10 @@ bazel_packages = {
             "80c82e93a12ba30021692b11c78007807e82383a673be1602573b944beb359ab"),
     ("Darwin", "arm64"):
         BazelPackage(
-            base_uri="https://releases.bazel.build/4.1.0/rc4/",
-            file="bazel-4.1.0rc4-darwin-arm64",
+            base_uri="https://github.com/bazelbuild/bazel/releases/download/4.1.0/",
+            file="bazel-4.1.0-darwin-arm64",
             sha256=
-            "998466a73295e4a03a9f3ef06feeab87029d500b2f262655600c5dccce7113ba"),
+            "c372d39ab9dac96f7fdfc2dd649e88b05ee4c94ce3d6cf2313438ef0ca6d5ac1"),
     ("Windows", "x86_64"):
         BazelPackage(
             base_uri=None,
