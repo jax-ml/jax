@@ -25,11 +25,10 @@ from jax.scipy import special
 @_wraps(osp_stats.norm.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_inexact("norm.logpdf", x, loc, scale)
-  two = _constant_like(x, 2)
-  scale_sqrd = lax.pow(scale, two)
+  scale_sqrd = lax.square(scale)
   log_normalizer = lax.log(lax.mul(_constant_like(x, 2 * np.pi), scale_sqrd))
-  quadratic = lax.div(lax.pow(lax.sub(x, loc), two), scale_sqrd)
-  return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
+  quadratic = lax.div(lax.square(lax.sub(x, loc)), scale_sqrd)
+  return lax.div(lax.add(log_normalizer, quadratic), _constant_like(x, -2))
 
 
 @_wraps(osp_stats.norm.pdf, update_doc=False)

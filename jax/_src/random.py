@@ -1019,7 +1019,7 @@ def _gamma_one(key, alpha):
   alpha = lax.select(lax.ge(alpha, one), alpha, lax.add(alpha, one))
 
   d = lax.sub(alpha, one_over_three)
-  c = lax.div(one_over_three, lax.pow(d, one_over_two))
+  c = lax.div(one_over_three, lax.sqrt(d))
 
   def _cond_fn(kXVU):
     _, X, V, U = kXVU
