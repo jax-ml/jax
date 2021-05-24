@@ -70,9 +70,27 @@ def get_python_version(python_bin_path):
 
 def check_python_version(python_version):
   if python_version < (3, 6):
-    print("JAX requires Python 3.6 or newer.")
+    print("ERROR: JAX requires Python 3.6 or newer, found ", python_version)
     sys.exit(-1)
 
+
+def check_numpy_version(python_bin_path):
+  version = shell(
+    [python_bin_path, "-c", "import numpy as np; print(np.__version__)"])
+  numpy_version = tuple(map(int, version.split('.')[:2]))
+  if numpy_version < (1, 16):
+    print("ERROR: JAX requires NumPy 1.16 or newer, found " + version + ".")
+    sys.exit(-1)
+  return version
+
+def check_scipy_version(python_bin_path):
+  version = shell(
+    [python_bin_path, "-c", "import scipy as sp; print(sp.__version__)"])
+  scipy_version = tuple(map(int, version.split('.')[:2]))
+  if scipy_version < (1, 0):
+    print("ERROR: JAX requires SciPy 1.0 or newer, found " + version + ".")
+    sys.exit(-1)
+  return version
 
 # Bazel
 
@@ -460,6 +478,11 @@ def main():
   python_version = get_python_version(python_bin_path)
   print("Python version: {}".format(".".join(map(str, python_version))))
   check_python_version(python_version)
+
+  numpy_version = check_numpy_version(python_bin_path)
+  print("NumPy version: {}".format(numpy_version))
+  scipy_version = check_scipy_version(python_bin_path)
+  print("SciPy version: {}".format(scipy_version))
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print("Target CPU features: {}".format(args.target_cpu_features))
