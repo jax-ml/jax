@@ -20,6 +20,10 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     unknown dimensions are used in arithmetic operations, e.g., `jnp.reshape(-1)`
     ({jax-issue}`#6827`).    
 
+  * The {func}`jax2tf.convert` generates custom attributes with location information
+   in TF ops. The code that XLA generates after jax2tf
+   has the same location information as JAX/XLA.
+
 * Breaking changes:
 
 * Bug fixes:
@@ -29,8 +33,6 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * The {func}`jax2tf.convert` now scopes the `enable_xla` conversion parameter
     properly to apply only during the just-in-time conversion
     ({jax-issue}`#6720`).
-  * Fixed assertion failure in {func}`jax2tf.call_tf` when used with captured
-    `tf.Variable` ({jax-issue}`#6572`).
   * The {func}`jax2tf.convert` now converts `lax.dot_general` using the
     `XlaDot` TensorFlow op, for better fidelity w.r.t. JAX numerical precision
     ({jax-issue}`#6717`).

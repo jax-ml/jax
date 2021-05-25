@@ -29,6 +29,8 @@ config.parse_flags_with_absl()
 
 class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype .* requested in array is not available")
   def test_cond(self):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: t + 1., lambda f: f, x)
@@ -36,6 +38,8 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(f_jax, jnp.bool_(True), 1.)
     self.ConvertAndCompare(f_jax, jnp.bool_(False), 1.)
 
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype .* requested in array is not available")
   def test_cond_multiple_results(self):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: (t + 1., 1.), lambda f: (f + 2., 2.), x)
@@ -43,13 +47,16 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(f_jax, jnp.bool_(True), 1.)
     self.ConvertAndCompare(f_jax, jnp.bool_(False), 1.)
 
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype .* requested in array is not available")
   def test_cond_partial_eval(self):
     def f(x):
       res = lax.cond(True, lambda op: op * x, lambda op: op + x, x)
       return res
     self.ConvertAndCompare(jax.grad(f), 1.)
 
-
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype .* requested in array is not available")
   def test_cond_units(self):
     def g(x):
       return lax.cond(True, lambda x: x, lambda y: y, x)
@@ -57,7 +64,8 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(g, 0.7)
     self.ConvertAndCompare(jax.grad(g), 0.7)
 
-
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype .* requested in array is not available")
   def test_cond_custom_jvp(self):
     """Conversion of function with custom JVP, inside cond.
     This exercises the custom_jvp_call_jaxpr primitives."""
@@ -84,7 +92,8 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(g, arg, "grad")
     self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
-
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype .* requested in array is not available")
   def test_cond_custom_vjp(self):
     """Conversion of function with custom VJP, inside cond.
     This exercises the custom_vjp_call_jaxpr primitives."""
@@ -109,7 +118,8 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(g, arg, "vmap")
     self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
-
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype .* requested in array is not available")
   def test_while_single_carry(self):
     """A while with a single carry"""
     def func(x):
@@ -169,6 +179,8 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
     self.ConvertAndCompare(product_xs_ys, xs, ys)
 
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Explicitly requested dtype .* requested in array is not available")
   def test_while_custom_jvp(self):
     """Conversion of function with custom JVP, inside while.
     This exercises the custom_jvp_call_jaxpr primitives."""
@@ -217,7 +229,6 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       return c_out
 
     arg = np.arange(10, dtype=np.float32)
-    print(jax.make_jaxpr(jax.grad(f_jax))(arg, arg))
     self.ConvertAndCompare(jax.grad(f_jax), arg, arg)
 
 

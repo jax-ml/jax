@@ -13,8 +13,11 @@
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 from functools import partial
+import contextlib
+import os
 import re
 import string
+import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import jax
@@ -24,6 +27,7 @@ from jax._src import api
 from jax import core, custom_derivatives, dtypes
 from jax import linear_util as lu
 from jax import random, tree_util
+from jax._src import source_info_util
 from jax._src import util
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
@@ -48,7 +52,9 @@ import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
+from tensorflow.core.framework import attr_value_pb2  # type: ignore[import]
 from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # type: ignore[import]
+from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
 # pylint: enable=g-direct-tensorflow-import
 
 PolyShape = shape_poly.PolyShape
@@ -111,6 +117,24 @@ tf_impl_with_avals: Dict[core.Primitive, Callable[..., Any]] = {}
 # requiring a TFXLA operation, an exception is thrown instead.
 _enable_xla = True
 
+# In order to ensure that JAX picks up the proper user-frame for source
+# locations we will register the TensorFlow source path as an internal
+# path with source_info_util. The typical stack when a JAX primitive
+# conversion happens is:
+#    jax2tf.process_primitive  (top of stack)
+#    jax tracing machinery ...
+#    tf.custom_gradient machinery ...
+#    jax2tf.converted_fun
+#    tf function machinery ...
+#    user code invokes the converted function on TF tensors
+#
+# We need to skip over not only JAX internal frames, but TF internal frames
+# also.
+# We register the TensorFlow source path lazily
+_has_registered_tf_source_path = False
+# Whether to actually include XLA op metadata
+_include_xla_op_metadata = True
+
 def _xla_disabled_error(primitive_name: str,
                         extra_msg: Optional[str] = None) -> Exception:
   assert not _enable_xla
@@ -124,7 +148,8 @@ def convert(fun: Callable,
             *,
             polymorphic_shapes: Optional[Sequence[Any]] = None,
             with_gradient=True,
-            enable_xla=True) -> Callable:
+            enable_xla=True
+            ) -> Callable:
   """Transforms `fun` to be executed by TensorFlow.
 
   See
@@ -185,7 +210,8 @@ def convert(fun: Callable,
     tuple/lists/dicts) thereof, and returns TfVals as outputs.
   """
   api._check_callable(fun)
-
+  fun_name = getattr(fun, "__name__", "unknown")
+  name_stack = util.extend_name_stack(util.wrap_name(fun_name, "jax2tf"))
   def converted_fun(*args: TfVal, **kwargs: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
     if not core.trace_state_clean():
@@ -287,20 +313,30 @@ def convert(fun: Callable,
       global _enable_xla
       prev_enable_xla = _enable_xla
       _enable_xla = enable_xla
+      global _include_xla_op_metadata
+      prev_include_xla_op_metadata = _include_xla_op_metadata
+      _include_xla_op_metadata = False
+
       _shape_env = shapeenv
+      global _has_registered_tf_source_path
+      if not _has_registered_tf_source_path:
+        source_info_util.register_exclusion(os.path.dirname(tf.__file__))
+        _has_registered_tf_source_path = True
 
       if with_gradient:
 
         @tf.custom_gradient
         def converted_fun_flat_with_custom_gradient(*args_flat: TfVal) -> TfVal:
-          out_with_avals = _interpret_fun(flat_fun, args_flat, args_avals_flat)
+          out_with_avals = _interpret_fun(flat_fun, args_flat, args_avals_flat,
+                                          name_stack)
           outs, out_avals = util.unzip2(out_with_avals)
           return (tuple(outs),
                   partial(converted_grad_fn, _out_cts_avals=tuple(out_avals)))
 
         out_flat = converted_fun_flat_with_custom_gradient(*args_flat)
       else:
-        out_flat_raw = _interpret_fun(flat_fun, args_flat, args_avals_flat)
+        out_flat_raw = _interpret_fun(flat_fun, args_flat, args_avals_flat,
+                                      name_stack)
         message = ("The jax2tf-converted function does not support gradients. "
                    "Use `with_gradient` parameter to enable gradients")
         # We use PreventGradient, which is propagated through a SavedModel.
@@ -311,6 +347,7 @@ def convert(fun: Callable,
     finally:
       _shape_env = {}
       _enable_xla = prev_enable_xla
+      _include_xla_op_metadata = prev_include_xla_op_metadata
 
     out_flat = [tf.identity(x, "jax2tf_out") for x in out_flat]
     out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
@@ -334,20 +371,48 @@ def dtype_of_val(val: TfVal) -> DType:
 
 # Internals
 
+# TODO: add all globals here
+class _ThreadLocalState(threading.local):
+  def __init__(self):
+    self.name_stack = ""
+_thread_local_state = _ThreadLocalState()
+
+def _get_current_name_stack():
+  return _thread_local_state.name_stack
+
+@contextlib.contextmanager
+def _extended_name_stack(extra_name_stack: Optional[str]):
+  prev_name_stack = _thread_local_state.name_stack
+  if extra_name_stack:
+    if not prev_name_stack:
+      _thread_local_state.name_stack = extra_name_stack
+    else:
+      _thread_local_state.name_stack = util.extend_name_stack(
+          _thread_local_state.name_stack, extra_name_stack)
+  try:
+    yield
+  finally:
+    _thread_local_state.name_stack = prev_name_stack
+
+
 def _interpret_fun(
     fun: lu.WrappedFun, in_vals: Sequence[TfVal],
-    in_avals: Sequence[core.AbstractValue]
+    in_avals: Sequence[core.AbstractValue],
+    extra_name_stack: Optional[str]
 ) -> Sequence[Tuple[TfVal, core.AbstractValue]]:
   with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
     fun = _interpret_subtrace(fun, main, in_avals)
-    with core.new_sublevel():
-      out_vals: Sequence[Tuple[TfVal, core.AbstractValue]] = \
-          fun.call_wrapped(*in_vals)
-    del main
+    with _extended_name_stack(extra_name_stack):
+      with core.new_sublevel():
+        out_vals: Sequence[Tuple[TfVal, core.AbstractValue]] = \
+            fun.call_wrapped(*in_vals)
+      del main
   return tuple(out_vals)
 
 
-def _convert_jax_impl(jax_impl: Callable, *, multiple_results=True) -> Callable:
+def _convert_jax_impl(jax_impl: Callable, *,
+                      multiple_results=True,
+                      extra_name_stack: Optional[str] = None) -> Callable:
   """Convert the JAX implementation of a primitive.
 
   Args:
@@ -355,6 +420,8 @@ def _convert_jax_impl(jax_impl: Callable, *, multiple_results=True) -> Callable:
       `(*args: JaxVal, **kwargs) -> Sequence[JaxVal]`. This function implements
         a primitive in terms of other primitives.
     multiple_results: whether `jax_impl` returns a sequence of results.
+    extra_name_stack: additional element to add to the name stack for the
+      converted ops.
 
   Returns:
      a function with signature `(*args: TfVal, _in_avals, _out_aval, **kwargs)
@@ -362,7 +429,8 @@ def _convert_jax_impl(jax_impl: Callable, *, multiple_results=True) -> Callable:
   """
 
   def wrapped(*tf_args: TfVal, _in_avals: Sequence[core.AbstractValue],
-              _out_aval: core.AbstractValue, **kwargs) -> Sequence[TfVal]:
+              _out_aval: core.AbstractValue,
+              **kwargs) -> Sequence[TfVal]:
 
     # We wrap the jax_impl under _interpret_fun to abstract the TF values
     # from jax_impl and turn them into JAX abstract values.
@@ -371,7 +439,8 @@ def _convert_jax_impl(jax_impl: Callable, *, multiple_results=True) -> Callable:
       return jax_results if multiple_results else [jax_results]
 
     tf_results_with_avals = _interpret_fun(
-        lu.wrap_init(jax_impl_jax_args), tf_args, _in_avals)
+        lu.wrap_init(jax_impl_jax_args), tf_args, _in_avals,
+        extra_name_stack)
     tf_results, _ = util.unzip2(tf_results_with_avals)
     return tf_results if multiple_results else tf_results[0]
 
@@ -395,13 +464,14 @@ def _interpret_subtrace(main: core.MainTrace,
   yield out_vals_with_avals
 
 
-def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal) -> Sequence[TfVal]:
+def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal,
+                     extra_name_stack: Optional[str]) -> Sequence[TfVal]:
   """Evaluates a Jaxpr with tf.Tensor arguments.
 
   The output is a sequence of TfVal (no `core.unit`), suitable for use with TF.
   """
   fun: lu.WrappedFun = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
-  out_with_avals = _interpret_fun(fun, args, jaxpr.in_avals)
+  out_with_avals = _interpret_fun(fun, args, jaxpr.in_avals, extra_name_stack)
   return tuple(v for v, _ in out_with_avals)
 
 
@@ -681,7 +751,6 @@ class TensorFlowTrace(core.Trace):
   those will introduce their own MainTrace, and any operations involving those
   will be done on those traces, i.e., not a concern for TFT.
   """
-
   def pure(self, val: Union[TfVal, core.Unit]) -> TensorFlowTracer:
     """Lifts a non-Tracer into the TensorFlowTracer.
 
@@ -721,14 +790,32 @@ class TensorFlowTrace(core.Trace):
     args_avals: Sequence[core.AbstractValue] = tuple(t.aval for t in tracers)
     out_aval = primitive.abstract_eval(*args_avals, **params)
     args_tf: Sequence[TfVal] = [t.val for t in tracers]
-    if impl_needs_avals:
-      val_out: TfVal = impl(
-          *args_tf,
-          _in_avals=args_avals,  # type: ignore
-          _out_aval=out_aval,
-          **params)
+    def invoke_impl() -> TfVal:
+      if impl_needs_avals:
+        return impl(
+            *args_tf,
+            _in_avals=args_avals,  # type: ignore
+            _out_aval=out_aval,
+            **params)
+      else:
+        return impl(*args_tf, **params)
+
+    if _include_xla_op_metadata:
+      op_metadata = xla.make_op_metadata(primitive, params,
+                                         name_stack=_get_current_name_stack(),
+                                         source_info=source_info_util.current())
+      op_metadata_proto = xla_data_pb2.OpMetadata(
+          op_type=op_metadata.op_type,
+          op_name=op_metadata.op_name,
+          source_file=op_metadata.source_file,
+          source_line=op_metadata.source_line
+      )
+      with tf_ops.get_default_graph()._attr_scope(
+          {"_XlaOpMetadata": attr_value_pb2.AttrValue(
+              s=op_metadata_proto.SerializeToString())}):
+        val_out = invoke_impl()
     else:
-      val_out = impl(*args_tf, **params)
+      val_out = invoke_impl()
 
     if primitive.multiple_results:
       out = [
@@ -751,21 +838,27 @@ class TensorFlowTrace(core.Trace):
         )  # type: ignore
     return out  # type: ignore
 
-  def process_call(self, call_primitive: core.Primitive, f: lu.WrappedFun,
+  def process_call(self, call_primitive: core.Primitive, fun: lu.WrappedFun,
                    tracers: Sequence[TensorFlowTracer], params):
     assert call_primitive.multiple_results
-    vals: Sequence[TfVal] = tuple(t.val for t in tracers)
+    vals: Sequence[TfVal] = [t.val for t in tracers]
     avals: Sequence[core.AbstractValue] = tuple(t.aval for t in tracers)
-    f = _interpret_subtrace(f, self.main, avals)
-    with core.new_sublevel():
-      if call_primitive == core.named_call_p:
-        with tf.name_scope(_sanitize_scope_name(params["name"])):
-          vals_out: Sequence[Tuple[TfVal, core.AbstractValue]] = \
-              f.call_wrapped(*vals)
-      elif call_primitive == sharded_jit.sharded_call_p:
-        vals_out = _sharded_call(f, vals, **params)
-      else:
-        vals_out = f.call_wrapped(*vals)
+    fun = _interpret_subtrace(fun, self.main, avals)
+    extra_name_stack = None
+    if call_primitive == core.named_call_p:
+      extra_name_stack = util.wrap_name(params["name"], "named")
+    elif call_primitive == xla.xla_call_p:
+      extra_name_stack = util.wrap_name(params["name"], "jit")
+    with _extended_name_stack(extra_name_stack):
+      with core.new_sublevel():
+        if call_primitive == core.named_call_p:
+          with tf.name_scope(_sanitize_scope_name(params["name"])):
+            vals_out: Sequence[Tuple[TfVal, core.AbstractValue]] = \
+                fun.call_wrapped(*vals)
+        elif call_primitive == sharded_jit.sharded_call_p:
+          vals_out = _sharded_call(fun, vals, **params)
+        else:
+          vals_out = fun.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def post_process_call(self, call_primitive: core.Primitive,
@@ -777,6 +870,7 @@ class TensorFlowTrace(core.Trace):
     main = self.main
 
     def todo(vals: Sequence[TfVal]):
+      # TODO: is name_stack correct?
       trace = TensorFlowTrace(main, core.cur_sublevel())
       return [
           TensorFlowTracer(trace, v, out_tracer.aval)
@@ -1822,7 +1916,7 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
 
   def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-    res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2)
+    res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2, extra_name_stack=None)
     return res
 
   return _common_reduce_window(operand, init_value, reducer, window_dimensions,
@@ -1993,11 +2087,13 @@ tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 tf_impl_with_avals[lax_control_flow.cummin_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_min),
-    multiple_results=False)
+    multiple_results=False,
+    extra_name_stack="cummin")
 tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_max),
-    multiple_results=False)
+    multiple_results=False,
+    extra_name_stack="cummin")
 # TODO(bchetioui): cumsum and cumprod can be converted using pure TF ops for
 # certain dtypes: bfloat16, float16, float32, float64, and int32. Other dtypes
 # will fail when running in compiled mode, but are otherwise compatible with
@@ -2006,11 +2102,13 @@ tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
 tf_impl_with_avals[lax_control_flow.cumsum_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_sum),
-    multiple_results=False)
+    multiple_results=False,
+    extra_name_stack="cumsum")
 tf_impl_with_avals[lax_control_flow.cumprod_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_prod),
-    multiple_results=False)
+    multiple_results=False,
+    extra_name_stack="cumprod")
 
 
 def _select_and_scatter(operand, source, init_value, select_jaxpr,
@@ -2045,7 +2143,7 @@ tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   res = _convert_jax_impl(
       partial(jax._src.random._threefry2x32_lowering, use_rolled_loops=False),
-      multiple_results=True)(
+      multiple_results=True, extra_name_stack="threefry")(
           *args, _in_avals=_in_avals, _out_aval=_out_aval)
   return res
 
@@ -2056,7 +2154,7 @@ tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 # With use_vmap=True on, we get about the same performance for JAX and jax2tf.
 tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
     partial(jax._src.random._gamma_impl, use_vmap=True),
-    multiple_results=False)
+    multiple_results=False, extra_name_stack="random_gamma")
 
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
@@ -2164,7 +2262,7 @@ def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
 
   def update_computation(arg1: TfVal, arg2: TfVal) -> TfVal:
     closed_jaxpr = core.ClosedJaxpr(update_jaxpr, update_consts)
-    res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2)
+    res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2, extra_name_stack=None)
     return res
 
   o_spec = tf.TensorSpec((), dtype=operand.dtype)
@@ -2204,8 +2302,11 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
   del linear
   # tf.cond needs lambdas with no arguments.
   branches_tf = [
-      partial(_interpret_jaxpr, jaxpr, *operands)
+      partial(_interpret_jaxpr, jaxpr, *operands,
+              # Same name stack as the XLA translation of cond_p
+              extra_name_stack=f"branch_{i}_fun")
       for jaxpr in branches
+      for i, jaxpr in enumerate(branches)
   ]
   return tf.switch_case(index, branches_tf)
 
@@ -2228,10 +2329,13 @@ def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
 
   # The conditional must return a single value to TF
   def cond_tf_func(*args: TfVal) -> TfVal:
-    pred, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *args)
+    pred, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *args,
+                             # Same name stack as the XLA translation of while_p
+                             extra_name_stack="while/cond")
     return pred
 
-  body_tf_func = partial(_interpret_jaxpr, body_jaxpr, *body_consts)
+  body_tf_func = partial(_interpret_jaxpr, body_jaxpr, *body_consts,
+                                   extra_name_stack="while/body")
   return tf.while_loop(cond_tf_func, body_tf_func, init_carry)
 
 
@@ -2255,7 +2359,8 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
   cond_consts, body_consts, init_carry = util.split_list(
       args, [cond_nconsts, body_nconsts])
   # Initial computation of batched condition
-  init_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *init_carry)
+  init_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *init_carry,
+                                  extra_name_stack="while/body_pred")
   assert init_pred_b is not core.unit
 
   def new_cond_tf_func(pred_b: TfVal, *carry: TfVal) -> TfVal:
@@ -2264,7 +2369,8 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
 
   def new_body_tf_func(pred_b: TfVal, *carry: TfVal) -> Sequence[TfVal]:
     new_carry: Sequence[TfVal] = _interpret_jaxpr(body_jaxpr, *body_consts,
-                                                  *carry)
+                                                  *carry,
+                                                  extra_name_stack="while/body")
 
     def select_one_carry(new_c: TfVal, c: TfVal) -> TfVal:
       pred_b_bcast = _broadcast_in_dim(
@@ -2275,7 +2381,8 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
 
     selected_carry: Sequence[TfVal] = list(
         map(select_one_carry, new_carry, carry))
-    next_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *selected_carry)
+    next_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *selected_carry,
+                                    extra_name_stack="body_pred")
     return (next_pred_b, *selected_carry)
 
   _, *res_carry = tf.while_loop(new_cond_tf_func, new_body_tf_func,
@@ -2287,7 +2394,8 @@ tf_impl[lax_control_flow.while_p] = _while
 
 # We use the scan impl rule to rewrite in terms of while.
 tf_impl_with_avals[lax_control_flow.scan_p] = _convert_jax_impl(
-    lax_control_flow._scan_impl)
+    lax_control_flow._scan_impl,
+    extra_name_stack="scan")
 
 
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
@@ -2460,7 +2568,7 @@ tf_impl_with_avals[lax_linalg.eigh_p] = _eigh
 
 
 def _lu(operand: TfVal, _in_avals, _out_aval):
-  return _convert_jax_impl(lax_linalg._lu_python)(
+  return _convert_jax_impl(lax_linalg._lu_python, extra_name_stack="lu")(
       operand, _in_avals=_in_avals, _out_aval=_out_aval)
 
 
@@ -2496,7 +2604,8 @@ tf_impl_with_avals[lax_linalg.triangular_solve_p] = _triangular_solve
 
 
 def _linear_solve(*args: TfVal, const_lengths, jaxprs, _in_avals, _out_aval):
-  return _convert_jax_impl(lax_control_flow._custom_linear_solve_impl)(
+  return _convert_jax_impl(lax_control_flow._custom_linear_solve_impl,
+                           extra_name_stack="linear_solve")(
       *args,
       const_lengths=const_lengths,
       jaxprs=jaxprs,
@@ -2511,7 +2620,7 @@ def _custom_jvp_call_jaxpr(*args: TfVal, fun_jaxpr: core.ClosedJaxpr,
                            jvp_jaxpr_thunk: Callable,
                            num_consts: int) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
-  return _interpret_jaxpr(fun_jaxpr, *args)
+  return _interpret_jaxpr(fun_jaxpr, *args, extra_name_stack="custom_jvp")
 
 
 tf_impl[custom_derivatives.custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr
@@ -2520,7 +2629,7 @@ tf_impl[custom_derivatives.custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr
 def _custom_vjp_call_jaxpr(*args: TfVal, fun_jaxpr: core.ClosedJaxpr,
                            **_) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
-  return _interpret_jaxpr(fun_jaxpr, *args)
+  return _interpret_jaxpr(fun_jaxpr, *args, extra_name_stack="custom_vjp")
 
 
 tf_impl[custom_derivatives.custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr
@@ -2617,13 +2726,14 @@ def _pjit(*args: TfVal,
           name: str,
           _in_avals: Sequence[core.ShapedArray],
           _out_aval: core.ShapedArray) -> TfVal:
-  del donated_invars, name
+  del donated_invars
   # TODO: add `name` to the name stack
   shard_value_for_mesh = partial(_shard_value, resource_env.physical_mesh)
   # Apply sharding annotation to the arguments
   sharded_args: Sequence[TfVal] = tuple(
       map(shard_value_for_mesh, args, _in_avals, in_axis_resources))
-  results = _interpret_jaxpr(jaxpr, *sharded_args)
+  results = _interpret_jaxpr(jaxpr, *sharded_args,
+                             extra_name_stack=util.wrap_name(name, "pjit"))
   sharded_results: Sequence[TfVal] = tuple(
       map(shard_value_for_mesh, results, _out_aval, out_axis_resources))
   return tuple(sharded_results)
