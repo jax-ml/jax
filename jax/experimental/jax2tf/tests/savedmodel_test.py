@@ -35,7 +35,10 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
   def save_and_load_model(self, model: tf.Module) -> tf.Module:
     # Roundtrip through saved model on disk.
     model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
-    tf.saved_model.save(model, model_dir)
+    tf.saved_model.save(
+        model,
+        model_dir,
+        options=tf.saved_model.SaveOptions(custom_gradients=True))
     restored_model = tf.saved_model.load(model_dir)
     return restored_model
 
@@ -94,13 +97,8 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(restored_model.f(x), f_jax(x))
     with tf.GradientTape() as tape:
       y = restored_model.f(xv)
-
-    # TODO: at the moment TF does not fully-support custom_gradient in a
-    # savedmodel (b/123499169), but at least a warning is printed and an
-    # exception is thrown when gradients are taken. The exception, however,
-    # is a very strange one, for now.
-    with self.assertRaisesRegex(TypeError, "An op outside of the function building code is being passed"):
-      _ = tape.gradient(y, xv)
+    self.assertAllClose(tape.gradient(y, xv).numpy(),
+                        jax.grad(f_jax)(0.7).astype(np.float32))
 
   def _compare_with_saved_model(self, f_jax, *args):
     # Certain ops are converted to ensure an XLA context, e.g.,
