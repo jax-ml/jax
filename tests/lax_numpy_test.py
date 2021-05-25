@@ -3933,6 +3933,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.array([], dtype=jnp.float32),
       jnp.take(jnp.array([], jnp.float32), jnp.array([], jnp.int32)))
 
+    np.testing.assert_array_equal(
+      jnp.ones((2, 0, 4), dtype=jnp.float32),
+      jnp.take(jnp.ones((2, 0, 4), dtype=jnp.float32), jnp.array([], jnp.int32),
+               axis=1))
+
+    with self.assertRaisesRegex(IndexError, "non-empty jnp.take"):
+      jnp.take(jnp.ones((2, 0, 4), dtype=jnp.float32),
+               jnp.array([0], jnp.int32), axis=1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_index={}_axis={}".format(
