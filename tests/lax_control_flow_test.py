@@ -2068,6 +2068,50 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(expected, actual)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  def test_custom_linear_solve_aux(self):
+    def explicit_jacobian_solve_aux(matvec, b):
+      x = lax.stop_gradient(jnp.linalg.solve(api.jacobian(matvec)(b), b))
+      return x, array_aux
+
+    def matrix_free_solve_aux(matvec, b):
+      return lax.custom_linear_solve(
+        matvec, b, explicit_jacobian_solve_aux, explicit_jacobian_solve_aux,
+        symmetric=True, has_aux=True)
+
+    def linear_solve_aux(a, b):
+      return matrix_free_solve_aux(partial(high_precision_dot, a), b)
+
+    # array aux values, to be able to use jtu.check_grads
+    array_aux = {"converged": np.array(1.), "nfev": np.array(12345.)}
+    rng = np.random.RandomState(0)
+    a = rng.randn(3, 3)
+    a = a + a.T
+    b = rng.randn(3)
+
+    expected = jnp.linalg.solve(a, b)
+    actual_nojit, nojit_aux = linear_solve_aux(a, b)
+    actual_jit, jit_aux = api.jit(linear_solve_aux)(a, b)
+
+    self.assertAllClose(expected, actual_nojit)
+    self.assertAllClose(expected, actual_jit)
+    # scalar dict equality check
+    self.assertDictEqual(nojit_aux, array_aux)
+    self.assertDictEqual(jit_aux, array_aux)
+
+    # jvp / vjp test
+    jtu.check_grads(linear_solve_aux, (a, b), order=2, rtol=2e-3)
+
+    # vmap test
+    c = rng.randn(3, 2)
+    expected = jnp.linalg.solve(a, c)
+    expected_aux = tree_util.tree_map(partial(np.repeat, repeats=2), array_aux)
+    actual_vmap, vmap_aux = api.vmap(linear_solve_aux, (None, 1), -1)(a, c)
+
+    self.assertAllClose(expected, actual_vmap)
+    jtu.check_eq(expected_aux, vmap_aux)
+
+
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_zeros(self):
     def explicit_jacobian_solve(matvec, b):
       return lax.stop_gradient(jnp.linalg.solve(api.jacobian(matvec)(b), b))
