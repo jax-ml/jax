@@ -17,8 +17,13 @@ cannot follow NumPy exactly.
   array updates (:code:`x[i] = y`), JAX provides an alternative pure indexed
   update function :func:`jax.ops.index_update`.
 
+* Relatedly, some NumPy functions return views of arrays when possible (examples
+  are :func:`numpy.transpose` and :func:`numpy.reshape`). JAX versions of such
+  functions will return copies instead, although such copies can often be optimized
+  away by XLA when sequences of operations are compiled using :func:`jax.jit`.
+
 * NumPy is very aggressive at promoting values to :code:`float64` type. JAX
-  sometimes is less aggressive about type promotion.
+  sometimes is less aggressive about type promotion (See :ref:`type-promotion`).
 
 A small number of NumPy operations that have data-dependent output shapes are
 incompatible with :func:`jax.jit` compilation. The XLA compiler requires that
