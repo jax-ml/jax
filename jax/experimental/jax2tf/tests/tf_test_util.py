@@ -170,6 +170,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
             f"Unexpected success with known limitations {expect_tf_error}"))
           unexpected_successes.append(f"{mode}: {expect_tf_error}")
 
+      if (jtu.device_under_test() == "gpu" and
+          "dot_general_preferred" in self._testMethodName):
+        logging.info(log_message(f"Arguments are {args}, JAX result is {result_jax}\nand TF result is {result_tf}"))
+
       skip_comparison = [l for l in jax2tf_limits if l.skip_comparison]
       if skip_comparison:
         logging.warning(log_message(f"Skip result comparison due to {skip_comparison}"))
@@ -228,9 +232,16 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         jax_opt_hlo = modules[0].to_string()
         logging.info(f"[{self._testMethodName}] "
                      f"JAX OPT HLO\n{jax_opt_hlo}")
-        tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
-                    stage="optimized_hlo")
-        logging.info(f"[{self._testMethodName}] TF OPT HLO\n{tf_opt_hlo}")
+
+        # TODO(b/189265364): Remove this workaround
+        if (jtu.device_under_test() == "gpu" and
+            "dot_general" in self._testMethodName):
+          print(f"[{self._testMethodName}] Not logging TF OPT HLO because of "
+                f"crash in tf.experimental_get_compiler_ir (b/189265364)")
+        else:
+          tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+                      stage="optimized_hlo")
+          logging.info(f"[{self._testMethodName}] TF OPT HLO\n{tf_opt_hlo}")
 
         raise
 
