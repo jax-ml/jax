@@ -99,8 +99,8 @@ More detailed information can be found in the
 | fft | TF error: TF function not compileable | complex128, float64 | cpu, gpu | compiled |
 | ge | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | gt | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
-| igamma | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
-| igammac | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
+| igamma | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
+| igammac | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | integer_pow | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu | graph |
 | le | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | lgamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |

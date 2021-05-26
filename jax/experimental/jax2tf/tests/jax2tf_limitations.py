@@ -72,7 +72,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         description, devices=devices, dtypes=dtypes, enabled=enabled)
     if isinstance(modes, str):
       modes = (modes,)
-    assert all(m in ["eager", "graph", "compiled"] for m in modes)
+    assert all(m in ["eager", "graph", "compiled"] for m in modes), "Invalid modes: {modes}"
     self.modes = modes
     self.expect_tf_error = expect_tf_error
     self.skip_tf_run = skip_tf_run
@@ -744,7 +744,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           err_msg=err_msg)
 
     return [
-        missing_tf_kernel(dtypes=[dtypes.bfloat16, np.float16]),
+        missing_tf_kernel(
+            dtypes=[dtypes.bfloat16, np.float16],
+            devices=("cpu", "gpu"),
+            modes=("eager", "graph")),
         custom_numeric(
             custom_assert=custom_assert,
             description=(
@@ -781,7 +784,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           err_msg=err_msg)
 
     return [
-        missing_tf_kernel(dtypes=[dtypes.bfloat16, np.float16]),
+        missing_tf_kernel(
+            dtypes=[dtypes.bfloat16, np.float16],
+            devices=("cpu", "gpu"),
+            modes=("eager", "graph")),
         custom_numeric(dtypes=np.float64, tol=1e-9),
         custom_numeric(devices="gpu", tol=1e-3),
         custom_numeric(
