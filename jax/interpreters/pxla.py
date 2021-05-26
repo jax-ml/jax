@@ -898,7 +898,8 @@ def parallel_callable(fun: lu.WrappedFun,
   compiled = xla.backend_compile(backend, built, compile_options)
   handle_args = partial(shard_args, compiled.local_devices(), input_indices)
   execute_fun = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
-  return WeakRefList([execute_fun, compiled.fingerprint])
+  fingerprint = getattr(compiled, "fingerprint", None)
+  return WeakRefList([execute_fun, fingerprint])
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
 
