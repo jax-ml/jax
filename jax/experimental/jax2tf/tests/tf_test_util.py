@@ -170,6 +170,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
             f"Unexpected success with known limitations {expect_tf_error}"))
           unexpected_successes.append(f"{mode}: {expect_tf_error}")
 
+      # TODO(b/189287598): collect some logs. Remove when bug is fixed.
+      if (jtu.device_under_test() == "gpu" and
+          "dot_general_preferred" in self._testMethodName):
+        logging.info(log_message(f"Arguments are {args}, JAX result is {result_jax}\nand TF result is {result_tf}"))
+
       skip_comparison = [l for l in jax2tf_limits if l.skip_comparison]
       if skip_comparison:
         logging.warning(log_message(f"Skip result comparison due to {skip_comparison}"))
@@ -186,10 +191,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
       custom_assert_lim = [l for l in jax2tf_limits if l.custom_assert]
       assert len(custom_assert_lim) <= 1, f"Expecting at most one applicable limitation with custom_assert, found {custom_assert_lim}"
-
-      if (jtu.device_under_test() == "gpu" and
-          "dot_general_preferred" in self._testMethodName):
-        logging.info(log_message(f"Arguments are {args}, JAX result is {result_jax}\nand TF result is {result_tf}"))
 
       try:
         err_msg = f"TF mode {mode}."
