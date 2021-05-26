@@ -98,7 +98,7 @@ jobs:
         pip install -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
-        pytest -n auto tests examples
+        pytest -n auto --tb=short tests examples
 
 
   documentation:
@@ -137,5 +137,5 @@ jobs:
       env:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
       run: |
-        pytest -n 1 docs
-        pytest -n 1 --doctest-modules --ignore=jax/experimental/jax2tf jax
+        pytest -n 1 --tb=short docs
+        pytest -n 1 --tb=short --doctest-modules --ignore=jax/experimental/jax2tf jax
