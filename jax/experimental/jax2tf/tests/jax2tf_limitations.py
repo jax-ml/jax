@@ -471,16 +471,15 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             np.bool_,
         ],),
         # TODO(b/189287598)
-        # Leave this limitation disabled for a bit longer, to collect some failure examples.
-        # Jax2TfLimitation(
-        #     "Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598)",
-        #     dtypes=[
-        #         jnp.bfloat16, np.float16, np.float32, np.complex64
-        #     ],
-        #     devices="gpu",
-        #     modes="compiled",
-        #     enabled=(harness.params["preferred_element_type"] is not None),
-        #     skip_comparison=True)
+        Jax2TfLimitation(
+            "Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598)",
+            dtypes=[
+                jnp.bfloat16, np.float16, np.float32, np.complex64
+            ],
+            devices="gpu",
+            modes="compiled",
+            enabled=(harness.params["preferred_element_type"] is not None),
+            skip_comparison=True)
     ]
 
   @classmethod
