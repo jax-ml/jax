@@ -817,11 +817,17 @@ def _foldaxis(axis, x):
   new_shape[axis:axis+2] = [x.shape[axis] * x.shape[axis + 1]]
   return x.reshape(new_shape)
 
+def _index_in_axis_index_group(axis_name, axis_index_groups):
+  idx = axis_index(axis_name)
+  if axis_index_groups is not None:
+    indices = np.array(axis_index_groups).flatten()
+    axis_index_to_group_index = indices.argsort() % len(axis_index_groups[0])
+    idx = lax_numpy.array(axis_index_to_group_index)[idx]
+  return idx
+
 def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis, axis_index_groups):
   full = all_gather(x, axis_name, axis_index_groups=axis_index_groups)
-  idx = axis_index(axis_name)
-  if axis_index_groups:
-    idx = idx % len(axis_index_groups[0])
+  idx = _index_in_axis_index_group(axis_name, axis_index_groups)
   axis_size = full.shape[0]
   tile_size = x.shape[split_axis] // axis_size
   tile_base_idx = idx * tile_size
@@ -1014,11 +1020,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None):
   return tree_util.tree_map(bind, x)
 
 def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
-  index = axis_index(axis_name)
-  if axis_index_groups is not None:
-    indices = np.array(axis_index_groups).flatten()
-    axis_index_to_group_index = indices.argsort() % len(axis_index_groups[0])
-    index = lax_numpy.array(axis_index_to_group_index)[index]
+  index = _index_in_axis_index_group(axis_name, axis_index_groups)
   outs = tree_util.tree_map(partial(_expand, all_gather_dimension, axis_size, index), x)
   return psum(outs, axis_name, axis_index_groups=axis_index_groups)
 
