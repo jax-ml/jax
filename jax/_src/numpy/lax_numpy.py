@@ -1082,15 +1082,18 @@ def _sinc_maclaurin_jvp(k, primals, tangents):
   (x,), (t,) = primals, tangents
   return _sinc_maclaurin(k, x), _sinc_maclaurin(k + 1, x) * t
 
+_ARRAY_VIEW_DOC = """
+The JAX version of this function will return a copy rather than a view of the input.
+"""
 
-@_wraps(np.transpose)
+@_wraps(np.transpose, lax_description=_ARRAY_VIEW_DOC)
 def transpose(a, axes=None):
   _check_arraylike("transpose", a)
   axes = np.arange(ndim(a))[::-1] if axes is None else axes
   return lax.transpose(a, axes)
 
 
-@_wraps(np.rot90)
+@_wraps(np.rot90, lax_description=_ARRAY_VIEW_DOC)
 def rot90(m, k=1, axes=(0, 1)):
   _check_arraylike("rot90", m)
   ax1, ax2 = axes
@@ -1112,7 +1115,7 @@ def rot90(m, k=1, axes=(0, 1)):
       return flip(transpose(m, perm), ax2)
 
 
-@_wraps(np.flip)
+@_wraps(np.flip, lax_description=_ARRAY_VIEW_DOC)
 def flip(m, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   _check_arraylike("flip", m)
   if axis is None:
@@ -1121,12 +1124,12 @@ def flip(m, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   return lax.rev(m, [_canonicalize_axis(ax, ndim(m)) for ax in axis])
 
 
-@_wraps(np.fliplr)
+@_wraps(np.fliplr, lax_description=_ARRAY_VIEW_DOC)
 def fliplr(m):
   return flip(m, 1)
 
 
-@_wraps(np.flipud)
+@_wraps(np.flipud, lax_description=_ARRAY_VIEW_DOC)
 def flipud(m):
   return flip(m, 0)
 
@@ -1304,7 +1307,7 @@ def isrealobj(x):
   return not iscomplexobj(x)
 
 
-@_wraps(np.reshape)
+@_wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a, newshape, order="C"):
   _check_arraylike("reshape", a)
   try:
@@ -1353,7 +1356,7 @@ def _transpose(a, *args):
     axis = _ensure_index_tuple(args)
   return transpose(a, axis)
 
-@_wraps(np.ravel)
+@_wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
 def ravel(a, order="C"):
   _check_arraylike("ravel", a)
   if order == "K":
@@ -1433,7 +1436,7 @@ def resize(a, new_shape):
 
   return reshape(a, new_shape)
 
-@_wraps(np.squeeze)
+@_wraps(np.squeeze, lax_description=_ARRAY_VIEW_DOC)
 def squeeze(a, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   _check_arraylike("squeeze", a)
   if axis is None:
@@ -1452,7 +1455,7 @@ def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
   return lax.expand_dims(a, axis)
 
 
-@_wraps(np.swapaxes)
+@_wraps(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
 def swapaxes(a, axis1: int, axis2: int):
   _check_arraylike("swapaxes", a)
   perm = np.arange(ndim(a))
@@ -1460,7 +1463,7 @@ def swapaxes(a, axis1: int, axis2: int):
   return lax.transpose(a, perm)
 
 
-@_wraps(np.moveaxis)
+@_wraps(np.moveaxis, lax_description=_ARRAY_VIEW_DOC)
 def moveaxis(a, source: Union[int, Sequence[int]],
              destination: Union[int, Sequence[int]]):
   _check_arraylike("moveaxis", a)
@@ -1829,7 +1832,7 @@ def _split(op, ary, indices_or_sections, axis=0):
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
-@_wraps(np.split)
+@_wraps(np.split, lax_description=_ARRAY_VIEW_DOC)
 def split(ary, indices_or_sections, axis: int = 0):
   return _split("split", ary, indices_or_sections, axis=axis)
 
@@ -2911,8 +2914,7 @@ def block(arrays):
   out, _ = _block(arrays)
   return out
 
-
-@_wraps(np.atleast_1d, update_doc=False)
+@_wraps(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 def atleast_1d(*arys):
   if len(arys) == 1:
     arr = asarray(arys[0])
@@ -2921,7 +2923,7 @@ def atleast_1d(*arys):
     return [atleast_1d(arr) for arr in arys]
 
 
-@_wraps(np.atleast_2d, update_doc=False)
+@_wraps(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = asarray(arys[0])
@@ -2935,7 +2937,7 @@ def atleast_2d(*arys):
     return [atleast_2d(arr) for arr in arys]
 
 
-@_wraps(np.atleast_3d, update_doc=False)
+@_wraps(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 def atleast_3d(*arys):
   if len(arys) == 1:
     arr = asarray(arys[0])
@@ -3243,7 +3245,7 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   return lax.convert_element_type(res, dtype)
 
 
-@_wraps(np.meshgrid)
+@_wraps(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
 def meshgrid(*args, **kwargs):
   indexing = kwargs.get("indexing", "xy")
   sparse = kwargs.get("sparse", False)
@@ -3804,7 +3806,7 @@ def diag_indices_from(arr):
 
   return diag_indices(arr.shape[0], ndim=arr.ndim)
 
-@_wraps(np.diagonal)
+@_wraps(np.diagonal, lax_description=_ARRAY_VIEW_DOC)
 def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
   _check_arraylike("diagonal", a)
   a_shape = shape(a)
@@ -3830,7 +3832,7 @@ def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
   return lax.slice_in_dim(d, 0, diag_size, axis=-1)
 
 
-@_wraps(np.diag)
+@_wraps(np.diag, lax_description=_ARRAY_VIEW_DOC)
 def diag(v, k=0):
   _check_arraylike("diag", v)
   v_shape = shape(v)
@@ -4590,7 +4592,7 @@ def roll(a, shift, axis: Optional[Union[int, Sequence[int]]] = None):
   return _roll(a, shift, axis)
 
 
-@_wraps(np.rollaxis)
+@_wraps(np.rollaxis, lax_description=_ARRAY_VIEW_DOC)
 def rollaxis(a, axis: int, start=0):
   _check_arraylike("rollaxis", a)
   start = core.concrete_or_error(operator.index, start, "'start' argument of jnp.rollaxis()")
