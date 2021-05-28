@@ -2925,8 +2925,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "shape": shape, "num_sections": num_sections, "axis": axis,
        "dtype": dtype}
       for shape, axis, num_sections in [
-          ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((3,), 0, [-1]),
-          ((12, 4), 1, 2), ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3)]
+          ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((12, 4), 1, 2),
+          ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3)]
       for dtype in default_dtypes))
   def testSplitStaticInt(self, shape, num_sections, axis, dtype):
     rng = jtu.rand_default(self.rng())

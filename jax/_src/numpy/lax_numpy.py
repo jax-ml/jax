@@ -1805,8 +1805,7 @@ def _split(op, ary, indices_or_sections, axis=0):
   size = ary.shape[axis]
   if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
     indices_or_sections = np.array(
-        [_canonicalize_axis(core.concrete_or_error(np.int64, i_s,
-                                                   f"in jax.numpy.{op} argument 1"), size)
+        [core.concrete_or_error(np.int64, i_s, f"in jax.numpy.{op} argument 1")
          for i_s in indices_or_sections], np.int64)
     split_indices = np.concatenate([[np.int64(0)], indices_or_sections,
                                     [np.int64(size)]])
