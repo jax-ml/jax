@@ -248,10 +248,15 @@ class PartitionSpec(tuple):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
 
-def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
-                local_in_parts=None, local_out_parts=None,
-                local_num_partitions=None,
-                static_argnums: Union[int, Iterable[int]] = (),
+def sharded_jit(
+    fun: Callable,
+    in_parts,
+    out_parts,
+    num_partitions: Optional[int] = None,
+    local_in_parts=None,
+    local_out_parts=None,
+    local_num_partitions=None,
+    static_argnums: Union[int, Iterable[int]] = (),
 ):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 

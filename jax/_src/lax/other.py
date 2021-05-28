@@ -25,10 +25,10 @@ def conv_general_dilated_patches(
     filter_shape: Sequence[int],
     window_strides: Sequence[int],
     padding: Union[str, Sequence[Tuple[int, int]]],
-    lhs_dilation: Sequence[int] = None,
-    rhs_dilation: Sequence[int] = None,
-    dimension_numbers: lax.ConvGeneralDilatedDimensionNumbers = None,
-    precision: lax.PrecisionType = None,
+    lhs_dilation: Optional[Sequence[int]] = None,
+    rhs_dilation: Optional[Sequence[int]] = None,
+    dimension_numbers: Optional[lax.ConvGeneralDilatedDimensionNumbers] = None,
+    precision: Optional[lax.PrecisionType] = None,
     preferred_element_type: Optional[DType] = None,
 ) -> lax.Array:
   """Extract patches subject to the receptive field of `conv_general_dilated`.
