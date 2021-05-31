@@ -40,6 +40,7 @@ compatible_shapes = [[(), ()],
                      [(2, 3, 4), (2, 1, 4)]]
 
 float_dtypes = jtu.dtypes.floating
+complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.integer
 
 OpRecord = collections.namedtuple(
@@ -106,7 +107,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "shapes": shapes, "dtype": dtype,
        "axis": axis, "keepdims": keepdims,
        "return_sign": return_sign, "use_b": use_b}
-      for shape_group in compatible_shapes for dtype in float_dtypes + int_dtypes
+      for shape_group in compatible_shapes for dtype in float_dtypes + complex_dtypes + int_dtypes
       for use_b in [False, True]
       for shapes in itertools.product(*(
         (shape_group, shape_group) if use_b else (shape_group,)))
