@@ -670,7 +670,8 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
 
   nreps = jaxpr_replicas(jaxpr)
   device = _xla_callable_device(nreps, backend, device, arg_devices)
-  backend = device.platform if device else backend
+  backend = xb.get_device_backend(device) if device else (
+      xb.get_backend(backend) if backend is not None else None)
   result_handlers = map(partial(aval_to_result_handler, device), out_avals)
 
   # Computations that only produce constants and/or only rearrange their inputs,
@@ -710,10 +711,11 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   xla_args, donated_invars = _xla_callable_args(c, abstract_args, tuple_args,
                                                 donated_invars=donated_invars)
   out_nodes = jaxpr_subcomp(
-      c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
+      c, jaxpr, backend.platform if backend is not None else None,
+      AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
-  out_tuple = xops.Tuple(c, out_nodes)
   backend = xb.get_backend(backend)
+  out_tuple = xops.Tuple(c, out_nodes)
   if backend.platform in ("gpu", "tpu"):
     donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
   if any(donated_invars):

@@ -31,6 +31,8 @@ logging._warn_preinit_stderr = 0
 
 import jax.lib
 from .._src.config import flags
+from . import tpu_driver_client
+from . import xla_client
 from jax._src import util, traceback_util
 from jax._src import dtypes
 import numpy as np
@@ -38,29 +40,25 @@ import threading
 
 traceback_util.register_exclusion(__file__)
 
-try:
-  from . import tpu_client
-except ImportError:
-  tpu_client = None
-from . import xla_client
 
 xops = xla_client.ops
 
 FLAGS = flags.FLAGS
 
+# TODO(phawkins): Remove jax_xla_backend.
 flags.DEFINE_string(
-    'jax_xla_backend', 'xla',
-    'Default is "xla" for the XLA service directly, '
-    'or "tpu_driver" for using high-performance access to Cloud TPU hardware.')
+    'jax_xla_backend', '',
+    'jax_xla_backend is an alias for jax_platform_name. If both are '
+    'provided, --jax_xla_backend takes priority. Prefer --jax_platform_name.')
 flags.DEFINE_string(
     'jax_backend_target', 'local',
     'Either "local" or "rpc:address" to connect to a remote service target.')
 flags.DEFINE_string(
     'jax_platform_name',
     os.getenv('JAX_PLATFORM_NAME', ''),
-    'Platform name for XLA. The default is to attempt to use a GPU if '
+    'Platform name for XLA. The default is to attempt to use a GPU or TPU if '
     'available, but fall back to CPU otherwise. To set the platform manually, '
-    'pass "cpu" for CPU or "gpu" for GPU.')
+    'pass "cpu" for CPU, "gpu" for GPU, etc.')
 flags.DEFINE_bool(
     'jax_disable_most_optimizations', False,
     'Try not to do much optimization work. This can be useful if the cost of '
@@ -126,50 +124,84 @@ def get_compile_options(
 
   return compile_options
 
-_backends = {}
 
-def register_backend(name, factory):
-  _backends[name] = factory
+# Backends
 
-def _get_local_backend(platform=None):
-  if not platform:
-    platform = FLAGS.jax_platform_name or None
-
-  backend = xla_client.get_local_backend(platform)
-  if backend is None:
-    raise RuntimeError("No local XLA backends found.")
-
-  if backend.platform == 'cpu' and platform != 'cpu':
-    logging.warning('No GPU/TPU found, falling back to CPU. '
-                    '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
-
-  return backend
+def _make_tpu_driver_client():
+  if tpu_driver_client is None:
+    logging.info("Remote TPU is not linked into jax; skipping remote TPU.")
+    return None
+  if FLAGS.jax_backend_target is None:
+    logging.info("No --jax_backend_target was provided; skipping remote TPU.")
+    return None
+  return tpu_driver_client.TpuBackend.create(worker=FLAGS.jax_backend_target)
 
 
-register_backend('xla', _get_local_backend)
+# Backends, in increasing order of preference.
+# We have no particular opinion about how "backends" relate to "devices". For
+# example, there could be multiple backends that provide the same kind of
+# device.
+if jax.lib._xla_extension_version >= 23:
+  _backend_factories = {
+     'interpreter': xla_client.make_interpreter_client,
+     'cpu': xla_client.make_cpu_client,
+     'tpu_driver': _make_tpu_driver_client,
+     'gpu': xla_client.make_gpu_client,
+     'tpu': xla_client.make_tpu_client,
+  }
+else:
+  _backend_factories = {
+     'interpreter': xla_client._interpreter_backend_factory,
+     'cpu': xla_client._cpu_backend_factory,
+     'tpu_driver': _make_tpu_driver_client,
+     'gpu': xla_client._gpu_backend_factory,
+     'tpu': xla_client._tpu_backend_factory,
+  }
 
-# memoize the TPU driver to be consistent with xla_client behavior
-_tpu_backend = None
-
-def _get_tpu_driver_backend(platform):
-  if platform == "cpu":
-    return _get_local_backend("cpu")
-
-  global _tpu_backend
-  if _tpu_backend is None:
-    backend_target = FLAGS.jax_backend_target
-    if backend_target is None:
-      raise ValueError('When using TPU Driver as the backend, you must specify '
-                       '--jax_backend_target=<hostname>:8470.')
-    _tpu_backend = tpu_client.TpuBackend.create(worker=backend_target)
-  return _tpu_backend
+def register_backend_factory(name, factory):
+  _backend_factories[name] = factory
 
 
-if tpu_client:
-  register_backend('tpu_driver', _get_tpu_driver_backend)
-
-
+_backends = None
 _backend_lock = threading.Lock()
+
+
+def backends():
+  global _backends
+
+  with _backend_lock:
+    if _backends is not None:
+      return _backends
+
+    _backends = {}
+    for name, factory in _backend_factories.items():
+      logging.vlog(1, "Initializing backend '%s'" % name)
+      try:
+        backend = factory()
+        if backend is not None:
+          if backend.device_count() > 0:
+            _backends[name] = backend
+          util.distributed_debug_log(("Initialized backend", backend.platform),
+                                     ("process_index", backend.process_index()),
+                                     ("device_count", backend.device_count()),
+                                     ("local_devices", backend.local_devices()))
+          logging.vlog(1, "Backend '%s' initialized" % name)
+      except (RuntimeError, ImportError) as err:
+        if name in ('cpu', 'interpreter'):
+          # We always expect the CPU and interpreter backends to initialize
+          # successfully.
+          raise
+        else:
+          # If the backend isn't built into the binary, or if it has no devices,
+          # we expect a RuntimeError.
+          logging.info("Unable to initialize backend '%s': %s" % (name, err))
+          continue
+    if list(_backends.keys())[-1] == "cpu":
+      logging.warning('No GPU/TPU found, falling back to CPU. '
+                      '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
+    return _backends
+
+
 
 @lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
 def get_backend(platform=None):
@@ -178,23 +210,28 @@ def get_backend(platform=None):
   if not isinstance(platform, (type(None), str)):
     return platform
 
-  with _backend_lock:
-    backend_factory = _backends.get(FLAGS.jax_xla_backend)
-    if backend_factory is None:
-      msg = 'Unknown jax_xla_backend value "{}".'
-      raise ValueError(msg.format(FLAGS.jax_xla_backend))
-    backend = backend_factory(platform)
-    util.distributed_debug_log(("Initialized backend", backend.platform),
-                               ("process_index", backend.process_index()),
-                               ("device_count", backend.device_count()),
-                               ("local_devices", backend.local_devices()))
+  bs = backends()
+  platform = (platform or FLAGS.jax_xla_backend or FLAGS.jax_platform_name
+              or None)
+  if platform is not None:
+    backend = bs.get(platform, None)
+    if backend is None:
+      raise RuntimeError(f"Unknown backend {platform}")
     return backend
+  else:
+    return list(bs.values())[-1]
 
 
 def get_device_backend(device=None):
   """Returns the Backend associated with `device`, or the default Backend."""
-  platform = device.platform if device else None
-  return get_backend(platform)
+  if device is not None:
+    # TODO(phawkins): remove this workaround after jaxlib 0.1.68 becomes the
+    # minimum and it is safe to call `.client` on a tpu_driver TpuDevice.
+    if tpu_driver_client and isinstance(
+        device, tpu_driver_client._tpu_client.TpuDevice):
+      return get_backend('tpu_driver')
+    return device.client
+  return get_backend()
 
 
 def device_count(backend: Optional[str] = None) -> int:

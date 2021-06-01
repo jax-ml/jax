@@ -103,9 +103,9 @@ except ImportError:
 _xla_extension_version = getattr(xla_client, '_version', 0)
 
 try:
-  from jaxlib import tpu_client  # pytype: disable=import-error
+  from jaxlib import tpu_client as tpu_driver_client  # pytype: disable=import-error
 except:
-  tpu_client = None
+  tpu_driver_client = None
 
 
 cuda_path: Optional[str]
