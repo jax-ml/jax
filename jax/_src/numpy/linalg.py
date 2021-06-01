@@ -329,12 +329,12 @@ def pinv(a, rcond=None):
     max_rows_cols = max(a.shape[-2:])
     rcond = 10. * max_rows_cols * jnp.finfo(a.dtype).eps
   rcond = jnp.asarray(rcond)
-  u, s, v = svd(a, full_matrices=False)
+  u, s, vh = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   cutoff = rcond[..., jnp.newaxis] * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
   s = jnp.where(s > cutoff, s, jnp.inf)
-  res = jnp.matmul(_T(v), jnp.divide(_T(u), s[..., jnp.newaxis]))
+  res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]))
   return lax.convert_element_type(res, a.dtype)
 
 
