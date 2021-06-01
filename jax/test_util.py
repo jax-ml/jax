@@ -17,7 +17,7 @@ import functools
 import re
 import os
 import textwrap
-from typing import Dict, Sequence, Union
+from typing import Dict, List, Generator, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib
@@ -33,10 +33,12 @@ from . import core
 from ._src import dtypes as _dtypes
 from . import lax
 from ._src.config import flags, bool_env, config
-from ._src.util import partial, prod
+from ._src.util import partial, prod, unzip2
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla
+from .experimental import maps
+from .experimental.maps import mesh
 
 
 FLAGS = flags.FLAGS
@@ -1012,6 +1014,44 @@ def ignore_warning(**kw):
     warnings.filterwarnings("ignore", **kw)
     yield
 
+# -------------------- Mesh parametrization helpers --------------------
+
+MeshSpec = List[Tuple[str, int]]
+
+@contextmanager
+def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
+  """Test utility for setting up meshes given mesh data from `schedules`."""
+  # This is similar to the `with_mesh` function above, but isn't a decorator.
+  axis_names, shape = unzip2(named_shape)
+  size = prod(shape)
+  local_devices = list(api.local_devices())
+  if len(local_devices) < size:
+    raise unittest.SkipTest(f"Test requires {size} local devices")
+  mesh_devices = np.array(local_devices[:size]).reshape(shape)
+  with mesh(mesh_devices, axis_names):
+    yield
+
+def with_mesh_from_kwargs(f):
+  return lambda *args, **kwargs: with_mesh(kwargs['mesh'])(f)(*args, **kwargs)
+
+def with_and_without_mesh(f):
+  return parameterized.named_parameters(
+    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
+    for name, mesh, axis_resources in (
+      ('', (), ()),
+      ('Mesh', (('x', 2),), (('i', 'x'),))
+    ))(with_mesh_from_kwargs(f))
+
+old_spmd_lowering_flag = False
+def set_spmd_lowering_flag(val: bool):
+  global old_spmd_lowering_flag
+  maps.make_xmap_callable.cache_clear()
+  old_spmd_lowering_flag = maps.EXPERIMENTAL_SPMD_LOWERING
+  maps.EXPERIMENTAL_SPMD_LOWERING = val
+
+def restore_spmd_lowering_flag():
+  maps.make_xmap_callable.cache_clear()
+  maps.EXPERIMENTAL_SPMD_LOWERING = old_spmd_lowering_flag
 
 class _cached_property:
   null = object()

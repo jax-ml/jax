@@ -590,13 +590,20 @@ def get_array_mapping(axis_resources: ParsedPartitionSpec) -> pxla.ArrayMapping:
                      for i, axes in enumerate(axis_resources)
                      for axis in axes)
 
-def get_sharding_proto(c, xla_op, axis_resources, mesh):
+def get_sharding_proto(c, xla_op, axis_resources: ParsedPartitionSpec,
+                       mesh: maps.Mesh) -> xc.OpSharding:
   xla_shape = c.GetShape(xla_op)
   if xla_shape.is_token():
     aval = core.abstract_token
     assert axis_resources is REPLICATED
   else:
     aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.element_type())
+  return get_sharding_proto_aval(aval, axis_resources, mesh)
+
+
+def get_sharding_proto_aval(aval: core.AbstractValue,
+                            axis_resources: ParsedPartitionSpec,
+                            mesh: maps.Mesh) -> xc.OpSharding:
   array_mapping = get_array_mapping(axis_resources)
   sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(
       aval, array_mapping)

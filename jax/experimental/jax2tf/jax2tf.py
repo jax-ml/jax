@@ -31,6 +31,8 @@ from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
 import jax._src.random
 from jax.api_util import flatten_fun
+from jax.experimental import maps
+from jax.experimental import pjit
 from jax.interpreters import ad
 from jax.interpreters import pxla
 from jax.interpreters import sharded_jit
@@ -397,9 +399,6 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfVal) -> Sequence[TfVal]:
   return tuple(v for v, _ in out_with_avals)
 
 
-### tracer
-
-
 def _aval_to_tf_shape(aval: core.AbstractValue) -> Tuple[Optional[int], ...]:
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
   return tuple(
@@ -729,8 +728,9 @@ class TensorFlowTrace(core.Trace):
   def process_call(self, call_primitive: core.Primitive, f: lu.WrappedFun,
                    tracers: Sequence[TensorFlowTracer], params):
     assert call_primitive.multiple_results
-    vals: Sequence[TfVal] = [t.val for t in tracers]
-    f = _interpret_subtrace(f, self.main, tuple(t.aval for t in tracers))
+    vals: Sequence[TfVal] = tuple(t.val for t in tracers)
+    avals: Sequence[core.AbstractValue] = tuple(t.aval for t in tracers)
+    f = _interpret_subtrace(f, self.main, avals)
     with core.new_sublevel():
       if call_primitive == core.named_call_p:
         with tf.name_scope(_sanitize_scope_name(params["name"])):
@@ -813,6 +813,8 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
 
 
 for unexpected in xla.call_translations:  # Call primitives are inlined
+  if unexpected is pjit.pjit_p:
+    continue
   tf_impl[unexpected] = functools.partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.
@@ -2494,14 +2496,32 @@ def split_to_logical_devices(tensor: TfVal,
   Returns:
     an annotated tensor.
   """
-  # This corresponds to the sharding annotations in
-  # xla_bridge._sharding_to_proto.
+  # TODO: this is only for sharded_jit. Either remove, or implement in terms
+  # of _shard_values.
   if partition_dimensions is None:
     return xla_sharding.replicate(tensor, use_sharding_op=True)
   num_partition_splits = np.prod(partition_dimensions)
   tile_assignment = np.arange(num_partition_splits).reshape(
       partition_dimensions)
   return xla_sharding.tile(tensor, tile_assignment, use_sharding_op=True)
+
+
+def _shard_value(mesh: maps.Mesh,
+                 val: TfVal,
+                 aval: core.AbstractValue,
+                 axis_resources: pjit.ParsedPartitionSpec) -> TfVal:
+  """Apply sharding to a TfVal."""
+  sharding_proto: xla_client.OpSharding = pjit.get_sharding_proto_aval(
+      aval, axis_resources, mesh)
+  # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
+  xla_sharding_proto: xla_data_pb2.OpSharding = (
+      xla_data_pb2.OpSharding(
+          type=int(sharding_proto.type),
+          tile_assignment_dimensions=sharding_proto.tile_assignment_dimensions,
+          tile_assignment_devices=sharding_proto.tile_assignment_devices,
+          replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim))
+  return xla_sharding.Sharding(proto=xla_sharding_proto).apply_to_tensor(
+      val, use_sharding_op=True)
 
 
 def _sharded_call(f: lu.WrappedFun, vals: Sequence[TfVal],
@@ -2520,12 +2540,51 @@ def _sharded_call(f: lu.WrappedFun, vals: Sequence[TfVal],
   return sharded_vals_out
 
 
-def _sharding_constraint(arg: TfVal, *,
-                         partitions: pxla.PartitionsOrReplicated):
+def _sharded_jit_sharding_constraint(arg: TfVal, *,
+                                     partitions: pxla.PartitionsOrReplicated,
+                                     _in_avals: Sequence[core.ShapedArray],
+                                     _out_aval: core.ShapedArray):
+  del _in_avals, _out_aval
   return split_to_logical_devices(arg, partitions)
 
 
-tf_impl[sharded_jit.sharding_constraint_p] = _sharding_constraint
+tf_impl_with_avals[sharded_jit.sharding_constraint_p] = _sharded_jit_sharding_constraint
+
+
+def _pjit(*args: TfVal,
+          jaxpr: core.ClosedJaxpr,
+          in_axis_resources: Sequence[pjit.ParsedPartitionSpec],
+          out_axis_resources: Sequence[pjit.ParsedPartitionSpec],
+          resource_env: maps.ResourceEnv,
+          donated_invars,
+          name: str,
+          _in_avals: Sequence[core.ShapedArray],
+          _out_aval: core.ShapedArray) -> TfVal:
+  del donated_invars, name
+  # TODO: add `name` to the name stack
+  shard_value_for_mesh = functools.partial(_shard_value, resource_env.physical_mesh)
+  # Apply sharding annotation to the arguments
+  sharded_args: Sequence[TfVal] = tuple(
+      util.safe_map(shard_value_for_mesh, args, _in_avals, in_axis_resources))
+  results = _interpret_jaxpr(jaxpr, *sharded_args)
+  sharded_results: Sequence[TfVal] = tuple(
+      util.safe_map(shard_value_for_mesh, results, _out_aval, out_axis_resources))
+  return tuple(sharded_results)
+
+
+tf_impl_with_avals[pjit.pjit_p] = _pjit
+
+
+def _pjit_sharding_constraint(arg: TfVal, *,
+                              axis_resources: pjit.ParsedPartitionSpec,
+                              resource_env: maps.ResourceEnv,
+                              _in_avals: Sequence[core.ShapedArray],
+                              _out_aval: core.ShapedArray,
+                              **kwargs) -> TfVal:
+  return _shard_value(resource_env.physical_mesh, arg, _in_avals[0], axis_resources)
+
+
+tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint
 
 
 def _register_checkpoint_pytrees():
