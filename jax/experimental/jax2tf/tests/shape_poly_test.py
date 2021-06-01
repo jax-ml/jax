@@ -721,6 +721,21 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
 
+    _make_harness("einsum", "0",
+                  lambda x: jnp.einsum("...i->...", x),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+
+    _make_harness("einsum", "1",
+                  lambda x, y: jnp.einsum("...ij,...jk->...ik", x, y),
+                  [RandArg((3, 4, 5), _f32), RandArg((3, 5, 6), _f32)],
+                  poly_axes=[0, 0]),
+
+    _make_harness("einsum", "2",
+                  lambda x, y: jnp.einsum("...ij,jk->...ik", x, y),
+                  [RandArg((3, 4, 5), _f32), RandArg((5, 6), _f32)],
+                  poly_axes=[0, None]),
+
     _make_harness("jnp_take", "",
                   lambda a, i: jnp.take(a, i, axis=1),
                   [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
@@ -945,6 +960,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   """Tests for primitives that take shape values as parameters."""
 
   # This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES.
+
   # For each primitive "xxx" the
   # test will be called "test_prim_xxx_...".
   # If you want to run this test for only one harness that includes "foo"
@@ -1044,6 +1060,18 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           lambda x: jnp.squeeze(x, axis=1),
           input_signature=[tf.TensorSpec([None, None])],
           polymorphic_shapes=[PS("b1", "b2")],
+          expected_output_signature=tf.TensorSpec([None]))
+
+  def test_einsum_multiple_contractions_error(self):
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Shape polymorphism is not yet supported for einsum with more than one contraction"):
+      self.CheckShapePolymorphism(
+          lambda x, y, z: jnp.einsum("ab,bc,cd->ad", x, y, z),
+          input_signature=[tf.TensorSpec([None, 2]),
+                           tf.TensorSpec([2, 3]), tf.TensorSpec([3, 4])],
+          polymorphic_shapes=["(a, 2)", "(2, 3)", "(3, 4)"],
           expected_output_signature=tf.TensorSpec([None]))
 
 
