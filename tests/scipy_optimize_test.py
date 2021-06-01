@@ -155,7 +155,7 @@ class TestLBFGS(jtu.JaxTestCase):
       result = jax.scipy.optimize.minimize(
           f,
           x0,
-          method='L-BFGS',
+          method='l-bfgs-experimental-do-not-rely-on-this',
           options=dict(gtol=1e-6),
       )
       return result.x
