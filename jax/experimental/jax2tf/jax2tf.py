@@ -865,8 +865,8 @@ def _sign(x: TfVal) -> TfVal:
   if x.dtype.is_unsigned:
     # TF and XLA do not support tf.math.sign for unsigned types.
     return tf.where(
-        tf.math.equal(x, 0), np.array(0, dtype=x.dtype),
-        np.array(1, dtype=x.dtype))
+        tf.math.equal(x, 0), tf.constant(0, dtype=x.dtype),
+        tf.constant(1, dtype=x.dtype))
   else:
     return tf.math.sign(x)
 
@@ -1245,8 +1245,7 @@ def _precision_config_proto(precision: Optional[Tuple[PrecisionType,
 
 def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
                  dimension_numbers, feature_group_count, batch_group_count,
-                 preferred_element_type: Optional[DType],
-                 out_shape) -> TfVal:
+                 preferred_element_type: Optional[DType], out_shape) -> TfVal:
 
   def error(msg):
     suffix = ("See source code for the precise conditions under which "
@@ -1290,8 +1289,8 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
     lhs_shape = np.take(lhs.shape, lhs_perm)[2:]
     # TF only allows 'VALID' and 'SAME' padding
     for pad_str in ["VALID", "SAME"]:
-      gen_padding = lax.padtype_to_pads(
-          lhs_shape, effective_rhs_shape, window_strides, pad_str)
+      gen_padding = lax.padtype_to_pads(lhs_shape, effective_rhs_shape,
+                                        window_strides, pad_str)
       if list(gen_padding) == list(padding):
         return pad_str
     raise error("Input padding not supported in TensorFlow.")
@@ -1889,13 +1888,12 @@ def _specialized_reduce_window(reducer,
   """
   if not _enable_xla and name in ["reduce_window_max", "reduce_window_sum"]:
     return _try_tf_pool(name, operand, window_dimensions, window_strides,
-                       padding, base_dilation, window_dilation)
+                        padding, base_dilation, window_dilation)
 
   return _common_reduce_window(operand, identity(operand.dtype), reducer,
                                window_dimensions, window_strides, padding,
                                base_dilation, window_dilation, _in_avals,
                                _out_aval)
-
 
 
 def _get_max_identity(tf_dtype):

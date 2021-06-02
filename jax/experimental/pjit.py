@@ -597,7 +597,7 @@ def get_sharding_proto(c, xla_op, axis_resources: ParsedPartitionSpec,
     aval = core.abstract_token
     assert axis_resources is REPLICATED
   else:
-    aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.element_type())
+    aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.element_type())  # type: ignore
   return get_aval_sharding_proto(aval, axis_resources, mesh)
 
 

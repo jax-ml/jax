@@ -554,6 +554,13 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       tf_fun2_without_xla(x)
     self.assertAllClose(fun(x), tf_fun2_with_xla(x))
 
+  def test_randint(self):
+      def randint():
+        return jax.random.randint(
+            jax.random.PRNGKey(42), shape=(), minval=0, maxval=1)
+
+      self.ConvertAndCompare(randint)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

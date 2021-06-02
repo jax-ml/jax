@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-05-26*
+*Last generated on (YYYY-MM-DD): 2021-05-31*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -89,7 +89,7 @@ More detailed information can be found in the
 | cummin | TF error: op not defined for dtype | bool, complex | cpu, gpu, tpu | compiled, eager, graph |
 | digamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | div | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
-| div | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
+| dot_general | TF error: Numeric comparision disabled: Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598) | bfloat16, complex64, float16, float32 | gpu | compiled |
 | dot_general | TF test skipped: Not implemented in JAX: preferred_element_type=c128 not implemented | complex64 | tpu | compiled, eager, graph |
 | dot_general | TF test skipped: Not implemented in JAX: preferred_element_type=i64 not implemented | int16, int32, int8 | tpu | compiled, eager, graph |
 | dot_general | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
@@ -128,7 +128,6 @@ More detailed information can be found in the
 | reduce_window_min | TF error: op not defined for dtype | bool, complex | cpu, gpu, tpu | compiled, eager, graph |
 | regularized_incomplete_beta | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | rem | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
-| rem | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | round | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | rsqrt | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | scatter_add | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |

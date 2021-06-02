@@ -450,10 +450,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def div(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(
-            dtypes=[
-                np.uint8, np.uint16, np.uint32, np.uint64, np.int8, np.int16
-            ],),
         Jax2TfLimitation(
             "TF integer division fails if divisor contains 0; JAX returns NaN",
             dtypes=[
@@ -1053,10 +1049,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def rem(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(
-            dtypes=[
-                np.uint8, np.uint16, np.uint32, np.uint64, np.int8, np.int16
-            ],),
         Jax2TfLimitation(
             "TF integer division fails if divisor contains 0; JAX returns NaN",
             dtypes=[
