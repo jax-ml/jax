@@ -1029,7 +1029,7 @@ if cusolver is not None:
 
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, rocsolver.getrf)
+    _lu_cpu_gpu_translation_rule, rocsolver.getrf, backend='gpu')
 
 xla.backend_specific_translations['tpu'][lu_p] = _lu_tpu_translation_rule
 
