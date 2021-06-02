@@ -177,14 +177,31 @@ class CallTfTest(jtu.JaxTestCase):
   def test_with_var_read(self, with_jit=True):
     if jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("Test fails on GPU")
-    outer_var = tf.Variable(3., dtype=np.float32)
+    outer_var_array = np.array([3., 4.], dtype=np.float32)
+    outer_var = tf.Variable(outer_var_array)
 
     def fun_tf(x):
       return x * outer_var + 1.
 
-    x = np.float32(2.)
+    x = np.array([2., 5.,], dtype=np.float32)
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
-    self.assertAllClose(x * 3. + 1., res, check_dtypes=False)
+    self.assertAllClose(x * outer_var_array + 1., res, check_dtypes=False)
+
+  def test_with_var_different_shape(self):
+    # See https://github.com/google/jax/issues/6050
+    if jtu.device_under_test() == "gpu":
+      raise unittest.SkipTest("Test fails on GPU")
+    v = tf.Variable((4., 2.), dtype=tf.float32)
+
+    def tf_func(x):
+      return v + x
+    x = np.float32(123.)
+    tf_out = tf_func(x)
+
+    jax_func = jax.jit(jax2tf.call_tf(tf_func))
+    jax_out = jax_func(x)
+
+    self.assertAllClose(tf_out, jax_out, check_dtypes=False)
 
   @parameterized_jit
   def test_with_var_write_error(self, with_jit=True):
@@ -221,11 +238,11 @@ class CallTfTest(jtu.JaxTestCase):
     t5 = tf.constant(5., dtype=np.float32)
 
     def fun_tf(x):
-      return (x * v2 + t4) * v3 + t5
+      return (x * v3 + t4 + v2) * v3 + t5
 
     x = np.float32(2.)
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
-    self.assertAllClose((x * 2. + 4.) * 3. + 5., res, check_dtypes=False)
+    self.assertAllClose((x * 3. + 4. + 2.) * 3. + 5., res, check_dtypes=False)
 
   @parameterized_jit
   def test_grad(self, with_jit=False):

@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
 from functools import partial
 from unittest import SkipTest
 
@@ -42,8 +43,10 @@ class ShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
     super(ShardedJitTest, self).setUp()
-    if jtu.device_under_test() != "tpu":
+    if jtu.device_under_test() not in ["tpu", "gpu"]:
       raise SkipTest
+    if jtu.device_under_test() == "gpu":
+      os.environ["NCCL_LAUNCH_MODE"] = "PARALLEL"
 
   def testBasic(self):
     if jax.device_count() < 2:
@@ -247,15 +250,21 @@ class ShardedJitTest(jtu.JaxTestCase):
     y_shards = [y[i:i+shard_size] for i in range(0, shape[0], shard_size)]
     z = jnp.array([3.], dtype=np.float32)
 
-    result = f(x)
     assert len(jax.local_devices()) == len(y_shards)
     for device, y_shard in zip(jax.local_devices(), y_shards):
       device.transfer_to_infeed((y_shard, z))
+    # Transfer data to infeed before executing the function. For GPUs, the
+    # execution of the compiled function is blocking, so transferring data
+    # to infeed before executing ensures that the execution does not deadlock
+    # waiting for the infeed data.
+    result = f(x)
 
     expected = x @ y.T + z
     self.assertAllClose(result, expected, check_dtypes=False)
 
   def testCompilationCache(self):
+    if jax.local_device_count() < 2:
+      raise SkipTest("requires 2 devices")
     f = lambda x: x + 1
     sharded_f = sharded_jit(f, in_parts=P(2), out_parts=P(2))
     shape = (2,)
@@ -271,7 +280,7 @@ class ShardedJitErrorsTest(jtu.JaxTestCase):
 
   def setUp(self):
     super(ShardedJitErrorsTest, self).setUp()
-    if jtu.device_under_test() != "tpu":
+    if jtu.device_under_test() not in ["tpu", "gpu"]:
       raise SkipTest
 
   def testNotEnoughDevices(self):
@@ -321,8 +330,10 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
     super(PmapOfShardedJitTest, self).setUp()
-    if jtu.device_under_test() != "tpu":
+    if jtu.device_under_test() not in ["tpu", "gpu"]:
       raise SkipTest
+    if jtu.device_under_test() == "gpu":
+      os.environ["NCCL_LAUNCH_MODE"] = "PARALLEL"
 
   # TODO(skye): make a similar version for ShardedJitTest and run the same tests
   def _runTest(self, f, in_partitions, out_partitions, dtype=np.float32):

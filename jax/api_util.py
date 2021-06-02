@@ -13,16 +13,18 @@
 # limitations under the License.
 
 import operator
-from typing import Any, Tuple, Union
+from functools import partial
+from typing import Any, Dict, Iterable, Tuple, Union, Optional
 
 import numpy as np
 
 from . import core
-from . import dtypes
-from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
+from ._src import dtypes
+from .tree_util import (tree_flatten, tree_unflatten, tree_multimap,
                         tree_structure, treedef_children, treedef_is_leaf)
+from ._src.tree_util import _replace_nones
 from . import linear_util as lu
-from ._src.util import safe_map, WrapHashably, Hashable
+from ._src.util import safe_map, WrapHashably, WrapKwArgs, Hashable
 from .core import unit
 
 from ._src import traceback_util
@@ -43,6 +45,18 @@ def _ensure_index_tuple(x: Any) -> Tuple[int, ...]:
     return (operator.index(x),)
   except TypeError:
     return tuple(map(operator.index, x))
+
+def _ensure_str(x: str) -> str:
+  if not isinstance(x, str):
+    raise TypeError(f"argument is not a string: {x}")
+  return x
+
+def _ensure_str_tuple(x: Union[str, Iterable[str]]) -> Tuple[str, ...]:
+  """Convert x to a tuple of strings."""
+  if isinstance(x, str):
+    return (x,)
+  else:
+    return tuple(map(_ensure_str, x))
 
 @lu.transformation_with_aux
 def flatten_fun(in_tree, *args_flat):
@@ -72,6 +86,26 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
+PyTreeDef = Any
+def flattened_fun_in_tree(fn: lu.WrappedFun) -> Optional[Tuple[PyTreeDef, bool]]:
+  # This implementation relies on internal details of linear_util.py's
+  # WrappedFun, but it's for the worthy cause of better user error messages.
+  # It can fail (i.e. return None) if its WrappedFun argument is not transformed
+  # with flatten_fun or flatten_fun_nokwargs, which could happen e.g. when
+  # core.eval_jaxpr encounters a call primitive (though at that point we're just
+  # round-tripping jaxprs and the user errors in question are impossible).
+  assert isinstance(flatten_fun, partial) and len(flatten_fun.args) == 1
+  assert (isinstance(flatten_fun_nokwargs, partial) and
+          len(flatten_fun_nokwargs.args) == 1)
+  flat_xforms = {flatten_fun.args[0], flatten_fun_nokwargs.args[0]}
+  try:
+    (in_tree, has_kwargs), = ((args[0], f is flatten_fun.args[0])
+                              for f, args in fn.transforms if f in flat_xforms)
+  except ValueError:
+    return None
+  else:
+    return in_tree, has_kwargs
+
 @lu.transformation_with_aux
 def flatten_fun_nokwargs2(in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
@@ -87,20 +121,26 @@ def flatten_fun_nokwargs2(in_tree, *args_flat):
 
 def argnums_partial(f, dyn_argnums, args):
   dyn_argnums = _ensure_index_tuple(dyn_argnums)
-  fixed_args = tuple([unit if i in dyn_argnums else wrap_hashably(arg)
-                      for i, arg in enumerate(args)])
+  fixed_args = tuple(unit if i in dyn_argnums else wrap_hashably(arg)
+                     for i, arg in enumerate(args))
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, fixed_args), dyn_args
 
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
-                           args: Tuple[Any]):
+                           args: Tuple[Any], *, allow_invalid: bool):
   """Version of ``argnums_partial`` that checks hashability of static_argnums."""
+  if not static_argnums:
+    return f, args
   dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
   dyn_args = tuple(args[i] for i in dyn_argnums)
 
   fixed_args = [unit] * len(args)  # type: ignore
   for i in static_argnums:
+    # TODO(shoyer): set allow_invalid=True permanently after enabling
+    # static_argnames.
+    if allow_invalid and i >= len(args):
+      continue
     static_arg = args[i]
     try:
       hash(static_arg)
@@ -122,6 +162,48 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
     args[i] = arg
   ans = yield args, kwargs
   yield ans
+
+
+def argnames_partial(f, dyn_argnames, kwargs):
+  dyn_argnames = _ensure_str_tuple(dyn_argnames)
+  fixed_kwargs = tuple((k, unit if k in dyn_argnames else wrap_hashably(v))
+                       for k, v in kwargs.items())
+  dyn_kwargs = {k: kwargs[k] for k in dyn_argnames}
+  return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
+
+
+def argnames_partial_except(f: lu.WrappedFun, static_argnames: Tuple[str, ...],
+                            kwargs: Dict[str, Any]):
+  if not static_argnames:
+    return f, kwargs
+  dyn_kwargs = {k: v for k, v in kwargs.items() if k not in static_argnames}
+
+  fixed_kwargs: Dict[str, Any] = {}
+  for k, arg in kwargs.items():
+    if k in dyn_kwargs:
+      fixed_kwargs[k] = unit
+    else:
+      try:
+        hash(arg)
+      except TypeError:
+        raise ValueError(
+            "Non-hashable static arguments are not supported, as this can lead "
+            f"to unexpected cache-misses. Static argument (name {k}) of type "
+            f"{type(arg)} for function {f.__name__} is non-hashable.")
+      else:
+        fixed_kwargs[k] = Hashable(arg)  # type: ignore
+
+  return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
+
+
+@lu.transformation
+def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
+  kwargs = {k: None if arg is unit else arg.val
+            for k, arg in fixed_kwargs.val.items()}
+  kwargs.update(dyn_kwargs)
+  ans = yield args, kwargs
+  yield ans
+
 
 def donation_vector(donate_argnums, args, kwargs) -> Tuple[bool, ...]:
   """Returns a tuple with a boolean value for each leaf in args."""
@@ -216,3 +298,8 @@ def shaped_abstractify(x):
   named_shape = getattr(x, 'named_shape', {})
   return core.ShapedArray(np.shape(x), _dtype(x), weak_type=weak_type,
                           named_shape=named_shape)
+
+# This decorator exists to make it easier to monkey-patch APIs in JAX.
+# By default it does nothing, but it can be monkey-patched to do other things.
+def api_hook(fun, tag: str):
+  return fun

@@ -389,6 +389,26 @@ class JetTest(jtu.JaxTestCase):
       return jax.grad(f)(x, eps)
     jet(g, (1.,), ([1.],))  # doesn't crash
 
+  def test_scatter_add(self):
+    # very basic test from https://github.com/google/jax/issues/5365
+    def f(x):
+      x0 = x[0]
+      x1 = x[1]
+      return (x0**5 + x1**5).sum()
+
+    def h(eps):
+      from jax import jacfwd, grad
+
+      x = jnp.array([1., 1.])
+      μ = eps * x
+
+      def F(t):
+        return f(x + t * μ)
+
+      return grad(jacfwd(F))(0.)
+
+    self.check_jet(h, (0.,), ([1., 2., 3.],), rtol=1e-3)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

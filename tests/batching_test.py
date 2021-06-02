@@ -15,18 +15,18 @@
 
 import itertools as it
 import numpy as np
-from unittest import skipIf
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jax import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
 from jax import random
-from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
-from jax.api import vmap
+from jax import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
+from jax import vmap
 from jax._src.util import partial
 import jax.ops
 
@@ -967,33 +967,35 @@ class BatchingTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": "_{}_vmap_names={}_collective_names={}".format(
-          collective.__name__.replace(" ", ""), vmap_names, collective_names),
+          collective.__name__.replace(" ", ""),
+          "".join(vmap_names), "".join(collective_names)),
        "collective": collective, "bulk_op": bulk_op, "vmap_names": vmap_names,
        "collective_names": collective_names}
       for collective, bulk_op in [(lax.psum, jnp.sum),
                                   (lax.pmax, jnp.max),
                                   (lax.pmin, jnp.min)]
-      for vmap_names in [('i',), ('i', 'j'), ('j', 'i')]
-      for collective_names in it.permutations(vmap_names))
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
+      for vmap_names in [('i',), ('i', 'j'), ('i', 'j', 'k')]
+      for subset_size in range(1, len(vmap_names) + 1)
+      for collective_subset in it.combinations(vmap_names, subset_size)
+      for collective_names in it.permutations(collective_subset))
   def testCommAssocCollective(self, collective, bulk_op, vmap_names, collective_names):
-    x = jnp.arange(3 * 4 * 5, dtype=jnp.float32).reshape((3, 4, 5))
+    shape = (2, 2, 2)
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
 
     # To test relative permutations of the order in which the axis names appear
     # in the primitive call versus the order the vmaps are applied, we always
     # apply vmaps in the order of the `vmap_names` argument, and apply the
     # collective with names according to the `collective_names` argument.
     f = lambda x: x - collective(x, collective_names)
-    for axis_name in vmap_names:
-      f = vmap(f, axis_name=axis_name)
-    self.assertAllClose(f(x), x - bulk_op(x, axis=tuple(range(len(vmap_names)))))
+    # Use non-zero in and out axes to improve the coverage
+    for i, axis_name in enumerate(vmap_names):
+      f = vmap(f, axis_name=axis_name, in_axes=i, out_axes=i)
+    pos_axis = [i for i, name in enumerate(vmap_names) if name in collective_names]
+    self.assertAllClose(f(x), x - bulk_op(x, axis=pos_axis, keepdims=True))
 
     if collective is lax.psum:
       jtu.check_grads(f, (x,), 2, eps=1)
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testPPermute(self):
     nelem = 10
     ntests = 10
@@ -1012,8 +1014,6 @@ class BatchingTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
       for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testAllToAll(self, vmap_axis, split_axis, concat_axis):
     shape = (4, 4, 4, 4)
     x = np.arange(np.prod(shape)).reshape(shape)
@@ -1028,8 +1028,6 @@ class BatchingTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
       for split_axis, concat_axis, vmap_axis in it.product(range(2), range(2), range(3)))
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testAllToAllSplitAxis(self, vmap_axis, split_axis, concat_axis):
     shape = (4, 4, 4)
     x = np.arange(np.prod(shape)).reshape(shape)
@@ -1083,16 +1081,12 @@ class BatchingTest(jtu.JaxTestCase):
       jax.vmap(lambda *xs: xs, in_axes=(0, None), out_axes=(0, -2))(
         np.arange(5), 7)
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testAxisIndex(self):
     x = np.arange(10)
     self.assertAllClose(
       vmap(lambda x: x - lax.axis_index('i'), axis_name='i')(x),
       x - np.arange(x.shape[0]))
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testCollectivePdot(self):
     def f(x, y):
       return lax.pdot(x, y, 'i')
@@ -1109,8 +1103,6 @@ class BatchingTest(jtu.JaxTestCase):
     z = vmap(f, axis_name='i', in_axes=(0, 0), out_axes=None)(x, y)
     self.assertAllClose(z, jnp.dot(x.T, y))
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testCollectivePdotBatching(self):
     def f(x, y):
       return lax.pdot(x, y, 'i')
@@ -1121,8 +1113,6 @@ class BatchingTest(jtu.JaxTestCase):
     zs = vmap(vmap(f, axis_name='i', in_axes=(1, 0), out_axes=None))(xs, ys)
     self.assertAllClose(zs, jnp.einsum('nij,njk->nik', xs, ys))
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testPdotJvp(self):
     def f(x, y):
       return lax.pdot(x, y, 'i')
@@ -1138,8 +1128,6 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(z, jnp.dot(x, y))
     self.assertAllClose(z_dot, jnp.dot(x_dot, y) + jnp.dot(x, y_dot))
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testPdotVjp(self):
     def f(x, y):
       return lax.pdot(x, y, 'i')
@@ -1164,8 +1152,13 @@ class BatchingTest(jtu.JaxTestCase):
     y = vmap(f)(a=jnp.array([1]), b=jnp.array([2]))  # doesn't work
     self.assertAllClose(x, y)
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
+  def testGradOfPsum(self):
+    a = jnp.ones(5)
+    f = vmap(jax.grad(lambda x: -lax.psum(x, 'i')), out_axes=None, axis_name='i')
+    self.assertEqual(
+        f(a),
+        jax.core.jaxpr_as_fun(jax.make_jaxpr(f)(a))(a)[0])
+
   def testAllGatherToUnmapped(self):
     def f(x):
       return lax.all_gather(x, axis_name='i')
@@ -1174,8 +1167,6 @@ class BatchingTest(jtu.JaxTestCase):
     # Original mapped axis becomes first axis of unmapped return value.
     self.assertAllClose(vmap(f, axis_name='i', in_axes=1, out_axes=None)(x), x.T)
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testBatchedAllGather(self):
     def f(x):
       return lax.all_gather(x, axis_name='i')
@@ -1187,8 +1178,6 @@ class BatchingTest(jtu.JaxTestCase):
     res = vmap(vmap(f, axis_name='j'), axis_name='i', out_axes=None)(x)
     self.assertAllClose(res, x.T)
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testAllGatherVjp(self):
     def f(x):
       return lax.all_gather(x, axis_name='i')
@@ -1200,8 +1189,6 @@ class BatchingTest(jtu.JaxTestCase):
     x_bar, = vmap(lambda x, y_bar: vjp(f, x)[1](y_bar), axis_name='i')(x, y_bar)
     self.assertAllClose(x_bar, np.sum(y_bar, axis=0))
 
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testAllGatherOfConst(self):
     def f(x):
       a = lax.all_gather(jnp.ones_like(x), axis_name='i')
@@ -1225,8 +1212,6 @@ class BatchingTest(jtu.JaxTestCase):
       for shape in [(7,), (5, 8)]
       for axis in range(len(shape))
   )
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def testArgAllReduce(self, shape, dtype, axis, collective, bulk_op):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
@@ -1239,6 +1224,14 @@ class BatchingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
       TypeError, "Output from batched function.*is not a valid JAX type"):
       vmap(lambda x: "hello")(np.arange(5))
+
+  def testIssue6096(self):
+    def f(x):
+      return jsp.special.betainc(jnp.ones(3), 1., x)
+
+    self.assertEqual(f(jnp.ones(3)).shape, (3,))
+    self.assertEqual(jax.vmap(f)(jnp.ones((2, 3))).shape, (2, 3))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

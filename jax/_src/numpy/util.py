@@ -20,6 +20,8 @@ from typing import Callable, NamedTuple, Optional, Dict, Sequence
 _parameter_break = re.compile("\n(?=[A-Za-z_])")
 _section_break = re.compile(r"\n(?=[^\n]{3,15}\n-{3,15})", re.MULTILINE)
 _numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\([\w\W]*?\)$', re.MULTILINE)
+_versionadded = re.compile(r'^\s+\.\.\s+versionadded::', re.MULTILINE)
+_docreference = re.compile(r':doc:`(.*?)\s*<.*?>`')
 
 class ParsedDoc(NamedTuple):
   """
@@ -47,17 +49,23 @@ def _parse_numpydoc(docstr: Optional[str]) -> ParsedDoc:
   if docstr is None or not docstr.strip():
     return ParsedDoc(docstr)
 
-  firstline, _, body = docstr.partition('\n')
+  # Remove any :doc: directives in the docstring to avoid sphinx errors
+  docstr = _docreference.sub(
+    lambda match: f"{match.groups()[0]}", docstr)
+
+  signature, body = "", docstr
+  match = _numpy_signature_re.match(body)
+  if match:
+    signature = match.group()
+    body = docstr[match.end():]
+
+  firstline, _, body = body.partition('\n')
   body = textwrap.dedent(body.lstrip('\n'))
 
-  signature = ""
-  if _numpy_signature_re.match(firstline):
-    signature, firstline = firstline, ""
-  else:
-    match = _numpy_signature_re.match(body)
-    if match:
-      signature = match.group()
-      body = body[match.end():]
+  match = _numpy_signature_re.match(body)
+  if match:
+    signature = match.group()
+    body = body[match.end():]
 
   summary = firstline
   if not summary:
@@ -85,7 +93,8 @@ def _parse_parameters(body: str) -> Dict[str, str]:
 
 
 def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
-           sections: Sequence[str] = ('Parameters', 'Returns', 'References')):
+           sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
+           skip_params: Sequence[str] = ()):
   """Specialized version of functools.wraps for wrapping numpy functions.
 
   This produces a wrapped function with a modified docstring. In particular, if
@@ -103,6 +112,8 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
       the docstring.
     sections: a list of sections to include in the docstring. The default is
       ["Parameters", "returns", "References"]
+    skip_params: a list of strings containing names of parameters accepted by the
+      function that should be skipped in the parameter list.
   """
   def wrap(op):
     docstr = getattr(fun, "__doc__", None)
@@ -116,8 +127,8 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
           parsed.sections['Parameters'] = (
             "Parameters\n"
             "----------\n" +
-            "\n".join(desc for p, desc in parameters.items()
-                      if p in op.__code__.co_varnames)
+            "\n".join(_versionadded.split(desc)[0].rstrip() for p, desc in parameters.items()
+                      if p in op.__code__.co_varnames and p not in skip_params)
           )
 
         docstr = parsed.summary.strip() + "\n" if parsed.summary else ""
@@ -138,7 +149,6 @@ def _wraps(fun: Callable, update_doc: bool = True, lax_description: str = "",
         if kept_sections:
           docstr += "\n" + "\n\n".join(kept_sections) + "\n"
       except:
-        raise
         docstr = fun.__doc__
 
     op.__doc__ = docstr

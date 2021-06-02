@@ -69,7 +69,7 @@ from jax.experimental import jax2tf
 from jax.interpreters import xla
 
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf  # type: ignore[import]
 
 config.parse_flags_with_absl()
 
@@ -110,7 +110,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                                   dtype=harness.dtype), limitations))
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
-    self.ConvertAndCompare(func_jax, *args, limitations=limitations)
+    enable_xla = harness.params.get("enable_xla", True)
+    self.ConvertAndCompare(func_jax, *args, limitations=limitations,
+                           enable_xla=enable_xla)
 
   def test_primitive_coverage(self):
     """Fail if there are JAX primitives that are not implemented."""
@@ -129,8 +131,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     all_primitives = tuple(sorted(all_primitives, key=str))
     for p in all_primitives:
-      # TODO: remove tie_in once omnistaging is on by default
-      if p.name == "axis_index" or p.name == "tie_in":
+      if p.name == "axis_index":
         continue
       if p.name in tf_not_yet_impl:
         self.assertNotIn(
@@ -173,7 +174,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     tf_error_table = [
         """
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |
-| --- | --- | --- | --- | --- | ---|"""
+| --- | --- | --- | --- | --- |"""
     ]
     tf_numerical_discrepancies_table = list(tf_error_table)  # a copy
     for h, l in sorted(
@@ -260,8 +261,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
 
     with self.assertRaisesRegex(
-        NotImplementedError, "Call to pad can only be converted through "
-                             "TFXLA, but XLA is disabled"):
+        NotImplementedError, "Call to pad cannot be converted with enable_xla=False."):
       self.ConvertAndCompare(
           fun, np.ones((2, 3), dtype=np.float32), enable_xla=False)
 

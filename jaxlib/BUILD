@@ -15,7 +15,7 @@
 # JAX is Autograd and XLA
 
 load(
-    "//jax:jax.bzl",
+    "//jaxlib:jax.bzl",
     "cuda_library",
     "flatbuffer_cc_library",
     "flatbuffer_py_library",
@@ -116,8 +116,10 @@ py_library(
         "pocketfft.py",
         "version.py",
     ] + if_cuda_is_configured([
+        "cuda_linalg.py",
         "cuda_prng.py",
         "cusolver.py",
+        "cusparse.py",
     ]) + if_rocm_is_configured([
         "rocsolver.py",
     ]),
@@ -133,8 +135,10 @@ py_library(
     name = "gpu_support",
     deps = [
         ":cublas_kernels",
+        ":cuda_lu_pivot_kernels",
         ":cuda_prng_kernels",
         ":cusolver_kernels",
+        ":cusparse_kernels",
     ],
 )
 
@@ -192,6 +196,64 @@ pybind_extension(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@pybind11",
+    ],
+)
+
+pybind_extension(
+    name = "cusparse_kernels",
+    srcs = ["cusparse.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "cusparse_kernels",
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":handle_pool",
+        ":kernel_pybind11_helpers",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cusparse_lib",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@pybind11",
+    ],
+)
+
+cuda_library(
+    name = "cuda_lu_pivot_kernels_lib",
+    srcs = ["cuda_lu_pivot_kernels.cu.cc"],
+    hdrs = ["cuda_lu_pivot_kernels.h"],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":kernel_helpers",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+pybind_extension(
+    name = "cuda_lu_pivot_kernels",
+    srcs = ["cuda_lu_pivot_kernels.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "cuda_lu_pivot_kernels",
+    deps = [
+        ":cuda_lu_pivot_kernels_lib",
+        ":kernel_pybind11_helpers",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@local_config_cuda//cuda:cuda_headers",
         "@pybind11",
     ],
@@ -282,5 +344,14 @@ pybind_extension(
         "@flatbuffers//:runtime_cc",
         "@pocketfft",
         "@pybind11",
+    ],
+)
+
+pybind_extension(
+    name = "cpu_feature_guard",
+    srcs = ["cpu_feature_guard.c"],
+    module_name = "cpu_feature_guard",
+    deps = [
+        "@org_tensorflow//third_party/python_runtime:headers",
     ],
 )

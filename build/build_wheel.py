@@ -78,6 +78,42 @@ def copy_file(src_file, dst_dir, dst_filename=None):
   else:
     _copy_normal(src_file, dst_dir, dst_filename=dst_filename)
 
+
+_XLA_EXTENSION_STUBS = [
+    "__init__.pyi",
+    "jax_jit.pyi",
+    "ops.pyi",
+    "outfeed_receiver.pyi",
+    "pmap_lib.pyi",
+    "profiler.pyi",
+    "pytree.pyi",
+]
+
+
+def patch_copy_xla_extension_stubs(dst_dir):
+  # This file is required by PEP-561. It marks jaxlib as package containing
+  # type stubs.
+  with open(os.path.join(dst_dir, "py.typed"), "w"):
+    pass
+  # The -stubs suffix is required by PEP-561.
+  xla_extension_dir = os.path.join(dst_dir, "xla_extension-stubs")
+  os.makedirs(xla_extension_dir)
+  # Create a dummy __init__.py to convince setuptools that
+  # xla_extension-stubs is a package.
+  with open(os.path.join(xla_extension_dir, "__init__.py"), "w"):
+    pass
+  for stub_name in _XLA_EXTENSION_STUBS:
+    with open(r.Rlocation(
+        "org_tensorflow/tensorflow/compiler/xla/python/xla_extension/" + stub_name)) as f:
+      src = f.read()
+    src = src.replace(
+        "from tensorflow.compiler.xla.python import xla_extension",
+        "from .. import xla_extension"
+    )
+    with open(os.path.join(xla_extension_dir, stub_name), "w") as f:
+      f.write(src)
+
+
 def patch_copy_xla_client_py(dst_dir):
   with open(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_client.py")) as f:
     src = f.read()
@@ -118,9 +154,9 @@ def verify_mac_libraries_dont_reference_chkstack():
   if nm.returncode != 0:
     raise RuntimeError(f"nm process failed: {nm.stdout} {nm.stderr}")
   if "____chkstk_darwin" in nm.stdout:
-      raise RuntimeError(
-        "Mac wheel incorrectly depends on symbol ____chkstk_darwin, which "
-        "means that it isn't compatible with older MacOS versions.")
+    raise RuntimeError(
+      "Mac wheel incorrectly depends on symbol ____chkstk_darwin, which "
+      "means that it isn't compatible with older MacOS versions.")
 
 
 def prepare_wheel(sources_path):
@@ -136,6 +172,7 @@ def prepare_wheel(sources_path):
   copy_file(r.Rlocation("__main__/jaxlib/setup.cfg"), dst_dir=sources_path)
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/init.py"),
                  dst_filename="__init__.py")
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cpu_feature_guard.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/lapack.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_pocketfft.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py"))
@@ -143,23 +180,34 @@ def prepare_wheel(sources_path):
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.so"))
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.pyd"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.pyd"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.pyd"))
   if r.Rlocation("__main__/jaxlib/cusolver.py") is not None:
+    libdevice_dir = os.path.join(jaxlib_dir, "cuda", "nvvm", "libdevice")
+    os.makedirs(libdevice_dir)
+    copy_file(r.Rlocation("local_config_cuda/cuda/cuda/nvvm/libdevice/libdevice.10.bc"),
+              dst_dir=libdevice_dir)
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver.py"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_linalg.py"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng.py"))
   if r.Rlocation("__main__/jaxlib/rocblas_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocblas_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocsolver.py"))
+  if r.Rlocation("__main__/jaxlib/cusparse_kernels.so") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse_kernels.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/version.py"))
 
   if _is_windows():
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.pyd"))
   else:
     copy_to_jaxlib(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so"))
+  patch_copy_xla_extension_stubs(jaxlib_dir)
   patch_copy_xla_client_py(jaxlib_dir)
 
   if not _is_windows():
@@ -169,12 +217,16 @@ def prepare_wheel(sources_path):
 
 def build_wheel(sources_path, output_path):
   """Builds a wheel in `output_path` using the source tree in `sources_path`."""
-  platform_name = {
-    "Linux": "manylinux2010",
-    "Darwin": "macosx_10_9",
-    "Windows": "win",
-  }[platform.system()]
-  cpu_name = "amd64" if platform.system() == "Windows" else "x86_64"
+  if platform.system() == "Windows":
+    cpu_name = "amd64"
+    platform_name = "win"
+  else:
+    platform_name, cpu_name = {
+      ("Linux", "x86_64"): ("manylinux2010", "x86_64"),
+      ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
+      ("Darwin", "x86_64"): ("macosx_10_9", "x86_64"),
+      ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
+    }[(platform.system(), platform.machine())]
   python_tag_arg = (f"--python-tag=cp{sys.version_info.major}"
                     f"{sys.version_info.minor}")
   platform_tag_arg = f"--plat-name={platform_name}_{cpu_name}"

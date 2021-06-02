@@ -18,7 +18,7 @@ from functools import partial
 import itertools
 import operator
 import re
-from unittest import SkipTest, skipIf
+from unittest import SkipTest
 import textwrap
 
 from absl.testing import absltest
@@ -28,11 +28,12 @@ import numpy as np
 import numpy.random as npr
 
 import jax
-from jax import api
+from jax._src import api
 from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu
+from jax import tree_util
 from jax._src.util import unzip2
 from jax.lib import xla_bridge
 from jax.interpreters import xla
@@ -237,14 +238,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testWhileTypeErrors(self):
     """Test typing error messages for while."""
+    tuple_treedef = tree_util.tree_structure((1., 1.))
+    leaf_treedef = tree_util.tree_structure(0.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]).")):
+        re.escape(f"cond_fun must return a boolean scalar, but got pytree {tuple_treedef}.")):
       lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
     with  self.assertRaisesRegex(TypeError,
         re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])].")):
       lax.while_loop(lambda c: np.float32(1.), lambda c: c, np.float32(0.))
     with self.assertRaisesRegex(TypeError,
-        re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
+        re.escape("body_fun output and input must have same type structure, "
+                  f"got {tuple_treedef} and {leaf_treedef}.")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
     with self.assertRaisesWithLiteralMatch(TypeError,
         ("body_fun output and input must have identical types, got\n"
@@ -335,7 +339,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.array([4, 3, 4, 3])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
   def testWhileLoopAxisIndexBatched(self):
     def fun(x):
       return lax.while_loop(lambda x: x < lax.axis_index('i'), lambda x: x + 2, x)
@@ -715,7 +718,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("Pred must be a scalar, got (1.0, 1.0) of type <class 'tuple'>")):
       lax.cond((1., 1.), lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
+        re.escape("true_fun and false_fun output must have same type structure, "
+                  f"got {tree_util.tree_structure(2.)} and {tree_util.tree_structure((3., 3.))}.")):
       lax.cond(True, lambda top: 2., lambda fop: (3., 3.), 1.)
     with self.assertRaisesRegex(
         TypeError, textwrap.dedent(
@@ -744,7 +748,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("Empty branch sequence")):
       lax.switch(0, [], 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("branch 0 and 1 outputs must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
+        re.escape("branch 0 and 1 outputs must have same type structure, "
+                  f"got {tree_util.tree_structure(2.)} and {tree_util.tree_structure((3., 3.))}.")):
       lax.switch(1, [lambda _: 2., lambda _: (3., 3.)], 1.)
     with self.assertRaisesRegex(
         TypeError, textwrap.dedent(
@@ -996,7 +1001,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
     jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
-  @skipIf(not config.omnistaging_enabled, "test only works with omnistaging")
   def testCondGradVmapNan(self):
     eps = 1e-3
 
@@ -1362,7 +1366,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(scan, (0,))
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -1393,7 +1397,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(scan, (0,))
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -1427,7 +1431,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(scan, (0,))
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -1589,10 +1593,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.scan(lambda c, x: np.float32(0.), 0, a)
     with  self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, "
-                  "got PyTreeDef(tuple, [*,*,*]) and PyTreeDef(tuple, [*,PyTreeDef(tuple, [*,*])])")):
+                  f"got {tree_util.tree_structure((0, 0, 0,))} "
+                  f"and {tree_util.tree_structure((1, (2, 3)))}")):
       lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a)
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(None, []).")):
+        re.escape("scan carry output and input must have same type structure, "
+                  f"got {tree_util.tree_structure(a)} and {tree_util.tree_structure(None)}.")):
       lax.scan(lambda c, x: (0, x), None, a)
     with self.assertRaisesWithLiteralMatch(
         TypeError,
@@ -1602,8 +1608,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         "ShapedArray(float32[])."):
       lax.scan(lambda c, x: (np.int32(0), x), np.float32(1.0), a)
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan carry output and input must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
-      lax.scan(lambda c, x: (0, x), (1, 2), jnp.arange(5))
+        re.escape("scan carry output and input must have same type structure, "
+                  f"got {tree_util.tree_structure(a)} and {tree_util.tree_structure((1, 2))}.")):
+      lax.scan(lambda c, x: (0, x), (1, 2), a)
 
 
   @parameterized.named_parameters(
@@ -1648,7 +1655,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(scan, (0,))
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_shape = [5, 3]
     c_shape = [4]
@@ -1709,7 +1716,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(carry_out[1], carry_init, check_dtypes=False)
     self.assertAllClose(carry_out[0], jnp.array([2., 2., 2.]), check_dtypes = False)
 
-  # TODO(mattjj, dougalm): fix this test when skip_checks is False
   def testIssue757(self):
     # code from https://github.com/google/jax/issues/757
     def fn(a):
@@ -1871,25 +1877,29 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loop_lax, (x,), order=2, modes=["fwd"])
 
+  def testStaticForiGrad(self):
+    func = lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x)
+    api.grad(func)(1.)  # doesn't crash
+    api.linearize(func, 1.)  # doesn't crash
+
   @parameterized.named_parameters(
       dict(testcase_name="_loop={}".format(loop), loop=loop)
-      for loop in ["while", "fori", "fori_inside_cond", "fori_inside_scan"])
+      for loop in ["while", "fori_inside_cond", "fori_inside_scan"])
   def testWhileGradError(self, loop: str = "fori_inside_scan"):
     # Raise error for vjp for loops
     if loop == "while":
       func = lambda x: lax.while_loop(lambda i: i < 5., lambda i: i + 1., x)
-    elif loop == "fori":
-      func = lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x)
     elif loop == "fori_inside_jit":
       func = api.jit(lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x))
     elif loop == "fori_inside_cond":
-      func = lambda x: lax.cond(True, x,
-                                lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
-                                 1., lambda x: x)
+      func = lambda x: lax.cond(
+          True,
+          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
+          1., lambda x: x)
     elif loop == "fori_inside_scan":
-      func = lambda x: lax.scan(lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x),
-                                              None),
-                                x, np.ones(2))[0]
+      func = lambda x: lax.scan(
+          lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x), None),
+          x, np.ones(2))[0]
     else:
       assert False
 
@@ -2056,6 +2066,50 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = jnp.linalg.solve(a, c)
     actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
     self.assertAllClose(expected, actual)
+
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  def test_custom_linear_solve_aux(self):
+    def explicit_jacobian_solve_aux(matvec, b):
+      x = lax.stop_gradient(jnp.linalg.solve(api.jacobian(matvec)(b), b))
+      return x, array_aux
+
+    def matrix_free_solve_aux(matvec, b):
+      return lax.custom_linear_solve(
+        matvec, b, explicit_jacobian_solve_aux, explicit_jacobian_solve_aux,
+        symmetric=True, has_aux=True)
+
+    def linear_solve_aux(a, b):
+      return matrix_free_solve_aux(partial(high_precision_dot, a), b)
+
+    # array aux values, to be able to use jtu.check_grads
+    array_aux = {"converged": np.array(1.), "nfev": np.array(12345.)}
+    rng = np.random.RandomState(0)
+    a = rng.randn(3, 3)
+    a = a + a.T
+    b = rng.randn(3)
+
+    expected = jnp.linalg.solve(a, b)
+    actual_nojit, nojit_aux = linear_solve_aux(a, b)
+    actual_jit, jit_aux = api.jit(linear_solve_aux)(a, b)
+
+    self.assertAllClose(expected, actual_nojit)
+    self.assertAllClose(expected, actual_jit)
+    # scalar dict equality check
+    self.assertDictEqual(nojit_aux, array_aux)
+    self.assertDictEqual(jit_aux, array_aux)
+
+    # jvp / vjp test
+    jtu.check_grads(linear_solve_aux, (a, b), order=2, rtol=2e-3)
+
+    # vmap test
+    c = rng.randn(3, 2)
+    expected = jnp.linalg.solve(a, c)
+    expected_aux = tree_util.tree_map(partial(np.repeat, repeats=2), array_aux)
+    actual_vmap, vmap_aux = api.vmap(linear_solve_aux, (None, 1), -1)(a, c)
+
+    self.assertAllClose(expected, actual_vmap)
+    jtu.check_eq(expected_aux, vmap_aux)
+
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_zeros(self):
@@ -2350,7 +2404,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "compiling a primitive computation `while` that requires {} "
+            "compiling a primitive computation `scan` that requires {} "
             "replicas, but only {} XLA devices are available on backend {}."
             .format(too_big, api.device_count(), jtu.device_under_test())),
         lambda: f_loop(jnp.ones(too_big)))
@@ -2455,6 +2509,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(result.second, np.array([0., 10., 30.]),
                         check_dtypes=False)
+
+  def testAssociativeScanOfBools(self):
+    x = jnp.array([False, True, True, True, False, True])
+    y = lax.associative_scan(lax.bitwise_xor, x)
+    self.assertArraysEqual(np.array([False, True, False, True, True, False]), y)
+
+  @parameterized.named_parameters({"testcase_name": f"_{shape}", "shape": shape}
+                                  for shape in [2, 43, 100])
+  def testAssociativeScanSolvingRegressionTest(self, shape):
+    # This test checks that the batching rule doesn't raise for a batch
+    # sensitive function (solve).
+    ms = np.repeat(np.eye(2).reshape(1, 2, 2), shape, axis=0)
+    vs = np.ones((shape, 2))
+
+    @api.vmap
+    def fn(a, b):
+      m1, v1 = a
+      m2, v2 = b
+      return m1 + m2, jsp.linalg.solve(m1, v2) + jsp.linalg.solve(m2, v1)
+
+    _ = lax.associative_scan(fn, elems=(ms, vs))
 
   def test_scan_typecheck_param(self):
     d = jnp.ones(2)
@@ -2565,8 +2640,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     *_, ext_res = vjp_fun.args[0].args[0]
     self.assertIsInstance(ext_res, xla.DeviceArray)
 
-  @skipIf(not config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
   def test_scan_vmap_collectives(self):
     def scan_f(state, x):
       s = lax.psum(state, 'i') * x
@@ -2582,9 +2655,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_xla_cpu_gpu_loop_cond_bug(self):
     # https://github.com/google/jax/issues/5900
-    if jax.lib.version < (0, 1, 62):
-      raise SkipTest("test is broken on jaxlib==0.1.61 and 0.1.60")
-
     def deriv(f):
       return lambda x, *args: jax.linearize(lambda x: f(x, *args), x)[1](1.0)
 
@@ -2610,6 +2680,24 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertAllClose(deriv(my_pow)(3.0, 1), 1.0, check_dtypes=False)
 
+  def test_unexpected_tracer_error(self):
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "for while_loop"):
+      lst = []
+      def side_effecting_body(val):
+        lst.append(val)
+        return val+1
+      lax.while_loop(lambda x: x < 2, side_effecting_body, 1)
+      lst[0] += 1
+
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "for scan"):
+      lst = []
+      def side_effecting_scan(carry, val):
+        lst.append(val)
+        return carry, val+1
+      lax.scan(side_effecting_scan, None, jnp.ones((2, 2)))
+      lst[0] += 1
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

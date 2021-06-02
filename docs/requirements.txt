@@ -2,7 +2,8 @@
 # sphinx >=3 required by sphinx-autodoc-typehints v1.11.1 (Oct 2020)
 sphinx >=3, <4
 sphinx_rtd_theme
-sphinx-autodoc-typehints
+sphinx-autodoc-typehints==1.11.1
+jupyter-sphinx>=0.3.2
 myst-nb
 
 # Packages used for CI tests.
@@ -12,5 +13,4 @@ pytest-xdist
 # Packages used for notebook execution
 matplotlib
 sklearn
-jaxlib
-.  # install jax itself from current directory.
+.[cpu]  # Install jax from the current directory; jaxlib from pypi.

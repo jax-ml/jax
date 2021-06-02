@@ -27,6 +27,7 @@ from jax import tree_util
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.interpreters import masking
+from jax._src import util
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
@@ -35,7 +36,7 @@ DType = Any
 def _make_tf_args(args):
   def _convert_to_tensor(v):
     if hasattr(v, "dtype"):
-      tf.convert_to_tensor(v)
+      return tf.convert_to_tensor(v)
     return v
 
   return tf.nest.map_structure(_convert_to_tensor, args)
@@ -44,10 +45,11 @@ def _make_tf_args(args):
 def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
   # tf_args can be PyTrees
   def _make_one_arg_signature(tf_arg):
+    if np.isscalar(tf_arg):
+      tf_arg = np.array(tf_arg)
     return tf.TensorSpec(np.shape(tf_arg), tf_arg.dtype)
 
   return tf.nest.map_structure(_make_one_arg_signature, list(tf_args))
-
 
 def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   if mode == "eager":
@@ -168,6 +170,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
             f"Unexpected success with known limitations {expect_tf_error}"))
           unexpected_successes.append(f"{mode}: {expect_tf_error}")
 
+      if (jtu.device_under_test() == "gpu" and
+          "dot_general_preferred" in self._testMethodName):
+        logging.info(log_message(f"Arguments are {args}, JAX result is {result_jax}\nand TF result is {result_tf}"))
+
       skip_comparison = [l for l in jax2tf_limits if l.skip_comparison]
       if skip_comparison:
         logging.warning(log_message(f"Skip result comparison due to {skip_comparison}"))
@@ -185,13 +191,59 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       custom_assert_lim = [l for l in jax2tf_limits if l.custom_assert]
       assert len(custom_assert_lim) <= 1, f"Expecting at most one applicable limitation with custom_assert, found {custom_assert_lim}"
 
-      if custom_assert_lim:
-        logging.info(log_message(f"Running custom_assert with tol={max_tol} due to {custom_assert_lim[0]}"))
-        custom_assert_lim[0].custom_assert(self, result_jax, result_tf, args=args, tol=max_tol)
-      else:
-        logging.info(log_message(f"Running default assert with tol={max_tol}"))
-        # In compiled mode we expect the same result as JAX by default
-        self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol)
+      try:
+        err_msg = f"TF mode {mode}."
+        log_hlo_on_error = mode == "compiled" or jtu.device_under_test() == "tpu"
+        if log_hlo_on_error:
+          err_msg += " See the logs for JAX and TF HLO comparisons."
+        if custom_assert_lim:
+          logging.info(log_message(f"Running custom_assert with tol={max_tol} due to {custom_assert_lim[0]}"))
+          custom_assert_lim[0].custom_assert(self, result_jax, result_tf,
+                                             args=args, tol=max_tol,
+                                             err_msg=err_msg)
+        else:
+          logging.info(log_message(f"Running default assert with tol={max_tol}"))
+          self.assertAllClose(result_jax, result_tf, atol=max_tol, rtol=max_tol,
+                              err_msg=err_msg)
+      except AssertionError as e:
+        # Print the HLO for comparison
+        if not log_hlo_on_error:
+          print(f"[{self._testMethodName}] Not logging HLO because the "
+                f"mode was {mode}")
+          raise
+
+        logging.info(f"[{self._testMethodName}] Logging HLO for exception in mode {mode}: {e}")
+        jax_comp = jax.xla_computation(func_jax)(*args)
+        jax_hlo = jax_comp.as_hlo_text()
+        logging.info(f"[{self._testMethodName}] "
+                     f"JAX NON_OPT HLO\n{jax_hlo}")
+
+        tf_func_compiled = tf.function(
+            func_tf,
+            autograph=False,
+            jit_compile=True,
+            input_signature=_make_tf_input_signature(*tf_args))
+        tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+                    stage="hlo")
+        logging.info(f"[{self._testMethodName}] TF NON OPT HLO\n{tf_hlo}")
+
+        backend = jax.lib.xla_bridge.get_backend()
+        modules = backend.compile(jax_comp).hlo_modules()
+        jax_opt_hlo = modules[0].to_string()
+        logging.info(f"[{self._testMethodName}] "
+                     f"JAX OPT HLO\n{jax_opt_hlo}")
+
+        # TODO(b/189265364): Remove this workaround
+        if (jtu.device_under_test() == "gpu" and
+            "dot_general" in self._testMethodName):
+          print(f"[{self._testMethodName}] Not logging TF OPT HLO because of "
+                f"crash in tf.experimental_get_compiler_ir (b/189265364)")
+        else:
+          tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+                      stage="optimized_hlo")
+          logging.info(f"[{self._testMethodName}] TF OPT HLO\n{tf_opt_hlo}")
+
+        raise
 
     # end "for mode"
 
@@ -237,7 +289,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
   def CheckShapePolymorphism(self, f_jax: Callable, *,
                              input_signature: Sequence[tf.TensorSpec],
-                             in_shapes: Optional[Sequence[Any]],
+                             polymorphic_shapes: Optional[Sequence[Any]],
                              expected_output_signature: tf.TensorSpec):
     """Convert a function using polymorphic shapes.
 
@@ -248,30 +300,36 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         must match the `input_signature`. (see jax2tf.convert).
     """
     f_tf = tf.function(
-        jax2tf.convert(f_jax, in_shapes=in_shapes),
+        jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes),
         autograph=False,
         input_signature=input_signature)
     concrete_f_tf = f_tf.get_concrete_function(*input_signature)
     if expected_output_signature:
+      # Strangely, output_shapes can be a single shape for a function with a
+      # single result, or a list/tuple of shapes.
       concrete_output_tf_shape = concrete_f_tf.output_shapes
-      assert not isinstance(concrete_output_tf_shape, tuple)  # A single result
-      self.assertEqual(
-          tuple(expected_output_signature.shape),
-          tuple(concrete_output_tf_shape))
+      if not isinstance(concrete_output_tf_shape, (tuple, list)):  # Single result
+        assert not isinstance(expected_output_signature, (tuple, list))
+        expected_output_signature = [expected_output_signature]
+        concrete_output_tf_shape = [concrete_output_tf_shape]
+
+      for expected, found in util.safe_zip(expected_output_signature,
+                                           concrete_output_tf_shape):
+        self.assertEqual(tuple(expected.shape), tuple(found))
     return f_tf
 
-  def MakeInputSignature(self, *in_shapes):
+  def MakeInputSignature(self, *polymorphic_shapes):
     """From a pytree of in_shape string specification, make a pytree of tf.TensorSpec.
 
     Dimension variables are replaced with None.
     """
 
-    def in_shape_to_tensorspec(in_shape: str) -> tf.TensorSpec:
-      in_spec = masking.parse_spec(in_shape)
+    def polymorphic_shape_to_tensorspec(poly_shape: str) -> tf.TensorSpec:
+      in_spec = masking.parse_spec(poly_shape)
       return tf.TensorSpec(
           tuple(
               int(dim_spec) if dim_spec.is_constant else None
               for dim_spec in in_spec),
           dtype=tf.float32)
 
-    return tree_util.tree_multimap(in_shape_to_tensorspec, in_shapes)
+    return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)

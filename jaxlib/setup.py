@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from setuptools import setup
-from glob import glob
 import os
 
 __version__ = None
@@ -25,19 +24,20 @@ cuda_version = os.environ.get("JAX_CUDA_VERSION")
 if cuda_version:
   __version__ += "+cuda" + cuda_version.replace(".", "")
 
-binary_libs = [os.path.basename(f) for f in glob('jaxlib/*.so*')]
-binary_libs += [os.path.basename(f) for f in glob('jaxlib/*.pyd*')]
-
 setup(
     name='jaxlib',
     version=__version__,
     description='XLA library for JAX',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=['jaxlib'],
+    packages=['jaxlib', 'jaxlib.xla_extension-stubs'],
     python_requires='>=3.6',
-    install_requires=['scipy', 'numpy>=1.16', 'absl-py', 'flatbuffers'],
+    install_requires=['scipy', 'numpy>=1.16', 'absl-py', 'flatbuffers >= 1.12, < 3.0'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
-    package_data={'jaxlib': binary_libs},
+    package_data={
+        'jaxlib': ['*.so', '*.pyd*', 'py.typed', 'cuda/nvvm/libdevice/libdevice*'],
+        'jaxlib.xla_extension-stubs': ['*.pyi'],
+    },
+    zip_safe=False,
 )

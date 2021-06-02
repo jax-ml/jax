@@ -24,8 +24,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import api
-from jax import core
+from jax._src import api
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
@@ -37,7 +36,9 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
+compatible_shapes = [[(3,)],
+                     [(), (3, 4), (3, 1), (1, 4)],
+                     [(2, 3, 4), (2, 1, 4)]]
 
 
 GradTestSpec = collections.namedtuple(
@@ -397,7 +398,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     result, pullback = api.vjp(dot, lhs, rhs)
     gresult = lax.zeros_like_array(result)
     s = str(api.make_jaxpr(pullback)(gresult))
-    assert "precision=HIGHEST" in s
+    assert "Precision.HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -428,7 +429,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     result, pullback = api.vjp(dot_general, lhs, rhs)
     gresult = lax.zeros_like_array(result)
     s = str(api.make_jaxpr(pullback)(gresult))
-    assert "precision=HIGHEST" in s
+    assert "Precision.HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_dtype={}_broadcast_sizes={}".format(
@@ -654,6 +655,30 @@ class LaxAutodiffTest(jtu.JaxTestCase):
            1e-2 if dtypes.finfo(dtype).bits == 32 else None)
     if op not in (lax.max, lax.min) or all(d > 0 for d in shape):
       check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_reducedims={}"
+       .format(jtu.format_shape_dtype_string(shape, dtype), dims),
+       "shape": shape, "dtype": dtype, "dims": dims}
+      for dtype in grad_float_dtypes
+      for shape, dims in [
+          [(3, 4, 5), ()],
+          [(3, 4, 5), (0,)],
+          [(3, 4, 5), (1, 2)],
+          [(3, 4, 5), (0, 2)],
+          [(3, 4, 5), (0, 1, 2)],
+          [(3, 1), (1,)],
+          [(3, 0, 5), (1,)],
+      ]))
+  def testReducePairGrad(self, shape, dtype, dims):
+    rng = jtu.rand_default(self.rng(), scale=1)
+    tol = {np.float32: 1e-2, np.float64: 1e-4}
+    operands = (rng(shape, dtype), rng(shape, dtype))
+    init_vals = (np.array(0, dtype), np.array(1, dtype))
+    def op(xs, ys):
+      return (xs[0] + ys[0], xs[1] * ys[1])
+    reduce = lambda xs, ys: lax.reduce((xs, ys), init_vals, op, dims)
+    check_grads(reduce, operands, 2, ["fwd", "rev"], tol, tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
@@ -992,7 +1017,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = np.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    with core.skipping_checks():
+    with jax.enable_checks(False):
       with self.assertRaises(TypeError):
         lax.stop_gradient(lambda x: x)
 

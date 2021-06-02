@@ -45,7 +45,7 @@ Example pytrees:
 ```
 
 JAX can be extended to consider other container types as pytrees; see
-[Extending pytrees](extending pytrees) below.
+{ref}`extending-pytrees` below.
 
 ## Pytrees and JAX functions
 
@@ -142,7 +142,7 @@ _jnp.arange(10)
 ```
 
 ```{code-cell}
-from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
+from jax.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
 
 # The structured value to be transformed
@@ -187,6 +187,8 @@ for structured in example_containers:
   show_example(structured)
 ```
 
+(extending-pytrees)=
+
 ### Extending pytrees
 
 By default, any part of a structured value that is not recognized as an
@@ -206,10 +208,13 @@ show_example(Special(1., 2.))
 ```
 
 The set of Python types that are considered internal pytree nodes is extensible,
-through a global registry of types. Values of registered types are traversed
-recursively:
+through a global registry of types, and values of registered types are traversed
+recursively. To register a new type, you can use
+{func}`~jax.tree_util.register_pytree_node`:
 
 ```{code-cell}
+from jax.tree_util import register_pytree_node
+
 class RegisteredSpecial(Special):
   def __repr__(self):
     return "RegisteredSpecial(x={}, y={})".format(self.x, self.y)
@@ -251,6 +256,29 @@ register_pytree_node(
 )
 
 show_example(RegisteredSpecial(1., 2.))
+```
+
+Alternatively, you can define appropriate `tree_flatten` and `tree_unflatten` methods
+on your class and decorate it with {func}`~jax.tree_util.register_pytree_node_class`:
+
+```{code-cell}
+from jax.tree_util import register_pytree_node_class
+
+@register_pytree_node_class
+class RegisteredSpecial2(Special):
+  def __repr__(self):
+    return "RegisteredSpecial2(x={}, y={})".format(self.x, self.y)
+
+  def tree_flatten(self):
+    children = (self.x, self.y)
+    aux_data = None
+    return (children, aux_data)
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    return cls(*children)
+
+show_example(RegisteredSpecial2(1., 2.))
 ```
 
 JAX needs sometimes to compare `treedef` for equality. Therefore, care must be

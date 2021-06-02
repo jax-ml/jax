@@ -51,7 +51,7 @@ class XlaBridgeTest(absltest.TestCase):
 
   def test_local_devices(self):
     self.assertNotEmpty(xb.local_devices())
-    with self.assertRaisesRegex(ValueError, "Unknown host_id 100"):
+    with self.assertRaisesRegex(ValueError, "Unknown process_index 100"):
       xb.local_devices(100)
     with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
       xb.local_devices(backend="foo")

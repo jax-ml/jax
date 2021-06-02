@@ -18,12 +18,10 @@ import numpy as np
 
 from . import ad_util
 from . import core
-from . import dtypes
+from ._src import dtypes
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
-
-_DIMENSION_TYPES = core._DIMENSION_TYPES
 
 UnshapedArray = core.UnshapedArray
 ShapedArray = core.ShapedArray
@@ -69,7 +67,7 @@ def _zeros_like_python_scalar(t, x):
 
 def _make_concrete_python_scalar(t, x):
   return ConcreteArray(
-    np.array(x, dtype=dtypes.python_scalar_dtypes[t]),
+    np.array(x, dtype=dtypes._scalar_type_to_dtype(t, x)),
     weak_type=True)
 
 for t in dtypes.python_scalar_dtypes:

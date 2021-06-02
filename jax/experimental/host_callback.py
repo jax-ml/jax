@@ -173,31 +173,33 @@ following function definition::
 
   def power3(x):
      y = x * x
+     # Print both 'x' and 'x^2'
      _, y = id_print((x, y), what="x,x^2")  # Must pack multiple arguments
      return y * x
 
   power3(3.)
-  # what: x,x^2 : [3., 9.]
+  # what: x,x^2 : (3., 9.)
+
+(You can see these examples tested in `host_callback_test.HostCallbackIdTapTest.test_tap_transforms`.)
 
 During JAX transformations the special parameter ``transforms`` is added to
 contain a list of transformation descriptors in the form
 ``(transform_name, transform_params)``.
 
 For :func:`jax.vmap` the arguments are batched, and ``transforms`` is extended
-with transformation name ``batch`` and ``batch_dims`` set to the the tuple of
+with transformation name ``batch`` and ``batch_dims`` set to the tuple of
 batched dimensions (one entry per argument, ``None`` denotes an argument that
 was broadcast)::
 
   jax.vmap(power3)(np.arange(3.))
-  # transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2 : [[0, 1, 2], [0, 1,
-  4]]
+  # transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2 : ([0, 1, 2], [0, 1,
+  4])
 
-For :func:`jax.jvp` there will be two callbacks, one with the values of
-the primals and one with the tangents::
+For :func:`jax.jvp` there will be one callback with a pair, consisting of
+the values of the primals and those of the tangents::
 
   jax.jvp(power3, (3.,), (0.1,))
-  # what: x,x^2: [3., 9.]
-  # transforms: ['jvp'] what: x,x^2 : [0.1, 0.6]
+  # transforms: ['jvp'] what: x,x^2 : ( (3., 9.), (0.1, 0.6) )
 
 For :func:`jax.vjp` or :func:`jax.grad` there will be one callback with the
 values of the adjoints for the arguments. You may also see a callback with
@@ -205,31 +207,76 @@ the values of the primals from the forward pass, if those values are needed for
 the backward pass::
 
   jax.grad(power3)(3.)
-  # what=x,x^2: [3., 9.]  # from forward pass, since y is used in backward pass
-  # transforms: ['jvp', 'transpose'] what: x,x^2 : [0., 3.]  # from backward pass, adjoints of _, y
+  # what=x,x^2: (3., 9.)  # from forward pass, since y is used in backward pass
+  # transforms: ['jvp', 'transpose'] what: x,x^2 : (0., 3.)  # from backward pass, adjoints of _, y
+
+And here is an example of composed transforms. For vmap of grad, we see first
+a callback with the vmap of the forward pass (with just the 'batch' transform),
+and another callback with the vmap of the adjoints of the arguments. Note that
+the first argument is replicated (`batch_dims` is None)::
+
+  jax.vmap(jax.grad(power3))(np.array([2., 3.]))
+  # transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2
+  #    ( [2. 3.]
+  #      [4. 9.] )
+  # transforms: ['jvp', 'transpose', ('batch', {'batch_dims': (None, 0)})] what: x,x^2
+  #    ( 0.
+  #      [2. 3.] )
 
 In presence of :func:`jax.pmap` the code will run on multiple devices and
 each device will tap its values independently.
 It may be helpful to use the ``tap_with_device`` option for :func:`id_print`
 or :func:`id_tap`, so that you see which device is sending which data::
 
-  jax.pmap(power3, devices=jax.devices()[0:2])(np.array([3., 4.])
-  # device=cpu:0 what=x,x^2: [3., 9.]  # from the first device
-  # device=cpu:1 what=x,x^2: [4., 16.]  # from the second device
+  jax.pmap(power3, devices=jax.local_devices()[:2])(np.array([3., 4.])
+  # device=cpu:0 what=x,x^2: (3., 9.)  # from the first device
+  # device=cpu:1 what=x,x^2: (4., 16.)  # from the second device
 
-See documentation for :func:`id_tap` and :func:`id_print`.
+When using :func:`jax.pmap` with multiple devices on multiple hosts, every
+host will receive callbacks from all of its local devices, with an operand
+that corresponds to each device slice. For a
+:func:`call`, the callback must return to each device only the slice of the
+result that pertains to the corresponding device.
+
+
+When using the experimental :func:`pjit.pjit` the code will run on multiple
+devices on different shards of the input. The current implementation of
+host callbacks will ensure that a single device will collect and outfeed
+the entire operand, in a single callback. The callback function is supposed
+to return the entire array, which will then be sent in a single infeed to the
+same device that issued the outfeed. This device is then responsible for
+sending the required shards to the other devices::
+
+  with maps.mesh(jax.local_devices()[:2], ["d"]):
+    pjit.pjit(power3, in_axis_resources=(P("d"),),
+              out_axis_resources=(P("d"),))(np.array([3., 4.]))
+
+  # device=TPU:0 what=x,x^2: ( [3., 4.],
+  #                            [9., 16.] )
+
+Note that the collection of the operand on one device may result in OOM if
+the operand was sharded across devices.
+
+When using :func:`pjit.pjit` with multiple devices on multiple hosts, only
+the host for the device 0 (w.r.t. the mesh) will receive the callback, with
+the operand collected
+from all participating devices on all hosts. For a :func:`call`, the callback
+must return the entire array for all devices on all hosts.
+
+See documentation for :func:`id_tap`, :func:`id_print`, and :func:`call`.
 For more usage example, see tests/host_callback_test.py.
 
 Low-level details and debugging
 -------------------------------
 
-The host callback functions will be executed for each device in the order in which
-the send operations were performed on the device.
+The host callback functions will be executed for each device in the order in
+which the send operations were performed on the device.
 
 The host callback functions for multiple devices may be interleaved.
 The data from the devices is received by separate threads managed by the JAX
 runtime (one thread per device). The runtime maintains a buffer of
-configurable size. When the buffer is full, all the receiving threads are paused
+configurable size (see the flag ``--jax_host_callback_max_queue_byte_size``).
+When the buffer is full, all the receiving threads are paused
 which eventually pauses the computation on devices. The runtime has one
 additional thread that invokes the Python user functions with the received data.
 If the processing of the callbacks is slow, it may actually lead to the runtime
@@ -242,7 +289,7 @@ runtime mechanism see
 In order to pause the execution until all data from computations already
 started on devices has arrived and has been processed, use :func:`barrier_wait`.
 Note that this is needed only for :func:`id_tap` and :func:`id_print`, which
-are processed asyncronously with the device computation.
+are processed asynchronously with the device computation.
 
 Exceptions from the user-defined callback functions are logged along with their
 stack traces, but the receiving threads are not stopped. Instead the last
@@ -256,7 +303,8 @@ results to the call origin device. In order to avoid the device computation
 being stuck waiting for a result that will never arrive, in case of any
 error during the processing of the callback (whether raised by the user-code
 itself or due to a mismatch of the returned value and the expected return_shape)
-we send the device a "fake" result of shape ``int8[12345]``. This will make the device
+we send the device a "fake" result of shape ``int8[12345]``.
+This will make the device
 computation abort because the received data is different than then one that
 it expects. On CPU the runtime will crash with a distinctive error message:
 
@@ -270,6 +318,8 @@ program as:
 ```
 RET_CHECK failure ... Mismatch between infeed source buffer shape s8[12345] ...
 ```
+
+To debug the underlying cause for these messages, see the Debugging section.
 
 On TPU, there is currently no shape check for infeed, so we take the safer
 route to not send anything in case of errors, and let the computation hang.
@@ -315,11 +365,17 @@ for the C++ outfeed `receiver backend
   * `TF_CPP_VMODULE=<module_name>=3`` (the module name can be either C++ or
     Python, without the extension).
 
-You should also use the ``--verbosity=2`` flag so that you see the logs from Python.
+You should also use the ``--verbosity=2`` flag so that you see the logs
+from Python.
 
-For example:
+For example, you can try to enable logging in the ``host_callback`` module:
 ```
-TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed_receiver_py=3,outfeed_thunk=3,infeed_thunk=3,cpu_transfer_manager=3,cpu_runtime=3,xfeed_manager=3,pjrt_client=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_jit_simple
+TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=host_callback=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_tap_jit_simple
+```
+
+If you want to enable logging in lower-level implementation modules try:
+```
+TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed_receiver_py=3,outfeed_thunk=3,infeed_thunk=3,cpu_transfer_manager=3,cpu_runtime=3,xfeed_manager=3,pjrt_client=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_tap_jit_simple
 ```
 
 (For bazel tests use --test_arg=--vmodule=...
@@ -340,13 +396,15 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence,
 import typing
 from absl import logging
 
-from jax import api
+from jax._src import api
 from jax import core
-from jax.config import config, bool_env
+from jax.config import config
 from jax import custom_derivatives
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
+from jax.experimental import pjit
 from jax.lib import pytree
+from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.lib import xla_extension
 from jax.interpreters import ad, xla, batching, masking, pxla
@@ -359,19 +417,6 @@ import numpy as np
 
 
 FLAGS = config.FLAGS
-config.DEFINE_bool(
-    'jax_host_callback_inline',
-    bool_env('JAX_HOST_CALLBACK_INLINE', False),
-    help='Inline the host_callback, if not in a staged context.'
-)
-
-def inline_host_callback() -> bool:
-  try:
-    return FLAGS.jax_host_callback_inline
-  except AttributeError:
-    # TODO: I cannot get this flag to be seen for py3.6 tests in Github
-    return False
-
 xops = xla_client._xla.ops
 
 # TODO(necula): fix mypy errors if I define the type aliases below
@@ -545,7 +590,9 @@ def _call(callback_func: Callable, arg, *,
           result_shape=None,
           call_with_device=False,
           identity=False):
-  _initialize_outfeed_receiver()  # Lazy initialization
+  # Lazy initialization
+  _initialize_outfeed_receiver(
+      max_callback_queue_size_bytes=FLAGS.jax_host_callback_max_queue_byte_size)
   api._check_callable(callback_func)
   flat_args, arg_treedef = pytree.flatten(arg)
   for arg in flat_args:
@@ -762,7 +809,7 @@ outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
 
 def _outside_call_impl(*args, **params):
   assert not "has_token" in params
-  if inline_host_callback():
+  if FLAGS.jax_host_callback_inline:
     device = api.devices()[0]
     results = _outside_call_run_callback(args, device, send_infeed=False, **params)
     return results
@@ -783,39 +830,77 @@ outside_call_p.def_impl(_outside_call_impl)
 def _outside_call_translation_rule(
     comp: XlaComputationBuilder, *args_op: XlaOp, **params):
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
-  assert params["has_token"]
+  assert params["has_token"]  # type: ignore[key-error]
   current_token = args_op[-2]
   current_itoken = args_op[-1]
   # TODO: expose shape.is_token
-  assert not comp.get_shape(current_token).is_array() and not comp.get_shape(current_token).is_array(), (
-      "The last two arguments must be tokens")
-  assert not comp.get_shape(current_itoken).is_array() and not comp.get_shape(current_itoken).is_array(), (
+  assert comp.get_shape(current_token).is_token() and comp.get_shape(current_itoken).is_token(), (
       "The last two arguments must be tokens")
 
   args_to_outfeed = args_op[:-2]
-  send_infeed = not params["identity"] and len(params["flat_results_aval"]) > 0
+  identity = params["identity"]  # type: ignore[key-error]
+  flat_results_aval = params["flat_results_aval"] if not identity else [
+  ]  # type: ignore[key-error]
+  # Some platforms refuse to infeed empty arrays. We generate constants
+  # instead.
+  non_empty_flat_results_aval = list(filter(lambda aval: not (_aval_is_empty(aval)),
+                                            flat_results_aval))
+  send_infeed = not identity and len(non_empty_flat_results_aval) > 0
   callback_id = _register_callback(
       functools.partial(_outside_call_run_callback, send_infeed=send_infeed, **params))
   next_token = _outfeed_receiver.receiver.add_outfeed(comp, current_token,
                                                       callback_id,
                                                       args_to_outfeed)
   expecting_infeed = False
-  if params["identity"]:
+  if identity:
     results = list(args_to_outfeed)
     next_itoken = current_itoken
   else:
-    flat_results_aval = params["flat_results_aval"]
-    if flat_results_aval:
+    empty_results = [
+        xops.ConstantLiteral(comp, np.zeros(aval.shape, aval.dtype))
+        for aval in flat_results_aval
+        if _aval_is_empty(aval)
+    ]
+    if non_empty_flat_results_aval:
       after_outfeed_itoken = xops.AfterAll(comp, [current_itoken, next_token])
+      # We shard the infeed as AssignedDevice(0). This must match the
+      # outfeed (from outfeed_receiver.cc). Since `lax.infeed` does not support
+      # this kind of sharding, we use a custom translation for infeed.
+      array_sharding_proto = xla_client.OpSharding()
+      array_sharding_proto.type = xla_client.OpSharding.Type.MAXIMAL
+      array_sharding_proto.tile_assignment_dimensions = [1]
+      array_sharding_proto.tile_assignment_devices = [0]
 
-      results_and_token = xla.translations[lax.infeed_p](comp, after_outfeed_itoken,
-                                                         shapes=flat_results_aval, partitions=None)
+      token_sharding_proto = xla_client.OpSharding()
+      token_sharding_proto.type = xla_client.OpSharding.Type.REPLICATED
+      infeed_sharding_proto = xb.tuple_sharding_proto(
+          [array_sharding_proto] * len(non_empty_flat_results_aval) +
+          [token_sharding_proto])
+
+      shape = tuple(shape.with_major_to_minor_layout_if_absent()
+                    for x in non_empty_flat_results_aval
+                    for shape in xla.aval_to_xla_shapes(x))
+
+      build_infeed = functools.partial(xops.InfeedWithToken,
+                                       after_outfeed_itoken,
+                                       xla_client.Shape.tuple_shape(shape))
+      outs_and_token = xb.with_sharding_proto(comp, infeed_sharding_proto,
+                                              build_infeed)
+      outs = xops.GetTupleElement(outs_and_token, 0)
+      next_itoken = xops.GetTupleElement(outs_and_token, 1)
+      non_empty_results = [
+          xops.GetTupleElement(outs, i)
+          for i in range(len(non_empty_flat_results_aval))
+      ]
       expecting_infeed = True
-      next_itoken = xops.GetTupleElement(results_and_token, len(flat_results_aval))
-      results = [xops.GetTupleElement(results_and_token, i) for i in range(len(flat_results_aval))]
+      results = [
+          empty_results.pop(0) if _aval_is_empty(result_aval) else non_empty_results.pop(0)
+          for result_aval in flat_results_aval]
     else:
-      results = []
+      results = empty_results
       next_itoken = current_itoken
+
+    assert len(results) == len(flat_results_aval)
 
   assert expecting_infeed == send_infeed
   return xops.Tuple(comp, results + [next_token, next_itoken])
@@ -875,7 +960,10 @@ def _outside_call_run_callback(
 
       canonical_flat_results = tuple(util.safe_map(xla.canonicalize_dtype, actual_flat_results))
       actual_flat_results_aval = _values_to_avals(canonical_flat_results)
-      logging.vlog(2, f"Outside call consumer {callback} result {res} : {flat_results_aval}. Sending to infeed.")
+      logging.vlog(
+          2,
+          f"Outside call consumer {callback} result {res} : {flat_results_aval}. Sending to infeed for device {device}."
+      )
 
       if not all(ea.strip_weak_type() == ra.strip_weak_type()
                  for ea, ra in util.safe_zip(flat_results_aval,
@@ -887,7 +975,10 @@ def _outside_call_run_callback(
         raise TypeError(msg)
 
       if send_infeed:
-        device.transfer_to_infeed(tuple(canonical_flat_results))
+        # Do not send the 0-sized arrays
+        non_empty_canonical_flat_results = tuple(filter(lambda r: not _aval_is_empty(r),
+                                                        canonical_flat_results))
+        device.transfer_to_infeed(non_empty_canonical_flat_results)
       return canonical_flat_results
 
   except Exception as e:
@@ -919,6 +1010,9 @@ def _add_transform(params: Dict, name: str, *transform_params) -> Dict:
   return dict(
       params, transforms=(params.get("transforms", ()) + (new_transform,)))
 
+
+def _aval_is_empty(aval) -> bool:
+  return np.prod(aval.shape) == 0
 
 # TODO(necula): there must be a better way to do this.
 # The AttributeError is for regular values, the KeyError is for ConcreteArray
@@ -1298,13 +1392,26 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
     eqns.append(
         core.new_jaxpr_eqn(
             eqn.invars + [input_token_var, input_itoken_var],
-            eqn.outvars + [output_token_var, output_itoken_var],
-            eqn.primitive,
+            eqn.outvars + [output_token_var, output_itoken_var], eqn.primitive,
             dict(
                 eqn.params,
                 call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
-            ),
-            eqn.source_info))
+            ), eqn.source_info))
+  elif eqn.primitive is pjit.pjit_p:
+    jaxpr = cast(core.ClosedJaxpr, eqn.params["jaxpr"])
+    eqns.append(
+        core.new_jaxpr_eqn(
+            eqn.invars + [input_token_var, input_itoken_var],
+            eqn.outvars + [output_token_var, output_itoken_var], eqn.primitive,
+            dict(
+                eqn.params,
+                jaxpr=_rewrite_closed_jaxpr(jaxpr, True, True),
+                donated_invars=eqn.params["donated_invars"] + (False, False),
+                in_axis_resources=(eqn.params["in_axis_resources"] +
+                                   (pjit.REPLICATED, pjit.REPLICATED)),
+                out_axis_resources=(eqn.params["out_axis_resources"] +
+                                    (pjit.REPLICATED, pjit.REPLICATED)),
+            ), eqn.source_info))
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
 
@@ -1329,7 +1436,8 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
           dict(
               call_jaxpr=transformed_cond_jaxpr.jaxpr,
               name="cond_before",
-              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals)),
+              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals),
+              inline=False),
           eqn.source_info))
   # Make a new cond "lambda pred, carry, token, itoken: pred"
   new_cond_pred_invar = mk_new_var(cond_jaxpr.out_avals[0])
@@ -1372,7 +1480,8 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
           dict(
               call_jaxpr=transformed_body_jaxpr.jaxpr,
               name="body",
-              donated_invars=(False,) * len(transformed_body_jaxpr.in_avals)),
+              donated_invars=(False,) * len(transformed_body_jaxpr.in_avals),
+              inline=False),
           eqn.source_info),
       core.new_jaxpr_eqn(
           new_body_invars_cond_constvars + new_body_carry2 + [new_body_token2, new_body_itoken2],
@@ -1380,7 +1489,8 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
           dict(
               call_jaxpr=transformed_cond_jaxpr.jaxpr,
               name="cond_body",
-              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals)),
+              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals),
+              inline=False),
           eqn.source_info)
   ]
   new_body_jaxpr = core.ClosedJaxpr(
@@ -1510,10 +1620,9 @@ def _initialize_outfeed_receiver(
       return
 
     if clients is None:
-      # By default, all devices on all backends
-      clients = xla_client._get_local_backends().values()  # type: ignore[protected-class]
-      # Drop the interpreter clients
-      clients = tuple([c for c in clients if c.platform != "interpreter"])  # type: ignore
+      # By default, all devices on all supported backends
+      clients = [backend for name, backend in xb.backends().items()
+                 if name in ("cpu", "gpu", "tpu")]
     devices = list(
         itertools.chain(*[backend.local_devices() for backend in clients]))
     _outfeed_receiver.clients = clients  # type: ignore[assignment]

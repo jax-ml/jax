@@ -12,18 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools as it
+
 from typing import Any, Callable, Dict, Sequence, Union
 
 import jax.numpy as jnp
 
 from jax import core
-from jax.core import Trace, Tracer
+from jax.core import Trace, Tracer, jaxpr_as_fun
+from jax import lax
+from jax import custom_derivatives as cd
+from jax.interpreters import partial_eval as pe
 from jax import linear_util as lu
-from jax._src.util import partial, safe_map, wraps
+from jax._src.util import partial, safe_map, wraps, split_list
+from jax._src.lax import control_flow as lcf
 
 import inspect
 from jax.api_util import flatten_fun_nokwargs
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax.tree_util import tree_flatten, tree_unflatten, tree_structure, tree_map
 
 map = safe_map
 
@@ -110,6 +116,14 @@ def _callback_fun(callback, strip_calls, *in_vals, **params):
     del main
   yield out_vals
 
+def callback_jaxpr(closed_jaxpr, callback, strip_calls):
+  fun = lu.wrap_init(jaxpr_as_fun(closed_jaxpr))
+  fun = callback_subtrace(fun)
+  fun = _callback_fun(fun, callback, strip_calls)
+  avals_in = closed_jaxpr.in_avals
+  jaxpr_out, consts = cd._initial_style_jaxpr(fun, avals_in)
+  return core.ClosedJaxpr(jaxpr_out, consts)
+
 def _check_callable(fun):
   if not callable(fun):
     raise TypeError(f"Expected a callable value, got {fun}")
@@ -143,6 +157,8 @@ class CallbackTrace(Trace):
     return CallbackTracer(self, val.val)
 
   def process_primitive(self, primitive, tracers, params):
+    if primitive in custom_callback_rules:
+      return custom_callback_rules[primitive](self, *tracers, **params)
     vals_in = [t.val for t in tracers]
     vals_out = self.main.callback(primitive, vals_in, params)  # type: ignore
     if primitive.multiple_results:
@@ -158,14 +174,116 @@ class CallbackTrace(Trace):
     return [CallbackTracer(self, val) for val in vals_out]
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
-    # This implementation just drops the custom derivative rule.
-    # TODO(sharadmv): don't drop the custom derivative rule
-    del primitive, jvp  # Unused.
-    return fun.call_wrapped(*tracers)
+    vals_in = [t.val for t in tracers]
+    fun = callback_subtrace(fun, self.main)
+    jvp = callback_subtrace(jvp, self.main)
+    out = primitive.bind(fun, jvp, *vals_in)
+    return safe_map(self.pure, out)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
                               out_trees):
-    # This implementation just drops the custom derivative rule.
-    # TODO(sharadmv): don't drop the custom derivative rule
-    del primitive, fwd, bwd, out_trees  # Unused.
-    return fun.call_wrapped(*tracers)
+    vals_in = [t.val for t in tracers]
+    fun = callback_subtrace(fun, self.main)
+    fwd = callback_subtrace(fwd, self.main)
+    bwd = callback_subtrace(bwd, self.main)
+    out = primitive.bind(fun, fwd, bwd, *vals_in, out_trees=out_trees)
+    return safe_map(self.pure, out)
+
+custom_callback_rules: Dict[Any, Any] = {}
+
+def _scan_callback_rule(trace, *tracers, reverse, length, num_consts, num_carry,
+                        jaxpr, linear, unroll):
+  const_tracers, carry_tracers, xs_tracers = split_list(tracers, [num_consts, num_carry])
+  carry_avals, xs_avals = tree_map(lambda x: x.aval, (carry_tracers, xs_tracers))
+  const_vals, carry_vals, xs_vals = tree_map(lambda x: x.val, (const_tracers, carry_tracers, xs_tracers))
+
+  x_tracers = [t[0] for t in xs_tracers]
+  x_avals = [t.aval for t in x_tracers]
+
+  body_fun = jaxpr_as_fun(jaxpr)
+
+  def new_body(*vals):
+    out = body_fun(*vals)
+    out_carry, y = split_list(out, [num_carry])
+    return out_carry, y
+  main = trace.main
+  new_body = callback_transform(new_body, main.callback, strip_calls=main.strip_calls)  # type: ignore
+  in_tree = tree_structure(carry_avals + xs_avals)
+  new_jaxpr, new_consts, _ = lcf._initial_style_jaxpr(
+      new_body, in_tree, tuple(carry_avals + x_avals))
+  vals = tuple(it.chain(new_consts, carry_vals, xs_vals))
+  out_vals = lax.scan_p.bind(*vals, reverse=reverse, length=length,
+                             num_consts=len(new_consts), num_carry=num_carry,
+                             jaxpr=new_jaxpr, linear=linear, unroll=unroll)
+  return safe_map(trace.pure, out_vals)
+
+custom_callback_rules[lax.scan_p] = _scan_callback_rule
+
+
+def _while_callback_rule(trace, *tracers, cond_jaxpr, body_jaxpr,
+                         cond_nconsts, body_nconsts):
+  cond_const_tracers, body_const_tracers, init_tracers = split_list(
+            tracers, [cond_nconsts, body_nconsts])
+  init_avals = safe_map(lambda x: x.aval, init_tracers)
+  cond_const_vals, body_const_vals, init_vals = tree_map(
+      lambda x: x.val, (cond_const_tracers, body_const_tracers, init_tracers))
+
+  body_fun = jaxpr_as_fun(body_jaxpr)
+  cond_fun = jaxpr_as_fun(cond_jaxpr)
+
+  def cond(*carry):
+    return cond_fun(*it.chain(cond_const_vals, carry))
+
+  def body(*carry):
+    return body_fun(*it.chain(body_const_vals, carry))
+
+  main = trace.main
+  new_cond = callback_transform(cond, main.callback, strip_calls=main.strip_calls)  # type: ignore
+  new_body = callback_transform(body, main.callback, strip_calls=main.strip_calls)  # type: ignore
+  in_tree = tree_structure(init_avals)
+
+  new_cond_jaxpr, new_cond_consts, _ = lcf._initial_style_jaxpr(new_cond, in_tree, tuple(init_avals))
+  new_body_jaxpr, new_body_consts, _ = lcf._initial_style_jaxpr(new_body, in_tree, tuple(init_avals))
+  out = lcf.while_p.bind(
+      *it.chain(new_cond_consts, new_body_consts, init_vals),
+      cond_nconsts=len(new_cond_consts),
+      body_nconsts=len(new_body_consts),
+      cond_jaxpr=new_cond_jaxpr,
+      body_jaxpr=new_body_jaxpr)
+  return safe_map(trace.pure, out)
+
+custom_callback_rules[lax.while_p] = _while_callback_rule
+
+def _custom_derivative_call_jaxpr_callback_rule(primitive, trace, *tracers,
+                                                fun_jaxpr, num_consts, **params):
+  main = trace.main
+  vals = [t.val for t in tracers]
+
+  new_closed_jaxpr = callback_jaxpr(fun_jaxpr, main.callback, strip_calls=main.strip_calls)
+  if primitive == cd.custom_jvp_call_jaxpr_p:
+    thunk_name = 'jvp_jaxpr_thunk'
+  elif primitive == cd.custom_vjp_call_jaxpr_p:
+    thunk_name = 'fwd_jaxpr_thunk'
+    params['bwd'] = callback_subtrace(params['bwd'], main)
+  else:
+    raise NotImplementedError(primitive)
+
+  thunk = params.pop(thunk_name)
+  @pe._memoize
+  def new_thunk():
+    thunk_jaxpr = core.ClosedJaxpr(*thunk())
+    closed_jaxpr = callback_jaxpr(thunk_jaxpr, main.callback, main.strip_calls)
+    return closed_jaxpr.jaxpr, closed_jaxpr.literals
+
+  params[thunk_name] = new_thunk
+  new_fun_jaxpr, new_consts = new_closed_jaxpr.jaxpr, new_closed_jaxpr.literals
+  closed_fun_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(new_fun_jaxpr), ())
+  new_num_consts = len(new_consts) + num_consts
+  out = primitive.bind(*it.chain(new_consts, vals), fun_jaxpr=closed_fun_jaxpr,
+                       num_consts=new_num_consts, **params)
+  return safe_map(trace.pure, out)
+
+custom_callback_rules[cd.custom_jvp_call_jaxpr_p] = partial(
+    _custom_derivative_call_jaxpr_callback_rule, cd.custom_jvp_call_jaxpr_p)
+custom_callback_rules[cd.custom_vjp_call_jaxpr_p] = partial(
+    _custom_derivative_call_jaxpr_callback_rule, cd.custom_vjp_call_jaxpr_p)

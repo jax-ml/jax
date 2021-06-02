@@ -21,7 +21,7 @@ import numpy as np
 import opt_einsum
 import scipy.special
 
-from . import dtypes
+from jax._src import dtypes
 
 _slice = builtins.slice
 _max = builtins.max
@@ -148,6 +148,15 @@ def population_count(x):
   if x.dtype == np.uint64:
     x = (x & m[5]) + ((x >> 32) & m[5])  # put count of each 64 bits into those 64 bits
   return x.astype(dtype)
+
+def clz(x):
+  assert np.issubdtype(x.dtype, np.integer)
+  nbits = np.iinfo(x.dtype).bits
+  mask = (2 ** np.arange(nbits, dtype=x.dtype))[::-1]
+  bits = (x[..., None] & mask).astype(np.bool_)
+  out = np.argmax(bits, axis=-1).astype(x.dtype)
+  out[x == 0] = nbits
+  return out
 
 eq = np.equal
 ne = np.not_equal

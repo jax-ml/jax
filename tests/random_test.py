@@ -24,8 +24,9 @@ import scipy.linalg
 import scipy.special
 import scipy.stats
 
-from jax import api
+from jax._src import api
 from jax import core
+from jax import dtypes
 from jax import grad
 from jax import lax
 from jax import numpy as jnp
@@ -209,6 +210,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
+  def testNormalBfloat16(self):
+    # Passing bfloat16 as dtype string.
+    # https://github.com/google/jax/issues/6813
+    res_bfloat16_str = random.normal(random.PRNGKey(0), dtype='bfloat16')
+    res_bfloat16 = random.normal(random.PRNGKey(0), dtype=jnp.bfloat16)
+    self.assertAllClose(res_bfloat16, res_bfloat16_str)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in complex_dtypes))
@@ -223,6 +231,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(jnp.real(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
       self._CheckKolmogorovSmirnovCDF(jnp.imag(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
+      self.assertEqual(dtype, samples.dtype)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
@@ -294,7 +303,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "dtype": dtype, "shape": shape}
       for dtype in jtu.dtypes.floating + jtu.dtypes.integer
-      for shape in [100, (10, 10), (10, 5, 2)]))
+      for shape in [100, (10, 10), (10, 5, 2), 0, 1, (0, 5), (1, 5)]))
   def testPermutationArray(self, dtype, shape):
     key = random.PRNGKey(0)
     x = jnp.arange(np.prod(shape)).reshape(shape).astype(dtype)
@@ -305,7 +314,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm2 = crand(key)
 
     self.assertAllClose(perm1, perm2)
-    self.assertFalse(np.all(perm1 == x))  # seems unlikely!
+    if x.shape[0] > 1:
+      self.assertFalse(np.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(np.sort(perm1.ravel()), x.ravel(), check_dtypes=False)
     self.assertArraysAllClose(
       x, jnp.arange(np.prod(shape)).reshape(shape).astype(dtype))
@@ -491,7 +501,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     eps = 0.01 * alpha / (1.0 + np.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
                - scipy.stats.gamma.cdf(z, alpha - eps)) / (2 * eps)
-    pdf = scipy.stats.gamma.pdf(z, alpha)
+    with np.errstate(over='ignore'):
+      pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
     self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
@@ -713,8 +724,14 @@ class LaxRandomTest(jtu.JaxTestCase):
     keys = [random.fold_in(key, i) for i in range(10)]
     assert np.unique(np.ravel(keys)).shape == (20,)
 
+  def testFoldInBig(self):
+    key = random.PRNGKey(0)
+    seeds = [2 ** 32 - 2, 2 ** 32 - 1]
+    keys = [random.fold_in(key, seed) for seed in seeds]
+    assert np.unique(np.ravel(keys)).shape == (4,)
+
   def testStaticShapeErrors(self):
-    if config.read("jax_disable_jit"):
+    if config.jax_disable_jit:
       raise SkipTest("test only relevant when jit enabled")
 
     @api.jit
@@ -907,11 +924,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       random.choice(key, 5, 2, replace=True)
 
   def test_eval_shape_big_random_array(self):
-    if not config.omnistaging_enabled:
-      raise SkipTest("after deleting lazy constants, requires omnistaging")
     def f(x):
       return random.normal(random.PRNGKey(x), (int(1e12),))
-    with core.skipping_checks():  # check_jaxpr will materialize array
+    with jax.enable_checks(False):  # check_jaxpr will materialize array
       api.eval_shape(f, 0)  # doesn't error
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -941,6 +956,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     ]
   ))
   def test_prng_seeds_and_keys(self, seed, type, jit, key):
+    if (jit and type is int and not config.x64_enabled and
+        (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
+      self.skipTest("Expected failure: integer out of range for jit.")
     seed = type(seed)
     if jit:
       actual = api.jit(random.PRNGKey)(seed)
@@ -956,30 +974,52 @@ class LaxRandomTest(jtu.JaxTestCase):
   def test_prng_jit_invariance(self, seed, type):
     if type == "int" and seed == (1 << 64) - 1:
       self.skipTest("Expected failure: Python int too large.")
+    if not config.x64_enabled and seed > np.iinfo(np.int32).max:
+      self.skipTest("Expected failure: Python int too large.")
     type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
     args_maker = lambda: [type(seed)]
     self._CompileAndCheck(random.PRNGKey, args_maker)
 
   def test_prng_errors(self):
-    seed = np.iinfo(np.uint64).max
+    seed = np.iinfo(np.int64).max + 1
     with self.assertRaises(OverflowError):
       random.PRNGKey(seed)
     with self.assertRaises(OverflowError):
       api.jit(random.PRNGKey)(seed)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
-    raise SkipTest("broken test")  # TODO(mattjj): fix
-
-    if not config.omnistaging_enabled:
-      raise SkipTest("test is omnistaging-specific")
-
-    key = random.PRNGKey(1)
+    key = random.PRNGKey(1).block_until_ready()
     with jtu.count_device_put() as count:
       api.jit(random.split)(key)
-      key, _ = random.split(key, 2)
-    self.assertEqual(count[0], 1)  # 1 for the argument device_put call
+    self.assertEqual(count[0], 1)  # 1 for the argument device_put
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_dtype={dtype}", "dtype": dtype}
+      for dtype in int_dtypes + uint_dtypes))
+  def test_randint_bounds(self, dtype):
+    min = np.iinfo(dtype).min
+    max = np.iinfo(dtype).max
+    key = random.PRNGKey(1701)
+    shape = (10,)
+    if np.iinfo(dtype).bits < np.iinfo(dtypes.canonicalize_dtype(int)).bits:
+      expected = random.randint(key, shape, min, max, dtype)
+      self.assertArraysEqual(expected, random.randint(key, shape, min - 12345, max + 12345, dtype))
+    else:
+      self.assertRaises(OverflowError, random.randint, key, shape, min - 12345, max + 12345, dtype)
 
+  def test_randint_out_of_range(self):
+    key = random.PRNGKey(0)
+
+    r = random.randint(key, (10,), 255, 256, np.uint8)
+    self.assertAllClose(r, jnp.full_like(r, 255))
+
+    r = random.randint(key, (1000,), -128, 128, np.int8)
+    self.assertGreater((r == -128).sum(), 0)
+    self.assertGreater((r == 127).sum(), 0)
+
+    r = random.randint(key, (1000,), -1000, 1000, np.uint8)
+    self.assertGreater((r == 0).sum(), 0)
+    self.assertGreater((r == 255).sum(), 0)
 
 
 if __name__ == "__main__":

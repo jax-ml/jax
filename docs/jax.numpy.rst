@@ -17,8 +17,13 @@ cannot follow NumPy exactly.
   array updates (:code:`x[i] = y`), JAX provides an alternative pure indexed
   update function :func:`jax.ops.index_update`.
 
+* Relatedly, some NumPy functions return views of arrays when possible (examples
+  are :func:`numpy.transpose` and :func:`numpy.reshape`). JAX versions of such
+  functions will return copies instead, although such copies can often be optimized
+  away by XLA when sequences of operations are compiled using :func:`jax.jit`.
+
 * NumPy is very aggressive at promoting values to :code:`float64` type. JAX
-  sometimes is less aggressive about type promotion.
+  sometimes is less aggressive about type promotion (See :ref:`type-promotion`).
 
 A small number of NumPy operations that have data-dependent output shapes are
 incompatible with :func:`jax.jit` compilation. The XLA compiler requires that
@@ -87,7 +92,9 @@ Not every function in NumPy is implemented; contributions are welcome!
     block
     bool_
     broadcast_arrays
+    broadcast_shapes
     broadcast_to
+    c_
     can_cast
     cbrt
     cdouble
@@ -120,6 +127,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     cumsum
     deg2rad
     degrees
+    delete
     diag
     diagflat
     diag_indices
@@ -244,6 +252,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     mean
     median
     meshgrid
+    mgrid
     min
     minimum
     mod
@@ -274,6 +283,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     not_equal
     number
     object_
+    ogrid
     ones
     ones_like
     outer
@@ -281,6 +291,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     pad
     percentile
     piecewise
+    poly
     polyadd
     polyder
     polyint
@@ -294,6 +305,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     promote_types
     ptp
     quantile
+    r_
     rad2deg
     radians
     ravel
@@ -303,6 +315,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     remainder
     repeat
     reshape
+    resize
     result_type
     right_shift
     rint
@@ -311,6 +324,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     roots
     rot90
     round
+    round_
     row_stack
     save
     savez
@@ -434,3 +448,20 @@ jax.numpy.linalg
   svd
   tensorinv
   tensorsolve
+
+JAX DeviceArray
+---------------
+The JAX :class:`~jax.numpy.DeviceArray` is the core array object in JAX: you can
+think of it as the equivalent of a :class:`numpy.ndarray` backed by a memory buffer
+on a single device. Like :class:`numpy.ndarray`, most users will not need to
+instantiate :class:`DeviceArray`s manually, but rather will create them via
+:mod:`jax.numpy` functions like :func:`~jax.numpy.array`, :func:`~jax.numpy.arange`,
+:func:`~jax.numpy.linspace`, and others listed above.
+
+.. autoclass:: jax.numpy.DeviceArray
+
+.. autoclass:: jaxlib.xla_extension.DeviceArrayBase
+
+.. autoclass:: jaxlib.xla_extension.DeviceArray
+   :members:
+   :inherited-members:

@@ -47,11 +47,14 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    notebooks/XLA_in_Python
    notebooks/maml
    notebooks/score_matching
+   notebooks/xmap_tutorial
+   multi_process
 
 .. toctree::
    :maxdepth: 1
    :caption: Notes
 
+   deprecation
    concurrency
    gpu_memory_allocation
    profiling
@@ -63,6 +66,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    :maxdepth: 2
    :caption: Developer documentation
 
+   contributing
    developer
    jax_internal_api
    autodidax

@@ -25,8 +25,7 @@ from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
 from ..api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten, register_pytree_node
 from .._src.util import safe_map, safe_zip, split_list
-from .. import custom_derivatives
-from ..config import config
+from .._src import custom_derivatives
 
 map = safe_map
 zip = safe_zip
@@ -214,14 +213,9 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
       complete_ivjp_flat, _ = flatten_fun_nokwargs(complete_ivjp, in_tree)
 
       in_avals = map(abstract, primals_in + primals_out + primals_out)
-      if config.omnistaging_enabled:
-        # TODO: Actually we do know some of the inputs, because they might be literals!
-        ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
-            complete_ivjp_flat, map(pe.PartialVal.unknown, in_avals), instantiate=True)
-      else:
-        ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(  # type: ignore
-          complete_ivjp_flat, map(pe.PartialVal.unknown, in_avals),
-          instantiate=True, stage_out=False)  # type: ignore
+      # TODO: Actually we do know some of the inputs, because they might be literals!
+      ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
+          complete_ivjp_flat, map(pe.PartialVal.unknown, in_avals), instantiate=True)
       assert not ivjp_jaxpr.constvars  # That might happen some time, but don't bother until then
       ivjp_jaxpr = core.ClosedJaxpr(ivjp_jaxpr, [])
 
@@ -231,12 +225,8 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
     unknowns = (map(ad.is_undefined_primal, primals_in) +
                 map(ad.is_undefined_primal, primals_out) +
                 [False] * len(cts_in))
-    if config.omnistaging_enabled:
-      jaxpr_known, jaxpr_unknown, out_unknowns = pe.partial_eval_jaxpr(  # type: ignore
-          ivjp_jaxpr, unknowns, instantiate=False)  # type:ignore
-    else:
-      jaxpr_known, jaxpr_unknown, out_unknowns = pe.partial_eval_jaxpr(  # type: ignore
-          ivjp_jaxpr, unknowns, instantiate=False, trace_type=None)  # type: ignore
+    jaxpr_known, jaxpr_unknown, out_unknowns = pe.partial_eval_jaxpr(  # type: ignore
+        ivjp_jaxpr, unknowns, instantiate=False)  # type:ignore
     unknown_rec_primals_in, unknown_cotangents = split_list(out_unknowns, [num_inputs])
     # Make sure we're able to compute all cotangents. We don't really care if we
     # can reconstruct or primals or not, although failure to do so might result in
@@ -312,15 +302,3 @@ def get_primitive_inverse(p):
 def definverse(primitive, inverse_rule):
   primitive_inverses[primitive] = inverse_rule
   return inverse_rule
-
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global _initial_style_jaxpr, custom_jvp_call
-
-  def _initial_style_jaxpr(fun, in_avals):
-    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-    jaxpr, _, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
-                                         bottom=True, stage_out=False)  # type: ignore
-    assert not any(isinstance(c, core.Tracer) for c in consts)
-    return core.ClosedJaxpr(jaxpr, consts)

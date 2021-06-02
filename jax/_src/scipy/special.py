@@ -17,7 +17,8 @@ from functools import partial
 import numpy as np
 import scipy.special as osp_special
 
-from jax import api, lax, core
+from jax._src import api
+from jax import lax, core
 from jax.interpreters import ad
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
@@ -107,23 +108,33 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
     a, = _promote_args_inexact("logsumexp", a)
   pos_dims, dims = _reduction_dims(a, axis)
   amax = jnp.max(a, axis=dims, keepdims=keepdims)
-  amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
+  amax = lax.stop_gradient(lax.select(jnp.isfinite(amax), amax, lax.full_like(amax, 0)))
   amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
-  if b is None:
+  # fast path if the result cannot be negative.
+  if b is None and not np.issubdtype(a.dtype, np.complexfloating):
     out = lax.add(lax.log(jnp.sum(lax.exp(lax.sub(a, amax_with_dims)),
                                   axis=dims, keepdims=keepdims)),
                   amax)
     sign = jnp.where(jnp.isnan(out), np.nan, 1.0).astype(out.dtype)
     sign = jnp.where(out == -np.inf, 0.0, sign)
   else:
-    sumexp = jnp.sum(lax.mul(lax.exp(lax.sub(a, amax_with_dims)), b),
-                     axis=dims, keepdims=keepdims)
-    sign = lax.stop_gradient(lax.sign(sumexp))
-    out = lax.add(lax.log(lax.abs(sumexp)), amax)
+    expsub = lax.exp(lax.sub(a, amax_with_dims))
+    if b is not None:
+      expsub = lax.mul(expsub, b)
+    sumexp = jnp.sum(expsub, axis=dims, keepdims=keepdims)
+
+    sign = lax.stop_gradient(jnp.sign(sumexp))
+    if np.issubdtype(sumexp.dtype, np.complexfloating):
+      if return_sign:
+        sumexp = sign*sumexp
+      out = lax.add(lax.log(sumexp), amax)
+    else:
+      out = lax.add(lax.log(lax.abs(sumexp)), amax)
   if return_sign:
     return (out, sign)
   if b is not None:
-    out = jnp.where(sign < 0, np.nan, out)
+    if not np.issubdtype(out.dtype, np.complexfloating):
+      out = jnp.where(sign < 0, np.nan, out)
   return out
 
 
@@ -156,13 +167,14 @@ def entr(x):
 @_wraps(osp_special.multigammaln, update_doc=False)
 def multigammaln(a, d):
   d = core.concrete_or_error(int, d, "d argument of multigammaln")
-  a, d = _promote_args_inexact("multigammaln", a, d)
+  a, d_ = _promote_args_inexact("multigammaln", a, d)
 
-  constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d),
-                             lax.sub(d, _constant_like(a, 1))),
+  constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d_),
+                             lax.sub(d_, _constant_like(a, 1))),
                      lax.log(_constant_like(a, np.pi)))
   res = jnp.sum(gammaln(jnp.expand_dims(a, axis=-1) -
-                        lax.div(jnp.arange(d), _constant_like(a, 2))),
+                        lax.div(jnp.arange(d, dtype=d_.dtype),
+                                _constant_like(a, 2))),
                axis=-1)
   return res + constant
 

@@ -30,10 +30,20 @@ except Exception as exc:
 del _cloud_tpu_init
 
 # flake8: noqa: F401
-from .config import config
-from .api import (
+
+# Confusingly there are two things named "config": the module and the class.
+# We want the exported object to be the class, so we first import the module
+# to make sure a later import doesn't overwrite the class.
+from . import config as _config_module
+del _config_module
+
+from ._src.config import (
+  config, enable_checks, check_tracer_leaks, checking_leaks,
+  debug_nans, debug_infs, log_compiles, default_matmul_precision,
+  numpy_rank_promotion
+)
+from ._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
-  argnums_partial,  # TODO(phawkins): update Haiku to not use this.
   checkpoint,
   closure_convert,
   curry,  # TODO(phawkins): update users to avoid this.
@@ -41,12 +51,7 @@ from .api import (
   custom_gradient,
   custom_jvp,
   custom_vjp,
-  custom_transforms,
   default_backend,
-  defjvp,
-  defjvp_all,
-  defvjp,
-  defvjp_all,
   device_count,
   device_get,
   device_put,
@@ -77,6 +82,8 @@ from .api import (
   named_call,
   partial,  # TODO(phawkins): update callers to use functools.partial.
   pmap,
+  process_count,
+  process_index,
   pxla,  # TODO(phawkins): update users to avoid this.
   remat,
   shapecheck,
@@ -103,6 +110,8 @@ from .version import __version__
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
+from . import api
+from . import dtypes
 from . import errors
 from . import image
 from . import lax

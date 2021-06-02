@@ -15,18 +15,19 @@
 from docutils import nodes
 
 def jax_issue_role(name, rawtext, text, lineno, inliner, options={}, content=[]):
-  """Generate links to jax issues in sphinx.
+  """Generate links to jax issues or PRs in sphinx.
 
   Usage::
 
       :jax-issue:`1234`
 
   This will output a hyperlink of the form
-  `#1234 <http://github.com/google.jax/issues/1234>`_.
+  `#1234 <http://github.com/google/jax/issues/1234>`_. These links work even
+  for PR numbers.
   """
   text = text.lstrip('#')
   if not text.isdigit():
-      raise RuntimeError(f"Invalid content in {rawtext}: expected an issue number.")
+      raise RuntimeError(f"Invalid content in {rawtext}: expected an issue or PR number.")
   url = "https://github.com/google/jax/issues/{}".format(text)
   node = nodes.reference(rawtext, '#' + text, refuri=url, **options)
   return [node], []

@@ -18,6 +18,7 @@ from functools import partial
 import unittest
 
 import numpy as np
+import scipy
 import scipy as osp
 
 from absl.testing import absltest
@@ -82,7 +83,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
        "n": n, "dtype": dtype}
-      for n in [0, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
+      for n in [0, 2, 3, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
       for dtype in float_types + complex_types))
   def testDet(self, n, dtype):
     rng = jtu.rand_default(self.rng())
@@ -119,6 +120,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a[0] = 0
       jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
 
+  def testDetGradIssue6121(self):
+    f = lambda x: jnp.linalg.det(x).sum()
+    x = jnp.ones((16, 1, 1))
+    jax.grad(f)(x)
+    jtu.check_grads(f, (x,), 2, atol=1e-1, rtol=1e-1)
+
   def testDetGradOfSingularMatrixCorank1(self):
     # Rank 2 matrix with nonzero gradient
     a = jnp.array([[ 50, -30,  45],
@@ -131,7 +138,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     b = jnp.array([[ 36, -42,  18],
                   [-42,  49, -21],
                   [ 18, -21,   9]], dtype=jnp.float32)
-    jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1, eps=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -332,10 +339,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigh(self, n, dtype, lower):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    tol = 1e-4
-    if jtu.device_under_test() == "tpu":
-      if jnp.issubdtype(dtype, np.complexfloating):
-        raise unittest.SkipTest("No complex eigh on TPU")
+    tol = 1e-3
     args_maker = lambda: [rng((n, n), dtype)]
 
     uplo = "L" if lower else "U"
@@ -361,9 +365,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigvalsh(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if jtu.device_under_test() == "tpu":
-      if jnp.issubdtype(dtype, jnp.complexfloating):
-        raise unittest.SkipTest("No complex eigh on TPU")
     n = shape[-1]
     def args_maker():
       a = rng((n, n), dtype)
@@ -406,9 +407,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in complex_types
       for lower in [True, False]
       for eps in [1e-4]))
-  # TODO(phawkins): enable when there is a complex eigendecomposition
-  # implementation for TPU.
-  @jtu.skip_on_devices("tpu")
   def testEighGradVectorComplex(self, shape, dtype, lower, eps):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
@@ -457,15 +455,51 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEighBatching(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if (jtu.device_under_test() == "tpu" and
-        jnp.issubdtype(dtype, np.complexfloating)):
-      raise unittest.SkipTest("No complex eigh on TPU")
     shape = (10,) + shape
     args = rng(shape, dtype)
     args = (args + np.conj(T(args))) / 2
     ws, vs = vmap(jsp.linalg.eigh)(args)
     self.assertTrue(np.all(np.linalg.norm(
         np.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(1,), (4,), (5,)]
+      for dtype in (np.int32,)))
+  def testLuPivotsToPermutation(self, shape, dtype):
+    jtu.skip_if_unsupported_type(dtype)
+    pivots_size = shape[-1]
+    permutation_size = 2 * pivots_size
+
+    pivots = jnp.arange(permutation_size - 1, pivots_size - 1, -1, dtype=dtype)
+    pivots = jnp.broadcast_to(pivots, shape)
+    actual = lax.linalg.lu_pivots_to_permutation(pivots, permutation_size)
+    expected = jnp.arange(permutation_size - 1, -1, -1, dtype=dtype)
+    expected = jnp.broadcast_to(expected, actual.shape)
+    self.assertArraysEqual(actual, expected)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(1,), (4,), (5,)]
+      for dtype in (np.int32,)))
+  def testLuPivotsToPermutationBatching(self, shape, dtype):
+    jtu.skip_if_unsupported_type(dtype)
+    shape = (10,) + shape
+    pivots_size = shape[-1]
+    permutation_size = 2 * pivots_size
+
+    pivots = jnp.arange(permutation_size - 1, pivots_size - 1, -1, dtype=dtype)
+    pivots = jnp.broadcast_to(pivots, shape)
+    batched_fn = vmap(
+        lambda x: lax.linalg.lu_pivots_to_permutation(x, permutation_size))
+    actual = batched_fn(pivots)
+    expected = jnp.arange(permutation_size - 1, -1, -1, dtype=dtype)
+    expected = jnp.broadcast_to(expected, actual.shape)
+    self.assertArraysEqual(actual, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_ord={}_axis={}_keepdims={}".format(
@@ -903,7 +937,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # jtu.check_grads(lambda *args: jnp_fun(*args)[0], args_maker(), order=2, atol=1e-2, rtol=1e-2)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):
     def test(x):
       val, vec = jnp.linalg.eigh(x)
@@ -1018,6 +1051,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(ps, actual_ps)
     self.assertAllClose(ls, actual_ls, rtol=5e-6)
     self.assertAllClose(us, actual_us)
+
+  @jtu.skip_on_devices("cpu", "tpu")
+  def testLuCPUBackendOnGPU(self):
+    # tests running `lu` on cpu when a gpu is present.
+    jit(jsp.linalg.lu, backend="cpu")(np.ones((2, 2)))  # does not crash
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1365,6 +1403,70 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
       jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=1, atol=tol,
                       rtol=tol)
+
+class EighTridiagonalTest(jtu.JaxTestCase):
+
+  def run_test(self, alpha, beta):
+    n = alpha.shape[-1]
+    # scipy.linalg.eigh_tridiagonal doesn't support complex inputs, so for
+    # this we call the slower numpy.linalg.eigh.
+    if np.issubdtype(alpha.dtype, np.complexfloating):
+      tridiagonal = np.diag(alpha) + np.diag(beta, 1) + np.diag(
+          np.conj(beta), -1)
+      eigvals_expected, _ = np.linalg.eigh(tridiagonal)
+    else:
+      eigvals_expected = scipy.linalg.eigh_tridiagonal(
+          alpha, beta, eigvals_only=True)
+    eigvals = jax.scipy.linalg.eigh_tridiagonal(
+        alpha, beta, eigvals_only=True)
+    finfo = np.finfo(alpha.dtype)
+    atol = 4 * np.sqrt(n) * finfo.eps * np.amax(np.abs(eigvals_expected))
+    self.assertAllClose(eigvals_expected, eigvals, atol=atol, rtol=1e-4)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name": f"_n={n}_dtype={dtype.__name__}",
+      "n": n, "dtype": dtype}
+     for n in [1, 2, 3, 7, 8, 100]
+     for dtype in float_types + complex_types))
+  def testToeplitz(self, n, dtype):
+    jtu.skip_if_unsupported_type(dtype)
+    for a, b in [[2, -1], [1, 0], [0, 1], [-1e10, 1e10], [-1e-10, 1e-10]]:
+      alpha = a * np.ones([n], dtype=dtype)
+      beta = b * np.ones([n - 1], dtype=dtype)
+      self.run_test(alpha, beta)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name": f"_n={n}_dtype={dtype.__name__}",
+      "n": n, "dtype": dtype}
+     for n in [1, 2, 3, 7, 8, 100]
+     for dtype in float_types + complex_types))
+  def testRandomUniform(self, n, dtype):
+    alpha = jtu.rand_uniform(self.rng())((n,), dtype)
+    beta = jtu.rand_uniform(self.rng())((n - 1,), dtype)
+    self.run_test(alpha, beta)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name": f"_dtype={dtype.__name__}",
+      "dtype": dtype}
+     for dtype in float_types + complex_types))
+  def testSelect(self, dtype):
+    n = 5
+    alpha = jtu.rand_uniform(self.rng())((n,), dtype)
+    beta = jtu.rand_uniform(self.rng())((n - 1,), dtype)
+    eigvals_all = jax.scipy.linalg.eigh_tridiagonal(alpha, beta, select="a",
+                                                    eigvals_only=True)
+    eps = np.finfo(alpha.dtype).eps
+    atol = 2 * n * eps
+    for first in range(n - 1):
+      for last in range(first + 1, n - 1):
+        # Check that we get the expected eigenvalues by selecting by
+        # index range.
+        eigvals_index = jax.scipy.linalg.eigh_tridiagonal(
+            alpha, beta, select="i", select_range=(first, last),
+            eigvals_only=True)
+        self.assertAllClose(
+            eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

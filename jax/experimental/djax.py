@@ -14,11 +14,12 @@
 
 from functools import partial, reduce
 import itertools as it
+import operator as op
 from typing import (Tuple, List, Sequence, Set, Dict, Any, Callable, Union,
                     Optional)
 
 from jax import core
-from jax import dtypes
+from jax._src import dtypes
 from jax.core import Var, Literal, Atom, Tracer
 from jax._src.util import (safe_zip, safe_map, curry, unzip2, split_list,
                            tuple_delete)
@@ -261,10 +262,16 @@ def typecheck_type(env, aval):
         if not (isinstance(d.name.aval, AbsArray) and
                 isinstance(d.name.aval._eltTy, BoundedIntTy)):
           raise TypeError(f'dim var of unexpected type: {d.name.aval}')
-        if not all(j < i for j in d.indices):
-          raise TypeError(f'out-of-bounds dim indexing: {aval}')
-        expected_shape = tuple(aval.shape[j] for j in d.indices)
-        if d.name.aval.shape != expected_shape:
+        d_indices_set = set(d.indices)
+        if i in d_indices_set:
+          raise TypeError(f"circular dim indexing expression: {d}")
+        for j in d.indices:
+          d_j = aval.shape[j]
+          if (isinstance(d_j, DimIndexingExpr) and
+              not d_indices_set.issuperset(d_j.indices)):
+            raise TypeError(f"dim indexing not transitively closed: {d}")
+        expected_idx_array_shape = tuple(aval.shape[j] for j in d.indices)
+        if d.name.aval.shape != expected_idx_array_shape:
           raise TypeError(f'incompatible shapes in dim indexing: {aval}')
       else:
         raise TypeError(f'unexpected type in shape: {type(d)}')
@@ -473,8 +480,10 @@ def _place_in_dim_tracers_in_shapes(trace, in_avals):
           if dim_tracer is None:
             dim_tracer = dim_tracers[id(d)] = trace.new_arg(d)
           new_shape.append(dim_tracer)
-        else:
+        elif isinstance(d, (int, BoundedInt)):
           new_shape.append(d)
+        else:
+          raise NotImplementedError(d)  # TODO
       new_aval = AbsArray(tuple(new_shape), aval._eltTy)
       new_in_avals.append(new_aval)
   return list(dim_tracers.values()), new_in_avals
@@ -567,10 +576,11 @@ def partition_list(bs, lst):
 
 def _raise_absarray_to_type_level(aval: AbsArray, weak_type: bool):
   assert isinstance(aval, AbsArray)
+  unique_avals: Dict[int, AbsArray] = {}
   shape = []
   for d in aval.shape:
     if isinstance(d, BoundedInt):
-      shape.append(AbsArray((), BoundedIntTy(d._bound)))
+      shape.append(unique_avals.setdefault(id(d), AbsArray((), BoundedIntTy(d._bound))))
     elif isinstance(d, DimIndexer):
       raise NotImplementedError  # TODO
     else:
@@ -578,7 +588,7 @@ def _raise_absarray_to_type_level(aval: AbsArray, weak_type: bool):
   return AbsArray(tuple(shape), aval._eltTy)
 core.raise_to_shaped_mappings[AbsArray] = _raise_absarray_to_type_level
 
-def _abstractify_array_for_ad(x: Array):
+def _abstractify_array_for_ad(x: Array):  # TODO misleading name, used in djit
   return AbsArray(x.shape, x._eltTy)
 core.pytype_aval_mappings[Array] = _abstractify_array_for_ad
 
@@ -745,6 +755,9 @@ def djit(fun):
   def f_jitted(*args, **kwargs):
     args, in_tree = tree_flatten((args, kwargs))
     f, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+    # TODO we shouldn't dedup avals one array at a time; need to do it for the
+    # full argument list!
+    # unique_avals: Dict[int, core.AbstractValue] = {}
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args]
     jaxpr, consts, unconverted_binders = trace_to_jaxpr_dynamic(f, in_avals)
     num_consts = len(consts)
@@ -765,6 +778,45 @@ def _extract_dim_vals(in_dim_binders, in_binders, unconverted_binders, args):
   in_dim_vals = [sizes[v] for v in in_dim_binders[:num_binders]] + converted_in_dim_vals
   return in_dim_vals, args
 
+
+def traceable_to_padded_translation(traceable):
+  def translation(c, dims, avals, operands, **params):
+    dim_avals = [core.ShapedArray((), np.int32) for _ in dims]
+    padded_avals = map(_replace_vars_with_bounds, avals)
+
+    @lu.wrap_init
+    def fun(*args):
+      dim_sizes, args = split_list(args, [len(dims)])
+      logical_sizes = dict(zip(dims, dim_sizes))
+      logical_shapes = [tuple([logical_sizes.get(d, d) for d in aval.shape])
+                        for aval in avals]  # TODO more cases
+      return traceable(logical_shapes, *args, **params)
+
+    in_avals = [*dim_avals, *padded_avals]
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+
+    operands_ = it.chain.from_iterable([*dims.values(), *operands])
+    outs = xla.jaxpr_subcomp(c, jaxpr, None, xla.AxisEnv(1, (), ()),
+                             xla._xla_consts(c, consts), '', *operands_)
+    return xla._partition_outputs(out_avals, outs)
+  return translation
+
+def _replace_vars_with_bounds(aval):
+  if not isinstance(aval, AbsArray):
+    return aval
+  else:
+    new_shape = []
+    for d in aval.shape:
+      if isinstance(d, Var):
+        assert d.aval.shape == () and isinstance(d.aval._eltTy, BoundedIntTy)
+        new_shape.append(d.aval._eltTy._bound)
+      elif isinstance(d, int):
+        new_shape.append(d)
+      elif isinstance(d, BoundedInt):
+        new_shape.append(d._bound)
+      else:
+        raise NotImplementedError(d)
+    return core.ShapedArray(tuple(new_shape), aval._eltTy._dtype)
 
 # AD
 
@@ -940,9 +992,17 @@ def batch_jaxpr(jaxpr, axis_size, in_dims):
               if d is not batching.not_mapped else aval
               for d, aval in zip(in_dims, in_avals)]
 
-  f, out_dims = batching.batch_fun2(lu.wrap_init(jaxpr_as_fun(jaxpr)), in_dims)
+  fun, out_dims = batching.batch_subtrace(lu.wrap_init(jaxpr_as_fun(jaxpr)))
+  f = _batch_fun(fun, in_dims)
   jaxpr, consts, _ = trace_to_jaxpr_dynamic(f, in_avals)
   return jaxpr, consts, out_dims()
+
+@lu.transformation
+def _batch_fun(in_dims, *in_vals, **params):
+  with core.new_main(batching.BatchTrace, axis_name=None) as main:
+    out_vals = yield (main, in_dims, *in_vals), params
+    del main
+  yield out_vals
 
 def _map_array(size: int, axis: int, aval: AbsArray) -> AbsArray:
   return AbsArray(tuple_delete(aval.shape, axis), aval._eltTy)
@@ -1032,29 +1092,87 @@ def _reduce_sum_typecheck_rule(x, *, axes):
   return [reduce_sum_p.abstract_eval(x.aval, axes=axes)]
 typecheck_rules[reduce_sum_p] = _reduce_sum_typecheck_rule
 
-def _reduce_sum_translation_rule(c, dims, avals, operands, *, axes):
-  (x,), = operands
-  shape = c.get_shape(x)
-  dtype = shape.numpy_dtype()
-  iota_shape = xc.Shape.array_shape(xc.PrimitiveType.S32, shape.dimensions())
-  if dims:
-    aval, = avals
-    masks = [xops.Lt(xops.Iota(c, iota_shape, i), dims[v][0])
-             for i, v in enumerate(aval.shape) if isinstance(v, Var)
-             and i in axes]
-    map(c.get_shape, masks)
-    x = xops.Select(reduce(xops.And, masks), x,
-                    xops.Broadcast(xb.constant(c, np.zeros((), dtype)),
-                                   shape.dimensions()))
-  scalar = core.ShapedArray((), dtype)
-  out = xops.Reduce(c, [x], [xb.constant(c, np.array(0, dtype))],
-                    xla.primitive_subcomputation(lax.add_p, scalar, scalar), axes)
-  return [[out]]
-translations[reduce_sum_p] = _reduce_sum_translation_rule
+def _reduce_sum_translation_traceable(logical_shapes, x, *, axes):
+  shape, = logical_shapes
+  x = _replace_masked_values(shape, x, 0, axes=axes)
+  return [lax._reduce_sum(x, axes=axes)]
+translations[reduce_sum_p] = traceable_to_padded_translation(
+    _reduce_sum_translation_traceable)
+
+def _replace_masked_values(logical_shape, x, val, axes=None):
+  axes = axes or set(range(len(logical_shape)))
+  masks = [lax.broadcasted_iota(np.int32, x.shape, i) < d
+           for i, d in enumerate(logical_shape) if d is not None and i in axes]
+  if masks:
+    x = lax.select(reduce(op.and_, masks), x, lax.full_like(x, val))
+  return x
 
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   raise NotImplementedError  # TODO
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
+
+
+### lt
+
+def lt(x, y):
+  return lt_p.bind(x, y)
+lt_p = core.Primitive('lt')
+
+@lt_p.def_abstract_eval
+def _lt_abstract_eval(x, y):
+  if isinstance(x, AbsArray) or isinstance(y, AbsArray):
+    # TODO check dtypes match
+    if not x.shape:
+      return AbsArray(y.shape, BaseType(np.dtype('bool')))
+    if not y.shape:
+      return AbsArray(x.shape, BaseType(np.dtype('bool')))
+    map(_dims_must_equal, x.shape, y.shape)
+    return AbsArray(x.shape, BaseType(np.dtype('bool')))
+  else:
+    return lax.lt_p.abstract_eval(x, y)
+
+def _lt_typecheck_rule(x, y):
+  return [lt_p.abstract_eval(x.aval, y.aval)]
+
+def _lt_translation_rule(c, dims, avals, operands):
+  (x,), (y,) = operands
+  return [[xops.Lt(x, y)]]
+
+
+### dot
+
+def dot(x, y):
+  assert len(x.shape) == len(y.shape) == 2
+  return dot_general(x, y, ([1], [0]), ([], []))
+
+Dims = Tuple[Sequence[int], Sequence[int]]
+
+def dot_general(x: Any, y: Any, contract: Dims, batch: Dims) -> Any:
+  return dot_general_p.bind(x, y, contract=contract, batch=batch)
+dot_general_p = core.Primitive('dot_general')
+
+@dot_general_p.def_abstract_eval
+def _dot_general_abstract_eval(x, y, *, contract, batch):
+  for i, j in zip(*contract): _dims_must_equal(x.shape[i], y.shape[j])
+  for i, j in zip(*batch): _dims_must_equal(x.shape[i], y.shape[j])
+  shape = lax._dot_general_shape_computation(x.shape, y.shape, (contract, batch))
+  return AbsArray(shape, x._eltTy)
+
+def _dot_general_typecheck_rule(x, y, *, contract, batch):
+  return [_dot_general_abstract_eval(x.aval, y.aval,
+                                     contract=contract, batch=batch)]
+typecheck_rules[dot_general_p] = _dot_general_typecheck_rule
+
+def _dot_general_trans(logical_shapes, x, y, *, contract, batch):
+  x_shape, _ = logical_shapes
+  lhs_contract, _ = contract
+  x = _replace_masked_values(x_shape, x, 0, axes=lhs_contract)
+  return [lax.dot_general(x, y, dimension_numbers=(contract, batch))]
+translations[dot_general_p] = traceable_to_padded_translation(_dot_general_trans)
+
+def _dot_general_transpose_rule(cotangent, x, y, *, contract, batch):
+  assert False  # TODO
+ad.primitive_transposes[dot_general_p] = _dot_general_transpose_rule
 
 
 ## add
@@ -1160,32 +1278,18 @@ def _nonzero_typecheck_rule(invar):
   return out_dim_var, out_val_aval
 typecheck_rules[nonzero_p] = _nonzero_typecheck_rule
 
-def _nonzero_translation_rule(c, dims, avals, operands):
-  (vals,), = operands
-  shape = c.get_shape(vals)
-  last_axis = len(shape.dimensions()) - 1
-  zeros = xops.Broadcast(xb.constant(c, np.zeros((), shape.numpy_dtype())),
-                         shape.dimensions())
-  s32_etype = xc.dtype_to_etype(np.dtype('int32'))
-  nonzero_indicators = xops.ConvertElementType(xops.Ne(vals, zeros), s32_etype)
-  i = core.ShapedArray((), np.dtype('int32'))
-  out_dim = xops.Reduce(c, [nonzero_indicators],
-                        [xb.constant(c, np.array(0, np.dtype('int32')))],
-                        xla.primitive_subcomputation(lax.add_p, i, i),
-                        (last_axis,))
-  c.get_shape(out_dim)  # xla type checking
-
-  subc = xb.make_computation_builder("sort_gt_comparator")
-  params = [xb.parameter(subc, i, xc.Shape.array_shape(s32_etype, ()))
-            for i in range(4)]
-  comparator = subc.build(xops.Gt(params[0], params[1]))
-  iota_shape = xc.Shape.array_shape(xc.PrimitiveType.S32, shape.dimensions())
-  ans = xops.Sort(c, [nonzero_indicators, xops.Iota(c, iota_shape, last_axis)],
-                  is_stable=True, comparator=comparator)
-  _, out_val = xla.xla_destructure(c, ans)
-  c.get_shape(out_val)  # xla type checking
-  return [[out_dim], [out_val]]
-translations[nonzero_p] = _nonzero_translation_rule
+def _nonzero_translation_traceable(logical_shapes, x):
+  shape, = logical_shapes
+  assert shape
+  x = _replace_masked_values(shape, x, 0)
+  nonzero_indicators = x != 0
+  last_axis = len(shape) - 1
+  out_sizes = lax._reduce_sum(nonzero_indicators.astype(np.int32), [last_axis])
+  iota = lax.broadcasted_iota(np.int32, x.shape, dimension=last_axis)
+  _, idx = lax.sort_key_val(~nonzero_indicators, iota, dimension=last_axis)
+  return out_sizes, idx
+translations[nonzero_p] = traceable_to_padded_translation(
+    _nonzero_translation_traceable)
 
 def _nonzero_vmap_rule(args, in_dims):
   (x,), (d,) = args, in_dims
@@ -1295,8 +1399,10 @@ translations[broadcast_p] = _broadcast_translation_rule
 
 import jax.numpy as jnp
 
-def bbarray(bound_shape: Tuple[int], x: NDArray):
-  shape = tuple(BoundedInt(d, bound) for d, bound in zip(x.shape, bound_shape))
+def bbarray(bound_shape: Tuple[int, ...], x: NDArray):
+  sizes: Dict[int, BoundedInt] = {}
+  shape = tuple(sizes.setdefault(d, BoundedInt(d, bound))
+                for d, bound in zip(x.shape, bound_shape))
   slices = tuple(slice(d) for d in x.shape)
   padded_x = jnp.ones(bound_shape, x.dtype).at[slices].set(x)
   return Array(shape, BaseType(x.dtype), padded_x)
@@ -1428,3 +1534,15 @@ if __name__ == '__main__':
   xs = jnp.array([[0, 1, 0, 1, 0, 1],
                   [1, 1, 1, 1, 0, 1]])
   print(jax.vmap(f)(xs))
+
+
+  ## dot
+
+  @djit
+  def f(x):
+    return dot(x, x)
+  p('dot(x, x)')
+  x = bbarray((4, 4), np.arange(9., dtype=np.float32).reshape(3, 3))
+  print(f(x))
+  y = np.arange(9.).reshape(3, 3)
+  print(f'should be\n{np.dot(y, y)}')

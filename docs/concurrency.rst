@@ -1,10 +1,7 @@
 Concurrency
 ===========
 
-JAX has some limited support for Python concurrency.
-
-Concurrency support is experimental and only lightly tested; please report any
-bugs.
+JAX has limited support for Python concurrency.
 
 Clients may call JAX APIs (e.g., :func:`~jax.jit` or :func:`~jax.grad`)
 concurrently from separate Python threads.

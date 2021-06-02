@@ -22,6 +22,7 @@ from absl.testing import parameterized
 
 import jax
 from jax import dtypes
+from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
@@ -135,7 +136,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
          dtype=dtype)
     for dtype in [np.int64, np.float64]))
   def test_converts_64bit(self, dtype=np.int64, with_function=False):
-    if not config.FLAGS.jax_enable_x64:
+    if not config.jax_enable_x64:
       self.skipTest("requires x64 mode")
     big_const = np.full((5,), 2 ** 33, dtype=dtype)
     self.ConvertAndCompare(jnp.sin, big_const)
@@ -284,6 +285,43 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(4. * 4., y)
     self.assertAllClose(3. * 4., tape.gradient(y, x))
 
+  def test_gradient_with_float0_intermediate(self):
+    # Gradient over integer-argument functions
+    def f(x, y):  # x is an int, y is a float
+      return 2 * x + y
+
+    def g(x):  # x: f32
+      return 2. * f(3 * x.astype("int32"), x * 4.)
+
+    x = np.float_(2.)
+    grad_g = jax.grad(g)
+    self.ConvertAndCompare(grad_g, x)
+
+
+  def test_gradient_with_float0_result(self):
+    # Gradient over integer-argument functions, with float0 result
+    def f(x, y):  # x is an int, y is a float
+      return 2 * x + y
+
+    def g(x):  # x: i32
+      return jnp.sum(2. * f(3 * x, 4. * x.astype("float32")))
+
+    grad_g = jax.grad(g, allow_int=True)
+    x = 2
+    d_dx_jax = grad_g(x)
+    d_dx_tf = jax2tf.convert(grad_g)(x)
+    self.assertEqual(d_dx_jax.dtype, dtypes.float0)
+    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), dtypes.bfloat16),
+                        d_dx_tf.numpy())
+
+    shape = (3, 4)
+    x = np.ones(shape, dtype=np.int32)
+    d_dx_jax = grad_g(x)
+    d_dx_tf = jax2tf.convert(grad_g)(x)
+    self.assertEqual(d_dx_jax.dtype, dtypes.float0)
+    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), dtypes.bfloat16),
+                        d_dx_tf.numpy())
+
   def test_convert_argument_non_callable_error(self):
     with self.assertRaisesRegex(TypeError, "Expected a callable value"):
       jax2tf.convert(5.)
@@ -379,7 +417,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "grad")
 
-  @jtu.skip_on_flag('jax_omnistaging', False)
   def test_convert_nullary_func(self):
     # Even nullary functions are converted to TF (as opposed to constant-folded
     # in JAX prior to conversion).
@@ -389,7 +426,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf_graph = f_tf.get_concrete_function().graph.as_graph_def()
     self.assertIn('op: "Sin"', str(f_tf_graph))
 
-  @jtu.skip_on_flag('jax_omnistaging', False)
   def test_convert_of_nested_independent_jit(self):
     def func(x):
       def inner1(y):
@@ -449,7 +485,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         ValueError, "convert must be used outside all JAX transformations"):
       self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
 
-  @jtu.skip_on_flag('jax_omnistaging', False)
   def test_name_scope(self):
     log = []
 
@@ -481,6 +516,50 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(
         tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
                                                    jnp.bfloat16))
+
+  def test_kwargs(self):
+    # Re: https://github.com/google/jax/issues/6791
+    def f_jax(*, x):
+      return jnp.sum(x)
+    f_tf = jax2tf.convert(f_jax)
+    self.assertAllClose(
+      f_tf(x=np.zeros(3, dtype=np.float32)),  # Call with kwargs.
+      np.zeros((), dtype=np.float32))
+
+  def test_enable_xla(self):
+    # Tests that enable_xla flag is properly scoped to a conversion.
+    def fun(x):
+      # Can be converted only if enable_xla is on, due to negative padding.
+      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
+
+    tf_fun_with_xla = jax2tf.convert(fun, enable_xla=True)
+    tf_fun_without_xla = jax2tf.convert(fun, enable_xla=False)
+    x = np.ones((2, 3), dtype=np.float32)
+
+    self.assertAllClose(fun(x), tf_fun_with_xla(x))
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Call to pad cannot be converted with enable_xla=False"):
+      tf_fun_without_xla(x)
+
+    # Now in reverse order
+    def fun2(x):
+      # Can be converted only if enable_xla is on, due to negative padding.
+      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
+
+    tf_fun2_without_xla = jax2tf.convert(fun2, enable_xla=False)
+    tf_fun2_with_xla = jax2tf.convert(fun2, enable_xla=True)
+
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Call to pad cannot be converted with enable_xla=False"):
+      tf_fun2_without_xla(x)
+    self.assertAllClose(fun(x), tf_fun2_with_xla(x))
+
+  def test_randint(self):
+      def randint():
+        return jax.random.randint(
+            jax.random.PRNGKey(42), shape=(), minval=0, maxval=1)
+
+      self.ConvertAndCompare(randint)
 
 
 if __name__ == "__main__":

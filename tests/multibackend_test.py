@@ -22,7 +22,7 @@ import numpy as np
 import numpy.random as npr
 from unittest import SkipTest
 
-from jax import api
+from jax._src import api
 from jax import test_util as jtu
 from jax import numpy as jnp
 

@@ -22,7 +22,7 @@ variational evidence lower bound (ELBO)."""
 from functools import partial
 import matplotlib.pyplot as plt
 
-from jax.api import jit, grad, vmap
+from jax import jit, grad, vmap
 from jax import random
 from jax.experimental import optimizers
 import jax.numpy as jnp

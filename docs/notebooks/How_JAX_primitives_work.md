@@ -64,7 +64,7 @@ defined in the `jax.lax` module:
 :outputId: 3fb1c8a7-7a4c-4a3a-f7ff-37b7dc740528
 
 from jax import lax
-from jax import api
+from jax._src import api
 
 def multiply_add_lax(x, y, z):
   """Implementation of multiply-add using the jax.lax primitives."""

@@ -208,7 +208,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   ))
   def test_bicgstab_against_scipy(
       self, shape, dtype, preconditioner):
-    if not config.FLAGS.jax_enable_x64:
+    if not config.jax_enable_x64:
       raise unittest.SkipTest("requires x64 mode")
 
     rng = jtu.rand_default(self.rng())
@@ -253,6 +253,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for preconditioner in [None, 'identity', 'exact']
       ))
+  @jtu.skip_on_devices("gpu")
   def test_bicgstab_on_identity_system(self, shape, dtype, preconditioner):
     A = jnp.eye(shape[1], dtype=dtype)
     solution = jnp.ones(shape[1], dtype=dtype)
@@ -277,6 +278,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for preconditioner in [None, 'identity', 'exact']
       ))
+  @jtu.skip_on_devices("gpu")
   def test_bicgstab_on_random_system(self, shape, dtype, preconditioner):
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
@@ -319,6 +321,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self, shape, dtype, preconditioner, solve_method):
     if not config.x64_enabled:
       raise unittest.SkipTest("requires x64 mode")
+
+    # The LLVM bug that caused this appears to be fixed in jaxlib 0.1.67.
+    if jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 66):
+      raise unittest.SkipTest("test fails on CPU jaxlib <= 0.1.66")
 
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
@@ -365,6 +371,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for preconditioner in [None, 'identity', 'exact']
       for solve_method in ['batched', 'incremental']
       ))
+  @jtu.skip_on_devices("gpu")
   def test_gmres_on_identity_system(self, shape, dtype, preconditioner,
                                     solve_method):
     A = jnp.eye(shape[1], dtype=dtype)
@@ -395,6 +402,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for preconditioner in [None, 'identity', 'exact']
       for solve_method in ['incremental', 'batched']
       ))
+  @jtu.skip_on_devices("gpu")
   def test_gmres_on_random_system(self, shape, dtype, preconditioner,
                                   solve_method):
     rng = jtu.rand_default(self.rng())

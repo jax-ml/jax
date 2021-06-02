@@ -15,8 +15,12 @@ features.
   :toctree: _autosummary
 
   start_server
-  trace_function
-  TraceContext
+  start_trace
+  stop_trace
+  trace
+  annotate_function
+  TraceAnnotation
+  StepTraceAnnotation
 
 
 Device memory profiling
@@ -30,4 +34,13 @@ profiling features.
 
   device_memory_profile
   save_device_memory_profile
-  
+
+Deprecated functions
+--------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+  trace_function
+  TraceContext
+  StepTraceContext

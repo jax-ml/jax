@@ -125,11 +125,13 @@ repository root, and rebuild by running `build.py` or upgrading `jaxlib` if
 necessary. You shouldn't have to reinstall `jax` because `pip install -e`
 sets up symbolic links from site-packages into the repository.
 
+(running-tests)=
+
 # Running the tests
 
 To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
 parallel. First, install `pytest-xdist` and `pytest-benchmark` by running
-`pip install pytest-xdist pytest-benchmark`.
+`ip install -r build/test-requirements.txt`.
 Then, from the repository root directory run:
 
 ```
@@ -203,11 +205,13 @@ And then run:
 sphinx-build -b html docs docs/build/html
 ```
 This can take a long time because it executes many of the notebooks in the documentation source;
-if you'd prefer to build the docs without exeuting the notebooks, you can run:
+if you'd prefer to build the docs without executing the notebooks, you can run:
 ```
 sphinx-build -b html -D jupyter_execute_notebooks=off docs docs/build/html
 ```
 You can then see the generated documentation in `docs/build/html/index.html`.
+
+(update-notebooks)=
 
 ## Update notebooks
 
@@ -239,7 +243,7 @@ $ jupytext --sync docs/notebooks/*
 ```
 
 Alternatively, you can run this command via the [pre-commit](https://pre-commit.com/)
-framework by executing the folloing in the main JAX directory:
+framework by executing the following in the main JAX directory:
 
 ```
 $ pre-commit run --all
@@ -247,6 +251,18 @@ $ pre-commit run --all
 
 See the pre-commit framework documentation for information on how to set your local git
 environment to execute this automatically.
+
+### Creating new notebooks
+
+If you are adding a new notebook to the documentation and would like to use the `jupytext --sync`
+command discussed here, you can set up your notebook for jupytext by using the following command:
+
+```
+$ jupytext --set-formats ipynb,md:myst path/to/the/notebook.ipynb
+```
+
+This works by adding a `"jupytext"` metadata field to the notebook file which specifies the
+desired formats, and which the `jupytext --sync` command recognizes when invoked.
 
 ### Notebooks within the sphinx build
 

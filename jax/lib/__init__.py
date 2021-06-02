@@ -15,29 +15,38 @@
 # This module is largely a wrapper around `jaxlib` that performs version
 # checking on import.
 
+import os
+from typing import Optional
+
 __all__ = [
-  'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
+  'cuda_linalg', 'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
   'pocketfft', 'pytree', 'tpu_client', 'version', 'xla_client'
 ]
 
-import jaxlib
+try:
+  import jaxlib
+except ModuleNotFoundError as err:
+  raise ModuleNotFoundError(
+    'jax requires jaxlib to be installed. See '
+    'https://github.com/google/jax#installation for installation instructions.'
+    ) from err
 
-# Must be kept in sync with the jaxlib version in build/test-requirements.txt
-_minimum_jaxlib_version = (0, 1, 60)
+from jax.version import _minimum_jaxlib_version as _minimum_jaxlib_version_str
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
   # jaxlib is too old to have version number.
-  msg = 'This version of jax requires jaxlib version >= {}.'
-  raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version)))
-                    ) from err
+  msg = f'This version of jax requires jaxlib version >= {_minimum_jaxlib_version_str}.'
+  raise ImportError(msg) from err
 
 version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
+_minimum_jaxlib_version = tuple(int(x) for x in _minimum_jaxlib_version_str.split('.'))
 
 # Check the jaxlib version before importing anything else from jaxlib.
 def _check_jaxlib_version():
   if version < _minimum_jaxlib_version:
-    msg = 'jaxlib is version {}, but this version of jax requires version {}.'
+    msg = (f'jaxlib is version {jaxlib_version.__version__}, '
+           f'but this version of jax requires version {_minimum_jaxlib_version_str}.')
 
     if version == (0, 1, 23):
       msg += ('\n\nA common cause of this error is that you installed jaxlib '
@@ -45,10 +54,13 @@ def _check_jaxlib_version():
               'manylinux2010 wheels. Try running:\n\n'
               'pip install --upgrade pip\n'
               'pip install --upgrade jax jaxlib\n')
-    raise ValueError(msg.format('.'.join(map(str, version)),
-                                '.'.join(map(str, _minimum_jaxlib_version))))
+    raise ValueError(msg)
 
 _check_jaxlib_version()
+
+if version >= (0, 1, 68):
+  from jaxlib import cpu_feature_guard
+  cpu_feature_guard.check_cpu_features()
 
 from jaxlib import xla_client
 from jaxlib import lapack
@@ -65,6 +77,11 @@ except ImportError:
   cusolver = None
 
 try:
+  from jaxlib import cusparse  # pytype: disable=import-error
+except ImportError:
+  cusparse = None
+
+try:
   from jaxlib import rocsolver  # pytype: disable=import-error
 except ImportError:
   rocsolver = None
@@ -74,6 +91,11 @@ try:
 except ImportError:
   cuda_prng = None
 
+try:
+  from jaxlib import cuda_linalg  # pytype: disable=import-error
+except ImportError:
+  cuda_linalg = None
+
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
 # number that can be used to perform changes without breaking the master
@@ -81,6 +103,12 @@ except ImportError:
 _xla_extension_version = getattr(xla_client, '_version', 0)
 
 try:
-  from jaxlib import tpu_client  # pytype: disable=import-error
+  from jaxlib import tpu_client as tpu_driver_client  # pytype: disable=import-error
 except:
-  tpu_client = None
+  tpu_driver_client = None
+
+
+cuda_path: Optional[str]
+cuda_path = os.path.join(os.path.dirname(jaxlib.__file__), "cuda")
+if not os.path.isdir(cuda_path):
+  cuda_path = None

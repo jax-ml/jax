@@ -16,7 +16,7 @@ import functools
 import re
 from typing import Any, Callable, Dict, List, Tuple
 
-from jax import api
+from jax._src import api
 from jax import lax
 from . import lax_numpy as jnp
 from jax._src.util import safe_map as map, safe_zip as zip
@@ -209,22 +209,21 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     Vectorized version of the given function.
 
   Here a few examples of how one could write vectorized linear algebra routines
-  using :func:`vectorize`::
+  using :func:`vectorize`:
 
-    import jax.numpy as jnp
-    from functools import partial
+  >>> from functools import partial
 
-    @partial(jnp.vectorize, signature='(k),(k)->(k)')
-    def cross_product(a, b):
-      assert a.shape == b.shape and a.ndim == b.ndim == 1
-      return jnp.array([a[1] * b[2] - a[2] * b[1],
-                        a[2] * b[0] - a[0] * b[2],
-                        a[0] * b[1] - a[1] * b[0]])
+  >>> @partial(jnp.vectorize, signature='(k),(k)->(k)')
+  ... def cross_product(a, b):
+  ...   assert a.shape == b.shape and a.ndim == b.ndim == 1
+  ...   return jnp.array([a[1] * b[2] - a[2] * b[1],
+  ...                     a[2] * b[0] - a[0] * b[2],
+  ...                     a[0] * b[1] - a[1] * b[0]])
 
-    @partial(jnp.vectorize, signature='(n,m),(m)->(n)')
-    def matrix_vector_product(matrix, vector):
-      assert matrix.ndim == 2 and matrix.shape[1:] == vector.shape
-      return matrix @ vector
+  >>> @partial(jnp.vectorize, signature='(n,m),(m)->(n)')
+  ... def matrix_vector_product(matrix, vector):
+  ...   assert matrix.ndim == 2 and matrix.shape[1:] == vector.shape
+  ...   return matrix @ vector
 
   These functions are only written to handle 1D or 2D arrays (the ``assert``
   statements will never be violated), but with vectorize they support
@@ -236,14 +235,21 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   (2, 3)
   >>> cross_product(jnp.ones((1, 2, 3)), jnp.ones((2, 1, 3))).shape
   (2, 2, 3)
-  >>> matrix_vector_product(jnp.ones(3), jnp.ones(3))
+  >>> matrix_vector_product(jnp.ones(3), jnp.ones(3))  # doctest: +IGNORE_EXCEPTION_DETAIL
+  Traceback (most recent call last):
   ValueError: input with shape (3,) does not have enough dimensions for all
   core dimensions ('n', 'k') on vectorized function with excluded=frozenset()
   and signature='(n,k),(k)->(k)'
   >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones(3)).shape
   (2,)
   >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones((4, 3))).shape
-  (4, 2)  # not the same as jnp.matmul
+  (4, 2)
+
+  Note that this has different semantics than `jnp.matmul`:
+
+  >>> jnp.matmul(jnp.ones((2, 3)), jnp.ones((4, 3)))  # doctest: +IGNORE_EXCEPTION_DETAIL
+  Traceback (most recent call last):
+  TypeError: dot_general requires contracting dimensions to have the same shape, got [3] and [4].
   """
   if any(not isinstance(exclude, int) for exclude in excluded):
     raise TypeError("jax.numpy.vectorize can only exclude integer arguments, "

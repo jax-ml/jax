@@ -23,7 +23,8 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import dtypes
+from jax._src import dtypes
+from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.interpreters import xla
@@ -34,7 +35,7 @@ config.parse_flags_with_absl()
 bool_dtypes = [np.dtype('bool')]
 
 signed_dtypes = [np.dtype('int8'), np.dtype('int16'), np.dtype('int32'),
-                 np.dtype('int64'), np.dtype('longlong'), np.dtype('intc')]
+                 np.dtype('int64')]
 
 unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
                    np.dtype('uint64')]
@@ -161,12 +162,13 @@ class DtypesTest(jtu.JaxTestCase):
         self.assertEqual(np.promote_types(t1, t2),
                          dtypes.promote_types(t1, t2))
 
-  def testScalarInstantiation(self):
-    for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:
-      a = t(1)
-      self.assertEqual(a.dtype, jnp.dtype(t))
-      self.assertIsInstance(a, xla.DeviceArray)
-      self.assertEqual(0, jnp.ndim(a))
+  @parameterized.parameters([jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64])
+  def testScalarInstantiation(self, scalar_type):
+    a = scalar_type(1)
+    self.assertEqual(a.dtype, jnp.dtype(scalar_type))
+    self.assertIsInstance(a, xla.DeviceArray)
+    self.assertEqual(0, jnp.ndim(a))
+    self.assertIsInstance(np.dtype(scalar_type).type(1), scalar_type)
 
   def testIsSubdtype(self):
     for t in scalar_types:
@@ -202,6 +204,10 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(jnp.int32(101),
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
 
+  @parameterized.parameters(all_dtypes)
+  def testDtypeFromString(self, dtype):
+    self.assertEqual(dtypes.dtype(str(dtype)), dtype)
+
 
 class TestPromotionTables(jtu.JaxTestCase):
 
@@ -210,7 +216,7 @@ class TestPromotionTables(jtu.JaxTestCase):
      "jaxtype": jaxtype}
      for jaxtype in dtypes._jax_types)
   def testJaxTypeFromType(self, jaxtype):
-    self.assertIs(dtypes._jax_type(jaxtype), jaxtype)
+    self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
 
   @parameterized.named_parameters(
     {"testcase_name": "_jaxtype={}".format(jaxtype),
@@ -221,7 +227,7 @@ class TestPromotionTables(jtu.JaxTestCase):
       val = jaxtype(0)
     except TypeError:
       val = jaxtype.type(0)
-    self.assertIs(dtypes._jax_type(val), jaxtype)
+    self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(val)), jaxtype)
 
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")
@@ -326,6 +332,31 @@ class TestPromotionTables(jtu.JaxTestCase):
     f = lambda x, y: xfun(x) + yfun(y)
     args_maker = lambda: [xtype(1), ytype(1)]
     self._CompileAndCheck(f, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+     "dtype": dtype, "weak_type": weak_type}
+    for dtype in all_dtypes
+    for weak_type in [True, False]
+  )
+  def testUnaryPromotion(self, dtype, weak_type):
+    # Regression test for https://github.com/google/jax/issues/6051
+    x = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    y = jnp.array(0, dtype=dtypes.result_type(x))
+    assert x.dtype == y.dtype
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+     "dtype": dtype, "weak_type": weak_type}
+    for dtype in all_dtypes
+    for weak_type in [True, False]
+  )
+  def testBinaryNonPromotion(self, dtype, weak_type):
+    # Regression test for https://github.com/google/jax/issues/6051
+    x = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    y = (x + x)
+    assert x.dtype == y.dtype
+    assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

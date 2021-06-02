@@ -6,10 +6,10 @@ Link: go/jax2tf-examples.
 This directory contains a number of examples of using the
 [jax2tf converter](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md) to:
 
-  * save SavedModel from trained MNIST models, using both pure JAX and Flax.
-  * reuse the feature-extractor part of the trained MNIST model in
-    TensorFlow Hub, and in a larger TensorFlow Keras model.
-  * use jax2tf with TensorFlow Serving and TensorFlow JavaScript.
+  * save SavedModel from trained MNIST models, using both Flax and pure JAX.
+  * reuse the feature-extractor part of the trained MNIST model
+    in a larger TensorFlow Keras model.
+  * use Flax models with TensorFlow Serving, TensorFlow JavaScript, and TensorFlow Lite.
 
 # Generating TensorFlow SavedModel
 
@@ -68,7 +68,7 @@ one using Flax (`FlaxMNIST`). Other Flax models can be arranged similarly,
 and the same strategy should work for other neural-network libraries for JAX.
 
 If your Flax model takes multiple inputs, then you need to change the last
-line above to:
+line in the example above to:
 
   ```python
   predict_fn = lambda params, input: model.apply({"params": params}, *input)
@@ -131,10 +131,10 @@ following sequence of steps:
    * optionally plot images with the training digits and the inference results.
 
 
-There are a number of flags to select the Flax model (`--model=mnist_flag`),
+There are a number of flags to select the Flax model (`--model=mnist_flax`),
 to skip the training and just test a previously loaded
 SavedModel (`--nogenerate_model`), to choose the saving path, etc.
-The default saving location is `/tmp/jax2tf/saved_models/1`.
+The default saving location is `/tmp/jax2tf/saved_models/`.
 
 
 By default, this example will convert the inference function for three separate

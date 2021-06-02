@@ -1,11 +1,11 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-03-03* (YYYY-MM-DD)
+*Last generated on: 2021-05-17* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2313 test harnesses to test
-the implementation of 122 numeric JAX primitives.
+We use a set of 2507 test harnesses to test
+the implementation of 121 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
 The following table shows the dtypes at which primitives
@@ -39,7 +39,7 @@ be updated.
 
 
 | Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
-| --- | --- | --- | --- | --- |
+| --- | --- | --- | --- |
 | abs | 10 | inexact, signed | bool, unsigned |
 | acos | 6 | inexact | bool, integer |
 | acosh | 6 | inexact | bool, integer |
@@ -64,7 +64,7 @@ be updated.
 | complex | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
 | concatenate | 17 | all |  |
 | conj | 5 | complex, float32, float64 | bfloat16, bool, float16, integer |
-| conv_general_dilated | 58 | inexact | bool, integer |
+| conv_general_dilated | 73 | inexact, int16, int32, int8 | bool, int64, unsigned |
 | convert_element_type | 201 | all |  |
 | cos | 6 | inexact | bool, integer |
 | cosh | 6 | inexact | bool, integer |
@@ -76,7 +76,7 @@ be updated.
 | device_put | 16 | all |  |
 | digamma | 4 | floating | bool, complex, integer |
 | div | 20 | inexact, integer | bool |
-| dot_general | 125 | all |  |
+| dot_general | 245 | all |  |
 | dynamic_slice | 32 | all |  |
 | dynamic_update_slice | 21 | all |  |
 | eig | 72 | inexact | bool, integer |
@@ -95,7 +95,7 @@ be updated.
 | igamma | 6 | floating | bool, complex, integer |
 | igammac | 6 | floating | bool, complex, integer |
 | imag | 2 | complex | bool, floating, integer |
-| integer_pow | 34 | inexact, integer | bool |
+| integer_pow | 108 | inexact, integer | bool |
 | iota | 16 | inexact, integer | bool |
 | is_finite | 4 | floating | bool, complex, integer |
 | le | 15 | bool, floating, integer | complex |
@@ -156,7 +156,6 @@ be updated.
 | svd | 120 | inexact | bool, integer |
 | tan | 6 | inexact | bool, integer |
 | tanh | 6 | inexact | bool, integer |
-| tie_in | 15 | all |  |
 | top_k | 15 | bool, floating, integer | complex |
 | transpose | 17 | all |  |
 | triangular_solve | 26 | inexact | bool, integer |
@@ -183,26 +182,25 @@ and search for "limitation".
 
 
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
-| --- | --- | --- | --- | --- |
+| --- | --- | --- | --- |
 |cholesky|unimplemented|float16|cpu, gpu|
-|cummax|unimplemented|complex64|tpu|
-|cummin|unimplemented|complex64|tpu|
-|cumprod|unimplemented|complex64|tpu|
+|conv_general_dilated|preferred_element_type not implemented for integers|int16, int32, int8|gpu|
+|conv_general_dilated|preferred_element_type=c128 not implemented|complex64|tpu|
+|conv_general_dilated|preferred_element_type=f64 not implemented|bfloat16, float16, float32|tpu|
+|conv_general_dilated|preferred_element_type=i64 not implemented|int16, int32, int8|tpu|
+|dot_general|preferred_element_type=c128 not implemented|complex64|tpu|
+|dot_general|preferred_element_type=i64 not implemented|int16, int32, int8|tpu|
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|
 |eigh|complex eigh not supported |complex|tpu|
 |eigh|unimplemented|bfloat16, float16|cpu, gpu|
 |lu|unimplemented|bfloat16, float16|cpu, gpu, tpu|
 |qr|unimplemented|bfloat16, float16|cpu, gpu|
-|reduce_window_max|unimplemented in XLA|complex64|tpu|
-|reduce_window_min|unimplemented in XLA|complex64|tpu|
-|reduce_window_mul|unimplemented in XLA|complex64|tpu|
 |scatter_max|unimplemented|complex64|tpu|
 |scatter_min|unimplemented|complex64|tpu|
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|
 |svd|complex not implemented. Works in JAX for CPU and GPU with custom kernels|complex|tpu|
 |svd|unimplemented|bfloat16, float16|cpu, gpu|
-|tie_in|requires omnistaging to be disabled|all|cpu, gpu, tpu|
 |triangular_solve|unimplemented|float16|gpu|
 
 ## Table generation

@@ -17,6 +17,7 @@ By default, uses a pure JAX implementation of MNIST. There are flags to choose
 a Flax CNN version of MNIST, or to skip the training and just test a
 previously saved SavedModel. It is possible to save a batch-polymorphic
 version of the model, or a model prepared for specific batch sizes.
+
 Try --help to see all flags.
 
 This file is used both as an executable, and as a library in two other examples.
@@ -36,8 +37,8 @@ import numpy as np
 import tensorflow as tf  # type: ignore
 import tensorflow_datasets as tfds  # type: ignore
 
-flags.DEFINE_string("model", "mnist_pure_jax",
-                    "Which model to use: mnist_pure_jax, mnist_flax.")
+flags.DEFINE_enum("model", "mnist_flax", ["mnist_flax", "mnist_pure_jax"],
+                  "Which model to use.")
 flags.DEFINE_boolean("model_classifier_layer", True,
                      ("The model should include the classifier layer, or just "
                       "the last layer of logits. Set this to False when you "
@@ -47,10 +48,18 @@ flags.DEFINE_string("model_path", "/tmp/jax2tf/saved_models",
                     "Path under which to save the SavedModel.")
 flags.DEFINE_integer("model_version", 1,
                      ("The version number for the SavedModel. Needed for "
-                      "serving, larger versions will take precedence"))
+                      "serving, larger versions will take precedence"),
+                     lower_bound=1)
 flags.DEFINE_integer("serving_batch_size", 1,
-                     ("For what batch size to prepare the serving signature. "))
-flags.DEFINE_integer("num_epochs", 3, "For how many epochs to train.")
+                     "For what batch size to prepare the serving signature. "
+                     "Use -1 for converting and saving with batch polymorphism.")
+flags.register_validator(
+    "serving_batch_size",
+    lambda serving_batch_size: serving_batch_size > 0 or serving_batch_size == -1,
+    message="--serving_batch_size must be either -1 or a positive integer.")
+
+flags.DEFINE_integer("num_epochs", 3, "For how many epochs to train.",
+                     lower_bound=1)
 flags.DEFINE_boolean(
     "generate_model", True,
     "Train and save a new model. Otherwise, use an existing SavedModel.")
@@ -96,7 +105,7 @@ def train_and_save():
       input_signatures = [
           tf.TensorSpec((None,) + mnist_lib.input_shape, tf.float32),
       ]
-      shape_polymorphic_input_spec = "(batch, _, _, _)"
+      polymorphic_shapes = "(batch, ...)"
     else:
       input_signatures = [
           # The first one will be the serving signature
@@ -107,14 +116,15 @@ def train_and_save():
           tf.TensorSpec((mnist_lib.test_batch_size,) + mnist_lib.input_shape,
                         tf.float32),
       ]
-      shape_polymorphic_input_spec = None
+      polymorphic_shapes = None
+
     logging.info(f"Saving model for {model_descr}")
     saved_model_lib.convert_and_save_model(
         predict_fn,
         predict_params,
         model_dir,
         input_signatures=input_signatures,
-        shape_polymorphic_input_spec=shape_polymorphic_input_spec,
+        polymorphic_shapes=polymorphic_shapes,
         compile_model=FLAGS.compile_model)
 
     if FLAGS.test_savedmodel:
@@ -169,7 +179,7 @@ def savedmodel_dir(with_version: bool = True) -> str:
   """The directory where we save the SavedModel."""
   model_dir = os.path.join(
       FLAGS.model_path,
-      f"{'mnist' if FLAGS.model_classifier_layer else 'mnist_features'}"
+      FLAGS.model + ('' if FLAGS.model_classifier_layer else '_features')
   )
   if with_version:
     model_dir = os.path.join(model_dir, str(FLAGS.model_version))

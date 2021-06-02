@@ -20,7 +20,7 @@ import numpy as np
 from typing import Any, Optional, Tuple, Union
 
 from jax import custom_jvp
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 from jax import core
 from jax.core import AxisName
@@ -160,7 +160,7 @@ def hard_tanh(x: Array) -> Array:
   .. math::
     \mathrm{hard\_tanh}(x) = \begin{cases}
       -1, & x < -1\\
-      x, & 0 \le x \le 1\\
+      x, & -1 \le x \le 1\\
       1, & 1 < x
     \end{cases}
 

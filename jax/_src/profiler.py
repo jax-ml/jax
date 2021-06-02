@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import contextmanager
 from functools import wraps
+import threading
 from typing import Callable, Optional
+import warnings
 
 from jax.lib import xla_bridge
 from jax.lib import xla_client
@@ -24,8 +27,8 @@ def start_server(port: int):
 
   Using the "TensorFlow profiler" feature in `TensorBoard
   <https://www.tensorflow.org/tensorboard>`_ 2.2 or newer, you can
-  connect to the profiler server and sample execution traces that show CPU and
-  GPU device activity.
+  connect to the profiler server and sample execution traces that show CPU,
+  GPU, and/or TPU device activity.
 
   Returns a profiler server object. The server remains alive and listening until
   the server object is destroyed.
@@ -33,25 +36,105 @@ def start_server(port: int):
   return xla_client.profiler.start_server(port)
 
 
-class TraceContext(xla_client.profiler.TraceMe):
-  """Context manager generates a trace event in the profiler.
+class _ProfileState(object):
+  def __init__(self):
+    self.profile_session = None
+    self.log_dir = None
+    self.lock = threading.Lock()
+
+_profile_state = _ProfileState()
+
+
+def start_trace(log_dir):
+  """Starts a profiler trace.
+
+  The trace will capture CPU, GPU, and/or TPU activity, including Python
+  functions and JAX on-device operations. Use ``stop_trace()`` to end the trace
+  and save the results to ``log_dir``.
+
+  The resulting trace can be viewed with TensorBoard. Note that TensorBoard
+  doesn't need to be running when collecting the trace.
+
+  Only once trace may be collected a time. A RuntimeError will be raised if
+  ``start_trace()`` is called while another trace is running.
+
+  Args:
+    log_dir: The directory to save the profiler trace to (usually the
+      TensorBoard log directory).
+  """
+  with _profile_state.lock:
+    if _profile_state.profile_session is not None:
+      raise RuntimeError("Profile has already been started. "
+                         "Only one profile may be run at a time.")
+    _profile_state.profile_session = xla_client.profiler.ProfilerSession()
+    _profile_state.log_dir = log_dir
+
+
+def stop_trace():
+  """Stops the currently-running profiler trace.
+
+  The trace will be saved to the ``log_dir`` passed to the corresponding
+  ``start_trace()`` call. Raises a RuntimeError if a trace hasn't been started.
+  """
+  with _profile_state.lock:
+    if _profile_state.profile_session is None:
+      raise RuntimeError("No profile started")
+    _profile_state.profile_session.stop_and_export(_profile_state.log_dir)
+    _profile_state.profile_session = None
+    _profile_state.log_dir = None
+
+
+@contextmanager
+def trace(log_dir):
+  """Context manager to take a profiler trace.
+
+  The trace will capture CPU, GPU, and/or TPU activity, including Python
+  functions and JAX on-device operations.
+
+  The resulting trace can be viewed with TensorBoard. Note that TensorBoard
+  doesn't need to be running when collecting the trace.
+
+  Only once trace may be collected a time. A RuntimeError will be raised if a
+  trace is started while another trace is running.
+
+  Args:
+    log_dir: The directory to save the profiler trace to (usually the
+      TensorBoard log directory).
+  """
+  start_trace(log_dir)
+  try:
+    yield
+  finally:
+    stop_trace()
+
+
+class TraceAnnotation(xla_client.profiler.TraceMe):
+  """Context manager that generates a trace event in the profiler.
 
   The trace event spans the duration of the code enclosed by the context.
 
   For example:
 
-  >>> import jax, jax.numpy as jnp
   >>> x = jnp.ones((1000, 1000))
-  >>> with jax.profiler.TraceContext("acontext"):
-  ...   jnp.dot(x, x.T).block_until_ready()
+  >>> with jax.profiler.TraceAnnotation("my_label"):
+  ...   result = jnp.dot(x, x.T).block_until_ready()
 
-  This will cause an "acontext" event to show up on the trace timeline if the
-  event occurs while the process is being traced by TensorBoard.
+  This will cause a "my_label" event to show up on the trace timeline if the
+  event occurs while the process is being traced.
   """
   pass
 
 
-class StepTraceContext(TraceContext):
+# TODO: remove this sometime after jax 0.2.11 is released
+class TraceContext(TraceAnnotation):
+  def __init__(self, *args, **kwargs):
+    warnings.warn(
+        "TraceContext has been renamed to TraceAnnotation. This alias "
+        "will eventually be removed; please update your code.")
+    super().__init__(*args, **kwargs)
+
+
+class StepTraceAnnotation(TraceAnnotation):
   """Context manager that generates a step trace event in the profiler.
 
   The step trace event spans the duration of the code enclosed by the context.
@@ -60,12 +143,10 @@ class StepTraceContext(TraceContext):
   For example, it can be used to mark training steps and enable the profiler to
   provide the performance analysis per step:
 
-  >>> import jax
-  >>>
-  >>> while global_step < NUM_STEPS:
-  ...   with jax.profiler.StepTraceContext("train", step_num=global_step):
-  ...     train_step()
-  ...     global_step += 1
+  >>> while global_step < NUM_STEPS:                                           # doctest: +SKIP
+  ...   with jax.profiler.StepTraceAnnotation("train", step_num=global_step):  # doctest: +SKIP
+  ...     train_step()                                                         # doctest: +SKIP
+  ...     global_step += 1                                                     # doctest: +SKIP
 
   This will cause a "train xx" event to show up on the trace timeline if the
   event occurs while the process is being traced by TensorBoard. In addition,
@@ -79,42 +160,57 @@ class StepTraceContext(TraceContext):
     super().__init__(name, _r=1, **kwargs)
 
 
-def trace_function(func: Callable, name: str = None, **kwargs):
+# TODO: remove this sometime after jax 0.2.11 is released
+class StepTraceContext(StepTraceAnnotation):
+  def __init__(self, *args, **kwargs):
+    warnings.warn(
+        "StepTraceContext has been renamed to StepTraceAnnotation. This alias "
+        "will eventually be removed; please update your code.")
+    super().__init__(*args, **kwargs)
+
+
+def annotate_function(func: Callable, name: Optional[str] = None, **kwargs):
   """Decorator that generates a trace event for the execution of a function.
 
   For example:
 
-  >>> import jax, jax.numpy as jnp
-  >>>
-  >>> @jax.profiler.trace_function
-  >>> def f(x):
+  >>> @jax.profiler.annotate_function
+  ... def f(x):
   ...   return jnp.dot(x, x.T).block_until_ready()
   >>>
-  >>> f(jnp.ones((1000, 1000))
+  >>> result = f(jnp.ones((1000, 1000)))
 
   This will cause an "f" event to show up on the trace timeline if the
   function execution occurs while the process is being traced by TensorBoard.
 
   Arguments can be passed to the decorator via :py:func:`functools.partial`.
 
-  >>> import jax, jax.numpy as jnp
   >>> from functools import partial
-  >>>
-  >>> @partial(jax.profiler.trace_function, name="event_name")
-  >>> def f(x):
+
+  >>> @partial(jax.profiler.annotate_function, name="event_name")
+  ... def f(x):
   ...   return jnp.dot(x, x.T).block_until_ready()
-  >>>
-  >>> f(jnp.ones((1000, 1000))
+
+  >>> result = f(jnp.ones((1000, 1000)))
   """
 
   name = name or getattr(func, '__qualname__', None)
   name = name or func.__name__
   @wraps(func)
   def wrapper(*args, **kwargs):
-    with TraceContext(name, **kwargs):
+    with TraceAnnotation(name, **kwargs):
       return func(*args, **kwargs)
     return wrapper
   return wrapper
+
+
+# TODO: remove this sometime after jax 0.2.11 is released
+def trace_function(*args, **kwargs):
+  warnings.warn(
+      "trace_function has been renamed to annotate_function. This alias "
+      "will eventually be removed; please update your code.")
+  return annotate_function(*args, **kwargs)
+
 
 
 def device_memory_profile(backend: Optional[str] = None) -> bytes:

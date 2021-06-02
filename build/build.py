@@ -70,27 +70,61 @@ def get_python_version(python_bin_path):
 
 def check_python_version(python_version):
   if python_version < (3, 6):
-    print("JAX requires Python 3.6 or newer.")
+    print("ERROR: JAX requires Python 3.6 or newer, found ", python_version)
     sys.exit(-1)
 
+
+def check_numpy_version(python_bin_path):
+  version = shell(
+    [python_bin_path, "-c", "import numpy as np; print(np.__version__)"])
+  numpy_version = tuple(map(int, version.split('.')[:2]))
+  if numpy_version < (1, 16):
+    print("ERROR: JAX requires NumPy 1.16 or newer, found " + version + ".")
+    sys.exit(-1)
+  return version
+
+def check_scipy_version(python_bin_path):
+  version = shell(
+    [python_bin_path, "-c", "import scipy as sp; print(sp.__version__)"])
+  scipy_version = tuple(map(int, version.split('.')[:2]))
+  if scipy_version < (1, 0):
+    print("ERROR: JAX requires SciPy 1.0 or newer, found " + version + ".")
+    sys.exit(-1)
+  return version
 
 # Bazel
 
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/3.7.2/"
-BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
+BazelPackage = collections.namedtuple("BazelPackage",
+                                      ["base_uri", "file", "sha256"])
 bazel_packages = {
-    "Linux":
+    ("Linux", "x86_64"):
         BazelPackage(
+            base_uri=None,
             file="bazel-3.7.2-linux-x86_64",
             sha256=
             "70dc0bee198a4c3d332925a32d464d9036a831977501f66d4996854ad4e4fc0d"),
-    "Darwin":
+    ("Linux", "aarch64"):
         BazelPackage(
+            base_uri=None,
+            file="bazel-3.7.2-linux-arm64",
+            sha256=
+            "6ebd9eccbcb8f63c92a324c0c86cec11963aa9dcb914dd4718f592fdfeda9823"),
+    ("Darwin", "x86_64"):
+        BazelPackage(
+            base_uri=None,
             file="bazel-3.7.2-darwin-x86_64",
             sha256=
             "80c82e93a12ba30021692b11c78007807e82383a673be1602573b944beb359ab"),
-    "Windows":
+    ("Darwin", "arm64"):
         BazelPackage(
+            base_uri="https://github.com/bazelbuild/bazel/releases/download/4.1.0/",
+            file="bazel-4.1.0-darwin-arm64",
+            sha256=
+            "c372d39ab9dac96f7fdfc2dd649e88b05ee4c94ce3d6cf2313438ef0ca6d5ac1"),
+    ("Windows", "x86_64"):
+        BazelPackage(
+            base_uri=None,
             file="bazel-3.7.2-windows-x86_64.exe",
             sha256=
             "ecb696b1b9c9da6728d92fbfe8410bafb4b3a65c358980e49742233f33f74d10"),
@@ -99,12 +133,12 @@ bazel_packages = {
 
 def download_and_verify_bazel():
   """Downloads a bazel binary from Github, verifying its SHA256 hash."""
-  package = bazel_packages.get(platform.system())
+  package = bazel_packages.get((platform.system(), platform.machine()))
   if package is None:
     return None
 
   if not os.access(package.file, os.X_OK):
-    uri = BAZEL_BASE_URI + package.file
+    uri = (package.base_uri or BAZEL_BASE_URI) + package.file
     sys.stdout.write("Downloading bazel from: {}\n".format(uri))
 
     def progress(block_count, block_size, total_size):
@@ -444,6 +478,11 @@ def main():
   python_version = get_python_version(python_bin_path)
   print("Python version: {}".format(".".join(map(str, python_version))))
   check_python_version(python_version)
+
+  numpy_version = check_numpy_version(python_bin_path)
+  print("NumPy version: {}".format(numpy_version))
+  scipy_version = check_scipy_version(python_bin_path)
+  print("SciPy version: {}".format(scipy_version))
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print("Target CPU features: {}".format(args.target_cpu_features))

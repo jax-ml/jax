@@ -54,11 +54,11 @@ The method we apply here was originally proposed by [Hyvarinen et al. (2005)](ht
 
 $$ L_{mse} = E_{x \sim p(x)} \left\lVert model(x) - \nabla_x \log p(x) \right\lVert_2^2 $$
 
-One can't minimize this explicitly because the real $\nabla_x log p(x)$ is usually unknown. However under broad assumptions on p(x) and a sufficiently powerful model, one can say that ` ... math happens ... ` and therefore the arg-minimum of $L_{mse}$ can be found by minimizing a more tractable objective:
+One can't minimize this explicitly because the real $\nabla_x \log p(x)$ is usually unknown. However under broad assumptions on $p(x)$ and a sufficiently powerful model, one can say that ` ... math happens ... ` and therefore the arg-minimum of $L_{mse}$ can be found by minimizing a more tractable objective:
 
 $$ L_{matching} = E_{x \sim p(x)} \space tr( \space \mathbf{J}_x [\space model(x)  \space]) + \frac12 \left\Vert model(x) \right\lVert_2^2 $$
 
-Here $tr( \space \mathbf{J}_x [\space model(x)  \space])$ is a trace of Jacobian of $model(x)$ w.r.t. $x$. Now all it takes is to minimize the second objective with backpropagation... that is, if you can compute jacobians. Thankfully, we have __jax__!
+Here $tr( \space \mathbf{J}_x [\space model(x)  \space])$ is a trace of Jacobian of $model(x)$ w.r.t. $x$. Now all it takes is to minimize the second objective with backpropagation... that is, if you can compute Jacobians. Thankfully, we have __jax__!
 
 ```{code-cell} ipython3
 :id: 98wjxKcNG6TI
@@ -187,12 +187,13 @@ Seriously though, this paper takes advantage of two new ideas: sampling with __L
 
 ## Sampling with Langevin Dynamics
 
-Once we have $\nabla_x log p(x)$, we can use it to generate data. One simple thing you can do is a gradient ascent w.r.t image to find a local maximum of p(x):
-$$\hat x_{t + 1} := x_t + \epsilon \nabla_{x_t} log p(x_t)$$
+Once we have $\nabla_x \log p(x)$, we can use it to generate data. One simple thing you can do is a gradient ascent w.r.t image to find a local maximum of $p(x)$:
+
+$$\hat x_{t + 1} := x_t + \epsilon \nabla_{x_t} \log p(x_t)$$
 
 In order to sample $x \sim p(x)$, one can run a slightly more sophisticated procedure:
 
-$$\hat x_{t+1} := \hat x_t + \frac \epsilon 2 \nabla_{\hat x_t} log p(\hat x_t) + \sqrt \epsilon z_t, \quad z_t \sim N(0, I)$$
+$$\hat x_{t+1} := \hat x_t + \frac \epsilon 2 \nabla_{\hat x_t} \log p(\hat x_t) + \sqrt \epsilon z_t, \quad z_t \sim N(0, I)$$
 
 
 Performing this update multiple times in an MCMC fashion is a special case of Langevin Dynamics. Under $\epsilon \rightarrow 0, t \rightarrow \inf$: $\hat x_t$ converges to a sample from $p(x)$. You can find a more detailed explanation and a formal proof in [Welling et al. (2011)](https://www.ics.uci.edu/~welling/publications/papers/stoclangevin_v6.pdf) and further exploration of SGLD in [The et al. (2014)](https://arxiv.org/abs/1409.0578) and [Vollmer et al. (2015)](https://arxiv.org/abs/1501.00438).
@@ -251,13 +252,13 @@ plt.scatter(*sample_batch(10_000).T, alpha=0.025)
 
 ## Sliced Score Matching
 
-Now the problem with our previous loss function is that the computation of $tr(\mathbf{J}_x [\space model(x)])$ takes a $O(N^2 + N)$ time to compute, thus not being suitable for high-dimensional problems. The solution is using jacobian vector products which can be easily computed using forward mode auto-differentiation. This method is called Sliced Score Matching and was proposed by [Yang Song et al. (2019)](https://arxiv.org/abs/1905.07088).
+Now the problem with our previous loss function is that the computation of $tr(\mathbf{J}_x [\space model(x)])$ takes a $O(N^2 + N)$ time to compute, thus not being suitable for high-dimensional problems. The solution is using Jacobian vector products which can be easily computed using forward mode auto-differentiation. This method is called Sliced Score Matching and was proposed by [Yang Song et al. (2019)](https://arxiv.org/abs/1905.07088).
 
 Our new objective looks like this:
 
 $$E_{\mathbf{v} \sim \mathcal{N}(0, 1)} E_{x \sim p(x)} [ \mathbf{v}^T \mathbf{J}_x[model(x)] \mathbf{v} + \frac{1}{2} (\mathbf{v}^T model(x))^2 ]$$
 
-Jacobian Vector products, by the way, can be easily computed using `jax.jvp`.
+Jacobian vector products, by the way, can be easily computed using `jax.jvp`.
 
 ```{code-cell} ipython3
 :id: MkAXz0SmG6TY
@@ -270,7 +271,7 @@ def compute_ssm_loss(net_params, inputs, key):
     # generate random vectors from N(0, I)
     v = jax.random.normal(key, shape=inputs.shape)
 
-    # predict score and comput jacobian of score times v
+    # predict score and compute jacobian of score times v
     score, jac_v = jax.jvp(apply, [inputs], [v])
     
     return jnp.mean(batch_dot(v, jac_v) + 1/2 * batch_dot(v, score) ** 2)
@@ -334,7 +335,7 @@ for i in range(2_000):
 +++ {"id": "A8Ni7_cGG6Tf"}
 
 ## Easy? Let's go deeper!
-MNIST 8x8, computing full jacobian would require 64 passes through the network
+MNIST 8x8, computing a full Jacobian would require 64 passes through the network
 
 ```{code-cell} ipython3
 :id: Y2ZgeMq-G6Tf

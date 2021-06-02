@@ -12,13 +12,88 @@ GPU and TPU. The end result looks something like this:
 
 ### Installation
 
-Install specific nightly versions of TensorBoard, TensorBoard profiler, TensorFlow, as well as the What-If Tool TensorBoard, as follows:
+The TensorBoard profiler is only available with the version of TensorBoard
+bundled with TensorFlow.
+
 ```shell
-# Profiling is known to work with the following packages.
-pip install --upgrade tb-nightly==2.5.0a20201203 tbp-nightly==2.4.0a20201203 tf-nightly==2.5.0.dev20201203 tensorboard-plugin-wit==1.7.0
+pip install tensorflow tbp-nightly
 ```
 
-### Usage
+If you already have TensorFlow installed, you only need to install the
+`tbp-nightly` pip package. Be careful to only install one version of TensorFlow
+or TensorBoard, otherwise you may encounter the "duplicate plugins" error
+described {ref}`below <multiple_installs>`.
+
+(We recommend `tbp-nightly` because `tensorboard-plugin-profile==2.4.0` is
+incompatible with TensorBoard's experimental fast data loading logic. This
+should be resolved with `tensorboard-plugin-profile==2.5.0` when it's
+released. These instructions were tested with `tensorflow==2.4.1` and
+`tbp-nightly==2.5.0a20210428`.)
+
+### Programmatic capture
+
+You can instrument your code to capture a profiler trace via the
+{func}`jax.profiler.start_trace` and {func}`jax.profiler.stop_trace`
+methods. Call {func}`~jax.profiler.start_trace` with the directory to write
+trace files to. This should be the same `--logdir` directory used to start
+TensorBoard. Then, you can use TensorBoard to view the traces.
+
+For example, to take a profiler trace:
+
+```python
+import jax
+
+jax.profiler.start_trace("/tmp/tensorboard")
+
+# Run the operations to be profiled
+key = jax.random.PRNGKey(0)
+x = jax.random.normal(key, (5000, 5000))
+y = x @ x
+y.block_until_ready()
+
+jax.profiler.stop_trace()
+```
+
+Note the {func}`block_until_ready` call. We use this to make sure on-device
+execution is captured by the trace. See {ref}`async-dispatch` for details on why
+this is necessary.
+
+You can also use the {func}`jax.profiler.trace` context manager as an
+alternative to `start_trace` and `stop_trace`:
+
+```python
+import jax
+
+with jax.profiler.trace():
+  key = jax.random.PRNGKey(0)
+  x = jax.random.normal(key, (5000, 5000))
+  y = x @ x
+  y.block_until_ready()
+```
+
+To view the trace, first start TensorBoard if you haven't already:
+
+```shell
+$ tensorboard --logdir=/tmp/tensorboard
+[...]
+Serving TensorBoard on localhost; to expose to the network, use a proxy or pass --bind_all
+TensorBoard 2.5.0 at http://localhost:6006/ (Press CTRL+C to quit)
+```
+
+You should be able to load TensorBoard at <http://localhost:6006/> in this
+example. You can specify a different port with the `--port` flag. See
+{ref}`remote_profiling` below if running JAX on a remote server.
+
+Then, either select "Profile" in the upper-right dropdown menu, or go directly
+to <http://localhost:6006/#profile>. Available traces appear in the "Runs"
+dropdown menu on the left. Select the run you're interested in, and then under
+"Tools", select "trace_viewer".  You should now see a timeline of the
+execution. You can use the WASD keys to navigate the trace, and click or drag to
+select events to see more details at the bottom. See [these TensorFlow
+docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
+for more details on using the trace viewer.
+
+### Manual capture via TensorBoard
 
 The following are instructions for capturing a manually-triggered N-second trace
 from a running program.
@@ -43,7 +118,7 @@ from a running program.
 
     This starts the profiler server that TensorBoard connects to. The profiler
     server must be running before you move on to the next step. It will remain
-    alive and listening until the object returned by `start_server()` is 
+    alive and listening until the object returned by `start_server()` is
     destroyed.
 
     If you'd like to profile a snippet of a long-running program (e.g. a long
@@ -76,10 +151,12 @@ from a running program.
    docs](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras#use_the_tensorflow_profiler_to_profile_model_training_performance)
    for more details on using the trace viewer.<br /><br />
 
-1. By default, the events in the trace viewer are mostly low-level internal JAX
-   functions. You can add your own events and functions by using
-   {func}`jax.profiler.TraceContext` and {func}`jax.profiler.trace_function` in
-   your code and capturing a new profile.
+### Adding custom trace events
+
+By default, the events in the trace viewer are mostly low-level internal JAX
+functions. You can add your own events and functions by using
+{class}`jax.profiler.TraceAnnotation` and {func}`jax.profiler.annotate_function` in
+your code.
 
 ### Troubleshooting
 
@@ -101,6 +178,11 @@ Add the path to `libcupti.so` to the environment variable `LD_LIBRARY_PATH`.
 ```shell
 export LD_LIBRARY_PATH=/usr/local/cuda-10.1/extras/CUPTI/lib64/:$LD_LIBRARY_PATH
 ```
+
+If you still get the `Could not load dynamic library` message after doing this,
+check if the GPU trace shows up in the trace viewer anyway. This message
+sometimes occurs even when everything is working, since it looks for the
+`libcupti` library in multiple places.
 
 **If you get an error like: `failed with error CUPTI_ERROR_INSUFFICIENT_PRIVILEGES`**<br />
 Full error:
@@ -132,6 +214,30 @@ machine. Use the following SSH command to forward the default TensorBoard port
 
 ```shell
 ssh -L 6006:localhost:6006 <remote server address>
+```
+
+#### Profiling on a Cloud TPU VM
+
+Cloud TPU VMs come with a special version of TensorFlow pre-installed, so
+there's no need to explicitly install it, and doing so can cause TensorFlow to
+stop working on TPU. Just `pip install tbp-nightly`.
+
+(multiple_installs)=
+#### Multiple TensorBoard installs
+
+**If starting TensorBoard fails with an error like: `ValueError: Duplicate
+plugins for name projector`**
+
+It's often because there are two versions of TensorBoard and/or TensorFlow
+installed (e.g. the `tensorflow`, `tf-nightly`, `tensorboard`, and `tb-nightly`
+pip packages all include TensorBoard). Uninstalling a single pip package can
+result in the `tensorboard` executable being removed which is then hard to
+replace, so it may be necessary to uninstall everything and reinstall a single
+version:
+
+```shell
+pip uninstall tensorflow tf-nightly tensorboard tb-nightly
+pip install tensorflow
 ```
 
 ## Nsight

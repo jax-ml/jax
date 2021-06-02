@@ -109,6 +109,7 @@ Operators
     real
     reciprocal
     reduce
+    reduce_precision
     reduce_window
     reshape
     rem

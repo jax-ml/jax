@@ -27,7 +27,6 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 
 from jax.config import config
-from jax.config import flags
 
 # We use TensorFlow and PIL as reference implementations.
 try:
@@ -41,8 +40,6 @@ except ImportError:
   PIL_Image = None
 
 config.parse_flags_with_absl()
-
-FLAGS = flags.FLAGS
 
 float_dtypes = jtu.dtypes.all_floating
 inexact_dtypes = jtu.dtypes.inexact

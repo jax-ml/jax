@@ -14,10 +14,15 @@
 
 from setuptools import setup, find_packages
 
-__version__ = None
+# The following should be updated with each new jaxlib release.
+_current_jaxlib_version = '0.1.67'
+_available_cuda_versions = ['101', '102', '110', '111']
 
+_dct = {}
 with open('jax/version.py') as f:
-  exec(f.read(), globals())
+  exec(f.read(), _dct)
+__version__ = _dct['__version__']
+_minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 
 setup(
     name='jax',
@@ -33,6 +38,19 @@ setup(
         'absl-py',
         'opt_einsum',
     ],
+    extras_require={
+        # Minimum jaxlib version; used in testing.
+        'minimum-jaxlib': [f'jaxlib=={_minimum_jaxlib_version}'],
+
+        # CPU-only jaxlib can be installed via:
+        # $ pip install jax[cpu]
+        'cpu': [f'jaxlib>={_minimum_jaxlib_version}'],
+
+        # CUDA installations require adding jax releases URL; e.g.
+        # $ pip install jax[cuda110] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+        **{f'cuda{version}': f"jaxlib=={_current_jaxlib_version}+cuda{version}"
+           for version in _available_cuda_versions}
+    },
     url='https://github.com/google/jax',
     license='Apache-2.0',
     classifiers=[

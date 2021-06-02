@@ -248,10 +248,12 @@ def cache(call: Callable):
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
-    if core.debug_state.check_leaks:
-      key = (_copy_main_traces(fun.transforms), fun.params, args, config.x64_enabled)
+    if config.jax_check_tracer_leaks:
+      key = (_copy_main_traces(fun.transforms), fun.params, args,
+             config.x64_enabled, config._trace_context())
     else:
-      key = (fun.transforms, fun.params, args, config.x64_enabled)
+      key = (fun.transforms, fun.params, args, config.x64_enabled,
+             config._trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result

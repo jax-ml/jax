@@ -17,11 +17,12 @@ from functools import partial
 
 import numpy as np
 
-from jax.api import jit, linear_transpose, ShapeDtypeStruct
+from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
 from jax.core import Primitive
 from jax.interpreters import xla
 from jax._src.util import prod
-from jax import dtypes, lax
+from jax._src import dtypes
+from jax import lax
 from jax.lib import xla_client
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -114,7 +115,9 @@ def _irfft_transpose(t, fft_lengths):
   scale = 1 / prod(fft_lengths)
   out = scale * mask * x
   assert out.dtype == _complex_dtype(t.dtype), (out.dtype, t.dtype)
-  return out
+  # Use JAX's convention for complex gradients
+  # https://github.com/google/jax/issues/6223#issuecomment-807740707
+  return lax.conj(out)
 
 def fft_transpose_rule(t, operand, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:

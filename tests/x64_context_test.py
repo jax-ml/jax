@@ -19,13 +19,11 @@ import time
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import jax
-from jax import api
+from jax._src import api
 from jax import lax
 from jax import partial
 from jax import random
 from jax.config import config
-from jax.config import FLAGS
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
 import jax.test_util as jtu
@@ -49,8 +47,6 @@ class X64ContextTests(jtu.JaxTestCase):
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
       for jit in ["python", "cpp", None]))
   def test_make_array(self, jit):
-    if jit == "cpp" and not config.omnistaging_enabled:
-      self.skipTest("cpp_jit requires omnistaging")
     func = _maybe_jit(jit, lambda: jnp.arange(10.0))
     dtype_start = func().dtype
     with enable_x64():
@@ -66,16 +62,13 @@ class X64ContextTests(jtu.JaxTestCase):
           "enable_or_disable": f
       } for jit in ["python", "cpp", None] for f in [enable_x64, disable_x64]))
   def test_correctly_capture_default(self, jit, enable_or_disable):
-    if jit == "cpp" and not config.omnistaging_enabled:
-      self.skipTest("cpp_jit requires omnistaging")
-
     # The fact we defined a jitted function with a block with a different value
     # of `config.enable_x64` has no impact on the output.
     with enable_or_disable():
       func = _maybe_jit(jit, lambda: jnp.arange(10.0))
       func()
 
-    expected_dtype = "float64" if config.read("jax_enable_x64") else "float32"
+    expected_dtype = "float64" if config._read("jax_enable_x64") else "float32"
     self.assertEqual(func().dtype, expected_dtype)
 
     with enable_x64():
@@ -89,8 +82,6 @@ class X64ContextTests(jtu.JaxTestCase):
   def test_near_singular_inverse(self, jit):
     if jtu.device_under_test() == "tpu":
       self.skipTest("64-bit inverse not available on TPU")
-    if jit == "cpp" and not config.omnistaging_enabled:
-      self.skipTest("cpp_jit requires omnistaging")
     @partial(_maybe_jit, jit, static_argnums=1)
     def near_singular_inverse(key, N, eps):
       X = random.uniform(key, (N, N))
@@ -113,8 +104,6 @@ class X64ContextTests(jtu.JaxTestCase):
       {"testcase_name": "_jit={}".format(jit), "jit": jit}
       for jit in ["python", "cpp", None]))
   def test_while_loop(self, jit):
-    if jit == "cpp" and not config.omnistaging_enabled:
-      self.skipTest("cpp_jit requires omnistaging")
     @partial(_maybe_jit, jit)
     def count_to(N):
       return lax.while_loop(lambda x: x < N, lambda x: x + 1.0, 0.0)
@@ -145,9 +134,6 @@ class X64ContextTests(jtu.JaxTestCase):
   def test_jit_cache(self):
     if jtu.device_under_test() == "tpu":
       self.skipTest("64-bit random not available on TPU")
-    if jax.lib._xla_extension_version < 4 and FLAGS.experimental_cpp_jit:
-      self.skipTest(
-          "Known failure due to https://github.com/google/jax/issues/5532")
 
     f = partial(random.uniform, random.PRNGKey(0), (1,), 'float64', -1, 1)
     with disable_x64():
@@ -156,6 +142,18 @@ class X64ContextTests(jtu.JaxTestCase):
     with enable_x64():
       for _ in range(2):
         f()
+
+  def test_convert_element_type(self):
+    # Regression test for part of https://github.com/google/jax/issues/5982
+    with enable_x64():
+      x = jnp.int64(1)
+    self.assertEqual(x.dtype, jnp.int64)
+
+    y = x.astype(jnp.int32)
+    self.assertEqual(y.dtype, jnp.int32)
+
+    z = api.jit(lambda x: x.astype(jnp.int32))(x)
+    self.assertEqual(z.dtype, jnp.int32)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -20,6 +20,7 @@ See README.md for how these are used.
 """
 import functools
 import logging
+import re
 import time
 from typing import Any, Callable, Optional, Sequence, Tuple
 from absl import flags
@@ -63,7 +64,18 @@ def load_mnist(split: tfds.Split, batch_size: int):
   """
   if FLAGS.mock_data:
     with tfds.testing.mock_data(num_examples=batch_size):
-      ds = tfds.load("mnist", split=split)
+      try:
+        ds = tfds.load("mnist", split=split)
+      except Exception as e:
+        m = re.search(r'metadata files were not found in (.+/)mnist/', str(e))
+        if m:
+          msg = ("TFDS mock_data is missing the mnist metadata files. Run the "
+                 "`saved_model_main.py` binary and see where TFDS downloads "
+                 "the mnist data set (typically ~/tensorflow_datasets/mnist). "
+                 f"Copy the `mnist` directory to {m.group(1)} and re-run the test")
+          raise ValueError(msg) from e
+        else:
+          raise e
   else:
     ds = tfds.load("mnist", split=split)
 
@@ -101,9 +113,7 @@ class PureJaxMNIST:
       either the predictions (B, 10) if with_classifier=True, or the
       final set of logits of shape (B, 512).
     """
-    # TODO: replace inputs.shape[1:] with -1 once we fix shape polymorphic bug
-    x = inputs.reshape(
-      (inputs.shape[0], np.prod(inputs.shape[1:])))  # flatten to f32[B, 784]
+    x = inputs.reshape((inputs.shape[0], -1))  # flatten to f32[B, 784]
     for w, b in params[:-1]:
       x = jnp.dot(x, w) + b
       x = jnp.tanh(x)
@@ -166,8 +176,8 @@ class PureJaxMNIST:
       test_acc = PureJaxMNIST.accuracy(PureJaxMNIST.predict, params, test_ds)
       logging.info(
         f"{PureJaxMNIST.name}: Epoch {epoch} in {epoch_time:0.2f} sec")
-      logging.info(f"{PureJaxMNIST.name}: Training set accuracy {train_acc}")
-      logging.info(f"{PureJaxMNIST.name}: Test set accuracy {test_acc}")
+      logging.info(f"{PureJaxMNIST.name}: Training set accuracy {100. * train_acc:0.2f}%")
+      logging.info(f"{PureJaxMNIST.name}: Test set accuracy {100. * test_acc:0.2f}%")
 
     return (functools.partial(
       PureJaxMNIST.predict, with_classifier=with_classifier), params)
@@ -194,8 +204,7 @@ class FlaxMNIST:
       x = nn.Conv(features=64, kernel_size=(3, 3))(x)
       x = nn.relu(x)
       x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-      # TODO: replace np.prod(x.shape[1:]) with -1 once we fix shape_polymorphism
-      x = x.reshape((x.shape[0], np.prod(x.shape[1:])))  # flatten
+      x = x.reshape((x.shape[0], -1))  # flatten
       x = nn.Dense(features=256)(x)
       x = nn.relu(x)
       if not with_classifier:
@@ -257,8 +266,8 @@ class FlaxMNIST:
       test_acc = PureJaxMNIST.accuracy(FlaxMNIST.predict, optimizer.target,
                                        test_ds)
       logging.info(f"{FlaxMNIST.name}: Epoch {epoch} in {epoch_time:0.2f} sec")
-      logging.info(f"{FlaxMNIST.name}: Training set accuracy {train_acc}")
-      logging.info(f"{FlaxMNIST.name}: Test set accuracy {test_acc}")
+      logging.info(f"{FlaxMNIST.name}: Training set accuracy {100. * train_acc:0.2f}%")
+      logging.info(f"{FlaxMNIST.name}: Test set accuracy {100. * test_acc:0.2f}%")
 
     # See discussion in README.md for packaging Flax models for conversion
     predict_fn = functools.partial(FlaxMNIST.predict,

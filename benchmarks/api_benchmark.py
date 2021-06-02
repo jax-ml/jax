@@ -19,6 +19,7 @@ import google_benchmark
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import lax
 
 
 partial = functools.partial
@@ -34,6 +35,40 @@ def required_devices(num_devices_required):
       return f(state)
     return helper2
   return helper1
+
+
+@google_benchmark.register
+def eager_unary_dispatch(state):
+  a = jax.device_put(1)
+  lax.neg(a)
+  while state:
+    lax.neg(a)
+
+
+@google_benchmark.register
+def eager_unary(state):
+  a = jax.device_put(1)
+  lax.neg(a).block_until_ready()
+  while state:
+    lax.neg(a).block_until_ready()
+
+
+@google_benchmark.register
+def eager_binary_dispatch(state):
+  a = jax.device_put(1)
+  b = jax.device_put(2)
+  lax.add(a, b)
+  while state:
+    lax.add(a, b)
+
+
+@google_benchmark.register
+def eager_binary(state):
+  a = jax.device_put(1)
+  b = jax.device_put(2)
+  lax.add(a, b).block_until_ready()
+  while state:
+    lax.add(a, b).block_until_ready()
 
 
 @google_benchmark.register
@@ -99,13 +134,37 @@ def jit_simple_many_args(n, state):
   while state:
     f(args).block_until_ready()
 
+def jit_simple_pruned_args_dispatch(n, state):
+  args = [jax.device_put(i) for i in range(n)]
+  f = jax.jit(lambda *xs: xs[0] + 1)
+  x = f(*args)
+  x.block_until_ready()
+
+  while state:
+    x = f(*args)
+  x.block_until_ready()
+
+
+def jit_simple_pruned_args(n, state):
+  args = [jax.device_put(i) for i in range(n)]
+  f = jax.jit(lambda *xs: xs[0] + 1)
+  x = f(*args)
+  x.block_until_ready()
+
+  while state:
+    f(*args).block_until_ready()
+
 benchmarks = []
 for n in [10, 100, 1000, 2000]:
   benchmarks += [
       google_benchmark.register(partial(jit_simple_many_args_dispatch, n),
                                 name=f"jit_simple_many_args_dispatch_{n}"),
       google_benchmark.register(partial(jit_simple_many_args, n),
-                                name=f"jit_simple_many_args_{n}")
+                                name=f"jit_simple_many_args_{n}"),
+      google_benchmark.register(partial(jit_simple_pruned_args_dispatch, n),
+                                name=f"jit_simple_pruned_args_dispatch_{n}"),
+      google_benchmark.register(partial(jit_simple_pruned_args, n),
+                                name=f"jit_simple_pruned_args_{n}")
   ]
 
 
@@ -183,6 +242,32 @@ def pmap_simple_8_devices(state):
     c, d = f(a, b)
     c.block_until_ready()
     d.block_until_ready()
+
+
+def _run_sda_index_bench(state, num_devices):
+  x = jax.pmap(jnp.sin)(jnp.arange(num_devices))
+  jax.device_get(x)
+  while state:
+    for i in range(num_devices):
+      _ = x[i]
+
+
+@google_benchmark.register
+@required_devices(1)
+def sda_index_1(state):
+  _run_sda_index_bench(state, 1)
+
+
+@google_benchmark.register
+@required_devices(2)
+def sda_index_2(state):
+  _run_sda_index_bench(state, 2)
+
+
+@google_benchmark.register
+@required_devices(8)
+def sda_index_8(state):
+  _run_sda_index_bench(state, 8)
 
 
 def swap(a, b):

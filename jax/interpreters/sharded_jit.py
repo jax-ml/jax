@@ -31,11 +31,9 @@ from ..api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
                          HashableFunction)
-from ..config import config, flags
+from .._src.config import config
 
 xops = xc._xla.ops
-
-FLAGS = flags.FLAGS
 
 
 def _map(f, *xs):
@@ -86,24 +84,12 @@ def _sharded_callable(
   logging.vlog(2, "in_parts: %s", in_parts)
   logging.vlog(2, "local_in_parts: %s", local_in_parts)
 
-  if config.omnistaging_enabled:
-    jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
-        fun, global_abstract_args)
-  else:
-    in_pvals = [pe.PartialVal.unknown(aval) for aval in global_abstract_args]
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals,  # type: ignore
-                                                 instantiate=False, bottom=True)  # type: ignore
+  jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(fun, global_abstract_args)
 
-    # TODO(skye): add tests for equationless jaxpr cases
-    if not jaxpr.eqns and all(outvar.aval is core.abstract_unit
-                              for outvar in jaxpr.outvars):
-      return lambda *_: [
-          const if pv is None else core.unit for pv, const in out_pvals
-      ]
-
-  if xb.get_backend().platform != "tpu":
+  if xb.get_backend().platform not in ["tpu", "gpu"]:
     # TODO(skye): fall back to regular jit?
-    raise ValueError("sharded_jit only works on TPU!")
+    raise ValueError("sharded_jit not supported for " +
+                     xb.get_backend().platform)
 
   nparts = pxla.reconcile_num_partitions(jaxpr, nparts)
   assert nparts is not None
@@ -144,7 +130,7 @@ def _sharded_callable(
                      for out, parts, lparts
                      in safe_zip(global_out_avals, out_parts, local_out_parts)]
 
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               f"Compiling {fun.__name__} for {nparts} devices with "
               f"args {global_abstract_args}.")
@@ -181,7 +167,6 @@ def _sharded_callable(
 
   handle_args = partial(pxla.shard_args, compiled.local_devices(),
                         input_indices)
-  assert config.omnistaging_enabled
   handle_outs = _avals_to_results_handler(nrep, local_nparts,  # type: ignore
                                           local_out_parts, local_out_avals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,
@@ -263,10 +248,15 @@ class PartitionSpec(tuple):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
 
-def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
-                local_in_parts=None, local_out_parts=None,
-                local_num_partitions=None,
-                static_argnums: Union[int, Iterable[int]] = (),
+def sharded_jit(
+    fun: Callable,
+    in_parts,
+    out_parts,
+    num_partitions: Optional[int] = None,
+    local_in_parts=None,
+    local_out_parts=None,
+    local_num_partitions=None,
+    static_argnums: Union[int, Iterable[int]] = (),
 ):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
@@ -466,29 +456,3 @@ def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
     A new version of ``x`` with the specified sharding applied.
   """
   return sharding_constraint_p.bind(x, partitions=partitions)
-
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global _pvals_to_results_handler, _pval_to_result_handler
-
-  def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
-    handlers = [_pval_to_result_handler(npart, parts, out_pval)
-                for parts, out_pval in safe_zip(partitions, out_pvals)]  # type: ignore
-
-    def handler(out_bufs):
-      return [h(bufs) for h, bufs in zip(handlers, out_bufs)]
-
-    return handler
-
-  def _pval_to_result_handler(npart, parts, pval):
-    pv, const = pval
-    if pv is None:
-      raise NotImplementedError  # TODO(skye): handle constant outputs
-    else:
-      if pv is not core.abstract_unit:
-        spec = pxla.partitioned_sharding_spec(npart, parts, pv)
-        indices = pxla.spec_to_indices(pv.shape, spec)
-      else:
-        spec = indices = None
-      return pxla.aval_to_result_handler(spec, indices, pv)

@@ -28,7 +28,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.abstract_arrays import make_shaped_array
-from jax.api import jvp, linearize, vjp, jit, make_jaxpr
+from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax._src.util import partial
@@ -275,7 +275,24 @@ class CoreTest(jtu.JaxTestCase):
     try:
       fn(params)
       gc.set_debug(gc.DEBUG_SAVEALL)
-      self.assertEqual(gc.collect(), 0)
+      self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
+    finally:
+      gc.set_debug(debug)
+
+  def test_reference_cycles_jit(self):
+    gc.collect()
+
+    def f(x):
+      return x.sum()
+
+    fn = jit(f)
+    params = jnp.zeros([])
+
+    debug = gc.get_debug()
+    try:
+      fn(params).block_until_ready()
+      gc.set_debug(gc.DEBUG_SAVEALL)
+      self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
 

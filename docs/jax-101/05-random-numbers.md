@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "1Op_vnmkjw3z"}
 
-# Pseudo random numbers in JAX
+# Pseudo Random Numbers in JAX
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/05-random-numbers.ipynb)
 
@@ -37,8 +37,7 @@ In NumPy, pseudo random number generation is based on a global `state`.
 
 This can be set to a deterministic initial condition using `random.seed(SEED)`.
 
-
-```{code-cell} ipython3
+```{code-cell}
 :id: qbmCquES5beU
 
 import numpy as np
@@ -49,11 +48,10 @@ np.random.seed(0)
 
 You can inspect the content of the state using the following command.
 
-```{code-cell} ipython3
----
-id: qNO_vG7z7qUb
-outputId: 47817350-83be-40cc-85c3-46419fdbfda0
----
+```{code-cell}
+:id: qNO_vG7z7qUb
+:outputId: 47817350-83be-40cc-85c3-46419fdbfda0
+
 def print_truncated_random_state():
   """To avoid spamming the outputs, print only part of the state."""
   full_random_state = np.random.get_state()
@@ -66,11 +64,10 @@ print_truncated_random_state()
 
 The `state` is updated by each call to a random function:
 
-```{code-cell} ipython3
----
-id: ZqUzvqF1B1TO
-outputId: c1874391-eb8d-43d8-eb8f-c918ed0a0c1a
----
+```{code-cell}
+:id: ZqUzvqF1B1TO
+:outputId: c1874391-eb8d-43d8-eb8f-c918ed0a0c1a
+
 np.random.seed(0)
 
 print_truncated_random_state()
@@ -84,11 +81,10 @@ print_truncated_random_state()
 
 NumPy allows you to sample both individual numbers, or entire vectors of numbers in a single function call. For instance, you may sample a vector of 3 scalars from a uniform distribution by doing:
 
-```{code-cell} ipython3
----
-id: 6Xqx2e8tAW5d
-outputId: a428facb-cd16-4375-f5c4-8fc601e60169
----
+```{code-cell}
+:id: 6Xqx2e8tAW5d
+:outputId: a428facb-cd16-4375-f5c4-8fc601e60169
+
 np.random.seed(0)
 print(np.random.uniform(size=3))
 ```
@@ -97,11 +93,10 @@ print(np.random.uniform(size=3))
 
 NumPy provides a *sequential equivalent guarantee*, meaning that sampling N numbers in a row individually or sampling a vector of N numbers results in the same pseudo-random sequences:
 
-```{code-cell} ipython3
----
-id: bZiBZXHW_2wO
-outputId: 3aff9a51-8a19-4737-a7ad-91b23bfc05f8
----
+```{code-cell}
+:id: bZiBZXHW_2wO
+:outputId: 3aff9a51-8a19-4737-a7ad-91b23bfc05f8
+
 np.random.seed(0)
 print("individually:", np.stack([np.random.uniform() for _ in range(3)]))
 
@@ -121,11 +116,10 @@ JAX's random number generation differs from NumPy's in important ways. The reaso
 
 We will discuss why in the following. First, we will focus on the implications of a PRNG design based on a global state. Consider the code:
 
-```{code-cell} ipython3
----
-id: j441y2NCmnbt
-outputId: 77fe84d7-c86e-417a-95b9-d73663ed40fc
----
+```{code-cell}
+:id: j441y2NCmnbt
+:outputId: 77fe84d7-c86e-417a-95b9-d73663ed40fc
+
 import numpy as np
 
 np.random.seed(0)
@@ -150,12 +144,10 @@ Making this code reproducible in JAX would require to enforce this specific orde
 
 To avoid this issue, JAX does not use a global state. Instead, random functions explicitly consume the state, which is referred to as a `key` .
 
+```{code-cell}
+:id: LuaGUVRUvbzQ
+:outputId: bbf525d7-d407-49b4-8bee-2cd827846e04
 
-```{code-cell} ipython3
----
-id: LuaGUVRUvbzQ
-outputId: bbf525d7-d407-49b4-8bee-2cd827846e04
----
 from jax import random
 
 key = random.PRNGKey(42)
@@ -169,11 +161,10 @@ A key is just an array of shape `(2,)`.
 
 'Random key' is essentially just another word for 'random seed'. However, instead of setting it once as in NumPy, any call of a random function in JAX requires a key to be specified. Random functions consume the key, but do not modify it. Feeding the same key to a random function will always result in the same sample being generated:
 
-```{code-cell} ipython3
----
-id: Tc_Tsv06Fz3l
-outputId: 1472ae73-edbf-4163-9992-46781d258014
----
+```{code-cell}
+:id: Tc_Tsv06Fz3l
+:outputId: 1472ae73-edbf-4163-9992-46781d258014
+
 print(random.normal(key))
 print(random.normal(key))
 ```
@@ -188,11 +179,10 @@ print(random.normal(key))
 
 In order to generate different and independent samples, you must `split()` the key *yourself* whenever you want to call a random function:
 
-```{code-cell} ipython3
----
-id: qChuz1C9CSJe
-outputId: f6eb1dc3-d83c-45ef-d90e-5a12d36fa7e6
----
+```{code-cell}
+:id: qChuz1C9CSJe
+:outputId: f6eb1dc3-d83c-45ef-d90e-5a12d36fa7e6
+
 print("old key", key)
 new_key, subkey = random.split(key)
 del key  # The old key is discarded -- we must never use it again.
@@ -217,7 +207,7 @@ It doesn't matter which part of the output of `split(key)` we call `key`, and wh
 
 Usually, the above example would be written concisely as
 
-```{code-cell} ipython3
+```{code-cell}
 :id: Xkt5OYjHjWiP
 
 key, subkey = random.split(key)
@@ -231,7 +221,7 @@ which discards the old key automatically.
 
 It's worth noting that `split()` can create as many keys as you need, not just 2:
 
-```{code-cell} ipython3
+```{code-cell}
 :id: hbHZP2xM7Egf
 
 key, *forty_two_subkeys = random.split(key, num=43)
@@ -246,11 +236,10 @@ However, JAX does not provide a sequential equivalence guarantee, because doing 
 
 In the example below, sampling 3 values out of a normal distribution individually using three subkeys gives a different result to using giving a single key and specifying `shape=(3,)`:
 
-```{code-cell} ipython3
----
-id: 4nB_TA54D-HT
-outputId: 2f259f63-3c45-46c8-f597-4e53dc63cb56
----
+```{code-cell}
+:id: 4nB_TA54D-HT
+:outputId: 2f259f63-3c45-46c8-f597-4e53dc63cb56
+
 key = random.PRNGKey(42)
 subkeys = random.split(key, 3)
 sequence = np.stack([random.normal(subkey) for subkey in subkeys])

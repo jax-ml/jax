@@ -66,11 +66,10 @@ class MetadataTest(jtu.JaxTestCase):
     self.assertRegex(hlo, 'op_type="cos"')
     self.assertRegex(hlo, 'op_type="mul"')
     # TODO(mattjj,jekbradbury): update these tests post-omnistaging
-    if not config.omnistaging_enabled:
-      self.assertRegex(hlo, 'op_name=".*jit\\(jvp\\(foo\\)\\)/sin"')
-      self.assertRegex(hlo, 'op_name=".*jit\\(jvp\\(foo\\)\\)/cos"')
-      self.assertRegex(hlo, 'op_name=".*jit\\(transpose\\('
-                            'jvp\\(foo\\)\\)\\)/mul"')
+    # self.assertRegex(hlo, 'op_name=".*jit\\(jvp\\(foo\\)\\)/sin"')
+    # self.assertRegex(hlo, 'op_name=".*jit\\(jvp\\(foo\\)\\)/cos"')
+    # self.assertRegex(hlo, 'op_name=".*jit\\(transpose\\('
+    #                       'jvp\\(foo\\)\\)\\)/mul"')
 
   def test_cond_metadata(self):
     def true_fun(x):

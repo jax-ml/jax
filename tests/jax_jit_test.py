@@ -13,11 +13,11 @@
 # limitations under the License.
 
 import inspect
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import api
 from jax import dtypes
 from jax import lib as jaxlib
 from jax import numpy as jnp
@@ -29,8 +29,6 @@ import numpy as np
 # It covers all JAX numpy types types except bfloat16 and numpy array.
 # TODO(jblespiau): Add support for float0 in the C++ path.
 _EXCLUDED_TYPES = [np.ndarray]
-if jax.lib._xla_extension_version < 6:
-  _EXCLUDED_TYPES.append(jax.dtypes.bfloat16)
 
 _SCALAR_NUMPY_TYPES = [
     x for x in jax.abstract_arrays.array_types if x not in _EXCLUDED_TYPES
@@ -138,10 +136,9 @@ class JaxJitTest(parameterized.TestCase):
     self.assertEqual(res.dtype, complex_type)
     self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)
 
-  @unittest.skipIf(jax.lib._xla_extension_version < 3, "jaxlib too old")
   def test_convert_int_overflow(self):
     with self.assertRaisesRegex(
-        RuntimeError if jax.lib._xla_extension_version >= 6 else OverflowError,
+        RuntimeError,
         "(Python int too large|Unable to convert Python scalar).*"):
       jaxlib.jax_jit.device_put(int(1e100), True, jax.devices()[0])
 
@@ -203,7 +200,7 @@ class JaxJitTest(parameterized.TestCase):
     def f(a, b, c):
       return a + b + c
 
-    jitted_f = jax.api._cpp_jit(f)
+    jitted_f = api._cpp_jit(f)
     self.assertEqual(inspect.signature(f), inspect.signature(jitted_f))
 
 

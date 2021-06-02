@@ -19,9 +19,9 @@ import operator
 import types
 from typing import Any, Callable
 
+from absl import logging
 import numpy as np
 
-import jax
 from jax.config import config
 
 partial = functools.partial
@@ -57,18 +57,6 @@ def unzip3(xyzs):
     ys.append(y)
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
-
-def unzip4(wxyzs):
-  ws = []
-  xs = []
-  ys = []
-  zs = []
-  for w, x, y, z in wxyzs:
-    ws.append(w)
-    xs.append(x)
-    ys.append(y)
-    zs.append(z)
-  return tuple(ws), tuple(xs), tuple(ys), tuple(zs)
 
 def subvals(lst, replace):
   lst = list(lst)
@@ -192,10 +180,10 @@ def cache(max_size=4096):
 
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
-      if jax.core.debug_state.check_leaks:
+      if config.jax_check_tracer_leaks:
         return f(*args, **kwargs)
       else:
-        return cached(bool(config.x64_enabled), *args, **kwargs)
+        return cached(config._trace_context(), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
@@ -209,7 +197,7 @@ def memoize(f):
 
   @functools.wraps(f)
   def wrapper(*args, **kwargs):
-    return memoized(bool(config.x64_enabled), *args, **kwargs)
+    return memoized(config._trace_context(), *args, **kwargs)
 
   wrapper.cache_clear = memoized.cache_clear
   wrapper.cache_info = memoized.cache_info
@@ -221,7 +209,7 @@ def prod(xs):
     out *= x
   return out
 
-class WrapHashably(object):
+class WrapHashably:
   __slots__ = ["val"]
 
   def __init__(self, val):
@@ -233,7 +221,7 @@ class WrapHashably(object):
   def __eq__(self, other):
     return self.val is other.val
 
-class Hashable(object):
+class Hashable:
   __slots__ = ["val"]
 
   def __init__(self, val):
@@ -241,6 +229,18 @@ class Hashable(object):
 
   def __hash__(self):
     return hash(self.val)
+
+  def __eq__(self, other):
+    return self.val == other.val
+
+class WrapKwArgs:
+  __slots__ = ["val"]
+
+  def __init__(self, val):
+    self.val = val
+
+  def __hash__(self):
+    return hash(tuple((k, v) for k, v in sorted(self.val.items())))
 
   def __eq__(self, other):
     return self.val == other.val
@@ -330,10 +330,6 @@ def tuple_delete(t, idx):
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
 
-def tuple_replace(t, idx, val):
-  assert 0 <= idx < len(t), (idx, len(t))
-  return t[:idx] + (val,) + t[idx:]
-
 # TODO(mattjj): replace with dataclass when Python 2 support is removed
 def taggedtuple(name, fields) -> Callable[..., Any]:
   """Lightweight version of namedtuple where equality depends on the type."""
@@ -393,3 +389,22 @@ def maybe_named_axis(axis, if_pos, if_named):
   except TypeError:
     named = True
   return if_named(axis) if named else if_pos(pos)
+
+def distributed_debug_log(*pairs):
+  """Format and log `pairs` if config.jax_distributed_debug is enabled.
+
+  Args:
+    pairs: A sequence of label/value pairs to log. The first pair is treated as
+    a heading for subsequent pairs.
+  """
+  if config.jax_distributed_debug:
+    lines = ["\nDISTRIBUTED_DEBUG_BEGIN"]
+    try:
+      lines.append(f"{pairs[0][0]}: {pairs[0][1]}")
+      for label, value in pairs[1:]:
+        lines.append(f"  {label}: {value}")
+    except Exception as e:
+      lines.append("DISTRIBUTED_DEBUG logging failed!")
+      lines.append(f"{e}")
+    lines.append("DISTRIBUTED_DEBUG_END")
+    logging.warning("\n".join(lines))

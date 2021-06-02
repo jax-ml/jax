@@ -61,8 +61,16 @@ class StaxTest(tf_test_util.JaxToTfTestCase):
     images = np.array(jax.random.normal(key, shape))
 
     self.ConvertAndCompare(
-        infer, images,
-        limitations=[jax2tf_limitations.custom_numeric(tol=0.5)])
+        infer,
+        images,
+        limitations=[
+            # TODO: these are some very high tolerances. Revisit once we fix
+            # convolutions?
+            jax2tf_limitations.custom_numeric(
+                tol=0.1, devices="tpu", modes=("eager", "graph", "compiled")),
+            jax2tf_limitations.custom_numeric(
+                tol=1e-5, devices="cpu", modes=("eager", "graph", "compiled")),
+        ])
 
 
 if __name__ == "__main__":
