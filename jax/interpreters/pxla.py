@@ -43,7 +43,7 @@ import numpy as np
 from .._src.config import config
 from .. import core
 from .. import linear_util as lu
-from ..abstract_arrays import array_types
+from jax._src.abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
 from .._src import source_info_util
 from .._src.util import (partial, unzip3, prod, safe_map, safe_zip,

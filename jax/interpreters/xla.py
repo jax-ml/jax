@@ -30,7 +30,7 @@ from .. import ad_util
 from jax._src import dtypes
 from .. import linear_util as lu
 from jax._src import source_info_util
-from ..abstract_arrays import (make_shaped_array, array_types)
+from jax._src.abstract_arrays import (make_shaped_array, array_types)
 from ..core import (ConcreteArray, ShapedArray, AbstractToken,
                     Literal, pp_eqn_compact, raise_to_shaped, abstract_token)
 from jax._src.pprint_util import pp
