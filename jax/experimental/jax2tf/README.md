@@ -1,7 +1,7 @@
 # JAX and TensorFlow interoperation (jax2tf/call_tf)
 
 This package provides experimental support for interoperation between JAX and TensorFlow.
-There are two interoperation directions: 
+There are two interoperation directions:
 
 - `jax2tf.convert`: for using JAX functions in a TensorFlow context, e.g.,
 for eager or graph execution, or for saving as a TensorFlow SavedModel; and
@@ -475,8 +475,8 @@ in [savedmodel_test.py](https://github.com/google/jax/blob/master/jax/experiment
 
 ### Missing converter features
 
-There is currently no support for replicated (e.g. `pmap`) or multi-device
-(e.g. `sharded_jit`) functions. The collective operations are not yet handled.
+There is currently no support for `pmap` or`xmap`, nor for the collective
+operations. There is support for `sharded_jit` and `pjit`.
 
 ### No SavedModel fine-tuning
 

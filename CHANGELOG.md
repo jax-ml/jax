@@ -11,6 +11,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.14 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...master).
 * New features:
+  * The {func}`jax2tf.convert` now has support for `pjit` and `sharded_jit`.
 
 * Breaking changes:
 

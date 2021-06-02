@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import contextmanager
 from functools import partial
 import logging
-from typing import Generator, List, Tuple
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -32,47 +30,23 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap, mesh
 from jax.experimental.pjit import pjit, pjit_p, with_sharding_constraint, SpecSync
 from jax.interpreters import pxla
-from jax._src.util import unzip2, prod, curry
+from jax._src.util import prod, curry
 
 from jax.config import config
 config.parse_flags_with_absl()
 
 
 def setUpModule():
-  global old_lowering_flag
-  jax.experimental.maps.make_xmap_callable.cache_clear()
-  old_lowering_flag = jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING
-  jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = True
+  jtu.set_spmd_lowering_flag(True)
 
 def tearDownModule():
-  jax.experimental.maps.make_xmap_callable.cache_clear()
-  jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = old_lowering_flag
-
-
-# TODO(skye): move into test_util and dedup with xmap_test.py
-MeshSpec = List[Tuple[str, int]]
-
-@contextmanager
-def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
-  """Test utility for setting up meshes given mesh data from `schedules`."""
-  # This is similar to the `with_mesh` function above, but isn't a decorator.
-  axis_names, shape = unzip2(named_shape)
-  size = prod(shape)
-  local_devices = list(jax.local_devices())
-  if len(local_devices) < size:
-    raise SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(local_devices[:size]).reshape(shape)
-  with mesh(mesh_devices, axis_names):
-    yield
-
-def with_mesh_from_kwargs(f):
-  return lambda *args, **kwargs: with_mesh(kwargs['mesh'])(f)(*args, **kwargs)
+  jtu.restore_spmd_lowering_flag()
 
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
 class PJitTest(jtu.BufferDonationTestCase):
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testBasic1D(self):
     @partial(pjit,
              in_axis_resources=(P('x'), P('x')),
@@ -90,7 +64,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[0].to_py(), expected,
                         check_dtypes=False)
 
-  @with_mesh([('x', 2), ('y', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testBasic2D(self):
     @partial(pjit,
              in_axis_resources=(P(None, 'x', 'y'), P('y')),
@@ -118,7 +92,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[3].to_py(), split1,
                         check_dtypes=False)
 
-  @with_mesh([('x', 2), ('y', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testTwoMeshAxisSharding(self):
     @partial(pjit,
              in_axis_resources=P(('x', 'y'),),
@@ -144,7 +118,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual.device_buffers[3].to_py(), splits[3],
                         check_dtypes=False)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testBufferDonation(self):
     @partial(pjit,
              in_axis_resources=P('x'),
@@ -162,7 +136,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertNotDeleted(y)
     self.assertDeleted(x)
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraint(self):
     @partial(pjit, in_axis_resources=None, out_axis_resources=None)
     def f(x):
@@ -186,7 +160,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotation from pjit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraintPyTree(self):
     @partial(pjit, in_axis_resources=None, out_axis_resources=None)
     def f(x):
@@ -232,7 +206,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       should_be_tracing = False
       pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testNested(self):
     # Add a constant captured by the nested pjit to make things more complicated
     h = jnp.arange(4)
@@ -243,7 +217,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(y, jnp.sin(x).sum() + h.sum())
     self.assertTrue(hasattr(y, "sharding_spec"))
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testJVP(self):
     # Add a constant captured by the nested pjit to make things more complicated
     h = jnp.arange(4)
@@ -252,7 +226,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jtu.check_grads(g, (jnp.arange(16, dtype=jnp.float32).reshape((4, 4)),),
                     order=2, modes=["fwd"], eps=1)
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
     x, y = jnp.arange(4), jnp.arange(5)
     f = pjit(lambda x, y: x.sum() + jnp.sin(y),
@@ -263,13 +237,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     r, = f_eval(x, y)
     self.assertAllClose(r, x.sum() + jnp.sin(y))
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testNonArrayArg(self):
     self.assertEqual(pjit(lambda x: x + 2,
                           in_axis_resources=None,
                           out_axis_resources=None)(1), 3)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testNonHashableAxisResources(self):
     x = jnp.arange(4)
     y = pjit(lambda x: {'b': x['a'] + 2},
@@ -277,7 +251,7 @@ class PJitTest(jtu.BufferDonationTestCase):
              out_axis_resources={'b': P('x')})({'a': x})
     self.assertAllClose(y, {'b': x + 2})
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testGradOfConstraint(self):
     # Make sure that we can compute grads through sharding constraints
     h = lambda x: jnp.sin(with_sharding_constraint(x, P('x'))).sum()
@@ -286,7 +260,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = jnp.arange(8, dtype=jnp.float32)
     self.assertAllClose(f(x), jnp.cos(x))
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testNoopPartitionSpecs(self):
     noops = [P(), P(None), P(()), P((), None), P(None, None, ())]
     x = jnp.arange(8).reshape((2, 2, 2))
@@ -294,7 +268,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       y = pjit(lambda x: x * 2, in_axis_resources=spec, out_axis_resources=spec)(x)
       self.assertAllClose(y, x * 2)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testVmapModifiesAxisResources(self):
     h = pjit(lambda x, y: (x + y, x, y), in_axis_resources=P('x'), out_axis_resources=None)
     x = jnp.arange(4)
@@ -310,7 +284,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(y_sync, SpecSync.IN_SYNC)
     self.assertEqual(z_sync, SpecSync.DIM_PERMUTE)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testVMap(self):
     f = pjit(lambda x, y: (x + y, x), in_axis_resources=P('x'), out_axis_resources=P('x'))
     x = jnp.arange(4)
@@ -402,7 +376,7 @@ def check_1d_2d_mesh(f, set_mesh):
       ("2", (("x", 2),), "x"),
       ("2x1", (("x", 2), ("y", 1)), ("x", "y")),
       ("2x2", (("x", 2), ("y", 2)), ("x", "y")),
-    ))(with_mesh_from_kwargs(f) if set_mesh else f)
+    ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
@@ -444,7 +418,7 @@ class PJitErrorTest(jtu.JaxTestCase):
            in_axis_resources=None, out_axis_resources=None)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
-  @with_mesh([('z', 1)])
+  @jtu.with_mesh([('z', 1)])
   def testUndefinedResourcesArgs(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
@@ -454,7 +428,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
-  @with_mesh([('z', 1)])
+  @jtu.with_mesh([('z', 1)])
   def testUndefinedResourcesOuts(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
@@ -464,7 +438,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: x, in_axis_resources=None, out_axis_resources=spec)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
-  @with_mesh([('z', 1)])
+  @jtu.with_mesh([('z', 1)])
   def testUndefinedResourcesConstraint(self, mesh, resources):
     x = jnp.ones((2, 2))
     spec = P(resources,)
@@ -475,7 +449,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: with_sharding_constraint(x, spec),
            in_axis_resources=None, out_axis_resources=None)(x)
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testRankTooLowArgs(self):
     x = jnp.arange(2)
     spec = P('x', 'y')
@@ -484,7 +458,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x.sum(), in_axis_resources=spec, out_axis_resources=None)(x)
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testRankTooLowOuts(self):
     x = jnp.arange(2)
     spec = P('x', 'y')
@@ -493,7 +467,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x.sum(), in_axis_resources=None, out_axis_resources=spec)(x)
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testRankTooLowConstraint(self):
     x = jnp.arange(2)
     spec = P('x', 'y')
@@ -504,7 +478,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       pjit(lambda x: with_sharding_constraint(x, spec),
            in_axis_resources=None, out_axis_resources=None)(x)
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testRepeatedInResources(self):
     x = jnp.arange(2)
     for spec in [P('x', 'x'), P('x', ('y', 'x'))]:
@@ -514,7 +488,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(ValueError, error):
         pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
 
-  @with_mesh([('x', 2), ('y', 1)])
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testRepeatedOutResources(self):
     x = jnp.arange(2)
     for spec in [P('x', 'x'), P('x', ('y', 'x'))]:
@@ -524,7 +498,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(ValueError, error):
         pjit(lambda x: x, in_axis_resources=None, out_axis_resources=spec)(x)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testInputShardsXMapAxis(self):
     spec = P('x')
     f = xmap(pjit(lambda x: x + 2, in_axis_resources=spec, out_axis_resources=None),
@@ -537,7 +511,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       f(x)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testOutputShardsXMapAxis(self):
     spec = P('x')
     f = xmap(pjit(lambda x: x + 2, in_axis_resources=None, out_axis_resources=spec),
@@ -550,7 +524,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       f(x)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testConstraintShardsXMapAxis(self):
     spec = P('x')
     f = xmap(lambda x: with_sharding_constraint(x, axis_resources=spec),
@@ -563,7 +537,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       f(x)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testCatchesInnerXMapErrors(self):
     f = pjit(xmap(lambda x, y: x, in_axes=(['i'], ['j']), out_axes=['i', 'j'],
                   axis_resources={'i': 'x', 'j': 'x'}),
