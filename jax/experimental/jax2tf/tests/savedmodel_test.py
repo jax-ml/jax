@@ -83,7 +83,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
       x, = primals
       x_dot, = tangents
       primal_out = f_jax(x)
-      tangent_out = 3. * x * x_dot
+      tangent_out = np.float32(3.) * x * x_dot
       return primal_out, tangent_out
 
     model = tf.Module()
