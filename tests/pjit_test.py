@@ -218,13 +218,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertTrue(hasattr(y, "sharding_spec"))
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
-  def testJVP(self):
+  def testAutodiff(self):
     # Add a constant captured by the nested pjit to make things more complicated
     h = jnp.arange(4)
     f = pjit(lambda x: x.sum() + h.sum(), in_axis_resources=P('x', 'y'), out_axis_resources=None)
-    g = pjit(lambda x: f(x + 2), in_axis_resources=P('x', None), out_axis_resources=None)
+    g = pjit(lambda x: f(jnp.sin(x * 4 + 2)), in_axis_resources=P('x', None), out_axis_resources=None)
     jtu.check_grads(g, (jnp.arange(16, dtype=jnp.float32).reshape((4, 4)),),
-                    order=2, modes=["fwd"], eps=1)
+                    order=2)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):

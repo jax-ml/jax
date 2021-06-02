@@ -329,6 +329,9 @@ class ParsedPartitionSpec:
   def __iter__(self):
     return iter(self.partitions)
 
+  def __repr__(self):
+    return f"<{self.partitions[1:-1]}>"  # Replace parens with angle brackets
+
 REPLICATED = ParsedPartitionSpec(None, ())
 
 
@@ -508,6 +511,120 @@ def _pjit_jvp(primals_in, tangents_in,
                        for nz, aval in zip(is_nz_tangents_out, jaxpr.out_avals)]
 ad.primitive_jvps[pjit_p] = _pjit_jvp
 
+
+def _pjit_partial_eval(trace, *in_tracers,
+                       jaxpr, in_axis_resources, out_axis_resources,
+                       resource_env, donated_invars, name):
+  # XXX: At the moment all residuals get fully replicated, which is extremely
+  #      wasteful and might quickly lead to OOM errors.
+  mesh = resource_env.physical_mesh
+  in_pvals = [t.pval for t in in_tracers]
+
+  known_ins = tuple(pv.is_known() for pv in in_pvals)
+  unknown_ins = tuple(not k for k in known_ins)
+  raw_known_jaxpr, raw_unknown_jaxpr, unknown_outs = pe.partial_eval_jaxpr(
+      jaxpr, unknown_ins, instantiate=False)
+  unknown_outs = tuple(unknown_outs)
+  known_outs = tuple(not uk for uk in unknown_outs)
+  num_residuals = len(raw_known_jaxpr.jaxpr.outvars) - len(unknown_outs)
+
+  def keep_where(l, should_keep):
+    return tuple(x for x, keep in zip(l, should_keep) if keep)
+
+  # Prepare the known jaxpr
+  # TODO(apaszke): map_jaxpr will break caching!
+  known_jaxpr = raw_known_jaxpr.map_jaxpr(lambda jaxpr: pe._drop_vars(
+      jaxpr,
+      drop_ins=unknown_ins,
+      drop_outs=unknown_outs + (False,) * num_residuals))
+  # Compute the known outputs
+  all_known_outs = pjit_p.bind(
+      *(pv.get_known() for pv in in_pvals if pv.is_known()),
+      jaxpr=known_jaxpr,
+      in_axis_resources=keep_where(in_axis_resources, known_ins),
+      out_axis_resources=(keep_where(out_axis_resources, known_outs) +
+                          (REPLICATED,) * num_residuals),
+      resource_env=resource_env,
+      donated_invars=keep_where(donated_invars, known_ins),
+      name=name)
+  if num_residuals:
+    known_out_vals, residual_vals = split_list(all_known_outs, [-num_residuals])
+  else:
+    known_out_vals, residual_vals = all_known_outs, ()
+  known_tracers_out = [trace.new_const(known_out) for known_out in known_out_vals]
+  residual_tracers = [trace.new_instantiated_const(residual) for residual in residual_vals]
+
+  # Prepare the unknown jaxpr
+  # TODO(apaszke): map_jaxpr will break caching!
+  unknown_jaxpr = raw_unknown_jaxpr.map_jaxpr(lambda jaxpr: pe._drop_vars(
+      jaxpr,
+      drop_ins=known_ins + (False,) * num_residuals,
+      drop_outs=known_outs))
+  # Prepare unknown tracers
+  unknown_params = dict(
+      jaxpr=unknown_jaxpr,
+      in_axis_resources=(keep_where(in_axis_resources, unknown_ins) +
+                         (REPLICATED,) * num_residuals),
+      out_axis_resources=keep_where(out_axis_resources, unknown_outs),
+      resource_env=resource_env,
+      donated_invars=(keep_where(donated_invars, unknown_ins) +
+                      (REPLICATED,) * num_residuals),
+      name=name)
+  unknown_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
+  unknown_tracers_out = [pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
+                         for aval in global_to_local(mesh, unknown_jaxpr.out_avals,
+                                                     unknown_params['out_axis_resources'])]
+  eqn = pe.new_eqn_recipe((*unknown_tracers_in, *residual_tracers),
+                          unknown_tracers_out,
+                          pjit_p,
+                          unknown_params,
+                          source_info_util.current())
+  for t in unknown_tracers_out: t.recipe = eqn
+  return pe._zip_knowns(known_tracers_out, unknown_tracers_out, unknown_outs)
+pe.custom_partial_eval_rules[pjit_p] = _pjit_partial_eval
+
+def _pjit_transpose(cts_in, *primals_in,
+                    jaxpr, in_axis_resources, out_axis_resources,
+                    resource_env, donated_invars, name):
+  mesh = resource_env.physical_mesh
+
+  def prune_type(ty, xs, maybe_zeros):
+    return tuple(x for x, mz in zip(xs, maybe_zeros) if not type(mz) is ty)
+
+  body = lu.wrap_init(ad.closed_backward_pass)
+  body = lu.hashable_partial(body, jaxpr)
+  primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
+  body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)
+
+  transpose_in_axis_resources = (
+    *prune_type(ad.UndefinedPrimal, in_axis_resources, primals_in),
+    *prune_type(ad.Zero, out_axis_resources, cts_in)
+  )
+  global_cts_in_avals = local_to_global(
+      mesh,
+      [core.raise_to_shaped(core.get_aval(ct)) for ct in primals_and_nz_cts_in],
+      transpose_in_axis_resources)
+  transpose_jaxpr, global_cts_out_avals, consts = pe.trace_to_jaxpr_dynamic(
+      body, global_cts_in_avals)
+  # TODO(apaszke): Creating ClosedJaxpr by hand will break compilation cache!
+  transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
+  del consts
+  cts_out_treedef = cts_out_treedef_thunk()
+  transpose_out_axis_resources = prune_type(
+      ad.Zero,
+      in_axis_resources,
+      tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
+
+  nz_cts_out = pjit_p.bind(
+      *primals_and_nz_cts_in,
+      jaxpr=transpose_jaxpr,
+      in_axis_resources=transpose_in_axis_resources,
+      out_axis_resources=transpose_out_axis_resources,
+      resource_env=resource_env,
+      donated_invars=(False,) * len(primals_and_nz_cts_in),
+      name=name)
+  return tree_unflatten(cts_out_treedef, nz_cts_out)
+ad.primitive_transposes[pjit_p] = _pjit_transpose
 
 def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources):
   pjit_resources = set(it.chain.from_iterable(pos_axis_resources))

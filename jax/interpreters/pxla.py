@@ -1356,10 +1356,13 @@ class Mesh:
 
   @property
   def device_ids(self):
+    assert not self.empty
     return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
 
   def __repr__(self):
-    return f"Mesh({self.devices!r}, {self.axis_names!r})"
+    if self.empty:
+      return "Mesh([], ())"
+    return f"Mesh({self.device_ids!r}, {self.axis_names!r})"
 
   def local_to_global(self, axes: ArrayMapping, aval):
     return untile_aval_nd(self.shape, axes,
