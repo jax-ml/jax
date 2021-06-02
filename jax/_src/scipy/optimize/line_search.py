@@ -13,10 +13,13 @@
 # limitations under the License.
 
 from typing import NamedTuple, Union
+from functools import partial
 
 import jax.numpy as jnp
 import jax
-from jax.lax import while_loop
+from jax import lax
+
+_dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 
 
 def _cubicmin(a, fa, fpa, b, fb, c, fc):
@@ -26,7 +29,7 @@ def _cubicmin(a, fa, fpa, b, fb, c, fc):
   denom = (db * dc) ** 2 * (db - dc)
   d1 = jnp.array([[dc ** 2, -db ** 2],
                   [-dc ** 3, db ** 3]])
-  A, B = jnp.dot(d1, jnp.array([fb - fa - C * db, fc - fa - C * dc])) / denom
+  A, B = _dot(d1, jnp.array([fb - fa - C * db, fc - fa - C * dc])) / denom
 
   radical = B * B - 3. * A * C
   xmin = a + (-B + jnp.sqrt(radical)) / (3. * A)
@@ -197,9 +200,9 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
     state = state._replace(failed= state.failed | state.j >= 30)
     return state
 
-  state = while_loop(lambda state: (~state.done) & (~pass_through) & (~state.failed),
-                     body,
-                     state)
+  state = lax.while_loop(lambda state: (~state.done) & (~pass_through) & (~state.failed),
+                         body,
+                         state)
 
   return state
 
@@ -264,14 +267,14 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
   """
   def restricted_func_and_grad(t):
     phi, g = jax.value_and_grad(f)(xk + t * pk)
-    dphi = jnp.dot(g, pk)
+    dphi = jnp.real(_dot(g, pk))
     return phi, dphi, g
 
   if old_fval is None or gfk is None:
     phi_0, dphi_0, gfk = restricted_func_and_grad(0.)
   else:
     phi_0 = old_fval
-    dphi_0 = jnp.dot(gfk, pk)
+    dphi_0 = jnp.real(_dot(gfk, pk))
   if old_old_fval is not None:
     candidate_start_value = 1.01 * 2 * (phi_0 - old_old_fval) / dphi_0
     start_value = jnp.where(candidate_start_value > 1, 1.0, candidate_start_value)
@@ -381,9 +384,9 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
     state = state._replace(i=state.i + 1, a_i1=a_i, phi_i1=phi_i, dphi_i1=dphi_i)
     return state
 
-  state = while_loop(lambda state: (~state.done) & (state.i <= maxiter) & (~state.failed),
-                     body,
-                     state)
+  state = lax.while_loop(lambda state: (~state.done) & (state.i <= maxiter) & (~state.failed),
+                         body,
+                         state)
 
   status = jnp.where(
       state.failed,

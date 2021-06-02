@@ -140,5 +140,95 @@ class TestBFGS(jtu.JaxTestCase):
       jax.scipy.optimize.minimize(f, jnp.ones(2), args=45, method='BFGS')
 
 
+class TestLBFGS(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_func={}_maxiter={}".format(func_and_init[0].__name__, maxiter),
+     "maxiter": maxiter, "func_and_init": func_and_init}
+    for maxiter in [None]
+    for func_and_init in [(rosenbrock, np.zeros(2)),
+                          (himmelblau, np.zeros(2)),
+                          (matyas, np.ones(2) * 6.),
+                          (eggholder, np.ones(2) * 100.)]))
+  def test_minimize(self, maxiter, func_and_init):
+
+    func, x0 = func_and_init
+
+    @jit
+    def min_op(x0):
+      result = jax.scipy.optimize.minimize(
+          func(jnp),
+          x0,
+          method='l-bfgs-experimental-do-not-rely-on-this',
+          options=dict(maxiter=maxiter, gtol=1e-7),
+      )
+      return result.x
+
+    jax_res = min_op(x0)
+
+    # Note that without bounds, L-BFGS-B is just L-BFGS
+    scipy_res = scipy.optimize.minimize(func(np), x0, method='L-BFGS-B').x
+
+    if func.__name__ == 'matyas':
+      # scipy performs badly for Matyas, compare to true minimum instead
+      self.assertAllClose(jax_res, jnp.zeros_like(jax_res), atol=1e-7)
+      return
+
+    if func.__name__ == 'eggholder':
+      # L-BFGS performs poorly for the eggholder function.
+      # Neither scipy nor jax find the true minimum, so we can only loosely (with high atol) compare the false results
+      self.assertAllClose(jax_res, scipy_res, atol=1e-3)
+      return
+
+    self.assertAllClose(jax_res, scipy_res, atol=2e-5, check_dtypes=False)
+
+  def test_minimize_complex_sphere(self):
+    z0 = jnp.array([1., 2. - 3.j, 4., -5.j])
+
+    def f(z):
+      return jnp.real(jnp.dot(jnp.conj(z - z0), z - z0))
+
+    @jit
+    def min_op(x0):
+      result = jax.scipy.optimize.minimize(
+          f,
+          x0,
+          method='l-bfgs-experimental-do-not-rely-on-this',
+          options=dict(gtol=1e-6),
+      )
+      return result.x
+
+    jax_res = min_op(jnp.zeros_like(z0))
+
+    self.assertAllClose(jax_res, z0)
+
+  def test_complex_rosenbrock(self):
+    complex_dim = 5
+
+    f_re = rosenbrock(jnp)
+    init_re = jnp.zeros((2 * complex_dim,))
+    expect_re = jnp.ones((2 * complex_dim,))
+
+    def f(z):
+      x_re = jnp.concatenate([jnp.real(z), jnp.imag(z)])
+      return f_re(x_re)
+
+    init = init_re[:complex_dim] + 1.j * init_re[complex_dim:]
+    expect = expect_re[:complex_dim] + 1.j * expect_re[complex_dim:]
+
+    @jit
+    def min_op(z0):
+      result = jax.scipy.optimize.minimize(
+          f,
+          z0,
+          method='l-bfgs-experimental-do-not-rely-on-this',
+          options=dict(gtol=1e-6),
+      )
+      return result.x
+
+    jax_res = min_op(init)
+    self.assertAllClose(jax_res, expect, atol=2e-5)
+
+
 if __name__ == "__main__":
   absltest.main()
