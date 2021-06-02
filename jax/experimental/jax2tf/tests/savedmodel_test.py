@@ -38,7 +38,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     tf.saved_model.save(
         model,
         model_dir,
-        options=tf.saved_model.SaveOptions(custom_gradients=True))
+        options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
     restored_model = tf.saved_model.load(model_dir)
     return restored_model
 
@@ -98,7 +98,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     with tf.GradientTape() as tape:
       y = restored_model.f(xv)
     self.assertAllClose(tape.gradient(y, xv).numpy(),
-                        jax.grad(f_jax)(0.7).astype(np.float32))
+                        jax.grad(f_jax)(x).astype(np.float32))
 
   def _compare_with_saved_model(self, f_jax, *args):
     # Certain ops are converted to ensure an XLA context, e.g.,

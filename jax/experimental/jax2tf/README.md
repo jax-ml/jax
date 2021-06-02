@@ -137,8 +137,12 @@ custom gradients and wrap instead the converted function with
 ``tf.raw_ops.PreventGradient`` to generated an error in case a gradient
 computation is attempted.
 
-Currently, there is a bug that prevents using custom gradients with SavedModel
-(see [Caveats](#caveats) below).
+SavedModels enables saving custom derivative rules by using the `experimental_custom_gradients` option:
+
+```
+options = tf.saved_model.SaveOptions(experimental_custom_gradients=True)
+tf.saved_model.save(model, path, options=options)
+```
 
 ## Shape-polymorphic conversion
 
@@ -477,15 +481,6 @@ in [savedmodel_test.py](https://github.com/google/jax/blob/master/jax/experiment
 
 There is currently no support for replicated (e.g. `pmap`) or multi-device
 (e.g. `sharded_jit`) functions. The collective operations are not yet handled.
-
-### No SavedModel fine-tuning
-
-Currently, TensorFlow SavedModel does not properly save the `tf.custom_gradient`.
-It does save however some attributes that on model restore result in a warning
-that the model might not be differentiable, and trigger an error if differentiation
-is attempted. The plan is to fix this. Note that if no gradients are requested,
-the PreventGradient ops will be saved along with the converted code and will
-give a nice error if differentiation of the converted code is attempted.
 
 ### Converting gradients for integer-argument functions
 
