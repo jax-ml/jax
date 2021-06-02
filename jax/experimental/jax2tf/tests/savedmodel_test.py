@@ -36,8 +36,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     # Roundtrip through saved model on disk.
     model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
     tf.saved_model.save(
-        model,
-        model_dir,
+        model, model_dir,
         options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
     restored_model = tf.saved_model.load(model_dir)
     return restored_model
