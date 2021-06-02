@@ -16,7 +16,9 @@ import os
 import sys
 import traceback
 import types
+import warnings
 
+import jax
 from jax.lib import xla_extension
 from jax._src import util
 
@@ -55,6 +57,11 @@ def include_frame(f):
 # ignore these frames heuristically based on source and name match.
 def ignore_known_hidden_frame(f):
   return 'importlib._bootstrap' in f.f_code.co_filename
+
+def add_tracebackhide_to_hidden_frames(tb):
+  for f, lineno in traceback.walk_tb(tb):
+    if not include_frame(f):
+      f.f_locals["__tracebackhide__"] = True
 
 def filter_traceback(tb):
   out = None
@@ -111,6 +118,38 @@ make_traceback = (types.TracebackType if sys.version_info >= (3, 7) else
 def filtered_tracebacks_supported():
   return make_traceback is not None
 
+def running_under_ipython():
+  """Returns true if we appear to be in an IPython session."""
+  try:
+    get_ipython()  # type: ignore
+    return True
+  except NameError:
+    return False
+
+def python_supports_tracebackhide():
+  """Returns true we can add __tracebackhide__ to frames."""
+  # TODO(phawkins): remove this test after droppping Python 3.6 support.
+  return sys.version_info[:2] >= (3, 7)
+
+def ipython_supports_tracebackhide():
+  """Returns true if the IPython version supports __tracebackhide__."""
+  import IPython  # type: ignore
+  return IPython.version_info[:2] >= (7, 17)
+
+def filtering_mode():
+  mode = jax.config.jax_traceback_filtering
+  if mode is None or mode == "auto":
+    if (running_under_ipython() and ipython_supports_tracebackhide() and
+        python_supports_tracebackhide()):
+      mode = "tracebackhide"
+    else:
+      mode = "remove_frames"
+  if mode == "tracebackhide" and not python_supports_tracebackhide():
+    warnings.warn("--jax_traceback_filtering=tracebackhide requires Python 3.7 "
+                  "or newer.")
+    mode = "remove_frames"
+  return mode
+
 def api_boundary(fun):
   '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
 
@@ -139,39 +178,47 @@ def api_boundary(fun):
 
   @util.wraps(fun)
   def reraise_with_filtered_traceback(*args, **kwargs):
+    __tracebackhide__ = True
     try:
       return fun(*args, **kwargs)
     except Exception as e:
-      if not is_under_reraiser(e):
-        filtered_tb, unfiltered = None, None
-        try:
-          filtered_tb = filter_traceback(e.__traceback__)
-          if filtered_tb is None:
-            raise
-          msg = format_exception_only(e)
-          msg = f'{msg}\n\n{_jax_message_append}'
-          unfiltered = UnfilteredStackTrace(msg)
-          unfiltered.with_traceback(add_call_stack_frames(e.__traceback__))
-          unfiltered.__context__ = e.__context__
-          unfiltered.__cause__ = e.__cause__
-          unfiltered.__suppress_context__ = e.__suppress_context__
-          e.__context__ = None
-          e.__cause__ = unfiltered
-          # There seems to be no way to alter the currently raised exception's
-          # traceback, except via the C API. The currently raised exception
-          # is part of the interpreter's thread state: value `e` is a copy.
-          if hasattr(xla_extension, 'replace_thread_exc_traceback'):
-            xla_extension.replace_thread_exc_traceback(filtered_tb)
-            raise
-          else:
-            # TODO(phawkins): remove this case when jaxlib 0.1.66 is the
-            # minimum.
-
-            # Fallback case for older jaxlibs; includes the current frame.
-            raise e.with_traceback(filtered_tb)
-        finally:
-          del filtered_tb
-          del unfiltered
-      else:
+      mode = filtering_mode()
+      if is_under_reraiser(e) or mode == "off":
         raise
+      if mode == "tracebackhide":
+        add_tracebackhide_to_hidden_frames(e.__traceback__)
+        raise
+      assert mode == "remove_frames", mode
+
+      filtered_tb, unfiltered, mode = None, None, None
+      try:
+        filtered_tb = filter_traceback(e.__traceback__)
+        if filtered_tb is None:
+          raise
+        msg = format_exception_only(e)
+        msg = f'{msg}\n\n{_jax_message_append}'
+        unfiltered = UnfilteredStackTrace(msg)
+        unfiltered.with_traceback(add_call_stack_frames(e.__traceback__))
+        unfiltered.__context__ = e.__context__
+        unfiltered.__cause__ = e.__cause__
+        unfiltered.__suppress_context__ = e.__suppress_context__
+        e.__context__ = None
+        e.__cause__ = unfiltered
+
+        # There seems to be no way to alter the currently raised exception's
+        # traceback, except via the C API. The currently raised exception
+        # is part of the interpreter's thread state: value `e` is a copy.
+        if hasattr(xla_extension, 'replace_thread_exc_traceback'):
+          xla_extension.replace_thread_exc_traceback(filtered_tb)
+          raise
+        else:
+          # TODO(phawkins): remove this case when jaxlib 0.1.66 is the
+          # minimum.
+
+          # Fallback case for older jaxlibs; includes the current frame.
+          raise e.with_traceback(filtered_tb)
+      finally:
+        del filtered_tb
+        del unfiltered
+        del mode
   return reraise_with_filtered_traceback
