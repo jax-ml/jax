@@ -239,6 +239,33 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     partial_xlog1py = functools.partial(lsp_special.xlog1py, 0.)
     self.assertAllClose(api.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_maxdegree={}_inputsize={}".format(l_max, num_z),
+       "l_max": l_max,
+       "num_z": num_z}
+       for l_max, num_z in zip([1, 2, 3], [6, 7, 8])))
+  def testLpmn(self, l_max, num_z):
+    # Points on which the associated Legendre functions areevaluated.
+    z = np.linspace(-0.2, 0.9, num_z)
+    actual_p_vals, actual_p_derivatives = lsp_special.lpmn(m=l_max, n=l_max, z=z)
+
+    # The expected results are obtained from scipy.
+    expected_p_vals = np.zeros((l_max + 1, l_max + 1, num_z))
+    expected_p_derivatives = np.zeros((l_max + 1, l_max + 1, num_z))
+
+    for i in range(num_z):
+      val, derivative = osp_special.lpmn(l_max, l_max, z[i])
+      expected_p_vals[:, :, i] = val
+      expected_p_derivatives[:, :, i] = derivative
+
+    with self.subTest('Test values.'):
+      self.assertAllClose(actual_p_vals, expected_p_vals, rtol=1e-6, atol=3.2e-6)
+
+    with self.subTest('Test derivatives.'):
+      self.assertAllClose(actual_p_derivatives,expected_p_derivatives,
+              rtol=1e-6, atol=8.4e-4)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
