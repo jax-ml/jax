@@ -81,8 +81,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     def check_avals(*, args: Sequence[jax2tf.jax2tf.TfVal],
                     polymorphic_shapes: Sequence[Optional[Union[str, PS]]],
                     expected_avals: Sequence[core.ShapedArray]):
+      arg_dtypes = tuple(map(lambda a: jax2tf.jax2tf._to_jax_dtype(jax2tf.dtype_of_val(a)), args))
       avals, shape_env = jax2tf.jax2tf._args_to_avals_and_env(
-          args, polymorphic_shapes)  # The function under test
+          args, arg_dtypes, polymorphic_shapes)  # The function under test
       self.assertEqual(expected_avals, avals)
       # TODO: Check the shape_env
 

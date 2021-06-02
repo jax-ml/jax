@@ -33,23 +33,12 @@ import tensorflow as tf  # type: ignore[import]
 
 DType = Any
 
-def _make_tf_args(args):
-  def _convert_to_tensor(v):
-    if hasattr(v, "dtype"):
-      return tf.convert_to_tensor(v)
-    return v
-
-  return tf.nest.map_structure(_convert_to_tensor, args)
-
-
 def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
   # tf_args can be PyTrees
-  def _make_one_arg_signature(tf_arg):
-    if np.isscalar(tf_arg):
-      tf_arg = np.array(tf_arg)
-    return tf.TensorSpec(np.shape(tf_arg), tf_arg.dtype)
+  def _make_one_array_signature(tf_arg):
+    return tf.TensorSpec(np.shape(tf_arg), jax2tf.dtype_of_val(tf_arg))
 
-  return tf.nest.map_structure(_make_one_arg_signature, list(tf_args))
+  return tf.nest.map_structure(_make_one_array_signature, list(tf_args))
 
 def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   if mode == "eager":
@@ -133,7 +122,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     result_tf = None
 
     func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
-    tf_args = _make_tf_args(args)
 
     unexpected_successes: List[str] = []
     # Run the "compiled" mode first, it is most important
@@ -149,7 +137,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         continue
 
       try:
-        result_tf = _run_tf_function(func_tf, *tf_args, mode=mode)
+        result_tf = _run_tf_function(func_tf, *args, mode=mode)
         tf_exception = None
       except Exception as e:
         tf_exception = e
@@ -218,12 +206,18 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         logging.info(f"[{self._testMethodName}] "
                      f"JAX NON_OPT HLO\n{jax_hlo}")
 
+        tf_args_signature = _make_tf_input_signature(*args)
+        # If we give the signature, we cannot pass scalars
+        tf_args_no_scalars = tuple(
+            map(lambda a, sig: tf.convert_to_tensor(a, dtype=sig.dtype),
+                args, tf_args_signature))
+
         tf_func_compiled = tf.function(
             func_tf,
             autograph=False,
             jit_compile=True,
-            input_signature=_make_tf_input_signature(*tf_args))
-        tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+            input_signature=tf_args_signature)
+        tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
                     stage="hlo")
         logging.info(f"[{self._testMethodName}] TF NON OPT HLO\n{tf_hlo}")
 
@@ -239,7 +233,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
           print(f"[{self._testMethodName}] Not logging TF OPT HLO because of "
                 f"crash in tf.experimental_get_compiler_ir (b/189265364)")
         else:
-          tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+          tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
                       stage="optimized_hlo")
           logging.info(f"[{self._testMethodName}] TF OPT HLO\n{tf_opt_hlo}")
 

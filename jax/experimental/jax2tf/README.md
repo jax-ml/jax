@@ -499,6 +499,70 @@ jax2tf.convert(jax.grad(f_jax, allow_int=True))(2))
 # returns a `bfloat16` zero: tf.Tensor(0, shape=(), dtype=bfloat16)
 ```
 
+### Different 64-bit precision in JAX and TensorFlow
+
+JAX behaves somewhat differently than TensorFlow in the handling
+of 32-bit vs. 64-bit values. However, always the `jax2tf.convert`
+function behaves like the JAX function.
+
+JAX interprets the type of Python scalars differently based on
+`JAX_ENABLE_X64` flag.
+See the [JAX type promotion documentation](https://jax.readthedocs.io/en/latest/type_promotion.html).)
+In the default configuration, the
+flag is unset, and JAX interprets Python constants as 32-bit,
+e.g., the type of `3.14` is `float32`. This is also what
+TensorFlow always does. JAX goes further, it forces
+all explicitly-specified 64-bit values to be interpreted as
+32-bit:
+
+```
+# with JAX_ENABLE_x64=0
+jnp.sin(3.14)  # Has type float32
+tf.math.sin(3.14)  # Has type float32
+
+jnp.sin(np.float64(3.14))  # Also has type float32
+tf.math.sin(np.float64(3.14))  # Has type float64
+
+# The jax2tf.convert function behaves like the JAX function.
+jax2tf.convert(jnp.sin)(3.14)  # Has type float32
+jax2tf.convert(jnp.sin)(np.float64(3.14))  # Has type float32
+
+# The following will still compute `sin` in float32 (with a tf.cast on the argument).
+tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, tf.float64))
+```
+
+When the `JAX_ENABLE_x64` flas is set, JAX uses 64-bit types
+for Python scalars and respects the explicit 64-bit types:
+
+```
+# with JAX_ENABLE_x64=1
+jnp.sin(3.14)  # Has type float64
+tf.math.sin(3.14)  # Has type float32
+
+# The jax2tf.convert function behaves like the JAX function.
+jax2tf.convert(jnp.sin)(3.14)  # Has type float64
+
+# The following will compute `sin` in float64.
+tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, tf.float64))
+
+# The following will compute `sin` in float32.
+tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14))
+```
+
+This is achieved by inserting `tf.cast` operations
+on the input arguments inside the converted function,
+if necessary.
+
+If you want to create a `tf.Variable` or `tf.TensorSpec` with the
+same dtype, you should use `jax2tf.dtype_of_val`:
+
+```
+# The following two calls will convert jax_fun at the same dtypes
+# independently of the value of JAX_ENABLE_X64.
+jax2tf.convert(jax_fun)(3.14)
+jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14))
+```
+
 ### TensorFlow XLA ops
 
 For most JAX primitives there is a natural TF op that fits the needed semantics.
@@ -710,7 +774,7 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
 ## TensorFlow versions supported
 
 The ``jax2tf.convert`` and `call_tf` require very recent versions of TensorFlow.
-As of today, the tests are run using `tf_nightly==2.5.0-dev20210315`.
+As of today, the tests are run using `tf_nightly==2.6.0-dev20210601`.
 
 ## Running on GPU
 

@@ -33,29 +33,29 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: t + 1., lambda f: f, x)
 
-    self.ConvertAndCompare(f_jax, jnp.bool_(True), jnp.float_(1.))
-    self.ConvertAndCompare(f_jax, jnp.bool_(False), jnp.float_(1.))
+    self.ConvertAndCompare(f_jax, jnp.bool_(True), 1.)
+    self.ConvertAndCompare(f_jax, jnp.bool_(False), 1.)
 
   def test_cond_multiple_results(self):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: (t + 1., 1.), lambda f: (f + 2., 2.), x)
 
-    self.ConvertAndCompare(f_jax, jnp.bool_(True), jnp.float_(1.))
-    self.ConvertAndCompare(f_jax, jnp.bool_(False), jnp.float_(1.))
+    self.ConvertAndCompare(f_jax, jnp.bool_(True), 1.)
+    self.ConvertAndCompare(f_jax, jnp.bool_(False), 1.)
 
   def test_cond_partial_eval(self):
     def f(x):
       res = lax.cond(True, lambda op: op * x, lambda op: op + x, x)
       return res
-    self.ConvertAndCompare(jax.grad(f), jnp.float_(1.))
+    self.ConvertAndCompare(jax.grad(f), 1.)
 
 
   def test_cond_units(self):
     def g(x):
       return lax.cond(True, lambda x: x, lambda y: y, x)
 
-    self.ConvertAndCompare(g, jnp.float_(0.7))
-    self.ConvertAndCompare(jax.grad(g), jnp.float_(0.7))
+    self.ConvertAndCompare(g, 0.7)
+    self.ConvertAndCompare(jax.grad(g), 0.7)
 
 
   def test_cond_custom_jvp(self):
@@ -76,7 +76,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def g(x):
       return lax.cond(True, f, lambda y: y, x)
 
-    arg = jnp.float_(0.7)
+    arg = 0.7
     self.TransformConvertAndCompare(g, arg, None)
     self.TransformConvertAndCompare(g, arg, "jvp")
     self.TransformConvertAndCompare(g, arg, "vmap")
@@ -104,7 +104,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def g(x):
       return lax.cond(True, f, lambda y: y, x)
 
-    arg = jnp.float_(0.7)
+    arg = 0.7
     self.TransformConvertAndCompare(g, arg, None)
     self.TransformConvertAndCompare(g, arg, "vmap")
     self.TransformConvertAndCompare(g, arg, "grad_vmap")
@@ -117,7 +117,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       #      for(i=x; i < 4; i++);
       return lax.while_loop(lambda c: c < 4, lambda c: c + 1, x)
 
-    self.ConvertAndCompare(func, jnp.int_(0))
+    self.ConvertAndCompare(func, 0)
 
   def test_while(self):
     # Some constants to capture in the conditional branches
@@ -189,7 +189,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
                             lambda carry: (carry[0] + 1., f(carry[1])),
                             (0., x))
 
-    arg = jnp.float_(0.7)
+    arg = 0.7
     self.TransformConvertAndCompare(g, arg, None)
     self.TransformConvertAndCompare(g, arg, "jvp")
     self.TransformConvertAndCompare(g, arg, "vmap")
