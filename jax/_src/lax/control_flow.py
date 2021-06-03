@@ -2510,7 +2510,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   if not all(int(elem.shape[axis]) == num_elems for elem in elems_flat[1:]):
     raise ValueError('Array inputs to associative_scan must have the same '
                      'first dimension. (saw: {})'
-                     .format([elems.shape for elem in elems_flat]))
+                     .format([elem.shape for elem in elems_flat]))
 
 
   # Summary of algorithm:
