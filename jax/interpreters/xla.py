@@ -35,7 +35,7 @@ from ..core import (ConcreteArray, ShapedArray, AbstractToken,
                     Literal, pp_eqn_compact, raise_to_shaped, abstract_token)
 from jax._src.pprint_util import pp
 from .._src.util import (partial, partialmethod, cache, prod, unzip2,
-                    extend_name_stack, wrap_name, safe_zip, safe_map)
+                         safe_zip, safe_map)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..lib import _xla_extension_version
@@ -58,6 +58,32 @@ XlaOp = Any  # xla_extension.XlaOp
 XlaShape = Any # xla_client.Shape
 XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
 XlaExecutable = Any # xla_extension.LocalExecutable
+
+
+class NameStackFrame(NamedTuple):
+  kind: Union[core.Primitive, str]
+  payload: Any = None
+
+  @property
+  def name(self):
+    return self.kind.name if isinstance(self.kind, core.Primitive) else self.kind
+
+  def __str__(self):
+    return self.name if self.payload is None else f"{self.name}({self.payload})"
+
+class NameStack(NamedTuple):
+  frames: Tuple[NameStackFrame, ...]
+
+  @classmethod
+  def init(cls, kind: Union[core.Primitive, str], payload: Any = None):
+    return cls((NameStackFrame(kind, payload),))
+
+  def extend(self, kind: Union[core.Primitive, str], payload: Any = None):
+    return NameStack(self.frames + (NameStackFrame(kind, payload),))
+
+  def __str__(self):
+    return '/'.join(unsafe_map(str, self.frames))
+
 
 # This flag is set on exit; no logging should be attempted
 _on_exit = False
@@ -323,7 +349,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     ans = rule(c, avals, xla_args, params)
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
-    ans = rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
+    ans = rule(c, axis_env, NameStack.init(prim), avals, backend,
          *xla_args, **params)
   else:
     raise NotImplementedError(f"XLA translation rule for {prim} not found")
@@ -402,7 +428,7 @@ def _flatmap(func: Callable, vars: Sequence):
 def _partitionmap(func: Callable, vars: Sequence, nodes: Sequence):
   return map(func, vars, _partition_outputs([v.aval for v in vars], nodes))
 
-def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
+def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack: NameStack, *args):
   if backend not in ('cpu', 'gpu', 'tpu'):
     platform = xb.get_backend(backend).platform  # canonicalize
   else:
@@ -424,7 +450,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
     assert node is not None
     env[v] = node
 
-  env = {}
+  env: Dict[core.Var, Any] = {}
   _partitionmap(write, [core.unitvar], _make_unit_constant(c))
   _partitionmap(write, jaxpr.constvars, consts)
   _partitionmap(write, jaxpr.invars, args)
@@ -432,7 +458,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
     frame = source_info_util.user_frame(eqn.source_info)
     c.set_op_metadata(xc.OpMetadata(
         op_type=eqn.primitive.name,
-        op_name=str(pp(name_stack) >> pp_eqn_compact(
+        op_name=str(pp(str(name_stack) + "/") >> pp_eqn_compact(
             eqn.primitive.name, eqn.params)),
         source_file=frame.file_name if frame else None,
         source_line=frame.line_num if frame else None))
@@ -449,7 +475,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
     elif eqn.primitive in initial_style_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = initial_style_translations[eqn.primitive]
-      ans = rule(c, axis_env, extend_name_stack(name_stack, eqn.primitive.name),
+      ans = rule(c, axis_env, name_stack.extend(eqn.primitive),
                  map(aval, eqn.invars), backend, *in_nodes, **new_params)
     elif eqn.primitive in parallel_translations:
       rule = parallel_translations[eqn.primitive]
@@ -713,7 +739,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend.platform if backend is not None else None,
       AxisEnv(nreps, (), ()), xla_consts,
-      extend_name_stack(wrap_name(name, 'jit')), *xla_args)
+      NameStack.init(xla_call_p, name), *xla_args)
   backend = xb.get_backend(backend)
   out_tuple = xops.Tuple(c, out_nodes)
   if backend.platform in ("gpu", "tpu"):
@@ -953,7 +979,7 @@ def _xla_call_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
   subc = xb.make_computation_builder(f"jit_{name}")
   args = [xb.parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
-                            extend_name_stack(name_stack, wrap_name(name, 'jit')), *args)
+                            name_stack.extend(xla_call_p, name), *args)
   subc = subc.build(xops.Tuple(subc, out_nodes))
   return xops.Call(c, subc, list(in_nodes))
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
@@ -1007,8 +1033,8 @@ def lower_fun(fun, multiple_results, parallel=False, with_avals=False, backend=N
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts), '',
-                         *xla_args)
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts),
+                         NameStack.init(''), *xla_args)
     if multiple_results or any(v.aval._num_buffers > 1 for v in jaxpr.outvars):
       return xops.Tuple(c, outs)
     else:
@@ -1399,7 +1425,7 @@ def _remat_using_cond(
   input_op = xb.parameter(remat_subc, 0, c.get_shape(true_op), replicated=[])
   args = xla_destructure(remat_subc, input_op)
   out_nodes = jaxpr_subcomp(remat_subc, call_jaxpr, backend, axis_env, (),
-                            extend_name_stack(name_stack, wrap_name(name, 'remat')),
+                            name_stack.extend(pe.remat_call_p, name),
                             *args)
   out_node_shapes = [remat_subc.get_shape(o) for o in out_nodes]
   remat_subc = remat_subc.build(xops.Tuple(remat_subc, out_nodes))
@@ -1423,7 +1449,7 @@ def _remat_using_while(
   dummy_args = xla_destructure(dummy_subc, dummy_input_op)
   dummy_subcomp_outs = jaxpr_subcomp(
       dummy_subc, call_jaxpr, backend, axis_env, (),
-      extend_name_stack(name_stack, wrap_name(name, "remat")), *dummy_args)
+      name_stack.extend(pe.remat_call_p, name), *dummy_args)
   out_node_shapes = [dummy_subc.get_shape(o) for o in dummy_subcomp_outs]
 
   i_init = xb.constant(c, np.array(0, dtype=np.int32))
@@ -1444,7 +1470,7 @@ def _remat_using_while(
   i_next = xops.Add(i, xb.constant(body_subc, np.array(1, dtype=np.int32)))
   subcomp_outs = jaxpr_subcomp(
       body_subc, call_jaxpr, backend, axis_env, (),
-      extend_name_stack(name_stack, wrap_name(name, "remat")), *args)
+      name_stack.extend(pe.remat_call_p, name), *args)
   out_nodes = [i_next] + args + subcomp_outs
   body_subc = body_subc.build(xops.Tuple(body_subc, out_nodes))
   outs = xops.While(cond_subc, body_subc, inputs)
@@ -1474,7 +1500,7 @@ def _named_call_translation_rule(c, axis_env, in_nodes, name_stack, *,
   subc = xb.make_computation_builder(name)
   args = [xb.parameter(subc, i, c.GetShape(n)) for i, n in enumerate(in_nodes)]
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
-                            extend_name_stack(name_stack, name), *args)
+                            name_stack.extend(name), *args)
   subc = subc.Build(xops.Tuple(subc, out_nodes))
   return xops.Call(c, subc, list(in_nodes))
 call_translations[core.named_call_p] = _named_call_translation_rule

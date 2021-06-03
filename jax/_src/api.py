@@ -54,7 +54,7 @@ from ..tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf, treedef_children, Partial)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod,
-                        split_list, extend_name_stack, wrap_name, cache, wraps,
+                        split_list, wrap_name, cache, wraps,
                         HashableFunction)
 from ..lib import jax_jit
 from ..lib import version
@@ -737,7 +737,7 @@ def xla_computation(fun: Callable,
         c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)
     out_nodes = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
-        extend_name_stack(wrap_name(fun_name, "xla_computation")), *xla_args)
+        xla.NameStack.init("xla_computation", fun_name), *xla_args)
     build_out_tuple = partial(xc.ops.Tuple, c, out_nodes)
     if out_parts is not None:
       out_tuple = xb.with_sharding(c, out_parts_flat, build_out_tuple)

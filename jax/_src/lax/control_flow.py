@@ -46,7 +46,7 @@ from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (partial, unzip2, unzip3, safe_map, safe_zip,
-                           split_list, cache, extend_name_stack)
+                           split_list, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves, tree_structure)
@@ -336,7 +336,7 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
   pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
                             _map(partial(xb.constant, cond_c), cond_jaxpr.consts),
-                            extend_name_stack(name_stack, 'cond'), *(x + z))
+                            name_stack.extend(while_p, 'cond'), *(x + z))
   if batched:
     scalar = ShapedArray((), np.bool_)
     or_ = xla.primitive_subcomputation(lax.or_p, scalar, scalar)
@@ -349,11 +349,11 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
   new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
                             _map(partial(xb.constant, body_c), body_jaxpr.consts),
-                            extend_name_stack(name_stack, 'body'), *(y + z))
+                            name_stack.extend(while_p, 'body'), *(y + z))
   if batched:
     body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
                                    _map(partial(xb.constant, body_c), cond_jaxpr.consts),
-                                   extend_name_stack(name_stack, 'body_pred'), *(x + z))
+                                   name_stack.extend(while_p, 'body_pred'), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z, body_jaxpr.out_avals)
     assert _map(body_c.get_shape, new_z) == _map(body_c.get_shape, z) # no broadcast
   new_carry = xops.Tuple(body_c, list(itertools.chain(x, y, new_z)))
@@ -758,7 +758,7 @@ def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
     ops = [xops.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
     outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
                              _map(partial(xb.constant, c), jaxpr.consts),
-                             extend_name_stack(name_stack, name + '_fun'), *ops)
+                             name_stack.extend(cond_p, name + '_fun'), *ops)
     return c.build(xops.Tuple(c, outs))
 
   op = xops.Tuple(c, args)
