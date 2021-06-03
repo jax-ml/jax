@@ -250,7 +250,10 @@ class Config:
     See docstring for ``define_bool_state``.
     """
     name = name.lower()
-    self.DEFINE_enum(name, os.getenv(name.upper(), default),
+    default = os.getenv(name.upper(), default)
+    if default is not None and default not in enum_values:
+      raise ValueError(f"Invalid value \"{default}\" for JAX flag {name}")
+    self.DEFINE_enum(name, default,
                      enum_values=enum_values, help=help,
                      update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
@@ -517,3 +520,17 @@ default_matmul_precision = config.define_enum_state(
       update_global_jit_state(default_matmul_precision=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(default_matmul_precision=val))
+
+traceback_filtering = config.define_enum_state(
+    name = 'jax_traceback_filtering',
+    enum_values=["off", "tracebackhide", "remove_frames", "auto"],
+    default="auto",
+    help="Controls how JAX filters internal frames out of tracebacks.\n\n"
+         "Valid values are:\n"
+         " * \"off\": disables traceback filtering.\n"
+         " * \"auto\": use \"tracebackhide\" if running under a sufficiently "
+         "new IPython, or \"remove_frames\" otherwise.\n"
+         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to "
+         " hidden stack frames, which some traceback printers support.\n"
+         " * \"remove_frames\": removes hidden frames from tracebacks, and adds "
+         " the unfiltered traceback as a __cause__ of the exception.\n")

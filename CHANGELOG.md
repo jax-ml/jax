@@ -12,6 +12,10 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...master).
 * New features:
   * The {func}`jax2tf.convert` now has support for `pjit` and `sharded_jit`.
+  * A new configuration option JAX_TRACEBACK_FILTERING controls how JAX filters
+    tracebacks.
+  * A new traceback filtering mode using `__tracebackhide__` is now enabled by
+    default in sufficiently recent versions of IPython.
 
 * Breaking changes:
 
