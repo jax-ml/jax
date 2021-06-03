@@ -16,13 +16,14 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Breaking changes:
 
 * Bug fixes:
+  * The {func}`jax2tf.convert` now ensures that it uses the same typing rules
+    for Python scalars and for choosing 32-bit vs. 64-bit computations
+    as JAX ({jax-issue}`#6883`).
   * The {func}`jax2tf.convert` now scopes the `enable_xla` conversion parameter
     properly to apply only during the just-in-time conversion
     ({jax-issue}`#6720`).
   * Fixed assertion failure in {func}`jax2tf.call_tf` when used with captured
     `tf.Variable` ({jax-issue}`#6572`).
-
-* Bug fixes:
   * The {func}`jax2tf.convert` now converts `lax.dot_general` using the
     `XlaDot` TensorFlow op, for better fidelity w.r.t. JAX numerical precision
     ({jax-issue}`#6717`).

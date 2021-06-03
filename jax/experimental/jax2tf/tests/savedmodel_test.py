@@ -46,7 +46,8 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     model = tf.Module()
     model.f = tf.function(jax2tf.convert(f_jax),
                           autograph=False,
-                          input_signature=[tf.TensorSpec([], tf.float32)])
+                          input_signature=[tf.TensorSpec([], tf.float32)]
+                          )
     x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
     restored_model = self.save_and_load_model(model)
@@ -82,7 +83,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
       x, = primals
       x_dot, = tangents
       primal_out = f_jax(x)
-      tangent_out = np.float32(3.) * x * x_dot
+      tangent_out = x * x_dot * 3.
       return primal_out, tangent_out
 
     model = tf.Module()
@@ -147,25 +148,15 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
         "Detected unsupported operations when trying to compile graph"):
       tf.function(tf_fn, jit_compile=True)(x_str)
 
-    def compute_jax_fn(x):
-      # A JAX function whose conversion does not run in TF without XLA because
-      # tf.math.atan is not supported on float16 without XLA.
-      return lax.atan(x) + lax.atan(x)
-
-    with self.assertRaisesRegex(
-        tf.errors.NotFoundError,
-        "Could not find device for node.*Atan.*DT_HALF"):
-      tf_fn(x_str, compute_tf_fn=jax2tf.convert(compute_jax_fn))
-
     # Plug in the TF-compiled JAX-converted `compute_jax_fn`.
     composed_fn = lambda x_str: tf_fn(
         x_str,
-        compute_tf_fn=tf.function(jax2tf.convert(compute_jax_fn),
+        compute_tf_fn=tf.function(jax2tf.convert(jnp.sin),
                                   autograph=True,
                                   jit_compile=True))
     res_tf = composed_fn(x_str)
     self.assertAllClose(res_tf.numpy(),
-                        compute_jax_fn(np.array([3.14, 2.78], dtype=np.float16)))
+                        jnp.sin(np.array([3.14, 2.78], dtype=np.float16)))
 
     # Save and restore SavedModel
     model = tf.Module()

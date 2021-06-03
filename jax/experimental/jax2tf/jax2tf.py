@@ -22,7 +22,6 @@ from jax import ad_util, api_util, config
 from jax._src import api
 from jax import core, custom_derivatives, dtypes
 from jax import linear_util as lu
-from jax import numpy as jnp
 from jax import random, tree_util
 from jax._src import util
 from jax._src.lax import control_flow as lax_control_flow
@@ -58,6 +57,8 @@ PolyShape = shape_poly.PolyShape
 _VALID_SCOPE_REGEX = re.compile("^[A-Za-z0-9.][A-Za-z0-9_.\\/>-]*$")
 _INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/>-]")
 
+map = util.safe_map
+zip = util.safe_zip
 
 def _sanitize_scope_name(name):
   scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
@@ -74,25 +75,11 @@ PrecisionType = int  # Enum xla_data.PrecisionConfig.Precision
 
 
 def _is_tfval(v: TfVal) -> bool:
-  if isinstance(v, (tf.Tensor, tf.Variable)):
-    return True
   try:
-    # Note: this conversion is overkill and just intended as a type check; this
-    # code is in principle only run if config.jax_enable_checks is True.
-    # TODO: it is not true that this code is run only with jax_enable_checks.
-    _safe_convert_to_tensor(v)
+    tf.convert_to_tensor(v)
     return True
-  except ValueError:
+  except:
     return False
-
-
-def _safe_convert_to_tensor(val, dtype=None) -> TfVal:
-  dtype = dtype if dtype else (val.dtype if hasattr(val, "dtype") else None)
-  conversion_type = to_tf_dtype(dtype) if dtype else None
-  # The float0 type is not known to TF.
-  if dtype and dtype == dtypes.float0:
-    val = np.zeros(np.shape(val), conversion_type.as_numpy_dtype)
-  return tf.convert_to_tensor(val, dtype=conversion_type)
 
 
 # The implementation rules for primitives. The rule will be called with the
@@ -208,16 +195,14 @@ def convert(fun: Callable,
     tree_util.tree_map(check_arg, args)
     tree_util.tree_map(check_arg, list(kwargs.values()))
 
-    # Name input tensors
-    args = tuple(
-        tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"),
-                           a)  # type: ignore
-        for i, a in enumerate(args))
-    kwargs = {k: tf.identity(v, f"jax2tf_arg_{k}") for k, v in kwargs.items()}
-
-    # This function may take pytrees of TfVals. We can only set
-    # tf.custom_gradient on functions that take a flat argument list.
     args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+    # May need to cast the arguments to have the type assumed by JAX
+    args_and_dtypes_flat = tuple(map(_tfval_to_tensor_jax_dtype, args_flat))
+    args_flat, arg_dtypes_flat = util.unzip2(args_and_dtypes_flat)
+    # Name input tensors; do this after we have cast the arguments
+    def _apply_name(a: TfVal, suffix) -> TfVal:
+      return tf.identity(a, f"jax2tf_arg_{suffix}")
+    args_flat = tuple(_apply_name(a, i) for i, a in enumerate(args_flat))
 
     if polymorphic_shapes is None:
       polymorphic_shapes_ = (None,) * len(args)
@@ -238,10 +223,13 @@ def convert(fun: Callable,
 
     # Construct the abstract values for the flat arguments, possibly based on
     # the input shapes and the polymorphic_shapes if given. May create new shape
-    # variables.
-    args_avals_flat, shapeenv = _args_to_avals_and_env(args_flat,
-                                                       polymorphic_shapes_flat)
+    # variables. May cast the args_flat to JAX types, using JAX's interpretation
+    # of types of constants.
+    args_avals_flat, shapeenv = _args_to_avals_and_env(
+        args_flat, arg_dtypes_flat, polymorphic_shapes_flat)
 
+    # This function may take pytrees of TfVals. We can only set
+    # tf.custom_gradient on functions that take a flat argument list.
     f = lu.wrap_init(fun)
     # out_tree_thunk() will be the output tree, after running _interpret_fun.
     flat_fun, out_tree_thunk = flatten_fun(f, in_tree)
@@ -279,6 +267,7 @@ def convert(fun: Callable,
         ]
       out_cts = tree_util.tree_unflatten(out_tree_thunk(), out_cts_flat)
       # TODO: enable higher-order gradients
+      # TODO: I think that this does not work with kwargs
       with tf.name_scope("jax2tf_vjp"):
         in_cts = convert(
             fun_vjp_jax,
@@ -325,8 +314,20 @@ def convert(fun: Callable,
   return converted_fun
 
 
-# Internals
+def dtype_of_val(val: TfVal) -> DType:
+  """Computes the TensorFlow dtype using JAX's typing rules.
 
+  If the value is a tf.Tensor, it starts with its dtype. If the value is a
+  constant it uses JAX to infer its dtype. The resulting dtype follows the
+  JAX type inference rules, and depends on the value of the
+  JAX_ENABLE_X64 flag.
+
+  See README.md for how 64-bit values are treated.
+  """
+  tval, _ = _tfval_to_tensor_jax_dtype(val)
+  return tval.dtype
+
+# Internals
 
 def _interpret_fun(
     fun: lu.WrappedFun, in_vals: Sequence[TfVal],
@@ -379,7 +380,7 @@ def _interpret_subtrace(main: core.MainTrace,
   trace = TensorFlowTrace(main, core.cur_sublevel())
   in_tracers = tuple(
       TensorFlowTracer(trace, val, aval)
-      for val, aval in util.safe_zip(in_vals, in_avals))
+      for val, aval in zip(in_vals, in_avals))
   # The outs may be core.unit, see comment in TensorFlowTrace.pure.
   outs = yield in_tracers, {}  # type: Sequence[Union[TfVal, core.Unit]]
   out_tracers: Iterable[TensorFlowTracer] = (
@@ -403,51 +404,84 @@ def _aval_to_tf_shape(aval: core.AbstractValue) -> Tuple[Optional[int], ...]:
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
   return tuple(
       map(lambda d: None if isinstance(d, shape_poly.DimVar) else d,
-          aval.shape))  # type: ignore[attr-defined]
+                    aval.shape))  # type: ignore[attr-defined]
 
 
-def _tfval_shape_dtype(val: TfVal) -> Tuple[Sequence[Optional[int]], DType]:
-  """Called for constants that occur in the program, or for input values to the converted function.
+def _to_tf_dtype(jax_dtype):
+  # Note that converting _to_tf_dtype and _to_jax_dtype are not inverses,
+  # due to float0 and 64-bit behavior.
+  if jax_dtype == dtypes.float0:
+    jax_dtype = dtypes.bfloat16
+  return tf.dtypes.as_dtype(jax_dtype)
 
-  The returned shape may have unknown components, but only when called for
-  inputs.
+
+def _to_jax_dtype(tf_dtype):
+  # Note that converting _to_tf_dtype and _to_jax_dtype are not inverses,
+  # due to float0 and 64-bit behavior.
+  return dtypes.canonicalize_dtype(tf_dtype.as_numpy_dtype)
+
+
+def _tfval_to_tensor_jax_dtype(val: TfVal,
+                               jax_dtype: Optional[DType] = None) -> Tuple[TfVal, DType]:
+  """Converts a scalar, ndarray, or tf.Tensor to a tf.Tensor with proper type.
+
+  If `jax_dtype` is missing, uses JAX typing rules.
+  See README.md for details regarding 64-bit values.
+
+  Args:
+    val: a scalar, ndarray, tf.Tensor, or tf.Variable
+    jax_dtype: an optional dtype to use. If missing, uses JAX type inference
+      rules for constants.
+
+  Returns:
+    a tuple with a tf.Tensor with the type as needed by JAX, and the JAX type.
   """
   if isinstance(val, (tf.Tensor, tf.Variable)):
-    # May be partially known
-    return tuple(val.shape), to_jax_dtype(val.dtype)
-  else:  # Must be a numeric value
-    assert not config.jax_enable_checks or _is_tfval(val), f"Non TfVal: {val}"
-    raw_aval = xla.abstractify(val)
-    return raw_aval.shape, raw_aval.dtype  # type: ignore[attr-defined]
+    jax_dtype = jax_dtype or _to_jax_dtype(val.dtype)  # Give JAX a chance to pick the type
+    conversion_dtype = _to_tf_dtype(jax_dtype)
+    if conversion_dtype != val.dtype:
+      return tf.cast(val, conversion_dtype), jax_dtype
+    else:
+      return val, jax_dtype
+  else:  # A constant
+    jax_dtype = jax_dtype or xla.abstractify(val).dtype
+    conversion_dtype = _to_tf_dtype(jax_dtype)
+    # The float0 type is not known to TF.
+    if jax_dtype == dtypes.float0:
+      val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
+    return tf.convert_to_tensor(val, dtype=conversion_dtype), jax_dtype
 
 
 # A dimension environment maps dimension variables to TF expressions that
 # compute the value of the dimension. These expressions refer to the TF
 # function arguments.
 _ShapeEnv = Dict[shape_poly.DimVar, TfVal]
-def _args_to_avals_and_env(args: Sequence[TfVal],
-                           polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]]) -> \
+def _args_to_avals_and_env(
+    args: Sequence[TfVal],
+    arg_jax_dtypes: Sequence[DType],
+    polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]]) -> \
   Tuple[Sequence[core.AbstractValue], _ShapeEnv]:
-  """Computes abstract values and a dimension environment for arguments.
+  """Computes canonicalized args, abstract values and a dimension environment for arguments.
 
   Args:
-    args: the arguments, TF inputs.
+    args: the arguments, TF inputs. Must be tf.Tensor or tf.Variable.
+    arg_dtypes: the inferred JAX dtypes for the args.
     polymorphic_shapes: the polymorphic specifications for the arguments.
-  Returns: a tuple of a sequence of abtract values corresponding to the
-    arguments and a dimension environment.
+  Returns: a tuple of: a sequence of abstract values corresponding to the
+    arguments, and a dimension environment.
   """
   shapeenv: _ShapeEnv = {}
 
   def input_aval(arg: TfVal,
+                 arg_jax_dtype: DType,
                  polymorphic_shape: Optional[str]) -> core.AbstractValue:
     """The abstract value for an input."""
-    raw_shape, dtype = _tfval_shape_dtype(arg)
-
-    aval_shape = shape_poly.parse_spec(polymorphic_shape, raw_shape)
+    arg_shape = np.shape(arg)
+    aval_shape = shape_poly.parse_spec(polymorphic_shape, arg_shape)
 
     for i, d in enumerate(aval_shape):
       if type(d) is int:
-        assert d == np.shape(arg)[i]
+        assert d == arg_shape[i]
       elif type(d) is shape_poly.DimVar and d not in shapeenv:
         # Even if the shape of `arg` is known, we still use `tf.shape` for
         # safety, because the promise is that we will convert the function
@@ -457,9 +491,9 @@ def _args_to_avals_and_env(args: Sequence[TfVal],
         # TODO: add an assertion tf.shape(arg)[i] == env[d]
         pass
 
-    return core.ShapedArray(aval_shape, dtype)
+    return core.ShapedArray(aval_shape, arg_jax_dtype)
 
-  avals = tuple(map(input_aval, args, polymorphic_shapes))  # type: ignore
+  avals = tuple(map(input_aval, args, arg_jax_dtypes, polymorphic_shapes))  # type: ignore
   return avals, shapeenv
 
 
@@ -469,8 +503,7 @@ _shape_env = {}  # type: _ShapeEnv
 
 def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
   assert all(map(
-      lambda x: x is not None,
-      shape)), (f"Argument shape should be a valid JAX shape but got {shape}")
+      lambda x: x is not None, shape)), (f"Argument shape should be a valid JAX shape but got {shape}")
   return tuple(_shape_env[d]  # type: ignore[index]
                if type(d) is shape_poly.DimVar else d
                for d in shape)
@@ -591,23 +624,13 @@ class TensorFlowTracer(core.Tracer):
     if aval is core.abstract_unit:
       self.val = val
     elif isinstance(val, (tf.Tensor, tf.Variable)):
-      val_shape, val_dtype = _tfval_shape_dtype(val)
+      val_shape = val.shape
+      val_dtype = _to_jax_dtype(val.dtype)
       aval_dtype = np.dtype(self._aval.dtype)  # type: ignore[attr-defined]
-      if (val_dtype != aval_dtype and not config.x64_enabled and
-          (val_dtype == tf.int32 and aval_dtype == jnp.int64 or
-           val_dtype == tf.int64 and aval_dtype == jnp.int32 or
-           val_dtype == tf.float32 and aval_dtype == jnp.float64 or
-           val_dtype == tf.float64 and aval_dtype == jnp.float32 or
-           val_dtype == tf.complex128 and aval_dtype == jnp.complex64)):
-        # If JAX does not have x64 bit mode enabled, it will force the 64-bit
-        # values to use 32-bit precision. In order to make the TF conversion
-        # follow JAX's rules, we cast the TF values down to 32-bit mode.
-        val = tf.cast(val, dtype=aval_dtype)
-        val_dtype = aval_dtype
 
       if config.jax_enable_checks:
         assert aval_dtype == val_dtype, f"expected {aval_dtype} == {val_dtype}"
-        for aval_dim, val_dim in util.safe_zip(
+        for aval_dim, val_dim in zip(
             self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
             assert isinstance(
@@ -625,8 +648,8 @@ class TensorFlowTracer(core.Tracer):
 
       self.val = val
     else:  # Must be a numeric value
-      self.val = _safe_convert_to_tensor(
-          val, dtype=self._aval.dtype)  # type: ignore[attr-defined]
+      self.val = _tfval_to_tensor_jax_dtype(
+          val, self._aval.dtype)[0]  # type: ignore[attr-defined]
 
   @property
   def aval(self):
@@ -674,8 +697,9 @@ class TensorFlowTrace(core.Trace):
       return TensorFlowTracer(self, tf.constant(np.nan, tf.float32),
                               core.abstract_unit)
     else:
-      shape, dtype = _tfval_shape_dtype(val)
-      return TensorFlowTracer(self, val, core.ShapedArray(shape, dtype))
+      tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val)
+      return TensorFlowTracer(self, val,
+                              core.ShapedArray(tf_val.shape, jax_dtype))
 
   def lift(self, val: core.Tracer) -> TensorFlowTracer:
     # This would be called when we need to raise a tracer from a lower-level
@@ -707,7 +731,7 @@ class TensorFlowTrace(core.Trace):
     if primitive.multiple_results:
       out = [
           TensorFlowTracer(self, v, a)
-          for v, a in util.safe_zip(val_out, out_aval)
+          for v, a in zip(val_out, out_aval)
       ]  # type: ignore
     else:
       out = TensorFlowTracer(self, val_out, out_aval)  # type: ignore
@@ -754,7 +778,7 @@ class TensorFlowTrace(core.Trace):
       trace = TensorFlowTrace(main, core.cur_sublevel())
       return [
           TensorFlowTracer(trace, v, out_tracer.aval)
-          for v, out_tracer in util.safe_zip(vals, out_tracers)
+          for v, out_tracer in zip(vals, out_tracers)
       ]
 
     return vals, todo
@@ -796,17 +820,6 @@ class TensorFlowTrace(core.Trace):
       except KeyError as err:
         msg = "TensorFlow interpretation rule for '{}' not implemented"
         raise NotImplementedError(msg.format(p)) from err
-
-
-def to_tf_dtype(jax_dtype):
-  if jax_dtype == dtypes.float0:
-    jax_dtype = dtypes.bfloat16
-  return tf.dtypes.as_dtype(jax_dtype)
-
-
-def to_jax_dtype(tf_dtype):
-  return tf_dtype.as_numpy_dtype
-
 
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
@@ -988,7 +1001,7 @@ tf_impl[lax.mul_p] = tf.math.multiply
 
 
 def _iota(*, dtype, shape, dimension):
-  dtype = to_tf_dtype(dtype)
+  dtype = _to_tf_dtype(dtype)
   # Some dtypes are unsupported, like uint32, so we just fall back to int32.
   # TODO(mattjj, necula): improve tf.range dtype handling
   shape_tf = _eval_shape(shape)
@@ -1183,14 +1196,14 @@ def _convert_element_type(operand, *, new_dtype, weak_type=False):
           new_dtype, np.complexfloating) or new_dtype == np.bool_)):
     sign = _sign(operand)
     operand = sign * tf.math.floor(sign * operand)
-  return tf.dtypes.cast(operand, to_tf_dtype(new_dtype))
+  return tf.dtypes.cast(operand, _to_tf_dtype(new_dtype))
 
 
 tf_impl[lax.convert_element_type_p] = _convert_element_type
 
 
 def _bitcast_convert_type(operand, new_dtype):
-  return tf.bitcast(operand, to_tf_dtype(new_dtype))
+  return tf.bitcast(operand, _to_tf_dtype(new_dtype))
 
 
 tf_impl[lax.bitcast_convert_type_p] = _bitcast_convert_type
@@ -1585,7 +1598,7 @@ def _pad(operand, padding_value, *, padding_config,
   if all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in padding_config):
     return tf.pad(
         operand,
-        util.safe_zip(low, high),
+        zip(low, high),
         mode="CONSTANT",
         constant_values=padding_value)
   raise _xla_disabled_error("pad", "Only use cases without interior or negative padding can be converted without XLA.")
@@ -1629,7 +1642,7 @@ def _argminmax(fn, operand, axes, index_dtype):
     output_type = tf.int64
   # TODO(phawkins): handle axes larger than 2^31.
   result = fn(operand, axis=axis, output_type=output_type)
-  return tf.cast(result, to_tf_dtype(index_dtype))
+  return tf.cast(result, _to_tf_dtype(index_dtype))
 
 
 tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
@@ -2215,7 +2228,7 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
       return tf.where(pred_b_bcast, new_c, c)
 
     selected_carry: Sequence[TfVal] = list(
-        util.safe_map(select_one_carry, new_carry, carry))
+        map(select_one_carry, new_carry, carry))
     next_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *selected_carry)
     return (next_pred_b, *selected_carry)
 
@@ -2288,7 +2301,7 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
   for op in operands:
     o_spec = tf.TensorSpec((), dtype=op.dtype)
     comparator_spec.extend([o_spec, o_spec])
-    o_aval = core.ShapedArray((), to_jax_dtype(op.dtype))
+    o_aval = core.ShapedArray((), _to_jax_dtype(op.dtype))
     comparator_jax_in_avals.extend([o_aval, o_aval])
 
   # Use the same comparator that JAX uses when compiling to XLA, to get the
@@ -2526,14 +2539,14 @@ def _sharded_call(f: lu.WrappedFun, vals: Sequence[TfVal],
                   in_parts: Sequence[pxla.PartitionsOrReplicated],
                   out_parts_thunk,
                   **_) -> Sequence[Tuple[TfVal, core.AbstractValue]]:
-  sharded_vals = util.safe_map(split_to_logical_devices, vals, in_parts)
+  sharded_vals = map(split_to_logical_devices, vals, in_parts)
   vals_out = f.call_wrapped(*sharded_vals)  # caller handles new_sublevel
   out_parts_flat = out_parts_thunk()
   assert len(out_parts_flat) == len(
       vals_out), f"expected {len(out_parts_flat)} == {len(vals_out)}"
   sharded_vals_out = [
       (split_to_logical_devices(val, val_part), val_aval)
-      for (val, val_aval), val_part in util.safe_zip(vals_out, out_parts_flat)
+      for (val, val_aval), val_part in zip(vals_out, out_parts_flat)
   ]
   return sharded_vals_out
 
@@ -2563,10 +2576,10 @@ def _pjit(*args: TfVal,
   shard_value_for_mesh = functools.partial(_shard_value, resource_env.physical_mesh)
   # Apply sharding annotation to the arguments
   sharded_args: Sequence[TfVal] = tuple(
-      util.safe_map(shard_value_for_mesh, args, _in_avals, in_axis_resources))
+      map(shard_value_for_mesh, args, _in_avals, in_axis_resources))
   results = _interpret_jaxpr(jaxpr, *sharded_args)
   sharded_results: Sequence[TfVal] = tuple(
-      util.safe_map(shard_value_for_mesh, results, _out_aval, out_axis_resources))
+      map(shard_value_for_mesh, results, _out_aval, out_axis_resources))
   return tuple(sharded_results)
 
 
