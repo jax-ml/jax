@@ -121,6 +121,17 @@ class BatchTrace(Trace):
   def sublift(self, val):
     return BatchTracer(self, val.val, val.batch_dim)
 
+  def get_primitive_batcher(self, primitive):
+    if primitive in initial_style_batchers:
+      return partial(initial_style_batchers[primitive],
+                    axis_name=self.axis_name,
+                    main_type=self.main.trace_type)
+    try:
+      return primitive_batchers[primitive]
+    except KeyError as err:
+      msg = "Batching rule for '{}' not implemented"
+      raise NotImplementedError(msg.format(primitive)) from err
+
   def process_primitive(self, primitive, tracers, params):
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     if (primitive in collective_rules and
@@ -130,7 +141,7 @@ class BatchTrace(Trace):
     elif all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
     else:
-      batched_primitive = get_primitive_batcher(primitive, self)
+      batched_primitive = self.get_primitive_batcher(primitive)
       val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
     if primitive.multiple_results:
       return map(partial(BatchTracer, self), val_out, dim_out)
@@ -247,9 +258,6 @@ class BatchTrace(Trace):
 
   post_process_custom_vjp_call = post_process_custom_jvp_call
 
-class SPMDBatchTrace(BatchTrace):
-  pass
-
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
                                axis_name: Iterable[core.AxisName],
                                ) -> bool:
@@ -326,17 +334,6 @@ def vtile(f_flat: lu.WrappedFun,
 BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
 primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
 initial_style_batchers : Dict[core.Primitive, Any] = {}
-
-def get_primitive_batcher(p, trace):
-  if p in initial_style_batchers:
-    return partial(initial_style_batchers[p],
-                   axis_name=trace.axis_name,
-                   main_type=trace.main.trace_type)
-  try:
-    return primitive_batchers[p]
-  except KeyError as err:
-    msg = "Batching rule for '{}' not implemented"
-    raise NotImplementedError(msg.format(p)) from err
 
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)

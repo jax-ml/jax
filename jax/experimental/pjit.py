@@ -449,7 +449,8 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
 xla.call_translations[pjit_p] = _pjit_translation_rule
 
 
-def _pjit_batcher(vals_in, dims_in,
+def _pjit_batcher(insert_axis,
+                  vals_in, dims_in,
                   axis_name, main_type,
                   jaxpr, in_axis_resources, out_axis_resources,
                   resource_env, donated_invars, name):
@@ -462,11 +463,12 @@ def _pjit_batcher(vals_in, dims_in,
       jaxpr, axis_size, is_mapped_in,
       instantiate=False, axis_name=axis_name, main_type=main_type)
 
+  new_parts = (axis_name,) if insert_axis else ()
   in_axis_resources = tuple(
-      spec.insert_axis_partitions(0, ()) if is_mapped else spec
+      spec.insert_axis_partitions(0, new_parts) if is_mapped else spec
       for is_mapped, spec in zip(is_mapped_in, in_axis_resources))
   out_axis_resources = tuple(
-      spec.insert_axis_partitions(0, ()) if is_mapped else spec
+      spec.insert_axis_partitions(0, new_parts) if is_mapped else spec
       for is_mapped, spec in zip(is_mapped_out, out_axis_resources))
   vals_out = pjit_p.bind(
     *vals_in,
@@ -478,7 +480,8 @@ def _pjit_batcher(vals_in, dims_in,
     name=name)
   dims_out = [0 if batched else batching.not_mapped for batched in is_mapped_out]
   return vals_out, dims_out
-batching.initial_style_batchers[pjit_p] = _pjit_batcher
+batching.initial_style_batchers[pjit_p] = partial(_pjit_batcher, False)
+pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True)
 
 
 def _pjit_jvp(primals_in, tangents_in,

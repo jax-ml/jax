@@ -1394,6 +1394,18 @@ def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
     named_shape.pop(name, None)  # The name might be missing --- it's a broadcast.
   return aval.update(shape=tuple(shape), named_shape=named_shape)
 
+
+class SPMDBatchTrace(batching.BatchTrace):
+  def get_primitive_batcher(self, primitive):
+    if primitive in spmd_primitive_batchers:
+      return partial(spmd_primitive_batchers[primitive],
+                     axis_name=self.axis_name,
+                     main_type=self.main.trace_type)
+    return super().get_primitive_batcher(primitive)
+
+spmd_primitive_batchers: Dict[core.Primitive, Callable] = {}
+
+
 def vtile_by_mesh(fun: lu.WrappedFun,
                   mesh: Mesh,
                   in_axes: Sequence[ArrayMapping],
@@ -1408,7 +1420,7 @@ def vtile_by_mesh(fun: lu.WrappedFun,
                          tuple(a.get(name, None) for a in out_axes),
                          tile_size=size,
                          axis_name=name,
-                         main_type=batching.SPMDBatchTrace)
+                         main_type=SPMDBatchTrace)
   return fun
 
 def mesh_callable(fun: lu.WrappedFun,

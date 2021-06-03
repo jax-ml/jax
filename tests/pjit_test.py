@@ -30,6 +30,7 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap, mesh
 from jax.experimental.pjit import pjit, pjit_p, with_sharding_constraint, SpecSync
 from jax.interpreters import pxla
+from jax.interpreters import xla
 from jax._src.util import prod, curry
 
 from jax.config import config
@@ -294,6 +295,29 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(w, x)
     self.assertEqual(z.sharding_spec.sharding, (pxla.NoSharding(), pxla.Chunked([2])))
     self.assertEqual(w.sharding_spec.sharding, (pxla.Chunked([2]),))
+
+  @jtu.with_mesh([('x', 2), ('y', 1)])
+  def testShardingInXMap(self):
+    h = pjit(lambda x: x, in_axis_resources=P('x'), out_axis_resources=None)
+    f = xmap(lambda x: h(x * 2), in_axes=['i', ...], out_axes=['i', ...],
+             axis_resources={'i': 'y'})
+    x = jnp.arange(16).reshape((4, 4))
+    self.assertIn(pjit_p, xla.call_translations)
+    rule = xla.call_translations[pjit_p]
+    test_rule_called = False
+    def _test_rule(*args, **kwargs):
+      nonlocal test_rule_called
+      test_rule_called = True
+      in_axis_resources = kwargs['in_axis_resources']
+      self.assertEqual(len(in_axis_resources), 1)
+      self.assertIn(('y',), in_axis_resources[0].partitions)
+      return rule(*args, **kwargs)
+    try:
+      xla.call_translations[pjit_p] = _test_rule
+      f(x)
+      self.assertTrue(test_rule_called)
+    finally:
+      xla.call_translations[pjit_p] = rule
 
   def testInfeed(self):
     devices = np.array(jax.local_devices())

@@ -24,7 +24,6 @@ from functools import wraps, partial, partialmethod
 
 from .. import numpy as jnp
 from .. import core
-from .. import config
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg
 from ..tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
@@ -33,6 +32,7 @@ from .._src.tree_util import _replace_nones
 from ..api_util import (flatten_fun_nokwargs, flatten_axes, _ensure_index_tuple,
                         donation_vector)
 from .._src import source_info_util
+from ..config import config
 from ..errors import JAXTypeError
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
@@ -939,7 +939,7 @@ def _batch_trace_process_xmap(self, is_spmd, primitive, f: lu.WrappedFun, tracer
     dims_out = dims_out_thunk()
     return [batching.BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 batching.BatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, False)  # type: ignore
-batching.SPMDBatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, True)  # type: ignore
+pxla.SPMDBatchTrace.process_xmap = partialmethod(_batch_trace_process_xmap, True)  # type: ignore
 
 
 def _xmap_initial_to_final_params(params):
