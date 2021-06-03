@@ -376,7 +376,7 @@ def full_lower(val: Any):
 
 def full_raise(trace: Trace, val: Any) -> Tracer:
   if not isinstance(val, Tracer):
-    assert type(val) in jax_types
+    assert type(val) in jax_types, val
     return trace.pure(val)
   level = trace.main.level
   if val._trace.main is trace.main:
@@ -713,6 +713,9 @@ register_pytree_node(list,  lambda l: (None, l), lambda _, xs:  list(xs))
 register_pytree_node(dict,
                      lambda d: map(tuple, unzip2(sorted(d.items()))),
                      lambda keys, vals: dict(zip(keys, vals)))
+# Registering None as a pytree let us handle None as a 'default argument'
+# sentinel, and functions returning None to indicate no outputs.
+register_pytree_node(type(None), lambda _: (None, ()), lambda _, __: None)
 
 class PyTreeDef(NamedTuple):
   node_type: NodeType
@@ -982,11 +985,16 @@ eqn ::= <binder> , ... = <primitive> [ <params> ] <atom> , ...
 The syntax of types is:
 
 ```
-jaxpr_type ::= [ <array_type> , ... ] -> [ <array_type> , ... ]
+jaxpr_type ::= [ <array_type> , ... ] -> {<effects>} [ <array_type> , ... ]
 array_type ::= <dtype>[<shape>]
 dtype ::= f32 | f64 | i32 | i64
 shape ::= <int> , ...
+effects ::= <effect>, ...
+effect ::= IO
 ```
+
+Effects are discussed in Part 6 (or maybe Part 5 if we need to do it before
+cond...)
 
 How do we represent these as Python data structures? We reuse ShapedArrays to
 represent types, and we can represent the term syntax with a few Python
@@ -1019,6 +1027,7 @@ class Jaxpr(NamedTuple):
   in_binders: List[Var]
   eqns: List[JaxprEqn]
   outs: List[Atom]
+  effects: bool
 
   def __hash__(self): return id(self)
   __eq__ = op.is_
@@ -1029,17 +1038,20 @@ def raise_to_shaped(aval):
 
 Type-checking a jaxpr involves checking that there are no unbound variables,
 that variables are only bound once, and that for each equation the type of
-the primitive application matches the type of the output binders.
+the primitive application matches the type of the output binders. Application
+of an effectful primitive is only valid within a jaxpr with effectful type.
 
 ```{code-cell}
 class JaxprType(NamedTuple):
   in_types:  List[ShapedArray]
   out_types: List[ShapedArray]
+  effects: bool
 
   def __repr__(self):
     in_types = ', '.join(aval.str_short() for aval in self.in_types)
     out_types = ', '.join(aval.str_short() for aval in self.out_types)
-    return f'({in_types}) -> ({out_types})'
+    effects = ' {{IO}}' if self.effects else ''
+    return f'({in_types}) ->{effects} ({out_types})'
 
 def typecheck_jaxpr(jaxpr: Jaxpr) -> JaxprType:
   env: Set[Var] = set()
@@ -1050,7 +1062,8 @@ def typecheck_jaxpr(jaxpr: Jaxpr) -> JaxprType:
 
   for eqn in jaxpr.eqns:
     in_types = [typecheck_atom(env, x) for x in eqn.inputs]
-    out_types = abstract_eval_rules[eqn.primitive](*in_types, **eqn.params)
+    out_types, eff = abstract_eval_rules[eqn.primitive](*in_types, **eqn.params)
+    typecheck_effects(eff, jaxpr.effects)
     for out_binder, out_type in zip(eqn.out_binders, out_types):
       if not out_type == out_binder.aval: raise TypeError
     for out_binder in eqn.out_binders:
@@ -1059,7 +1072,7 @@ def typecheck_jaxpr(jaxpr: Jaxpr) -> JaxprType:
 
   in_types = [v.aval for v in jaxpr.in_binders]
   out_types = [typecheck_atom(env, x) for x in jaxpr.outs]
-  return JaxprType(in_types, out_types)
+  return JaxprType(in_types, out_types, jaxpr.effects)
 
 def typecheck_atom(env: Set[Var], x: Atom) -> ShapedArray:
   if isinstance(x, Var):
@@ -1069,6 +1082,9 @@ def typecheck_atom(env: Set[Var], x: Atom) -> ShapedArray:
     return raise_to_shaped(get_aval(x.val))
   else:
     assert False
+
+def typecheck_effects(application_effects: bool, allowed_effects: bool) -> None:
+  if not allowed_effects and application_effects: raise TypeError
 ```
 
 We can apply the function represented by a jaxpr to arguments with a simple
@@ -1149,11 +1165,11 @@ class JaxprTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     avals_in = [t.aval for t in tracers]
-    avals_out = abstract_eval_rules[primitive](*avals_in, **params)
+    avals_out, effects = abstract_eval_rules[primitive](*avals_in, **params)
     out_tracers = [self.builder.new_tracer(self, a) for a in avals_out]
     inputs = [self.builder.getvar(t) for t in tracers]
     outvars = [self.builder.add_var(t) for t in out_tracers]
-    self.builder.add_eqn(JaxprEqn(primitive, inputs, params, outvars))
+    self.builder.add_eqn(JaxprEqn(primitive, inputs, params, outvars), effects)
     return out_tracers
 
   @property
@@ -1174,6 +1190,7 @@ class JaxprBuilder:
   const_tracers: Dict[int, JaxprTracer]
   constvals: Dict[Var, Any]
   tracers: List[JaxprTracer]
+  effects: bool
 
   def __init__(self):
     self.eqns = []
@@ -1181,14 +1198,16 @@ class JaxprBuilder:
     self.const_tracers = {}
     self.constvals = {}
     self.tracers = []
+    self.effects = False
 
   def new_tracer(self, trace: JaxprTrace, aval: ShapedArray) -> JaxprTracer:
     tracer = JaxprTracer(trace, aval)
     self.tracers.append(tracer)
     return tracer
 
-  def add_eqn(self, eqn: JaxprEqn) -> None:
+  def add_eqn(self, eqn: JaxprEqn, effects: bool) -> None:
     self.eqns.append(eqn)
+    self.effects |= effects
 
   def add_var(self, tracer: JaxprTracer) -> Var:
     assert id(tracer) not in self.tracer_to_var
@@ -1212,7 +1231,7 @@ class JaxprBuilder:
     t2v = lambda t: self.tracer_to_var[id(t)]
     in_binders = constvars + [t2v(t) for t in in_tracers]
     out_vars = [t2v(t) for t in out_tracers]
-    jaxpr = Jaxpr(in_binders, self.eqns, out_vars)
+    jaxpr = Jaxpr(in_binders, self.eqns, out_vars, self.effects)
     typecheck_jaxpr(jaxpr)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     return jaxpr, constvals
@@ -1228,7 +1247,8 @@ def _inline_literals(jaxpr: Jaxpr, consts: List[Any]) -> Tuple[Jaxpr, List[Any]]
   new_eqns = [JaxprEqn(eqn.primitive, [literals.get(x, x) for x in eqn.inputs],
                        eqn.params, eqn.out_binders) for eqn in jaxpr.eqns]
   new_outs = [literals.get(x, x) for x in jaxpr.outs]
-  new_jaxpr = Jaxpr(new_const_binders + other_binders, new_eqns, new_outs)
+  new_jaxpr = Jaxpr(new_const_binders + other_binders, new_eqns, new_outs,
+                    jaxpr.effects)
   typecheck_jaxpr(new_jaxpr)
   return new_jaxpr, new_consts
 ```
@@ -1245,38 +1265,41 @@ rules for the other jaxpr-producing trace machinery, where the potential extra
 generality is useful.
 
 ```{code-cell}
-def binop_abstract_eval(x: ShapedArray, y: ShapedArray) -> List[ShapedArray]:
+def binop_abstract_eval(x: ShapedArray, y: ShapedArray
+                        ) -> Tuple[List[ShapedArray], bool]:
   if not isinstance(x, ShapedArray) or not isinstance(y, ShapedArray):
     raise TypeError
   if raise_to_shaped(x) != raise_to_shaped(y): raise TypeError
-  return [ShapedArray(x.shape, x.dtype)]
+  return [ShapedArray(x.shape, x.dtype)], False
 
 abstract_eval_rules[add_p] = binop_abstract_eval
 abstract_eval_rules[mul_p] = binop_abstract_eval
 
-def compare_abstract_eval(x: ShapedArray, y: ShapedArray) -> List[ShapedArray]:
+def compare_abstract_eval(x: ShapedArray, y: ShapedArray
+                          ) -> Tuple[List[ShapedArray], bool]:
   if not isinstance(x, ShapedArray) or not isinstance(y, ShapedArray):
     raise TypeError
   if x.shape != y.shape: raise TypeError
-  return [ShapedArray(x.shape, np.dtype('bool'))]
+  return [ShapedArray(x.shape, np.dtype('bool'))], False
 abstract_eval_rules[greater_p] = compare_abstract_eval
 abstract_eval_rules[less_p] = compare_abstract_eval
 
-def vectorized_unop_abstract_eval(x: ShapedArray) -> List[ShapedArray]:
-  return [ShapedArray(x.shape, x.dtype)]
+def vectorized_unop_abstract_eval(x: ShapedArray) -> Tuple[List[ShapedArray], bool]:
+  return [ShapedArray(x.shape, x.dtype)], False
 
 abstract_eval_rules[sin_p] = vectorized_unop_abstract_eval
 abstract_eval_rules[cos_p] = vectorized_unop_abstract_eval
 abstract_eval_rules[neg_p] = vectorized_unop_abstract_eval
 
-def reduce_sum_abstract_eval(x: ShapedArray, *, axis: int) -> List[ShapedArray]:
+def reduce_sum_abstract_eval(x: ShapedArray, *, axis: int
+                             ) -> Tuple[List[ShapedArray], bool]:
   new_shape = [d for i, d in enumerate(x.shape) if i != axis]
-  return [ShapedArray(tuple(new_shape), x.dtype)]
+  return [ShapedArray(tuple(new_shape), x.dtype)], False
 abstract_eval_rules[reduce_sum_p] = reduce_sum_abstract_eval
 
 def broadcast_abstract_eval(x: ShapedArray, *, shape: Sequence[int],
-                            axes: Sequence[int]) -> List[ShapedArray]:
-  return [ShapedArray(tuple(shape), x.dtype)]
+                            axes: Sequence[int]) -> Tuple[List[ShapedArray], bool]:
+  return [ShapedArray(tuple(shape), x.dtype)], False
 abstract_eval_rules[broadcast_p] = broadcast_abstract_eval
 ```
 
@@ -1353,6 +1376,7 @@ def pp_jaxpr(jaxpr: Jaxpr) -> PPrint:
 def var_str(names: DefaultDict[Var, str], v: Var) -> str:
   return f'{names[v]}:{v.aval.str_short()}'
 
+<<<<<<< HEAD
 def pp_eqn(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
   rule = pp_rules.get(eqn.primitive)
   if rule:
@@ -1363,6 +1387,17 @@ def pp_eqn(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
            pp(' '.join(names[x] if isinstance(x, Var) else str(x.val)
                        for x in eqn.inputs)))
     return lhs >> pp(' = ') >> rhs
+=======
+def pp_eqn(names: Dict[Var, str], eqn: JaxprEqn) -> PPrint:
+  rhs = (pp(eqn.primitive.name) >> pp_params(eqn.params) >>
+         pp(' '.join(names[x] if isinstance(x, Var) else str(x.val)
+                     for x in eqn.inputs)))
+  if eqn.out_binders:
+    lhs = pp(' '.join(var_str(names, v) for v in eqn.out_binders))
+    return lhs >> pp(' = ') >> rhs
+  else:
+    return rhs
+>>>>>>> 5b2c18cc3 (basic effects design prototyping)
 
 def pp_params(params: Dict[str, Any]) -> PPrint:
   items = sorted(params.items())
@@ -1565,10 +1600,11 @@ def xla_callable(hashable_jaxpr: IDHashable, hashable_consts: Tuple[IDHashable])
   c = xb.make_computation_builder('xla_call')
   xla_consts = _xla_consts(c, consts)
   xla_params = _xla_params(c, in_avals)
-  outs = jaxpr_subcomp(c, jaxpr, xla_consts + xla_params)
-  out = xops.Tuple(c, outs)
-  compiled = xb.get_backend(None).compile(c.build(out))
-  return partial(execute_compiled, compiled, [v.aval for v in jaxpr.outs])
+  _, outs = jaxpr_subcomp(c, jaxpr, xops.CreateToken(c), xla_consts + xla_params)
+  if jaxpr.effects:
+    outs = [xops.Constant(c, np.uint8(0)), *outs]
+  compiled = xb.get_backend(None).compile(c.build(xops.Tuple(c, outs)))
+  return partial(execute, compiled, jaxpr.effects, [v.aval for v in jaxpr.outs])
 
 def _xla_consts(c: xe.XlaBuilder, consts: List[Any]) -> List[xe.XlaOp]:
   unique_consts = {id(cnst): cnst for cnst in consts}
@@ -1588,8 +1624,8 @@ program using `jaxpr_subcomp`, then returns a callable which executes the
 compiled program:
 
 ```{code-cell}
-def jaxpr_subcomp(c: xe.XlaBuilder, jaxpr: Jaxpr, args: List[xe.XlaOp]
-                  ) -> xe.XlaOp:
+def jaxpr_subcomp(c: xe.XlaBuilder, jaxpr: Jaxpr, token: xe.XlaOp,
+                  args: List[xe.XlaOp]) -> xe.XlaOp:
   env: Dict[Var, xe.XlaOp] = {}
 
   def read(x: Atom) -> xe.XlaOp:
@@ -1603,13 +1639,16 @@ def jaxpr_subcomp(c: xe.XlaBuilder, jaxpr: Jaxpr, args: List[xe.XlaOp]
     in_avals = [x.aval for x in eqn.inputs]
     in_vals = map(read, eqn.inputs)
     rule = xla_translations[eqn.primitive]
-    out_vals = rule(c, in_avals, in_vals, **eqn.params)
+    token, out_vals = rule(c, token, in_avals, in_vals, **eqn.params)
     map(write, eqn.out_binders, out_vals)
-  return map(read, jaxpr.outs)
+  return token, map(read, jaxpr.outs)
 
-def execute_compiled(compiled, out_avals, *args):
+def execute(compiled, effectful, out_avals, *args):
   input_bufs = [input_handlers[type(x)](x) for x in args]
   out_bufs = compiled.execute(input_bufs)
+  if effectful:
+    blocker, *out_bufs = out_bufs
+    blocker.block_host_until_ready()
   return [handle_result(aval, buf) for aval, buf in zip(out_avals, out_bufs)]
 
 default_input_handler = xb.get_backend(None).buffer_from_pyval
@@ -1629,9 +1668,11 @@ And as with any interpreter, we need an interpretation rule for each
 primitive:
 
 ```{code-cell}
-def direct_translation(op, c, in_avals, in_vals):
+def direct_translation(op: Callable, c: xe.XlaBuilder, token: xe.XlaOp,
+                       in_avals: List[ShapedArray], in_vals: List[xe.XlaOp]
+                       ) -> Tuple[xe.XlaOp, List[xe.XlaOp]]:
   del c, in_avals
-  return [op(*in_vals)]
+  return token, [op(*in_vals)]
 
 xla_translations[add_p] = partial(direct_translation, xops.Add)
 xla_translations[mul_p] = partial(direct_translation, xops.Mul)
@@ -1641,19 +1682,19 @@ xla_translations[cos_p] = partial(direct_translation, xops.Cos)
 xla_translations[greater_p] = partial(direct_translation, xops.Gt)
 xla_translations[less_p] = partial(direct_translation, xops.Lt)
 
-def reduce_sum_translation(c, in_avals, in_vals, *, axis):
+def reduce_sum_translation(c, token, in_avals, in_vals, *, axis):
   (x_aval,), (x,) = in_avals, in_vals
   zero = xops.ConstantLiteral(c, np.array(0, x_aval.dtype))
   subc = xb.make_computation_builder('add')
   shape = _xla_shape(ShapedArray((), x_aval.dtype))
   xops.Add(xops.Parameter(subc, 0, shape), xops.Parameter(subc, 1, shape))
-  return [xops.Reduce(c, [x], [zero], subc.build(), [axis])]
+  return token, [xops.Reduce(c, [x], [zero], subc.build(), [axis])]
 xla_translations[reduce_sum_p] = reduce_sum_translation
 
-def broadcast_translation(c, in_avals, in_vals, *, shape, axes):
+def broadcast_translation(c, token, in_avals, in_vals, *, shape, axes):
   x, = in_vals
   dims_complement = [i for i in range(len(shape)) if i not in axes]
-  return [xops.BroadcastInDim(x, shape, dims_complement)]
+  return token, [xops.BroadcastInDim(x, shape, dims_complement)]
 xla_translations[broadcast_p] = broadcast_translation
 ```
 
@@ -1770,17 +1811,19 @@ def xla_call_abstract_eval_rule(*in_types, jaxpr, num_consts):
   jaxpr_type = typecheck_jaxpr(jaxpr)
   if not all(t1 == t2 for t1, t2 in zip(jaxpr_type.in_types, in_types)):
     raise TypeError
-  return jaxpr_type.out_types
+  return jaxpr_type.out_types, jaxpr.effects
 abstract_eval_rules[xla_call_p] = xla_call_abstract_eval_rule
 
-def xla_call_translation(c, in_avals, in_vals, *, jaxpr, num_consts):
+def xla_call_translation(c, token, in_avals, in_vals, *, jaxpr, num_consts):
   del num_consts  # Only used at top-level.
   # Calling jaxpr_subcomp directly would inline. We generate a Call HLO instead.
   subc = xb.make_computation_builder('inner xla_call')
   xla_params = _xla_params(subc, in_avals)
-  outs = jaxpr_subcomp(subc, jaxpr, xla_params)
-  subc = subc.build(xops.Tuple(subc, outs))
-  return destructure_tuple(c, xops.Call(c, subc, in_vals))
+  tok_param = xb.parameter(subc, len(in_avals), xc.Shape.token_shape())
+  out_tok, outs = jaxpr_subcomp(subc, jaxpr, tok_param, xla_params)
+  subc = subc.build(xops.Tuple(subc, [out_tok, *outs]))
+  token, *outs = destructure_tuple(c, xops.Call(c, subc, [*in_vals, token]))
+  return token, outs
 xla_translations[xla_call_p] = xla_call_translation
 
 def destructure_tuple(c, tup):
@@ -2175,7 +2218,8 @@ class PartialEvalTrace(Trace):
     if rule: return rule(self, tracers, **params)
     tracers_in = [self.instantiate_const(t) for t in tracers]
     avals_in = [t.aval for t in tracers_in]
-    avals_out = abstract_eval_rules[primitive](*avals_in, **params)
+    avals_out, _ = abstract_eval_rules[primitive](*avals_in, **params)
+    # TODO do something about checking effects here?
     tracers_out = [PartialEvalTracer(self, PartialVal.unknown(aval), None)
                    for aval in avals_out]
     eqn = JaxprEqnRecipe(primitive, tracers_in, params, avals_out,
@@ -2219,7 +2263,7 @@ def tracers_to_jaxpr(tracers_in: List[PartialEvalTracer],
   constvars, constvals = unzip2(constvar_to_val.items())
   in_binders = constvars + [tracer_to_var[id(t)] for t in tracers_in]
   out_vars = [tracer_to_var[id(t)] for t in tracers_out]
-  jaxpr = Jaxpr(in_binders, eqns, out_vars)
+  jaxpr = Jaxpr(in_binders, eqns, out_vars, False)
   typecheck_jaxpr(jaxpr)
   return jaxpr, constvals
 
@@ -2359,8 +2403,8 @@ def partial_eval_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool],
   ins1, ins2 = partition_list(in_unknowns, jaxpr.in_binders)
   outs1, outs2 = partition_list(out_unknowns, jaxpr.outs)
 
-  jaxpr1 = Jaxpr(ins1, eqns1, outs1 + residuals)
-  jaxpr2 = Jaxpr(residuals + ins2, eqns2, outs2)
+  jaxpr1 = Jaxpr(ins1, eqns1, outs1 + residuals, jaxpr.effects)
+  jaxpr2 = Jaxpr(residuals + ins2, eqns2, outs2, False)
   typecheck_partial_eval_jaxpr(jaxpr, in_unknowns, out_unknowns, jaxpr1, jaxpr2)
 
   return jaxpr1, jaxpr2, out_unknowns, num_res
@@ -2571,7 +2615,7 @@ transpose_rules[xla_call_p] = xla_call_transpose_rule
 @lru_cache()
 def transpose_jaxpr(jaxpr: Jaxpr, undef_primals: Tuple[bool, ...]
                     ) -> Tuple[Jaxpr, List[Any]]:
-  avals_in, avals_out = typecheck_jaxpr(jaxpr)
+  avals_in, avals_out, _ = typecheck_jaxpr(jaxpr)
   traceable = partial(eval_jaxpr_transposed, jaxpr)
   args = [UndefPrimal(a) if u else a for a, u in zip(avals_in, undef_primals)]
   trans_jaxpr, consts, _ = make_jaxpr(traceable, tuple(args), tuple(avals_out))
@@ -2705,8 +2749,8 @@ def _join_jaxpr_consts(jaxpr1: Jaxpr, jaxpr2: Jaxpr, n1: int, n2: int
   assert jaxpr1_type.in_types[n1:] == jaxpr2_type.in_types[n2:]
   consts1, rest1 = split_list(jaxpr1.in_binders, n1)
   consts2, rest2 = split_list(jaxpr2.in_binders, n2)
-  new_jaxpr1 = Jaxpr(consts1 + consts2 + rest1, jaxpr1.eqns, jaxpr1.outs)
-  new_jaxpr2 = Jaxpr(consts1 + consts2 + rest2, jaxpr2.eqns, jaxpr2.outs)
+  new_jaxpr1 = Jaxpr(consts1 + consts2 + rest1, jaxpr1.eqns, jaxpr1.outs, False)
+  new_jaxpr2 = Jaxpr(consts1 + consts2 + rest2, jaxpr2.eqns, jaxpr2.outs, False)
   return new_jaxpr1, new_jaxpr2
 
 def bind_cond(pred, *args, true_jaxpr, false_jaxpr):
@@ -2832,11 +2876,18 @@ def cond_abstract_eval(pred_type, *in_types, true_jaxpr, false_jaxpr):
     raise TypeError
   if not all(t1 == t2 for t1, t2 in zip(jaxpr_type.in_types, in_types)):
     raise TypeError
-  return jaxpr_type.out_types
+  assert not jaxpr_type.effects  # TODO handle effects
+  return jaxpr_type.out_types, jaxpr_type.effects
 abstract_eval_rules[cond_p] = cond_abstract_eval
 
+<<<<<<< HEAD
 def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr):
   del in_avals  # Unused
+=======
+def cond_translation(c, token, in_avals, in_vals, *, true_jaxpr, false_jaxpr):
+  del in_avals  # Unused.
+  if true_jaxpr.effects: raise NotImplementedError  # TODO
+>>>>>>> 5b2c18cc3 (basic effects design prototyping)
   pred, *in_vals = in_vals
   flat_vals, in_tree = tree_flatten(in_vals)
   operand = xops.Tuple(c, flat_vals)
@@ -2846,7 +2897,7 @@ def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr):
     c = xb.make_computation_builder(name)
     operand = xb.parameter(c, 0, operand_shape)
     operands = tree_unflatten(in_tree, destructure_tuple(c, operand))
-    outs = jaxpr_subcomp(c, jaxpr, operands)
+    _, outs = jaxpr_subcomp(c, jaxpr, xops.CreateToken(c), operands)
     return c.build(xops.Tuple(c, outs))
 
   true_comp = make_comp('true_fn', true_jaxpr)
@@ -2855,7 +2906,7 @@ def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr):
   int_etype = xc.dtype_to_etype(np.dtype('int32'))
   out = xops.Conditional(xops.ConvertElementType(pred, int_etype),
                          [false_comp, true_comp], [operand] * 2)
-  return destructure_tuple(c, out)
+  return token, destructure_tuple(c, out)
 xla_translations[cond_p] = cond_translation
 ```
 
@@ -2925,8 +2976,10 @@ def _join_jaxpr_res(jaxpr1: Jaxpr, jaxpr2: Jaxpr, n1: int, n2: int
   outs2, res2 = split_list(jaxpr2.outs, len(jaxpr2.outs) - n2)
   zeros_like1 = [Lit(np.zeros(v.aval.shape, v.aval.dtype)) for v in res1]
   zeros_like2 = [Lit(np.zeros(v.aval.shape, v.aval.dtype)) for v in res2]
-  new_jaxpr1 = Jaxpr(jaxpr1.in_binders, jaxpr1.eqns, outs1 + res1 + zeros_like2)
-  new_jaxpr2 = Jaxpr(jaxpr2.in_binders, jaxpr2.eqns, outs2 + zeros_like1 + res2)
+  new_jaxpr1 = Jaxpr(jaxpr1.in_binders, jaxpr1.eqns, outs1 + res1 + zeros_like2,
+                     jaxpr1.effects)
+  new_jaxpr2 = Jaxpr(jaxpr2.in_binders, jaxpr2.eqns, outs2 + zeros_like1 + res2,
+                     jaxpr2.effects)
   return new_jaxpr1, new_jaxpr2
 ```
 
@@ -2986,6 +3039,7 @@ out = grad(lambda x: cond(True, lambda: x * x, lambda: 0.))(1.)
 print(out)
 ```
 
+<<<<<<< HEAD
 ```{code-cell}
 :tags: [hide-input]
 
@@ -3000,4 +3054,86 @@ def pprint_cond(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
                pp_jaxpr(true_jaxpr).indent(2),
                pp_jaxpr(false_jaxpr).indent(2)])
 pp_rules[cond_p] = pprint_cond
+=======
+## Part 6: effects
+
+```{code-cell}
+print_p = Primitive("print")
+```
+
+```{code-cell}
+def xprint(*args):
+  if isinstance(args[0], str):
+    fmt, *args = args
+  else:
+    fmt = None
+  bind(print_p, *args, fmt=fmt)
+```
+
+```{code-cell}
+def print_impl(*args, fmt):
+  print(fmt.format(*args))
+  return ()
+impl_rules[print_p] = print_impl
+```
+
+```{code-cell}
+xprint('hi')
+```
+
+```{code-cell}
+def xprint_abstract_eval(*args: ShapedArray, fmt: str) -> Tuple[List[Any], bool]:
+  return [], True
+abstract_eval_rules[print_p] = xprint_abstract_eval
+```
+
+```{code-cell}
+jaxpr, _, _ = make_jaxpr(lambda: xprint('hi'))
+print(jaxpr)
+```
+
+```{code-cell}
+import autodidax_ext
+```
+
+```{code-cell}
+class ShapeDType(NamedTuple):
+  size: int
+  dtype: np.dtype
+  shape: Tuple[int, ...]
+```
+
+```{code-cell}
+class F(NamedTuple):
+  f: Callable
+  arg_shapes: List[ShapeDType]
+
+  def __call__(self, *args):
+    return self.f(*args)
+```
+
+```{code-cell}
+def emit_callback(c, token, f, *args):
+  f_ = F(f, [shape_dtype_spec(c, x) for x in args])
+  return autodidax_ext.pycallback(c, token, f_, *args)
+```
+
+```{code-cell}
+def shape_dtype_spec(c, x):
+  s = c.get_shape(x)
+  shape, dtype = s.dimensions(), s.numpy_dtype()
+  return ShapeDType(dtype.itemsize * int(np.prod(shape)), dtype, shape)
+```
+
+```{code-cell}
+def xprint_translation(c, token, in_avals, in_vals, *, fmt):
+  callback = lambda *args: print(fmt.format(*args))
+  token = emit_callback(c, token, callback, *in_vals)
+  return token, []
+xla_translations[print_p] = xprint_translation
+```
+
+```{code-cell}
+jit(lambda x: xprint('hi: {}', x))(np.array([1., 2.]))
+>>>>>>> 5b2c18cc3 (basic effects design prototyping)
 ```
