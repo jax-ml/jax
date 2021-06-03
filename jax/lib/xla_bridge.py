@@ -141,40 +141,52 @@ def _make_tpu_driver_client():
 # We have no particular opinion about how "backends" relate to "devices". For
 # example, there could be multiple backends that provide the same kind of
 # device.
+_backend_factories = {}
+
+def register_backend_factory(name, factory, *, priority=0):
+  _backend_factories[name] = (factory, priority)
+
+
 if jax.lib._xla_extension_version >= 23:
-  _backend_factories = {
-     'interpreter': xla_client.make_interpreter_client,
-     'cpu': xla_client.make_cpu_client,
-     'tpu_driver': _make_tpu_driver_client,
-     'gpu': xla_client.make_gpu_client,
-     'tpu': xla_client.make_tpu_client,
-  }
+   register_backend_factory('interpreter', xla_client.make_interpreter_client,
+                            priority=-100)
+   register_backend_factory('cpu', xla_client.make_cpu_client,
+                            priority=0)
+   register_backend_factory('tpu_driver', _make_tpu_driver_client,
+                            priority=100)
+   register_backend_factory('gpu', xla_client.make_gpu_client,
+                            priority=200)
+   register_backend_factory('tpu', xla_client.make_tpu_client,
+                            priority=300)
 else:
-  _backend_factories = {
-     'interpreter': xla_client._interpreter_backend_factory,
-     'cpu': xla_client._cpu_backend_factory,
-     'tpu_driver': _make_tpu_driver_client,
-     'gpu': xla_client._gpu_backend_factory,
-     'tpu': xla_client._tpu_backend_factory,
-  }
+   register_backend_factory('interpreter',
+                            xla_client._interpreter_backend_factory,
+                            priority=-100)
+   register_backend_factory('cpu', xla_client._cpu_backend_factory, priority=0)
+   register_backend_factory('tpu_driver', _make_tpu_driver_client,
+                            priority=100)
+   register_backend_factory('gpu', xla_client._gpu_backend_factory,
+                            priority=200)
+   register_backend_factory('tpu', xla_client._tpu_backend_factory,
+                            priority=300)
 
-def register_backend_factory(name, factory):
-  _backend_factories[name] = factory
 
-
+_default_backend = None
 _backends = None
 _backend_lock = threading.Lock()
 
 
 def backends():
   global _backends
+  global _default_backend
 
   with _backend_lock:
     if _backends is not None:
       return _backends
 
+    default_priority = -1000
     _backends = {}
-    for name, factory in _backend_factories.items():
+    for name, (factory, priority) in _backend_factories.items():
       logging.vlog(1, "Initializing backend '%s'" % name)
       try:
         backend = factory()
@@ -186,6 +198,9 @@ def backends():
                                      ("device_count", backend.device_count()),
                                      ("local_devices", backend.local_devices()))
           logging.vlog(1, "Backend '%s' initialized" % name)
+          if priority > default_priority:
+            _default_backend = backend
+            default_priority = priority
       except Exception as err:
         if name in ('cpu', 'interpreter'):
           # We always expect the CPU and interpreter backends to initialize
@@ -196,7 +211,7 @@ def backends():
           # we expect a RuntimeError.
           logging.info("Unable to initialize backend '%s': %s" % (name, err))
           continue
-    if list(_backends.keys())[-1] == "cpu":
+    if _default_backend.platform == "cpu":
       logging.warning('No GPU/TPU found, falling back to CPU. '
                       '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
     return _backends
@@ -219,7 +234,7 @@ def get_backend(platform=None):
       raise RuntimeError(f"Unknown backend {platform}")
     return backend
   else:
-    return list(bs.values())[-1]
+    return _default_backend
 
 
 def get_device_backend(device=None):
