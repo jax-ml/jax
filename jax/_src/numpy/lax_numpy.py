@@ -1416,7 +1416,8 @@ def unravel_index(indices, shape):
   cumulative_sizes = cumulative_sizes.reshape([-1] + [1] * indices.ndim)
   clipped_indices = expand_dims(clipped_indices, axis=0)
   idx = clipped_indices % cumulative_sizes[:-1] // cumulative_sizes[1:]
-  return tuple(idx)
+  # TODO(jakevdp): return tuple(idx) once it behaves properly (#3821)
+  return tuple(lax.index_in_dim(idx, i, keepdims=False) for i in range(idx.shape[0]))
 
 @_wraps(np.resize)
 def resize(a, new_shape):
