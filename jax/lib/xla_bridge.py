@@ -186,7 +186,7 @@ def backends():
                                      ("device_count", backend.device_count()),
                                      ("local_devices", backend.local_devices()))
           logging.vlog(1, "Backend '%s' initialized" % name)
-      except (RuntimeError, ImportError) as err:
+      except Exception as err:
         if name in ('cpu', 'interpreter'):
           # We always expect the CPU and interpreter backends to initialize
           # successfully.
