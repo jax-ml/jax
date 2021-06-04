@@ -124,15 +124,17 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   # We keep here the explicit set of groups for which we don't have limitations
   harness_groups_no_limitations = {
-      "abs", "and", "argmin", "argmax", "broadcast", "broadcast_in_dim", "ceil",
-      "concatenate", "cos", "complex", "conj", "device_put", "dynamic_slice",
+      "abs", "and", "argmin", "argmax", "atan2", "broadcast",
+      "broadcast_in_dim", "ceil",
+      "concatenate", "cos", "cosh", "complex", "conj",
+      "device_put", "dynamic_slice",
       "dynamic_update_slice", "exp", "eq", "floor", "log", "gather", "imag",
       "iota", "is_finite", "ne", "not", "or", "pad", "random_split",
       "reduce_and", "reduce_prod", "reduce_or", "reduce_sum", "real", "reshape",
       "rev",
       "select", "shift_left", "shift_right_logical", "shift_right_arithmetic",
-      "sin", "slice", "sqrt", "squeeze", "stop_gradient", "tie_in", "transpose",
-      "xor", "zeros_like"
+      "sin", "sinh", "slice", "sqrt", "squeeze", "stop_gradient",
+      "tie_in", "transpose", "xor", "zeros_like"
   }
 
   @classmethod
@@ -151,14 +153,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def acos(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(
-            dtypes=[np.float16, dtypes.bfloat16, np.complex64],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
-        missing_tf_kernel(
-            dtypes=[np.complex128],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
         custom_numeric(
             dtypes=np.complex64,
             devices=("cpu", "gpu"),
@@ -174,10 +168,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def acosh(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(
-            dtypes=[dtypes.bfloat16, np.float16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
         custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-3),
         custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12),
         cls.helper_get_trig_custom_limitation(np.cosh)
@@ -195,21 +185,14 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def asin(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(
-            dtypes=[np.float16, dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
-        missing_tf_kernel(dtypes=[np.complex64, np.complex128]),
+        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4),
+        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12),
         cls.helper_get_trig_custom_limitation(np.sin)
     ]
 
   @classmethod
   def asinh(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(
-            dtypes=[np.float16, dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
         custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-3),
         custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12),
         cls.helper_get_trig_custom_limitation(np.sinh)
@@ -218,34 +201,18 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def atan(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(
-            dtypes=[np.float16, dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
-        missing_tf_kernel(dtypes=[np.complex64, np.complex128]),
+        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-5),
+        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12),
         cls.helper_get_trig_custom_limitation(np.tan)
     ]
 
   @classmethod
   def atanh(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(
-            dtypes=[np.float16, dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph")),
         custom_numeric(dtypes=np.float64, tol=1e-14),
         custom_numeric(dtypes=np.complex64, tol=1e-3),
         custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12),
         cls.helper_get_trig_custom_limitation(np.tanh)
-    ]
-
-  @classmethod
-  def atan2(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[np.float16, dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
     ]
 
   @classmethod
@@ -338,15 +305,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                        modes=("eager", "graph", "compiled"),
                        enabled=(not harness.params["enable_xla"]),
                        tol=5e-3)
-    ]
-
-  @classmethod
-  def cosh(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[np.float16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
     ]
 
   @classmethod
@@ -1134,15 +1092,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         missing_tf_kernel(
             description="sign not defined for unsigned integers",
             dtypes=[np.uint8, np.uint16, np.uint32, np.uint64])
-    ]
-
-  @classmethod
-  def sinh(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[np.float16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
     ]
 
   @classmethod
