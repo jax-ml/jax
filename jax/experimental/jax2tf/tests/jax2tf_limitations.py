@@ -882,7 +882,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
     return [
         missing_tf_kernel(
-             dtypes=[np.bool_, np.complex64, np.complex128]),
+             dtypes=[np.bool_]),
         custom_numeric(
             custom_assert=custom_assert,
             description=(
@@ -901,7 +901,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       tst.assertAllClose(result_jax[~mask], result_tf[~mask], err_msg=err_msg)
 
     return [
-        missing_tf_kernel(dtypes=[np.bool_, np.complex64, np.complex128]),
+        missing_tf_kernel(dtypes=[np.bool_]),
         custom_numeric(
             custom_assert=custom_assert,
             description=(
@@ -966,9 +966,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def reduce_min(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(dtypes=[np.complex64, np.complex128]),
-    ]
+    return cls.reduce_max(harness)
+
 
   @classmethod
   def reduce_window_add(cls, harness):
@@ -979,14 +978,14 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def reduce_window_max(cls, harness):
     assert "max" == harness.params["computation"].__name__
     return [
-        missing_tf_kernel(dtypes=[np.bool_, np.complex64, np.complex128]),
+        missing_tf_kernel(dtypes=[np.bool_]),
     ]
 
   @classmethod
   def reduce_window_min(cls, harness):
     assert "min" == harness.params["computation"].__name__
     return [
-        missing_tf_kernel(dtypes=[np.bool_, np.complex64, np.complex128]),
+        missing_tf_kernel(dtypes=[np.bool_]),
     ]
 
   @classmethod
@@ -1045,13 +1044,13 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def scatter_max(cls, harness):
     return [
-        missing_tf_kernel(dtypes=[np.bool_, np.complex64, np.complex128]),
+        missing_tf_kernel(dtypes=[np.bool_]),
     ]
 
   @classmethod
   def scatter_min(cls, harness):
     return [
-        missing_tf_kernel(dtypes=[np.bool_, np.complex64, np.complex128]),
+        missing_tf_kernel(dtypes=[np.bool_]),
     ]
 
   @classmethod

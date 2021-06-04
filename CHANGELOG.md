@@ -16,6 +16,9 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     tracebacks.
   * A new traceback filtering mode using `__tracebackhide__` is now enabled by
     default in sufficiently recent versions of IPython.
+  * The {func}`jax2tf.convert` supports shape polymorphism even when the
+    unknown dimensions are used in arithmetic operations, e.g., `jnp.reshape(-1)`
+    ({jax-issue}`#6827`).    
 
 * Breaking changes:
 
@@ -31,6 +34,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * The {func}`jax2tf.convert` now converts `lax.dot_general` using the
     `XlaDot` TensorFlow op, for better fidelity w.r.t. JAX numerical precision
     ({jax-issue}`#6717`).
+  * The {func}`jax2tf.convert` now has support for inequality comparisons and
+    min/max for complex numbers ({jax-issue}`#6892`).    
 
 ## jaxlib 0.1.67 (unreleased)
 

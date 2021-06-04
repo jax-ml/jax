@@ -34,10 +34,7 @@ On TPU only the "compiled" mode is relevant.
 
 Our priority is to ensure same coverage and numerical behavior with JAX
 in the "compiled" mode, **when using XLA to compile the converted program**.
-We are pretty close to that goal. In addition to a few loose ends, there is a known
-coverage problem due to JAX and XLA supporting inequality comparisons and min/max for
-booleans and complex numbers. It is not clear that TensorFlow will be extended to
-support these.
+We are pretty close to that goal.
 
 This table only shows errors for cases that are working in JAX (see [separate
 list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
