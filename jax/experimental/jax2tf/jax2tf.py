@@ -76,8 +76,10 @@ PrecisionType = int  # Enum xla_data.PrecisionConfig.Precision
 
 
 def _is_tfval(v: TfVal) -> bool:
+  if isinstance(v, (tf.Tensor, tf.Variable)):
+    return True
   try:
-    tf.convert_to_tensor(v)
+    tf.constant(v)
     return True
   except:
     return False
@@ -1755,8 +1757,6 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
       reducer, autograph=False).get_concrete_function(o_spec, o_spec)
 
   if not isinstance(init_val, tf.Tensor):
-    assert not config.jax_enable_checks or _is_tfval(
-        init_val), f"Non TfVal: {init_val}"
     init_val = tf.constant(init_val, operand.dtype)
   out = tfxla.reduce_window(
       operand,
