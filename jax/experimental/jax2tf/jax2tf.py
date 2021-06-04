@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
-import functools
+from functools import partial
 import re
 import string
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -116,7 +116,7 @@ def _xla_disabled_error(primitive_name: str,
     msg += f" {extra_msg}"
   return NotImplementedError(msg)
 
-@functools.partial(api_util.api_hook, tag="jax2tf_convert")
+@partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable,
             *,
             polymorphic_shapes: Optional[Sequence[Any]] = None,
@@ -293,8 +293,7 @@ def convert(fun: Callable,
           out_with_avals = _interpret_fun(flat_fun, args_flat, args_avals_flat)
           outs, out_avals = util.unzip2(out_with_avals)
           return (tuple(outs),
-                  functools.partial(
-                      converted_grad_fn, _out_cts_avals=tuple(out_avals)))
+                  partial(converted_grad_fn, _out_cts_avals=tuple(out_avals)))
 
         out_flat = converted_fun_flat_with_custom_gradient(*args_flat)
       else:
@@ -828,7 +827,7 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
 for unexpected in xla.call_translations:  # Call primitives are inlined
   if unexpected is pjit.pjit_p:
     continue
-  tf_impl[unexpected] = functools.partial(_unexpected_primitive, unexpected)
+  tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
@@ -1045,8 +1044,30 @@ def _rem(lhs, rhs):
 tf_impl[lax.div_p] = _div
 tf_impl[lax.rem_p] = _rem
 
-tf_impl[lax.max_p] = tf.math.maximum
-tf_impl[lax.min_p] = tf.math.minimum
+
+def _minmax(x: TfVal, y: TfVal, *, is_min: bool,
+            _in_avals: Sequence[core.AbstractValue],
+            _out_aval: core.AbstractValue,) -> TfVal:
+  # For complex numbers use lexicographic ordering, like JAX
+  if dtypes.issubdtype(x.dtype.as_numpy_dtype, np.complexfloating):
+    return _convert_jax_impl(
+        partial(lax._minmax_complex_lowering,
+                          lax_cmp_pick_x=lax.lt if is_min else lax.gt),
+        multiple_results=False)(x, y, _in_avals=_in_avals, _out_aval=_out_aval)
+  else:
+    return (tf.math.minimum if is_min else tf.math.maximum)(x, y)
+
+def _minmax_scalar(x: TfVal, y: TfVal, *, is_min: bool) -> TfVal:
+  # For reducers we will need min/max for scalars only. In that case we
+  # can construct the AbstractValues outselves, even in the presence of
+  # shape polymorphism.
+  assert len(x.shape) == 0 and len(y.shape) == 0, f"x: {x.shape}, y: {y.shape}"
+  aval = core.ShapedArray((), _to_jax_dtype(x.dtype))
+  return _minmax(x, y, is_min=is_min,
+                 _in_avals=[aval, aval], _out_aval=aval)
+
+tf_impl_with_avals[lax.max_p] = partial(_minmax, is_min=False)
+tf_impl_with_avals[lax.min_p] = partial(_minmax, is_min=True)
 
 # Map from TF signed types to TF unsigned types.
 _SIGNED_TO_UNSIGNED_TABLE = {
@@ -1659,8 +1680,8 @@ def _argminmax(fn, operand, axes, index_dtype):
   return tf.cast(result, _to_tf_dtype(index_dtype))
 
 
-tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
-tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
+tf_impl[lax.argmin_p] = partial(_argminmax, tf.math.argmin)
+tf_impl[lax.argmax_p] = partial(_argminmax, tf.math.argmax)
 
 _add_fn = tf.function(_add, autograph=False)
 _ge_fn = tf.function(tf.math.greater_equal, autograph=False)
@@ -1947,21 +1968,18 @@ def _get_min_identity(tf_dtype):
 
 # pylint: disable=protected-access
 tf_impl_with_avals[lax.reduce_window_sum_p] = (
-    functools.partial(
-        _specialized_reduce_window, _add, lambda x: 0,
-        name="reduce_window_sum"))
+    partial(_specialized_reduce_window, _add, lambda x: 0,
+            name="reduce_window_sum"))
 tf_impl_with_avals[lax.reduce_window_min_p] = (
-    functools.partial(
-        _specialized_reduce_window,
-        tf.math.minimum,
-        _get_min_identity,
-        name="reduce_window_min"))
+    partial(_specialized_reduce_window,
+            partial(_minmax_scalar, is_min=True),
+            _get_min_identity,
+            name="reduce_window_min"))
 tf_impl_with_avals[lax.reduce_window_max_p] = (
-    functools.partial(
-        _specialized_reduce_window,
-        tf.math.maximum,
-        _get_max_identity,
-        name="reduce_window_max"))
+    partial(_specialized_reduce_window,
+            partial(_minmax_scalar, is_min=False),
+            _get_max_identity,
+            name="reduce_window_max"))
 tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
@@ -1970,11 +1988,11 @@ tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 # O(n^2) on other backends. This may be implemented using associative_scan
 # instead to favor different backends.
 tf_impl_with_avals[lax_control_flow.cummin_p] = _convert_jax_impl(
-    functools.partial(lax_control_flow._cumred_tpu_translation_rule,
+    partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_min),
     multiple_results=False)
 tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
-    functools.partial(lax_control_flow._cumred_tpu_translation_rule,
+    partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_max),
     multiple_results=False)
 # TODO(bchetioui): cumsum and cumprod can be converted using pure TF ops for
@@ -1983,11 +2001,11 @@ tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
 # the operation. A non-XLA path can thus be defined for all dtypes, though the
 # tests will crash.
 tf_impl_with_avals[lax_control_flow.cumsum_p] = _convert_jax_impl(
-    functools.partial(lax_control_flow._cumred_tpu_translation_rule,
+    partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_sum),
     multiple_results=False)
 tf_impl_with_avals[lax_control_flow.cumprod_p] = _convert_jax_impl(
-    functools.partial(lax_control_flow._cumred_tpu_translation_rule,
+    partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_prod),
     multiple_results=False)
 
@@ -2001,7 +2019,7 @@ def _select_and_scatter(operand, source, init_value, select_jaxpr,
 tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 
 
-@functools.partial(bool_to_int8, argnums=(0, 1))
+@partial(bool_to_int8, argnums=(0, 1))
 def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
                             window_strides, padding, _in_avals, _out_aval):
   if not _enable_xla:
@@ -2023,8 +2041,7 @@ tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   res = _convert_jax_impl(
-      functools.partial(
-          jax._src.random._threefry2x32_lowering, use_rolled_loops=False),
+      partial(jax._src.random._threefry2x32_lowering, use_rolled_loops=False),
       multiple_results=True)(
           *args, _in_avals=_in_avals, _out_aval=_out_aval)
   return res
@@ -2035,7 +2052,7 @@ tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 # Use the vmap implementation, otherwise on TPU the performance is really bad
 # With use_vmap=True on, we get about the same performance for JAX and jax2tf.
 tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
-    functools.partial(jax._src.random._gamma_impl, use_vmap=True),
+    partial(jax._src.random._gamma_impl, use_vmap=True),
     multiple_results=False)
 
 
@@ -2049,7 +2066,7 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
   return proto
 
 
-@functools.partial(bool_to_int8, argnums=0)
+@partial(bool_to_int8, argnums=0)
 def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
             _in_avals, _out_aval):
   """Tensorflow implementation of gather."""
@@ -2171,7 +2188,7 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
   del linear
   # tf.cond needs lambdas with no arguments.
   branches_tf = [
-      functools.partial(_interpret_jaxpr, jaxpr, *operands)
+      partial(_interpret_jaxpr, jaxpr, *operands)
       for jaxpr in branches
   ]
   return tf.switch_case(index, branches_tf)
@@ -2198,7 +2215,7 @@ def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
     pred, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *args)
     return pred
 
-  body_tf_func = functools.partial(_interpret_jaxpr, body_jaxpr, *body_consts)
+  body_tf_func = partial(_interpret_jaxpr, body_jaxpr, *body_consts)
   return tf.while_loop(cond_tf_func, body_tf_func, init_carry)
 
 
@@ -2586,7 +2603,7 @@ def _pjit(*args: TfVal,
           _out_aval: core.ShapedArray) -> TfVal:
   del donated_invars, name
   # TODO: add `name` to the name stack
-  shard_value_for_mesh = functools.partial(_shard_value, resource_env.physical_mesh)
+  shard_value_for_mesh = partial(_shard_value, resource_env.physical_mesh)
   # Apply sharding annotation to the arguments
   sharded_args: Sequence[TfVal] = tuple(
       map(shard_value_for_mesh, args, _in_avals, in_axis_resources))

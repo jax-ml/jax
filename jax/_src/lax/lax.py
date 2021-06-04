@@ -2783,27 +2783,35 @@ def _broadcasting_select(c, which, x, y):
   return xops.Select(which, x, y)
 
 
-def _minmax_translation_rule(c, x, y, *, minmax=None, cmp=None):
+def _minmax_complex_lowering(x, y, *, lax_cmp_pick_x):
+  result_shape = broadcast_shapes(np.shape(x), np.shape(y))
+  x = _maybe_broadcast(result_shape, x)
+  y = _maybe_broadcast(result_shape, y)
+  rx = real(x)
+  ry = real(y)
+  pick_x = select(eq(rx, ry), lax_cmp_pick_x(imag(x), imag(y)),
+                  lax_cmp_pick_x(rx, ry))
+  return select(pick_x, x, y)
+
+def _minmax_translation_rule(c, x, y, *, op_minmax=None, lax_cmp_pick_x=None):
   dtype = c.get_shape(x).numpy_dtype()
   if dtypes.issubdtype(dtype, np.complexfloating):
-    rx = xops.Real(x)
-    ry = xops.Real(y)
-    return _broadcasting_select(
-        c, xops.Select(xops.Eq(rx, ry), cmp(xops.Imag(x), xops.Imag(y)),
-                       cmp(rx, ry)),
-        x, y)
-  return minmax(x, y)
+    return xla.lower_fun(partial(_minmax_complex_lowering,
+                                 lax_cmp_pick_x=lax_cmp_pick_x),
+                         multiple_results=False)(c, x, y)
+  else:
+    return op_minmax(x, y)
 
 max_p: core.Primitive = standard_naryop(
   [_any, _any], 'max', translation_rule=partial(
-    _minmax_translation_rule, minmax=xops.Max, cmp=xops.Gt))
+    _minmax_translation_rule, op_minmax=xops.Max, lax_cmp_pick_x=gt))
 ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
 
 min_p: core.Primitive = standard_naryop(
   [_any, _any], 'min', translation_rule=partial(
-    _minmax_translation_rule, minmax=xops.Min, cmp=xops.Lt))
+    _minmax_translation_rule, op_minmax=xops.Min, lax_cmp_pick_x=lt))
 ad.defjvp2(min_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))

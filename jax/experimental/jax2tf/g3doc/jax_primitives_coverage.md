@@ -1,10 +1,10 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-05-17* (YYYY-MM-DD)
+*Last generated on: 2021-06-04* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2507 test harnesses to test
+We use a set of 2570 test harnesses to test
 the implementation of 121 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
@@ -60,7 +60,7 @@ be updated.
 | broadcast_in_dim | 19 | all |  |
 | ceil | 4 | floating | bool, complex, integer |
 | cholesky | 30 | inexact | bool, integer |
-| clamp | 17 | floating, integer | bool, complex |
+| clamp | 20 | all |  |
 | complex | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
 | concatenate | 17 | all |  |
 | conj | 5 | complex, float32, float64 | bfloat16, bool, float16, integer |
@@ -90,28 +90,28 @@ be updated.
 | fft | 20 | complex, float32, float64 | bfloat16, bool, float16, integer |
 | floor | 4 | floating | bool, complex, integer |
 | gather | 37 | all |  |
-| ge | 15 | bool, floating, integer | complex |
-| gt | 15 | bool, floating, integer | complex |
+| ge | 17 | all |  |
+| gt | 17 | all |  |
 | igamma | 6 | floating | bool, complex, integer |
 | igammac | 6 | floating | bool, complex, integer |
 | imag | 2 | complex | bool, floating, integer |
 | integer_pow | 108 | inexact, integer | bool |
 | iota | 16 | inexact, integer | bool |
 | is_finite | 4 | floating | bool, complex, integer |
-| le | 15 | bool, floating, integer | complex |
+| le | 17 | all |  |
 | lgamma | 4 | floating | bool, complex, integer |
 | log | 6 | inexact | bool, integer |
 | log1p | 6 | inexact | bool, integer |
-| lt | 15 | bool, floating, integer | complex |
+| lt | 17 | all |  |
 | lu | 18 | inexact | bool, integer |
-| max | 29 | all |  |
-| min | 29 | all |  |
+| max | 33 | all |  |
+| min | 33 | all |  |
 | mul | 16 | inexact, integer | bool |
 | ne | 17 | all |  |
 | neg | 14 | inexact, integer | bool |
 | nextafter | 6 | floating | bool, complex, integer |
 | or | 11 | bool, integer | inexact |
-| pad | 90 | all |  |
+| pad | 120 | all |  |
 | population_count | 8 | integer | bool, inexact |
 | pow | 10 | inexact | bool, integer |
 | qr | 60 | inexact | bool, integer |
@@ -144,7 +144,7 @@ be updated.
 | shift_left | 10 | integer | bool, inexact |
 | shift_right_arithmetic | 10 | integer | bool, inexact |
 | shift_right_logical | 10 | integer | bool, inexact |
-| sign | 14 | inexact, integer | bool |
+| sign | 28 | inexact, integer | bool |
 | sin | 6 | inexact | bool, integer |
 | sinh | 6 | inexact | bool, integer |
 | slice | 24 | all |  |
@@ -184,6 +184,7 @@ and search for "limitation".
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
 | --- | --- | --- | --- |
 |cholesky|unimplemented|float16|cpu, gpu|
+|clamp|unimplemented|bool, complex|cpu, gpu, tpu|
 |conv_general_dilated|preferred_element_type not implemented for integers|int16, int32, int8|gpu|
 |conv_general_dilated|preferred_element_type=c128 not implemented|complex64|tpu|
 |conv_general_dilated|preferred_element_type=f64 not implemented|bfloat16, float16, float32|tpu|
