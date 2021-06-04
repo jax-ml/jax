@@ -987,9 +987,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     assert "min" == harness.params["computation"].__name__
     return [
         missing_tf_kernel(dtypes=[np.bool_, np.complex64, np.complex128]),
-        missing_tf_kernel(dtypes=[np.uint64],
-                          devices=("cpu", "gpu"),
-                          modes=("eager",)),
     ]
 
   @classmethod
