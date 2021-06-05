@@ -58,7 +58,6 @@ static int GetXCR0EAX() { return _xgetbv(0); }
       "xchg %%rdi, %%rbx\n"                \
       : "=a"(a), "=D"(b), "=c"(c), "=d"(d) \
       : "a"(a_inp), "2"(c_inp))
-#endif
 
 static int GetXCR0EAX() {
   int eax, edx;
@@ -66,6 +65,7 @@ static int GetXCR0EAX() {
   return eax;
 }
 
+#endif
 #endif
 
 // TODO(phawkins): technically we should build this module without AVX support
