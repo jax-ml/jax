@@ -50,7 +50,7 @@ from jax._src.util import (partial, unzip2, unzip3, safe_map, safe_zip,
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves, tree_structure)
-from jax import ad_util
+from jax._src import ad_util
 from jax.config import config
 
 xops = xla_client.ops

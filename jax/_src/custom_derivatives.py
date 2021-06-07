@@ -27,7 +27,7 @@ from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
 from jax._src.util import cache, safe_zip, safe_map, split_list
 from jax.api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from jax.core import raise_to_shaped
-from jax.ad_util import Zero, zeros_like_aval, stop_gradient_p
+from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
 from jax.interpreters import batching

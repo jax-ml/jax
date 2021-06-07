@@ -23,8 +23,8 @@ from .. import core
 from .._src.dtypes import dtype, float0
 from ..core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                     raise_to_shaped)
-from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
-                       zeros_like_p, Zero)
+from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
+                              zeros_like_aval, zeros_like_p, Zero)
 from .._src.util import (unzip2, safe_map, safe_zip, partial, split_list,
                          wrap_name, as_hashable_function)
 from ..tree_util import register_pytree_node

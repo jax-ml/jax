@@ -47,7 +47,7 @@ from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 from jax.interpreters import ad
-from jax import ad_util
+from jax._src import ad_util
 xb = xla_bridge
 xops = xla_client.ops
 Dtype = Any

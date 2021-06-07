@@ -16,7 +16,7 @@ from functools import partial
 
 import numpy as np
 
-from jax import ad_util
+from jax._src import ad_util
 from jax import core
 from jax._src import dtypes
 

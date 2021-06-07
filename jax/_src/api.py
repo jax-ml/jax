@@ -39,7 +39,6 @@ from contextlib import contextmanager, ExitStack
 from .. import core
 from .. import lib
 from .. import linear_util as lu
-from .. import ad_util
 from . import dtypes
 from ..core import eval_jaxpr
 from ..api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,

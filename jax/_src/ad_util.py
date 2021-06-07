@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Callable, Dict, Type
 
 from jax import core
-from .core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
+from jax.core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
                    valid_jaxtype, raise_to_shaped, get_aval)
-from .tree_util import register_pytree_node
-from typing import Any, Callable, Dict, Type
-from ._src.util import safe_map
+from jax.tree_util import register_pytree_node
+from jax._src.util import safe_map
 
-from ._src import traceback_util
+from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 Array = Any

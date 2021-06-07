@@ -47,7 +47,7 @@ from absl import testing
 import jax
 from jax import config
 from jax import dtypes
-from jax import ad_util
+from jax._src import ad_util
 from jax import test_util as jtu
 from jax import lax
 from jax import numpy as jnp

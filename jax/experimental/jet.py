@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 from jax import core
 from jax._src.util import unzip2
-from jax import ad_util
+from jax._src import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
 import jax.linear_util as lu

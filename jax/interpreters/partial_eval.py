@@ -26,7 +26,7 @@ import numpy as np
 from .. import core
 from .._src import dtypes
 from .. import linear_util as lu
-from ..ad_util import Zero
+from jax._src.ad_util import Zero
 from ..api_util import flattened_fun_in_tree
 from .._src.tree_util import tree_unflatten, tree_leaves
 from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,

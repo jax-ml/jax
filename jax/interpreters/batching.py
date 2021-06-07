@@ -19,7 +19,7 @@ import jax
 from ..config import config
 from .. import core
 from ..core import raise_to_shaped, Trace, Tracer
-from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
+from jax._src.ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
 from .._src.util import (unzip2, partial, safe_map, safe_zip, wrap_name, split_list,
                          canonicalize_axis, moveaxis, as_hashable_function, curry)

@@ -26,7 +26,7 @@ import numpy as np
 
 from ..config import config
 from .. import core
-from .. import ad_util
+from jax._src import ad_util
 from jax._src import dtypes
 from .. import linear_util as lu
 from jax._src import source_info_util
