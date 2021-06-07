@@ -369,6 +369,16 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIs(z3, x1)
     self.assertEqual(z2, 1)
 
+  def test_trivial_computations_with_tokens(self):
+    @self.jit
+    def noop(arr, token):
+      return arr, token
+
+    arr = jax.numpy.ones(10)
+    token = jax.lax.create_token()
+
+    self.assertEqual(token, noop(arr, token)[1])
+
   def test_jit_bad_input(self):
     def f(x):
       return x
