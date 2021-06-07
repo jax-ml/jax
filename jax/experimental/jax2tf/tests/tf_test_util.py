@@ -281,6 +281,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       return self.ConvertAndCompare(grad_func, t_arg)
     assert False, transform
 
+  # TODO(marcvanzee): Add flag enable_xla here so we can also test shape
+  # polymorphism for enable_xla=False.
   def CheckShapePolymorphism(self, f_jax: Callable, *,
                              input_signature: Sequence[tf.TensorSpec],
                              polymorphic_shapes: Optional[Sequence[Any]],

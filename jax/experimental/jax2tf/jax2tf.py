@@ -2103,21 +2103,34 @@ tf_impl_with_avals[lax.slice_p] = _slice
 def _dynamic_slice(operand, *start_indices, slice_sizes,
                    _in_avals: Sequence[core.ShapedArray],
                    _out_aval: core.ShapedArray):
-  # Here we could use tf.slice. Similarly, for lax.gather we can sometimes use
-  # tf.gather. But those have different semantics for index-out-of-bounds than
-  # JAX (and XLA). We have tried to force compilation, by wrapping into
-  # tf.xla.experimental.compile, or tf.function(jit_compile=True), but
-  # those solutions are brittle because they do not work when nested into an
-  # outer compilation (see b/162814494 and b/163006262). They also do not
-  # survive well being put in a SavedModel. Hence, we now use TFXLA slicing
-  # and gather ops.
-  if not _enable_xla:
-    raise _xla_disabled_error("dynamic_slice")
-  res = tfxla.dynamic_slice(
-      operand, tf.stack(start_indices), size_indices=_eval_shape(slice_sizes))
-  # TODO: implement shape inference for XlaDynamicSlice
-  res.set_shape(_aval_to_tf_shape(_out_aval))
-  return res
+  start_indices = tf.stack(start_indices)
+  slice_sizes = _eval_shape(slice_sizes)
+
+  if _enable_xla:
+    res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes)
+    # TODO: implement shape inference for XlaDynamicSlice
+    res.set_shape(_aval_to_tf_shape(_out_aval))
+    return res
+
+  # If XLA is disabled, we use `tf.slice` as a fallback, which has different out
+  # of bounds (OOB) behavior than `lax.dynamic_slice_p`:
+  # * If `slice size > max_len`, then both `tf.slice` and `lax.dynamic_slice_p`
+  #   fail, so we ignore this case.
+  # * If `start_indices` is OOB, then `tf.slice` fails but `lax.dynamic_slice_p`
+  #   clips the indices to [0, max_len].
+  # * If `start_indices + slice_size` is OOB, then `tf.slice` fails, but
+  #   `lax.dynamic_slice_p` adjust `start_indices` so that a full slice is
+  #   returned.
+  # The code below manually clips the start indices so that the behavior is
+  # the same as `lax.dynamic_slice_p`.
+
+  # clip_by_value fails if `start_indices` and `max_start` aren't of the same
+  # dtype. By explicitly casting to the right dtype here this doesn't happen.
+  operand_shape = _eval_shape(_in_avals[0].shape)
+  shape = tf.constant(operand_shape, dtype=start_indices.dtype)
+  max_start = tf.subtract(shape, slice_sizes)
+  start_indices = tf.clip_by_value(start_indices, 0, max_start)
+  return tf.slice(operand, start_indices, size=slice_sizes)
 
 
 tf_impl_with_avals[lax.dynamic_slice_p] = _dynamic_slice
