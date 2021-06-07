@@ -39,7 +39,7 @@ from jax import lax
 from jax import core
 from jax.core import NamedShape, JaxprTypeError
 from jax.experimental import maps
-from jax.experimental.maps import Mesh, mesh, xmap
+from jax.experimental.maps import Mesh, mesh, xmap, loop
 from jax.errors import JAXTypeError
 from jax.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
@@ -547,6 +547,21 @@ class XMapTest(XMapTestCase):
     f = xmap(lambda x: x, in_axes={}, out_axes=['i'], axis_sizes={'i': 4})
     g = xmap(f, in_axes={}, out_axes=['j', ...], axis_sizes={'j': 7})
     self.assertAllClose(g(x), jnp.tile(x.reshape((1, 1)), (7, 4)))
+
+  @loop('l', 4)
+  def testLoopBasic(self):
+    x = jnp.arange(16)
+    y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
+              axis_resources={'i': 'l'})(x)
+    self.assertAllClose(y, x + 4)
+
+  @jtu.with_mesh([('x', 2)])
+  @loop('l', 4)
+  def testLoopWithMesh(self):
+    x = jnp.arange(16)
+    y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
+              axis_resources={'i': ('x', 'l')})(x)
+    self.assertAllClose(y, x + 4)
 
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):
@@ -1197,6 +1212,18 @@ class XMapErrorTest(jtu.JaxTestCase):
              r"already partitioned along `x`, because its named shape contains `j`")
     with self.assertRaisesRegex(JAXTypeError, error):
       h(x)
+
+  @loop('l', 2)
+  def testResourceConflictArgsLoop(self):
+    fm = xmap(lambda x: x,
+              in_axes=['a', 'b'], out_axes=['a', 'b'],
+              axis_resources={'a': 'l', 'b': 'l'})
+    x = np.arange(16).reshape(4, 4)
+    error = (r"Axes `a` and `b` are both mapped to the resource `l`, but they "
+             r"coincide in the named_shape of an input to an xmapped function "
+             r"<lambda>")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      fm(x)
 
 
 if __name__ == '__main__':

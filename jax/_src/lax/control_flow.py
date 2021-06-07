@@ -151,7 +151,7 @@ def fori_loop(lower, upper, body_fun, init_val):
 
   .. code-block:: haskell
 
-    fori_loop :: Int -> Int -> ((int, a) -> a) -> a -> a
+    fori_loop :: Int -> Int -> ((Int, a) -> a) -> a -> a
 
   The semantics of ``fori_loop`` are given by this Python implementation::
 
