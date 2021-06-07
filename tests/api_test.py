@@ -98,10 +98,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   ])
   def test_jit_static_args(self, one, two, three, four, five):
     side = []
-    # For the CPP jit, we need to clear the cache to prevent cache hits between
-    # parameterized tests.
-    if hasattr(self.jit, "cache_clear"):
-      self.jit.cache_clear()
 
     def f(x, y, z, flag=False, flag2=False):
       del flag2  # unused
