@@ -43,8 +43,9 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from .._src.util import (safe_map, safe_zip, HashableFunction,
                          as_hashable_function, unzip2, distributed_debug_log,
-                         tuple_insert)
+                         tuple_insert, moveaxis)
 from .._src.lax.parallel import _axis_index_translation_rule
+from .. import lax
 
 map, unsafe_map = safe_map, map
 zip = safe_zip
@@ -81,48 +82,97 @@ AxisName = core.AxisName
 ResourceAxisName = AxisName  # Different name just for documentation purposes
 Mesh = pxla.Mesh
 
-# TODO: Support sequential mapping
-class ResourceEnv:
-  __slots__ = ('physical_mesh',)
-  physical_mesh: Mesh
+class Loop(NamedTuple):
+  name: ResourceAxisName
+  length: int
 
-  def __init__(self, physical_mesh: Mesh):
-    super().__setattr__('physical_mesh', physical_mesh)
+class ResourceEnv(NamedTuple):
+  physical_mesh: Mesh
+  loops: Tuple[Loop, ...]
+
+  def with_mesh(self, mesh: Mesh):
+    overlap = set(mesh.axis_names) & (self.resource_axes - set(self.physical_mesh.axis_names))
+    if overlap:
+      raise ValueError(f"Cannot update the mesh of the current resource "
+                       f"environment. The new mesh shadows already defined axes "
+                       f"{show_axes(overlap)}")
+    return self._replace(physical_mesh=mesh)
+
+  def with_extra_loop(self, loop: Loop):
+    if loop.name in self.resource_axes:
+      raise ValueError(f"Cannot extend the resource environment with loop named "
+                       f"`{loop.name}`. An axis of this name is already defined!")
+    return self._replace(loops=self.loops + (loop,))
 
   @property
   def physical_resource_axes(self) -> Set[ResourceAxisName]:
     return set(self.physical_mesh.axis_names)
 
   @property
+  def loop_resource_axes(self) -> Set[ResourceAxisName]:
+    return set(loop.name for loop in self.loops)
+
+  @property
   def resource_axes(self) -> Set[ResourceAxisName]:
-    return self.physical_resource_axes
+    return self.physical_resource_axes | self.loop_resource_axes
 
   @property
   def shape(self):
-    return self.physical_mesh.shape
+    shape = self.physical_mesh.shape
+    shape.update(self.loops)
+    return shape
 
   @property
   def local_shape(self):
-    return self.physical_mesh.local_mesh.shape
-
-  def __setattr__(self, name, value):
-    raise RuntimeError("ResourceEnv is immutable!")
-
-  def __delattr__(self):
-    raise RuntimeError("ResourceEnv is immutable!")
-
-  def __eq__(self, other):
-    return (type(other) is ResourceEnv and
-            self.physical_mesh == other.physical_mesh)
-
-  def __hash__(self):
-    return hash(self.physical_mesh)
+    shape = self.physical_mesh.local_mesh.shape
+    shape.update(self.loops)
+    return shape
 
   def __repr__(self):
-    return f"ResourceEnv({self.physical_mesh!r})"
+    return f"ResourceEnv({self.physical_mesh!r}, {self.loops!r})"
 
+EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
 thread_resources = threading.local()
-thread_resources.env = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
+thread_resources.env = EMPTY_ENV
+
+@contextlib.contextmanager
+def loop(name: ResourceAxisName, length: int):
+  """Define a loop resource to be available in scope of this context manager.
+
+  This is similar to :py:func:`mesh` in that it extends the resource
+  environment with a resource called ``name``. But, any use of this resource
+  axis in ``axis_resources`` argument of :py:func:`xmap` will cause the
+  body of :py:func:`xmap` to get executed ``length`` times with each execution
+  only processing only a slice of inputs mapped along logical axes assigned
+  to this resource.
+
+  This is especially useful in that it makes it possible to lower the memory
+  usage compared to :py:func:`vmap`, because it will avoid simultaneous
+  materialization of intermediate values for every point in the batch.
+
+  Note that collectives over loop axes are not supported, so they are less
+  versatile than physical mesh axes.
+
+  Args:
+    name: Name of the loop in the resource environment.
+    length: Number of iterations.
+
+  Example::
+
+    with loop('l', 4):
+      out = xmap(
+        lambda x: jnp.sin(x) * 5,  # This will be called 4 times with different
+                                   # slices of x.
+        in_axes=['i'], out_axes=['i'],
+        axis_resources={'i': 'l'})(x)
+  """
+  old_env = getattr(thread_resources, "env", EMPTY_ENV)
+  thread_resources.env = old_env.with_extra_loop(Loop(name, length))
+  try:
+    yield
+  finally:
+    thread_resources.env = old_env
+
 
 @contextlib.contextmanager
 def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
@@ -149,8 +199,8 @@ def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
         out_axes=['left', 'right', ...],
         axis_resources={'left': 'x', 'right': 'y'})(x, x.T)
   """
-  old_env = getattr(thread_resources, "env", None)
-  thread_resources.env = ResourceEnv(Mesh(np.asarray(devices, dtype=object), axis_names))
+  old_env = getattr(thread_resources, "env", EMPTY_ENV)
+  thread_resources.env = old_env.with_mesh(Mesh(np.asarray(devices, dtype=object), axis_names))
   try:
     yield
   finally:
@@ -579,7 +629,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
-  f = plan.vectorize(f, in_axes, out_axes)
+  f = plan.vectorize_and_loop(f, in_axes, out_axes)
 
   used_resources = _jaxpr_resources(jaxpr, resource_env) | set(it.chain(*axis_resources.values()))
   used_mesh_axes = used_resources & resource_env.physical_resource_axes
@@ -606,6 +656,7 @@ class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
   resource_env: ResourceEnv
   physical_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
+  loop_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]
   axis_subst_dict: Dict[AxisName, Tuple[ResourceAxisName, ...]]
   axis_vmap_size: Dict[AxisName, Optional[int]]
 
@@ -628,8 +679,8 @@ class EvaluationPlan(NamedTuple):
                           axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]],
                           resource_env: ResourceEnv,
                           global_axis_sizes: Dict[AxisName, int]):
-    # TODO: Support sequential resources
-    physical_axis_resources = axis_resources  # NB: We only support physical resources at the moment
+    physical_axis_resources, loop_axis_resources = _unzip_axis_resources(
+            axis_resources, resource_env)
     axis_resource_count = _get_axis_resource_count(axis_resources, resource_env)
     axis_subst_dict = dict(axis_resources)
     axis_vmap_size: Dict[AxisName, Optional[int]] = {}
@@ -644,7 +695,9 @@ class EvaluationPlan(NamedTuple):
         axis_subst_dict[naxis] += (fresh_resource_name(naxis),)
       else:
         axis_vmap_size[naxis] = None
-    return cls(resource_env, physical_axis_resources, axis_subst_dict, axis_vmap_size)
+    return cls(resource_env,
+               physical_axis_resources, loop_axis_resources,
+               axis_subst_dict, axis_vmap_size)
 
   def subst_axes_with_resources(self, jaxpr):
     try:
@@ -653,7 +706,7 @@ class EvaluationPlan(NamedTuple):
     except core.DuplicateAxisNameError:
       raise AssertionError("Incomplete resource type-checking? Please open a bug report!")
 
-  def vectorize(self, f: lu.WrappedFun, in_axes, out_axes):
+  def vectorize_and_loop(self, f: lu.WrappedFun, in_axes, out_axes) -> lu.WrappedFun:
     vmap_axes = {
         naxis: raxes[-1]
         for naxis, raxes in self.axis_subst_dict.items()
@@ -664,36 +717,39 @@ class EvaluationPlan(NamedTuple):
       map_in_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), in_axes))
       map_out_axes = tuple(unsafe_map(lambda spec: spec.get(naxis, None), out_axes))
       f = batching.vtile(f, map_in_axes, map_out_axes, tile_size=local_tile_size, axis_name=vaxis)
-    return f
+
+    used_loops = set(it.chain.from_iterable(self.loop_axis_resources.values()))
+    if not used_loops:
+      return f
+
+    if len(used_loops) > 1:
+      # TODO: Support multiple loops
+      raise NotImplementedError("Only one loop per xmap is supported")
+    loop_in_axes = _to_resource_axes(in_axes, self.loop_axis_resources)
+    loop_out_axes = _to_resource_axes(out_axes, self.loop_axis_resources)
+    loop_name, = used_loops
+    loop_length = self.resource_env.shape[loop_name]
+    def looped_f(*args):
+      def body(i, _):
+        # XXX: This call_wrapped is only valid under the assumption that scan
+        #      only ever traces the body once (which it does at the moment).
+        result = f.call_wrapped(
+            *(_slice_tile(arg, spec.get(loop_name, None), i, loop_length)
+              for arg, spec in zip(args, loop_in_axes)))
+        return i + 1, result
+      _, stacked_results = lax.scan(body, 0, (), length=loop_length)
+      return [_merge_leading_axis(sresult, spec.get(loop_name, None))
+              for sresult, spec in zip(stacked_results, loop_out_axes)]
+    return lu.wrap_init(looped_f)
 
   def to_mesh_axes(self, in_axes, out_axes):
     """
     Convert in/out_axes parameters ranging over logical dimensions to
     in/out_axes that range over the mesh dimensions.
     """
-    def to_mesh(axes):
-      return OrderedDict((physical_axis, pos_axis)
-                         for logical_axis, pos_axis in axes.items()
-                         for physical_axis in self.physical_axis_resources[logical_axis])
-    return (tuple(unsafe_map(to_mesh, in_axes)),
-            tuple(unsafe_map(to_mesh, out_axes)))
+    return (_to_resource_axes(in_axes, self.physical_axis_resources),
+            _to_resource_axes(out_axes, self.physical_axis_resources))
 
-def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
-                                 out_axes: Sequence[AxisNamePos],
-                                 global_axis_sizes: Dict[AxisName, int]):
-  defined_axes = set(global_axis_sizes)
-  for aval, axes in zip(out_avals, out_axes):
-    if not isinstance(aval, core.ShapedArray):
-      if axes:
-        raise AssertionError(f"Only array abstract values can have non-empty "
-                             f"out_axes, but {aval} has {axes}")
-      continue
-    undeclared_axes = (set(aval.named_shape) - set(axes)) & defined_axes
-    if undeclared_axes:
-      undeclared_axes_str = sorted([str(axis) for axis in undeclared_axes])
-      raise TypeError(f"One of xmap results has an out_axes specification of "
-                      f"{axes.user_repr}, but is actually mapped along more axes "
-                      f"defined by this xmap call: {', '.join(undeclared_axes_str)}")
 
 # -------- xmap primitive and its transforms --------
 
@@ -997,7 +1053,7 @@ def _xmap_translation_rule_replica(c, axis_env,
   resource_call_jaxpr = plan.subst_axes_with_resources(call_jaxpr)
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
-  f = plan.vectorize(f, in_axes, out_axes)
+  f = plan.vectorize_and_loop(f, in_axes, out_axes)
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
@@ -1095,7 +1151,7 @@ def _xmap_translation_rule_spmd(c, axis_env,
   resource_call_jaxpr = plan.subst_axes_with_resources(call_jaxpr)
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(resource_call_jaxpr, ())))
   f = hide_mapped_axes(f, in_axes, out_axes)
-  f = plan.vectorize(f, in_axes, out_axes)
+  f = plan.vectorize_and_loop(f, in_axes, out_axes)
   mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
   mesh = resource_env.physical_mesh
   f = pxla.vtile_by_mesh(f, mesh, mesh_in_axes, mesh_out_axes)
@@ -1180,7 +1236,7 @@ class ResourceCount(namedtuple('ResourceCount', ['nglobal', 'nlocal'])):
     return self.nglobal != self.nlocal
 
 
-def _get_axis_resource_count(axis_resources, resource_env) -> Dict[AxisName, ResourceCount]:
+def _get_axis_resource_count(axis_resources, resource_env) -> Dict[ResourceAxisName, ResourceCount]:
   global_res_shape = resource_env.shape
   local_res_shape = resource_env.local_shape
   return {axis: ResourceCount(int(np.prod(map(global_res_shape.get, resources), dtype=np.int64)),
@@ -1270,6 +1326,81 @@ def _jaxpr_resources(jaxpr: core.Jaxpr, resource_env) -> Set[ResourceAxisName]:
     for update in updates:
       used_resources |= update
   return used_resources
+
+
+def _to_resource_axes(axes_specs: Sequence[AxisNamePos],
+                      axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]]):
+  """
+  Convert in/out_axes parameters ranging over logical dimensions to
+  ones that range over resource dimensions.
+
+  Note that values no longer have to be distinct, as multiple resource
+  axes can tile a single positional axes. This is why the result is
+  an OrderedDict with an implicit major-to-minor ordering.
+  """
+  return tuple(OrderedDict((resource_axis, pos_axis)
+                           for logical_axis, pos_axis in axes.items()
+                           for resource_axis in axis_resources[logical_axis])
+               for axes in axes_specs)
+
+
+def _merge_leading_axis(x, axis: Optional[int]):
+  if axis is None:
+    # We assume that the output does not vary along the leading axis
+    return lax.index_in_dim(x, 0, axis=0, keepdims=False)
+  else:
+    x_moved = moveaxis(x, 0, axis)
+    shape = list(x_moved.shape)
+    shape[axis:axis + 2] = [shape[axis] * shape[axis + 1]]
+    return x_moved.reshape(shape)
+
+
+def _slice_tile(x, dim: Optional[int], i, n: int):
+  """Selects an `i`th (out of `n`) tiles of `x` along `dim`."""
+  if dim is None: return x
+  (tile_size, rem) = divmod(x.shape[dim], n)
+  assert rem == 0, "Please open a bug report!"
+  return lax.dynamic_slice_in_dim(x, i * tile_size, slice_size=tile_size, axis=dim)
+
+
+def _unzip_axis_resources(axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]],
+                          resource_env: ResourceEnv):
+  """Splits axis_resources into separate dicts for physical and loop resources."""
+  physical_axis_resources = {}
+  loop_axis_resources = {}
+  loop_resource_axes = resource_env.loop_resource_axes
+  for axis, raxes in axis_resources.items():
+    first_loop = 0
+    for raxis in raxes:
+      if raxis in loop_resource_axes:
+        break
+      else:
+        first_loop += 1
+    physical_axis_resources[axis] = raxes[:first_loop]
+    loop_resources = loop_axis_resources[axis] = raxes[first_loop:]
+    if not all(name in loop_resource_axes for name in loop_resources):
+      raise NotImplementedError("Loop resources cannot appear before mesh axes "
+                                "in the resource_axis argument")
+  return physical_axis_resources, loop_axis_resources
+
+
+def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
+                                 out_axes: Sequence[AxisNamePos],
+                                 global_axis_sizes: Dict[AxisName, int]):
+  defined_axes = set(global_axis_sizes)
+  for aval, axes in zip(out_avals, out_axes):
+    if not isinstance(aval, core.ShapedArray):
+      if axes:
+        raise AssertionError(f"Only array abstract values can have non-empty "
+                             f"out_axes, but {aval} has {axes}")
+      continue
+    undeclared_axes = (set(aval.named_shape) - set(axes)) & defined_axes
+    if undeclared_axes:
+      undeclared_axes_str = sorted([str(axis) for axis in undeclared_axes])
+      raise TypeError(f"One of xmap results has an out_axes specification of "
+                      f"{axes.user_repr}, but is actually mapped along more axes "
+                      f"defined by this xmap call: {', '.join(undeclared_axes_str)}")
+
 
 # -------- soft_pmap --------
 
