@@ -1225,6 +1225,18 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       fm(x)
 
+  @loop('l', 2)
+  def testLoopCollectives(self):
+    fm = xmap(lambda x: lax.psum(x, 'i'),
+              in_axes=['i'], out_axes=[],
+              axis_resources={'i': 'l'})
+    x = np.arange(16)
+    error = (r"Named axes with loop resources assigned to them cannot be "
+             r"referenced inside the xmapped computation \(e.g. in "
+             r"collectives\), but `i` violates that rule")
+    with self.assertRaisesRegex(RuntimeError, error):
+      fm(x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
