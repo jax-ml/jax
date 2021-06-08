@@ -78,15 +78,8 @@ for the design and its motivation.
 
 # flake8: noqa: F401
 
-from jax._src.prng import (
-  PRNGKey,
-  fold_in,
-  split,
-  threefry2x32_p,
-  threefry_2x32,
-)
-
 from jax._src.random import (
+  PRNGKey,
   bernoulli,
   beta,
   categorical,
@@ -95,6 +88,7 @@ from jax._src.random import (
   dirichlet,
   double_sided_maxwell,
   exponential,
+  fold_in,
   gamma,
   gumbel,
   laplace,
@@ -109,6 +103,7 @@ from jax._src.random import (
   randint,
   random_gamma_p,
   shuffle,
+  split,
   t,
   truncated_normal,
   uniform,

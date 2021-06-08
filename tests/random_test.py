@@ -30,6 +30,7 @@ from jax import dtypes
 from jax import grad
 from jax import lax
 from jax import numpy as jnp
+from jax import prng
 from jax import random
 from jax import test_util as jtu
 from jax import vmap
@@ -105,23 +106,23 @@ class LaxRandomTest(jtu.JaxTestCase):
       return tuple([hex(x.copy()).rstrip("L") for x in result])
 
     expected = ("0x6b200159", "0x99ba4efe")
-    result = random.threefry_2x32(np.uint32([0, 0]), np.uint32([0, 0]))
+    result = prng.threefry_2x32(np.uint32([0, 0]), np.uint32([0, 0]))
 
     self.assertEqual(expected, result_to_hex(result))
 
     expected = ("0x1cb996fc", "0xbb002be7")
-    result = random.threefry_2x32(np.uint32([-1, -1]), np.uint32([-1, -1]))
+    result = prng.threefry_2x32(np.uint32([-1, -1]), np.uint32([-1, -1]))
     self.assertEqual(expected, result_to_hex(result))
 
     expected = ("0xc4923a9c", "0x483df7a0")
-    result = random.threefry_2x32(
+    result = prng.threefry_2x32(
         np.uint32([0x13198a2e, 0x03707344]),
         np.uint32([0x243f6a88, 0x85a308d3]))
     self.assertEqual(expected, result_to_hex(result))
 
   def testThreefry2x32Large(self):
     n = 10000000
-    result = random.threefry_2x32(
+    result = prng.threefry_2x32(
       (np.uint32(0x13198a2e), np.uint32(0x03707344)),
       jnp.concatenate([
         jnp.full((n,), 0x243f6a88, jnp.uint32),
@@ -133,7 +134,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testThreefry2x32Empty(self):
     # Regression test for an op-by-op crash for empty arrays in CUDA mode.
     with api.disable_jit():
-      result = random.threefry_2x32(
+      result = prng.threefry_2x32(
         (np.uint32(0x13198a2e), np.uint32(0x03707344)),
         jnp.ones((10, 0,), jnp.uint32))
     np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
@@ -739,13 +740,13 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testFoldIn(self):
     key = random.PRNGKey(0)
-    keys = [random.fold_in(key, i) for i in range(10)]
+    keys = [random.fold_in(key, i).keys for i in range(10)]
     assert np.unique(np.ravel(keys)).shape == (20,)
 
   def testFoldInBig(self):
     key = random.PRNGKey(0)
     seeds = [2 ** 32 - 2, 2 ** 32 - 1]
-    keys = [random.fold_in(key, seed) for seed in seeds]
+    keys = [random.fold_in(key, seed).keys for seed in seeds]
     assert np.unique(np.ravel(keys)).shape == (4,)
 
   def testStaticShapeErrors(self):
@@ -783,7 +784,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     def fail(*args, **kwargs): assert False
     apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
     try:
-      _ = random.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
+      _ = prng.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
     finally:
       xla.apply_primitive = apply_primitive
 
@@ -805,14 +806,14 @@ class LaxRandomTest(jtu.JaxTestCase):
                        [6, 3, 4]], dtype='int32'))
 
     self.assertAllClose(
-        random.split(k, 4),
+        random.split(k, 4).keys,
         np.array([[2285895361, 1501764800],
                    [1518642379, 4090693311],
                    [ 433833334, 4221794875],
                    [ 839183663, 3740430601]], dtype='uint32'))
 
     self.assertAllClose(
-        random.fold_in(k, 4),
+        random.fold_in(k, 4).keys,
         np.array([2285895361,  433833334], dtype='uint32'))
 
   def testDtypeErrorMessage(self):
@@ -980,9 +981,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.skipTest("Expected failure: integer out of range for jit.")
     seed = type(seed)
     if jit:
-      actual = api.jit(random.PRNGKey)(seed)
+      actual = api.jit(random.PRNGKey)(seed).keys
     else:
-      actual = random.PRNGKey(seed)
+      actual = random.PRNGKey(seed).keys
     expected = jnp.array(key, dtype=jnp.uint32)
     self.assertArraysEqual(actual, expected)
 
@@ -997,7 +998,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.skipTest("Expected failure: Python int too large.")
     type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
     args_maker = lambda: [type(seed)]
-    self._CompileAndCheck(random.PRNGKey, args_maker)
+    make_prng = lambda seed: random.PRNGKey(seed).keys
+    self._CompileAndCheck(make_prng, args_maker)
 
   def test_prng_errors(self):
     seed = np.iinfo(np.int64).max + 1
@@ -1007,7 +1009,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       api.jit(random.PRNGKey)(seed)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
-    key = random.PRNGKey(1).block_until_ready()
+    key = random.PRNGKey(1).keys.block_until_ready()
     with jtu.count_device_put() as count:
       api.jit(random.split)(key)
     self.assertEqual(count[0], 1)  # 1 for the argument device_put

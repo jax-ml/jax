@@ -14,6 +14,8 @@
 
 
 from functools import partial
+from typing import Callable, Iterator, NamedTuple
+import warnings
 
 import numpy as np
 
@@ -27,47 +29,189 @@ from jax.lib import xla_client
 from jax.lib import cuda_prng
 from jax.interpreters import batching
 from jax.interpreters import xla
+from jax._src.pprint_util import pp, vcat
 from jax._src.util import prod
 
 
 UINT_DTYPES = {
     8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}  # type: ignore[has-type]
 
+# -- PRNG implementation interface --
 
-def PRNGKey(seed: int) -> jnp.ndarray:
-  """Create a pseudo-random number generator (PRNG) key given an integer seed.
+class PRNGImpl(NamedTuple):
+  """Specifies PRNG key shape and operations.
+
+  A PRNG implementation is determined by a key type ``K`` and a
+  collection of functions that operate on such keys. The key type
+  ``K`` is an array type with element type uint32 and shape specified
+  by ``key_shape``. The type signature of each operations is::
+
+    seed :: int[] -> K
+    fold_in :: K -> int[] -> K
+    split[n] :: K -> K[n]
+    random_bits[shape, bit_width] :: K -> uint<bit_width>[shape]
+
+  A PRNG implementation is adapted to an array-like object of keys
+  ``K`` by the ``PRNGKeyArray`` class, which should be created via the
+  ``seed_with_impl`` function.
+  """
+  key_shape: core.Shape
+  seed: Callable
+  split: Callable
+  random_bits: Callable
+  fold_in: Callable
+
+  def pprint(self):
+    return (pp(self.__class__.__name__) >> pp(':')) + vcat([
+        pp(k) >> pp(' = ') >> pp(v) for k, v in self._asdict().items()
+    ]).indent(2)
+
+
+# -- PRNG key arrays --
+
+def _is_prng_key_data(impl, keys: jnp.ndarray) -> bool:
+  ndim = len(impl.key_shape)
+  try:
+    return (keys.ndim >= 1 and
+            keys.shape[-ndim:] == impl.key_shape and
+            keys.dtype == np.uint32)
+  except AttributeError:
+    return False
+
+@tree_util.register_pytree_node_class
+class PRNGKeyArray:
+  """An array whose elements are PRNG keys.
+
+  This class lifts the definition of a PRNG, provided in the form of a
+  ``PRNGImpl``, into an array-like pytree class. Instances of this
+  class behave like an array whose base elements are keys, hiding the
+  fact that keys are typically arrays (of ``uint32`` dtype) themselves.
+
+  PRNGKeyArrays are also restricted relative to JAX arrays in that
+  they do not expose arithmetic operations. They instead expose
+  wrapper methods around the PRNG implementation functions (``split``,
+  ``random_bits``, ``fold_in``).
+  """
+
+  impl: PRNGImpl
+  keys: jnp.ndarray
+
+  def __init__(self, impl, key_data: jnp.ndarray):
+    # key_data might be a placeholder python `object` or `bool`
+    # instead of a jnp.ndarray due to tree_unflatten
+    if (type(key_data) not in [object, bool] and
+        not _is_prng_key_data(impl, key_data)):
+      raise TypeError(
+          f'Invalid PRNG key data {key_data} for PRNG implementation {impl}')
+    self.impl = impl
+    self.keys = key_data
+
+  def tree_flatten(self):
+    return (self.keys,), self.impl
+
+  @classmethod
+  def tree_unflatten(cls, impl, keys):
+    keys, = keys
+    return cls(impl, keys)
+
+  # TODO(frostig): Modify or remove after deprecation window. The
+  # change to consider is to return the leading shape, up to the
+  # individual key dimensions, i.e.:
+  #   base_ndim = len(self.impl.key_shape)
+  #   return self.keys.shape[:-base_ndim]
+  @property
+  def shape(self):
+    warnings.warn(
+        'deprecated `shape` attribute of PRNG key arrays. In a future version '
+        'of JAX this attribute will be removed or its value may change.')
+    return self.keys.shape
+
+  # TODO(frostig): remove after deprecation window
+  @property
+  def dtype(self):
+    warnings.warn('deprecated `dtype` attribute of PRNG key arrays')
+    return np.uint32
+
+  def __iter__(self) -> Iterator['PRNGKeyArray']:
+    base_ndim = len(self.impl.key_shape)
+    if self.keys.ndim == base_ndim:
+      raise TypeError('iteration over a 0-d single PRNG key')
+    return (PRNGKeyArray(self.impl, k) for k in iter(self.keys))
+
+  def __getitem__(self, idx) -> 'PRNGKeyArray':
+    if not isinstance(idx, tuple):
+      idx = (idx,)
+    if any(type(i) is not int for i in idx):
+      raise NotImplementedError(
+          'PRNGKeyArray only supports indexing with integer indices. '
+          f'Cannot index at {idx}')
+    base_ndim = len(self.impl.key_shape)
+    ndim = self.keys.ndim - base_ndim
+    if len(idx) > ndim:
+      raise IndexError(
+          f'too many indices for PRNGKeyArray: array is {ndim}-dimensional '
+          f'but {len(idx)} were indexed')
+    return PRNGKeyArray(self.impl, self.keys[idx])
+
+  def fold_in(self, data: int) -> 'PRNGKeyArray':
+    return PRNGKeyArray(self.impl, self.impl.fold_in(self.keys, data))
+
+  def random_bits(self, bit_width, shape) -> jnp.ndarray:
+    return self.impl.random_bits(self.keys, bit_width, shape)
+
+  def split(self, num: int) -> 'PRNGKeyArray':
+    return PRNGKeyArray(self.impl, self.impl.split(self.keys, num))
+
+  def __repr__(self):
+    base_ndim = len(self.impl.key_shape)
+    arr_shape = self.keys.shape[:-base_ndim]
+    pp_keys = pp('shape = ') >> pp(arr_shape)
+    pp_impl = pp('impl = ') >> self.impl.pprint()
+    return str(pp('PRNGKeyArray:') + (pp_keys + pp_impl).indent(2))
+
+
+def seed_with_impl(impl: PRNGImpl, seed: int) -> PRNGKeyArray:
+  return PRNGKeyArray(impl, impl.seed(seed))
+
+
+# -- threefry2x32 PRNG implementation --
+
+
+def _is_threefry_prng_key(key: jnp.ndarray) -> bool:
+  try:
+    return key.shape == (2,) and key.dtype == np.uint32
+  except AttributeError:
+    return False
+
+
+def threefry_seed(seed: int) -> jnp.ndarray:
+  """Create a single raw threefry PRNG key given an integer seed.
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
 
   Returns:
-    A PRNG key, which is modeled as an array of shape (2,) and dtype uint32. The
-    key is constructed from a 64-bit seed by effectively bit-casting to a pair
-    of uint32 values (or from a 32-bit seed by first padding out with zeros).
+    The PRNG key contents, modeled as an array of shape (2,) and dtype
+    uint32. The key is constructed from a 64-bit seed by effectively
+    bit-casting to a pair of uint32 values (or from a 32-bit seed by
+    first padding out with zeros).
   """
   # Avoid overflowerror in X32 mode by first converting ints to int64.
-  # This breaks JIT invariance of PRNGKey for large ints, but supports the
-  # common use-case of instantiating PRNGKey with Python hashes in X32 mode.
+  # This breaks JIT invariance for large ints, but supports the common
+  # use-case of instantiating with Python hashes in X32 mode.
   if isinstance(seed, int):
     seed_arr = jnp.asarray(np.int64(seed))
   else:
     seed_arr = jnp.asarray(seed)
   if seed_arr.shape:
-    raise TypeError(f"PRNGKey seed must be a scalar; got {seed!r}.")
+    raise TypeError(f"PRNG key seed must be a scalar; got {seed!r}.")
   if not np.issubdtype(seed_arr.dtype, np.integer):
-    raise TypeError(f"PRNGKey seed must be an integer; got {seed!r}")
+    raise TypeError(f"PRNG key seed must be an integer; got {seed!r}")
 
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
   k1 = convert(lax.shift_right_logical(seed_arr, lax._const(seed_arr, 32)))
   k2 = convert(jnp.bitwise_and(seed_arr, np.uint32(0xFFFFFFFF)))
   return lax.concatenate([k1, k2], 0)
-
-
-def _is_prng_key(key: jnp.ndarray) -> bool:
-  try:
-    return key.shape == (2,) and key.dtype == np.uint32
-  except AttributeError:
-    return False
 
 
 def _make_rotate_left(dtype):
@@ -245,49 +389,27 @@ def threefry_2x32(keypair, count):
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
 
 
-def split(key: jnp.ndarray, num: int = 2) -> jnp.ndarray:
-  """Splits a PRNG key into `num` new keys by adding a leading axis.
-
-  Args:
-    key: a PRNGKey (an array with shape (2,) and dtype uint32).
-    num: optional, a positive integer indicating the number of keys to produce
-      (default 2).
-
-  Returns:
-    An array with shape (num, 2) and dtype uint32 representing `num` new keys.
-  """
-  return _split(key, int(num))  # type: ignore
-
+def threefry_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
+  return _threefry_split(key, int(num))  # type: ignore
 
 @partial(jit, static_argnums=(1,))
-def _split(key, num) -> jnp.ndarray:
+def _threefry_split(key, num) -> jnp.ndarray:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
 
-def fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
-  """Folds in data to a PRNG key to form a new PRNG key.
-
-  Args:
-    key: a PRNGKey (an array with shape (2,) and dtype uint32).
-    data: a 32bit integer representing data to be folded in to the key.
-
-  Returns:
-    A new PRNGKey that is a deterministic function of the inputs and is
-    statistically safe for producing a stream of new pseudo-random values.
-  """
-  return _fold_in(key, jnp.uint32(data))
-
+def threefry_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
+  return _threefry_fold_in(key, jnp.uint32(data))
 
 @jit
-def _fold_in(key, data):
-  return threefry_2x32(key, PRNGKey(data))
+def _threefry_fold_in(key, data):
+  return threefry_2x32(key, threefry_seed(data))
 
 
 @partial(jit, static_argnums=(1, 2))
-def _random_bits(key, bit_width, shape):
+def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
-  if not _is_prng_key(key):
+  if not _is_threefry_prng_key(key):
     raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
@@ -298,7 +420,7 @@ def _random_bits(key, bit_width, shape):
       raise ValueError(f"The shape of axis {name} was specified as {size}, "
                        f"but it really is {real_size}")
     axis_index = lax.axis_index(name)
-    key = fold_in(key, axis_index)
+    key = threefry_fold_in(key, axis_index)
   size = prod(shape.positional)
   # Compute ceil(bit_width * size / 32) in a way that is friendly to shape
   # polymorphism
@@ -314,7 +436,7 @@ def _random_bits(key, bit_width, shape):
   if not nblocks:
     bits = threefry_2x32(key, lax.iota(np.uint32, rem))
   else:
-    keys = split(key, nblocks + 1)
+    keys = threefry_split(key, nblocks + 1)
     subkeys, last_key = keys[:-1], keys[-1]
     blocks = vmap(threefry_2x32, in_axes=(0, None))(subkeys, lax.iota(np.uint32, jnp.iinfo(np.uint32).max))
     last = threefry_2x32(last_key, lax.iota(np.uint32, rem))
@@ -339,3 +461,11 @@ def _random_bits(key, bit_width, shape):
     bits = lax.reshape(bits, (np.uint32(max_count * 32 // bit_width),), (1, 0))
     bits = lax.convert_element_type(bits, dtype)[:size]
   return lax.reshape(bits, shape)
+
+
+threefry_prng_impl = PRNGImpl(
+    key_shape=(2,),
+    seed=threefry_seed,
+    split=threefry_split,
+    random_bits=threefry_random_bits,
+    fold_in=threefry_fold_in)
