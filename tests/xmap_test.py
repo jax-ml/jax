@@ -39,7 +39,7 @@ from jax import lax
 from jax import core
 from jax.core import NamedShape, JaxprTypeError
 from jax.experimental import maps
-from jax.experimental.maps import Mesh, mesh, xmap, loop
+from jax.experimental.maps import Mesh, mesh, xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
 from jax.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
@@ -548,7 +548,7 @@ class XMapTest(XMapTestCase):
     g = xmap(f, in_axes={}, out_axes=['j', ...], axis_sizes={'j': 7})
     self.assertAllClose(g(x), jnp.tile(x.reshape((1, 1)), (7, 4)))
 
-  @loop('l', 4)
+  @serial_loop('l', 4)
   def testLoopBasic(self):
     x = jnp.arange(16)
     y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
@@ -556,11 +556,24 @@ class XMapTest(XMapTestCase):
     self.assertAllClose(y, x + 4)
 
   @jtu.with_mesh([('x', 2)])
-  @loop('l', 4)
+  @serial_loop('l', 4)
   def testLoopWithMesh(self):
     x = jnp.arange(16)
     y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
               axis_resources={'i': ('x', 'l')})(x)
+    self.assertAllClose(y, x + 4)
+
+  def testLoopAnonBasic(self):
+    x = jnp.arange(16)
+    y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
+              axis_resources={'i': SerialLoop(4)})(x)
+    self.assertAllClose(y, x + 4)
+
+  @jtu.with_mesh([('x', 2)])
+  def testLoopAnonWithMesh(self):
+    x = jnp.arange(16)
+    y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
+              axis_resources={'i': ('x', SerialLoop(4))})(x)
     self.assertAllClose(y, x + 4)
 
 
@@ -1069,7 +1082,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     xshape = (2, 5, 6)
     x = jnp.arange(np.prod(xshape)).reshape(xshape)
     with self.assertRaisesRegex(RuntimeError,
-                                "Changing the resource environment.*"):
+                                "Changing the physical mesh is not allowed.*"):
       f(x)
 
   def testEmptyArgumentTrees(self):
@@ -1213,7 +1226,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       h(x)
 
-  @loop('l', 2)
+  @serial_loop('l', 2)
   def testResourceConflictArgsLoop(self):
     fm = xmap(lambda x: x,
               in_axes=['a', 'b'], out_axes=['a', 'b'],
@@ -1225,7 +1238,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       fm(x)
 
-  @loop('l', 2)
+  @serial_loop('l', 2)
   def testLoopCollectives(self):
     fm = xmap(lambda x: lax.psum(x, 'i'),
               in_axes=['i'], out_axes=[],
