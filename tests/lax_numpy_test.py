@@ -970,6 +970,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.skipTest("np.argwhere() result for scalar input changed in numpy 1.18.")
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
+    # JIT compilation requires specifying a size statically. Full test of this
+    # behavior is in testNonzeroSize().
+    jnp_fun = lambda x: jnp.argwhere(x, size=np.size(x) // 2)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_axis={}".format(
           rec.test_name.capitalize(),
