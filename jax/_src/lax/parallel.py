@@ -543,7 +543,7 @@ def pgather(src, idx, axes: Union[int, AxisName]):
 ### parallel primitives
 
 def _subst_all_names_in_param(
-    pname: str, params: core.ParamDict, subst: core.AxisSubst) -> core.ParamDict:
+    pname: str, params: core.ParamDict, subst: core.AxisSubst, traverse: bool) -> core.ParamDict:
   axis_name = params[pname]
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)

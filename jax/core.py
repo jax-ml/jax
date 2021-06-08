@@ -1693,9 +1693,11 @@ def used_axis_names(primitive: Primitive, params: ParamDict) -> Set[AxisName]:
   subst_axis_names(primitive, params, register_name)
   return axis_names
 
-def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst) -> ParamDict:
+def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst, traverse: bool = True) -> ParamDict:
   if primitive in axis_substitution_rules:
-    return axis_substitution_rules[primitive](params, subst)
+    return axis_substitution_rules[primitive](params, subst, traverse)
+  if not traverse:
+    return params
   # Default implementation: substitute names in all jaxpr parameters
   if isinstance(primitive, MapPrimitive):
     def shadowed_subst(name):
@@ -1756,7 +1758,7 @@ def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
     return ClosedJaxpr(new_jaxpr, consts)
   return new_jaxpr
 
-axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst], ParamDict]] = {}
+axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst, bool], ParamDict]] = {}
 
 # ------------------- AxisPrimitive -------------------
 # Primitives that store axis names in params and want those axis names to

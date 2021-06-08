@@ -701,6 +701,8 @@ class EvaluationPlan(NamedTuple):
 
   def subst_axes_with_resources(self, jaxpr):
     try:
+      if any(self.loop_axis_resources.values()):
+        _check_no_loop_collectives(jaxpr, self.loop_axis_resources)
       with core.extend_axis_env_nd(self.resource_axis_env.items()):
         return core.subst_axis_names_jaxpr(jaxpr, self.axis_subst)
     except core.DuplicateAxisNameError:
@@ -776,8 +778,10 @@ def _process_xmap_default(self, call_primitive, f, tracers, params):
   raise NotImplementedError(f"{type(self)} must override process_xmap to handle xmap")
 core.Trace.process_xmap = _process_xmap_default  # type: ignore
 
-def _xmap_axis_subst(params, subst):
+def _xmap_axis_subst(params, subst, traverse):
   if 'call_jaxpr' not in params:  # TODO(apaszke): This feels sketchy, but I'm not sure why
+    return params
+  if not traverse:
     return params
   def shadowed_subst(name):
     return (name,) if name in params['global_axis_sizes'] else subst(name)
@@ -1401,6 +1405,20 @@ def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
                       f"{axes.user_repr}, but is actually mapped along more axes "
                       f"defined by this xmap call: {', '.join(undeclared_axes_str)}")
 
+
+# TODO: We should relax this at least for "constructor primitives"
+#       such as axis_index or zeros.
+def _check_no_loop_collectives(jaxpr, loop_axis_resources):
+  def subst_no_loop(name):
+    if loop_axis_resources.get(name, ()):
+      raise RuntimeError(f"Named axes with loop resources assigned to them cannot "
+                          f"be referenced inside the xmapped computation (e.g. in "
+                          f"collectives), but `{name}` violates that rule")
+    return (name,)
+  for eqn in jaxpr.eqns:
+    core.subst_axis_names(eqn.primitive, eqn.params, subst_no_loop, traverse=False)
+    rec = partial(_check_no_loop_collectives, loop_axis_resources=loop_axis_resources)
+    core.traverse_jaxpr_params(rec, eqn.params)
 
 # -------- soft_pmap --------
 
