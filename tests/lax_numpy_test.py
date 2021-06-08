@@ -4221,6 +4221,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
+    # JIT compilation requires specifying a size statically. Full test of
+    # this behavior is in testNonzeroSize().
+    jnp_fun = lambda x: jnp.where(x, size=np.size(x) // 2)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "_{}".format("_".join(
         jtu.format_shape_dtype_string(shape, dtype)
