@@ -1704,14 +1704,19 @@ _WHERE_DOC = """\
 At present, JAX does not support JIT-compilation of the single-argument form
 of :py:func:`jax.numpy.where` because its output shape is data-dependent. The
 three-argument form does not have a data-dependent shape and can be JIT-compiled
-successfully.
+successfully. Alternatively, you can specify the optional ``size`` keyword:
+if specified, the first ``size`` True elements will be returned; if there
+are fewer True elements than ``size`` indicates, the index arrays will be
+padded with zeros.
 """
 
 @_wraps(np.where, update_doc=False, lax_description=_WHERE_DOC)
-def where(condition, x=None, y=None):
+def where(condition, x=None, y=None, *, size=None):
   if x is None and y is None:
-    return nonzero(asarray(condition))
+    return nonzero(asarray(condition), size=size)
   else:
+    if size is not None:
+      raise ValueError("size argument cannot be used in three-term where function.")
     return _where(condition, x, y)
 
 
