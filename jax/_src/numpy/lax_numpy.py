@@ -4467,10 +4467,18 @@ def vander(x, N=None, increasing=False):
 
 ### Misc
 
+_ARGWHERE_DOC = """\
+Because the size of the output of ``argwhere`` is data-dependent, the function is not
+typically compatible with JIT. The JAX version adds the optional ``size`` argument, which
+specifies the size of the leading dimension of the output - it must be specified statically
+for ``jnp.argwhere`` to be traced. If ``size`` is specified, the indices of the first ``size``
+True elements will be returned; if there are fewer nonzero elements than `size` indicates,
+the index arrays will be zero-padded.
+"""
 
-@_wraps(np.argwhere)
-def argwhere(a):
-  result = transpose(vstack(nonzero(a)))
+@_wraps(np.argwhere, lax_description=_ARGWHERE_DOC)
+def argwhere(a, *, size=None):
+  result = transpose(vstack(nonzero(a, size=size)))
   if ndim(a) == 0:
     return result[:0].reshape(result.shape[0], 0)
   return result.reshape(result.shape[0], ndim(a))
