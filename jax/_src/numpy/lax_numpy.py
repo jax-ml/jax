@@ -2306,9 +2306,9 @@ def nonzero(a, *, size=None):
   strides = np.cumprod(a.shape[::-1])[::-1] // a.shape
   return tuple((flat_indices // stride) % size for stride, size in zip(strides, a.shape))
 
-@_wraps(np.flatnonzero)
-def flatnonzero(a):
-  return nonzero(ravel(a))[0]
+@_wraps(np.flatnonzero, lax_description=_NONZERO_DOC)
+def flatnonzero(a, *, size=None):
+  return nonzero(ravel(a), size=size)[0]
 
 
 def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
