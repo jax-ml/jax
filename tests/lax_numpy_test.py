@@ -2161,6 +2161,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_size={}".format(
+         jtu.format_shape_dtype_string(shape, dtype), size),
+       "shape": shape, "dtype": dtype, "size": size}
+      for dtype in number_dtypes
+      for size in [1, 5, 10]
+      for shape in nonempty_array_shapes))
+  def testUniqueSize(self, shape, dtype, size):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    kwds = dict(return_index=True, return_inverse=True, return_counts=True)
+
+    def np_fun(x):
+      u, ind, inv, counts = jnp.unique(x, **kwds)
+      if size <= len(u):
+        u, ind, counts = u[:size], ind[:size], counts[:size]
+      else:
+        extra = size - len(u)
+        u = np.concatenate([u, np.full(extra, u[0], u.dtype)])
+        ind = np.concatenate([ind, np.full(extra, ind[0], ind.dtype)])
+        counts = np.concatenate([counts, np.zeros(extra, counts.dtype)])
+      return u, ind, inv, counts
+
+    jnp_fun = lambda x: jnp.unique(x, size=size, **kwds)
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fixed_size={}".format(fixed_size),
       "fixed_size": fixed_size}
       for fixed_size in [True, False]))
