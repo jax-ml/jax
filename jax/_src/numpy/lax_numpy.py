@@ -1589,13 +1589,25 @@ def setdiff1d(ar1, ar2, assume_unique=False):
   return ar1[idx]
 
 
-@_wraps(np.union1d)
-def union1d(ar1, ar2):
-  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in union1d()")
-  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in union1d()")
+_UNION1D_DOC = """\
+Because the size of the output of ``union1d`` is data-dependent, the function is not
+typically compatible with JIT. The JAX version adds the optional `size` argument which
+specifies the size of the output array: it must be specified statically for ``jnp.union1d``
+to be traced. If specified, the first `size` unique elements will be returned; if there are
+fewer unique elements than `size` indicates, the return value will be padded with
+the minimum value of the union."""
 
-  conc = concatenate((ar1, ar2), axis=None)
-  return unique(conc)
+@_wraps(np.union1d, lax_description=_UNION1D_DOC)
+def union1d(ar1, ar2, *, size=None):
+  # TODO(jakevdp): call _check_arraylike on inputs
+  ar1 = asarray(ar1)
+  ar2 = asarray(ar2)
+  if size is None:
+    ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
+    ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
+  else:
+    size = core.concrete_or_error(operator.index, size, "The error arose in union1d()")
+  return unique(concatenate((ar1, ar2), axis=None), size=size)
 
 
 @_wraps(np.setxor1d, lax_description="""

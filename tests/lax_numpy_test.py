@@ -1272,6 +1272,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp.union1d, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_size={}".format(
+       jtu.format_shape_dtype_string(shape1, dtype1),
+       jtu.format_shape_dtype_string(shape2, dtype2), size),
+       "shape1": shape1, "shape2": shape2, "dtype1": dtype1, "dtype2": dtype2, "size": size}
+      for dtype1 in [s for s in default_dtypes if s != jnp.bfloat16]
+      for dtype2 in [s for s in default_dtypes if s != jnp.bfloat16]
+      for shape1 in nonempty_nonscalar_array_shapes
+      for shape2 in nonempty_nonscalar_array_shapes
+      for size in [1, 5, 10]))
+  def testUnion1dSize(self, shape1, shape2, dtype1, dtype2, size):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
+    def np_fun(arg1, arg2):
+      dtype = jnp.promote_types(arg1.dtype, arg2.dtype)
+      result = np.union1d(arg1, arg2).astype(dtype)
+      if size <= len(result):
+        return result[:size]
+      else:
+        return np.concatenate([result, np.full(size - len(result), result[0], result.dtype)])
+    def jnp_fun(arg1, arg2):
+      return jnp.union1d(arg1, arg2, size=size)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_assume_unique={}".format(
        jtu.format_shape_dtype_string(shape1, dtype1),
        jtu.format_shape_dtype_string(shape2, dtype2),
