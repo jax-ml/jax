@@ -47,8 +47,8 @@ from jax._src.abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
 from .._src import source_info_util
 from .._src.util import (partial, unzip3, prod, safe_map, safe_zip,
-                         extend_name_stack, wrap_name, assert_unreachable,
-                         tuple_insert, tuple_delete, distributed_debug_log)
+                         assert_unreachable, tuple_insert, tuple_delete,
+                         distributed_debug_log)
 from ..errors import JAXTypeError
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
@@ -791,7 +791,7 @@ def parallel_callable(fun: lu.WrappedFun,
                                                     donated_invars=donated_invars)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend_name, axis_env, xla_consts,
-                                  extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
+                                  xla.NameStack.init(xla_pmap_p, name), *xla_args)
   build_out_tuple = partial(xops.Tuple, c, out_nodes)
   if out_parts is not None:
     out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
@@ -1188,7 +1188,7 @@ def _pmap_translation_rule(c, axis_env,
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     sharded_outs = xla.jaxpr_subcomp(
         c, call_jaxpr, backend, new_env, (),
-        extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
+        name_stack.extend(xla_pmap_p, name), *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_xla_unshard(c, aval, new_env, out_axis, shard, backend=backend)
           for aval, out_axis, shard in safe_zip(out_avals, out_axes, sharded_outs)]
@@ -1415,6 +1415,7 @@ def vtile_by_mesh(fun: lu.WrappedFun,
   return fun
 
 def mesh_callable(fun: lu.WrappedFun,
+                  primitive: core.Primitive,
                   transformed_name: str,
                   backend_name: Optional[str],
                   mesh: Mesh,
@@ -1499,7 +1500,7 @@ def mesh_callable(fun: lu.WrappedFun,
   with core.extend_axis_env_nd(mesh.shape.items()):
     out_nodes = xla.jaxpr_subcomp(
         c, jaxpr, backend_name, axis_env, xla_consts,
-        extend_name_stack(wrap_name(transformed_name, 'xmap')), *xla_args)
+        xla.NameStack.init(primitive, transformed_name), *xla_args)
   backend = xb.get_backend(backend_name)
   if spmd_lowering:
     out_partitions_t = xb.tuple_sharding_proto(out_partitions)

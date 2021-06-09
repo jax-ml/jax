@@ -29,8 +29,7 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index_tuple
 from ..tree_util import tree_flatten, tree_unflatten
-from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
-                         HashableFunction)
+from .._src.util import wraps, safe_zip, HashableFunction
 from .._src.config import config
 
 xops = xc._xla.ops
@@ -141,7 +140,7 @@ def _sharded_callable(
   axis_env = xla.AxisEnv(nrep, (), ())
   out_nodes = xla.jaxpr_subcomp(
       c, jaxpr, None, axis_env, xla_consts,
-      extend_name_stack(wrap_name(name, "sharded_jit")), *xla_args)
+      xla.NameStack.init(sharded_call_p, name), *xla_args)
   out_tuple = xb.with_sharding(c, out_parts, xops.Tuple, c, out_nodes)
   built = c.Build(out_tuple)
 
@@ -193,7 +192,7 @@ def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
 
   out_nodes = xla.jaxpr_subcomp(
       subc, call_jaxpr, backend, axis_env, (),
-      extend_name_stack(name_stack, wrap_name(name, "sharded_jit")), *args)
+      name_stack.extend(sharded_call_p, name), *args)
   out_parts = out_parts_thunk()
   assert len(out_parts) == len(out_nodes)
   out_nodes = [xb.set_sharding(subc, out, sharding)

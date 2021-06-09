@@ -38,7 +38,7 @@ from ..interpreters import partial_eval as pe
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_unflatten
-from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
+from .._src.util import (HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
                          split_list, cache, tuple_insert)
 xops = xc._xla.ops
@@ -407,7 +407,7 @@ def pjit_callable(
   local_in_avals = global_to_local(resource_env.physical_mesh,
                                    jaxpr.in_avals, in_axis_resources)
   # TODO(skye): allow for using a submesh of physical_mesh
-  return pxla.mesh_callable(fun, name, None, resource_env.physical_mesh,
+  return pxla.mesh_callable(fun, pjit_p, name, None, resource_env.physical_mesh,
                             in_axes, out_axes, donated_invars,
                             True, *local_in_avals, tile_by_mesh_axes=False,
                             do_resource_typecheck="pjit")
@@ -437,7 +437,7 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
   # TODO: Think about how to avoid duplicating constants with the outer jaxpr
   out_nodes = xla.jaxpr_subcomp(
       subc, jaxpr.jaxpr, backend, axis_env, xla._xla_consts(subc, jaxpr.consts),
-      extend_name_stack(name_stack, wrap_name(name, "pjit")), *args)
+      name_stack.extend(pjit_p, name), *args)
   out_nodes = [
       xb.set_sharding_proto(subc, out,
                             get_sharding_proto(subc, out, axis_resources, mesh))

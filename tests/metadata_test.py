@@ -82,9 +82,9 @@ class MetadataTest(jtu.JaxTestCase):
     self.assertRegex(hlo, 'op_type="cond"')
     self.assertRegex(hlo, 'op_name=".*cond\\[ linear=\\(False, False\\) \\]"')
     self.assertRegex(hlo, 'op_type="cos"')
-    self.assertRegex(hlo, 'op_name=".*cond/branch_0_fun/cos"')
+    self.assertRegex(hlo, 'op_name=".*cond\\(branch_0_fun\\)/cos"')
     self.assertRegex(hlo, 'op_type="sin"')
-    self.assertRegex(hlo, 'op_name=".*cond/branch_1_fun/sin"')
+    self.assertRegex(hlo, 'op_name=".*cond\\(branch_1_fun\\)/sin"')
 
 
 if __name__ == "__main__":

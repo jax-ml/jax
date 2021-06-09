@@ -637,6 +637,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
     assert spmd_in_axes is None and spmd_out_axes_thunk is None  # No outer xmaps, so should be None
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
     return pxla.mesh_callable(f,
+                              xmap_p,
                               name,
                               backend,
                               resource_env.physical_mesh,
@@ -1076,7 +1077,7 @@ def _xmap_translation_rule_replica(c, axis_env,
   # translation rule just because the extra tuple stuff is a pain.
   tiled_outs = xla.jaxpr_subcomp(
       c, vectorized_jaxpr, backend, axis_env, (),
-      xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')), *tiled_ins)
+      name_stack.extend(xmap_p, name), *tiled_ins)
 
   outs = [_xla_untile(c, axis_env, tiled_out, ans_out_axes, local_mesh_shape, backend)
           if v.aval is not core.abstract_unit else tiled_out
@@ -1192,7 +1193,7 @@ def _xmap_translation_rule_spmd(c, axis_env,
   # translation rule just because the extra tuple stuff is a pain.
   global_out_nodes = xla.jaxpr_subcomp(
       c, vectorized_jaxpr, backend, axis_env, (),
-      xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')),
+      name_stack.extend(xmap_p, name),
       *sharded_global_in_nodes)
 
   sharded_global_out_nodes = [
