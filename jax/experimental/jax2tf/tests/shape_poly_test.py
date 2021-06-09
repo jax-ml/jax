@@ -904,12 +904,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4, 4), _f32), RandArg((3, 4), _f32)],
                   poly_axes=[0, 0]),
 
-    _make_harness("dynamic_slice", "",
-                  # x:shape: (b, 4)
-                  lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),
-                  [RandArg((3, 4), _f32)],
-                  poly_axes=[0]),
-
     _make_harness("dynamic_update_slice", "",
                   # x:shape: (b, 4)
                   lambda x: lax.dynamic_update_slice(x, x, (0, 0)),
@@ -1072,6 +1066,16 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   poly_axes=[0]),
 ]
 
+for enable_xla in [False, True]:
+  _POLY_SHAPE_TEST_HARNESSES.append(
+      _make_harness(f"dynamic_slice_enablexla={enable_xla}", "",
+                    # x:shape: (b, 4)
+                    lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),
+                    [RandArg((3, 4), _f32)],
+                    poly_axes=[0],
+                    enable_xla=enable_xla)
+ )
+
 for reduce_op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]:
   _POLY_SHAPE_TEST_HARNESSES.append(
       _make_harness("reduce", reduce_op.__name__,
@@ -1103,6 +1107,11 @@ def _add_vmap_primitive_harnesses():
       continue
     # And the jax2tf limitations that are known to result in TF error.
     if any(l.expect_tf_error for l in _get_jax2tf_limitations(device, h)):
+      continue
+    # TODO(marcvanzee): We currently exclude tests with enable_xla=False because
+    # this doesn't work with vmap due to a call to lax.gather. We should include
+    # them once vmap works with enable_xla=False.
+    if not h.params.get("enable_xla", True):
       continue
     harness_groups[h.group_name].append(h)
 
@@ -1226,11 +1235,13 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         input_signature.append(arg_tensorspec)
 
     res_jax = harness.dyn_fun(*args)
+    enable_xla = harness.params.get("enable_xla", True)
     f_tf = self.CheckShapePolymorphism(
         harness.dyn_fun,
         input_signature=input_signature,
         polymorphic_shapes=polymorphic_shapes,
-        expected_output_signature=None)
+        expected_output_signature=None,
+        enable_xla=enable_xla)
 
     if harness.params["check_result"]:
       tol = harness.params["tol"]

@@ -293,24 +293,26 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       return self.ConvertAndCompare(grad_func, t_arg)
     assert False, transform
 
-  # TODO(marcvanzee): Add flag enable_xla here so we can also test shape
-  # polymorphism for enable_xla=False.
+
   def CheckShapePolymorphism(self, f_jax: Callable, *,
                              input_signature: Sequence[tf.TensorSpec],
                              polymorphic_shapes: Optional[Sequence[Any]],
-                             expected_output_signature: tf.TensorSpec):
-    """Convert a function using polymorphic shapes.
+                             expected_output_signature: Optional[tf.TensorSpec] = None,
+                             enable_xla: bool = True):
+    """Converts a function using polymorphic shapes.
 
     Args:
       f_jax: a JAX function of `n` arguments
       input_signature: used as the input signature for the tf.function.
-      in_shapes: if given, it must be a sequence of `n` shape specifications and
-        must match the `input_signature`. (see jax2tf.convert).
+      polymorphic_shapes: Specifies input shapes to be treated polymorphically
+        during conversion.
+      expected_output_signature: if given, this function tests whether the
+        actual output signature is equal to this one.
+      enable_xla: Whether to enable XLA conversion for jax2tf.convert.
     """
-    f_tf = tf.function(
-        jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes),
-        autograph=False,
-        input_signature=input_signature)
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
+                             enable_xla=enable_xla)
+    f_tf = tf.function(f_tf, autograph=False, input_signature=input_signature)
     concrete_f_tf = f_tf.get_concrete_function(*input_signature)
     if expected_output_signature:
       # Strangely, output_shapes can be a single shape for a function with a

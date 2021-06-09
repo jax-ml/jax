@@ -2224,12 +2224,14 @@ def _dynamic_slice(operand, *start_indices, slice_sizes,
   #   returned.
   # The code below manually clips the start indices so that the behavior is
   # the same as `lax.dynamic_slice_p`.
-
-  # clip_by_value fails if `start_indices` and `max_start` aren't of the same
-  # dtype. By explicitly casting to the right dtype here this doesn't happen.
   operand_shape = _eval_shape(_in_avals[0].shape)
-  shape = tf.constant(operand_shape, dtype=start_indices.dtype)
-  max_start = tf.subtract(shape, slice_sizes)
+  max_start = tf.subtract(operand_shape, slice_sizes)
+  # If `operand_shape` and `slice_sizes` are Python tuples of integers,
+  # `tf.subtract` returns a Tensor of dtype tf.int32, which may conflict with
+  # the dtype of `start_indices` if we run in x64 mode and throw an error when
+  # calling `tf.clip_by_vaue`. Therefore we cast to the right dtype here
+  # explicitly.
+  max_start = tf.cast(max_start, dtype=start_indices.dtype)
   start_indices = tf.clip_by_value(start_indices, 0, max_start)
   return tf.slice(operand, start_indices, size=slice_sizes)
 
