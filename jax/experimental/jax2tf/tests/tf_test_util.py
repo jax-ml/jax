@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import contextlib
+import dataclasses
 import logging
 
 from typing import Any, Callable, List, Optional, Sequence
@@ -30,6 +31,7 @@ from jax.interpreters import masking
 from jax._src import util
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
+from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
 DType = Any
 
@@ -60,6 +62,16 @@ def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   else:
     assert False, (
         f"Expected 'eager', 'graph', or 'compiled' for mode: got '{mode}'")
+
+
+## Helper functions for matching OpMetadata in TF graphs
+@dataclasses.dataclass(order=True, frozen=True)
+class OpMetadataGraph:
+  tf_type: str  # The standard Tf.Operation.type
+  op_type: str  # The rest are OpMetadata fields from _Xla... attributes
+  op_name: str
+  source_file: str
+  source_line: str
 
 
 class JaxToTfTestCase(jtu.JaxTestCase):
@@ -329,3 +341,60 @@ class JaxToTfTestCase(jtu.JaxTestCase):
           dtype=tf.float32)
 
     return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)
+
+
+  def CheckOpMetadata(self, jax_fun, x,
+                      expected: Sequence[OpMetadataGraph],
+                      include_xla_op_metadata=True):
+    """Checks that the tf.Graph obtained by converting `jax_fun` for argument
+    `x` contains all the given OpMetadata.
+
+    If `not include_xla_op_metadata` then disable the generation of the
+    OpMetadata attributes, and check that we don't find any ops with
+    metadata.
+    """
+    f_tf = tf.function(
+        jax2tf.convert(jax_fun,
+                       include_xla_op_metadata=include_xla_op_metadata),
+        autograph=False,
+        input_signature=[tf.TensorSpec(x.shape, x.dtype)])
+    # Trace the TF function to a graph
+    f_tf_concrete = f_tf.get_concrete_function(tf.convert_to_tensor(x))
+
+    found_tf_ops = []
+    def iter_nested_graph(graph: tf.Graph):
+      for n in graph._nodes_by_id.values():
+        try:
+          op_metadata = n.get_attr("_XlaOpMetadata")
+          op_metadata_proto = xla_data_pb2.OpMetadata()
+          op_metadata_proto.ParseFromString(op_metadata)
+          found_tf_ops.append(
+              OpMetadataGraph(
+                  tf_type=n.type,
+                  op_name=op_metadata_proto.op_name,
+                  op_type=op_metadata_proto.op_type,
+                  source_file=op_metadata_proto.source_file,
+                  source_line=op_metadata_proto.source_line))
+        except ValueError:
+          continue
+
+        # Look for nested graphs. There probably is a better way!
+        if n.type == "StatelessWhile":
+          iter_nested_graph(n._body_graph)
+          iter_nested_graph(n._cond_graph)
+        if n.type == "StatelessCase":
+          for idx in range(10):  # How can I tell how many cases there are?
+            branch = getattr(n, f"_branch_graph_{idx}", None)
+            if branch is None:
+              break
+            iter_nested_graph(branch)
+
+    iter_nested_graph(f_tf_concrete.graph)
+    try:
+      if include_xla_op_metadata:
+        self.assertContainsSubset(expected, found_tf_ops)
+      else:
+        self.assertEmpty(found_tf_ops)
+    except Exception:
+      print("Found nodes:\n  ", "\n   ".join([str(md) for md in found_tf_ops]))
+      raise

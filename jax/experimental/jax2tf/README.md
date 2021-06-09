@@ -525,6 +525,20 @@ in [savedmodel_test.py](https://github.com/google/jax/blob/master/jax/experiment
 There is currently no support for `pmap` or`xmap`, nor for the collective
 operations. There is support for `sharded_jit` and `pjit`.
 
+### SavedModel is large (contains a large amount of source information)
+
+The SavedModel obtained from a `jax2tf.convert`-ed function includes source
+location information. This ensures that the debugging experience is similar
+for JAX with XLA vs. `jax2tf.convert` with XLA. However, this debugging information
+increases the size of the SavedModel, even possibly doubling it. You can
+disable the generation of this metadata with the parameter
+`include_xla_op_metadata`.
+
+### SavedModel supports only first-order gradients
+
+The `jax2tf`-converted function supports higher-order gradients, but when the
+function is saved in a SavedModel, only the first-order gradient is saved.
+
 ### Converting gradients for integer-argument functions
 
 When JAX differentiates over functions with integer arguments, the gradients will
