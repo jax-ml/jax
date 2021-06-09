@@ -356,6 +356,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
                           rtol=1e-3)
 
+  def testEighZeroDiagonal(self):
+    a = np.array([[0., -1., -1.,  1.],
+                  [-1.,  0.,  1., -1.],
+                  [-1.,  1.,  0., -1.],
+                  [1., -1., -1.,  0.]], dtype=np.float32)
+    w, v = jnp.linalg.eigh(a)
+    self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
+                         1e-3 * np.linalg.norm(a))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
            jtu.format_shape_dtype_string(shape, dtype)),
