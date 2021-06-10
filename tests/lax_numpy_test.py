@@ -2000,6 +2000,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+        "shape": shape, "dtype": dtype, "axis": axis}
+      for shape in [(4, 1), (4, 3), (4, 5, 6)]
+      for dtype in all_dtypes
+      for axis in [None] + list(range(1 - len(shape), len(shape) - 1))))
+  def testConcatenateArray(self, shape, dtype, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda x: np.concatenate(x, axis=axis)
+    jnp_fun = lambda x: jnp.concatenate(x, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testConcatenateAxisNone(self):
     # https://github.com/google/jax/issues/3419
     a = jnp.array([[1, 2], [3, 4]])
