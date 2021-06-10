@@ -24,9 +24,8 @@ import numpy as np
 
 def _fill_lanczos_kernel(radius, x):
   y = radius * jnp.sin(np.pi * x) * jnp.sin(np.pi * x / radius)
-  with np.errstate(divide='ignore', invalid='ignore'):
-    out = y / (np.pi ** 2 * x ** 2)
-  out = jnp.where(x <= 1e-3, 1., out)
+  #  out = y / (np.pi ** 2 * x ** 2) where x >1e-3, 1 otherwise
+  out = jnp.where(x > 1e-3, jnp.divide(y, jnp.where(x != 0, np.pi**2 * x**2, 1)), 1)
   return jnp.where(x > radius, 0., out)
 
 
@@ -63,10 +62,10 @@ def compute_weight_mat(input_size: int, output_size: int, scale,
   weights = kernel(x)
 
   total_weight_sum = jnp.sum(weights, axis=0, keepdims=True)
-  with np.errstate(invalid='ignore', divide='ignore'):
-    weights = jnp.where(
-        jnp.abs(total_weight_sum) > 1000. * np.finfo(np.float32).eps,
-        weights / total_weight_sum, 0)
+  weights = jnp.where(
+      jnp.abs(total_weight_sum) > 1000. * np.finfo(np.float32).eps,
+      jnp.divide(weights, jnp.where(total_weight_sum != 0,  total_weight_sum, 1)),
+      0)
   # Zero out weights where the sample location is completely outside the input
   # range.
   # Note sample_f has already had the 0.5 removed, hence the weird range below.
