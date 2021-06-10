@@ -1,10 +1,10 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-06-04* (YYYY-MM-DD)
+*Last generated on: 2021-06-12* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2570 test harnesses to test
+We use a set of 2604 test harnesses to test
 the implementation of 121 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
@@ -77,7 +77,7 @@ be updated.
 | digamma | 4 | floating | bool, complex, integer |
 | div | 20 | inexact, integer | bool |
 | dot_general | 245 | all |  |
-| dynamic_slice | 32 | all |  |
+| dynamic_slice | 64 | all |  |
 | dynamic_update_slice | 21 | all |  |
 | eig | 72 | inexact | bool, integer |
 | eigh | 36 | inexact | bool, integer |
@@ -134,10 +134,10 @@ be updated.
 | rev | 19 | all |  |
 | round | 7 | floating | bool, complex, integer |
 | rsqrt | 6 | inexact | bool, integer |
-| scatter_add | 14 | inexact, integer | bool |
+| scatter_add | 15 | all |  |
 | scatter_max | 15 | all |  |
 | scatter_min | 19 | all |  |
-| scatter_mul | 14 | inexact, integer | bool |
+| scatter_mul | 15 | all |  |
 | select | 16 | all |  |
 | select_and_gather_add | 15 | floating | bool, complex, integer |
 | select_and_scatter_add | 27 | bool, floating, integer | complex |
@@ -197,8 +197,10 @@ and search for "limitation".
 |eigh|unimplemented|bfloat16, float16|cpu, gpu|
 |lu|unimplemented|bfloat16, float16|cpu, gpu, tpu|
 |qr|unimplemented|bfloat16, float16|cpu, gpu|
+|scatter_add|unimplemented|bool|cpu, gpu, tpu|
 |scatter_max|unimplemented|complex64|tpu|
 |scatter_min|unimplemented|complex64|tpu|
+|scatter_mul|unimplemented|bool|cpu, gpu, tpu|
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|
 |svd|complex not implemented. Works in JAX for CPU and GPU with custom kernels|complex|tpu|
 |svd|unimplemented|bfloat16, float16|cpu, gpu|

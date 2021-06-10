@@ -11,6 +11,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.15 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...master).
 * New features:
+  * The {func}`jax2tf.convert` supports inequalities and min/max for booleans
+    ({jax-issue}`#6956`).
 
 * Breaking changes:
   * Support for NumPy 1.16 has been dropped, per the
