@@ -32,7 +32,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=['jaxlib', 'jaxlib.xla_extension-stubs'],
     python_requires='>=3.6',
-    install_requires=['scipy', 'numpy>=1.16', 'absl-py', 'flatbuffers >= 1.12, < 3.0'],
+    install_requires=['scipy', 'numpy>=1.17', 'absl-py', 'flatbuffers >= 1.12, < 3.0'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
     package_data={
