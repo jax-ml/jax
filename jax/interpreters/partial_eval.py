@@ -28,7 +28,7 @@ from .. import linear_util as lu
 from ..ad_util import Zero
 from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,
                          split_list, cache, as_hashable_function)
-from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
+from ..core import (CallPrimitive, Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
                     dropvar, ConcreteArray, raise_to_shaped)
 from jax._src import source_info_util
@@ -758,7 +758,30 @@ def _reblake_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool]
   map(write, in_unknowns, jaxpr.invars)
   for eqn in jaxpr.eqns:
     unks_in = map(read, eqn.invars)
-    if any(unks_in):
+    if eqn.primitive.name in ('xla_call',):
+      call_jaxpr = eqn.params['call_jaxpr']
+      jaxpr1, jaxpr2, unks_out, num_res = _reblake_jaxpr(call_jaxpr, unks_in)
+      ins = ins1, ins2 = [], []
+      for unk, v in zip(unks_in, eqn.invars):
+        ins[unk].append(v)
+      outs = outs1, outs2 = [], []
+      for unk, v in zip(unks_out, eqn.outvars):
+        outs[unk].append(v)
+      # these are fresh variables from the perspective of the outer jaxpr
+      call_res, _ = split_list(jaxpr2.invars, [num_res])
+      eqn1 = core.JaxprEqn(ins1, outs1 + call_res, eqn.primitive, dict(
+          eqn.params, call_jaxpr=jaxpr1, donated_invars=(False,) * len(jaxpr1.invars)),
+          eqn.source_info)
+      eqn2 = core.JaxprEqn(call_res + eqn.invars, outs2, eqn.primitive, dict(
+          eqn.params, call_jaxpr=jaxpr2, donated_invars=(False,) * (num_res + len(eqn.invars))),
+          eqn.source_info)
+      eqns1.append(eqn1)
+      eqns2.append(eqn2)
+      for v in call_res: new_res(v)
+      for v, unk in zip(eqn.outvars, unks_out): write(unk, v)
+    elif isinstance(eqn.primitive, core.CallPrimitive):
+      raise NotImplementedError
+    elif any(unks_in):
       eqns2.append(eqn)
       map(partial(write, True), eqn.outvars)
     elif eqn.primitive.name in ('dot_general', 'conv_general_dilated'):
@@ -770,7 +793,7 @@ def _reblake_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool]
       eqns2.append(eqn)
       map(partial(write, False), eqn.outvars)
   out_unknowns = map(read, jaxpr.outvars)
-  residuals, num_res = list(residuals), len(residuals)
+  res_list, num_res = list(residuals), len(residuals)
 
   ins = ins1, ins2 = [], []
   for unk, v in zip(in_unknowns, jaxpr.invars):
@@ -780,8 +803,8 @@ def _reblake_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool]
     outs[unk].append(v)
 
   # TODO: dedup outs1 + residuals
-  jaxpr1 = Jaxpr([], ins1, outs1 + residuals, eqns1)
-  jaxpr2 = Jaxpr([], residuals + jaxpr.invars, outs2, eqns2)
+  jaxpr1 = Jaxpr([], ins1, outs1 + res_list, eqns1)
+  jaxpr2 = Jaxpr([], res_list + jaxpr.invars, outs2, eqns2)
   # typecheck_partial_eval_jaxpr(jaxpr, in_unknowns, out_unknowns, jaxpr1, jaxpr2)
   core.check_jaxpr(jaxpr1)
   core.check_jaxpr(jaxpr2)
