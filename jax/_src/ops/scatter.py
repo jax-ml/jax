@@ -102,7 +102,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   )
   out = scatter_op(x, indexer.gather_indices, y, dnums,
                    indices_are_sorted=indices_are_sorted,
-                   unique_indices=unique_indices)
+                   unique_indices=indexer.unique_indices or unique_indices)
   return lax.convert_element_type(out, dtype)
 
 

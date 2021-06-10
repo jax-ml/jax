@@ -2169,6 +2169,7 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
 
 @partial(bool_to_int8, argnums=0)
 def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
+            indices_are_sorted, unique_indices,
             _in_avals, _out_aval):
   """Tensorflow implementation of gather."""
   del _in_avals

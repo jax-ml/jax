@@ -4976,7 +4976,9 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if not core.is_empty_shape(indexer.gather_indices.shape):
     y = lax.gather(y, indexer.gather_indices, indexer.dnums,
-                   indexer.gather_slice_shape)
+                   indexer.gather_slice_shape,
+                   unique_indices=indexer.unique_indices,
+                   indices_are_sorted=indexer.indices_are_sorted)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:
@@ -4997,6 +4999,12 @@ _Indexer = collections.namedtuple("_Indexer", [
 
   # A GatherDimensionNumbers object describing the gather to perform.
   "dnums",
+
+  # Are the gather_indices known to be non-overlapping and/or sorted?
+  # (In practice, these translate to "there no advanced indices", because
+  # only advanced indices could lead to index repetition.)
+  "unique_indices",
+  "indices_are_sorted",
 
   # Slice dimensions that have negative strides, and so must be reversed after
   # the gather.
@@ -5237,7 +5245,9 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     gather_slice_shape=gather_slice_shape,
     reversed_y_dims=reversed_y_dims,
     dnums=dnums,
-    gather_indices=gather_indices_array)
+    gather_indices=gather_indices_array,
+    unique_indices=advanced_indexes is None,
+    indices_are_sorted=advanced_indexes is None)
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
