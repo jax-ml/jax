@@ -37,6 +37,10 @@ class DebugNaNsTest(jtu.JaxTestCase):
   def tearDown(self):
     config.update("jax_debug_nans", self.cfg)
 
+  def testSinc(self):
+    # Regression test for #6936
+    self.assertEqual(jnp.sinc(0.0), 1.0)
+
   def testSingleResultPrimitiveNoNaN(self):
     A = jnp.array([[1., 2.], [2., 3.]])
     ans = jnp.tanh(A)
