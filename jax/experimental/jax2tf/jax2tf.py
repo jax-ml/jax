@@ -81,6 +81,10 @@ TfVal = Any
 DType = Any
 PrecisionType = int  # Enum xla_data.PrecisionConfig.Precision
 
+# A dimension environment maps dimension variables to TF expressions that
+# compute the value of the dimension. These expressions refer to the TF
+# function arguments.
+_ShapeEnv = Dict[str, TfVal]
 
 def _is_tfval(v: TfVal) -> bool:
   if isinstance(v, (tf.Tensor, tf.Variable)):
@@ -111,12 +115,6 @@ tf_impl: Dict[core.Primitive, Callable[..., Any]] = {}
 # core.AbstractValue, or a tuple thereof when primitive.multiple_results).
 tf_impl_with_avals: Dict[core.Primitive, Callable[..., Any]] = {}
 
-# XLA is not linked in all environments; when converting a primitive, if this
-# variable is disabled, we try harder to use only standard TF ops if they are
-# applicable to the concrete use case; if the resulting conversion path ends up
-# requiring a TFXLA operation, an exception is thrown instead.
-_enable_xla = True
-
 # In order to ensure that JAX picks up the proper user-frame for source
 # locations we will register the TensorFlow source path as an internal
 # path with source_info_util. The typical stack when a JAX primitive
@@ -132,16 +130,47 @@ _enable_xla = True
 # also.
 # We register the TensorFlow source path lazily
 _has_registered_tf_source_path = False
-# Whether to actually include XLA op metadata
-_include_xla_op_metadata = True
 
+class _ThreadLocalState(threading.local):
+  def __init__(self):
+    self.name_stack = ""
+    # XLA is not linked in all environments; when converting a primitive, if this
+    # variable is disabled, we try harder to use only standard TF ops if they are
+    # applicable to the concrete use case; if the resulting conversion path ends up
+    # requiring a TFXLA operation, an exception is thrown instead.
+    self.enable_xla = True
+
+    # Keep track if we are inside a call_tf. In that context we disable the
+    # safety check that we are not inside JAX transformations.
+    self.inside_call_tf = False
+
+    # Maps dimension variables to TF expressions
+    self.shape_env: _ShapeEnv = {}
+
+    # Whether to actually include XLA op metadata in the generated TF ops
+    self.include_xla_op_metadata = True
+
+_thread_local_state = _ThreadLocalState()
+
+def _get_current_name_stack():
+  return _thread_local_state.name_stack
 def _xla_disabled_error(primitive_name: str,
                         extra_msg: Optional[str] = None) -> Exception:
-  assert not _enable_xla
+  assert not _thread_local_state.enable_xla
   msg = f"Call to {primitive_name} cannot be converted with enable_xla=False."
   if extra_msg:
     msg += f" {extra_msg}"
   return NotImplementedError(msg)
+
+@contextlib.contextmanager
+def inside_call_tf():
+  # Set the inside_call_tf flag for a context.
+  prev = _thread_local_state.inside_call_tf
+  _thread_local_state.inside_call_tf = True
+  try:
+    yield
+  finally:
+    _thread_local_state.inside_call_tf = prev
 
 @partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable,
@@ -214,9 +243,10 @@ def convert(fun: Callable,
   name_stack = util.extend_name_stack(util.wrap_name(fun_name, "jax2tf"))
   def converted_fun(*args: TfVal, **kwargs: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
-    if not core.trace_state_clean():
+    if not core.trace_state_clean() and not _thread_local_state.inside_call_tf:
+      # It is Ok to nest convert when we are inside a call_tf
       raise ValueError("convert must be used outside all JAX transformations." +
-                       f"Trace state: {core.thread_local_state.trace_state}")
+                       f"Trace state: {core.thread_local_state.trace_state.trace_stack}")
 
     def check_arg(a):
       if not _is_tfval(a):
@@ -308,16 +338,15 @@ def convert(fun: Callable,
       return in_cts
 
     try:
-      global _shape_env
-      assert not _shape_env, f"Unexpected shape environment {_shape_env}"
-      global _enable_xla
-      prev_enable_xla = _enable_xla
-      _enable_xla = enable_xla
-      global _include_xla_op_metadata
-      prev_include_xla_op_metadata = _include_xla_op_metadata
-      _include_xla_op_metadata = False
+      assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
 
-      _shape_env = shapeenv
+      prev_enable_xla = _thread_local_state.enable_xla
+      _thread_local_state.enable_xla = enable_xla
+
+      prev_include_xla_op_metadata = _thread_local_state.include_xla_op_metadata
+      _thread_local_state.include_xla_op_metadata = False
+
+      _thread_local_state.shape_env = shapeenv
       global _has_registered_tf_source_path
       if not _has_registered_tf_source_path:
         source_info_util.register_exclusion(os.path.dirname(tf.__file__))
@@ -345,9 +374,9 @@ def convert(fun: Callable,
             for o, _ in out_flat_raw
         ]
     finally:
-      _shape_env = {}
-      _enable_xla = prev_enable_xla
-      _include_xla_op_metadata = prev_include_xla_op_metadata
+      _thread_local_state.shape_env = {}
+      _thread_local_state.enable_xla = prev_enable_xla
+      _thread_local_state.include_xla_op_metadata = prev_include_xla_op_metadata
 
     out_flat = [tf.identity(x, "jax2tf_out") for x in out_flat]
     out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
@@ -370,15 +399,6 @@ def dtype_of_val(val: TfVal) -> DType:
   return tval.dtype
 
 # Internals
-
-# TODO: add all globals here
-class _ThreadLocalState(threading.local):
-  def __init__(self):
-    self.name_stack = ""
-_thread_local_state = _ThreadLocalState()
-
-def _get_current_name_stack():
-  return _thread_local_state.name_stack
 
 @contextlib.contextmanager
 def _extended_name_stack(extra_name_stack: Optional[str]):
@@ -526,10 +546,6 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     return tf.convert_to_tensor(val, dtype=conversion_dtype), jax_dtype
 
 
-# A dimension environment maps dimension variables to TF expressions that
-# compute the value of the dimension. These expressions refer to the TF
-# function arguments.
-_ShapeEnv = Dict[str, TfVal]
 def _args_to_avals_and_env(
     args: Sequence[TfVal],
     arg_jax_dtypes: Sequence[DType],
@@ -573,14 +589,10 @@ def _args_to_avals_and_env(
   return avals, shapeenv
 
 
-# A shape environment maps shape variables to TfVal.
-_shape_env = {}  # type: _ShapeEnv
-
-
 def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
-  return shape_poly.eval_shape(shape, _shape_env)
+  return shape_poly.eval_shape(shape, _thread_local_state.shape_env)
 
 
 def shape_as_value(x):
@@ -800,7 +812,7 @@ class TensorFlowTrace(core.Trace):
       else:
         return impl(*args_tf, **params)
 
-    if _include_xla_op_metadata:
+    if _thread_local_state.include_xla_op_metadata:
       op_metadata = xla.make_op_metadata(primitive, params,
                                          name_stack=_get_current_name_stack(),
                                          source_info=source_info_util.current())
@@ -953,7 +965,6 @@ tf_not_yet_impl = [
     "lu_pivots_to_permutation",
     "rng_bit_generator",
     "xla_pmap",
-    "call_tf",
 ]
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
@@ -1521,7 +1532,7 @@ def _conv_general_dilated(lhs, rhs, *,
                           _out_aval: core.AbstractValue):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   out_tf_shape = _aval_to_tf_shape(_out_aval)
-  if not _enable_xla:
+  if not _thread_local_state.enable_xla:
     return _try_tf_conv(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
         dimension_numbers, feature_group_count, batch_group_count,
@@ -1580,7 +1591,7 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_ndim, rhs_ndim = len(lhs.shape), len(rhs.shape)
-  if _enable_xla:
+  if _thread_local_state.enable_xla:
     dnums_proto = xla_data_pb2.DotDimensionNumbers()
     dnums_proto.lhs_contracting_dimensions.extend(lhs_contracting)
     dnums_proto.rhs_contracting_dimensions.extend(rhs_contracting)
@@ -1723,7 +1734,7 @@ def _pad(operand, padding_value, *, padding_config,
          _out_aval: core.AbstractValue):
   del _in_avals
   low, high, interior = util.unzip3(padding_config)
-  if _enable_xla:
+  if _thread_local_state.enable_xla:
     out = tfxla.pad(operand, padding_value, low, high, interior)
     return out
 
@@ -1911,7 +1922,7 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
   """
   assert len(consts) == 0, "Reduction computation cannot have constants"
 
-  if not _enable_xla:
+  if not _thread_local_state.enable_xla:
     raise _xla_disabled_error("reduce_window")
 
   def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
@@ -2029,7 +2040,7 @@ def _specialized_reduce_window(reducer,
   Returns:
     The reduced operand.
   """
-  if not _enable_xla and name in ["reduce_window_max", "reduce_window_sum"]:
+  if not _thread_local_state.enable_xla and name in ["reduce_window_max", "reduce_window_sum"]:
     return _try_tf_pool(name, operand, window_dimensions, window_strides,
                         padding, base_dilation, window_dilation)
 
@@ -2123,7 +2134,7 @@ tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 @partial(bool_to_int8, argnums=(0, 1))
 def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
                             window_strides, padding, _in_avals, _out_aval):
-  if not _enable_xla:
+  if not _thread_local_state.enable_xla:
     raise _xla_disabled_error("select_and_scatter_add")
   init_value = tf.zeros((), operand.dtype)
   select_fn = (
@@ -2173,7 +2184,7 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
             _in_avals, _out_aval):
   """Tensorflow implementation of gather."""
   del _in_avals, unique_indices
-  if not _enable_xla:
+  if not _thread_local_state.enable_xla:
     raise _xla_disabled_error("gather")
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
   slice_sizes_tf = _eval_shape(slice_sizes)
@@ -2209,7 +2220,7 @@ def _dynamic_slice(operand, *start_indices, slice_sizes,
   start_indices = tf.stack(start_indices)
   slice_sizes = _eval_shape(slice_sizes)
 
-  if _enable_xla:
+  if _thread_local_state.enable_xla:
     res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes)
     # TODO: implement shape inference for XlaDynamicSlice
     res.set_shape(_aval_to_tf_shape(_out_aval))
@@ -2259,7 +2270,7 @@ def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
   del unique_indices, _in_avals
   assert len(update_consts) == 0, "Update computation cannot have constants"
 
-  if not _enable_xla:
+  if not _thread_local_state.enable_xla:
     raise _xla_disabled_error("scatter")
 
   proto = _scatter_dimensions_proto(scatter_indices.shape, dimension_numbers)
@@ -2293,7 +2304,7 @@ tf_impl_with_avals[lax.scatter_add_p] = _scatter
 
 
 def _dynamic_update_slice(operand, update, *start_indices):
-  if not _enable_xla:
+  if not _thread_local_state.enable_xla:
     raise _xla_disabled_error("dynamic_update_slice")
   return tfxla.dynamic_update_slice(operand, update, tf.stack(start_indices))
 
@@ -2428,7 +2439,7 @@ tf_impl[lax.top_k_p] = _top_k
 
 def _sort(*operands: TfVal, dimension: int, is_stable: bool,
           num_keys: int) -> Tuple[TfVal, ...]:
-  if not _enable_xla:
+  if not _thread_local_state.enable_xla:
     raise _xla_disabled_error("sort")
   assert 1 <= num_keys <= len(operands)
   assert 0 <= dimension < len(

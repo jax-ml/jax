@@ -8,10 +8,16 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.14 (unreleased)
+## jax 0.2.15 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...master).
+* New features:
 
+* Breaking changes:
 
+* Bug fixes:
+  * Fixed bug that prevented round-tripping from JAX to TF and back:
+    `jax2tf.call_tf(jax2tf.convert)` ({jax-issue}`#6947`).
+ 
 ## jax 0.2.14 (June 10 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...jax-v0.2.14).
 * New features:
@@ -23,7 +29,6 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * The {func}`jax2tf.convert` supports shape polymorphism even when the
     unknown dimensions are used in arithmetic operations, e.g., `jnp.reshape(-1)`
     ({jax-issue}`#6827`).
-
   * The {func}`jax2tf.convert` generates custom attributes with location information
    in TF ops. The code that XLA generates after jax2tf
    has the same location information as JAX/XLA.

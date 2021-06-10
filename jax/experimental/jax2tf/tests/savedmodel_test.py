@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-
 from absl.testing import absltest
 
 import jax
@@ -32,15 +30,6 @@ config.parse_flags_with_absl()
 
 class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
-  def save_and_load_model(self, model: tf.Module) -> tf.Module:
-    # Roundtrip through saved model on disk.
-    model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
-    tf.saved_model.save(
-        model, model_dir,
-        options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
-    restored_model = tf.saved_model.load(model_dir)
-    return restored_model
-
   def test_eval(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
     model = tf.Module()
@@ -50,7 +39,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
                           )
     x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
-    restored_model = self.save_and_load_model(model)
+    restored_model = tf_test_util.SaveAndLoadModel(model)
     self.assertAllClose(restored_model.f(x), f_jax(x))
 
   def test_gradient_disabled(self):
@@ -62,7 +51,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
                           input_signature=[tf.TensorSpec([], tf.float32)])
     x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
-    restored_model = self.save_and_load_model(model)
+    restored_model = tf_test_util.SaveAndLoadModel(model)
     xv = tf.Variable(0.7, dtype=jnp.float32)
     self.assertAllClose(restored_model.f(x), f_jax(x))
 
@@ -92,7 +81,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
                           input_signature=[tf.TensorSpec([], tf.float32)])
     x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
-    restored_model = self.save_and_load_model(model)
+    restored_model = tf_test_util.SaveAndLoadModel(model)
     xv = tf.Variable(0.7, dtype=jnp.float32)
     self.assertAllClose(restored_model.f(x), f_jax(x))
     with tf.GradientTape() as tape:
@@ -106,14 +95,9 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     # JAX. We check that this information is preserved through a savedmodel
     f_tf = jax2tf.convert(f_jax)
     res = f_tf(*args)
-
-    model = tf.Module()
     input_signature = list(tf.TensorSpec(a.shape, a.dtype) for a in args)
-    model.f = tf.function(f_tf,
-                          autograph=False,
-                          input_signature=input_signature)
-    restored_model = self.save_and_load_model(model)
-    res_restored = restored_model.f(*args)
+    restored_f = tf_test_util.SaveAndLoadFunction(f_tf, input_signature)
+    res_restored = restored_f(*args)
     self.assertAllClose(res, res_restored)
 
   def test_xla_context_preserved_slice(self):
@@ -159,12 +143,9 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
                         jnp.sin(np.array([3.14, 2.78], dtype=np.float16)))
 
     # Save and restore SavedModel
-    model = tf.Module()
-    model.f = tf.function(
-        composed_fn,
-        input_signature=[tf.TensorSpec((2,), dtype=tf.string)])
-    restored_model = self.save_and_load_model(model)
-    res_tf_restored = restored_model.f(x_str)
+    restored_f = tf_test_util.SaveAndLoadFunction(composed_fn,
+                                                  [tf.TensorSpec((2,), dtype=tf.string)])
+    res_tf_restored = restored_f(x_str)
     self.assertAllClose(res_tf_restored.numpy(), res_tf.numpy())
 
 

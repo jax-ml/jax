@@ -462,7 +462,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
     spec_ = spec.replace(" ", "")
     if spec_[0] == "(":
       if spec_[-1] != ")":
-        raise ValueError(spec)
+        raise ValueError(f"PolyShape '{spec}' has invalid syntax")
       spec_ = spec_[1:-1]
     spec_ = spec_.rstrip(",")
     if not spec_:
