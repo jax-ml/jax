@@ -2172,12 +2172,13 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
             indices_are_sorted, unique_indices,
             _in_avals, _out_aval):
   """Tensorflow implementation of gather."""
-  del _in_avals
+  del _in_avals, unique_indices
   if not _enable_xla:
     raise _xla_disabled_error("gather")
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
   slice_sizes_tf = _eval_shape(slice_sizes)
-  out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf, False)
+  out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf,
+                     indices_are_sorted)
   out.set_shape(_aval_to_tf_shape(_out_aval))
   return out
 
