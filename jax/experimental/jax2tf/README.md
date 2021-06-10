@@ -618,7 +618,7 @@ same dtype, you should use `jax2tf.dtype_of_val`:
 # independently of the value of JAX_ENABLE_X64.
 jax2tf.convert(jax_fun)(3.14)
 jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14))
-
+```
 
 ### Unchecked assumption that the dimension variables take strictly positive values
 
