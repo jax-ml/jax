@@ -12,7 +12,7 @@ The `jax2tf.convert` mechanism can wrap a function
 written in JAX, possibly including JAX transformations, and turn it into
 a function that uses only TensorFlow operations. The converted function
 can be called or traced from TensorFlow and will behave as if it was written in TensorFlow.
-In practice this means that you can take some code written in JAX and execute it using
+In practice, this means that you can take some code written in JAX and execute it using
 TensorFlow eager mode, or stage it out as a TensorFlow graph, even save it
 as a SavedModel for archival, or for use with TensorFlow tools such as serving stack,
 or TensorFlow Hub.
@@ -122,7 +122,7 @@ For examples of how to save a Flax model as a SavedModel see the
 
 ## Differentiation
 
-The converted code supports differentiation from TensorFlow. In order to
+The converted code supports differentiation from TensorFlow. To
 ensure that the result of TensorFlow differentiation is identical to the
 one that JAX differentiation would produce, the jax2tf converter will
 annotate the converter function with a ``tf.custom_gradient`` that,
@@ -133,8 +133,8 @@ differentiation, thus respecting any custom gradients that may be present
 in the original function.
 
 The jax2tf converter has an option ``with_gradient=False`` to skip the
-custom gradients and wrap instead the converted function with
-``tf.raw_ops.PreventGradient`` to generated an error in case a gradient
+custom gradients and wrap instead of the converted function with
+``tf.raw_ops.PreventGradient`` to generate an error in case a gradient
 computation is attempted.
 
 SavedModels enables saving custom derivative rules by using the `experimental_custom_gradients` option:
@@ -146,7 +146,7 @@ tf.saved_model.save(model, path, options=options)
 
 ## Shape-polymorphic conversion
 
-**The shape polymorphism support is work in progress. It is meant to be sound,
+**The shape polymorphism support is a work in progress. It is meant to be sound,
 but it may fail to convert some programs. Please report any bugs you encounter.**
 
 We described above how to include in the SavedModel several specializations
@@ -221,7 +221,7 @@ known `tf.TensorSpec`, and any concrete input `x` whose shape matches `abs_sig`:
  * then the JAX execution would produce the same result: `f_jax(x) = y`,
 
 It is crucial to understand that `f_jax(x)` has the freedom to re-invoke the JAX tracing machinery,
-and in fact it does so for each distinct concrete input shape, while the generation of `f_tf`
+and it does so for each distinct concrete input shape, while the generation of `f_tf`
 uses JAX tracing only once, and invoking `f_tf(x)` does not use JAX tracing anymore. In fact,
 invoking the latter invocation may happen after the `f_tf` has been serialized
 to a SavedModel and reloaded in an environment where `f_jax` and the JAX
@@ -245,7 +245,7 @@ shape-polymorphic TensorFlow graph, but which will give an error when converting
 
 ### Details
 
-In order to be able to use shape polymorphism effectively with jax2tf, it
+To be able to use shape polymorphism effectively with jax2tf, it
 is worth considering what happens under the hood. When the converted function
 is invoked with a `TensorSpec`, the jax2tf converter will combine the
 `TensorSpec` from the actual argument with the `polymorphic_shapes` parameter to
@@ -305,11 +305,11 @@ dimension variables JAX computes intermediate shapes as multi-variate polynomial
 involving dimension variables, which are assumed to range over strictly positive
 integers.
 The dimension polynomials have the following behavior for arithmetic operations:
-  * addition, subtraction, multiplication are supported without restrictions, and
+  * addition, subtraction, multiplication are supported without restrictions and
     are overloaded, such that `+`, `*`, `np.sum`, `np.prod` work directly on
     dimension polynomials.
     These arise, e.g., in `jax.numpy.concatenate` or `jax.numpy.reshape`.
-  * division is a special case. It is also overloaded, but it is only partially
+  * the division is a special case. It is also overloaded, but it is only partially
     supported, when either (a) there is no remainder, or (b) the divisor is a constant
     in which case there may be a constant remainder. The need for division in JAX core
     arises in a couple of specific situations, e.g.,
@@ -445,7 +445,7 @@ jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
 
 ### Incomplete TensorFlow data type coverage
 
-There are a number of cases when the TensorFlow ops that are used by the
+There are several cases when the TensorFlow ops that are used by the
 jax2tf converter are not supported by TensorFlow for the same data types as in JAX.
 There is an
 [up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
@@ -522,7 +522,7 @@ in [savedmodel_test.py](https://github.com/google/jax/blob/master/jax/experiment
 
 ### Missing converter features
 
-There is currently no support for `pmap` or`xmap`, nor for the collective
+There is currently no support for `pmap` or`xmap`, nor the collective
 operations. There is support for `sharded_jit` and `pjit`.
 
 ### SavedModel is large (contains a large amount of source information)
@@ -701,7 +701,7 @@ We use the following TFXLA ops:
    * `XlaConv` and `XlaConv2` (wrap XLA ConvGeneralDilated operator).
    * `XlaDot` and `XlaDotV2` (wrap XLA DotGeneral operator).
    * `XlaGather` (wraps XLA Gather operator). We could use `tf.gather` in some
-     cases but not always. Also, `tf.gather` has a different semantics than `lax.gather`
+     cases but not always. Also, `tf.gather` has different semantics than `lax.gather`
      for index out of bounds.
    * `XlaScatter` (wraps XLA Scatter operator).
    * `XlaSelectAndScatter` (wraps XLA SelectAndScatter operator).
@@ -738,18 +738,18 @@ result in different results than JAX’s PRNG.
 In absence of TensorFlow XLA compilation,
 if one were to write the same functionality in JAX idiomatic code vs.
 native TensorFlow idiomatic code we could end up with very different compilation paths.
-Take for example, the case of batch normalization.
+Take, for example, the case of batch normalization.
 In TensorFlow if one uses [tf.nn.batch_normalization](https://www.tensorflow.org/api_docs/python/tf/nn/batch_normalization),
 a “high-level” TensorFlow op for batch
 normalization is generated, and in the absence of XLA, on CPU or GPU,
 a custom C++ “high-level” kernel implementing batch normalization is executed.
-In JAX, there is no primitive for batch normalization, and instead the
+In JAX, there is no primitive for batch normalization, and instead, the
 operation is decomposed into low-level primitives (e.g., [flax.nn.BatchNorm](https://flax.readthedocs.io/en/latest/_autosummary/flax.nn.BatchNorm.html#flax.nn.BatchNorm),
 or haiku.BatchNorm).
 Once those primitives are converted to TensorFlow, and the resulting code is
 run without XLA, the ensemble of the kernels executed will quite
 possibly behave differently, performance-wise or even numerically,
-than either the TensorFlow native or JAX native batch normalization.
+then either the TensorFlow native or JAX native batch normalization.
 A similar example is that of an LSTM cell.
 
 # Calling TensorFlow functions from JAX
@@ -832,7 +832,7 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
   * All the metadata inserted by TF during tracing and compilation, e.g.,
     source location information and op names, is carried through to the
     JAX XLA computation.
-  * The TF custom gradients are respected, since it is TF that generates the
+  * The TF custom gradients are respected since it is TF that generates the
     gradient computation.
   * In op-by-op mode, when we call TensorFlow in eager mode, we use
     DLPack to try to avoid copying the data. This works for CPU (for
@@ -872,7 +872,7 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
 
   * Ensure that there is no array copy through the host when running in eager
     mode (JAX op-by-op).
-  * Show how use ``call_tf`` to load a SavedModel into JAX.
+  * Show how to use ``call_tf`` to load a SavedModel into JAX.
 
 
 # Additional notes
@@ -908,9 +908,9 @@ There are instructions for updating those documents at the end of each
 document.
 
 The set of limitations is an over-approximation, in the sense that if XLA
-or TensorFlow improves and support more cases, no test will fail. Instead,
+or TensorFlow improves and supports more cases, no test will fail. Instead,
 periodically, we check for unnecessary limitations. We do this by uncommenting
 two assertions (in `tests/jax_primitives_coverage_test.py` and in
-`tests/tf_test_util.py`) and runing all the tests. With these assertions enabled
+`tests/tf_test_util.py`) and running all the tests. With these assertions enabled
 the tests will fail and point out unnecessary limitations. We remove limitations
 until the tests pass. Then we re-generate the documentation.
