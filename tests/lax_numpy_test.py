@@ -2762,9 +2762,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(
-          jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
-       "shape": shape, "dtypes": dtypes}
+      {"testcase_name": "_{}_array={}".format(
+          jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), array_input),
+       "shape": shape, "dtypes": dtypes, "array_input": array_input}
       for dtypes in [
         [np.float32],
         [np.float32, np.float32],
@@ -2772,19 +2772,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         [np.float32, np.int64, np.float32],
         [np.float32, np.int32, np.float64],
       ]
-      for shape in [(), (2,), (3, 4), (1, 5)]))
-  def testColumnStack(self, shape, dtypes):
+      for shape in [(), (2,), (3, 4), (1, 5)]
+      for array_input in [True, False]))
+  def testColumnStack(self, shape, dtypes, array_input):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
+    if array_input:
+      args_maker = lambda: [np.array([rng(shape, dtype) for dtype in dtypes])]
+    else:
+      args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
     np_fun = _promote_like_jnp(np.column_stack)
     jnp_fun = jnp.column_stack
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_axis={}".format(
-          jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), axis),
-       "shape": shape, "axis": axis, "dtypes": dtypes}
+      {"testcase_name": "_{}_axis={}_array={}".format(
+          jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), axis, array_input),
+       "shape": shape, "axis": axis, "dtypes": dtypes, "array_input": array_input}
       for dtypes in [
         [np.float32],
         [np.float32, np.float32],
@@ -2793,19 +2797,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         [np.float32, np.int32, np.float64],
       ]
       for shape in [(), (2,), (3, 4), (1, 100)]
-      for axis in range(-len(shape), len(shape) + 1)))
-  def testStack(self, shape, axis, dtypes):
+      for axis in range(-len(shape), len(shape) + 1)
+      for array_input in [True, False]))
+  def testStack(self, shape, axis, dtypes, array_input):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
+    if array_input:
+      args_maker = lambda: [np.array([rng(shape, dtype) for dtype in dtypes])]
+    else:
+      args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
     np_fun = _promote_like_jnp(partial(np.stack, axis=axis))
     jnp_fun = partial(jnp.stack, axis=axis)
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_{}".format(
-          op, jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
-       "shape": shape, "op": op, "dtypes": dtypes}
+      {"testcase_name": "_op={}_{}_array={}".format(
+          op, jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), array_input),
+       "shape": shape, "op": op, "dtypes": dtypes, "array_input": array_input}
       for op in ["hstack", "vstack", "dstack"]
       for dtypes in [
         [np.float32],
@@ -2814,10 +2822,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         [np.float32, np.int64, np.float32],
         [np.float32, np.int32, np.float64],
       ]
-      for shape in [(), (2,), (3, 4), (1, 100), (2, 3, 4)]))
-  def testHVDStack(self, shape, op, dtypes):
+      for shape in [(), (2,), (3, 4), (1, 100), (2, 3, 4)]
+      for array_input in [True, False]))
+  def testHVDStack(self, shape, op, dtypes, array_input):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
+    if array_input:
+      args_maker = lambda: [np.array([rng(shape, dtype) for dtype in dtypes])]
+    else:
+      args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
     np_fun = _promote_like_jnp(getattr(np, op))
     jnp_fun = getattr(jnp, op)
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
