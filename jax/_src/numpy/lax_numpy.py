@@ -1064,7 +1064,7 @@ def sinc(x):
   x, = _promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, lax._const(x, 0))
   pi_x = lax.mul(lax._const(x, pi), x)
-  safe_pi_x = where(eq_zero, lax._const(x, 0), pi_x)
+  safe_pi_x = where(eq_zero, lax._const(x, 1), pi_x)
   return where(eq_zero, _sinc_maclaurin(0, pi_x),
                lax.div(lax.sin(safe_pi_x), safe_pi_x))
 
