@@ -2826,8 +2826,24 @@ def tile(A, reps):
                         [k for pair in zip(reps, A_shape) for k in pair])
   return reshape(result, tuple(np.multiply(A_shape, reps)))
 
+def _concatenate_array(arr, axis: int):
+  # Fast path for concatenation when the input is an ndarray rather than a list.
+  arr = asarray(arr)
+  if arr.ndim == 0 or arr.shape[0] == 0:
+    raise ValueError("Need at least one array to concatenate.")
+  if axis is None:
+    return lax.reshape(arr, (arr.size,))
+  if arr.ndim == 1:
+    raise ValueError("Zero-dimensional arrays cannot be concatenated.")
+  axis = _canonicalize_axis(axis, arr.ndim - 1)
+  shape = arr.shape[1:axis + 1] + (arr.shape[0] * arr.shape[axis + 1],) + arr.shape[axis + 2:]
+  dimensions = [*range(1, axis + 1), 0, *range(axis + 1, arr.ndim)]
+  return lax.reshape(arr, shape, dimensions)
+
 @_wraps(np.concatenate)
 def concatenate(arrays, axis: int = 0):
+  if isinstance(arrays, ndarray):
+    return _concatenate_array(arrays, axis)
   _check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
