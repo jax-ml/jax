@@ -78,8 +78,8 @@ def check_numpy_version(python_bin_path):
   version = shell(
     [python_bin_path, "-c", "import numpy as np; print(np.__version__)"])
   numpy_version = tuple(map(int, version.split('.')[:2]))
-  if numpy_version < (1, 16):
-    print("ERROR: JAX requires NumPy 1.16 or newer, found " + version + ".")
+  if numpy_version < (1, 17):
+    print("ERROR: JAX requires NumPy 1.17 or newer, found " + version + ".")
     sys.exit(-1)
   return version
 

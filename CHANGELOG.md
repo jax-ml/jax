@@ -13,6 +13,8 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features:
 
 * Breaking changes:
+  * Support for NumPy 1.16 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
 
 * Bug fixes:
   * Fixed bug that prevented round-tripping from JAX to TF and back:
@@ -32,8 +34,6 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * The {func}`jax2tf.convert` generates custom attributes with location information
    in TF ops. The code that XLA generates after jax2tf
    has the same location information as JAX/XLA.
-
-* Breaking changes:
 
 * Bug fixes:
   * The {func}`jax2tf.convert` now ensures that it uses the same typing rules
