@@ -715,6 +715,26 @@ class BCOOTest(jtu.JaxTestCase):
 
     self.assertAllClose(M1, M2)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}_axes={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, axes),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense, "axes": axes}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)
+      for naxes in range(len(shape))
+      for axes in itertools.combinations(range(len(shape)), naxes)))
+  def test_bcoo_reduce_sum(self, shape, dtype, n_batch, n_dense, axes):
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+    data, indices = sparse_ops.bcoo_fromdense(M, n_batch=n_batch, n_dense=n_dense)
+    data_out, indices_out, shape_out = sparse_ops.bcoo_reduce_sum(data, indices, shape=shape, axes=axes)
+    result_dense = M.sum(axes)
+    result_sparse = sparse_ops.bcoo_todense(data_out, indices_out, shape=shape_out)
+    tol = {np.float32: 1E-6, np.float64: 1E-14}
+    self.assertAllClose(result_dense, result_sparse, atol=tol, rtol=tol)
+
 
 class SparseObjectTest(jtu.JaxTestCase):
   @parameterized.named_parameters(

@@ -980,6 +980,59 @@ xla.translations[bcoo_dot_general_p] = xla.lower_fun(
     _bcoo_dot_general_impl, multiple_results=False)
 
 #----------------------------------------------------------------------
+# BCOO functions that maybe should be primitives?
+
+def _tuple_replace(tup, ind, val):
+  return tuple(val if i == ind else t for i, t in enumerate(tup))
+
+def bcoo_reduce_sum(data, indices, *, shape, axes):
+  assert all(0 <= a < len(shape) for a in axes)
+  axes = sorted(set(axes))
+  n_sparse, nse = indices.shape[-2:]
+  n_batch = indices.ndim - 2
+
+  # Sum over dense dimensions -> sum over data
+  dense_axes = tuple(ax - n_sparse + 1 for ax in axes if ax >= n_batch + n_sparse)
+  data = data.sum(dense_axes)
+
+  # Sum over sparse dimensions -> drop index; sum is implicit
+  sparse_idx = [i for i in range(n_sparse) if i + n_batch not in axes]
+  if not sparse_idx:
+    indices = jnp.zeros(_tuple_replace(indices.shape, n_batch, 0), indices.dtype)
+  else:
+    indices = indices[..., np.array(sparse_idx), :]
+
+  # Sum over batch dimensions -> reshape into nse
+  batch_axes = {ax for ax in axes if ax < n_batch}
+
+  # First handle broadcasted batch dimensions
+  for ax in batch_axes:
+    if data.shape[ax] == 1:
+      if indices.shape[ax] == 1:
+        data = data * shape[ax]
+      else:
+        data = lax.broadcast_in_dim(data, _tuple_replace(data.shape, ax, shape[ax]), tuple(range(data.ndim)))
+    else:
+      if indices.shape[ax] == 1:
+        data = data.sum(ax)
+    assert data.shape[ax] == indices.shape[ax]
+
+  new_batch_dims = tuple(sorted(set(range(n_batch)) - batch_axes))
+  new_batch_shape = tuple(data.shape[i] for i in new_batch_dims)
+  new_nse = int(nse * np.prod([data.shape[i] for i in batch_axes]))
+
+  data = lax.reshape(data,
+                     new_batch_shape + (new_nse,) + data.shape[n_batch + 1:],
+                     new_batch_dims + tuple(batch_axes) + tuple(range(n_batch, data.ndim)))
+  indices = lax.reshape(indices,
+                        new_batch_shape + (indices.shape[n_batch], new_nse),
+                        new_batch_dims + (n_batch,) + tuple(batch_axes) + tuple(range(n_batch + 1, indices.ndim)))
+
+  out_shape = tuple(shape[i] for i in range(len(shape)) if i not in axes)
+  return data, indices, out_shape
+
+
+#----------------------------------------------------------------------
 # Sparse objects (APIs subject to change)
 class JAXSparse:
   """Base class for high-level JAX sparse objects."""
@@ -1155,8 +1208,8 @@ class BCOO(JAXSparse):
     super().__init__(args, shape=shape)
 
   @classmethod
-  def fromdense(cls, mat, *, nnz=None, index_dtype=np.int32):
-    return cls(bcoo_fromdense(mat, nse=nnz, index_dtype=index_dtype), shape=mat.shape)
+  def fromdense(cls, mat, *, nnz=None, index_dtype=np.int32, n_dense=0, n_batch=0):
+    return cls(bcoo_fromdense(mat, nse=nnz, index_dtype=index_dtype, n_dense=n_dense, n_batch=n_batch), shape=mat.shape)
 
   @api.jit
   def todense(self):
