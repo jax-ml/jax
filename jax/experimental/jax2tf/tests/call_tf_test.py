@@ -25,6 +25,7 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
 from jax.experimental import jax2tf
+from jax.experimental.jax2tf.tests import tf_test_util
 
 import numpy as np
 
@@ -58,10 +59,12 @@ class CallTfTest(jtu.JaxTestCase):
     _ = tf.add(1, 1)
     super().setUp()
 
-  @parameterized_jit
-  def test_eval_scalar_arg(self, with_jit=False):
+  #@parameterized_jit
+  def test_eval_scalar_arg(self, with_jit=True):
+    def f_tf(x):
+      return tf.math.sin(x)
     x = 3.
-    res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
+    res = _maybe_jit(with_jit, jax2tf.call_tf(f_tf))(x)
     self.assertAllClose(jnp.sin(x), res, check_dtypes=False)
 
   @parameterized_jit
@@ -118,6 +121,16 @@ class CallTfTest(jtu.JaxTestCase):
     fun_jax = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))
     res = fun_jax(x, y)
     self.assertAllClose((np.float32(12.), np.float64(11.)), res)
+
+  def test_eval_non_compileable(self):
+    # Check that in op-by-op we call a function in eager mode.
+    def f_tf_non_compileable(x):
+      return tf.strings.length(tf.strings.format("Hello {}!", [x]))
+
+    f_jax = jax2tf.call_tf(f_tf_non_compileable)
+    x = np.float32(0.7)
+    self.assertAllClose(f_tf_non_compileable(x).numpy(), f_jax(x))
+
 
   @parameterized_jit
   def test_control_flow(self, with_jit=True):
@@ -319,6 +332,89 @@ class CallTfTest(jtu.JaxTestCase):
     res = jax.pmap(fun_jax)(x)
     self.assertAllClose(np.float32(3. * (x + 2)), res)
 
+  def test_round_trip(self):
+    f_jax = jnp.sin
+    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax))
+    x = np.float32(0.7)
+    self.assertAllClose(f_jax(x), f_jax_rt(x))
+
+  def test_round_trip_custom_grad(self):
+    @jax.custom_vjp
+    def f(x):
+      return x * x
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), np.float32(3.) * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * ct_b,
+
+    f.defvjp(f_fwd, f_bwd)
+
+    f_rt = jax2tf.call_tf(jax2tf.convert(f, with_gradient=True))
+    x = np.float32(0.7)
+    self.assertAllClose(f(x), f_rt(x))
+    self.assertAllClose(jax.grad(f)(x), jax.grad(f_rt)(x))
+
+  def test_round_trip_shape_poly(self):
+    f_jax = jnp.sin
+    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax,
+                                             polymorphic_shapes=["(b, ...)"]))
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    self.assertAllClose(f_jax(x), f_jax_rt(x))
+
+  def test_round_trip_saved_model_shape_poly(self):
+    tracing_count = 0
+    def f_jax(x):
+      nonlocal tracing_count
+      tracing_count += 1
+      return jnp.sin(x)
+
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    res_jax = f_jax(x)
+    self.assertEqual(1, tracing_count)
+    # Will trace twice, it seems. Once to get the result signature, and once again
+    # for the actual saving.
+    restored_f = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
+    self.assertGreaterEqual(tracing_count, 2)
+    tracing_count = 0
+    f_jax_rt = jax2tf.call_tf(restored_f)
+    self.assertAllClose(res_jax, f_jax_rt(x))
+    # Ensure that restored_f works at other batch size as well
+    y = np.concatenate([x, x])
+    self.assertEqual(0, tracing_count)
+    res_jax_y = f_jax(y)
+    self.assertEqual(1, tracing_count)
+    # No more tracing for f_jax_rt
+    self.assertAllClose(res_jax_y, f_jax_rt(y))
+    self.assertEqual(1, tracing_count)
+
+  def test_round_trip_custom_grad_saved_model(self):
+    @jax.custom_vjp
+    def f(x):
+      return x * x
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), np.float32(3.) * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * ct_b,
+
+    f.defvjp(f_fwd, f_bwd)
+    def g(x):
+      return jnp.sum(f(x))
+
+    g_tf = tf_test_util.SaveAndLoadFunction(
+        jax2tf.convert(g, with_gradient=True, polymorphic_shapes=["b, ..."]),
+        [tf.TensorSpec([None], dtype=tf.float32)])
+    g_rt = jax2tf.call_tf(g_tf)
+    x = np.array([0.7], dtype=np.float32)
+    self.assertAllClose(g(x), g_rt(x))
+    self.assertAllClose(jax.grad(g)(x), jax.grad(g_rt)(x))
+
   def test_module_documentation(self):
     def cos_tf(x):
       return tf.math.cos(x)
@@ -341,6 +437,12 @@ class CallTfTest(jtu.JaxTestCase):
 
     print(jax.make_jaxpr(cos_tf_sin_jax)(x))
     print(jax.xla_computation(cos_tf_sin_jax)(x).as_hlo_text())
+
+  def test_round_trip_reverse(self):
+    f_tf = tf.math.sin
+    f_tf_rt = jax2tf.convert(jax2tf.call_tf(f_tf))
+    x = np.float32(0.7)
+    self.assertAllClose(f_tf(x).numpy(), f_tf_rt(x).numpy())
 
 
 if __name__ == "__main__":

@@ -23,18 +23,18 @@ https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#call
 
 """
 import logging
-from typing import Callable
+from typing import Callable, Sequence
 
 import jax
 from jax import core
 from jax import dlpack
-from jax import dtypes
 from jax import numpy as jnp
 from jax import tree_util
 from jax._src import util
 from jax.interpreters import xla
 from jax.lib import xla_bridge
 from jax.lib import xla_client
+from . import jax2tf as jax2tf_internal
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -86,19 +86,25 @@ def call_tf(func_tf: Callable) -> Callable:
 
     args_jax_flat, args_jax_treedef = tree_util.tree_flatten(args_jax)
     args_tf_sig_flat = [
-        tf.TensorSpec(np.shape(a_jax), _to_tf_dtype(_dtype(a_jax)))
+        tf.TensorSpec(np.shape(a_jax), jax2tf_internal._to_tf_dtype(_dtype(a_jax)))
         for a_jax in args_jax_flat
     ]
     args_tf_sig = tf.nest.map_structure(
         lambda a_jax: tf.TensorSpec(
-            np.shape(a_jax), _to_tf_dtype(_dtype(a_jax))), args_jax)
-    func_tf_concrete = tf.function(func_tf).get_concrete_function(*args_tf_sig)
+            np.shape(a_jax), jax2tf_internal._to_tf_dtype(_dtype(a_jax))), args_jax)
+
+    # Trace once through the function to get the result shape
+    with jax2tf_internal.inside_call_tf():
+      func_tf_concrete = tf.function(func_tf).get_concrete_function(*args_tf_sig)
+
     res_tf_sig_flat, res_treedef = tree_util.tree_flatten(
         func_tf_concrete.structured_outputs)
 
     res_jax_flat = call_tf_p.bind(
         *args_jax_flat,
+        # Carry the actual function such that op-by-op call can call in TF eager mode.
         func_tf=func_tf,
+        func_tf_concrete=func_tf_concrete,
         args_treedef=args_jax_treedef,
         args_tf_sig_flat=args_tf_sig_flat,
         res_treedef=res_treedef,
@@ -167,7 +173,9 @@ def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
     return tf.constant(np.asarray(arg_jax))
 
   args_tf_flat = tuple(map(_arg_jax_to_tf, args_jax_flat))
-  res_tf = func_tf(*args_treedef.unflatten(args_tf_flat))
+  with jax2tf_internal.inside_call_tf():
+    # Call in TF eager mode
+    res_tf = func_tf(*args_treedef.unflatten(args_tf_flat))
   res_tf_flat, _ = tree_util.tree_flatten(res_tf)
   # TODO(necula): check the result for tree and aval
 
@@ -190,7 +198,7 @@ call_tf_p.def_impl(_call_tf_impl)
 
 def _call_tf_abstract_eval(*_, res_tf_sig_flat, **__):
   return tuple([
-      core.ShapedArray(np.shape(r), _to_jax_dtype(r.dtype))
+      core.ShapedArray(np.shape(r), jax2tf_internal._to_jax_dtype(r.dtype))
       for r in res_tf_sig_flat
   ])
 
@@ -198,7 +206,7 @@ def _call_tf_abstract_eval(*_, res_tf_sig_flat, **__):
 call_tf_p.def_abstract_eval(_call_tf_abstract_eval)
 
 
-def _call_tf_translation_rule(builder, *args_op, func_tf,
+def _call_tf_translation_rule(builder, *args_op, func_tf, func_tf_concrete,
                               args_treedef, args_tf_sig_flat, res_tf_sig_flat,
                               **_):
   # TODO(necula): It seems that we need concrete tensors for get_compiler_ir?
@@ -209,7 +217,7 @@ def _call_tf_translation_rule(builder, *args_op, func_tf,
   ]
   args_tf = args_treedef.unflatten(args_tf_flat)
   func_tf = tf.function(func_tf, jit_compile=True)
-  func_tf_concrete = func_tf.get_concrete_function(*args_tf)
+  #func_tf_concrete = func_tf.get_concrete_function(*args_tf)
   captured_ops = []  # Same order as captured_inputs
   if func_tf_concrete.captured_inputs:
     # The function uses either captured variables or tensors.
@@ -248,13 +256,15 @@ def _call_tf_translation_rule(builder, *args_op, func_tf,
 
 xla.translations[call_tf_p] = _call_tf_translation_rule
 
+TfVal = jax2tf_internal.TfVal
+def _jax2tf_call_tf(*args: TfVal,
+                    _in_avals: Sequence[core.ShapedArray],
+                    _out_aval: core.ShapedArray,
+                    func_tf: Callable,
+                    **kwargs) -> TfVal:
+  res_tf = func_tf(*args)
+  res_tf_flat = tf.nest.flatten(res_tf)
+  # TODO: check that the return values have the right signature
+  return res_tf_flat
 
-def _to_tf_dtype(jax_dtype):
-  if jax_dtype == dtypes.float0:
-    return tf.float32
-  else:
-    return tf.dtypes.as_dtype(jax_dtype)
-
-
-def _to_jax_dtype(tf_dtype):
-  return tf_dtype.as_numpy_dtype
+jax2tf_internal.tf_impl_with_avals[call_tf_p] = _jax2tf_call_tf

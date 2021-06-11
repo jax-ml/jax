@@ -15,10 +15,11 @@
 import contextlib
 import dataclasses
 import logging
+import os
 
 from typing import Any, Callable, List, Optional, Sequence
 
-
+from absl.testing import absltest
 import jax
 from jax import dtypes
 from jax import numpy as jnp
@@ -72,6 +73,26 @@ class OpMetadataGraph:
   op_name: str
   source_file: str
   source_line: str
+
+
+def SaveAndLoadModel(model: tf.Module) -> tf.Module:
+  # Roundtrip through saved model on disk.
+  model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
+  tf.saved_model.save(
+      model, model_dir,
+      options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
+  restored_model = tf.saved_model.load(model_dir)
+  return restored_model
+
+def SaveAndLoadFunction(f_tf: Callable,
+                        input_signature: Sequence[tf.TensorSpec]) -> Callable:
+  # Roundtrip through saved model on disk
+  model = tf.Module()
+  model.f = tf.function(f_tf,
+                        autograph=False,
+                        input_signature=input_signature)
+  restored = SaveAndLoadModel(model)
+  return restored.f
 
 
 class JaxToTfTestCase(jtu.JaxTestCase):
@@ -343,7 +364,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
           dtype=tf.float32)
 
     return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)
-
 
   def CheckOpMetadata(self, jax_fun, x,
                       expected: Sequence[OpMetadataGraph],

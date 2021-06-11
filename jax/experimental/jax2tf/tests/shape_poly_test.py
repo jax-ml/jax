@@ -609,6 +609,16 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         res_jax,
         jax2tf.convert(f, polymorphic_shapes=["(b, h)", "h"])(x, y))
 
+  def test_saved_model_shape_poly(self):
+    f_jax = jnp.sin
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    restored_f = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
+    self.assertAllClose(f_jax(x), restored_f(x))
+    # Ensure that restored_f works at other batch size as well
+    y = np.concatenate([x, x])
+    self.assertAllClose(f_jax(y), restored_f(y))
+
   def test_readme_example(self):
     """Some of the examples from the README."""
     def image_mask_jax(images, mask):

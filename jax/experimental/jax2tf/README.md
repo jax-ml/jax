@@ -772,7 +772,7 @@ As a trivial example, consider computing ``sin(cos(1.))`` with ``sin`` done in J
   # It should return a similar result. This function will be called using
   # TensorFlow eager mode if called from outside JAX staged contexts (`jit`,
   # `pmap`, or control-flow primitives), and will be called using TensorFlow
-  # graph mode otherwise. In the latter case, the function must be compileable
+  # compiled mode otherwise. In the latter case, the function must be compileable
   # with XLA (`tf.function(func, jit_compile=True)`)
   def cos_tf(x):
     return tf.math.cos(x)
