@@ -656,7 +656,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   Returns:
     An array containing the product.
   """
-  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and lhs.shape[-1] == rhs.shape[0]:
+  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.symbolic_equal_dim(lhs.shape[-1], rhs.shape[0]):
     return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
                        precision=precision, preferred_element_type=preferred_element_type)
   else:
@@ -2274,22 +2274,22 @@ def _unbroadcast(aval, x):
   if not isinstance(aval, ShapedArray):
     raise TypeError("transpose with implicit broadcasting of unshaped values")
   x_shape = np.shape(x)
-  if aval.shape == x_shape:
+  if core.symbolic_equal_shape(aval.shape, x_shape):
     return x
   assert not aval.shape or len(x_shape) == len(aval.shape)
   if not aval.shape:
     return _reduce_sum(x, list(range(len(x_shape))))
   else:
-    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if a != b]
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.symbolic_equal_dim(a, b)]
     if config.jax_enable_checks: assert all(aval.shape[i] == 1 for i in dims)
     return reshape(_reduce_sum(x, dims), aval.shape)
 
 def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)
-  if x_shape == target_shape:
+  if core.symbolic_equal_shape(x_shape, target_shape):
     return x
   else:
-    dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape)) if a == b]
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape)) if core.symbolic_equal_dim(a, b)]
     squeeze_shape = [x_shape[i] for i in dims]
     return broadcast_in_dim(reshape(x, squeeze_shape), target_shape, dims)
 
@@ -2941,7 +2941,7 @@ def _conv_general_dilated_shape_rule(
     msg = ("conv_general_dilated feature_group_count must divide lhs feature "
            "dimension size, but {} does not divide {}.")
     raise ValueError(msg.format(feature_group_count, lhs_feature_count))
-  if quot != rhs.shape[dimension_numbers.rhs_spec[1]]:
+  if not core.symbolic_equal_dim(quot, rhs.shape[dimension_numbers.rhs_spec[1]]):
     msg = ("conv_general_dilated lhs feature dimension size divided by "
            "feature_group_count must equal the rhs input feature dimension "
            "size, but {} // {} != {}.")

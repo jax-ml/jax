@@ -880,7 +880,7 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
 ## TensorFlow versions supported
 
 The ``jax2tf.convert`` and `call_tf` require very recent versions of TensorFlow.
-As of today, the tests are run using `tf_nightly==2.6.0-dev20210601`.
+As of today, the tests are run using `tf_nightly==2.6.0-dev20210611`.
 
 ## Running on GPU
 
