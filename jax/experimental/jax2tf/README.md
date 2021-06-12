@@ -305,11 +305,11 @@ dimension variables JAX computes intermediate shapes as multi-variate polynomial
 involving dimension variables, which are assumed to range over strictly positive
 integers.
 The dimension polynomials have the following behavior for arithmetic operations:
-  * addition, subtraction, multiplication are supported without restrictions and
+  * addition, subtraction, multiplication are supported without restrictions, and
     are overloaded, such that `+`, `*`, `np.sum`, `np.prod` work directly on
     dimension polynomials.
     These arise, e.g., in `jax.numpy.concatenate` or `jax.numpy.reshape`.
-  * the division is a special case. It is also overloaded, but it is only partially
+  * division is a special case. It is also overloaded, but it is only partially
     supported, when either (a) there is no remainder, or (b) the divisor is a constant
     in which case there may be a constant remainder. The need for division in JAX core
     arises in a couple of specific situations, e.g.,
@@ -701,7 +701,7 @@ We use the following TFXLA ops:
    * `XlaConv` and `XlaConv2` (wrap XLA ConvGeneralDilated operator).
    * `XlaDot` and `XlaDotV2` (wrap XLA DotGeneral operator).
    * `XlaGather` (wraps XLA Gather operator). We could use `tf.gather` in some
-     cases but not always. Also, `tf.gather` has different semantics than `lax.gather`
+     cases but not always. Also, `tf.gather` has a different semantics than `lax.gather`
      for index out of bounds.
    * `XlaScatter` (wraps XLA Scatter operator).
    * `XlaSelectAndScatter` (wraps XLA SelectAndScatter operator).
@@ -743,13 +743,13 @@ In TensorFlow if one uses [tf.nn.batch_normalization](https://www.tensorflow.org
 a “high-level” TensorFlow op for batch
 normalization is generated, and in the absence of XLA, on CPU or GPU,
 a custom C++ “high-level” kernel implementing batch normalization is executed.
-In JAX, there is no primitive for batch normalization, and instead, the
+In JAX, there is no primitive for batch normalization, and instead the
 operation is decomposed into low-level primitives (e.g., [flax.nn.BatchNorm](https://flax.readthedocs.io/en/latest/_autosummary/flax.nn.BatchNorm.html#flax.nn.BatchNorm),
 or haiku.BatchNorm).
 Once those primitives are converted to TensorFlow, and the resulting code is
 run without XLA, the ensemble of the kernels executed will quite
 possibly behave differently, performance-wise or even numerically,
-then either the TensorFlow native or JAX native batch normalization.
+than either the TensorFlow native or JAX native batch normalization.
 A similar example is that of an LSTM cell.
 
 # Calling TensorFlow functions from JAX
