@@ -2,7 +2,7 @@ flake8
 flatbuffers==1.12
 # For now, we pin the numpy version here
 numpy>=1.16
-mypy==0.902
+mypy==0.790
 pillow
 pytest-benchmark
 pytest-xdist
