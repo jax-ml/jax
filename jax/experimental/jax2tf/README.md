@@ -300,8 +300,8 @@ A few examples of shape specifications and uses:
 
 ### Computing with dimension variables
 
-JAX keeps track of the shape of all intermediate results. When those shapes contain
-dimension variables JAX computes intermediate shapes as multi-variate polynomials
+JAX keeps track of the shape of all intermediate results. When those shapes depend
+on dimension variables JAX computes them as multi-variate polynomials
 involving dimension variables, which are assumed to range over strictly positive
 integers.
 The dimension polynomials have the following behavior for arithmetic operations:
@@ -324,6 +324,22 @@ The dimension polynomials have the following behavior for arithmetic operations:
     case we take into consideration that dimension variables range over strictly positive
     integers. E.g., `b >= 1`, `b >= 0`, `2 * a + b >= 3` are `True`, while `b >= 2`,
     `a >= b`, `a - b >= 0` are inconclusive and result in an exception.
+
+For example, the following code raises the exception
+`core.InconclusiveDimensionOperation` with the message
+`Dimension polynomial comparison 'a + 1' == 'b' is inconclusive`.
+
+```
+jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
+                polymorphic_shapes=["(a, b)"])(np.ones((3, 4))
+```
+
+Note that it would be unsound for JAX to compute `x.shape[0] + 1 == x.shape[1]`
+as `False` and produce a converted function that returns `1` just because the dimension polynomials
+are not identical: there are some concrete input shapes for which the function
+should return `0`.
+
+### Dimension variables appearing in the numeric computation
 
 There are some situations when dimension variables arise in the staged computation itself.
 You can see in the following example how elements from the input shapes
@@ -368,6 +384,9 @@ using `tf.shape` on the input parameters.
 
 
 ### Errors in presence of shape polymorphism
+
+In addition to the `InconclusiveDimensionOperation` error discussed above,
+one may encounter other kinds of errors.
 
 When tracing with shape polymorphism we can encounter shape errors:
 
@@ -419,18 +438,6 @@ jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
 jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
                polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 ```
-
-If the user code happens to perform computations directly on dimension polynomials,
-it can expect it to work as described above for addition, subtraction, and multiplication,
-and partially for comparisons.
-
-```
-jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
-                polymorphic_shapes=["(a, b)"])(np.ones((3, 4))
-```
-
-will raise the exception `core.InconclusiveDimensionOperation` with the message
-`Dimension polynomial comparison 'a + 1' == 'b' is inconclusive`.
 
 Finally, certain codes that use shapes in the actual computation may not yet work
 if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
