@@ -954,16 +954,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[1, 0]),
 
-    _make_harness("jnp_take", "",
-                  lambda a, i: jnp.take(a, i, axis=1),
-                  [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
-                  poly_axes=[0, None]),
-
-    _make_harness("jnp_getitem", "",
-                  lambda a, i: a[i],
-                  [RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
-                  poly_axes=[None, 0]),
-
     # TODO(necula): not supported yet
     # _make_harness("jnp_getitem", "",
     #               lambda a, i: a[i],
@@ -1082,14 +1072,24 @@ _POLY_SHAPE_TEST_HARNESSES = [
 ]
 
 for enable_xla in [False, True]:
-  _POLY_SHAPE_TEST_HARNESSES.append(
-      _make_harness(f"dynamic_slice_enablexla={enable_xla}", "",
+  _POLY_SHAPE_TEST_HARNESSES.extend([
+      _make_harness("dynamic_slice", f"enable_xla={enable_xla}",
                     # x:shape: (b, 4)
                     lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),
                     [RandArg((3, 4), _f32)],
                     poly_axes=[0],
-                    enable_xla=enable_xla)
- )
+                    enable_xla=enable_xla),
+
+      _make_harness("jnp_take", f"enable_xla={enable_xla}",
+                    lambda a, i: jnp.take(a, i, axis=1),
+                    [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
+                    poly_axes=[0, None], enable_xla=enable_xla),
+
+      _make_harness("jnp_getitem", f"enable_xla={enable_xla}",
+                    lambda a, i: a[i],
+                    [RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
+                    poly_axes=[None, 0], enable_xla=enable_xla),
+ ])
 
 for reduce_op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]:
   _POLY_SHAPE_TEST_HARNESSES.append(

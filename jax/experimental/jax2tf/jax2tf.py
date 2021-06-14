@@ -2224,20 +2224,76 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
   return proto
 
 
+def _gather_without_xla(operand: TfVal,
+                        start_indices: TfVal, *,
+                        dimension_numbers, slice_sizes,
+                        _in_avals: Sequence[core.ShapedArray]):
+  # Attempt to use tf.gather for lax.gather_p.
+
+  # Handle only the case when batch_dims=0.
+  # Find axis to match the tf.gather semantics
+  # Let I = len(start_indices_shape)
+  # let O = len(op_shape)
+  # slice_sizes == op_shape[:axis] + (1,) + op_shape[axis+1:]
+  # collapsed_slice_dims == (axis,)
+  # start_index_map == (axis,)
+  # offset_dims == (0, 1, ..., axis - 1, axis + I, ..., O + I - 1)
+  op_shape = _in_avals[0].shape
+  start_indices_shape = _in_avals[1].shape
+  assert len(op_shape) == len(slice_sizes)
+  if not (len(op_shape) >= 1 and
+          len(dimension_numbers.start_index_map) == 1 and
+          len(dimension_numbers.collapsed_slice_dims) == 1 and
+          dimension_numbers.collapsed_slice_dims[0] == dimension_numbers.start_index_map[0] and
+          len(dimension_numbers.offset_dims) == len(op_shape) - 1):
+    raise _xla_disabled_error(
+        "gather",
+        f"unsupported dimension_numbers '{dimension_numbers}'; op_shape={op_shape}.")
+  # We added a trailing dimension of size 1
+  if not core.symbolic_equal_dim(start_indices_shape[-1], 1):
+    raise _xla_disabled_error("gather",
+                              "trailing dimension for start_indices must be 1")
+  # Guess the axis
+  axis = dimension_numbers.collapsed_slice_dims[0]
+  index_dims = len(start_indices_shape) - 1
+  expected_offset_dims = tuple(
+      list(range(axis)) +
+      list(range(axis + index_dims, len(op_shape) + index_dims - 1)))
+  if dimension_numbers.offset_dims != expected_offset_dims:
+    raise _xla_disabled_error(
+        "gather",
+        f"unexpected dimension_numbers.offset_dims {dimension_numbers.offset_dims} != {expected_offset_dims}")
+  expected_slice_sizes = op_shape[:axis] + (1,) + op_shape[axis + 1:]
+  if not core.symbolic_equal_shape(slice_sizes, expected_slice_sizes):
+    raise _xla_disabled_error(
+        "gather",
+        f"unexpected slice_sizes {slice_sizes} != {expected_slice_sizes}")
+
+  reshape_shape = _eval_shape(start_indices_shape[0:-1])
+  start_indices_reshaped = tf.reshape(start_indices, reshape_shape)
+  # TODO: handle out-of-bounds accesses. For now in eager and graph mode
+  # TF aborts, so at least it is a loud error. JAX clamps the indices.
+  return tf.gather(operand, start_indices_reshaped, axis=axis, batch_dims=0)
+
+
 @partial(bool_to_int8, argnums=[0])
 def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
             indices_are_sorted, unique_indices,
-            _in_avals, _out_aval):
+            _in_avals: Sequence[core.ShapedArray],
+            _out_aval: core.ShapedArray):
   """Tensorflow implementation of gather."""
-  del _in_avals, unique_indices
-  if not _thread_local_state.enable_xla:
-    raise _xla_disabled_error("gather")
-  proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
-  slice_sizes_tf = _eval_shape(slice_sizes)
-  out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf,
-                     indices_are_sorted)
-  out.set_shape(_aval_to_tf_shape(_out_aval))
-  return out
+  del unique_indices
+  if _thread_local_state.enable_xla:
+    proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
+    slice_sizes_tf = _eval_shape(slice_sizes)
+    out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf,
+                       indices_are_sorted)
+    out.set_shape(_aval_to_tf_shape(_out_aval))
+    return out
+
+  return _gather_without_xla(operand, start_indices,
+                             dimension_numbers=dimension_numbers,
+                             slice_sizes=slice_sizes, _in_avals=_in_avals)
 
 
 tf_impl_with_avals[lax.gather_p] = _gather

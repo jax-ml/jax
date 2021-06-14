@@ -128,7 +128,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "bitcast_convert_type", "broadcast", "broadcast_in_dim", "ceil", "clamp",
       "concatenate", "cos", "cosh", "complex", "conj", "convert_element_type",
       "cummax", "cummin", "device_put", "dynamic_slice",
-      "dynamic_update_slice", "exp", "eq", "floor", "gather", "ge", "gt", "imag",
+      "dynamic_update_slice", "exp", "eq", "floor", "ge", "gt", "imag",
       "iota", "is_finite", "le", "lt", "log", "mul", "ne", "neg", "not",
       "or", "pad", "population_count", "random_split",
       "reduce_and", "reduce_prod", "reduce_or", "reduce_sum",
@@ -598,6 +598,25 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             modes="compiled"),
         # TODO: very high tolerance
         custom_numeric(tol=1e-3, modes=("eager", "graph", "compiled")),
+    ]
+
+  @classmethod
+  def gather(cls, harness):
+    return [
+        Jax2TfLimitation(
+            "TF function aborts for index out-of-bounds, when enable_xla=False",
+            devices="cpu",
+            modes=("eager", "graph"),
+            enabled=(not harness.params["enable_xla"] and harness.params.get("index_oob", False))),
+        # On GPU, it seems that tf.gather returns 0s for OOB indices in eager
+        # and graph modes.
+        # TODO: Remove when we implement OOB index handling
+        custom_numeric(
+            description="TF produces different results for index out-of-bounds, when enable_xla=False",
+            devices="gpu",
+            modes=("eager", "graph"),
+            custom_assert=lambda *_, **__: None,  # Just skip the comparison
+            enabled=(not harness.params["enable_xla"] and harness.params.get("index_oob", False))),
     ]
 
   @classmethod
