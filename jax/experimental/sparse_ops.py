@@ -875,7 +875,7 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs
     idx_right, idx_out = idx[:n_contracting], idx[n_contracting:]
     ctc = [0] if n_contracting else []
     prod = lax.dot_general(lhs_data, rhs[idx_right], (([], []), (ctc, ctc)))
-    return out_array.at[idx_out].add(prod) if idx_out else prod.sum(0)
+    return out_array.at[idx_out].add(prod) if idx_out else prod.sum(0, dtype=out_array.dtype)
   for i in range(n_batch)[::-1]:
     axes_in = [0, 0, 0, 0]
     if lhs_data.shape[i] == 1:
@@ -1040,6 +1040,10 @@ class JAXSparse:
   nnz: property
   dtype: property
 
+  @property
+  def ndim(self):
+    return len(self.shape)
+
   def __init__(self, args, *, shape):
     self.shape = shape
 
@@ -1202,6 +1206,7 @@ class BCOO(JAXSparse):
   n_batch = property(lambda self: self.indices.ndim - 2)
   n_sparse = property(lambda self: self.indices.shape[-2])
   n_dense = property(lambda self: self.data.ndim - 1 - self.n_batch)
+  shape = Tuple[int, ...]
 
   def __init__(self, args, *, shape):
     self.data, self.indices = map(jnp.asarray, args)
@@ -1215,15 +1220,31 @@ class BCOO(JAXSparse):
   def todense(self):
     return bcoo_todense(self.data, self.indices, shape=self.shape)
 
-  @api.jit
-  def matvec(self, v):
-    return bcoo_dot_general(self.data, self.indices, v, lhs_shape=self.shape,
-                            dimension_numbers=(([1], [0]), ([], [])))
+  def __matmul__(self, other):
+    if isinstance(other, JAXSparse):
+      raise NotImplementedError("sparse-sparse matmul")
+    other = jnp.asarray(other)
+    if self.ndim == 0 or other.ndim == 0:
+      raise ValueError("matmul inputs cannot be zero-dimensional.")
+    if self.ndim > 2 or other.ndim > 2:
+      raise NotImplementedError("sparse matmul for dimensions larger than 2")
+    dtype = jnp.promote_types(self.dtype, other.dtype)
+    return bcoo_dot_general(self.data.astype(dtype), self.indices, other.astype(dtype),
+                            lhs_shape=self.shape,
+                            dimension_numbers=(([self.ndim - 1], [0]), ([], [])))
 
-  @api.jit
-  def matmat(self, B):
-    return bcoo_dot_general(self.data, self.indices, B, lhs_shape=self.shape,
-                            dimension_numbers=(([1], [0]), ([], [])))
+  def __rmatmul__(self, other):
+    if isinstance(other, JAXSparse):
+      raise NotImplementedError("sparse-sparse matmul")
+    other = jnp.asarray(other)
+    if self.ndim == 0 or other.ndim == 0:
+      raise ValueError("matmul inputs cannot be zero-dimensional.")
+    if self.ndim > 2 or other.ndim > 2:
+      raise NotImplementedError("sparse matmul for dimensions larger than 2")
+    dtype = jnp.promote_types(self.dtype, other.dtype)
+    return bcoo_dot_general(self.data.astype(dtype), self.indices, other.astype(dtype),
+                            lhs_shape=self.shape,
+                            dimension_numbers=(([0], [other.ndim - 1]), ([], []))).T
 
   def transpose(self):
     if self.n_batch or self.n_dense:

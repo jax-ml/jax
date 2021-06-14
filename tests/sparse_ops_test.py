@@ -44,6 +44,8 @@ MATMUL_TOL = {
   np.complex128: 1E-10,
 }
 
+all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
+
 
 def rand_sparse(rng, nnz=0.5, post=lambda x: x):
   def _rand_sparse(shape, dtype, nnz=nnz):
@@ -734,6 +736,34 @@ class BCOOTest(jtu.JaxTestCase):
     result_sparse = sparse_ops.bcoo_todense(data_out, indices_out, shape=shape_out)
     tol = {np.float32: 1E-6, np.float64: 1E-14}
     self.assertAllClose(result_dense, result_sparse, atol=tol, rtol=tol)
+
+  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+        jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
+        jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)),
+       "lhs_shape": lhs_shape, "lhs_dtype": lhs_dtype,
+       "rhs_shape": rhs_shape, "rhs_dtype": rhs_dtype,
+      }
+      for lhs_shape, rhs_shape in [[(3,), (3,)],
+                                   [(3, 4), (4,)],
+                                   [(4,), (4, 5)],
+                                   [(3, 4), (4, 5)]]
+      for lhs_dtype in all_dtypes
+      for rhs_dtype in all_dtypes))
+  def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    rng = jtu.rand_default(self.rng())
+    lhs = jnp.array(rng(lhs_shape, lhs_dtype))
+    rhs = jnp.array(rng(rhs_shape, rhs_dtype))
+
+    out1 = lhs @ rhs
+    out2 = sparse_ops.BCOO.fromdense(lhs) @ rhs
+    out3 = lhs @ sparse_ops.BCOO.fromdense(rhs)
+
+    tol = {np.float64: 1E-13, np.complex128: 1E-13,
+           np.float32: 1E-6, np.complex64: 1E-6}
+    self.assertAllClose(out1, out2, rtol=tol)
+    self.assertAllClose(out1, out3, rtol=tol)
 
 
 class SparseObjectTest(jtu.JaxTestCase):
