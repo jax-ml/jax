@@ -1,6 +1,6 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-06-12* (YYYY-MM-DD)
+*Last generated on: 2021-06-14* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
@@ -193,7 +193,6 @@ and search for "limitation".
 |dot_general|preferred_element_type=i64 not implemented|int16, int32, int8|tpu|
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|
-|eigh|complex eigh not supported |complex|tpu|
 |eigh|unimplemented|bfloat16, float16|cpu, gpu|
 |lu|unimplemented|bfloat16, float16|cpu, gpu, tpu|
 |qr|unimplemented|bfloat16, float16|cpu, gpu|

@@ -978,7 +978,16 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
 tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[xla.device_put_p] = lambda x, device=None: x
 
-tf_impl[lax.neg_p] = tf.math.negative
+def _neg(x: TfVal) -> TfVal:
+  if x.dtype.is_unsigned:
+    signed_dtype = _UNSIGNED_TO_SIGNED_TABLE[x.dtype]
+    x_signed = tf.cast(x, signed_dtype)
+    res_signed = tf.math.negative(x_signed)
+    return tf.cast(res_signed, x.dtype)
+  else:
+    return tf.math.negative(x)
+
+tf_impl[lax.neg_p] = _neg
 
 
 def _sign(x: TfVal) -> TfVal:

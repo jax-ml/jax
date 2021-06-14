@@ -1666,10 +1666,6 @@ for dtype in jtu.dtypes.all_inexact:
           ],
           jax_unimplemented=[
               Limitation(
-                  "complex eigh not supported ",
-                  devices="tpu",
-                  dtypes=[np.complex64, np.complex128]),
-              Limitation(
                   "unimplemented",
                   devices=("cpu", "gpu"),
                   dtypes=[np.float16, dtypes.bfloat16]),

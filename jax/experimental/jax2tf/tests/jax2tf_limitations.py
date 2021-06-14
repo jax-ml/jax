@@ -129,13 +129,13 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "concatenate", "cos", "cosh", "complex", "conj", "convert_element_type",
       "cummax", "cummin", "device_put", "dynamic_slice",
       "dynamic_update_slice", "exp", "eq", "floor", "gather", "ge", "gt", "imag",
-      "iota", "is_finite", "le", "lt", "log", "mul", "ne", "not", "or", "pad",
-      "population_count", "random_split",
+      "iota", "is_finite", "le", "lt", "log", "mul", "ne", "neg", "not",
+      "or", "pad", "population_count", "random_split",
       "reduce_and", "reduce_prod", "reduce_or", "reduce_sum",
       "reduce_window_add", "reduce_window_mul", "reduce_window_min", "reduce_window_max",
-      "real", "reshape", "rev", "scatter_max", "scatter_min",
+      "real", "reshape", "rev", "rsqrt", "scatter_max", "scatter_min",
       "select", "select_and_scatter_add",
-      "shift_left", "shift_right_logical", "shift_right_arithmetic",
+      "shift_left", "shift_right_logical", "shift_right_arithmetic", "sign",
       "sin", "sinh", "slice", "sqrt", "squeeze", "stop_gradient", "sub",
       "tie_in", "transpose", "xor", "zeros_like"
   }
@@ -386,16 +386,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def dot_general(cls, harness: primitive_harness.Harness):
     return [
         missing_tf_kernel(dtypes=[np.bool_],),
-        # TODO(b/189287598)
-        Jax2TfLimitation(
-            "Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598)",
-            dtypes=[
-                jnp.bfloat16, np.float16, np.float32, np.complex64
-            ],
-            devices="gpu",
-            modes="compiled",
-            enabled=(harness.params["preferred_element_type"] is not None),
-            skip_comparison=True)
     ]
 
   @classmethod
@@ -855,12 +845,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def neg(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(dtypes=[np.uint8, np.uint16, np.uint32, np.uint64],)
-    ]
-
-  @classmethod
   def nextafter(cls, harness: primitive_harness.Harness):
     return [missing_tf_kernel(dtypes=[np.float16, dtypes.bfloat16])]
 
@@ -933,15 +917,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def rsqrt(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
-    ]
-
-  @classmethod
   def scatter_add(cls, harness):
     return [
         missing_tf_kernel(
@@ -972,14 +947,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             "fixed by using a variadic XlaReduceWindow, when available"),
                          dtypes=[np.float64],
                          devices=("cpu", "gpu"))
-    ]
-
-  @classmethod
-  def sign(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            description="sign not defined for unsigned integers",
-            dtypes=[np.uint8, np.uint16, np.uint32, np.uint64])
     ]
 
   @classmethod
