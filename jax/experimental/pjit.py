@@ -403,7 +403,9 @@ def pjit_callable(
 
   in_axes = [get_array_mapping(axes) for axes in in_axis_resources]
   out_axes = [get_array_mapping(axes) for axes in out_axis_resources]
-  fun = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+  f = core.jaxpr_as_fun(jaxpr)
+  f.__name__ = name
+  fun = lu.wrap_init(f)
   local_in_avals = global_to_local(resource_env.physical_mesh,
                                    jaxpr.in_avals, in_axis_resources)
   # TODO(skye): allow for using a submesh of physical_mesh
