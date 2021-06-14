@@ -20,19 +20,19 @@ or TensorFlow Hub.
 This package also contains the `jax2tf.call_tf` mechanism to call TensorFlow functions
 from JAX. These functions can be called in JAX's op-by-op execution mode,
 in which case the callee is executed in eager mode, or in JAX's jit (staged) context,
-in which case the callee is compiled to XLA and embedded in JAX's staged XLA. 
+in which case the callee is compiled to XLA and embedded in JAX's staged XLA.
 
-Both interoperation directions rely on the ability of 
-TensorFlow to use the XLA compiler (`tf.function(jit_compile=True)`). For the 
+Both interoperation directions rely on the ability of
+TensorFlow to use the XLA compiler (`tf.function(jit_compile=True)`). For the
 `jax2tf.convert` direction the JIT compilation of the resulting TensorFlow code ensures
 that the performance characteristics of the code match those of the JAX source.
-For the `call_tf` direction, JIT compilation is an essential part of the implementation 
-mechanism. Only TensorFlow functions that can be JIT-compiled can be called from 
-JAX. Since the TensorFlow functions that are produced by `jax2tf.convert` can 
-be JIT-compiled by design, we can round-trip from JAX to TensorFlow 
-(e.g., a SavedModel) and back. 
+For the `call_tf` direction, JIT compilation is an essential part of the implementation
+mechanism. Only TensorFlow functions that can be JIT-compiled can be called from
+JAX. Since the TensorFlow functions that are produced by `jax2tf.convert` can
+be JIT-compiled by design, we can round-trip from JAX to TensorFlow
+(e.g., a SavedModel) and back.
 
-We describe below some general concepts and capabilities, first for 
+We describe below some general concepts and capabilities, first for
 `jax2tf.convert` and [later](#calling-tensorflow-functions-from-jax)
 for `jax2tf.call_tf`.
 
@@ -300,11 +300,12 @@ A few examples of shape specifications and uses:
 
 ### Computing with dimension variables
 
-JAX keeps track of the shape of all intermediate results. When those shapes contain
-dimension variables JAX computes intermediate shapes as multi-variate polynomials
+JAX keeps track of the shape of all intermediate results. When those shapes depend
+on dimension variables JAX computes them as multi-variate polynomials
 involving dimension variables, which are assumed to range over strictly positive
 integers.
 The dimension polynomials have the following behavior for arithmetic operations:
+
   * addition, subtraction, multiplication are supported without restrictions, and
     are overloaded, such that `+`, `*`, `np.sum`, `np.prod` work directly on
     dimension polynomials.
@@ -324,6 +325,22 @@ The dimension polynomials have the following behavior for arithmetic operations:
     case we take into consideration that dimension variables range over strictly positive
     integers. E.g., `b >= 1`, `b >= 0`, `2 * a + b >= 3` are `True`, while `b >= 2`,
     `a >= b`, `a - b >= 0` are inconclusive and result in an exception.
+
+For example, the following code raises the exception
+`core.InconclusiveDimensionOperation` with the message
+`Dimension polynomial comparison 'a + 1' == 'b' is inconclusive`.
+
+```
+jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
+                polymorphic_shapes=["(a, b)"])(np.ones((3, 4))
+```
+
+Note that it would be unsound for JAX to compute `x.shape[0] + 1 == x.shape[1]`
+as `False` and produce a converted function that returns `1` just because the dimension polynomials
+are not identical: there are some concrete input shapes for which the function
+should return `0`.
+
+### Dimension variables appearing in the numeric computation
 
 There are some situations when dimension variables arise in the staged computation itself.
 You can see in the following example how elements from the input shapes
@@ -368,6 +385,9 @@ using `tf.shape` on the input parameters.
 
 
 ### Errors in presence of shape polymorphism
+
+In addition to the `InconclusiveDimensionOperation` error discussed above,
+one may encounter other kinds of errors.
 
 When tracing with shape polymorphism we can encounter shape errors:
 
@@ -420,18 +440,6 @@ jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
                polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 ```
 
-If the user code happens to perform computations directly on dimension polynomials,
-it can expect it to work as described above for addition, subtraction, and multiplication,
-and partially for comparisons.
-
-```
-jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
-                polymorphic_shapes=["(a, b)"])(np.ones((3, 4))
-```
-
-will raise the exception `core.InconclusiveDimensionOperation` with the message
-`Dimension polynomial comparison 'a + 1' == 'b' is inconclusive`.
-
 Finally, certain codes that use shapes in the actual computation may not yet work
 if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
 will have the value of the shape variable `v`. This case is not yet implemented:
@@ -450,47 +458,13 @@ jax2tf converter are not supported by TensorFlow for the same data types as in J
 There is an
 [up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 
-There are two kinds of errors you may see. For the primitives in the
-[unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md)
-that are shown to be undefined on all devices and for all execution modes
-(`eager`, `graph`, `compiled`), e.g., `lax.min` for booleans,
-the conversion typically uses a TensorFlow operator that is not
-registered for a certain data type:
-
-```python
-jax2tf.convert(lambda x: lax.min(x, x))(np.array([True]))
-
->>> InvalidArgumentError: Value for attr 'T' of bool is not in the list of allowed values:
->>>    bfloat16, half, float, double, uint8, int16, int32, int64;
->>>    NodeDef: {{node Minimum}};
->>>    Op<name=Minimum; signature=x:T, y:T -> z:T; attr=T:type,allowed=[DT_BFLOAT16, DT_HALF, DT_FLOAT, DT_DOUBLE, DT_UINT8, DT_INT16, DT_INT32, DT_INT64]> [Op:Minimum]
-```
-
-In the above cases, you should file a bug with JAX or TensorFlow, or consider
-changing your JAX code. We are working on eliminating this kind of problem.
-
-In other cases, the TensorFlow op is registered for the data type, but for the
-`eager` or `graph` execution modes there is no TensorFlow kernel defined.
-Such primitives appear in the
-[unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md)
-as unimplemented for `eager` and `graph`, e.g., `lax.sign` for unsigned integers:
-
-```python
-jax2tf.convert(lax.sign)(np.array([5], dtype=np.uint32))
-
->>> NotFoundError: Could not find device for node: {{node Minimum}} = Acos[T=DT_UINT32]
->>> All kernels registered for op Minimum:
->>>  device='CPU'; T in [DT_FLOAT]
->>>  device='CPU'; T in [DT_DOUBLE]
->>>  ...
-```
-
-In this situation, you can still run the converted program if you compile it with
-XLA:
-```python
-tf.function(jax2tf.convert(lax.sign),
-            autograph=False, jit_compile=True)(np.array([5], dtype=np.uint32))
-```
+If you try to convert and run in TensorFlow a program with partially supported primitives, you may see TensorFlow errors that
+a TensorFlow op is used with an supported data type, or that
+there is no supported TensorFlow kernel for the op for the given
+data type. The former case can happen even if you `jit_compile`
+the TensorFlow program, and it is a priority to fit. The latter
+case only appears in TensorFlow non-compiled mode and you can
+avoid the problem if you use XLA to `jit_compile` (always recommended).
 
 Our priority is to ensure numerical and performance accuracy for
 the converted program **when using XLA to compile the converted program**.
@@ -518,7 +492,7 @@ the function to a SavedModel, knowing that upon restore the
 JAX-converted code will be compiled.
 
 For a more elaborate example, see the test `test_tf_mix_jax_with_uncompileable`
-in [savedmodel_test.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/tests/savedmodel_test.py).
+in [savedmodel_test.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/savedmodel_test.py).
 
 ### Missing converter features
 
@@ -684,9 +658,10 @@ we use a set of special TF ops that are thin wrappers over HLO ops
 and implemented in,
 e.g.,
 [tf2xla/kernels/xla_pad_op.cc](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/tf2xla/kernels/xla_pad_op.cc).)
-We refer to these ops here as the TFXLA ops.
+We refer to these ops here as the XLA TF ops. Note that these are
+still regular TF ops, e.g., they can be saved in a SavedModel.
 
-There are several drawbacks of using TFXLA ops:
+There are several drawbacks of using XLA TF ops:
 
    * These ops will only be executable by a consumer that has XLA linked in.
    This should not be a problem for TPU execution, since that requires XLA anyway.
@@ -694,7 +669,7 @@ There are several drawbacks of using TFXLA ops:
    * These ops are not yet recognized by tools that process
    tf.Graph, e.g., TensorFlow.js converter.
 
-We use the following TFXLA ops:
+We use the following XLA TF ops:
 
    * `XlaPad` (wraps XLA Pad operator). We use this instead of `tf.pad` in order to
      support `lax.pad` interior padding (dilation) or negative edge padding.
@@ -757,7 +732,7 @@ A similar example is that of an LSTM cell.
 The function ```call_tf``` allows JAX functions to call
 TensorFlow functions. These functions can be called anywhere in a JAX
 computation, including in staging contexts ``jax.jit``, ``jax.pmap``, ``jax.xmap``,
-or inside JAX's control-flow primitives. In non-staging contexts, 
+or inside JAX's control-flow primitives. In non-staging contexts,
 the TensorFlow function is called in eager mode.
 For now, only reverse-mode autodiff is supported for these functions
 (no forward-mode autodiff, nor ``vmap``).
@@ -822,13 +797,19 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
       sine.16 = f32[] sine(get-tuple-element.15)
       ROOT tuple.17 = (f32[]) tuple(sine.16)
     }
-
 ```
+
+For a more elaborate example, including round-tripping from JAX
+to TensorFlow and back through a SavedModel, with support for
+custom gradients,
+see the test `test_round_trip_custom_grad_saved_model`
+in [call_tf_test.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/call_tf_test.py).
 
 ## Notes:
 
   * The TF function must be compileable (`tf.function(func, jit_compile=True`)
-    when used in a JAX staging context.
+    when used in a JAX staging context, but not when used in a
+    JAX op-by-op mode.
   * All the metadata inserted by TF during tracing and compilation, e.g.,
     source location information and op names, is carried through to the
     JAX XLA computation.
@@ -872,7 +853,6 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
 
   * Ensure that there is no array copy through the host when running in eager
     mode (JAX op-by-op).
-  * Show how use ``call_tf`` to load a SavedModel into JAX.
 
 
 # Additional notes

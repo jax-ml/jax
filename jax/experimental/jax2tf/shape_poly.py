@@ -34,6 +34,25 @@ import numpy as np
 DimSize = core.DimSize
 Shape = core.Shape
 
+
+class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
+  """Raised when we cannot conclusively compute with symbolic dimensions."""
+
+  _help_msg = """
+This error arises for arithmetic or comparison operations with shapes that
+are non-constant, and the result of the operation cannot be represented as
+a polynomial of dimension variables, or a boolean constant (for comparisons).
+
+Please see https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+for more details.
+"""
+
+  def __init__(self, message: str):
+    error_msg = f"{message}\n{InconclusiveDimensionOperation._help_msg}"
+    # https://github.com/python/mypy/issues/5887
+    super().__init__(error_msg)  # type: ignore
+
+
 class _DimMon(dict):
   """Represents a multivariate monomial, such as n^3 * m.
 
@@ -87,7 +106,7 @@ class _DimMon(dict):
 
   def divide(self, divisor: '_DimMon') -> '_DimMon':
     """
-    Divides by another monomial. Raises a core.InconclusiveDimensionOperation
+    Divides by another monomial. Raises a InconclusiveDimensionOperation
     if the result is not a monomial.
     For example, (n^3 * m) // n == n^2*m, but n // m fails.
     """
@@ -95,7 +114,7 @@ class _DimMon(dict):
     for key, exponent in divisor.items():
       diff = self.get(key, 0) - exponent
       if diff < 0:
-        raise core.InconclusiveDimensionOperation(f"Cannot divide {self} by {divisor}.")
+        raise InconclusiveDimensionOperation(f"Cannot divide {self} by {divisor}.")
       elif diff == 0: del d[key]
       elif diff > 0: d[key] = diff
     return _DimMon(d)
@@ -107,7 +126,7 @@ class _DimPolynomial(dict):
   The shape variables are assumed to range over integers >= 1.
 
   We overload integer operations, but we do that soundly, raising
-  :class:`core.InconclusiveDimensionOperation` when the result is not
+  :class:`InconclusiveDimensionOperation` when the result is not
   representable as a polynomial.
 
   The representation of a polynomial is as a dictionary mapping _DimMonomial to
@@ -209,7 +228,7 @@ class _DimPolynomial(dict):
       return False
     if ub is not None and ub < 0:
       return False
-    raise core.InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' == '{other}' is inconclusive")
+    raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' == '{other}' is inconclusive")
 
   # We must overload __eq__ and __ne__, or else we get unsound defaults.
   __eq__ = eq
@@ -222,7 +241,7 @@ class _DimPolynomial(dict):
       return True
     if ub is not None and ub < 0:
       return False
-    raise core.InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' >= '{other}' is inconclusive")
+    raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' >= '{other}' is inconclusive")
   __ge__ = ge
 
   def __le__(self, other: DimSize):
@@ -253,11 +272,11 @@ class _DimPolynomial(dict):
       mon, count = dividend.leading_term
       try:
         qmon = mon.divide(dmon)
-      except core.InconclusiveDimensionOperation:
-        raise core.InconclusiveDimensionOperation(err_msg)
+      except InconclusiveDimensionOperation:
+        raise InconclusiveDimensionOperation(err_msg)
       qcount, rcount = divmod(count, dcount)
       if rcount != 0:
-        raise core.InconclusiveDimensionOperation(err_msg)
+        raise InconclusiveDimensionOperation(err_msg)
 
       q = _DimPolynomial.from_coeffs({qmon: qcount})
       quotient += q
@@ -270,7 +289,7 @@ class _DimPolynomial(dict):
       remainder = r
     else:
       if dividend != 0:
-        raise core.InconclusiveDimensionOperation(err_msg)
+        raise InconclusiveDimensionOperation(err_msg)
       remainder = 0
 
     if config.jax_enable_checks:
@@ -295,7 +314,7 @@ class _DimPolynomial(dict):
     if self.is_constant:
       return op.index(next(iter(self.values())))
     else:
-      raise core.InconclusiveDimensionOperation(f"Dimension polynomial '{self}' is not constant")
+      raise InconclusiveDimensionOperation(f"Dimension polynomial '{self}' is not constant")
 
   def bounds(self) -> Tuple[Optional[int], Optional[int]]:
     """Returns the lower and upper bounds, if defined."""
@@ -353,7 +372,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
   def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
     try:
       return _ensure_poly(d1) == d2
-    except core.InconclusiveDimensionOperation:
+    except InconclusiveDimensionOperation:
       return False
 
   def greater_equal(self, d1: DimSize, d2: DimSize):
@@ -367,10 +386,10 @@ class DimensionHandlerPoly(core.DimensionHandler):
     err_msg = f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}"
     try:
       q, r = _ensure_poly(sz1).divmod(sz2)
-    except core.InconclusiveDimensionOperation:
-      raise core.InconclusiveDimensionOperation(err_msg)
+    except InconclusiveDimensionOperation:
+      raise InconclusiveDimensionOperation(err_msg)
     if r != 0:
-      raise core.InconclusiveDimensionOperation(err_msg)
+      raise InconclusiveDimensionOperation(err_msg)
     return q  # type: ignore[return-value]
 
   def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
@@ -378,8 +397,8 @@ class DimensionHandlerPoly(core.DimensionHandler):
     try:
       q, r = _ensure_poly(d - window_size).divmod(window_stride)
       return q + 1
-    except core.InconclusiveDimensionOperation as e:
-      raise core.InconclusiveDimensionOperation(
+    except InconclusiveDimensionOperation as e:
+      raise InconclusiveDimensionOperation(
           f"Cannot compute stride for dimension '{d}', "
           f"window_size '{window_size}', stride '{window_stride}'. Reason: {e}.")
     return d
