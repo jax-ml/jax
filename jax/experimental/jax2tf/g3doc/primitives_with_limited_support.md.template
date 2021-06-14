@@ -33,7 +33,7 @@ The errors apply only for certain devices and compilation modes ("eager",
 On TPU only the "compiled" mode is relevant.
 
 Our priority is to ensure same coverage and numerical behavior with JAX
-in the "compiled" mode, **when using XLA to compile the converted program**.
+in the "compiled" mode, i.e., **when using XLA to compile the converted program**.
 We are pretty close to that goal.
 
 This table only shows errors for cases that are working in JAX (see [separate

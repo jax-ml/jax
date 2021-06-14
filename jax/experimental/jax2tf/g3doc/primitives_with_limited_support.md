@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-06-04*
+*Last generated on (YYYY-MM-DD): 2021-06-12*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -33,7 +33,7 @@ The errors apply only for certain devices and compilation modes ("eager",
 On TPU only the "compiled" mode is relevant.
 
 Our priority is to ensure same coverage and numerical behavior with JAX
-in the "compiled" mode, **when using XLA to compile the converted program**.
+in the "compiled" mode, i.e., **when using XLA to compile the converted program**.
 We are pretty close to that goal.
 
 This table only shows errors for cases that are working in JAX (see [separate
@@ -60,20 +60,15 @@ More detailed information can be found in the
 | --- | --- | --- | --- | --- |
 | bessel_i0e | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | bessel_i1e | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| bitcast_convert_type | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | cholesky | TF test skipped: Not implemented in JAX: unimplemented | float16 | cpu, gpu | compiled, eager, graph |
 | cholesky | TF error: function not compilable | complex | cpu, gpu | compiled |
 | cholesky | TF error: op not defined for dtype | complex | tpu | compiled, graph |
 | clamp | TF test skipped: Not implemented in JAX: unimplemented | bool, complex | cpu, gpu, tpu | compiled, eager, graph |
-| clamp | TF error: op not defined for dtype | complex | cpu, gpu, tpu | compiled, eager, graph |
 | conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type not implemented for integers | int16, int32, int8 | gpu | compiled, eager, graph |
 | conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type=c128 not implemented | complex64 | tpu | compiled, eager, graph |
 | conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type=f64 not implemented | bfloat16, float16, float32 | tpu | compiled, eager, graph |
 | conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type=i64 not implemented | int16, int32, int8 | tpu | compiled, eager, graph |
 | conv_general_dilated | TF error: jax2tf BUG: batch_group_count > 1 not yet converted | all | cpu, gpu, tpu | compiled, eager, graph |
-| cummax | TF error: op not defined for dtype | bool, complex | cpu, gpu, tpu | compiled, eager, graph |
-| cummin | TF error: op not defined for dtype | uint64 | cpu, gpu | eager |
-| cummin | TF error: op not defined for dtype | bool, complex | cpu, gpu, tpu | compiled, eager, graph |
 | digamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | div | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
 | dot_general | TF error: Numeric comparision disabled: Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598) | bfloat16, complex64, float16, float32 | gpu | compiled |
@@ -92,42 +87,31 @@ More detailed information can be found in the
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | erfc | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | fft | TF error: TF function not compileable | complex128, float64 | cpu, gpu | compiled |
-| ge | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
-| gt | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | igamma | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | igammac | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | integer_pow | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu | graph |
-| le | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | lgamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| lt | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | lu | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | lu | TF error: op not defined for dtype | complex64 | tpu | compiled, eager, graph |
-| max | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
-| min | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | neg | TF error: op not defined for dtype | unsigned | cpu, gpu, tpu | compiled, eager, graph |
 | nextafter | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | qr | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu | compiled, eager, graph |
 | qr | TF error: op not defined for dtype | bfloat16 | tpu | compiled, eager, graph |
 | reduce_max | TF error: op not defined for dtype | complex | cpu, gpu, tpu | compiled, eager, graph |
 | reduce_min | TF error: op not defined for dtype | complex | cpu, gpu, tpu | compiled, eager, graph |
-| reduce_window_max | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
-| reduce_window_min | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | regularized_incomplete_beta | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | rem | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
 | round | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | rsqrt | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| scatter_add | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
+| scatter_add | TF test skipped: Not implemented in JAX: unimplemented | bool | cpu, gpu, tpu | compiled, eager, graph |
 | scatter_add | TF error: op not defined for dtype | complex64 | tpu | compiled, eager, graph |
 | scatter_max | TF test skipped: Not implemented in JAX: unimplemented | complex64 | tpu | compiled, eager, graph |
-| scatter_max | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | scatter_min | TF test skipped: Not implemented in JAX: unimplemented | complex64 | tpu | compiled, eager, graph |
-| scatter_min | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
-| scatter_mul | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
+| scatter_mul | TF test skipped: Not implemented in JAX: unimplemented | bool | cpu, gpu, tpu | compiled, eager, graph |
 | scatter_mul | TF error: op not defined for dtype | complex64 | tpu | compiled, eager, graph |
 | select_and_gather_add | TF error: jax2tf unimplemented for 64-bit inputs because the current implementation relies on packing two values into a single value. This can be fixed by using a variadic XlaReduceWindow, when available | float64 | cpu, gpu | compiled, eager, graph |
 | select_and_scatter_add | TF test skipped: Not implemented in JAX: works only for 2 or more inactive dimensions | all | tpu | compiled, eager, graph |
 | sign | TF error: sign not defined for unsigned integers | unsigned | cpu, gpu, tpu | compiled, eager, graph |
-| sort | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | svd | TF test skipped: Not implemented in JAX: complex not implemented. Works in JAX for CPU and GPU with custom kernels | complex | tpu | compiled, eager, graph |
 | svd | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu | compiled, eager, graph |
 | svd | TF error: function not compilable. Implemented using `tf.linalg.svd` and `tf.linalg.adjoint` | complex | cpu, gpu | compiled |

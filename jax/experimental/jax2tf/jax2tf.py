@@ -1162,6 +1162,8 @@ def _minmax(x: TfVal, y: TfVal, *, is_min: bool,
         partial(lax._minmax_complex_lowering,
                           lax_cmp_pick_x=lax.lt if is_min else lax.gt),
         multiple_results=False)(x, y, _in_avals=_in_avals, _out_aval=_out_aval)
+  elif x.dtype.as_numpy_dtype == np.bool_:
+    return (tf.math.logical_and if is_min else tf.math.logical_or)(x, y)
   else:
     return (tf.math.minimum if is_min else tf.math.maximum)(x, y)
 
@@ -1287,19 +1289,37 @@ def _not(x):
 tf_impl[lax.not_p] = _not
 
 
-def bool_to_int8(f, argnums):
-  """Computes bool valued functions using int8."""
+def bool_to_int8(f, argnums: Sequence[int]):
+  """Computes functions with some bool args and bool results using int8.
+
+  This is needed because some TF ops do not work for bool args, e.g.,
+  inequalities, min/max.
+
+  Args:
+    f: a TF callable to wrap. It will be called with non-boolean arguments.
+    argnums: the positional arguments that may be booleans.
+
+  Returns: a TF callable that can take a mix of boolean positional arguments
+    (in the positions specified by `argnums`) and some non-boolean positional
+    arguments. If there are no boolean arguments, just calls `f`. Otherwise,
+    casts the boolean arguments to `int8`, calls `f`, then casts the result to
+    `bool`.
+  """
   argnums = tf.nest.flatten(argnums)
 
-  def wrapper(*args, **kwargs):
-    if not any(args[i].dtype == tf.bool for i in argnums):
+  def wrapper(*args: TfVal, **kwargs):
+    argnum_types = {args[i].dtype for i in argnums}
+    if tf.bool not in argnum_types:
       return f(*args, **kwargs)
     else:
+      # All argnums should be boolean
+      assert len(argnum_types) == 1, argnum_types
       args_cast = [(tf.cast(a, tf.int8) if i in argnums else a)
                    for i, a in enumerate(args)]
       if "_in_avals" in kwargs:
 
         def cast_aval(aval):
+          assert aval.dtype == np.bool_
           return core.ShapedArray(aval.shape, np.int8)
 
         _in_avals_cast = [
@@ -1321,10 +1341,11 @@ tf_impl[lax.xor_p] = bool_to_int8(tf.bitwise.bitwise_xor, argnums=(0, 1))
 
 tf_impl[lax.eq_p] = tf.math.equal
 tf_impl[lax.ne_p] = tf.math.not_equal
-tf_impl[lax.ge_p] = tf.math.greater_equal
-tf_impl[lax.gt_p] = tf.math.greater
-tf_impl[lax.le_p] = tf.math.less_equal
-tf_impl[lax.lt_p] = tf.math.less
+
+tf_impl[lax.ge_p] = bool_to_int8(tf.math.greater_equal, argnums=(0, 1))
+tf_impl[lax.gt_p] = bool_to_int8(tf.math.greater, argnums=(0, 1))
+tf_impl[lax.le_p] = bool_to_int8(tf.math.less_equal, argnums=(0, 1))
+tf_impl[lax.lt_p] = bool_to_int8(tf.math.less, argnums=(0, 1))
 
 tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
@@ -1346,6 +1367,8 @@ tf_impl[lax.convert_element_type_p] = _convert_element_type
 
 
 def _bitcast_convert_type(operand, new_dtype):
+  if operand.dtype == new_dtype:
+    return operand
   return tf.bitcast(operand, _to_tf_dtype(new_dtype))
 
 
@@ -1767,13 +1790,13 @@ tf_impl[lax.transpose_p] = _transpose
 axes_to_axis = lambda func: lambda operand, axes: func(operand, axis=axes)
 
 tf_impl[lax.reduce_sum_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_sum), argnums=0))
+    bool_to_int8(axes_to_axis(tf.reduce_sum), argnums=[0]))
 tf_impl[lax.reduce_prod_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_prod), argnums=0))
+    bool_to_int8(axes_to_axis(tf.reduce_prod), argnums=[0]))
 tf_impl[lax.reduce_max_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_max), argnums=0))
+    bool_to_int8(axes_to_axis(tf.reduce_max), argnums=[0]))
 tf_impl[lax.reduce_min_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_min), argnums=0))
+    bool_to_int8(axes_to_axis(tf.reduce_min), argnums=[0]))
 tf_impl[lax.reduce_or_p] = axes_to_axis(tf.reduce_any)
 tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
@@ -2178,7 +2201,7 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
   return proto
 
 
-@partial(bool_to_int8, argnums=0)
+@partial(bool_to_int8, argnums=[0])
 def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
             indices_are_sorted, unique_indices,
             _in_avals, _out_aval):
@@ -2445,25 +2468,6 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
   assert 0 <= dimension < len(
       operands[0].shape
   ), f"Invalid {dimension} for ndim {len(operands[0].shape)}"
-
-  # The comparator is a 2N-argument TF function, with arguments [2k] and [2k +1]
-  # corresponding to two scalars from operand[k].
-  def lexicographic_comparator_old(*tf_args: TfVal) -> TfVal:
-    assert len(tf_args) == 2 * len(operands)
-    # We build a comparison:
-    #     arg[0] < arg[1] or (arg[0] == arg[1] and (arg[2] < arg[3] or ...))
-    # all the way to arg[2 * num_keys - 2] < arg[2 * num_keys - 1]
-    inside_comparison = None
-    for key_idx in range(num_keys - 1, -1, -1):
-      a = tf_args[2 * key_idx]
-      b = tf_args[2 * key_idx + 1]
-      a_lt_b = tf.math.less(a, b)
-      if inside_comparison is None:
-        inside_comparison = a_lt_b
-      else:
-        inside_comparison = tf.math.logical_or(
-            a_lt_b, tf.math.logical_and(tf.math.equal(a, b), inside_comparison))
-    return inside_comparison
 
   comparator_spec: List[tf.TensorSpec] = []
   comparator_jax_in_avals: List[core.AbstractValue] = []
