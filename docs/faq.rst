@@ -232,7 +232,7 @@ You could see this if you use a ``print`` statement::
 
   def func(x):
     print(x)
-    return np.cos(x)
+    return jnp.cos(x)
 
   res = jax.jit(func)(0.)
 
@@ -240,7 +240,7 @@ The above code does return the correct value ``1.`` but it also prints
 ``Traced<ShapedArray(float32[])>`` for the value of ``x``. Normally, JAX
 handles these tracer values internally in a transparent way, e.g.,
 in the numeric JAX primitives that are used to implement the
-``jax.numpy`` functions. This is why ``np.cos`` works in the example above.
+``jax.numpy`` functions. This is why ``jnp.cos`` works in the example above.
 
 More precisely, a **tracer** value is introduced for the argument of
 a JAX-transformed function, except the arguments identified by special
@@ -316,31 +316,31 @@ If you define a function using ``where`` to avoid an undefined value, if you
 are not careful you may obtain a ``NaN`` for reverse differentiation::
 
   def my_log(x):
-    return np.where(x > 0., np.log(x), 0.)
+    return jnp.where(x > 0., jnp.log(x), 0.)
 
   my_log(0.) ==> 0.  # Ok
   jax.grad(my_log)(0.)  ==> NaN
 
 A short explanation is that during ``grad`` computation the adjoint corresponding
-to the undefined ``np.log(x)`` is a ``NaN`` and when it gets accumulated to the
-adjoint of the ``np.where``. The correct way to write such functions is to ensure
-that there is a ``np.where`` *inside* the partially-defined function, to ensure
+to the undefined ``jnp.log(x)`` is a ``NaN`` and when it gets accumulated to the
+adjoint of the ``jnp.where``. The correct way to write such functions is to ensure
+that there is a ``jnp.where`` *inside* the partially-defined function, to ensure
 that the adjoint is always finite::
 
   def safe_for_grad_log(x):
-    return np.log(np.where(x > 0., x, 1.))
+    return jnp.log(jnp.where(x > 0., x, 1.))
 
   safe_for_grad_log(0.) ==> 0.  # Ok
   jax.grad(safe_for_grad_log)(0.)  ==> 0.  # Ok
 
-The inner ``np.where`` may be needed in addition to the original one, e.g.::
+The inner ``jnp.where`` may be needed in addition to the original one, e.g.::
 
   def my_log_or_y(x, y):
     """Return log(x) if x > 0 or y"""
-    return np.where(x > 0., np.log(np.where(x > 0., x, 1.), y)
+    return jnp.where(x > 0., jnp.log(jnp.where(x > 0., x, 1.), y)
 
 
 Additional reading:
 
-  * `Issue: gradients through np.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
+  * `Issue: gradients through jnp.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.
