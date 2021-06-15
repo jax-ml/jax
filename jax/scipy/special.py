@@ -33,6 +33,7 @@ from jax._src.scipy.special import (
   logit,
   logsumexp,
   lpmn,
+  lpmn_values,
   multigammaln,
   log_ndtr,
   ndtr,

@@ -266,6 +266,52 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self.assertAllClose(actual_p_derivatives,expected_p_derivatives,
               rtol=1e-6, atol=8.4e-4)
 
+    with self.subTest('Test JIT compatibility'):
+      args_maker = lambda: [z]
+      lsp_special_fn = lambda z: lsp_special.lpmn(l_max, l_max, z)
+      self._CompileAndCheck(lsp_special_fn, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_maxdegree={}_inputsize={}".format(l_max, num_z),
+       "l_max": l_max,
+       "num_z": num_z}
+       for l_max, num_z in zip([3, 4, 6, 32], [2, 3, 4, 64])))
+  def testNormalizedLpmnValues(self, l_max, num_z):
+    # Points on which the associated Legendre functions areevaluated.
+    z = np.linspace(-0.2, 0.9, num_z)
+    is_normalized = True
+    actual_p_vals = lsp_special.lpmn_values(l_max, l_max, z, is_normalized)
+
+    # The expected results are obtained from scipy.
+    expected_p_vals = np.zeros((l_max + 1, l_max + 1, num_z))
+    for i in range(num_z):
+      expected_p_vals[:, :, i] = osp_special.lpmn(l_max, l_max, z[i])[0]
+
+    def apply_normalization(a):
+      """Applies normalization to the associated Legendre functions."""
+      num_m, num_l, _ = a.shape
+      a_normalized = np.zeros_like(a)
+      for m in range(num_m):
+        for l in range(num_l):
+          c0 = (2.0 * l + 1.0) * osp_special.factorial(l - m)
+          c1 = (4.0 * np.pi) * osp_special.factorial(l + m)
+          c2 = np.sqrt(c0 / c1)
+          a_normalized[m, l] = c2 * a[m, l]
+      return a_normalized
+
+    # The results from scipy are not normalized and the comparison requires
+    # normalizing the results.
+    expected_p_vals_normalized = apply_normalization(expected_p_vals)
+
+    with self.subTest('Test accuracy.'):
+      self.assertAllClose(actual_p_vals, expected_p_vals_normalized, rtol=1e-6, atol=3.2e-6)
+
+    with self.subTest('Test JIT compatibility'):
+      args_maker = lambda: [z]
+      lsp_special_fn = lambda z: lsp_special.lpmn_values(l_max, l_max, z, is_normalized)
+      self._CompileAndCheck(lsp_special_fn, args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
