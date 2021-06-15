@@ -95,7 +95,8 @@ is trivial:
 my_model = tf.Module()
 # Save a function that can take scalar inputs.
 my_model.f = tf.function(jax2tf.convert(f_jax), input_signature=[tf.TensorSpec([], tf.float32)])
-tf.saved_model.save(my_model, '/some/directory')
+tf.saved_model.save(my_model, '/some/directory',
+                    options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
 
 # Restoring (note: the restored model does *not* require JAX to run, just XLA).
 restored_model = tf.saved_model.load('/some/directory')
@@ -113,7 +114,8 @@ SavedModel multiple versions of a function for different input shapes, by
 my_model.f = tf.function(jax2tf.convert(f_jax), autograph=False)
 my_model.f(tf.ones([1, 28, 28]))  # a batch size of 1
 my_model.f(tf.ones([16, 28, 28]))  # a batch size of 16
-tf.saved_model.save(my_model, '/some/directory')
+tf.saved_model.save(my_model, '/some/directory',
+                    options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
 ```
 
 For examples of how to save a Flax model as a SavedModel see the
@@ -143,6 +145,32 @@ SavedModels enables saving custom derivative rules by using the `experimental_cu
 options = tf.saved_model.SaveOptions(experimental_custom_gradients=True)
 tf.saved_model.save(model, path, options=options)
 ```
+
+If you use `with_gradient=True` and forget to use the `experimental_custom_gradients=True` parameter
+to `tf.saved_model.save` when you later load the saved model you will see a warning:
+
+```
+WARNING:absl:Importing a function (__inference_converted_fun_25) with ops with unsaved custom gradients. Will likely fail if a gradient is requested.
+```
+
+and if you do attempt to take a gradient of the loaded model you may get an error:
+
+```
+TypeError: An op outside of the function building code is being passed
+a "Graph" tensor. It is possible to have Graph tensors
+leak out of the function building context by including a
+tf.init_scope in your function building code.
+For example, the following function will fail:
+  @tf.function
+  def has_init_scope():
+    my_constant = tf.constant(1.)
+    with tf.init_scope():
+      added = my_constant * 2
+The graph tensor has name: args_0:0
+```
+
+(We are working with the TF team to give a more explicit error in this case.)
+
 
 ## Shape-polymorphic conversion
 
