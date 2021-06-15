@@ -75,23 +75,25 @@ class OpMetadataGraph:
   source_line: str
 
 
-def SaveAndLoadModel(model: tf.Module) -> tf.Module:
+def SaveAndLoadModel(model: tf.Module,
+                     save_gradients=True) -> tf.Module:
   # Roundtrip through saved model on disk.
   model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
   tf.saved_model.save(
       model, model_dir,
-      options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
+      options=tf.saved_model.SaveOptions(experimental_custom_gradients=save_gradients))
   restored_model = tf.saved_model.load(model_dir)
   return restored_model
 
 def SaveAndLoadFunction(f_tf: Callable,
-                        input_signature: Sequence[tf.TensorSpec]) -> Callable:
+                        input_signature: Sequence[tf.TensorSpec],
+                        save_gradients=True) -> Callable:
   # Roundtrip through saved model on disk
   model = tf.Module()
   model.f = tf.function(f_tf,
                         autograph=False,
                         input_signature=input_signature)
-  restored = SaveAndLoadModel(model)
+  restored = SaveAndLoadModel(model, save_gradients=save_gradients)
   return restored.f
 
 

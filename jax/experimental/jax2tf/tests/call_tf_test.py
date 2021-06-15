@@ -415,6 +415,48 @@ class CallTfTest(jtu.JaxTestCase):
     self.assertAllClose(g(x), g_rt(x))
     self.assertAllClose(jax.grad(g)(x), jax.grad(g_rt)(x))
 
+  def test_round_trip_without_gradient_saved_model(self):
+    # Explicitly with_gradient=False
+    f_jax = jnp.sum
+
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    f_tf = tf_test_util.SaveAndLoadFunction(
+        jax2tf.convert(f_jax, with_gradient=False),
+        [tf.TensorSpec(x.shape, dtype=x.dtype)])
+    f_rt = jax2tf.call_tf(f_tf)
+
+    self.assertAllClose(f_jax(x), f_rt(x))
+    with self.assertRaisesRegex(Exception,
+                                "Gradient explicitly disabled.*jax2tf-converted function does not support gradients. Use `with_gradient` parameter to enable gradients"):
+      jax.grad(f_rt)(x)
+
+  def test_round_trip_saved_model_no_gradients(self):
+    # Save without gradients
+    f_jax = jnp.sum
+
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    f_tf = tf_test_util.SaveAndLoadFunction(
+        jax2tf.convert(f_jax, with_gradient=True),
+        [tf.TensorSpec(x.shape, dtype=x.dtype)],
+        save_gradients=False)
+    f_rt = jax2tf.call_tf(f_tf)
+
+    self.assertAllClose(f_jax(x), f_rt(x))
+    # TODO: clean this up b/191117111: it should fail with a clear error
+    # The following results in a confusing error:
+    # TypeError: An op outside of the function building code is being passed
+    # a "Graph" tensor. It is possible to have Graph tensors
+    # leak out of the function building context by including a
+    # tf.init_scope in your function building code.
+    # For example, the following function will fail:
+    #   @tf.function
+    #   def has_init_scope():
+    #     my_constant = tf.constant(1.)
+    #     with tf.init_scope():
+    #       added = my_constant * 2
+    # The graph tensor has name: args_0:0
+    # g = jax.grad(f_rt)(x)
+
   def test_module_documentation(self):
     def cos_tf(x):
       return tf.math.cos(x)
