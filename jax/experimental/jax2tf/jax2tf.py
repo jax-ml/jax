@@ -300,6 +300,18 @@ def convert(fun: Callable,
     def converted_grad_fn(*out_cts_flat: TfVal,
                           _out_cts_avals: Sequence[core.AbstractValue],
                           variables=None):
+      # If the function has outputs of integer or bool types, and if we are
+      # under a tf.function context, then TF will pass None in _out_cts_flat
+      # in place of these values. We should change these to some integers or
+      # else JAX gets unhappy.
+      def fix_out_ct(out_ct: TfVal, out_ct_aval: core.AbstractValue) -> TfVal:
+        if out_ct is not None:
+          return out_ct
+        assert core.primal_dtype_to_tangent_dtype(out_ct_aval.dtype) == dtypes.float0, f"out_ct={out_ct}"
+        return tf.zeros(_eval_shape(out_ct_aval.shape), dtype=out_ct_aval.dtype)
+
+      out_cts_fixed_flat = tuple(map(fix_out_ct, out_cts_flat, _out_cts_avals))
+
       if variables:
         raise ValueError(
             "Unexpected variables used in forward pass. "
@@ -315,19 +327,21 @@ def convert(fun: Callable,
         _, pullback_jax = jax.vjp(fun, *args_jax)
         return pullback_jax(out_cts_jax)
 
+      out_tree = out_tree_thunk()
       if polymorphic_shapes is None:
         vjp_polymorphic_shapes = None
       else:
         args_polymorphic_shapes = tree_util.tree_unflatten(
             in_tree.children()[0], polymorphic_shapes_flat)
         out_cts_polymorphic_shapes = tree_util.tree_unflatten(
-            out_tree_thunk(),
+            out_tree,
             tuple(str(out_aval.shape)
                   for out_aval in _out_cts_avals))  # type: ignore
         vjp_polymorphic_shapes = [
             args_polymorphic_shapes, out_cts_polymorphic_shapes
         ]
-      out_cts = tree_util.tree_unflatten(out_tree_thunk(), out_cts_flat)
+
+      out_cts = tree_util.tree_unflatten(out_tree, out_cts_fixed_flat)
       # TODO: enable higher-order gradients
       # TODO: I think that this does not work with kwargs
       with tf.name_scope("jax2tf_vjp"):

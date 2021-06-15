@@ -352,6 +352,30 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), dtypes.bfloat16),
                         d_dx_tf.numpy())
 
+
+  def test_tf_gradients_int_argument(self):
+    # https://github.com/google/jax/issues/6975
+    # state is a pytree that contains an integer and a boolean.
+    # The function returns an integer and a boolean.
+    def f_jax(param, state, x):
+      return param * x, state
+
+    param = np.array([0.7, 0.9], dtype=np.float32)
+    state = dict(array=1., counter=7, truth=True)
+    x = 3.
+
+    # tf.function is important, without it the bug does not appear
+    f_tf = tf.function(jax2tf.convert(f_jax, with_gradient=True), autograph=False)
+
+    paramv = tf.Variable(param)
+    with tf.GradientTape() as tape:
+      r, _ = f_tf(paramv, state, x)
+      loss = tf.reduce_sum(r)
+
+    g_tf = tape.gradient(loss, paramv)
+    self.assertAllClose(g_tf.numpy(),
+                        jax.grad(lambda *args: jnp.sum(f_jax(*args)[0]))(param, state, x))
+
   def test_convert_argument_non_callable_error(self):
     with self.assertRaisesRegex(TypeError, "Expected a callable value"):
       jax2tf.convert(5.)
