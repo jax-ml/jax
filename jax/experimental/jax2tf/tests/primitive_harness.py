@@ -1123,22 +1123,22 @@ for dtype in set(jtu.dtypes.all):
 
 # Construct gather harnesses using take
 _gather_input = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))
-for indices, index_oob in [
-    # Ensure each set of indices has a distinct shape
-    (np.array(2, dtype=np.int32), False),
-    (np.array([2], dtype=np.int32), False),
-    (np.array([2, 4], dtype=np.int32), False),
-    (np.array([[2, 4], [5, 6]], dtype=np.int32), False),
-    (np.array([0, 1, 10], dtype=np.int32), True), # Index out of bounds too high
-    (np.array([0, 1, 2, -1], dtype=np.int32), False), # Index out of bounds, but works
-    (np.array([0, 1, 2, 3, -10], dtype=np.int32), False), # Index out of bounds, but works
-    (np.array([0, 1, 2, 3, 4, -11], dtype=np.int32), True)  # Index out of bounds, too low
+for indices, index_oob, indices_name in [
+    # Ensure each set of indices has a distinct name
+    (np.array(2, dtype=np.int32), False, "1"),
+    (np.array([2], dtype=np.int32), False, "2"),
+    (np.array([2, 4], dtype=np.int32), False, "3"),
+    (np.array([[2, 4], [5, 6]], dtype=np.int32), False, "4"),
+    (np.array([[0], [1], [10]], dtype=np.int32), True, "5_oob"), # Index out of bounds too high
+    (np.array([[0, 1], [2, -1]], dtype=np.int32), False, "6_neg"), # Negative index is from the end
+    (np.array([0, 1, 2, 3, -10], dtype=np.int32), False, "7_neg"), # Index out of bounds, but works
+    (np.array([[[0], [1]], [[3], [-11]]], dtype=np.int32), True, "8_neg_oob")  # Index out of bounds, too low
 ]:
   for axis in [0, 1, 2]:
     for enable_xla in [True, False]:
       define(
           lax.gather_p,
-          f"from_take_indices_shape={indices.shape}_axis={axis}_enable_xla={enable_xla}",
+          f"from_take_indices_name={indices_name}_axis={axis}_enable_xla={enable_xla}",
           lambda a, i, axis: jnp.take(a, i, axis=axis),
           [_gather_input, indices, StaticArg(axis)],
           dtype=_gather_input.dtype,

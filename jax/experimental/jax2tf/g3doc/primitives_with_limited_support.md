@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-06-14*
+*Last generated on (YYYY-MM-DD): 2021-06-15*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -85,7 +85,6 @@ More detailed information can be found in the
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | erfc | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | fft | TF error: TF function not compileable | complex128, float64 | cpu, gpu | compiled |
-| gather | TF error: TF function aborts for index out-of-bounds, when enable_xla=False | all | cpu, gpu | eager, graph |
 | igamma | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | igammac | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | integer_pow | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu | graph |

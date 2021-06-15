@@ -2269,11 +2269,14 @@ def _gather_without_xla(operand: TfVal,
         "gather",
         f"unexpected slice_sizes {slice_sizes} != {expected_slice_sizes}")
 
-  reshape_shape = _eval_shape(start_indices_shape[0:-1])
-  start_indices_reshaped = tf.reshape(start_indices, reshape_shape)
-  # TODO: handle out-of-bounds accesses. For now in eager and graph mode
-  # TF aborts, so at least it is a loud error. JAX clamps the indices.
-  return tf.gather(operand, start_indices_reshaped, axis=axis, batch_dims=0)
+  start_indices_reshaped = tf.reshape(start_indices,
+                                      _eval_shape(start_indices_shape[0:-1]))
+  start_indices_clipped = tf.clip_by_value(
+      start_indices_reshaped,
+      tf.constant(0, dtype=start_indices_reshaped.dtype),
+      tf.subtract(tf.cast(_eval_shape(op_shape)[axis], start_indices_reshaped.dtype),
+                  tf.constant(1, dtype=start_indices_reshaped.dtype)))
+  return tf.gather(operand, start_indices_clipped, axis=axis, batch_dims=0)
 
 
 @partial(bool_to_int8, argnums=[0])
