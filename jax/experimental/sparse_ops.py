@@ -1036,6 +1036,7 @@ def bcoo_reduce_sum(data, indices, *, shape, axes):
 # Sparse objects (APIs subject to change)
 class JAXSparse:
   """Base class for high-level JAX sparse objects."""
+  data: jnp.ndarray
   shape: Tuple[int, int]
   nnz: property
   dtype: property
@@ -1048,7 +1049,10 @@ class JAXSparse:
     self.shape = shape
 
   def __repr__(self):
-    return f"{self.__class__.__name__}({self.dtype}{list(self.shape)}, nnz={self.nnz})"
+    repr_ = f"{self.__class__.__name__}({self.dtype}{list(self.shape)}, nnz={self.nnz})"
+    if isinstance(self.data, core.Tracer):
+      repr_ = f"{type(self.data).__name__}[{repr_}]"
+    return repr_
 
   def tree_flatten(self):
     raise NotImplementedError("tree_flatten")
