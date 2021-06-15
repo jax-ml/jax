@@ -919,8 +919,8 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
 
   out_dtype = jnp.promote_types(lhs_data.dtype, rhs.dtype)
   out_shape = (tuple(lhs_shape[i] for i in lhs_batch) +
-               tuple(s for i, s in enumerate(lhs_shape) if i not in lhs_contracting + lhs_batch) +
-               tuple(s for i, s in enumerate(rhs.shape) if i not in rhs_contracting + rhs_batch))
+               tuple(s for i, s in enumerate(lhs_shape) if i not in {*lhs_contracting, *lhs_batch}) +
+               tuple(s for i, s in enumerate(rhs.shape) if i not in {*rhs_contracting, *rhs_batch}))
   return core.ShapedArray(out_shape, out_dtype)
 
 def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape):
