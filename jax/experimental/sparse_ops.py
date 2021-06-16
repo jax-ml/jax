@@ -838,6 +838,15 @@ def bcoo_dot_general(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape
   return bcoo_dot_general_p.bind(jnp.asarray(lhs_data), jnp.asarray(lhs_indices), jnp.asarray(rhs),
                                  dimension_numbers=dimension_numbers, lhs_shape=tuple(lhs_shape))
 
+def bcoo_rdot_general(lhs, rhs_data, rhs_indices, *, dimension_numbers, rhs_shape):
+  # TODO(jakevdp): perhaps this should be part of the bcoo_dot_general primitive?
+  result = bcoo_dot_general(rhs_data, rhs_indices, lhs, lhs_shape=rhs_shape,
+                            dimension_numbers=[d[::-1] for d in dimension_numbers])
+  n_contract, n_batch = (len(d[0]) for d in dimension_numbers)
+  n_swap = len(rhs_shape) - n_contract
+  permutation = tuple([*range(n_batch), *range(n_swap, result.ndim), *range(n_batch, n_swap)])
+  return lax.transpose(result, permutation)
+
 @bcoo_dot_general_p.def_impl
 def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape):
   lhs_data = jnp.asarray(lhs_data)
@@ -1246,9 +1255,9 @@ class BCOO(JAXSparse):
     if self.ndim > 2 or other.ndim > 2:
       raise NotImplementedError("sparse matmul for dimensions larger than 2")
     dtype = jnp.promote_types(self.dtype, other.dtype)
-    return bcoo_dot_general(self.data.astype(dtype), self.indices, other.astype(dtype),
-                            lhs_shape=self.shape,
-                            dimension_numbers=(([0], [other.ndim - 1]), ([], []))).T
+    return bcoo_rdot_general(other.astype(dtype), self.data.astype(dtype), self.indices,
+                             rhs_shape=self.shape,
+                             dimension_numbers=(([other.ndim - 1], [0]), ([], [])))
 
   def transpose(self):
     if self.n_batch or self.n_dense:
