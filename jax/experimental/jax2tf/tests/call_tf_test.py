@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for call_tf."""
 
+from functools import partial
 from typing import Callable, Dict, Tuple
 import unittest
 
@@ -20,6 +21,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
@@ -274,6 +276,76 @@ class CallTfTest(jtu.JaxTestCase):
     grad_x = _maybe_jit(with_jit, jax.grad(jax2tf.call_tf(fun_tf)))(x, y)
     self.assertAllClose(
         dict(first=np.float32(4.), second=np.float32(3.)), grad_x)
+
+  def test_grad_nested(self):
+    # We embed the call_tf function in a larger function whose gradient we take
+    # It is relevant here that the cotangents flowing through the call_tf
+    # function are not scalars.
+
+    b = np.array([[11., 12., 13.], [21., 22., 23.]], dtype=np.float32)  # [2, 3]
+    c = np.array([[31., 32.], [41., 42.], [51., 52.], [61., 62.]], dtype=np.float32)  # [4, 2]
+    x_dict = dict(b=b, c=c)  # b:[2, 3], c=[4, 2]
+    # res: dict(r:[4, 3], s:[4, 2])
+    def f_tf(x_dict):
+      return dict(r=tf.matmul(x_dict["c"], x_dict["b"]), s=7. * x_dict["c"])
+
+    @jax.jit  # To recognize it in jaxpr
+    def f_jax(x_dict):
+      return dict(r=jnp.matmul(x_dict["c"], x_dict["b"]), s=7. * x_dict["c"])
+
+    def loss(functional, x_dict):
+      prediction = functional(x_dict)  # r:[4, 3], s:[4, 2]
+      weights = np.array([1., 2., 3., 4.], dtype=np.float32)  # [4]
+      weighted_pred = jnp.matmul(weights, prediction["r"])  # [3]
+      return jnp.sum(weighted_pred) + 4. * jnp.sum(prediction["s"])
+
+    g_fun_with_tf = jax.grad(partial(loss, jax2tf.call_tf(f_tf)))
+    g_fun_with_jax = jax.grad(partial(loss, f_jax))
+
+    g_tf = g_fun_with_tf(x_dict)
+    g_jax = g_fun_with_jax(x_dict)
+    self.assertAllClose(g_jax, g_tf)
+
+  def test_grad_int_argument(self):
+    # Similar to https://github.com/google/jax/issues/6975
+    # state is a pytree that contains an integer and a boolean.
+    # The function returns an integer and a boolean.
+    def f(param, state, x):
+      return param * x, state
+
+    param = np.array([0.7, 0.9], dtype=np.float32)
+    state = dict(array=np.float32(1.), counter=7, truth=True)
+    x = np.float32(3.)
+
+    # tf.function is important, without it the bug does not appear
+    f_call_tf = jax2tf.call_tf(f)
+    g_call_tf = jax.grad(lambda *args: jnp.sum(f_call_tf(*args)[0]))(param, state, x)
+    g = jax.grad(lambda *args: jnp.sum(f(*args)[0]))(param, state, x)
+    self.assertAllClose(g_call_tf, g)
+
+  def test_grad_with_float0_result(self):
+    # Gradient over integer-argument functions, with float0 result
+    def f_jax(x, y):  # x is an int, y is a float; res is a (int, float)
+      return (2 * x, 2 * x + y * y)
+    def f_tf(x, y):
+      # TF needs explicit casts
+      return (2 * x, tf.cast(2 * x, dtype=y.dtype) + y * y)
+
+    def wrapper(functional, x, y):  # x: i32
+      return jnp.sum(2. * functional(3 * x, 4. * y)[1])
+
+    grad_g = jax.grad(partial(wrapper, f_jax),
+                      allow_int=True, argnums=(0, 1))
+    grad_g_call_tf = jax.grad(partial(wrapper, jax2tf.call_tf(f_tf)),
+                              allow_int=True, argnums=(0, 1))
+
+    x = np.int32(2)
+    y = np.float32(3.)
+    g_jax = grad_g(x, y)
+    g_call_tf = grad_g_call_tf(x, y)
+    self.assertEqual(g_jax[0].dtype, dtypes.float0)
+    self.assertEqual(g_call_tf[0].dtype, dtypes.float0)
+    self.assertAllClose(g_jax[1], g_call_tf[1])
 
   @parameterized_jit
   def test_grad_custom(self, with_jit=False):

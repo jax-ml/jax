@@ -115,40 +115,42 @@ def call_tf(func_tf: Callable) -> Callable:
 
   # Define the fwd and bwd custom_vjp functions
   def make_call_vjp_fwd(*args_jax):
-    # Return the primal argument as the residual
+    # Return the primal arguments as the residual
     return make_call(*args_jax), args_jax
 
-  def make_call_vjp_bwd(residual, ct_res):
-    args_jax = residual  # residual is the primal argument
+  def make_call_vjp_bwd(residual_jax, ct_res_jax):
+    args_jax = residual_jax  # residual is the primal argument
 
-    def tf_vjp_fun(args, ct_res):
+    def tf_vjp_fun(args_tf, ct_res_tf):
       """Invoke TF gradient."""
+
+      # TF does not like us to watch non-float vars
+      def replace_non_float(arg):
+        if np.issubdtype(arg.dtype.as_numpy_dtype, np.inexact):
+          return arg
+        else:
+          # When watched, this will be ignored. When use in results it will
+          # result in a floating 0. gradient, which JAX will ignore (and
+          # replace it with a float0)
+          return tf.zeros((), dtype=tf.float32)
+
+      watched_args_tf = tf.nest.map_structure(replace_non_float, args_tf)
       with tf.GradientTape(persistent=True) as tape:
-        tape.watch(args)
-        res = func_tf(*args)
+        tape.watch(watched_args_tf)
+        res = func_tf(*args_tf)
 
-      tf.nest.assert_same_structure(res, ct_res)
-      # If the result is not a scalar, we must accumulate arguments cotangents.
-      accumulator = None  # Same structure as "arg"
+      tf.nest.assert_same_structure(res, ct_res_tf)
+      dres_darg = tape.gradient(
+          tf.nest.map_structure(replace_non_float, res),
+          sources=watched_args_tf,
+          output_gradients=ct_res_tf,
+          unconnected_gradients=tf.UnconnectedGradients.ZERO)
 
-      def acc_ct(res_, ct_res_):
-        dres_darg = tape.gradient(
-            res_,
-            sources=args,
-            unconnected_gradients=tf.UnconnectedGradients.ZERO)
-        tf.nest.assert_same_structure(dres_darg, args)
-        scaled_dres_darg = tf.nest.map_structure(lambda d: d * ct_res_,
-                                                 dres_darg)
-        nonlocal accumulator
-        accumulator = (
-            scaled_dres_darg if accumulator is None
-            else tf.nest.map_structure(
-                lambda x, y: x + y, accumulator, scaled_dres_darg))
+      tf.nest.assert_same_structure(dres_darg, args_tf)
+      return dres_darg
 
-      tf.nest.map_structure(acc_ct, res, ct_res)
-      return accumulator
     # Use call_tf to call the VJP function
-    return call_tf(tf_vjp_fun)(args_jax, ct_res)
+    return call_tf(tf_vjp_fun)(args_jax, ct_res_jax)
 
   make_call.defvjp(make_call_vjp_fwd, make_call_vjp_bwd)
   return util.wraps(func_tf)(make_call)
