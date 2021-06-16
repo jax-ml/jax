@@ -1114,63 +1114,68 @@ for dtype in set(jtu.dtypes.all):
   axis = 0
   define(
       lax.gather_p,
-      f"dtypes_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}",
+      f"dtypes_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}_enable_xla=True",
       lambda a, i, axis: jnp.take(a, i, axis=axis),
       [RandArg(shape, dtype), indices,
        StaticArg(axis)],
-      dtype=dtype)
+      dtype=dtype,
+      enable_xla=True)
 
 # Construct gather harnesses using take
 _gather_input = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))
-for indices in [
-    # Ensure each set of indices has a distinct shape
-    np.array(2, dtype=np.int32),
-    np.array([2], dtype=np.int32),
-    np.array([2, 4], dtype=np.int32),
-    np.array([[2, 4], [5, 6]], dtype=np.int32),
-    np.array([0, 1, 10], dtype=np.int32),  # Index out of bounds
-    np.array([0, 1, 2, -1], dtype=np.int32),  # Index out of bounds
+for indices, index_oob, indices_name in [
+    # Ensure each set of indices has a distinct name
+    (np.array(2, dtype=np.int32), False, "1"),
+    (np.array([2], dtype=np.int32), False, "2"),
+    (np.array([2, 4], dtype=np.int32), False, "3"),
+    (np.array([[2, 4], [5, 6]], dtype=np.int32), False, "4"),
+    (np.array([[0], [1], [10]], dtype=np.int32), True, "5_oob"), # Index out of bounds too high
+    (np.array([[0, 1], [2, -1]], dtype=np.int32), False, "6_neg"), # Negative index is from the end
+    (np.array([0, 1, 2, 3, -10], dtype=np.int32), False, "7_neg"), # Index out of bounds, but works
+    (np.array([[[0], [1]], [[3], [-11]]], dtype=np.int32), True, "8_neg_oob")  # Index out of bounds, too low
 ]:
   for axis in [0, 1, 2]:
-    define(
-        lax.gather_p,
-        f"from_take_indices_shape={indices.shape}_axis={axis}",
-        lambda a, i, axis: jnp.take(a, i, axis=axis),
-        [_gather_input, indices, StaticArg(axis)],
-        dtype=_gather_input.dtype)
+    for enable_xla in [True, False]:
+      define(
+          lax.gather_p,
+          f"from_take_indices_name={indices_name}_axis={axis}_enable_xla={enable_xla}",
+          lambda a, i, axis: jnp.take(a, i, axis=axis),
+          [_gather_input, indices, StaticArg(axis)],
+          dtype=_gather_input.dtype,
+          enable_xla=enable_xla,
+          index_oob=index_oob)
 
 # Directly from lax.gather in lax_test.py.
-for shape, idxs, dnums, slice_sizes in [
+for shape, idxs, dnums, slice_sizes, needs_xla in [
     ((5,), np.array([[0], [2]]),
      lax.GatherDimensionNumbers(
          offset_dims=(), collapsed_slice_dims=(0,),
-         start_index_map=(0,)), (1,)),
+         start_index_map=(0,)), (1,), False),
     ((10,), np.array([[0], [0], [0]]),
      lax.GatherDimensionNumbers(
          offset_dims=(1,), collapsed_slice_dims=(),
-         start_index_map=(0,)), (2,)),
-    ((
-        10,
-        5,
-    ), np.array([[0], [2], [1]]),
+         start_index_map=(0,)), (2,), True),
+    ((10, 5,), np.array([[0], [2], [1]]),
      lax.GatherDimensionNumbers(
          offset_dims=(1,), collapsed_slice_dims=(0,),
-         start_index_map=(0,)), (1, 3)),
-    ((10, 5), np.array([[0, 2], [1, 0]]),
+         start_index_map=(0,)), (1, 3), True),
+    ((10, 6), np.array([[0, 2], [1, 0]]),
      lax.GatherDimensionNumbers(
          offset_dims=(1,), collapsed_slice_dims=(0,),
-         start_index_map=(0, 1)), (1, 3)),
+         start_index_map=(0, 1)), (1, 3), True),
 ]:
   dtype = np.float32
-  define(
-      lax.gather_p,
-      f"_shape={shape}_idxs_shape={idxs.shape}_dnums={dnums}_slice_sizes={slice_sizes}",
-      lambda op, idxs, dnums, slice_sizes: lax.gather(
-          op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
-      [RandArg(shape, dtype), idxs,
-       StaticArg(dnums),
-       StaticArg(slice_sizes)],
-      dtype=dtype)
+  for enable_xla in ([True] if needs_xla else [True, False]):
+    define(
+        lax.gather_p,
+        f"shape={shape}_idxs_shape={idxs.shape}_dnums={dnums}_slice_sizes={slice_sizes}_enable_xla={enable_xla}",
+        lambda op, idxs, dnums, slice_sizes: lax.gather(
+            op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
+        [RandArg(shape, dtype), idxs,
+         StaticArg(dnums),
+         StaticArg(slice_sizes)],
+        dtype=dtype,
+        enable_xla=enable_xla)
 
 
 def _make_scatter_harness(name,
