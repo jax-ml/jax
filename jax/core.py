@@ -246,7 +246,7 @@ class Primitive:
   multiple_results = False  # set for multi-output primitives
   call_primitive = False    # set for call primitives processed in final style
   map_primitive = False     # set for map primitives processed in final style
-  _dispatch_on_params = False  # whether to include axis names form params in dispatch
+  _dispatch_on_params = False  # whether to include axis names from params in dispatch
 
   def __init__(self, name: str):
     self.name = name
@@ -416,7 +416,7 @@ class Trace:
            "primitives")
     raise NotImplementedError(msg)
 
-  def process_map(self, call_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f, tracers, params):
     msg = (f"{type(self)} must override process_map to handle map-like "
            "primitives")
     raise NotImplementedError(msg)
@@ -1741,7 +1741,7 @@ def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: Dict[Var, Var
     e.eqn = eqn
     raise
   params = subst_axis_names(eqn.primitive, eqn.params, subst)
-  return JaxprEqn(invars, outvars, eqn.primitive, params, eqn.source_info)
+  return new_jaxpr_eqn(invars, outvars, eqn.primitive, params, eqn.source_info)
 
 def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   consts = None

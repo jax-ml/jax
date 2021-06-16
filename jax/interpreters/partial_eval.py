@@ -452,7 +452,7 @@ class JaxprTracer(Tracer):
       return self
 
   def is_known(self):
-      return self.pval.is_known()
+    return self.pval.is_known()
 
 # TODO(necula): this could return a ClosedJaxpr with out_pvals
 def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
