@@ -959,8 +959,8 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
                     call_jaxpr=call_jaxpr)
   del new_params['out_axes_thunk']
   del new_params['spmd_out_axes_thunk']
-  eqn = new_jaxpr_eqn([*constvars, *invars], outvars, primitive,
-                      new_params, source_info)
+  eqn = new_jaxpr_eqn([*constvars, *invars], outvars, primitive, new_params,
+                      any(e.effectful for e in jaxpr.eqns), source_info)
   self.frame.eqns.append(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore

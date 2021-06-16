@@ -137,12 +137,13 @@ class JaxprEqn(NamedTuple):
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
+  effectful: bool
   source_info: Optional[source_info_util.Traceback]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
-def new_jaxpr_eqn(invars, outvars, primitive, params, source_info=None):
-  return JaxprEqn(invars, outvars, primitive, params, source_info)
+def new_jaxpr_eqn(invars, outvars, primitive, params, effectful, source_info=None):
+  return JaxprEqn(invars, outvars, primitive, params, effectful, source_info)
 
 
 @total_ordering
@@ -246,6 +247,7 @@ class Primitive:
   multiple_results = False  # set for multi-output primitives
   call_primitive = False    # set for call primitives processed in final style
   map_primitive = False     # set for map primitives processed in final style
+  effectful = False         # set for side-effecting primitives
   _dispatch_on_params = False  # whether to include axis names from params in dispatch
 
   def __init__(self, name: str):
@@ -1741,7 +1743,7 @@ def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: Dict[Var, Var
     e.eqn = eqn
     raise
   params = subst_axis_names(eqn.primitive, eqn.params, subst)
-  return new_jaxpr_eqn(invars, outvars, eqn.primitive, params, eqn.source_info)
+  return new_jaxpr_eqn(invars, outvars, eqn.primitive, params, eqn.effectful, eqn.source_info)
 
 def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   consts = None
@@ -1959,7 +1961,7 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
 
 def pp_eqn(eqn: JaxprEqn, print_shapes: bool = False) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars, print_shapes)
-  pp_lhs = pp(f'{lhs} =')
+  pp_lhs = pp(f'{lhs} =(io)') if eqn.effectful else pp(f'{lhs} =')
   pp_rhs = (pp(eqn.primitive.name) >>
             pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
             pp(pp_vars(eqn.invars, print_shapes)))

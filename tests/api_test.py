@@ -2804,6 +2804,35 @@ class APITest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(f)(3)
     self.assertNotIn('xla_call', str(jaxpr))
 
+  def test_effects(self):
+    dummy_p = core.Primitive("dummy")
+    dummy_p.effectful = True
+    def dummy(x):
+      return dummy_p.bind(x)
+    dummy_p.def_abstract_eval(lambda x: core.raise_to_shaped(x))
+
+    jaxpr = jax.make_jaxpr(dummy)(1)
+    assert jaxpr.eqns[0].primitive == dummy_p and jaxpr.eqns[0].effectful
+
+    jitted_dummy = jax.jit(dummy)
+    jaxpr = jax.make_jaxpr(jitted_dummy)(1)
+    assert jaxpr.eqns[0].primitive.call_primitive and jaxpr.eqns[0].effectful
+
+    def fun_with_cond(c, x):
+      return jax.lax.cond(c, lambda x: dummy(x), lambda x: -dummy(x), x)
+    jaxpr = jax.make_jaxpr(fun_with_cond)(0, 1)
+    eqn_with_cond = [eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive == jax._src.lax.control_flow.cond_p]
+    assert len(eqn_with_cond) == 1
+    assert eqn_with_cond[0].effectful
+
+    def fun_with_scan(x):
+      def f(c, x):
+        return dummy(c), None
+      return jax.lax.scan(f, 1, None, 5)
+    jaxpr = jax.make_jaxpr(fun_with_scan)(0)
+    eqn_with_scan = [eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive == jax._src.lax.control_flow.scan_p]
+    assert len(eqn_with_scan) == 1
+    assert eqn_with_scan[0].effectful
 
 class RematTest(jtu.JaxTestCase):
 

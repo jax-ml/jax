@@ -892,8 +892,10 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   branches_1 = tuple(branches_1)
   branches_2 = tuple(branches_2)
 
+  effectful = False
   for jaxpr in branches_2[1:]:
     assert len(jaxpr.out_avals) == len(branches_2[0].out_avals)
+    effectful |= any(e.effectful for e in jaxpr.eqns)
 
   num_outs = len(branches_2[0].out_avals)
 
@@ -935,7 +937,7 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   params = dict(branches=branches_2, linear=linear_2)
   eqn = pe.new_eqn_recipe(
       [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
-      source_info_util.current())
+      effectful, source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -1663,6 +1665,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                                num_consts=num_consts_2,
                                num_carry=num_carry, linear=tuple(linear_2),
                                unroll=unroll),
+                          any(e.effectful for e in jaxpr.eqns),
                           source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return out_tracers

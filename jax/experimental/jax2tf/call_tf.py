@@ -170,6 +170,7 @@ def call_tf(func_tf: Callable) -> Callable:
 
 call_tf_p = core.Primitive("call_tf")
 call_tf_p.multiple_results = True
+call_tf_p.effectful = True
 
 
 # The impl will be used in op-by-op mode and calls func_tf in TF eager mode.

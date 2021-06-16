@@ -6394,6 +6394,7 @@ def _infeed_translation_rule(c, token, *, shapes, partitions):
 
 infeed_p = Primitive("infeed")
 infeed_p.multiple_results = True
+infeed_p.effectful = True
 infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
 infeed_p.def_abstract_eval(_infeed_abstract_eval)
 xla.translations[infeed_p] = _infeed_translation_rule
@@ -6417,6 +6418,7 @@ def _outfeed_translation_rule(c, token, *xs):
   return xops.OutfeedWithToken(t, token, c.get_shape(t))
 
 outfeed_p = Primitive("outfeed")
+outfeed_p.effectful = True
 outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
 outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
 xla.translations[outfeed_p] = _outfeed_translation_rule

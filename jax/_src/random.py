@@ -207,6 +207,7 @@ def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True
+threefry2x32_p.effectful = True
 threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
