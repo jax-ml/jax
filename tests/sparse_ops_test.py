@@ -545,7 +545,7 @@ class BCOOTest(jtu.JaxTestCase):
       for n_dense in range(len(lhs_shape) - max(lhs_contracting, default=0))
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
   def test_bcoo_dot_general_contract_only(self, lhs_shape, rhs_shape, dtype,
-                                         lhs_contracting, rhs_contracting, n_dense):
+                                          lhs_contracting, rhs_contracting, n_dense):
     rng = jtu.rand_small(self.rng())
     rng_sparse = rand_sparse(self.rng())
     def args_maker():
@@ -565,7 +565,7 @@ class BCOOTest(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
     self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
-    # In rare cases, this fails python_should_be_executing check. Why?
+    # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -606,7 +606,49 @@ class BCOOTest(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
     self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
-    # In rare cases, this fails python_should_be_executing check. Why?
+    # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
+    # self._CompileAndCheck(f_sparse, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_dimension_numbers={}_n_batch={}_n_dense={}"
+       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
+               jtu.format_shape_dtype_string(rhs_shape, dtype),
+               dimension_numbers, n_batch, n_dense),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "dimension_numbers": dimension_numbers,
+       "n_batch": n_batch, "n_dense": n_dense}
+      for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
+          ((3, 2, 4), (3, 3, 2), (([1], [2]), ([0], [0])), 1, 0),
+          ((3, 2, 4), (3, 3, 2), (([1], [2]), ([0], [0])), 2, 0),
+          ((2, 3, 4), (3, 3, 2), (([0], [2]), ([1], [0])), 1, 0),
+          ((2, 3, 4), (3, 3, 2), (([0], [2]), ([1], [0])), 2, 0),
+          ((3, 4, 3, 2), (3, 4, 2, 4), (([3], [2]), ([0], [0])), 1, 0),
+          ((3, 4, 3, 2), (3, 4, 2, 4), (([3], [2]), ([0, 1], [0, 1])), 2, 0),
+          ((3, 4, 3, 2), (3, 4, 2, 4), (([3], [2]), ([0, 1], [0, 1])), 2, 1),
+      ]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_bcoo_rdot_general_contract_and_batch(self, lhs_shape, rhs_shape, dtype,
+                                                dimension_numbers, n_batch, n_dense):
+    rng = jtu.rand_small(self.rng())
+    rng_sparse = rand_sparse(self.rng())
+    def args_maker():
+      lhs = rng(lhs_shape, dtype)
+      rhs = rng_sparse(rhs_shape, dtype)
+      data, indices = sparse_ops.bcoo_fromdense(rhs, n_batch=n_batch, n_dense=n_dense)
+      return data, indices, lhs, rhs
+
+    def f_dense(data, indices, lhs, rhs):
+      return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+
+    def f_sparse(data, indices, lhs, rhs):
+      return sparse_ops.bcoo_rdot_general(lhs, data, indices,
+                                          rhs_shape=rhs.shape,
+                                          dimension_numbers=dimension_numbers)
+
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
+    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
+    # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
