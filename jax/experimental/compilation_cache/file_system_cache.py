@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 import os
+from typing import Optional
+import warnings
 
 class FileSystemCache:
 
-  def __init__(self, path: str):
+  def __init__(self, path: str, max_cache_size_bytes=32 * 2**30):
     """Sets up a cache at 'path'. Cached values may already be present."""
     os.makedirs(path, exist_ok=True)
-    self._path  = path
+    self._path = path
+    self._max_cache_size_bytes = max_cache_size_bytes
 
   def get(self, key: str) -> Optional[bytes]:
     """Returns None if 'key' isn't present."""
@@ -37,6 +39,35 @@ class FileSystemCache:
     """Adds new cache entry, possibly evicting older entries."""
     if not key:
       raise ValueError("key cannot be empty")
-      #TODO(colemanliyah):implement eviction
-    with open(os.path.join(self._path, key), "wb") as file:
-      file.write(value)
+    if self._evict_entries_if_necessary(key, value):
+      path_to_new_file = os.path.join(self._path, key)
+      with open(path_to_new_file, "wb") as file:
+        file.write(value)
+    else:
+      warnings.warn(f"Cache value of size {len(value)} is larger than"
+                    f" the max cache size of {self._max_cache_size_bytes}")
+
+  def _evict_entries_if_necessary(self, key: str, value: bytes) -> bool:
+    """Returns True if there's enough space to add 'value', False otherwise."""
+    new_file_size = len(value)
+
+    if new_file_size >= self._max_cache_size_bytes:
+      return False
+
+    #TODO(colemanliyah): Refactor this section so the whole directory doesn't need to be checked
+    while new_file_size + self._get_cache_directory_size() > self._max_cache_size_bytes:
+      last_time = float('inf')
+      file_to_delete = None
+      for file_name in os.listdir(self._path):
+        file_to_inspect = os.path.join(self._path, file_name)
+        atime = os.stat(file_to_inspect).st_atime
+        if atime < last_time:
+          last_time = atime
+          file_to_delete = file_to_inspect
+      assert file_to_delete
+      os.remove(file_to_delete)
+    return True
+
+  def _get_cache_directory_size(self):
+    """Retrieves the current size of the directory, self.path"""
+    return sum(os.path.getsize(f) for f in os.scandir(self._path) if f.is_file())
