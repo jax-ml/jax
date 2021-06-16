@@ -82,13 +82,13 @@ AxisName = core.AxisName
 ResourceAxisName = AxisName  # Different name just for documentation purposes
 Mesh = pxla.Mesh
 
-class Loop(NamedTuple):
+class _Loop(NamedTuple):
   name: ResourceAxisName
   length: int
 
 class ResourceEnv(NamedTuple):
   physical_mesh: Mesh
-  loops: Tuple[Loop, ...]
+  loops: Tuple[_Loop, ...]
 
   def with_mesh(self, mesh: Mesh):
     overlap = set(mesh.axis_names) & (self.resource_axes - set(self.physical_mesh.axis_names))
@@ -98,7 +98,7 @@ class ResourceEnv(NamedTuple):
                        f"{show_axes(overlap)}")
     return self._replace(physical_mesh=mesh)
 
-  def with_extra_loop(self, loop: Loop):
+  def with_extra_loop(self, loop: _Loop):
     if loop.name in self.resource_axes:
       raise ValueError(f"Cannot extend the resource environment with loop named "
                        f"`{loop.name}`. An axis of this name is already defined!")
@@ -135,9 +135,45 @@ EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
 thread_resources = threading.local()
 thread_resources.env = EMPTY_ENV
 
+
+"""Create an anonymous serial loop resource for use in a single xmap axis.
+
+A use of :py:class:`SerialLoop` in :py:func:`xmap`'s ``axis_resources``
+extends the resource environment with a new serial loop with a unique
+unspecified name, that will only be used to partition the axis that
+used a given instance.
+
+This is unlike :py:func:`serial_loop`, which makes it possible to iterate
+jointly over chunks of multiple axes (with the usual requirement that they
+do not coincide in a named shape of any value in the program).
+
+Example::
+
+    # Processes `x` in a vectorized way, but in 20 micro-batches.
+    xmap(f, in_axes=['i'], out_axes=[i], axis_resources={'i': SerialLoop(20)})(x)
+
+    # Computes the result in a vectorized way, but in 400 micro-batches,
+    # once for each coordinate (0, 0) <= (i, j) < (20, 20). Each `SerialLoop`
+    # creates a fresh anonymous loop.
+    xmap(h, in_axes=(['i'], ['j']), out_axes=['i', 'j'],
+         axis_resources={'i': SerialLoop(20), 'j': SerialLoop(20)})(x, y)
+"""
+class SerialLoop:
+  length: int
+
+  def __init__(self, length):
+    self.length = length
+
+  def __eq__(self, other):
+    return self.length == other.length
+
+  def __hash__(self):
+    return hash(self.length)
+
+
 @contextlib.contextmanager
-def loop(name: ResourceAxisName, length: int):
-  """Define a loop resource to be available in scope of this context manager.
+def serial_loop(name: ResourceAxisName, length: int):
+  """Define a serial loop resource to be available in scope of this context manager.
 
   This is similar to :py:func:`mesh` in that it extends the resource
   environment with a resource called ``name``. But, any use of this resource
@@ -167,7 +203,7 @@ def loop(name: ResourceAxisName, length: int):
         axis_resources={'i': 'l'})(x)
   """
   old_env = getattr(thread_resources, "env", EMPTY_ENV)
-  thread_resources.env = old_env.with_extra_loop(Loop(name, length))
+  thread_resources.env = old_env.with_extra_loop(_Loop(name, length))
   try:
     yield
   finally:
@@ -293,6 +329,8 @@ def _prepare_axes(axes, arg_name):
   entries = map(partial(_parse_entry, arg_name), entries)
   return tree_unflatten(treedef, entries), entries, treedef
 
+Resource = Union[ResourceAxisName, SerialLoop]
+ResourceSet = Union[Resource, Tuple[Resource, ...]]
 
 # TODO: Some syntactic sugar to make the API more usable in a single-axis case?
 # TODO: Are the resource axes scoped lexically or dynamically? Dynamically for now!
@@ -301,7 +339,7 @@ def xmap(fun: Callable,
          out_axes,
          *,
          axis_sizes: Dict[AxisName, int] = {},
-         axis_resources: Dict[AxisName, Union[ResourceAxisName, Tuple[ResourceAxisName, ...]]] = {},
+         axis_resources: Dict[AxisName, ResourceSet] = {},
          donate_argnums: Union[int, Sequence[int]] = (),
          backend: Optional[str] = None):
   """Assign a positional signature to a program that uses named array axes.
@@ -486,11 +524,21 @@ def xmap(fun: Callable,
   in_axes_names = set(it.chain(*(spec.keys() for spec in in_axes_entries)))
   defined_names = axis_sizes_names | in_axes_names
   out_axes_names = set(it.chain(*(spec.keys() for spec in out_axes_entries)))
-  normalized_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]] = \
-      {axis: (resources if isinstance(resources, tuple) else (resources,))
-       for axis, resources in axis_resources.items()}
+
+  anon_serial_loops = []
+  def normalize_resource(r) -> ResourceAxisName:
+    if isinstance(r, SerialLoop):
+      name = fresh_resource_name()
+      anon_serial_loops.append((name, r.length))
+      return name
+    return r
+
+  normalized_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]] = {}
   for axis in defined_names:
-    normalized_axis_resources.setdefault(axis, ())
+    resources = axis_resources.get(axis, ())
+    if not isinstance(resources, tuple):
+      resources = (resources,)
+    normalized_axis_resources[axis] = tuple(unsafe_map(normalize_resource, resources))
   frozen_axis_resources = FrozenDict(normalized_axis_resources)
   necessary_resources = set(it.chain(*frozen_axis_resources.values()))
 
@@ -505,7 +553,7 @@ def xmap(fun: Callable,
                      f"{out_axes_names - defined_names}")
 
   for axis, resources in frozen_axis_resources.items():
-    if len(set(resources)) != len(resources):
+    if len(set(resources)) != len(resources):  # type: ignore
       raise ValueError(f"Resource assignment of a single axis must be a tuple of "
                        f"distinct resources, but specified {resources} for axis {axis}")
 
@@ -515,7 +563,6 @@ def xmap(fun: Callable,
   has_input_rank_assertions = any(spec.expected_rank is not None for spec in in_axes_entries)
   has_output_rank_assertions = any(spec.expected_rank is not None for spec in out_axes_entries)
 
-  @wraps(fun)
   def fun_mapped(*args):
     # Putting this outside of fun_mapped would make resources lexically scoped
     resource_env = thread_resources.env
@@ -584,6 +631,11 @@ def xmap(fun: Callable,
                            f"which asserts that it should be of rank {spec.expected_rank}, "
                            f"but the output has rank {out.ndim} (and shape {out.shape})")
     return tree_unflatten(out_tree(), out_flat)
+
+  # Decorate fun_mapped
+  for loop_params in reversed(anon_serial_loops):
+    fun_mapped = serial_loop(*loop_params)(fun_mapped)
+  fun_mapped = wraps(fun)(fun_mapped)
 
   return fun_mapped
 
@@ -1320,9 +1372,8 @@ def _jaxpr_resources(jaxpr: core.Jaxpr, resource_env) -> Set[ResourceAxisName]:
   used_resources = set()
   for eqn in jaxpr.eqns:
     if eqn.primitive is xmap_p:
-      if eqn.params['resource_env'] != resource_env:
-        raise RuntimeError("Changing the resource environment (e.g. hardware mesh "
-                           "spec) is not allowed inside xmap.")
+      if eqn.params['resource_env'].physical_mesh != resource_env.physical_mesh:
+        raise RuntimeError("Changing the physical mesh is not allowed inside xmap.")
       used_resources |= set(it.chain(*eqn.params['axis_resources'].values()))
     updates = core.traverse_jaxpr_params(
         partial(_jaxpr_resources, resource_env=resource_env), eqn.params)
