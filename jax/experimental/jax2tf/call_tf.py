@@ -28,6 +28,7 @@ from typing import Callable, Sequence
 import jax
 from jax import core
 from jax import dlpack
+from jax import dtypes
 from jax import numpy as jnp
 from jax import tree_util
 from jax._src import util
@@ -39,6 +40,8 @@ from . import jax2tf as jax2tf_internal
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
+map = util.safe_map
+zip = util.safe_zip
 xops = xla_client._xla.ops  # type: ignore
 
 # The platforms for which to use DLPack to avoid copying (only works on GPU
@@ -81,17 +84,21 @@ def call_tf(func_tf: Callable) -> Callable:
   def make_call(*args_jax):
     """We wrap it all in `make_call` so that we can attach custom VJP."""
 
-    def _dtype(x):
-      return (getattr(x, "dtype", None) or np.asarray(x).dtype)
-
     args_jax_flat, args_jax_treedef = tree_util.tree_flatten(args_jax)
+    # Canonicalize the arguments; e.g., makes them x32 if JAX is in 32-bit mode
+    def canonical_arg(v):
+      v = v if getattr(v, "dtype", None) else np.asarray(v)
+      dtype = dtypes.canonicalize_dtype(v.dtype)
+      if dtype != v.dtype:
+        v = v.astype(dtype)
+      return v
+
+    args_jax_flat = tuple(map(canonical_arg, args_jax_flat))
     args_tf_sig_flat = [
-        tf.TensorSpec(np.shape(a_jax), jax2tf_internal._to_tf_dtype(_dtype(a_jax)))
+        tf.TensorSpec(a_jax.shape, jax2tf_internal._to_tf_dtype(a_jax.dtype))
         for a_jax in args_jax_flat
     ]
-    args_tf_sig = tf.nest.map_structure(
-        lambda a_jax: tf.TensorSpec(
-            np.shape(a_jax), jax2tf_internal._to_tf_dtype(_dtype(a_jax))), args_jax)
+    args_tf_sig = args_jax_treedef.unflatten(args_tf_sig_flat)
 
     # Trace once through the function to get the result shape
     with jax2tf_internal.inside_call_tf():
@@ -100,6 +107,11 @@ def call_tf(func_tf: Callable) -> Callable:
     res_tf_sig_flat, res_treedef = tree_util.tree_flatten(
         func_tf_concrete.structured_outputs)
 
+    # Canonicalize the result signature; e.g., makes them x32 if JAX is in 32-bit mode
+    def res_sig_to_aval(res_sig: tf.TensorSpec) -> core.AbstractValue:
+      return core.ShapedArray(res_sig.shape, jax2tf_internal._to_jax_dtype(res_sig.dtype))
+
+    out_avals = tuple(map(res_sig_to_aval, res_tf_sig_flat))
     res_jax_flat = call_tf_p.bind(
         *args_jax_flat,
         # Carry the actual function such that op-by-op call can call in TF eager mode.
@@ -108,9 +120,9 @@ def call_tf(func_tf: Callable) -> Callable:
         args_treedef=args_jax_treedef,
         args_tf_sig_flat=args_tf_sig_flat,
         res_treedef=res_treedef,
-        res_tf_sig_flat=res_tf_sig_flat)
+        out_avals=out_avals)
     # TODO(necula): check the expected result signature
-    assert len(res_jax_flat) == len(res_tf_sig_flat)
+    assert len(res_jax_flat) == len(out_avals)
     return res_treedef.unflatten(res_jax_flat)
 
   # Define the fwd and bwd custom_vjp functions
@@ -161,7 +173,7 @@ call_tf_p.multiple_results = True
 
 
 # The impl will be used in op-by-op mode and calls func_tf in TF eager mode.
-def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
+def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, out_avals, **_):
   # On GPU we use dlpack to avoid copies of data to the host.
   def _arg_jax_to_tf(arg_jax):
     if (isinstance(arg_jax, xla.DeviceArray) and
@@ -181,7 +193,8 @@ def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
   res_tf_flat, _ = tree_util.tree_flatten(res_tf)
   # TODO(necula): check the result for tree and aval
 
-  def _res_tf_to_jax(res_tf):
+  def _res_tf_to_jax(res_tf: TfVal, out_aval: core.AbstractValue):
+    res_tf, _ = jax2tf_internal._tfval_to_tensor_jax_dtype(res_tf, jax_dtype=out_aval.dtype)
     if isinstance(res_tf, tf.Tensor) and res_tf.dtype in dlpack.SUPPORTED_DTYPES:
       res_tf_platform = tf.DeviceSpec.from_string(res_tf.backing_device).device_type
       res_jax_platform = res_tf_platform.lower()
@@ -192,24 +205,21 @@ def _call_tf_impl(*args_jax_flat, args_treedef, func_tf, **_):
 
     return jnp.asarray(np.asarray(res_tf))
 
-  return list(map(_res_tf_to_jax, res_tf_flat))
+  return list(map(_res_tf_to_jax, res_tf_flat, out_avals))
 
 
 call_tf_p.def_impl(_call_tf_impl)
 
 
-def _call_tf_abstract_eval(*_, res_tf_sig_flat, **__):
-  return tuple([
-      core.ShapedArray(np.shape(r), jax2tf_internal._to_jax_dtype(r.dtype))
-      for r in res_tf_sig_flat
-  ])
+def _call_tf_abstract_eval(*_, out_avals, **__):
+  return out_avals
 
 
 call_tf_p.def_abstract_eval(_call_tf_abstract_eval)
 
 
 def _call_tf_translation_rule(builder, *args_op, func_tf, func_tf_concrete,
-                              args_treedef, args_tf_sig_flat, res_tf_sig_flat,
+                              args_treedef, args_tf_sig_flat, out_avals,
                               **_):
   # TODO(necula): It seems that we need concrete tensors for get_compiler_ir?
   args_tf_flat = [
@@ -248,12 +258,28 @@ def _call_tf_translation_rule(builder, *args_op, func_tf, func_tf_concrete,
       stage="hlo_serialized", device_name=tf_device_name)
   callee_xla_comp = xla_client.XlaComputation(func_tf_hlo)
   res_tf = xops.Call(builder, callee_xla_comp, args_op + tuple(captured_ops))
-  if len(res_tf_sig_flat) == 1:
+  if len(out_avals) == 1:
     # TF does not wrap singletons as tuples, but JAX expects tuples because
     # call_tf is a multiple_results primitive.
-    return xops.Tuple(builder, [res_tf])
+    res_untupled = (res_tf,)
   else:
-    return res_tf
+    res_untupled = tuple(xops.GetTupleElement(res_tf, i)
+                         for i in range(len(out_avals)))
+  # We may have to cast the results to x32 for JAX
+  def canonicalize_res(res, out_aval: core.AbstractValue):
+    res_dtype = builder.get_shape(res).numpy_dtype()
+    if res_dtype != out_aval.dtype:
+      new_etype = xla_client.dtype_to_etype(out_aval.dtype)
+      return xops.ConvertElementType(res, new_element_type=new_etype)
+    else:
+      return res
+
+  canonical_res_untupled = tuple(map(canonicalize_res,
+                                     res_untupled,
+                                     out_avals))
+  return xops.Tuple(builder, canonical_res_untupled)
+
+
 
 
 xla.translations[call_tf_p] = _call_tf_translation_rule

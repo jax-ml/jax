@@ -61,13 +61,13 @@ class CallTfTest(jtu.JaxTestCase):
     _ = tf.add(1, 1)
     super().setUp()
 
-  #@parameterized_jit
+  @parameterized_jit
   def test_eval_scalar_arg(self, with_jit=True):
     def f_tf(x):
       return tf.math.sin(x)
     x = 3.
     res = _maybe_jit(with_jit, jax2tf.call_tf(f_tf))(x)
-    self.assertAllClose(jnp.sin(x), res, check_dtypes=False)
+    self.assertAllClose(jnp.sin(x), res)
 
   @parameterized_jit
   def test_eval_scalar_res(self, with_jit=False):
@@ -79,13 +79,13 @@ class CallTfTest(jtu.JaxTestCase):
   def test_eval_numpy_arg(self, with_jit=False):
     x = np.ones((2, 3), dtype=np.float32)
     res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
-    self.assertAllClose(jnp.sin(x), res, check_dtypes=False)
+    self.assertAllClose(jnp.sin(x), res)
 
   @parameterized_jit
   def test_eval_numpy_res(self, with_jit=False):
-    x = np.ones((2, 3), dtype=np.float32)
+    x = np.ones((2, 3))
     res = _maybe_jit(with_jit, jax2tf.call_tf(lambda _: x))(x)
-    self.assertAllClose(x, res, check_dtypes=False)
+    self.assertAllClose(x, res)
 
   def test_eval_numpy_no_copy(self):
     if jtu.device_under_test() != "cpu":
@@ -100,14 +100,14 @@ class CallTfTest(jtu.JaxTestCase):
   def test_eval_devicearray_arg(self, with_jit=False):
     x = jnp.ones((2, 3), dtype=np.float32)
     res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
-    self.assertAllClose(jnp.sin(x), res, check_dtypes=False)
+    self.assertAllClose(jnp.sin(x), res)
 
   def test_eval_devicearray_no_copy(self):
     if jtu.device_under_test() != "cpu":
       # TODO(necula): add tests for GPU and TPU
       raise unittest.SkipTest("no_copy test works only on CPU")
     # For DeviceArray zero-copy works even if not aligned
-    x = jnp.ones((3, 3), dtype=np.float32)
+    x = jnp.ones((3, 3))
     res = jax2tf.call_tf(lambda x: x)(x)
     self.assertAllClose(x, res)
     self.assertTrue(np.shares_memory(x, res))
@@ -160,8 +160,7 @@ class CallTfTest(jtu.JaxTestCase):
           testcase_name=f"_{dtype.__name__}{'_jit' if with_jit else ''}",
           dtype=dtype,
           with_jit=with_jit)
-      # TF does not support yet add for uint16 and uint64
-      for dtype in set(jtu.dtypes.all) - set([np.bool_, np.uint16, np.uint64])
+      for dtype in set(jtu.dtypes.all) - set([np.bool_])
       for with_jit in [True, False])
   def test_dtypes(self, dtype=np.int32, with_jit=True):
 
@@ -187,6 +186,27 @@ class CallTfTest(jtu.JaxTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x, y)
     self.assertAllClose(
         np.array([True, False, False, False], dtype=np.bool_), res)
+
+  def test_x64_input(self):
+    def f_tf(x):
+      return tf.math.sin(x)
+
+    x = 5.  # TF interprets this as f64
+    res_call_tf = jax2tf.call_tf(f_tf)(x)
+    res_jax = jnp.sin(x)
+    self.assertAllClose(res_call_tf, res_jax)
+
+  def test_x64_output(self):
+    def f_tf(x):
+      return (tf.constant(3., tf.float64), x)
+
+    x = np.float32(5.)
+    res_call_tf = jax2tf.call_tf(f_tf)(x)
+    res_jax = (3., x)
+    self.assertAllClose(res_call_tf, res_jax)
+
+    res_call_tf_jit = jax.jit(jax2tf.call_tf(f_tf))(x)
+    self.assertAllClose(res_call_tf_jit, res_jax)
 
   @parameterized_jit
   def test_with_var_read(self, with_jit=True):
