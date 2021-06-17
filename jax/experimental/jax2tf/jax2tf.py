@@ -1092,17 +1092,7 @@ tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(lax.asin_translation_rule,
 tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(lax.atan_translation_rule,
                                                    multiple_results=False)
 
-
-# TODO: remove this when TF supports atan2 for [b]float16
-def _atan2(y: TfVal, x: TfVal) -> TfVal:
-  if y.dtype in (tf.bfloat16, tf.float16):
-    return tf.cast(tf.math.atan2(tf.cast(y, tf.float32),
-                                 tf.cast(x, tf.float32)),
-                   y.dtype)
-  else:
-    return tf.math.atan2(y, x)
-
-tf_impl[lax.atan2_p] = _atan2
+tf_impl[lax.atan2_p] = tf.math.atan2
 tf_impl[lax.acosh_p] = tf.math.acosh
 tf_impl[lax.atanh_p] = tf.math.atanh
 tf_impl[lax.asinh_p] = tf.math.asinh
