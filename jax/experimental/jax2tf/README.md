@@ -892,6 +892,7 @@ As of today, the tests are run using `tf_nightly==2.6.0-dev20210611`.
 
 ## Running on GPU
 
+
 To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
 for CUDA. One must be mindful to install a version of CUDA that is compatible
 with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
