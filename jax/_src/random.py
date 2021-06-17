@@ -304,14 +304,15 @@ def _random_bits(key, bit_width, shape):
   max_count = int(np.ceil(bit_width * size / 32))
 
   nblocks, rem = divmod(max_count, jnp.iinfo(np.uint32).max)
+
   if not nblocks:
     bits = threefry_2x32(key, lax.iota(np.uint32, rem))
   else:
-    *subkeys, last_key = split(key, nblocks + 1)
-    blocks = [threefry_2x32(k, lax.iota(np.uint32, jnp.iinfo(np.uint32).max))
-              for k in subkeys]
+    keys = split(key, nblocks + 1)
+    subkeys, last_key = keys[:-1], keys[-1]
+    blocks = vmap(threefry_2x32, in_axes=(0, None))(subkeys, lax.iota(np.uint32, jnp.iinfo(np.uint32).max))
     last = threefry_2x32(last_key, lax.iota(np.uint32, rem))
-    bits = lax.concatenate(blocks + [last], 0)
+    bits = lax.concatenate([blocks.ravel(), last], 0)
 
   dtype = _UINT_DTYPES[bit_width]
   if bit_width == 64:
