@@ -2,13 +2,15 @@ name: CI
 
 on:
   # Trigger the workflow on push or pull request,
-  # but only for the master branch
+  # but only for the main branch
   push:
     branches:
       - master
+      - main
   pull_request:
     branches:
       - master
+      - main
 
 jobs:
   lint_and_typecheck:
@@ -19,7 +21,7 @@ jobs:
         uses: styfle/cancel-workflow-action@0.8.0
         with:
           access_token: ${{ github.token }}
-        if: ${{github.ref != 'refs/head/master'}}
+        if: ${{github.ref != 'refs/head/master' && github.ref != 'refs/head/main'}}
       - uses: actions/checkout@v2
       - name: Set up Python 3.8
         uses: actions/setup-python@v2
@@ -65,7 +67,7 @@ jobs:
       uses: styfle/cancel-workflow-action@0.7.0
       with:
         access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/head/master'}}
+      if: ${{github.ref != 'refs/head/master' && github.ref != 'refs/head/main'}}
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v2
@@ -112,7 +114,7 @@ jobs:
       uses: styfle/cancel-workflow-action@0.7.0
       with:
         access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/head/master'}}
+      if: ${{github.ref != 'refs/head/master' && github.ref != 'refs/head/main'}}
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v2
