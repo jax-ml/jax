@@ -16,10 +16,9 @@
 
 This is experimental work to explore sparse support in JAX.
 
-The primitives defined here are deliberately low-level: i.e. for now there is
-no JAX CSR or COO matrix class. Each primitive implements a common sparse
-operation (sparse to dense, dense to sparse, sparse matrix/vector product,
-sparse matrix/matrix product) for two common sparse representations
+The primitives defined here are deliberately low-level: each primitive implements
+a common sparse operation (sparse to dense, dense to sparse, sparse matrix/vector
+product, sparse matrix/matrix product) for two common sparse representations
 (CSR and COO).
 
 These routines have reference implementations defined via XLA scatter/gather
