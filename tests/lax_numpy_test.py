@@ -4811,6 +4811,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         jnp.mgrid[1.3:4.2:0.3],
                         atol=atol,
                         rtol=rtol)
+    # abstract tracer value for jnp.mgrid slice
+    with self.assertRaisesRegex(jax.core.ConcretizationTypeError,
+                                "slice start of jnp.mgrid"):
+      jax.jit(lambda a, b: jnp.mgrid[a:b])(0, 2)
 
   def testOgrid(self):
     def assertListOfArraysEqual(xs, ys):
@@ -4846,6 +4850,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         jnp.ogrid[1.2:4.8:0.24],
                         atol=atol,
                         rtol=rtol)
+    # abstract tracer value for ogrid slice
+    with self.assertRaisesRegex(jax.core.ConcretizationTypeError,
+                                "slice start of jnp.ogrid"):
+      jax.jit(lambda a, b: jnp.ogrid[a:b])(0, 2)
 
   def testR_(self):
     a = np.arange(6).reshape((2,3))
@@ -4868,6 +4876,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # bad directive
     with self.assertRaisesRegex(ValueError, "could not understand directive.*"):
       jnp.r_["asdfgh",[1,2,3]]
+    # abstract tracer value for r_ slice
+    with self.assertRaisesRegex(jax.core.ConcretizationTypeError,
+                                "slice start of jnp.r_"):
+      jax.jit(lambda a, b: jnp.r_[a:b])(0, 2)
 
     # Complex number steps
     atol = 1e-6
@@ -4908,6 +4920,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # bad directive
     with self.assertRaisesRegex(ValueError, "could not understand directive.*"):
       jnp.c_["asdfgh",[1,2,3]]
+    # abstract tracer value for c_ slice
+    with self.assertRaisesRegex(jax.core.ConcretizationTypeError,
+                                "slice start of jnp.c_"):
+      jax.jit(lambda a, b: jnp.c_[a:b])(0, 2)
 
     # Complex number steps
     atol = 1e-6
