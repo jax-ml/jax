@@ -16,6 +16,7 @@ from absl.testing import absltest
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
 import jax.test_util as jtu
 import tempfile
+import threading
 import time
 
 class FileSystemCacheTest(jtu.JaxTestCase):
@@ -121,6 +122,29 @@ class FileSystemCacheTest(jtu.JaxTestCase):
       cache = FileSystemCache(tmpdir, max_cache_size_bytes=2)
       cache.put("foo", b"bar")
       self.assertEqual(cache.get("foo"), None)
+
+  def test_threads(self):
+    file_contents1 = "1" * (65536 + 1)
+    file_contents2 = "2" * (65536 + 1)
+
+    def call_multiple_puts_and_gets(cache):
+      for i in range(50):
+        cache.put("foo", file_contents1.encode('utf-8').strip())
+        cache.put("foo", file_contents2.encode('utf-8').strip())
+        cache.get("foo")
+        self.assertEqual(cache.get("foo"), file_contents2.encode('utf-8').strip())
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cache = FileSystemCache(tmpdir)
+      threads = []
+      for i in range(50):
+        t = threading.Thread(target=call_multiple_puts_and_gets(cache))
+        t.start()
+        threads.append(t)
+      for t in threads:
+          t.join()
+
+      self.assertEqual(cache.get("foo"), file_contents2.encode('utf-8').strip())
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

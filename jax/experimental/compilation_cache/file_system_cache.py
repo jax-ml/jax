@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import tempfile
 from typing import Optional
 import warnings
 
@@ -41,8 +42,16 @@ class FileSystemCache:
       raise ValueError("key cannot be empty")
     if self._evict_entries_if_necessary(key, value):
       path_to_new_file = os.path.join(self._path, key)
-      with open(path_to_new_file, "wb") as file:
-        file.write(value)
+      # Create the path for the file in a temporary directory so we can use the
+      # atomic move function to ensure that the file is properly stored and read
+      # in the case of concurrent access across multiple threads or processes
+      with tempfile.TemporaryDirectory() as tmpdir:
+          temp_path_to_file = os.path.join(tmpdir, key)
+          with open(temp_path_to_file, "wb") as file:
+              file.write(value)
+              file.flush()
+              os.fsync(file.fileno())
+          os.rename(temp_path_to_file, path_to_new_file)
     else:
       warnings.warn(f"Cache value of size {len(value)} is larger than"
                     f" the max cache size of {self._max_cache_size_bytes}")
