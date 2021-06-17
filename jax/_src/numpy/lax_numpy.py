@@ -3331,6 +3331,21 @@ def meshgrid(*args, **kwargs):
   return output
 
 
+def _make_1d_grid_from_slice(s: slice, op_name: str):
+  start =core.concrete_or_error(None, s.start,
+                                f"slice start of jnp.{op_name}") or 0
+  stop = core.concrete_or_error(None, s.stop,
+                                f"slice stop of jnp.{op_name}")
+  step = core.concrete_or_error(None, s.step,
+                                f"slice step of jnp.{op_name}") or 1
+  if np.iscomplex(step):
+    newobj = linspace(start, stop, int(_abs(step)))
+  else:
+    newobj = arange(start, stop, step)
+
+  return newobj
+
+
 class _IndexGrid:
   def __getitem__(self, key):
     single_slice = isinstance(key, slice)
@@ -3338,15 +3353,7 @@ class _IndexGrid:
       key = (key,)
     output = []
     for k in key:
-      start = core.concrete_or_error(None, k.start,
-                                     "slice start of jnp.mgrid") or 0
-      stop = core.concrete_or_error(None, k.stop, "slice stop of jnp.mgrid")
-      step = core.concrete_or_error(None, k.step,
-                                    "slice step of jnp.mgrid") or 1
-      if np.iscomplex(step):
-        output.append(linspace(start, stop, int(_abs(step))))
-      else:
-        output.append(arange(start, stop, step))
+      output.append(_make_1d_grid_from_slice(k, op_name=self.op_name))
     if single_slice:
       return output[0]
     output = meshgrid(*output, indexing='ij', sparse=self.sparse)
@@ -3382,6 +3389,7 @@ class _Mgrid(_IndexGrid):
                   [0, 1, 2]]], dtype=int32)
   """
   sparse = False
+  op_name = "mgrid"
 
 mgrid = _Mgrid()
 
@@ -3414,21 +3422,10 @@ class _Ogrid(_IndexGrid):
      DeviceArray([[0, 1, 2]], dtype=int32)]
   """
   sparse = True
+  op_name = "ogrid"
 
 
 ogrid = _Ogrid()
-
-
-def _make_1d_grid_from_slice(s: slice):
-  start = s.start or 0
-  stop = s.stop
-  step = s.step or 1
-  if np.iscomplex(step):
-    newobj = linspace(start, stop, int(_abs(step)))
-  else:
-    newobj = arange(start, stop, step)
-
-  return newobj
 
 
 class _AxisConcat:
@@ -3467,7 +3464,7 @@ class _AxisConcat:
     output = []
     for item in key:
       if isinstance(item, slice):
-        newobj = _make_1d_grid_from_slice(item)
+        newobj = _make_1d_grid_from_slice(item, op_name=self.op_name)
       elif isinstance(item, str):
         raise ValueError("string directive must be placed at the beginning")
       else:
@@ -3566,6 +3563,7 @@ class RClass(_AxisConcat):
   axis = 0
   ndmin = 1
   trans1d = -1
+  op_name = "r_"
 
 
 r_ = RClass()
@@ -3613,6 +3611,7 @@ class CClass(_AxisConcat):
   axis = -1
   ndmin = 2
   trans1d = 0
+  op_name = "c_"
 
 
 c_ = CClass()
