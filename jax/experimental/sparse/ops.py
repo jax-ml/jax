@@ -812,13 +812,20 @@ def _bcoo_extract_transpose(ct, indices, mat):
 
 def _bcoo_extract_batching_rule(batched_args, batch_dims):
   indices, mat = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"batch_dims={batch_dims}. Only 0 and None are supported.")
+  assert any(b is not None for b in batch_dims)
   if batch_dims[0] is None:
-    indices = indices[None, ...]
-  if batch_dims[1] is None:
-    mat = mat[None, ...]
-  return bcoo_extract(indices, mat), 0
+    bdim = batch_dims[1]
+    indices = lax.expand_dims(indices, (bdim,))
+  elif batch_dims[1] is None:
+    bdim = batch_dims[0]
+    mat = lax.expand_dims(mat, (bdim,))
+  else:
+    assert batch_dims[0] == batch_dims[1]
+    bdim = batch_dims[0]
+  n_batch = indices.ndim - 2
+  if bdim >= n_batch:
+    raise ValueError(f"batch_dims={batch_dims} out of range for indices with n_batch={n_batch}")
+  return bcoo_extract(indices, mat), bdim
 
 ad.defjvp(bcoo_extract_p, None, _bcoo_extract_jvp)
 ad.primitive_transposes[bcoo_extract_p] = _bcoo_extract_transpose

@@ -700,6 +700,8 @@ class BCOOTest(jtu.JaxTestCase):
        "dimension_numbers": dimension_numbers,
        "n_batch": n_batch, "n_dense": n_dense}
       for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
+          ((4, 5), (5, 3), (([1], [0]), ([], [])), 0, 0),
+          ((2, 4, 5), (2, 5, 3), (([2], [1]), ([0], [0])), 1, 0),
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
           ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 1, 0),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 0),
@@ -719,12 +721,13 @@ class BCOOTest(jtu.JaxTestCase):
     data, indices = sparse.bcoo_fromdense(X, n_batch=n_batch, n_dense=n_dense)
     Y = rng(rhs_shape, dtype)
 
+    # gradient with respect to rhs
     def f_dense(Y):
       return lax.dot_general(X, Y, dimension_numbers=dimension_numbers)
 
     def f_sparse(Y):
       return sparse.bcoo_dot_general(data, indices, Y, lhs_shape=X.shape,
-                                        dimension_numbers=dimension_numbers)
+                                     dimension_numbers=dimension_numbers)
 
     jf_dense = jax.jacfwd(f_dense)(Y)
     jr_dense = jax.jacrev(f_dense)(Y)
@@ -738,6 +741,33 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(jf_dense, jf_sparse, rtol=tol)
     self.assertAllClose(jr_dense, jr_sparse, rtol=tol)
     self.assertAllClose(jf_sparse, jr_sparse, rtol=tol)
+
+    # gradient with respect to lhs
+    def g_dense(X):
+      return lax.dot_general(X, Y, dimension_numbers=dimension_numbers)
+
+    def g_sparse(data):
+      return sparse.bcoo_dot_general(data, indices, Y, lhs_shape=X.shape,
+                                     dimension_numbers=dimension_numbers)
+
+    jf_dense = jax.jacfwd(g_dense)(X)
+    jr_dense = jax.jacrev(g_dense)(X)
+    jf_sparse = jax.jacfwd(g_sparse)(data)
+    jr_sparse = jax.jacrev(g_sparse)(data)
+
+    tol = {}
+    if jtu.device_under_test() == "tpu":
+      tol = {np.float32: 5E-3}
+
+    self.assertAllClose(jf_dense, jr_dense, rtol=tol)
+    self.assertAllClose(jf_sparse, jr_sparse, rtol=tol)
+
+    # Extract the sparse jacobian from the dense & compare.
+    def extract(X):
+      return sparse.bcoo_extract(indices, X)
+    for i in range(g_dense(X).ndim):
+      extract = jax.vmap(extract)
+    self.assertAllClose(extract(jf_dense), jf_sparse, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
