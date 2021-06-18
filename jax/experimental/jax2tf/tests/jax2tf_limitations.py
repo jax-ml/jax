@@ -767,6 +767,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def log1p(cls, harness: primitive_harness.Harness):
     return [
+        custom_numeric(dtypes=np.complex128, tol=3e-14),
         custom_numeric(dtypes=np.float64, tol=1e-10),
         custom_numeric(dtypes=np.float32, tol=1e-3)
     ]

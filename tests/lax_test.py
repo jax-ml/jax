@@ -2597,6 +2597,14 @@ class LazyConstantTest(jtu.JaxTestCase):
     out = lax.cumsum(x)
     self.assertArraysEqual(out, x)
 
+  @unittest.skipIf(jax.lib._xla_extension_version < 24,
+                   "Test requires Jaxlib 0.1.68")
+  def testLog1pNearOne(self):
+    np.testing.assert_array_almost_equal_nulp(
+        np.log1p(np.float32(1e-5)), lax.log1p(np.float32(1e-5)))
+    np.testing.assert_array_almost_equal_nulp(
+        np.log1p(np.float32(1e-5)), lax.log1p(np.complex64(1e-5)))
+
 
 class LaxNamedShapeTest(jtu.JaxTestCase):
 
