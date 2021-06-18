@@ -3029,60 +3029,104 @@ def pprint_cond(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
 pp_rules[cond_p] = pprint_cond
 
 # ## Part 6: effects
+#
+# Let's add general side-effecting callbacks!
+#
+# First we'll write some low-level machinery so that we can call into Python
+# from XLA computations.
 
-print_p = Primitive("print")
+# +
+import ctypes
 
-def xprint(*args):
-  if isinstance(args[0], str):
-    fmt, *args = args
-  else:
-    fmt = None
-  bind(print_p, *args, fmt=fmt)
+def emit_callback(c, fun, token, in_avals, out_avals, in_vals):
+  callback = PyCallback(fun, in_avals, out_avals)
+  leak(callback)  # leak for now, should attach to executable
+  callback_addr = xops.Constant(c, np.uint64(id(callback)))
+  operands = [token, callback_addr, *in_vals]
+  out_shapes = [_xla_shape(a) for a in out_avals]
+  result_shape = xc.Shape.tuple_shape([xc.Shape.token_shape(), *out_shapes])
+  out = xops.CustomCallWithLayout(
+      c, b"pycall", operands=operands,
+      shape_with_layout=result_shape.with_major_to_minor_layout_if_absent(),
+      operand_shapes_with_layout=[
+          c.get_shape(x).with_major_to_minor_layout_if_absent()
+          for x in operands],
+      has_side_effect=True)
+  token, *outs = destructure_tuple(c, out)
+  return token, outs
+leak = [].append
 
-def print_impl(*args, fmt):
-  print(fmt.format(*args))
-  return ()
-impl_rules[print_p] = print_impl
-
-xprint('hi')
-
-
-def xprint_abstract_eval(*args: ShapedArray, fmt: str) -> Tuple[List[Any], bool]:
-  return [], True
-abstract_eval_rules[print_p] = xprint_abstract_eval
-
-jaxpr, _, _ = make_jaxpr(lambda: xprint('hi'))
-print(jaxpr)
-
-
-import autodidax_ext
-
-class ShapeDType(NamedTuple):
-  size: int
-  dtype: np.dtype
-  shape: Tuple[int, ...]
-
-class F(NamedTuple):
+class PyCallback(NamedTuple):
   f: Callable
-  arg_shapes: List[ShapeDType]
+  in_avals: List[ShapedArray]
+  out_avals: List[ShapedArray]
 
   def __call__(self, *args):
     return self.f(*args)
 
-def emit_callback(c, token, f, *args):
-  f_ = F(f, [shape_dtype_spec(c, x) for x in args])
-  return autodidax_ext.pycallback(c, token, f_, *args)
+@ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))
+def pycall_trampoline(out_ptr, arg_ptr_ptr):
+  f = ctypes.cast(arg_ptr_ptr[1][0], ctypes.py_object).value
+  args = [ptr_to_ndarr(arg_ptr_ptr[i+2], a) for i, a in enumerate(f.in_avals)]
+  outs = f(*args)
+  out_ptr = ctypes.cast(out_ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))
+  for i, a in enumerate(f.out_avals):
+    out = ptr_to_ndarr(out_ptr[i+1], a)
+    out[...] = outs[i]
 
-def shape_dtype_spec(c, x):
-  s = c.get_shape(x)
-  shape, dtype = s.dimensions(), s.numpy_dtype()
-  return ShapeDType(dtype.itemsize * int(np.prod(shape)), dtype, shape)
+def ptr_to_ndarr(p: ctypes._Pointer, a: ShapedArray):
+  p = ctypes.cast(p, ctypes.POINTER(ctypes.c_uint8))
+  size = a.dtype.itemsize * int(np.prod(a.shape))
+  return np.ctypeslib.as_array(p, (size,)).view(a.dtype).reshape(a.shape)
 
+PyCapsule_Destructor = ctypes.CFUNCTYPE(None, ctypes.py_object)
+PyCapsule_New = ctypes.pythonapi.PyCapsule_New
+PyCapsule_New.restype = ctypes.py_object
+PyCapsule_New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, PyCapsule_Destructor)
 
-def xprint_translation(c, token, in_avals, in_vals, *, fmt):
-  callback = lambda *args: print(fmt.format(*args))
-  token = emit_callback(c, token, callback, *in_vals)
-  return token, []
-xla_translations[print_p] = xprint_translation
+def make_custom_call_target(ctypes_callback):
+  func_ptr = ctypes.c_void_p.from_param(ctypes_callback)
+  return PyCapsule_New(func_ptr, b"xla._CUSTOM_CALL_TARGET", PyCapsule_Destructor(0))
+xc.register_custom_call_target(b"pycall", make_custom_call_target(pycall_trampoline))
+# -
 
-jit(lambda x: xprint('hi: {}', x))(np.array([1., 2.]))
+# Next, we'll introduce the general callback primitive, and define its semantics
+# with an impl rule. We also give a simple wrapper for printing.
+
+# +
+pycall_p = Primitive("pycall")
+
+def pycall(fun: Callable, result_shape: List[ShapedArray], *args):
+  return bind(pycall_p, *args, fun=fun, result_shape=result_shape)
+
+def pyprint(fmt: str, *args):
+  return pycall(lambda *args: print(fmt.format(*args)), [], *args)
+
+# +
+def pycall_impl(*args, fun, result_shape):
+  del result_shape
+  return fun(*args)
+impl_rules[pycall_p] = pycall_impl
+# -
+
+# Next, we'll add abstract evaluation and translation rules so that we can stage
+# this primitive into jaxprs, and then into XLA programs:
+
+# +
+def pycall_abstract_eval(*args: ShapedArray, fun, result_shape
+                         ) -> Tuple[List[Any], bool]:
+  return result_shape, True
+abstract_eval_rules[pycall_p] = pycall_abstract_eval
+
+def pycall_translation(c, token, in_avals, in_vals, *, fun, result_shape):
+  return emit_callback(c, fun, token, in_avals, result_shape, in_vals)
+xla_translations[pycall_p] = pycall_translation
+# -
+
+# Finally, we can test these basics:
+
+jit(lambda x: pyprint('hi: {}', x))(np.array([3., 1., 4.]))
+
+result_shape = [ShapedArray(np.shape(x), np.result_type(x))]
+y, = jit(lambda x: pycall(lambda x: [2.*x], result_shape, x))(3.)
+print(y)
