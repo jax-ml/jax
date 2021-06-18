@@ -88,7 +88,7 @@ Follow these steps to contribute code:
 
    ```bash
    git fetch upstream
-   git rebase upstream/master
+   git rebase upstream/main
    ```
 
    Finally, push your commit on your development branch and create a remote 

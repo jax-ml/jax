@@ -16,5 +16,5 @@
 # `_current_jaxlib_version` and `_available_cuda_versions` in setup.py to
 # reflect the most recent available binaries.
 # __version__ should be increased after releasing the current version
-# (i.e. on master, this is always the next version to be released).
+# (i.e. on main, this is always the next version to be released).
 __version__ = "0.1.68"

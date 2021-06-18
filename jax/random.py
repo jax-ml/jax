@@ -72,7 +72,7 @@ The approach is based on:
 2. "Splittable pseudorandom number generators using cryptographic hashing"
    (Claessen et al. 2013)
 
-See also https://github.com/google/jax/blob/master/design_notes/prng.md
+See also https://github.com/google/jax/blob/main/design_notes/prng.md
 for the design and its motivation.
 """
 

@@ -140,7 +140,7 @@ and its use is not recommended.)
 
 For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
-`multi_device_test.py <https://github.com/google/jax/blob/master/tests/multi_device_test.py>`_.
+`multi_device_test.py <https://github.com/google/jax/blob/main/tests/multi_device_test.py>`_.
 
 .. _faq-benchmark:
 

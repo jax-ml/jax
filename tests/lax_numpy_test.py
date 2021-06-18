@@ -2251,7 +2251,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testNonScalarRepeats(self, fixed_size):
     '''
     Following numpy test suite from `test_repeat` at
-    https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
+    https://github.com/numpy/numpy/blob/main/numpy/core/tests/test_multiarray.py
     '''
     tol = 1e-5
 
@@ -4457,7 +4457,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                       message="Explicitly requested dtype.*")
   def testArange(self):
     # test cases inspired by dask tests at
-    # https://github.com/dask/dask/blob/master/dask/array/tests/test_creation.py#L92
+    # https://github.com/dask/dask/blob/main/dask/array/tests/test_creation.py#L92
     self.assertAllClose(jnp.arange(77),
                         np.arange(77, dtype=jnp.int_))
     self.assertAllClose(jnp.arange(2, 13),

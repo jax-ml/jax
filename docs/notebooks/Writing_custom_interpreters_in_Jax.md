@@ -16,7 +16,7 @@ kernelspec:
 
 # Writing custom Jaxpr interpreters in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Writing_custom_interpreters_in_Jax.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Writing_custom_interpreters_in_Jax.ipynb)
 
 +++ {"id": "r-3vMiKRYXPJ"}
 
@@ -226,7 +226,7 @@ eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.literals, jnp.ones(5))
 
 Notice that `eval_jaxpr` will always return a flat list even if the original function does not.
 
-Furthermore, this interpreter does not handle `subjaxprs`, which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/google/jax/blob/master/jax/core.py)) to see the edge cases that this interpreter does not cover.
+Furthermore, this interpreter does not handle `subjaxprs`, which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/google/jax/blob/main/jax/core.py)) to see the edge cases that this interpreter does not cover.
 
 +++ {"id": "0vb2ZoGrCMM4"}
 
@@ -235,7 +235,7 @@ Furthermore, this interpreter does not handle `subjaxprs`, which we will not cov
 
 An `inverse` interpreter doesn't look too different from `eval_jaxpr`. We'll first set up the registry which will map primitives to their inverses. We'll then write a custom interpreter that looks up primitives in the registry.
 
-It turns out that this interpreter will also look similar to the "transpose" interpreter used in reverse-mode autodifferentiation [found here](https://github.com/google/jax/blob/master/jax/interpreters/ad.py#L141-L187).
+It turns out that this interpreter will also look similar to the "transpose" interpreter used in reverse-mode autodifferentiation [found here](https://github.com/google/jax/blob/main/jax/interpreters/ad.py#L141-L187).
 
 ```{code-cell} ipython3
 :id: gSMIT2z1vUpO

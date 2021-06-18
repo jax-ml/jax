@@ -31,7 +31,7 @@ particular test, we write them as `Limitation` objects that can be reused in
 multiple tests and can also be used to generate documentation, e.g.,
 the report of [unsupported and
 partially-implemented JAX
-primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
+primitives](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
 
 The limitations are used to filter out from tests the harnesses that are known
 to fail. A Limitation is specific to a harness.

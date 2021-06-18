@@ -2,7 +2,7 @@ Using jax2tf with TensorFlow serving
 ====================================
 
 This is a supplement to the
-[examples/README.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md)
+[examples/README.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md)
 with example code and
 instructions for using `jax2tf` with the open source TensorFlow model server.
 Specific instructions for Google-internal versions of model server are in the `internal` subdirectory.
@@ -15,16 +15,16 @@ SavedModel**.
 
 The only difference in the SavedModel produced with jax2tf is that the
 function graphs may contain
-[XLA TF ops](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#caveats)
+[XLA TF ops](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#caveats)
 that require enabling CPU/GPU XLA for execution in the model server. This
 is achieved using a command-line flag. There are no other differences compared
 to using SavedModel produced by TensorFlow.
 
 This serving example uses
-[saved_model_main.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/saved_model_main.py)
+[saved_model_main.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/saved_model_main.py)
 for saving the SavedModel and adds code specific to interacting with the
 model server:
-[model_server_request.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/serving/model_server_request.py).
+[model_server_request.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/serving/model_server_request.py).
 
 0.  *Set up JAX and TensorFlow serving*.
 

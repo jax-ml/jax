@@ -38,7 +38,7 @@ for `jax2tf.call_tf`.
 
 More involved examples, including using jax2tf with
 Flax models and their use with TensorFlow Hub and Keras, are described in the
-[examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
+[examples directory](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md).
 
 For details on saving a batch-polymorphic SavedModel see [below](#shape-polymorphic-conversion).
 
@@ -119,7 +119,7 @@ tf.saved_model.save(my_model, '/some/directory',
 ```
 
 For examples of how to save a Flax model as a SavedModel see the
-[examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
+[examples directory](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md).
 
 
 ## Differentiation
@@ -484,7 +484,7 @@ jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
 There are a number of cases when the TensorFlow ops that are used by the
 jax2tf converter are not supported by TensorFlow for the same data types as in JAX.
 There is an
-[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 
 If you try to convert and run in TensorFlow a program with partially supported primitives, you may see TensorFlow errors that
 a TensorFlow op is used with an supported data type, or that
@@ -520,7 +520,7 @@ the function to a SavedModel, knowing that upon restore the
 JAX-converted code will be compiled.
 
 For a more elaborate example, see the test `test_tf_mix_jax_with_uncompileable`
-in [savedmodel_test.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/savedmodel_test.py).
+in [savedmodel_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/savedmodel_test.py).
 
 ### Missing converter features
 
@@ -729,7 +729,7 @@ before conversion. (This is a hypothesis, we have not yet verified it extensivel
 
 There is one know case when the performance of the converted code will be different.
 JAX programs use a [stateless
-deterministic PRNG](https://github.com/google/jax/blob/master/design_notes/prng.md)
+deterministic PRNG](https://github.com/google/jax/blob/main/design_notes/prng.md)
 and it has an internal JAX primitive for it.
 This primitive is at the moment converted to a soup of tf.bitwise operations,
 which has a clear performance penalty. We plan to look into using the
@@ -831,7 +831,7 @@ For a more elaborate example, including round-tripping from JAX
 to TensorFlow and back through a SavedModel, with support for
 custom gradients,
 see the test `test_round_trip_custom_grad_saved_model`
-in [call_tf_test.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/call_tf_test.py).
+in [call_tf_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/call_tf_test.py).
 
 ## Notes:
 
@@ -896,7 +896,7 @@ As of today, the tests are run using `tf_nightly==2.6.0-dev20210611`.
 
 To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
 for CUDA. One must be mindful to install a version of CUDA that is compatible
-with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
+with both [jaxlib](https://github.com/google/jax/blob/main/README.md#pip-installation) and
 [TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
 
 ## Updating the limitations documentation
@@ -908,13 +908,11 @@ JAX primitive, data type, device type, and TensorFlow execution mode (`eager`,
 `graph`, or `compiled`). These limitations are also used
 to generate tables of limitations, e.g.,
 
-   * [List of primitives not supported in JAX](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primtives_coverage.md),
+   * [List of primitives not supported in JAX](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primtives_coverage.md),
      e.g., due to unimplemented cases in the XLA compiler, and
-   * [List of primitives not supported in jax2tf](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md),
+   * [List of primitives not supported in jax2tf](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md),
      e.g., due to unimplemented cases in TensorFlow. This list is incremental
      on top of the unsupported JAX primitives.
-
-
 
 There are instructions for updating those documents at the end of each
 document.

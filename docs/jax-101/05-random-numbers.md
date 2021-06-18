@@ -15,7 +15,7 @@ kernelspec:
 
 # Pseudo Random Numbers in JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/05-random-numbers.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/05-random-numbers.ipynb)
 
 *Authors: Matteo Hessel & Rosalia Schneider*
 
