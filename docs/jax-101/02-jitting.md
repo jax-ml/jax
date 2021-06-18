@@ -15,7 +15,7 @@ kernelspec:
 
 # Just In Time Compilation with JAX
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/jax-101/02-jitting.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/02-jitting.ipynb)
 
 *Authors: Rosalia Schneider & Vladimir Mikulik*
 

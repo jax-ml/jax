@@ -98,7 +98,7 @@ except ImportError:
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
-# number that can be used to perform changes without breaking the master
+# number that can be used to perform changes without breaking the main
 # branch on the Jax github.
 _xla_extension_version = getattr(xla_client, '_version', 0)
 

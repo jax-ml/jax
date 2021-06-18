@@ -14,7 +14,7 @@
 """Shape polymorphism support for jax2tf.
 
 For usage instructions, read the jax2tf.convert docstring, and the
-[README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md).
+[README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
 
 """
 import collections
@@ -43,7 +43,7 @@ This error arises for arithmetic or comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a polynomial of dimension variables, or a boolean constant (for comparisons).
 
-Please see https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
+Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
 """
 

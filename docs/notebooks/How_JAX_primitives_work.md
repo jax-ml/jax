@@ -15,7 +15,7 @@ kernelspec:
 
 # How JAX primitives work
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/How_JAX_primitives_work.ipynb)
 
 *necula@google.com*, October 2019.
 

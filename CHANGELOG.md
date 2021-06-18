@@ -5,11 +5,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 <!--
 Remember to align the itemized text with the first line of an item within a list.
 
-PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.2.15 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...master).
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...main).
 * New features:
   * The {func}`jax2tf.convert` supports inequalities and min/max for booleans
     ({jax-issue}`#6956`).
@@ -137,7 +137,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     * `TraceContext` --> {func}`~jax.profiler.TraceAnnotation`
     * `StepTraceContext` --> {func}`~jax.profiler.StepTraceAnnotation`
     * `trace_function` --> {func}`~jax.profiler.annotate_function`
-  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/master/design_notes/omnistaging.md)
+  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/main/design_notes/omnistaging.md)
     for more information.
   * Python integers larger than the maximum `int64` value will now lead to an overflow
     in all cases, rather than being silently converted to `uint64` in some cases ({jax-issue}`#6047`).
@@ -185,7 +185,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.scipy.stats.betabinom` is now available as a distribution with logpmf and pmf methods.
   * Added {func}`jax.experimental.jax2tf.call_tf` to call TensorFlow functions
     from JAX ({jax-issue}`#5627`)
-    and [README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
+    and [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
   * Extended the batching rule for `lax.pad` to support batching of the padding values.
 * Bug fixes:
   * {func}`jax.numpy.take` properly handles negative indices ({jax-issue}`#5768`)
@@ -300,7 +300,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.5...jax-v0.2.6).
 * New Features:
   * Add support for shape-polymorphic tracing for the jax.experimental.jax2tf converter.
-    See [README.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md).
+    See [README.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
 * Breaking change cleanup
 
   * Raise an error on non-hashable static arguments for jax.jit and
@@ -360,7 +360,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Improvements:
   * Ensure that `check_jaxpr` does not perform FLOPS.  See {jax-issue}`#4650`.
   * Expanded the set of JAX primitives converted by jax2tf.
-    See [primitives_with_limited_support.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/primitives_with_limited_support.md).
+    See [primitives_with_limited_support.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/primitives_with_limited_support.md).
 
 ## jax 0.2.4 (October 19 2020)
 
@@ -397,7 +397,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0).
 * Improvements:
   * Omnistaging on by default. See {jax-issue}`#3370` and
-    [omnistaging](https://github.com/google/jax/blob/master/design_notes/omnistaging.md)
+    [omnistaging](https://github.com/google/jax/blob/main/design_notes/omnistaging.md)
 
 ## jax (0.1.77) (September 15 2020)
 

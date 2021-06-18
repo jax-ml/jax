@@ -501,7 +501,7 @@ def _check_for_tracers(x):
            "arguments should typically not be indicated as nondiff_argnums. "
            "\n\n"
            "This behavior recently changed in JAX. "
-           "See https://github.com/google/jax/blob/master/docs/custom_vjp_update.md "
+           "See https://github.com/google/jax/blob/main/docs/custom_vjp_update.md "
            "for more information.")
     raise core.UnexpectedTracerError(msg)
 

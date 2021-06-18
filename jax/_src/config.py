@@ -156,18 +156,18 @@ class Config:
       if not FLAGS.jax_omnistaging:
         raise Exception(
           "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
-          "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.\n"
+          "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md.\n"
           "To remove this warning, unset the JAX_OMNISTAGING environment variable.")
 
   def enable_omnistaging(self):
     warnings.warn(
         "enable_omnistaging() is a no-op in JAX versions 0.2.12 and higher;\n"
-        "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md")
+        "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md")
 
   def disable_omnistaging(self):
     raise Exception(
       "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
-      "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.")
+      "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md.")
 
   def define_bool_state(
     self, name: str, default: bool, help: str, *,

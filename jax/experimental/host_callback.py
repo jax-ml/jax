@@ -105,7 +105,7 @@ using the :func:`jax.custom_vjp` mechanism.
 This is relatively easy to do, once one understands both the JAX custom VJP
 and the TensorFlow autodiff mechanisms.
 The code for how this can be done is shown in the ``call_tf_full_ad``
-function in `host_callback_to_tf_test.py <https://github.com/google/jax/blob/master/tests/host_callback_to_tf_test.py>`_.
+function in `host_callback_to_tf_test.py <https://github.com/google/jax/blob/main/tests/host_callback_to_tf_test.py>`_.
 This example supports arbitrary higher-order differentiation as well.
 
 Using :func:`call` to call a JAX function on another device, with reverse-mode autodiff support
@@ -117,7 +117,7 @@ the host, and then to the outside device on which the JAX host
 computation will run, and then the results are sent back to the original accelerator.
 
 The code for how this can be done is shown in the ``call_jax_other_device function``
-in `host_callback_test.py <https://github.com/google/jax/blob/master/tests/host_callback_test.py>`_.
+in `host_callback_test.py <https://github.com/google/jax/blob/main/tests/host_callback_test.py>`_.
 
 Using :func:`id_tap` to call a JAX function on another device, with no returned values, but full JAX transformation support
 ---------------------------------------------------------------------------------------------------------------------------

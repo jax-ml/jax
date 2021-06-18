@@ -19,7 +19,7 @@ This module introduces the function :func:`call_tf` that allows JAX to call
 TensorFlow functions.
 
 For examples and details, see
-https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
+https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
 
 """
 import logging
@@ -70,7 +70,7 @@ def call_tf(func_tf: Callable) -> Callable:
   custom gradients that may be defined for the code in ``func_tf``.
 
   For an example and more details see the
-  `README <https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax>`_.
+  `README <https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax>`_.
 
   Args:
     func_tf: a TensorFlow Callable that can take a pytree of TensorFlow
@@ -236,7 +236,7 @@ def _call_tf_translation_rule(builder, *args_op, func_tf, func_tf_concrete,
     msg = (
       "call_tf works best with a TensorFlow function that does not capture "
       "variables or tensors from the context. "
-      "See https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax for a discussion. "
+      "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax for a discussion. "
       f"The following captures were found {func_tf_concrete.captured_inputs}")
     logging.warning(msg)
 

@@ -274,7 +274,7 @@ You have to add this metadata by hand in the `.ipynb` file. It will be preserved
 re-saves the notebook.
 
 We exclude some notebooks from the build, e.g., because they contain long computations.
-See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/master/docs/conf.py).
+See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/main/docs/conf.py).
 
 ## Documentation building on readthedocs.io
 
@@ -282,7 +282,7 @@ JAX's auto-generated documentations is at <https://jax.readthedocs.io/>.
 
 The documentation building is controlled for the entire project by the
 [readthedocs JAX settings](https://readthedocs.org/dashboard/jax). The current settings
-trigger a documentation build as soon as code is pushed to the GitHub `master` branch.
+trigger a documentation build as soon as code is pushed to the GitHub `main` branch.
 For each code version, the building process is driven by the
 `.readthedocs.yml` and the `docs/conf.py` configuration files.
 

@@ -467,7 +467,7 @@ def _sharding_to_proto(sharding: SpatialSharding):
   """Converts a SpatialSharding to an OpSharding.
 
   See
-  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
+  https://github.com/tensorflow/tensorflow/blob/main/tensorflow/compiler/xla/xla_data.proto#L601
   for details on the OpSharding proto.
   """
   proto = xla_client.OpSharding()

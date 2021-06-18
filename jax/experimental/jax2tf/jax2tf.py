@@ -182,7 +182,7 @@ def convert(fun: Callable,
   """Transforms `fun` to be executed by TensorFlow.
 
   See
-  [README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md)
+  [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md)
   for more details about usage and common problems.
 
   Args:
@@ -220,7 +220,7 @@ def convert(fun: Callable,
       polymorphic_shapes are only supported for positional arguments; shape
       polymorphism is not supported for keyword arguments.
 
-      See [the README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
+      See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
 
     in_shapes: DEPRECATED in favor of `polymorphic_shapes`.
@@ -805,7 +805,7 @@ class TensorFlowTrace(core.Trace):
     assert False
 
   def sublift(self, val: TensorFlowTracer) -> TensorFlowTracer:
-    # This is called when we need to raise a tracer from the same master,
+    # This is called when we need to raise a tracer from the same main,
     # but a lower sublevel. This could come from a nested jit.
     return TensorFlowTracer(self, val.val, val._aval)
 
