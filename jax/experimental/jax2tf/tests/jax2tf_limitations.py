@@ -386,6 +386,16 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def dot_general(cls, harness: primitive_harness.Harness):
     return [
         missing_tf_kernel(dtypes=[np.bool_],),
+        # TODO(b/189287598)
+        Jax2TfLimitation(
+            "Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598)",
+            dtypes=[
+                jnp.bfloat16, np.float16, np.float32, np.complex64
+            ],
+            devices="gpu",
+            modes="compiled",
+            enabled=(harness.params["preferred_element_type"] is not None),
+            skip_comparison=True)
     ]
 
   @classmethod
