@@ -2018,7 +2018,7 @@ def _split_root_args(args, const_lengths):
 
 
 @api_boundary
-def custom_root(f, initial_guess, solve, tangent_solve):
+def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
   """Differentiably solve for a roots of a function.
 
   This is a low-level routine, mostly intended for internal use in JAX.
@@ -2049,6 +2049,8 @@ def custom_root(f, initial_guess, solve, tangent_solve):
       - For vector ``y``, you could use a linear solve with the Jacobian, if
         dimensionality of ``y`` is not too large:
         ``lambda g, y: np.linalg.solve(jacobian(g)(y), y)``.
+    has_aux: bool indicating whether the ``solve`` function returns
+      auxiliary data like solver diagnostics as a second argument.
 
   Returns:
     The result of calling solve(f, initial_guess) with gradients defined via
@@ -2060,11 +2062,11 @@ def custom_root(f, initial_guess, solve, tangent_solve):
       f, in_args_tree, guess_avals)
 
   in_tree, = treedef_children(in_args_tree)
-  _check_tree("f", "initial_guess", out_tree, in_tree)
+  _check_tree("f", "initial_guess", out_tree, in_tree, False)
 
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
       partial(solve, _stop_gradient_fun(f)), in_args_tree, guess_avals)
-  _check_tree("solve", "initial_guess", solution_tree, in_tree)
+  _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
 
   def linearize_and_solve(x, b):
     unchecked_zeros, f_jvp = jax.linearize(f, x)
@@ -2072,15 +2074,15 @@ def custom_root(f, initial_guess, solve, tangent_solve):
 
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
       linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2)
-  _check_tree("tangent_solve", "x", out_tree, in_tree)
+  _check_tree("tangent_solve", "x", out_tree, in_tree, False)
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]
   const_lengths = _RootTuple(*_map(len, all_consts))
   jaxprs = _RootTuple(f_jaxpr, solve_jaxpr, l_and_s_jaxpr)
 
-  out_flat = _custom_root(
+  solution_flat = _custom_root(
       const_lengths, jaxprs, *(_flatten(all_consts) + guess_flat))
-  return tree_unflatten(out_tree, out_flat)
+  return tree_unflatten(solution_tree, solution_flat)
 
 
 @partial(jax.custom_jvp, nondiff_argnums=(0, 1))
@@ -2093,7 +2095,10 @@ def _custom_root(const_lengths, jaxprs, *args):
 @_custom_root.defjvp
 def _root_jvp(const_lengths, jaxprs, primals, tangents):
   params, _ = _split_root_args(primals, const_lengths)
-  solution = _custom_root(const_lengths, jaxprs, *primals)
+  sol = _custom_root(const_lengths, jaxprs, *primals)
+
+  f_out_vals = len(jaxprs.f.out_avals)
+  solution, aux = split_list(sol, [f_out_vals])
 
   params_dot, _ = _split_root_args(tangents, const_lengths)
 
@@ -2114,6 +2119,9 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
       params.f, params_dot.f)
   solution_dot = _map(
       operator.neg, linearize_and_solve(*itertools.chain(solution, rhs)))
+  # append aux, create symbolic zero tangents for the aux values
+  solution += aux
+  solution_dot += _map(lax.zeros_like_array, aux)
 
   return solution, solution_dot
 
