@@ -32,7 +32,7 @@ twodim_shapes = [(1, 1), (2, 2), (2, 3), (3, 4), (4, 4)]
 threedim_shapes = [(2, 2, 2), (3, 3, 2), (4, 4, 2), (5, 5, 2)]
 
 
-default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer
+default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 
 
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
@@ -58,9 +58,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-8}
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12, np.complex64: 1e-2, np.complex128: 1e-12}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_xshape={}_yshape={}_mode={}".format(
@@ -81,7 +81,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-14}
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12, np.complex64: 1e-2, np.complex128: 1e-12}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
@@ -91,7 +91,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, type, bp),
        "shape": shape, "dtype": dtype, "axis": axis, "type": type, "bp": bp}
       for shape in [(5,), (4, 5), (3, 4, 5)]
-      for dtype in default_dtypes
+      for dtype in jtu.dtypes.floating + jtu.dtypes.integer
       for axis in [0, -1]
       for type in ['constant', 'linear']
       for bp in [0, [0, 2]]))
