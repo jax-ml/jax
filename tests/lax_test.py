@@ -987,6 +987,9 @@ class LaxTest(jtu.JaxTestCase):
     if (jtu.device_under_test() == "tpu" and
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("np.complex128 is not yet supported on TPU")
+    if jtu.device_under_test() == "gpu":
+      # TODO(b/189287598)
+      raise SkipTest("dot_general with preferred_element_type returns NaN non-deterministically on GPU")
     rng = jtu.rand_default(self.rng())
     x = rng(lhs_shape, dtype)
     y = rng(rhs_shape, dtype)
