@@ -809,6 +809,28 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(out1, out3, rtol=tol)
 
 
+class SparseGradTest(jtu.JaxTestCase):
+  def test_sparse_grad(self):
+    rng_sparse = rand_sparse(self.rng())
+    rng = jtu.rand_default(self.rng())
+
+    y = rng(5, "float32")
+    X = rng_sparse((10, 5), "float32")
+    Xsp = sparse.BCOO.fromdense(X)
+
+    def f(X, y):
+      return jnp.sum(X @ y)
+
+    grad_dense = api.grad(f, argnums=0)(X, y)
+    grad_sparse = sparse.grad(f, argnums=0)(Xsp, y)
+
+    # extract sparse gradient from dense gradient
+    indices = tuple(Xsp.indices)
+    grad_sparse_from_dense = jnp.zeros_like(grad_dense).at[indices].set(grad_dense[indices])
+
+    self.assertArraysEqual(grad_sparse.todense(), grad_sparse_from_dense)
+
+
 class SparseObjectTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
     {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}

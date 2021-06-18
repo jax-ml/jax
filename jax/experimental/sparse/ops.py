@@ -1221,7 +1221,7 @@ class BCOO(JAXSparse):
   shape = Tuple[int, ...]
 
   def __init__(self, args, *, shape):
-    self.data, self.indices = map(jnp.asarray, args)
+    self.data, self.indices = args
     super().__init__(args, shape=shape)
 
   @classmethod

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # flake8: noqa: F401
+from .ad import grad, value_and_grad
 from .ops import (
     bcoo_dot_general,
     bcoo_dot_general_p,
