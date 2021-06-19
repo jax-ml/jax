@@ -1216,7 +1216,7 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   operator.
   """
   permutation = tuple(permutation)
-  if permutation == tuple(range(len(permutation))):
+  if permutation == tuple(range(np.ndim(operand))):
     return operand
   else:
     return transpose_p.bind(operand, permutation=permutation)
