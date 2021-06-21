@@ -220,7 +220,6 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(min_shape, operand_shape, max_shape)))
   def testClamp(self, min_shape, operand_shape, max_shape, dtype, bdims):
     rng = jtu.rand_default(self.rng())
-    raise SkipTest("batching rule for clamp not implemented")  # TODO(mattj)
     shapes = [min_shape, operand_shape, max_shape]
     self._CheckBatching(lax.clamp, 10, bdims, shapes, [dtype] * 3, rng)
 
