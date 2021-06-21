@@ -908,7 +908,7 @@ JAX primitive, data type, device type, and TensorFlow execution mode (`eager`,
 `graph`, or `compiled`). These limitations are also used
 to generate tables of limitations, e.g.,
 
-   * [List of primitives not supported in JAX](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primtives_coverage.md),
+   * [List of primitives not supported in JAX](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md),
      e.g., due to unimplemented cases in the XLA compiler, and
    * [List of primitives not supported in jax2tf](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md),
      e.g., due to unimplemented cases in TensorFlow. This list is incremental
