@@ -302,7 +302,13 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero,
               ["rev"], inexact=True),
     op_record("ediff1d", 3, [np.int32], all_shapes, jtu.rand_default, []),
-    op_record("unwrap", 1, float_dtypes, nonempty_nonscalar_array_shapes,
+    # TODO(phawkins): np.unwrap does not correctly promote its default period
+    # argument under NumPy 1.21 for bfloat16 inputs. It works fine if we
+    # explicitly pass a bfloat16 value that does not need promition. We should
+    # probably add a custom test harness for unwrap that tests the period
+    # argument anyway.
+    op_record("unwrap", 1, [t for t in float_dtypes if t != dtypes.bfloat16],
+              nonempty_nonscalar_array_shapes,
               jtu.rand_default, ["rev"],
               # numpy.unwrap always returns float64
               check_dtypes=False,
@@ -5512,6 +5518,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'tri': ['like'],
+      'unwrap': ['period'],
       'zeros_like': ['subok', 'order']
     }
 

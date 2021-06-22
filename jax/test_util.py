@@ -213,7 +213,10 @@ safe_sub = partial(tree_multimap,
 conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
 
 def scalar_mul(xs, a):
-  return tree_map(lambda x: np.multiply(x, a, dtype=_dtype(x)), xs)
+  def mul(x):
+    dtype = _dtype(x)
+    return np.multiply(x, np.array(a, dtype=dtype), dtype=dtype)
+  return tree_map(mul, xs)
 
 
 def rand_like(rng, x):

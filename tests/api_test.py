@@ -171,7 +171,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.jit.cache_clear()
 
     def f(x, y, z):
-      print(x, y, z)
       side.append(None)
       return 100 * x + 10 * y + z
 
@@ -1158,7 +1157,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose((45., 9.), api.jvp(func, (5.,), (1.,)))
 
   def test_linear_transpose_abstract(self):
-    x = types.SimpleNamespace(shape=(3,), dtype=np.float32)
+    x = types.SimpleNamespace(shape=(3,), dtype=np.dtype(np.float32))
     y = jnp.arange(3, dtype=np.float32)
     transpose_fun = api.linear_transpose(lambda x: 2 * x, x)
     z, = transpose_fun(y)
@@ -1399,7 +1398,7 @@ class APITest(jtu.JaxTestCase):
     class MyArgArray(object):
       def __init__(self, shape, dtype):
         self.shape = shape
-        self.dtype = dtype
+        self.dtype = np.dtype(dtype)
 
     A = MyArgArray((3, 4), jnp.float32)
     b = MyArgArray((5,), jnp.float32)
@@ -1426,7 +1425,7 @@ class APITest(jtu.JaxTestCase):
     class MyArgArray(object):
       def __init__(self, shape, dtype, named_shape):
         self.shape = shape
-        self.dtype = dtype
+        self.dtype = jnp.dtype(dtype)
         self.named_shape = named_shape
 
     x = MyArgArray((3, 2), jnp.float32, {'i': 10})
@@ -3194,7 +3193,7 @@ class JaxprTest(jtu.JaxTestCase):
 
   def test_abstract_inputs(self):
     jaxpr = api.make_jaxpr(lambda x: x + 2.)(
-        types.SimpleNamespace(shape=(), dtype=np.float32))
+        types.SimpleNamespace(shape=(), dtype=np.dtype(np.float32)))
     self.assertEqual(jaxpr.in_avals[0].shape, ())
     self.assertEqual(jaxpr.in_avals[0].dtype, np.float32)
 
@@ -3262,7 +3261,7 @@ class JaxprTest(jtu.JaxTestCase):
       return x - lax.psum(x, 'i')
 
     x = types.SimpleNamespace(
-        shape=(2, 3), dtype=jnp.float32, named_shape={'i': 10})
+        shape=(2, 3), dtype=jnp.dtype(jnp.float32), named_shape={'i': 10})
     jaxpr = api.make_jaxpr(f, axis_env=[('i', 10)])(x)
     named_shapes = [v.aval.named_shape for v in jaxpr.jaxpr.eqns[1].invars]
     self.assertEqual(named_shapes, [{'i': 10}, {}])
