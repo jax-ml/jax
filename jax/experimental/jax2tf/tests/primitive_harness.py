@@ -1145,6 +1145,24 @@ for indices, index_oob, indices_name in [
           enable_xla=enable_xla,
           index_oob=index_oob)
 
+# Construct gather harnesses using array indexing and slicing.
+for slices, name in [
+    ((0,), "[0]"),
+    ((0, 1), "[0,1]"),
+    ((slice(0, 10), 2, slice(0, 10)), "[:,:2,:]"),
+    ((slice(2, 5), 5), "[2:5,5]"),
+    ((-1, -5, -200), "[-1,-5,-200]"),
+    ((slice(5, -2), 300), "[5:-2,300]"),
+]:
+  for enable_xla in [False, True]:
+    define(
+        lax.gather_p,
+        f"from_slicing_name={name}_enable_xla={enable_xla}",
+        lambda arr, *s: jnp.array(arr).__getitem__(*s),
+        [_gather_input, StaticArg(slices)],
+        dtype=_gather_input.dtype,
+        enable_xla=enable_xla)
+
 # Directly from lax.gather in lax_test.py.
 for shape, idxs, dnums, slice_sizes, needs_xla in [
     ((5,), np.array([[0], [2]]),

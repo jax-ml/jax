@@ -393,7 +393,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                 jnp.bfloat16, np.float16, np.float32, np.complex64
             ],
             devices="gpu",
-            modes="compiled",
+            modes=("eager", "graph", "compiled"),
             enabled=(harness.params["preferred_element_type"] is not None),
             skip_comparison=True)
     ]
