@@ -1,7 +1,0 @@
-flake8
-jaxlib==0.1.51
-mypy==0.770
-pillow
-pytest-benchmark
-pytest-xdist
-wheel
