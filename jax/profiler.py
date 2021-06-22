@@ -23,5 +23,4 @@ from jax._src.profiler import (
   stop_trace,
   trace,
   annotate_function,
-  trace_function,
 )

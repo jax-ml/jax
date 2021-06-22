@@ -186,15 +186,6 @@ def annotate_function(func: Callable, name: Optional[str] = None, **kwargs):
   return wrapper
 
 
-# TODO: remove this sometime after jax 0.2.11 is released
-def trace_function(*args, **kwargs):
-  warnings.warn(
-      "trace_function has been renamed to annotate_function. This alias "
-      "will eventually be removed; please update your code.")
-  return annotate_function(*args, **kwargs)
-
-
-
 def device_memory_profile(backend: Optional[str] = None) -> bytes:
   """Captures a JAX device memory profile as ``pprof``-format protocol buffer.
 
