@@ -14,6 +14,7 @@
 
 from functools import partial
 import itertools
+from jax._src.api import vmap
 import unittest
 
 from absl.testing import absltest
@@ -838,6 +839,19 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(out1, out2, rtol=tol)
     self.assertAllClose(out1, out3, rtol=tol)
 
+  def test_bcoo_vmap_shape(self, shape=(2, 3, 4, 5), dtype=np.float32):
+    # This test checks that BCOO shape metadata interacts correctly with vmap.
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+
+    def make_bcoo(M):
+      return sparse.BCOO.fromdense(M, nnz=np.prod(M.shape[:-1], dtype=int), n_dense=1)
+
+    for _ in range(3):
+      make_bcoo = vmap(make_bcoo)
+      Msp = make_bcoo(M)
+      self.assertEqual(Msp.shape, M.shape)
+      self.assertArraysEqual(Msp.todense(), M)
 
 class SparseGradTest(jtu.JaxTestCase):
   def test_sparse_grad(self):

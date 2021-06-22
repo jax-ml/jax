@@ -1215,6 +1215,10 @@ class COO(JAXSparse):
     return (self.data, self.row, self.col), {"shape": self.shape}
 
 
+def _is_dummy(*args):
+  return all(type(arg) is object for arg in args) or all(arg is None for arg in args)
+
+
 @tree_util.register_pytree_node_class
 class BCOO(JAXSparse):
   """Experimental BCOO matrix implemented in JAX; API subject to change."""
@@ -1226,6 +1230,10 @@ class BCOO(JAXSparse):
   n_sparse = property(lambda self: self.indices.shape[-2])
   n_dense = property(lambda self: self.data.ndim - 1 - self.n_batch)
   shape = Tuple[int, ...]
+
+  @property
+  def _sparse_shape(self):
+    return tuple(self.shape[self.indices.ndim - 2:][:self.indices.shape[-2]])
 
   def __init__(self, args, *, shape):
     self.data, self.indices = args
@@ -1271,4 +1279,24 @@ class BCOO(JAXSparse):
     return BCOO((self.data, self.indices[::-1]), shape=self.shape[::-1])
 
   def tree_flatten(self):
-    return (self.data, self.indices), {"shape": self.shape}
+    children = (self.data, self.indices)
+    # pytree sometimes creates dummy objects & we need to handle that.
+    sparse_shape = self.shape if _is_dummy(*children) else self._sparse_shape
+    # We serialize the sparse shape only to support batching.
+    return children, {"sparse_shape": sparse_shape}
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    data, indices = children
+    sparse_shape = aux_data["sparse_shape"]
+    # pytree sometimes creates dummy objects & we need to handle that.
+    if _is_dummy(data, indices):
+      shape = sparse_shape
+    else:
+      assert len(sparse_shape) == indices.shape[-2]
+      n_batch = indices.ndim - 2
+      shape = (
+          tuple(np.maximum(data.shape[:n_batch], indices.shape[:n_batch]))
+          + tuple(sparse_shape)
+          + tuple(data.shape[n_batch + 1:]))
+    return cls(children, shape=shape)
