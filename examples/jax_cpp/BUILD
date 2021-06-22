@@ -23,7 +23,6 @@ tf_cc_binary(
     name = "main",
     srcs = ["main.cc"],
     deps = [
-        "@org_tensorflow//tensorflow/compiler/jit:xla_cpu_jit",
         "@org_tensorflow//tensorflow/compiler/xla:literal",
         "@org_tensorflow//tensorflow/compiler/xla:literal_util",
         "@org_tensorflow//tensorflow/compiler/xla:shape_util",
