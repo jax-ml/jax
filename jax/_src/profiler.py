@@ -125,15 +125,6 @@ class TraceAnnotation(xla_client.profiler.TraceMe):
   pass
 
 
-# TODO: remove this sometime after jax 0.2.11 is released
-class TraceContext(TraceAnnotation):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-        "TraceContext has been renamed to TraceAnnotation. This alias "
-        "will eventually be removed; please update your code.")
-    super().__init__(*args, **kwargs)
-
-
 class StepTraceAnnotation(TraceAnnotation):
   """Context manager that generates a step trace event in the profiler.
 
@@ -158,15 +149,6 @@ class StepTraceAnnotation(TraceAnnotation):
 
   def __init__(self, name: str, **kwargs):
     super().__init__(name, _r=1, **kwargs)
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-class StepTraceContext(StepTraceAnnotation):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-        "StepTraceContext has been renamed to StepTraceAnnotation. This alias "
-        "will eventually be removed; please update your code.")
-    super().__init__(*args, **kwargs)
 
 
 def annotate_function(func: Callable, name: Optional[str] = None, **kwargs):
