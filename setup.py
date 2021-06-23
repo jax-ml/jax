@@ -16,7 +16,7 @@ from setuptools import setup, find_packages
 import sys
 
 # The following should be updated with each new jaxlib release.
-_current_jaxlib_version = '0.1.67'
+_current_jaxlib_version = '0.1.68'
 _available_cuda_versions = ['101', '102', '110', '111']
 _jaxlib_cuda_url = (
     f'https://storage.googleapis.com/jax-releases/cuda{{version}}/'
