@@ -13,16 +13,10 @@
 # limitations under the License.
 
 from setuptools import setup, find_packages
-import sys
 
 # The following should be updated with each new jaxlib release.
 _current_jaxlib_version = '0.1.68'
 _available_cuda_versions = ['101', '102', '110', '111']
-_jaxlib_cuda_url = (
-    f'https://storage.googleapis.com/jax-releases/cuda{{version}}/'
-    f'jaxlib-{_current_jaxlib_version}+cuda{{version}}'
-    f'-cp{sys.version_info.major}{sys.version_info.minor}-none-manylinux2010_x86_64.whl'
-)
 
 _dct = {}
 with open('jax/version.py') as f:
@@ -63,8 +57,8 @@ setup(
                 f'libtpu-nightly @ {_libtpu_url}'],
 
         # CUDA installations require adding jax releases URL; e.g.
-        # $ pip install jax[cuda110]
-        **{f'cuda{version}': f"jaxlib @ {_jaxlib_cuda_url.format(version=version)}"
+        # $ pip install jax[cuda110] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+        **{f'cuda{version}': f"jaxlib=={_current_jaxlib_version}+cuda{version}"
            for version in _available_cuda_versions}
     },
     url='https://github.com/google/jax',
