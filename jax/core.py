@@ -366,7 +366,7 @@ class Trace:
 
   def __init__(self, main: 'MainTrace', sublevel: 'Sublevel') -> None:
     self.main = main
-    self.level = main.level
+    self.level = main.level + 0
     self.sublevel = sublevel
 
   def full_raise(self, val) -> 'Tracer':
