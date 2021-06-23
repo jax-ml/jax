@@ -59,9 +59,28 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((2, 3), shape_poly.parse_spec("...", (2, 3)))
     self.assertEqual((2, 3), shape_poly.parse_spec(" ( 2 , 3 ) ", (2, 3)))
 
+  a, b = shape_poly.parse_spec("a, b", (2, 3))
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dim_spec={dim_spec}",
+           dim_spec=dim_spec, dim_poly=dim_poly)
+      for dim_spec, dim_poly in [
+          ("2*a*b", 2 * a * b),
+          ("-2 * a^2 * b + b^2", -2 * a * a * b + b * b),
+          ("-2 * a^2 * b + -1 *b^2*a", -2 * a * a * b - a * b * b),
+          ("3 * a * b * a + -2", 3 * a * b * a - 2),
+          ("a + 1", a + 1),
+          ("a + -1", a - 1),
+  ])
+  def test_parse_poly_spec_poly(self, dim_spec="3 * a * b * a + -2", dim_poly=3 * a * b * a - 2):
+    # For internal usage only (the polymorphic_shapes of VJP) we need to
+    # parse polynomials.
+    self.assertEqual((dim_poly,), shape_poly.parse_spec(dim_spec, (2,)))
+    self.assertEqual((dim_poly,), shape_poly.parse_spec(str(dim_poly), (2,)))
+
   def test_dim_vars(self):
-    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    a, b, a1 = shape_poly.parse_spec("a, b, a", (2, 3, 2))
     self.assertEqual(True, a == a)
+    self.assertEqual(True, a == a1)
     self.assertEqual(False, a != a)
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
@@ -145,7 +164,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertFalse((2 * a * b * a + 1).eq(a * b * a))
     self.assertFalse((3 * a * b * a - 1).eq(a * b * a))
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                re.escape("Dimension polynomial comparison '3 a^2 b + -2' == 'a^2 b' is inconclusive")):
+                                re.escape("Dimension polynomial comparison '3*a^2*b + -2' == 'a^2*b' is inconclusive")):
       (3 * a * b * a - 2).eq(a * b * a)
 
   def test_poly_compare(self):
@@ -202,7 +221,6 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(a * 2 // a, 2)
     self.assertIsInstance(a * 2 // a, int)
 
-  a, b = shape_poly.parse_spec("a, b", (2, 3))
   @parameterized.named_parameters(
       dict(testcase_name=f"_D={dividend}_d={divisor}_q={quotient}_r={remainder}",
            dividend=dividend, divisor=divisor, quotient=quotient,
@@ -362,10 +380,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     )
 
     # Some errors
-    with self.assertRaisesRegex(ValueError,
-                                re.escape("PolyShape ')(' has invalid syntax")):
-      check_avals(
-          args=[const((2, 3))], polymorphic_shapes=[")("], expected_avals=None)
+    for invalid_syntax in [")(", "2a", "a@", "a - 2"]:
+      with self.assertRaisesRegex(ValueError,
+                                  re.escape("PolyShape '" + invalid_syntax + "' has invalid syntax")):
+        check_avals(
+            args=[const((2,))], polymorphic_shapes=[invalid_syntax],
+            expected_avals=None)
 
     with self.assertRaisesRegex(
         ValueError,
@@ -591,6 +611,22 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((None, 3, 4), tuple(tf_grad.output_shapes[0]["res"]))
     # The shape of the gradient should match the input
     self.assertEqual((None, 3, 4), tuple(tf_grad.output_shapes[1]["grad"]))
+
+  def test_grad_not_var_output(self):
+    # Output of the function has poly shapes, non-variable
+    def f_jax(x):  # :[b, 3]
+      return jnp.reshape(x, (-1,))  # : [3b]
+    x = np.arange(12, dtype=np.float32).reshape((4, 3))
+    xv = tf.Variable(x)
+
+    f_tf = jax2tf.convert(f_jax, with_gradient=True,
+                          polymorphic_shapes=["b, ..."])
+
+    with tf.GradientTape() as tape:
+      res_tf = f_tf(xv)
+    grad_tf = tape.gradient(res_tf, xv)
+    self.assertAllClose(np.ones(x.shape, dtype=np.float32), grad_tf.numpy())
+
 
   def test_cond(self):
     # Test the primitive under conditional

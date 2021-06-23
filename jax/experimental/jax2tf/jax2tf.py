@@ -335,7 +335,7 @@ def convert(fun: Callable,
             in_tree.children()[0], polymorphic_shapes_flat)
         out_cts_polymorphic_shapes = tree_util.tree_unflatten(
             out_tree,
-            tuple(str(out_aval.shape)
+            tuple(str(out_aval.shape)  # Note: may be polynomials, not just DimVar
                   for out_aval in _out_cts_avals))  # type: ignore
         vjp_polymorphic_shapes = [
             args_polymorphic_shapes, out_cts_polymorphic_shapes
@@ -584,18 +584,20 @@ def _args_to_avals_and_env(
     aval_shape = shape_poly.parse_spec(polymorphic_shape, arg_shape)
 
     for i, d in enumerate(aval_shape):
-      if type(d) is int:
+      if not shape_poly.is_poly_dim(d):
+        assert isinstance(d, int)
         assert d == arg_shape[i]
-      elif shape_poly.is_poly_dim(d) and d not in shapeenv:
-        # Even if the shape of `arg` is known, we still use `tf.shape` for
-        # safety, because the promise is that we will convert the function
-        # to work for any value of the dimension.
-        v = d.to_var()  # type: ignore
-        assert v is not None
-        shapeenv[v] = tf.shape(arg)[i]  # type: ignore[index]
       else:
-        # TODO: add an assertion tf.shape(arg)[i] == env[d]
-        pass
+        d_var = d.to_var()  # type: ignore
+        if d_var is not None and d_var not in shapeenv:
+          # Even if the shape of `arg` is known, we still use `tf.shape` for
+          # safety, because the promise is that we will convert the function
+          # to work for any value of the dimension.
+          shapeenv[d_var] = tf.shape(arg)[i]  # type: ignore[index]
+        else:
+          # TODO: add an assertion tf.shape(arg)[i] == env[d]
+          pass
+
 
     return core.ShapedArray(aval_shape, arg_jax_dtype)
 
