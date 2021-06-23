@@ -24,10 +24,7 @@ with open('jax/version.py') as f:
 __version__ = _dct['__version__']
 _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 
-_libtpu_version = '20210615'
-_libtpu_url = (
-    f'https://storage.googleapis.com/cloud-tpu-tpuvm-artifacts/wheels/'
-    f'libtpu-nightly/libtpu_nightly-0.1.dev{_libtpu_version}-py3-none-any.whl')
+_libtpu_version = '0.1.dev20210615'
 
 setup(
     name='jax',
@@ -52,9 +49,9 @@ setup(
         'cpu': [f'jaxlib>={_minimum_jaxlib_version}'],
 
         # Cloud TPU VM jaxlib can be installed via:
-        # $ pip install jax[tpu]
+        # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_releases.html
         'tpu': [f'jaxlib=={_current_jaxlib_version}',
-                f'libtpu-nightly @ {_libtpu_url}'],
+                f'libtpu-nightly=={_libtpu_version}'],
 
         # CUDA installations require adding jax releases URL; e.g.
         # $ pip install jax[cuda110] -f https://storage.googleapis.com/jax-releases/jax_releases.html
