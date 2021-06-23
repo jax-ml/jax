@@ -12,5 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "0.2.14"
+__version__ = "0.2.15"
 _minimum_jaxlib_version = "0.1.65"
