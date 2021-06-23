@@ -8,8 +8,11 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.16 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.15...main).
+## jax 0.2.17 (unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...main).
+
+## jax 0.2.16 (June 23 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.15...jax-v0.2.16).
 
 ## jax 0.2.15 (June 23 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...jax-v0.2.15).
