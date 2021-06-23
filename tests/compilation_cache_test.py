@@ -124,7 +124,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     debug_options_obj.xla_cpu_fast_math_honor_division = False
     debug_options_obj.xla_cpu_fast_math_honor_functions = False
     debug_options_obj.xla_gpu_enable_fast_min_max = False
-    debug_options_obj.xla_backend_optimization_level = random.randint(1, 10)
+    debug_options_obj.xla_backend_optimization_level = random.randint(0, 10)
     debug_options_obj.xla_cpu_enable_xprof_traceme = False
     debug_options_obj.xla_llvm_disable_expensive_passes = False
     debug_options_obj.xla_test_all_input_layouts = False
