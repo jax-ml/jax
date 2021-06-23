@@ -25,6 +25,8 @@ from .ops import (
     bcoo_rdot_general,
     bcoo_todense,
     bcoo_todense_p,
+    bcoo_transpose,
+    bcoo_transpose_p,
     coo_fromdense,
     coo_fromdense_p,
     coo_matmat,
