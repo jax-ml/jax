@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+
 import numpy as np
 
 from jax._src.numpy import lax_numpy as jnp
@@ -35,6 +37,7 @@ from jax.lib import lapack
 
 from jax.lib import cuda_linalg
 from jax.lib import cusolver
+from jax.lib import cusparse
 from jax.lib import rocsolver
 
 from jax.lib import xla_client
@@ -1350,3 +1353,61 @@ if cusolver is not None:
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][svd_p] = partial(
     _svd_cpu_gpu_translation_rule, rocsolver.gesvd)
+
+
+tridiagonal_solve_p = Primitive('tridiagonal_solve')
+tridiagonal_solve_p.multiple_results = False
+tridiagonal_solve_p.def_impl(
+    functools.partial(xla.apply_primitive, tridiagonal_solve_p))
+tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
+# TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
+if cusparse is not None:
+  xla.backend_specific_translations['gpu'][tridiagonal_solve_p] = cusparse.gtsv2
+
+
+def tridiagonal_solve(dl, d, du, b):
+  r"""Computes the solution of a tridiagonal linear system.
+
+  This function computes the solution of a tridiagonal linear system::
+
+  .. math::
+    A . X = B
+
+  Args:
+    dl: The lower diagonal of A: ``dl[i] := A[i, i-1]`` for i in ``[0,m)``.
+      Note that ``dl[0] = 0``.
+    d: The middle diagnoal of A: ``d[i]  := A[i, i]`` for i in ``[0,m)``.
+    du: The upper diagonal of A: ``du[i] := A[i, i+1]`` for i in ``[0,m)``.
+      Note that ``dl[m - 1] = 0``.
+    b: Right hand side matrix.
+
+  Returns:
+    Solution ``X`` of tridiagonal system.
+  """
+  if dl.ndim != 1 or d.ndim != 1 or du.ndim != 1:
+    raise ValueError('dl, d and du must be vectors')
+
+  if dl.shape != d.shape or d.shape != du.shape:
+    raise ValueError(
+        f'dl={dl.shape}, d={d.shape} and du={du.shape} must all be `[m]`')
+
+  if b.ndim != 2:
+    raise ValueError(f'b={b.shape} must be a matrix')
+
+  m, = dl.shape
+  if m < 3:
+    raise ValueError(f'm ({m}) must be >= 3')
+
+  ldb, n = b.shape
+  if ldb < max(1, m):
+    raise ValueError(f'Leading dimension of b={ldb} must be ≥ max(1, {m})')
+
+  if dl.dtype != d.dtype or d.dtype != du.dtype or du.dtype != b.dtype:
+    raise ValueError(f'dl={dl.dtype}, d={d.dtype}, du={du.dtype} and '
+                     f'b={b.dtype} must be the same dtype,')
+
+  t = dl.dtype
+  if t not in (np.float32, np.float64):
+    raise ValueError(f'Only f32/f64 are supported, got {t}')
+
+  return tridiagonal_solve_p.bind(dl, d, du, b, m=m, n=n, ldb=ldb, t=t)

@@ -29,4 +29,6 @@ from jax._src.lax.linalg import (
   svd_p,
   triangular_solve,
   triangular_solve_p,
+  tridiagonal_solve,
+  tridiagonal_solve_p,
 )
