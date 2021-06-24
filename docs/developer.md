@@ -24,7 +24,7 @@ pip install jaxlib
 ```
 
 See the [JAX readme](https://github.com/google/jax#installation) for full
-guidance on pip installation (e.g., for GPU support).
+guidance on pip installation (e.g., for GPU and TPU support).
 
 ### Building `jaxlib` from source
 
