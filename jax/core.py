@@ -1080,7 +1080,7 @@ class ShapedArray(UnshapedArray):
                        self.weak_type, self.named_shape)
 
   def join(self, other):
-    if self.shape == other.shape and self.dtype == other.dtype:
+    if symbolic_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
       named_shape = join_named_shapes(self.named_shape, other.named_shape)
       return self.update(weak_type=weak_type, named_shape=named_shape)

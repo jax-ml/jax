@@ -21,6 +21,7 @@ import collections
 import itertools
 import functools
 import operator as op
+import re
 from typing import Any, Dict, Optional, Sequence, Set, Tuple, Union
 
 
@@ -64,7 +65,7 @@ class _DimMon(dict):
     return hash(frozenset(self.items()))
 
   def __str__(self):
-    return ' '.join(f'{key}^{exponent}' if exponent != 1 else str(key)
+    return "*".join(f"{key}^{exponent}" if exponent != 1 else str(key)
                     for key, exponent in sorted(self.items()))
 
   @classmethod
@@ -184,8 +185,14 @@ class _DimPolynomial(dict):
     return hash(tuple(sorted(self.items())))
 
   def __str__(self):
-    return ' + '.join(f'{c} {mon}' if c != 1 or mon.degree == 0 else str(mon)
-                      for mon, c in sorted(self.items(), reverse=True)).strip()
+    def _one_monomial(mon, c):
+      if mon.degree == 0:
+        return str(c)
+      if c == 1:
+        return str(mon)
+      return f"{c}*{mon}"
+    return " + ".join(_one_monomial(mon, c)
+                      for mon, c in sorted(self.items(), reverse=True))
 
   def __repr__(self):
     return str(self)
@@ -210,6 +217,14 @@ class _DimPolynomial(dict):
       mon = mon1.mul(mon2)
       coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
     return _DimPolynomial.from_coeffs(coeffs)
+
+  def __pow__(self, power, modulo=None):
+    assert modulo is None
+    try:
+      power = int(power)
+    except:
+      raise InconclusiveDimensionOperation(f"Dimension polynomial cannot be raised to non-integer power '{self}' ^ '{power}'")
+    return functools.reduce(op.mul, [self] * power)
 
   def __rmul__(self, other: DimSize) -> DimSize:
     return self * other  # multiplication commutes
@@ -268,7 +283,7 @@ class _DimPolynomial(dict):
     err_msg = f"Dimension polynomial '{self}' is not a multiple of '{divisor}'"
     # invariant: self = dividend + divisor * quotient
     # the leading term of dividend decreases through the loop.
-    while not (isinstance(dividend, int) or dividend.is_constant):
+    while is_poly_dim(dividend) and not dividend.is_constant:
       mon, count = dividend.leading_term
       try:
         qmon = mon.divide(dmon)
@@ -476,32 +491,25 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
   if spec is None:
     spec_tuple = (...,)  # type: Tuple[Any,...]
   elif isinstance(spec, PolyShape):
-    spec_tuple = tuple(spec)
+    spec_tuple = spec
   elif isinstance(spec, str):
-    spec_ = spec.replace(" ", "")
+    spec_ = spec.strip()
     if spec_[0] == "(":
       if spec_[-1] != ")":
         raise ValueError(f"PolyShape '{spec}' has invalid syntax")
       spec_ = spec_[1:-1]
+      spec_ = spec_.strip()
     spec_ = spec_.rstrip(",")
     if not spec_:
       spec_tuple = ()
     else:
-      specs = spec_.split(',')
-      def parse_dim(ds: str):
-        if ds == "...":
-          return ...
-        elif ds.isdigit():
-          return int(ds)
-        elif ds == "_" or ds.isalnum():
-          return ds
-        else:
-          raise ValueError(f"PolyShape '{spec}' has invalid syntax")
-
-      spec_tuple = tuple(map(parse_dim, specs))
+      spec_tuple = spec_.split(",")  # type: ignore
   else:
     raise ValueError(f"PolyShape '{spec}' must be either None, a string, or PolyShape.")
 
+  # Process ...
+  spec_tuple = tuple(map(lambda s: ... if isinstance(s, str) and s.strip() == "..." else s,
+                         spec_tuple))
   ds_ellipses = tuple(ds for ds in spec_tuple if ds == ...)
   if ds_ellipses:
     if len(ds_ellipses) > 1 or spec_tuple[-1] != ...:
@@ -513,29 +521,74 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
   if len(arg_shape) != len(spec_tuple):
     raise ValueError(f"PolyShape '{spec}' must match the rank of arguments {arg_shape}.")
 
+  # The actual parsing.
+  # We actually parse not just dimension variables, but polynomials.
+  # This is not a supported feature of the API, but is needed when parsing the
+  # polymorphic_shapes of a gradient function, when the primal function has polynomial
+  # output shapes.
+  def _parse_dim(dim_spec: Union[str, int]) -> DimSize:
+    if isinstance(dim_spec, int):
+      return dim_spec  #
+    dim_spec = dim_spec.strip()
+    if not dim_spec:
+      raise ValueError(f"PolyShape '{spec}' has invalid syntax (empty dimension {dim_spec}')")
+    # Terms are separated by "+"
+    terms = dim_spec.split("+")
+    if not terms:
+      raise ValueError(f"PolyShape '{spec}' has invalid syntax (empty dimension {dim_spec}')")
+    def _parse_term(term_spec: str) -> DimSize:
+      term_spec = term_spec.strip()
+      # Factors are separated by "*"
+      factors = term_spec.split("*")
+      if not factors:
+        raise ValueError(f"PolyShape '{spec}' has invalid syntax (unexpected term '{term_spec}')")
+      def _parse_factor(factor_spec: str) -> DimSize:
+        factor_spec = factor_spec.strip()
+        if re.match(r"^-?\d+$", factor_spec):
+          return int(factor_spec)
+        m = re.match(r"^([a-zA-Z]\w*)(\^(\d+))?$", factor_spec)
+        if not m:
+          raise ValueError(f"PolyShape '{spec}' has invalid syntax (unexpected term '{factor_spec}')")
+        var = _DimPolynomial.from_var(m.group(1))
+        if m.group(3) is None:
+          return var
+        return var ** int(m.group(3))
+
+      return functools.reduce(op.mul, map(_parse_factor, factors))
+    return functools.reduce(op.add, map(_parse_term, terms))
+
   shape_var_map: Dict[str, Set[int]] = collections.defaultdict(set)
-  def _process_dim(i: int, dim_spec):
-    if not isinstance(dim_spec, (str, int)):
-      raise ValueError(f"PolyShape '{spec}' in axis {i} must contain only integers, strings, or Ellipsis.")
+  def _process_dim(i: int, dim_spec: Union[str, int]):
+    if isinstance(dim_spec, str):
+      dim_spec = dim_spec.strip()
     dim_size = arg_shape[i]
     if dim_size is None:
-      if dim_spec == "_" or not isinstance(dim_spec, str):
+      if dim_spec == "_":
         msg = (f"PolyShape '{spec}' in axis {i} must contain a shape variable "
                f"for unknown dimension in argument shape {arg_shape}")
         raise ValueError(msg)
-      return _DimPolynomial.from_var(dim_spec)
+      dim_poly = _parse_dim(dim_spec)
+      if not is_poly_dim(dim_poly):
+        msg = (f"PolyShape '{spec}' in axis {i} must contain a shape variable "
+               f"for unknown dimension in argument shape {arg_shape}")
+        raise ValueError(msg)
+      return dim_poly
     else:  # dim_size is known
+      dim_size = int(dim_size)
       if dim_spec == "_":
         return dim_size
-      if isinstance(dim_spec, int):
-        if dim_spec != dim_size:
+      dim_poly = _parse_dim(dim_spec)
+      if not is_poly_dim(dim_poly):
+        if dim_poly != dim_size:
           msg = (f"PolyShape '{spec}' in axis {i} must contain a constant or '_' "
                  f"for known dimension in argument shape {arg_shape}")
           raise ValueError(msg)
         return dim_size
-      # We have a dimension variable for a known dimension.
-      shape_var_map[dim_spec].add(dim_size)
-      return _DimPolynomial.from_var(dim_spec)
+      # We have a dimension polynomial for a known dimension.
+      dim_var = dim_poly.to_var()
+      if dim_var is not None:
+        shape_var_map[dim_spec].add(dim_size)  # type: ignore
+      return dim_poly
 
   dims = tuple([_process_dim(i, ds) for i, ds in enumerate(spec_tuple)])
   for dim_var, dim_var_values in shape_var_map.items():
