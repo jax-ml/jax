@@ -1599,6 +1599,7 @@ def _conv_general_dilated(lhs, rhs, *,
   # Follow the lowering for complex convolutions from
   # lax._conv_general_dilated_translation. We can use the same conversion on all
   # platforms because on XLA:TPU the compiler does the same as a rewrite.
+  preferred_float_et: Optional[Any]
   if np.issubdtype(_in_avals[0].dtype, np.complexfloating):
     if preferred_element_type is not None:
       # Convert complex dtype to types used for real and imaginary parts

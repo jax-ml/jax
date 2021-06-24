@@ -585,7 +585,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
           raise ValueError(msg)
         return dim_size
       # We have a dimension polynomial for a known dimension.
-      dim_var = dim_poly.to_var()
+      dim_var = dim_poly.to_var()  # type: ignore
       if dim_var is not None:
         shape_var_map[dim_spec].add(dim_size)  # type: ignore
       return dim_poly
