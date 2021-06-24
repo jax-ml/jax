@@ -94,7 +94,8 @@ is trivial:
 # You can save the model just like you would with any other TensorFlow function:
 my_model = tf.Module()
 # Save a function that can take scalar inputs.
-my_model.f = tf.function(jax2tf.convert(f_jax), input_signature=[tf.TensorSpec([], tf.float32)])
+my_model.f = tf.function(jax2tf.convert(f_jax), autograph=False,
+                         input_signature=[tf.TensorSpec([], tf.float32)])
 tf.saved_model.save(my_model, '/some/directory',
                     options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
 
@@ -116,6 +117,33 @@ my_model.f(tf.ones([1, 28, 28]))  # a batch size of 1
 my_model.f(tf.ones([16, 28, 28]))  # a batch size of 16
 tf.saved_model.save(my_model, '/some/directory',
                     options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
+```
+
+Some special care is needed to ensure that the model parameters are not embedded
+as constants in the graph and are instead saved separately as variables.
+This is useful for two reasons:
+the parameters could be very large and exceed the limits of the
+GraphDef part of the SavedModel, or you may want to fine-tune the
+model and change the value of the parameters.
+
+```python
+def model_jax(params, inputs):
+  return params[0] + params[1] * inputs
+
+# Wrap the parameter constants as tf.Variables; this will signal to the model
+# saving code to save those constants as variables.
+params_vars = tf.nest.map_structure(tf.Variable, params)
+
+# Build the prediction function by closing over the `params_vars`. If you
+# instead were to close over `params` your SavedModel would have no variables
+# and the parameters will be included in the function graph.
+prediction_tf = lambda inputs: jax2tf.convert(model_jax)(params_vars, inputs)
+
+my_model = tf.Module()
+# Tell the model saver what are the variables.
+my_model.variables = tf.nest.flatten(params_vars)
+my_model.f = tf.function(prediction_tf, jit_compile=True)
+tf.saved_model.save(my_model)
 ```
 
 For examples of how to save a Flax model as a SavedModel see the
@@ -527,9 +555,12 @@ in [savedmodel_test.py](https://github.com/google/jax/blob/main/jax/experimental
 There is currently no support for `pmap` or`xmap`, nor for the collective
 operations. There is support for `sharded_jit` and `pjit`.
 
-### SavedModel is large (contains a large amount of source information)
+### SavedModel may be large
 
-The SavedModel obtained from a `jax2tf.convert`-ed function includes source
+If you suspect that the SavedModel is larger than it should be, check first
+that you are not including the parameters as constants in the graph (see [above](#usage-saved-model)).
+
+Additionally, the SavedModel obtained from a `jax2tf.convert`-ed function may include source
 location information. This ensures that the debugging experience is similar
 for JAX with XLA vs. `jax2tf.convert` with XLA. However, this debugging information
 increases the size of the SavedModel, even possibly doubling it. You can
