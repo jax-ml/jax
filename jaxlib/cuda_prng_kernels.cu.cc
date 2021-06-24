@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "jaxlib/cuda_prng_kernels.h"
+
 #include <array>
 #include <cstddef>
 
-#include "jaxlib/cuda_prng_kernels.h"
 #include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
 
@@ -106,7 +107,8 @@ std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n) {
   return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
 }
 
-void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
+void CudaThreeFry2x32(CustomCallStatus* /*status*/, cudaStream_t stream,
+                      void** buffers, const char* opaque,
                       std::size_t opaque_len) {
   std::array<const std::uint32_t*, 2> keys;
   keys[0] = reinterpret_cast<const std::uint32_t*>(buffers[0]);

@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "third_party/gpus/cuda/include/cusparse.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
@@ -27,7 +29,6 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuComplex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/gpus/cuda/include/cusparse.h"
 #include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
@@ -43,6 +44,8 @@ namespace {
 
 namespace py = pybind11;
 
+typedef struct CustomCallStatus_ CustomCallStatus;
+
 void ThrowIfErrorStatus(cusparseStatus_t status) {
   if (status != CUSPARSE_STATUS_SUCCESS) {
     throw std::runtime_error(cusparseGetErrorString(status));
@@ -54,7 +57,6 @@ void ThrowIfErrorStatus(cudaError_t error) {
     throw std::runtime_error(cudaGetErrorString(error));
   }
 }
-
 
 union CudaConst {
   int8_t i8[2];
@@ -277,8 +279,8 @@ std::pair<size_t, py::bytes> BuildCsrToDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len) {
+void CsrToDense(CustomCallStatus* /*status*/, cudaStream_t stream,
+                void** buffers, const char* opaque, size_t opaque_len) {
   const SparseMatDescriptor& d =
       *UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   auto handle = SparseHandlePool::Borrow(stream);
@@ -336,8 +338,8 @@ std::pair<size_t, py::bytes> BuildCsrFromDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-void CsrFromDense(cudaStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len) {
+void CsrFromDense(CustomCallStatus* /*status*/, cudaStream_t stream,
+                  void** buffers, const char* opaque, size_t opaque_len) {
   const SparseMatDescriptor& d =
       *UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   auto handle = SparseHandlePool::Borrow(stream);
@@ -412,8 +414,8 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
   return {buffer_size, PackDescriptor(CsrMatvecDescriptor{A, x, y, op})};
 }
 
-void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len) {
+void CsrMatvec(CustomCallStatus* /*status*/, cudaStream_t stream,
+               void** buffers, const char* opaque, size_t opaque_len) {
   const CsrMatvecDescriptor& d =
       *UnpackDescriptor<CsrMatvecDescriptor>(opaque, opaque_len);
   auto handle = SparseHandlePool::Borrow(stream);
@@ -503,8 +505,8 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
   return {buffer_size, PackDescriptor(CsrMatmatDescriptor{A, B, C, op_A})};
 }
 
-void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len) {
+void CsrMatmat(CustomCallStatus* /*status*/, cudaStream_t stream,
+               void** buffers, const char* opaque, size_t opaque_len) {
   const CsrMatmatDescriptor& d =
       *UnpackDescriptor<CsrMatmatDescriptor>(opaque, opaque_len);
   auto handle = SparseHandlePool::Borrow(stream);
@@ -580,8 +582,8 @@ std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-void CooToDense(cudaStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len) {
+void CooToDense(CustomCallStatus* /*status*/, cudaStream_t stream,
+                void** buffers, const char* opaque, size_t opaque_len) {
   const SparseMatDescriptor& d =
       *UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   auto handle = SparseHandlePool::Borrow(stream);
@@ -638,8 +640,8 @@ std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-void CooFromDense(cudaStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len) {
+void CooFromDense(CustomCallStatus* /*status*/, cudaStream_t stream,
+                  void** buffers, const char* opaque, size_t opaque_len) {
   const SparseMatDescriptor& d =
       *UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   auto handle = SparseHandlePool::Borrow(stream);
@@ -713,8 +715,8 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
   return {buffer_size, PackDescriptor(CooMatvecDescriptor{A, x, y, op})};
 }
 
-void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len) {
+void CooMatvec(CustomCallStatus* /*status*/, cudaStream_t stream,
+               void** buffers, const char* opaque, size_t opaque_len) {
   const CooMatvecDescriptor& d =
       *UnpackDescriptor<CooMatvecDescriptor>(opaque, opaque_len);
   auto handle = SparseHandlePool::Borrow(stream);
@@ -803,8 +805,8 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   return {buffer_size, PackDescriptor(CooMatmatDescriptor{A, B, C, op_A})};
 }
 
-void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len) {
+void CooMatmat(CustomCallStatus* /*status*/, cudaStream_t stream,
+               void** buffers, const char* opaque, size_t opaque_len) {
   const CooMatmatDescriptor& d =
       *UnpackDescriptor<CooMatmatDescriptor>(opaque, opaque_len);
   auto handle = SparseHandlePool::Borrow(stream);
@@ -906,14 +908,14 @@ void gtsv2(F1 computeGtsv2BufSize, F2 computeGtsv2, cudaStream_t stream,
   ThrowIfErrorStatus(computeStatus);
 }
 
-void gtsv2_f32(cudaStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len) {
+void gtsv2_f32(CustomCallStatus* /*status*/, cudaStream_t stream,
+               void** buffers, const char* opaque, std::size_t opaque_len) {
   gtsv2<float>(cusparseSgtsv2_bufferSizeExt, cusparseSgtsv2, stream, buffers,
                opaque, opaque_len);
 }
 
-void gtsv2_f64(cudaStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len) {
+void gtsv2_f64(CustomCallStatus* /*status*/, cudaStream_t stream,
+               void** buffers, const char* opaque, std::size_t opaque_len) {
   gtsv2<double>(cusparseDgtsv2_bufferSizeExt, cusparseDgtsv2, stream, buffers,
                 opaque, opaque_len);
 }

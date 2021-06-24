@@ -23,9 +23,12 @@ limitations under the License.
 
 namespace jax {
 
+typedef struct CustomCallStatus_ CustomCallStatus;
+
 std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n);
 
-void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
+void CudaThreeFry2x32(CustomCallStatus* status, cudaStream_t stream,
+                      void** buffers, const char* opaque,
                       std::size_t opaque_len);
 
 }  // namespace jax

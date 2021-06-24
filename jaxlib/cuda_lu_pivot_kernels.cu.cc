@@ -73,7 +73,8 @@ std::string BuildCudaLuPivotsToPermutationDescriptor(
       batch_size, pivot_size, permutation_size});
 }
 
-void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
+void CudaLuPivotsToPermutation(CustomCallStatus* /*status*/,
+                               cudaStream_t stream, void** buffers,
                                const char* opaque, std::size_t opaque_len) {
   const std::int32_t* pivots =
       reinterpret_cast<const std::int32_t*>(buffers[0]);

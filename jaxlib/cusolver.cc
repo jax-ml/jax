@@ -25,20 +25,22 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "include/pybind11/numpy.h"
-#include "include/pybind11/pybind11.h"
-#include "include/pybind11/stl.h"
-#include "jaxlib/cuda_gpu_kernel_helpers.h"
-#include "jaxlib/handle_pool.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
+#include "jaxlib/cuda_gpu_kernel_helpers.h"
+#include "jaxlib/handle_pool.h"
+#include "jaxlib/kernel_pybind11_helpers.h"
+#include "include/pybind11/numpy.h"
+#include "include/pybind11/pybind11.h"
+#include "include/pybind11/stl.h"
 
 namespace jax {
 namespace {
 
 namespace py = pybind11;
+
+typedef struct CustomCallStatus_ CustomCallStatus;
 
 void ThrowIfErrorStatus(cusolverStatus_t status) {
   switch (status) {
@@ -181,8 +183,8 @@ std::pair<int, py::bytes> BuildPotrfDescriptor(const py::dtype& dtype,
           PackDescriptor(PotrfDescriptor{type, uplo, b, n, lwork})};
 }
 
-void Potrf(cudaStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+void Potrf(CustomCallStatus* /*status*/, cudaStream_t stream, void** buffers,
+           const char* opaque, size_t opaque_len) {
   const PotrfDescriptor& d =
       *UnpackDescriptor<PotrfDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
@@ -299,8 +301,8 @@ std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GetrfDescriptor{type, b, m, n})};
 }
 
-void Getrf(cudaStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+void Getrf(CustomCallStatus* /*status*/, cudaStream_t stream, void** buffers,
+           const char* opaque, size_t opaque_len) {
   const GetrfDescriptor& d =
       *UnpackDescriptor<GetrfDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
@@ -405,8 +407,8 @@ std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GeqrfDescriptor{type, b, m, n, lwork})};
 }
 
-void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+void Geqrf(CustomCallStatus* /*status*/, cudaStream_t stream, void** buffers,
+           const char* opaque, size_t opaque_len) {
   const GeqrfDescriptor& d =
       *UnpackDescriptor<GeqrfDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
@@ -518,8 +520,8 @@ std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(OrgqrDescriptor{type, b, m, n, k, lwork})};
 }
 
-void Orgqr(cudaStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+void Orgqr(CustomCallStatus* /*status*/, cudaStream_t stream, void** buffers,
+           const char* opaque, size_t opaque_len) {
   const OrgqrDescriptor& d =
       *UnpackDescriptor<OrgqrDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
@@ -632,8 +634,8 @@ std::pair<int, py::bytes> BuildSyevdDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(SyevdDescriptor{type, uplo, b, n, lwork})};
 }
 
-void Syevd(cudaStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+void Syevd(CustomCallStatus* /*status*/, cudaStream_t stream, void** buffers,
+           const char* opaque, size_t opaque_len) {
   const SyevdDescriptor& d =
       *UnpackDescriptor<SyevdDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
@@ -774,8 +776,8 @@ std::pair<int, py::bytes> BuildSyevjDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(SyevjDescriptor{type, uplo, batch, n, lwork})};
 }
 
-void Syevj(cudaStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+void Syevj(CustomCallStatus* /*status*/, cudaStream_t stream, void** buffers,
+           const char* opaque, size_t opaque_len) {
   const SyevjDescriptor& d =
       *UnpackDescriptor<SyevjDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
@@ -916,8 +918,8 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
           PackDescriptor(GesvdDescriptor{type, b, m, n, lwork, jobu, jobvt})};
 }
 
-void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+void Gesvd(CustomCallStatus* /*status*/, cudaStream_t stream, void** buffers,
+           const char* opaque, size_t opaque_len) {
   const GesvdDescriptor& d =
       *UnpackDescriptor<GesvdDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);
@@ -1092,8 +1094,8 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
           PackDescriptor(GesvdjDescriptor{type, batch, m, n, lwork, jobz})};
 }
 
-void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
-            size_t opaque_len) {
+void Gesvdj(CustomCallStatus* /*status*/, cudaStream_t stream, void** buffers,
+            const char* opaque, size_t opaque_len) {
   const GesvdjDescriptor& d =
       *UnpackDescriptor<GesvdjDescriptor>(opaque, opaque_len);
   auto handle = SolverHandlePool::Borrow(stream);

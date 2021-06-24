@@ -23,20 +23,22 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "include/pybind11/numpy.h"
-#include "include/pybind11/pybind11.h"
-#include "include/pybind11/stl.h"
-#include "jaxlib/cuda_gpu_kernel_helpers.h"
-#include "jaxlib/handle_pool.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
 #include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "jaxlib/cuda_gpu_kernel_helpers.h"
+#include "jaxlib/handle_pool.h"
+#include "jaxlib/kernel_pybind11_helpers.h"
+#include "include/pybind11/numpy.h"
+#include "include/pybind11/pybind11.h"
+#include "include/pybind11/stl.h"
 
 namespace jax {
 namespace {
 
 namespace py = pybind11;
+
+typedef struct CustomCallStatus_ CustomCallStatus;
 
 void ThrowIfErrorStatus(cublasStatus_t status) {
   switch (status) {
@@ -149,8 +151,8 @@ std::pair<size_t, py::bytes> BuildTrsmBatchedDescriptor(
   return {size, PackDescriptor(desc)};
 }
 
-void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
-                 size_t opaque_len) {
+void TrsmBatched(CustomCallStatus* /*status*/, cudaStream_t stream,
+                 void** buffers, const char* opaque, size_t opaque_len) {
   const TrsmBatchedDescriptor& d =
       *UnpackDescriptor<TrsmBatchedDescriptor>(opaque, opaque_len);
   auto handle = BlasHandlePool::Borrow(stream);
@@ -239,8 +241,8 @@ std::pair<size_t, py::bytes> BuildGetrfBatchedDescriptor(const py::dtype& dtype,
   return {size, PackDescriptor(GetrfBatchedDescriptor{type, b, n})};
 }
 
-void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len) {
+void GetrfBatched(CustomCallStatus* /*status*/, cudaStream_t stream,
+                  void** buffers, const char* opaque, size_t opaque_len) {
   const GetrfBatchedDescriptor& d =
       *UnpackDescriptor<GetrfBatchedDescriptor>(opaque, opaque_len);
   auto handle = BlasHandlePool::Borrow(stream);

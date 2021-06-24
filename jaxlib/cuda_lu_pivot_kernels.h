@@ -23,12 +23,15 @@ limitations under the License.
 
 namespace jax {
 
+typedef struct CustomCallStatus_ CustomCallStatus;
+
 std::string BuildCudaLuPivotsToPermutationDescriptor(
     std::int64_t batch_size, std::int32_t pivot_size,
     std::int32_t permutation_size);
 
-void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
-                               const char* opaque, std::size_t opaque_len);
+void CudaLuPivotsToPermutation(CustomCallStatus* status, cudaStream_t stream,
+                               void** buffers, const char* opaque,
+                               std::size_t opaque_len);
 
 }  // namespace jax
 

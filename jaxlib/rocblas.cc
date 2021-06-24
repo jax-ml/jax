@@ -41,6 +41,8 @@ namespace {
 
 namespace py = pybind11;
 
+typedef struct CustomCallStatus_ CustomCallStatus;
+
 void ThrowIfErrorStatus(rocblas_status status) {
   switch (status) {
     case rocblas_status_success:
@@ -148,7 +150,8 @@ std::pair<size_t, py::bytes> BuildTrsmDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(desc)};
 }
 
-void Trsm(hipStream_t stream, void** buffers, const char* opaque,
+void Trsm(CustomCallStatus* /*status*/,
+          hipStream_t stream, void** buffers, const char* opaque,
           size_t opaque_len) {
   const TrsmDescriptor& d =
       *UnpackDescriptor<TrsmDescriptor>(opaque, opaque_len);
@@ -290,7 +293,8 @@ std::pair<int, py::bytes> BuildPotrfDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(PotrfDescriptor{type, uplo, b, n})};
 }
 
-void Potrf(hipStream_t stream, void** buffers, const char* opaque,
+void Potrf(CustomCallStatus* /*status*/,
+           hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len) {
   const PotrfDescriptor& d =
       *UnpackDescriptor<PotrfDescriptor>(opaque, opaque_len);
@@ -389,7 +393,8 @@ std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GetrfDescriptor{type, b, m, n})};
 }
 
-void Getrf(hipStream_t stream, void** buffers, const char* opaque,
+void Getrf(CustomCallStatus* /*status*/,
+           hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len) {
   const GetrfDescriptor& d =
       *UnpackDescriptor<GetrfDescriptor>(opaque, opaque_len);
@@ -494,7 +499,8 @@ std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GeqrfDescriptor{type, b, m, n})};
 }
 
-void Geqrf(hipStream_t stream, void** buffers, const char* opaque,
+void Geqrf(CustomCallStatus* /*status*/,
+           hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len) {
   const GeqrfDescriptor& d =
       *UnpackDescriptor<GeqrfDescriptor>(opaque, opaque_len);
@@ -608,7 +614,8 @@ std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(OrgqrDescriptor{type, b, m, n, k})};
 }
 
-void Orgqr(hipStream_t stream, void** buffers, const char* opaque,
+void Orgqr(CustomCallStatus* /*status*/,
+           hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len) {
   const OrgqrDescriptor& d =
       *UnpackDescriptor<OrgqrDescriptor>(opaque, opaque_len);
@@ -715,7 +722,8 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GesvdDescriptor{type, b, m, n, jobu, jobvt})};
 }
 
-void Gesvd(hipStream_t stream, void** buffers, const char* opaque,
+void Gesvd(CustomCallStatus* /*status*/,
+           hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len) {
   const GesvdDescriptor& d =
       *UnpackDescriptor<GesvdDescriptor>(opaque, opaque_len);
