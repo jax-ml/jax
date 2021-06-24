@@ -502,7 +502,7 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
   return concatenate_p.bind(*operands, dimension=dimension)
 
 Precision = xla_client.PrecisionConfig.Precision
-Precision.__str__ = lambda precision: precision.name
+Precision.__str__ = lambda precision: precision.name  # type: ignore
 PrecisionType = Any
 PrecisionLike = Union[None, str, PrecisionType, Tuple[str, str],
                       Tuple[PrecisionType, PrecisionType]]
