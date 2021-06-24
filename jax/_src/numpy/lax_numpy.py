@@ -4923,7 +4923,9 @@ def _unique_axis(ar, axis, return_index=False, return_inverse=False,
     new_shape = (mask.sum() or aux.shape[1], *out_shape)
   else:
     ind = nonzero(mask, size=size)[0]
-    new_shape = (size, *out_shape)
+    idx = list(range(len(ar.shape)))
+    idx[0], idx[axis] = axis, 0
+    new_shape = (size, [ar.shape[i] for i in idx[1:])
   result = moveaxis(aux[:, ind].T.reshape(*new_shape), 0, axis)
 
   ret = (result,)
