@@ -4913,17 +4913,23 @@ def _unique_axis_sorted_mask(ar, axis):
   return aux, mask, perm, out_shape
 
 def _unique_axis(ar, axis, return_index=False, return_inverse=False,
-                 return_counts=False):
+                 return_counts=False, size=None):
   """
   Find the unique elements of an array along a particular axis.
   """
   aux, mask, perm, out_shape = _unique_axis_sorted_mask(ar, axis)
-  result = moveaxis(aux[:, mask].T.reshape(mask.sum() or aux.shape[1], *out_shape), 0, axis)
+  if size is None:
+    ind = mask
+    new_shape = (mask.sum() or aux.shape[1], *out_shape)
+  else:
+    ind = nonzero(mask, size=size)[0]
+    new_shape = (size, *out_shape)
+  result = moveaxis(aux[:, ind].T.reshape(*new_shape), 0, axis)
 
   ret = (result,)
   if return_index:
     if aux.size:
-      ret += (perm[mask],)
+      ret += (perm[ind],)
     else:
       ret += (perm,)
   if return_inverse:
@@ -4936,7 +4942,11 @@ def _unique_axis(ar, axis, return_index=False, return_inverse=False,
     ret += (inv_idx,)
   if return_counts:
     if aux.size:
-      idx = concatenate(nonzero(mask) + (array([mask.size]),))
+      if size is not None:
+        idx = nonzero(mask, size=size+1)[0]
+        idx = idx.at[1:].set(where(idx[1:], idx[1:], mask.size))
+      else:
+        idx = concatenate(nonzero(mask) + (array([mask.size]),))
       ret += (diff(idx),)
     elif ar.shape[axis]:
       ret += (array([ar.shape[axis]]),)
@@ -4960,9 +4970,6 @@ The `size` cannot currently be used with the `axis` argument."""
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis: Optional[int] = None, *, size=None):
   # TODO(jakevdp): call _check_arraylike on input.
-  if axis is not None and size is not None:
-    # TODO(jakevdp): implement size & axis together.
-    raise NotImplementedError("jnp.unique `size` and `axis` arguments cannot be used together.")
 
   ar = asarray(ar)
 
@@ -4974,7 +4981,7 @@ def unique(ar, return_index=False, return_inverse=False,
   if axis is None:
     ret = _unique1d(ar, return_index, return_inverse, return_counts, size=size)
   else:
-    ret = _unique_axis(ar, axis, return_index, return_inverse, return_counts)
+    ret = _unique_axis(ar, axis, return_index, return_inverse, return_counts, size=size)
 
   return ret[0] if len(ret) == 1 else ret
 
