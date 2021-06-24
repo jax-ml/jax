@@ -2408,7 +2408,8 @@ def eval_shape(fun: Callable, *args, **kwargs):
   return tree_unflatten(out_tree(), out)
 
 
-def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
+def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
+               ) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
   The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
@@ -2446,6 +2447,14 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
       control flow is optional, and disabled by default, because in some
       edge-case compositions with :func:`jax.jit` it can lead to some extra
       computation.
+    prevent_cse: Optional, boolean indicating whether to prevent common
+      subexpression elimination (CSE) optimizations in the HLO generated from
+      differentiation. This CSE prevention has costs because it can foil other
+      optimizations, and because it can incur high overheads on some backends,
+      especially GPU. The default is True because otherwise, under a ``jit`` or
+      ``pmap``, CSE can defeat the purpose of this decorator. But in some
+      settings, like when used inside a ``scan``, this CSE prevention mechanism
+      is unnecessary, in which case ``prevent_cse`` can be set to False.
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -2496,7 +2505,8 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
     out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
-                             concrete=concrete)
+                             concrete=concrete, prevent_cse=prevent_cse,
+                             differentiated=False)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint
