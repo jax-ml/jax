@@ -220,7 +220,9 @@ class _DimPolynomial(dict):
 
   def __pow__(self, power, modulo=None):
     assert modulo is None
-    if not isinstance(power, int):
+    try:
+      power = int(power)
+    except:
       raise InconclusiveDimensionOperation(f"Dimension polynomial cannot be raised to non-integer power '{self}' ^ '{power}'")
     return functools.reduce(op.mul, [self] * power)
 
@@ -281,7 +283,7 @@ class _DimPolynomial(dict):
     err_msg = f"Dimension polynomial '{self}' is not a multiple of '{divisor}'"
     # invariant: self = dividend + divisor * quotient
     # the leading term of dividend decreases through the loop.
-    while not (isinstance(dividend, int) or dividend.is_constant):
+    while is_poly_dim(dividend) and not dividend.is_constant:
       mon, count = dividend.leading_term
       try:
         qmon = mon.divide(dmon)
@@ -566,16 +568,17 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
                f"for unknown dimension in argument shape {arg_shape}")
         raise ValueError(msg)
       dim_poly = _parse_dim(dim_spec)
-      if not isinstance(dim_poly, _DimPolynomial):
+      if not is_poly_dim(dim_poly):
         msg = (f"PolyShape '{spec}' in axis {i} must contain a shape variable "
                f"for unknown dimension in argument shape {arg_shape}")
         raise ValueError(msg)
       return dim_poly
     else:  # dim_size is known
+      dim_size = int(dim_size)
       if dim_spec == "_":
         return dim_size
       dim_poly = _parse_dim(dim_spec)
-      if isinstance(dim_poly, int):
+      if not is_poly_dim(dim_poly):
         if dim_poly != dim_size:
           msg = (f"PolyShape '{spec}' in axis {i} must contain a constant or '_' "
                  f"for known dimension in argument shape {arg_shape}")

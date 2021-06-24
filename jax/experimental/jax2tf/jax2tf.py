@@ -585,7 +585,6 @@ def _args_to_avals_and_env(
 
     for i, d in enumerate(aval_shape):
       if not shape_poly.is_poly_dim(d):
-        assert isinstance(d, int)
         assert d == arg_shape[i]
       else:
         d_var = d.to_var()  # type: ignore
@@ -1923,7 +1922,7 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
   reducer_fn = tf.function(
       reducer, autograph=False).get_concrete_function(o_spec, o_spec)
 
-  if not isinstance(init_val, tf.Tensor):
+  if not isinstance(init_val, (tf.Tensor, tf.Variable)):
     init_val = tf.constant(init_val, operand.dtype)
   out = tfxla.reduce_window(
       operand,

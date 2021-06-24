@@ -326,6 +326,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       return tf.Variable(
           np.ones(initializer_shape, np.float32), dtype=tf.float32, shape=shape)
 
+
     # Known shapes for the arguments
     check_avals(
         args=[const((2, 3))],
@@ -378,6 +379,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=["(c, b, a)"],
         expected_avals=(shaped_array("(c, b, a)", (2, 3, 4)),),
     )
+
+    # Check when the shapes are TensorSpec
+    check_avals(
+        args=[tf_var(tf.TensorShape([2, 3]), initializer_shape=(2, 3))],
+        polymorphic_shapes=[PS("b", ...)],
+        expected_avals=(shaped_array("(b, 3)", (2, 3)),))
 
     # Some errors
     for invalid_syntax in [")(", "2a", "a@", "a - 2"]:
