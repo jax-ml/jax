@@ -38,7 +38,8 @@ def make_shaped_array(x):
 
 def zeros_like_array(x):
   dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  return zeros_like_shaped_array(ShapedArray(np.shape(x), dtype))
+  aval = ShapedArray(np.shape(x), dtype)
+  return ad_util.zeros_like_aval(aval)
 
 array_types = {np.ndarray, np.bool_,
                np.int8, np.int16, np.int32, np.int64,
@@ -50,15 +51,6 @@ array_types = {np.ndarray, np.bool_,
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
-
-
-def zeros_like_shaped_array(aval):
-  assert isinstance(aval, ShapedArray)
-  if aval.dtype == dtypes.float0:
-    return np.zeros(aval.shape, dtypes.float0)
-  return np.broadcast_to(np.array(0, aval.dtype), aval.shape)
-
-ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 core.literalable_types.update(array_types)
 
