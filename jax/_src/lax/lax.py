@@ -1610,6 +1610,13 @@ def _device_put_raw(x, weak_type=None):
     aval = raise_to_shaped(core.get_aval(x), weak_type=weak_type)
     return xla.array_result_handler(None, aval)(*xla.device_put(x))
 
+def zeros_like_shaped_array(aval):
+  assert isinstance(aval, ShapedArray)
+  # The .astype is useful for float0
+  return broadcast(np.array(0).astype(aval.dtype), aval.shape)
+
+ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
+
 def iota(dtype: DType, size: int) -> Array:
   """Wraps XLA's `Iota
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
@@ -1672,11 +1679,11 @@ def stop_gradient(x):
   >>> jax.grad(lambda x: x**2)(3.)
   DeviceArray(6., dtype=float32)
   >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
-  array(0., dtype=float32)
+  DeviceArray(0., dtype=float32)
   >>> jax.grad(jax.grad(lambda x: x**2))(3.)
   DeviceArray(2., dtype=float32)
   >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
-  array(0., dtype=float32)
+  DeviceArray(0., dtype=float32)
   """
   def stop(x):
     if (dtypes.issubdtype(_dtype(x), np.floating) or
