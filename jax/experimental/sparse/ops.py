@@ -41,6 +41,7 @@ from jax import lax
 from jax import tree_util
 from jax import vmap
 from jax.interpreters import batching
+from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.lib import cusparse
 from jax.lib import xla_bridge
@@ -49,7 +50,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.interpreters import ad
 from jax.util import safe_zip
-from jax._src.lax.lax import ranges_like, remaining, _dot_general_batch_dim_nums
+from jax._src.lax.lax import ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_computation
 
 xb = xla_bridge
 xops = xla_client.ops
@@ -1050,14 +1051,26 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
   rhs_ndim = rhs.aval.ndim if ad.is_undefined_primal(rhs) else rhs.ndim
   lhs_kept = remaining(range(lhs_ndim), lhs_contract, lhs_batch)
   rhs_kept = remaining(range(rhs_ndim), rhs_contract, rhs_batch)
-  ans_batch, ans_lhs, ans_rhs = ranges_like(lhs_batch, lhs_kept, rhs_kept)
+  ans_batch, ans_lhs, ans_rhs = map(list, ranges_like(lhs_batch, lhs_kept, rhs_kept))
   if ad.is_undefined_primal(lhs_data):
     dims = ((ans_rhs, rhs_kept), (ans_batch, rhs_batch))
     lhs_contract_sorted_by_rhs = list(np.take(lhs_contract, np.argsort(rhs_contract)))
-    # TODO: extract these sparse indices without constructing the dense matrix.
-    out_axes = np.argsort(list(lhs_batch) + lhs_kept + lhs_contract_sorted_by_rhs)
-    out_dense = lax.transpose(lax.dot_general(ct, rhs, dimension_numbers=dims), out_axes)
-    return bcoo_extract(lhs_indices, out_dense), lhs_indices, rhs
+    permutation = list(lhs_batch) + lhs_kept + lhs_contract_sorted_by_rhs
+    out_axes = np.argsort(permutation)
+
+    # What follows is essentially this, but computed in terms of dot_general_sampled:
+    # out_dense_T = lax.dot_general(ct, rhs, dimension_numbers=dims)
+    # out_dense = lax.transpose(out_dense_T, out_axes)
+    # result = bcoo_extract(lhs_indices, out_dense)
+
+    # Instead we (1) un-transpose indices, (2) compute SDDMM, (3) re-transpose result
+    dummy_data = jnp.ones([1 for i in range(lhs_indices.ndim - 2)] + [lhs_indices.shape[-1]])
+    dummy_shape = tuple(lhs_indices.shape[:-2]) + tuple(1 for i in range(lhs_indices.shape[-2]))
+    _, lhs_indices_T = bcoo_transpose(dummy_data, lhs_indices, permutation=permutation, shape=dummy_shape)
+    result_T = bcoo_dot_general_sampled(ct, rhs, lhs_indices_T, dimension_numbers=dims)
+    result, _ = bcoo_transpose(result_T, lhs_indices_T, permutation=out_axes, shape=dummy_shape)
+
+    return result, lhs_indices, rhs
   else:
     dims = ((lhs_kept, ans_lhs), (lhs_batch, ans_batch))
     rhs_contract_sorted_by_lhs = list(np.take(rhs_contract, np.argsort(lhs_contract)))
@@ -1090,6 +1103,59 @@ ad.primitive_transposes[bcoo_dot_general_p] = _bcoo_dot_general_transpose
 batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
 xla.translations[bcoo_dot_general_p] = xla.lower_fun(
     _bcoo_dot_general_impl, multiple_results=False)
+
+#----------------------------------------------------------------------
+# bcoo_dot_general_sampled
+# (batched) general sampled dot product of two dense ND arrays, with
+# output computed only at a given set of sparse indices.
+
+bcoo_dot_general_sampled_p = core.Primitive("bcoo_dot_general_sampled")
+
+def bcoo_dot_general_sampled(A, B, indices, *, dimension_numbers):
+  return bcoo_dot_general_sampled_p.bind(A, B, indices, dimension_numbers=dimension_numbers)
+
+@bcoo_dot_general_sampled_p.def_impl
+def _bcoo_dot_general_sampled_impl(A, B, indices, *, dimension_numbers):
+  # TODO(jakevdp): use a more efficient implementation that avoids the full dot product.
+  dense_result = lax.dot_general(A, B, dimension_numbers=dimension_numbers)
+  return bcoo_extract(indices, dense_result)
+
+@bcoo_dot_general_sampled_p.def_abstract_eval
+def _bcoo_dot_general_sampled_abstract_eval(A, B, indices, *, dimension_numbers):
+  dense_result, = pe.abstract_eval_fun(lambda *args: [lax.dot_general(*args, dimension_numbers=dimension_numbers)], A, B)
+  sparse_result, = pe.abstract_eval_fun(lambda *args: [bcoo_extract(*args)], indices, dense_result)
+  return sparse_result
+
+def _bcoo_dot_general_sampled_transpose(ct, A, B, indices, *, dimension_numbers):
+  A_shape = A.aval.shape if hasattr(A, 'aval') else A.shape
+  B_shape = B.aval.shape if hasattr(B, 'aval') else B.shape
+  mat_shape = _dot_general_shape_computation(
+    A_shape, B_shape, dimension_numbers=dimension_numbers)
+  mat = ad.UndefinedPrimal(core.ShapedArray(mat_shape, ct.dtype))
+  indices, ct = _bcoo_extract_transpose(ct, indices, mat)
+  kwds = {'dimension_numbers': dimension_numbers,
+          'precision': None,
+          'preferred_element_type': None}
+  A, B = ad.get_primitive_transpose(lax.dot_general_p)(ct, A, B, **kwds)
+  return A, B, indices
+
+def _bcoo_dot_general_sampled_jvp_A(A_dot, A, B, indices, *, dimension_numbers):
+  return bcoo_dot_general_sampled(A_dot, B, indices, dimension_numbers=dimension_numbers)
+
+def _bcoo_dot_general_sampled_jvp_B(B_dot, A, B, indices, *, dimension_numbers):
+  return bcoo_dot_general_sampled(A, B_dot, indices, dimension_numbers=dimension_numbers)
+
+def _bcoo_dot_general_sampled_batch_rule(batched_args, batch_dims, *, dimension_numbers):
+  def impl(A, B, indices):
+    return _bcoo_dot_general_sampled_impl(A, B, indices, dimension_numbers=dimension_numbers)
+  return vmap(impl, in_axes=batch_dims, out_axes=0)(*batched_args), 0
+
+ad.defjvp(bcoo_dot_general_sampled_p, _bcoo_dot_general_sampled_jvp_A,
+          _bcoo_dot_general_sampled_jvp_B, None)
+ad.primitive_transposes[bcoo_dot_general_sampled_p] = _bcoo_dot_general_sampled_transpose
+batching.primitive_batchers[bcoo_dot_general_sampled_p] = _bcoo_dot_general_sampled_batch_rule
+xla.translations[bcoo_dot_general_sampled_p] = xla.lower_fun(
+    _bcoo_dot_general_sampled_impl, multiple_results=False)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
