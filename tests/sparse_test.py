@@ -838,6 +838,105 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(extract(jf_dense), jf_sparse, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_dimension_numbers={}_n_batch={}_n_dense={}"
+       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
+               jtu.format_shape_dtype_string(rhs_shape, dtype),
+               dimension_numbers, n_batch, n_dense),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "dimension_numbers": dimension_numbers,
+       "n_batch": n_batch, "n_dense": n_dense}
+      for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
+          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 0, 0),
+          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
+          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 0, 1),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 0, 0),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 1, 1),
+          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 0, 0),
+          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 1, 2),
+          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 1),
+      ]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_bcoo_dot_general_sampled(self, lhs_shape, rhs_shape, dtype, dimension_numbers, n_batch, n_dense):
+    rng = jtu.rand_default(self.rng())
+    sprng = rand_sparse(self.rng())
+    out_shape = lax.dot_general(
+      jnp.zeros(lhs_shape), jnp.zeros(rhs_shape),
+      dimension_numbers=dimension_numbers).shape
+
+    args_maker = lambda: [
+      rng(lhs_shape, dtype), rng(rhs_shape, dtype),
+      sparse.BCOO.fromdense(sprng(out_shape, dtype),
+                            n_batch=n_batch, n_dense=n_dense).indices]
+
+    def dense_fun(lhs, rhs, indices):
+      AB = lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+      return sparse.bcoo_extract(indices, AB)
+    def sparse_fun(lhs, rhs, indices):
+      return sparse.bcoo_dot_general_sampled(
+                lhs, rhs, indices, dimension_numbers=dimension_numbers)
+
+    tol = {}
+    if jtu.device_under_test() == "tpu":
+      tol = {np.float32: 5E-3}
+
+    self._CheckAgainstNumpy(dense_fun, sparse_fun, args_maker, tol=tol)
+    # TODO: python_should_be_executing check occasionally fails... why?
+    # self._CompileAndCheck(sparse_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs_shape={}_rhs_shape={}_dimension_numbers={}_n_batch={}_n_dense={}"
+       .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
+               jtu.format_shape_dtype_string(rhs_shape, dtype),
+               dimension_numbers, n_batch, n_dense),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "dimension_numbers": dimension_numbers,
+       "n_batch": n_batch, "n_dense": n_dense}
+      for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
+          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
+          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 1),
+          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 2, 0),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 1, 0),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 1, 1),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 2, 0),
+          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 0),
+          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 1),
+      ]
+      for dtype in jtu.dtypes.floating))
+  def test_bcoo_dot_general_sampled_ad(self, lhs_shape, rhs_shape, dtype, dimension_numbers, n_batch, n_dense):
+    rng = jtu.rand_default(self.rng())
+    sprng = rand_sparse(self.rng())
+    out_shape = lax.dot_general(
+      jnp.zeros(lhs_shape), jnp.zeros(rhs_shape),
+      dimension_numbers=dimension_numbers).shape
+
+    lhs = rng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
+    indices = sparse.BCOO.fromdense(sprng(out_shape, dtype),
+                                    n_batch=n_batch, n_dense=n_dense).indices
+
+    def dense_fun(lhs, rhs, indices):
+      AB = lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+      return sparse.bcoo_extract(indices, AB)
+    def sparse_fun(lhs, rhs, indices):
+      return sparse.bcoo_dot_general_sampled(
+                lhs, rhs, indices, dimension_numbers=dimension_numbers)
+
+    jf_dense = api.jacfwd(dense_fun)(lhs, rhs, indices)
+    jf_sparse = api.jacfwd(sparse_fun)(lhs, rhs, indices)
+    jr_dense = api.jacrev(dense_fun)(lhs, rhs, indices)
+    jr_sparse = api.jacrev(sparse_fun)(lhs, rhs, indices)
+
+    tol = {}
+    if jtu.device_under_test() == "tpu":
+      tol = {np.float32: 5E-3}
+
+    self.assertAllClose(jf_sparse, jf_dense, atol=tol)
+    self.assertAllClose(jr_sparse, jr_dense, atol=tol)
+    self.assertAllClose(jf_sparse, jr_sparse, atol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
        "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
