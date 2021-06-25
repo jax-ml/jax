@@ -48,3 +48,5 @@ from .ops import (
     CSR,
     BCOO,
 )
+
+from .transform import sparsify
