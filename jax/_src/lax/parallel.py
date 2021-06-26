@@ -1129,6 +1129,84 @@ batching.primitive_batchers[all_gather_p] = _all_gather_batcher
 batching.collective_rules[all_gather_p] = _all_gather_batched_collective
 core.axis_substitution_rules[all_gather_p] = partial(_subst_all_names_in_param, 'axis_name')
 
+
+def _reduce_scatter_via_reducer(x, *, reducer, scatter_dimension, axis_name, axis_index_groups, axis_size):
+  index = _index_in_group(axis_name, axis_index_groups)
+  start_indices = list(x.shape)
+  slice_sizes = list(x.shape)
+
+  scatter_dim_input_size = start_indices[scatter_dimension]
+  if scatter_dim_input_size % axis_size != 0:
+    raise ValueError(f"AllReduceScatter operand scatter dimension size "
+                     f"{scatter_dim_input_size} must be dividable by "
+                     f"shard_count {axis_size}")
+  scatter_dim_output_size = scatter_dim_input_size // axis_size
+
+  start_indices[scatter_dimension] = index * scatter_dim_output_size
+  slice_sizes[scatter_dimension] = scatter_dim_output_size
+  outs = reducer(x, axis_name=axis_name, axis_index_groups=axis_index_groups)
+  return lax.dynamic_slice(outs, start_indices, slice_sizes)
+
+
+def _reduce_scatter_translation_rule(prim, reducer, c, x, *, scatter_dimension, axis_name,axis_index_groups, axis_size, axis_env, platform):
+  if (platform == "gpu") and (scatter_dimension == 0):
+    scalar = ShapedArray((), c.get_shape(x).numpy_dtype())
+    computation = xla.primitive_subcomputation(prim, scalar, scalar)
+    replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
+    return xops.ReduceScatter(
+        x,
+        computation,
+        scatter_dimension=scatter_dimension,
+        shard_count=axis_size,
+        replica_groups=xc.make_replica_groups(replica_groups))
+  else:
+    return xla.lower_fun(
+        _reduce_scatter_via_reducer, multiple_results=False, parallel=True)(
+            c,
+            x,
+            reducer=reducer,
+            scatter_dimension=scatter_dimension,
+            axis_name=axis_name,
+            axis_index_groups=axis_index_groups,
+            axis_size=axis_size,
+            axis_env=axis_env,
+            platform=platform)
+
+
+def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
+                                  axis_index_groups, axis_size):
+  if not isinstance(axis_name, (list, tuple)):
+    axis_name = (axis_name,)
+  x_aval = core.raise_to_shaped(x)
+  new_shape = list(x_aval.shape)
+  new_shape[scatter_dimension] = int(x.shape[scatter_dimension] / axis_size)
+
+  new_named_shape = {
+      name: size
+      for name, size in x_aval.named_shape.items()
+      if name not in axis_name
+  }
+  return x_aval.update(shape=new_shape, named_shape=new_named_shape)
+
+
+reduce_scatter_p = core.AxisPrimitive("reduce_scatter")
+reduce_scatter_p.def_abstract_eval(_reduce_scatter_abstract_eval)
+xla.parallel_translations[reduce_scatter_p] = partial(
+    _reduce_scatter_translation_rule, lax.add_p, psum)
+pxla.multi_host_supported_collectives.add(reduce_scatter_p)
+
+
+def reduce_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None):
+  axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+  bind = partial(
+      reduce_scatter_p.bind,
+      axis_name=axis_name,
+      scatter_dimension=scatter_dimension,
+      axis_index_groups=axis_index_groups,
+      axis_size=axis_size)
+  return tree_util.tree_map(bind, x)
+
+
 def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
   axis_pos = list(axis_env.names).index(axis_name)
   nreplicas = axis_env.nreps // prod(axis_env.sizes)
