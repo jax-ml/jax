@@ -189,6 +189,7 @@ execution_excludepatterns = [
     'notebooks/thinking_in_jax.*',
     # TODO(jakevdp): enable execution on these
     'jax-101/*',
+    'notebooks/xmap_tutorial.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
