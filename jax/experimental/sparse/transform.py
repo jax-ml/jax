@@ -48,7 +48,7 @@ DeviceArray([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
 
 import functools
 from typing import (
-  Any, Callable, Dict, NamedTuple, NewType, List, Optional, Sequence, Tuple, Union)
+  Any, Callable, Dict, NamedTuple, List, Optional, Sequence, Tuple, Union)
 
 import numpy as np
 
