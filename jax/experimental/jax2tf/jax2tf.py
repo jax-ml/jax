@@ -1805,10 +1805,9 @@ tf_impl[lax.transpose_p] = _transpose
 
 axes_to_axis = lambda func: lambda operand, axes: func(operand, axis=axes)
 
-tf_impl[lax.reduce_sum_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_sum), argnums=[0]))
-tf_impl[lax.reduce_prod_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_prod), argnums=[0]))
+# reduce_sum and reduce_prod are not supported for bool
+tf_impl[lax.reduce_sum_p] = axes_to_axis(tf.reduce_sum)
+tf_impl[lax.reduce_prod_p] = axes_to_axis(tf.reduce_prod)
 tf_impl[lax.reduce_max_p] = (
     bool_to_int8(axes_to_axis(tf.reduce_max), argnums=[0]))
 tf_impl[lax.reduce_min_p] = (
