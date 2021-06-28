@@ -20,8 +20,10 @@ import enum
 from functools import partial
 import operator
 import re
-import unittest
+import subprocess
+import sys
 import types
+import unittest
 import warnings
 import weakref
 import functools
@@ -55,6 +57,7 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
+python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 
 
@@ -5434,6 +5437,29 @@ class NamedCallTest(jtu.JaxTestCase):
     self.assertEqual(f(int_min).dtype, int_dtype)
     self.assertRaises(OverflowError, f, int_max + 1)
     self.assertRaises(OverflowError, f, int_min - 1)
+
+
+class BackendsTest(jtu.JaxTestCase):
+
+  @unittest.skipIf(not sys.executable, "test requires sys.executable")
+  @unittest.skipIf(python_version < (3, 7), "test requires Python 3.7 or higher")
+  @jtu.skip_on_devices("gpu", "tpu")
+  def test_cpu_warning_suppression(self):
+    warning_expected = (
+      "import jax; "
+      "jax.numpy.arange(10)")
+    warning_not_expected = (
+      "import jax; "
+      "jax.config.update('jax_platform_name', 'cpu'); "
+      "jax.numpy.arange(10)")
+
+    result = subprocess.run([sys.executable, '-c', warning_expected],
+                            check=True, capture_output=True)
+    assert "No GPU/TPU found" in result.stderr.decode()
+
+    result = subprocess.run([sys.executable, '-c', warning_not_expected],
+                            check=True, capture_output=True)
+    assert "No GPU/TPU found" not in result.stderr.decode()
 
 
 if __name__ == '__main__':

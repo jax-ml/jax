@@ -225,11 +225,10 @@ def backends():
           # we expect a RuntimeError.
           logging.info("Unable to initialize backend '%s': %s" % (name, err))
           continue
-    if _default_backend.platform == "cpu":
+    if _default_backend.platform == "cpu" and FLAGS.jax_platform_name != 'cpu':
       logging.warning('No GPU/TPU found, falling back to CPU. '
                       '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
     return _backends
-
 
 
 @lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
