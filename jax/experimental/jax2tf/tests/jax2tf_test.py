@@ -352,29 +352,176 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), dtypes.bfloat16),
                         d_dx_tf.numpy())
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      dict(testcase_name=f"function={with_function}",
+           with_function=with_function)
+      for with_function in [False, True]))
+  def test_gradients_unused_argument_readme(self, with_function=True):
+    # x2 and x3 are not used. x3 has integer type.
+    def fn(x0, x1, x2, x3):
+      return x0 * 0. + x2 * 2.
 
-  def test_tf_gradients_int_argument(self):
+    xs = [tf.Variable(x) for x in [10., 11., 12., 13]]
+    with tf.GradientTape(persistent=True) as tape:
+      res = fn(*xs)
+
+    g_tf_native = tape.gradient(res, xs)
+    self.assertAllClose(g_tf_native[0].numpy(), np.float32(0.))
+    self.assertIsNone(g_tf_native[1])
+    self.assertAllClose(g_tf_native[2].numpy(), np.float32(2.))
+    self.assertIsNone(g_tf_native[3])
+
+    g_tf_native_0 = tape.gradient(res, xs,
+                                  unconnected_gradients=tf.UnconnectedGradients.ZERO)
+    self.assertAllClose(g_tf_native_0[0].numpy(), np.float32(0.))
+    self.assertAllClose(g_tf_native_0[1].numpy(), np.float32(0.))
+    self.assertAllClose(g_tf_native_0[2].numpy(), np.float32(2.))
+    self.assertAllClose(g_tf_native_0[3].numpy(), np.int32(0))
+
+    # Now with jax2tf.convert
+    with tf.GradientTape(persistent=True) as tape:
+      conv_fn = jax2tf.convert(fn, with_gradient=True)
+      if with_function:
+        conv_fn = tf.function(conv_fn, autograph=False)
+      res = conv_fn(*xs)
+
+    g_jax2tf = tape.gradient(res, xs)
+    # Returns: 0., 0., 2., None
+    # Note that the gradient for x1 is 0.
+    self.assertAllClose(g_jax2tf[0].numpy(), np.float32(0.))
+    self.assertAllClose(g_jax2tf[1].numpy(), np.float32(0.))
+    self.assertAllClose(g_jax2tf[2].numpy(), np.float32(2.))
+    self.assertIsNone(g_jax2tf[3])
+
+    g_jax2tf = tape.gradient(res, xs,
+                               unconnected_gradients=tf.UnconnectedGradients.ZERO)
+    self.assertAllClose(g_jax2tf[0].numpy(), np.float32(0.))
+    self.assertAllClose(g_jax2tf[1].numpy(), np.float32(0.))
+    self.assertAllClose(g_jax2tf[2].numpy(), np.float32(2.))
+    self.assertAllClose(g_jax2tf[3].numpy(), np.int32(0))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      dict(testcase_name=f"function={with_function}",
+           with_function=with_function)
+      for with_function in [False, True]))
+  def test_gradients_int_argument(self, with_function=False):
     # https://github.com/google/jax/issues/6975
-    # state is a pytree that contains an integer and a boolean.
-    # The function returns an integer and a boolean.
-    def f_jax(param, state, x):
-      return param * x, state
+    # An expanded version of test_gradients_unused_argument
+    # param: f32
+    # state: dict(array:f32, counter:i32, truth: bool)
+    # xf: f32
+    # xf_unused: f32 unused
+    # xi_unused: i32 unused
+    # return f32, state
+    def f_jax(param, state, xf, xf_unused, xi_unused):
+      return param * xf, state
 
+    # everything has different shapes
     param = np.array([0.7, 0.9], dtype=np.float32)
     state = dict(array=1., counter=7, truth=True)
-    x = 3.
+    xf = np.array([11.], dtype=np.float32)
+    xf_unused = np.array([21., 22., 23., 24.], dtype=np.float32)
+    xi_unused = np.array([31, 32, 33, 34, 35], dtype=np.int32)
 
-    # tf.function is important, without it the bug does not appear
-    f_tf = tf.function(jax2tf.convert(f_jax, with_gradient=True), autograph=False)
+    # Native JAX AD
+    g_jax = jax.grad(lambda *args: jnp.sum(f_jax(*args)[0]),
+                     argnums=(0, 1, 2, 3, 4),
+                     allow_int=True)(param, state, xf, xf_unused, xi_unused)
+    g_jax_param = np.array([11., 11.], dtype=np.float32)
+    g_jax_x = np.array([1.6], dtype=np.float32)
 
+    self.assertAllClose(g_jax[0], g_jax_param)
+    self.assertAllClose(g_jax[1]["array"], np.zeros_like(state["array"]))
+    self.assertEqual(g_jax[1]["counter"].dtype, jax.float0)
+    self.assertEqual(g_jax[1]["counter"].shape, ())
+    self.assertEqual(g_jax[1]["truth"].dtype, jax.float0)
+    self.assertEqual(g_jax[1]["truth"].shape, ())
+    self.assertAllClose(g_jax[2], g_jax_x)
+    self.assertAllClose(g_jax[3], np.zeros_like(xf_unused))
+    self.assertEqual(g_jax[4].dtype, jax.float0)
+    self.assertEqual(g_jax[4].shape, xi_unused.shape)
+
+    # Now native TF gradients, only to test how TF AD works
     paramv = tf.Variable(param)
-    with tf.GradientTape() as tape:
-      r, _ = f_tf(paramv, state, x)
+    statev = tf.nest.map_structure(tf.Variable, state)
+    xfv = tf.Variable(xf)
+    xf_unusedv = tf.Variable(xf_unused)
+    xi_unusedv = tf.Variable(xi_unused)
+    with tf.GradientTape(persistent=True) as tape:
+      r, _ = f_jax(paramv, statev, xfv, xf_unusedv, xi_unusedv)
       loss = tf.reduce_sum(r)
 
-    g_tf = tape.gradient(loss, paramv)
-    self.assertAllClose(g_tf.numpy(),
-                        jax.grad(lambda *args: jnp.sum(f_jax(*args)[0]))(param, state, x))
+    g_tf_native_0 = tape.gradient(
+        loss, (paramv, statev, xfv, xf_unusedv, xi_unusedv),
+        unconnected_gradients=tf.UnconnectedGradients.ZERO)
+    self.assertAllClose(g_tf_native_0[0].numpy(), g_jax_param)
+    self.assertAllClose(g_tf_native_0[1]["array"].numpy(), np.zeros_like(state["array"]).astype(np.float32))
+    self.assertAllClose(g_tf_native_0[1]["counter"].numpy(), np.zeros_like(state["counter"]).astype(np.int32))
+    self.assertAllClose(g_tf_native_0[1]["truth"].numpy(), np.zeros_like(state["truth"]))
+    self.assertAllClose(g_tf_native_0[2].numpy(), g_jax_x)
+    self.assertAllClose(g_tf_native_0[3].numpy(), np.zeros_like(xf_unused).astype(np.float32))
+    self.assertAllClose(g_tf_native_0[4].numpy(), np.zeros_like(xi_unused).astype(np.int32))
+
+    g_tf_native_None = tape.gradient(
+        loss, (paramv, statev, xfv, xf_unusedv, xi_unusedv),
+        unconnected_gradients=tf.UnconnectedGradients.NONE)
+    self.assertAllClose(g_tf_native_None[0].numpy(), g_jax_param)
+    self.assertIsNone(g_tf_native_None[1]["array"])
+    self.assertIsNone(g_tf_native_None[1]["counter"])
+    self.assertIsNone(g_tf_native_None[1]["truth"])
+    self.assertAllClose(g_tf_native_None[2].numpy(), g_jax_x)
+    self.assertIsNone(g_tf_native_None[3])
+    self.assertIsNone(g_tf_native_None[4])
+
+    # tf.function is important, without it the bug does not appear
+    f_tf = jax2tf.convert(f_jax, with_gradient=True)
+    if with_function:
+      f_tf = tf.function(f_tf, autograph=False)
+
+    with tf.GradientTape(persistent=True) as tape:
+      r, _ = f_tf(paramv, statev, xfv, xf_unusedv, xi_unusedv)
+      loss = tf.reduce_sum(r)
+
+    g_tf_0 = tape.gradient(loss, (paramv, statev, xfv, xf_unusedv, xi_unusedv),
+                           unconnected_gradients=tf.UnconnectedGradients.ZERO)
+    # Same results as TF native AD with tf.UnconnectedGradients.ZERO
+    self.assertAllClose(g_tf_0[0].numpy(), g_jax_param)
+    self.assertAllClose(g_tf_0[1]["array"].numpy(), np.zeros_like(state["array"]).astype(np.float32))
+    self.assertAllClose(g_tf_0[1]["counter"].numpy(), np.zeros_like(state["counter"]).astype(np.int32))
+    self.assertAllClose(g_tf_0[1]["truth"].numpy(), np.zeros_like(state["truth"]))
+    self.assertAllClose(g_tf_0[2].numpy(), g_jax_x)
+    self.assertAllClose(g_tf_0[3].numpy(), np.zeros_like(xf_unused))
+    self.assertAllClose(g_tf_0[4].numpy(), np.zeros_like(xi_unused))
+
+    g_tf_None = tape.gradient(loss, (paramv, statev, xfv, xf_unusedv, xi_unusedv),
+                              unconnected_gradients=tf.UnconnectedGradients.NONE)
+
+    # Almost the same results as TF native AD with tf.UnconnectedGradients.ZERO,
+    # except that unused inputs of inexact type get 0. gradients.
+    self.assertAllClose(g_tf_None[0].numpy(), g_jax_param)
+    # The next one is different
+    self.assertAllClose(g_tf_0[1]["array"].numpy(), np.zeros_like(state["array"]).astype(np.float32))
+    self.assertIsNone(g_tf_None[1]["counter"])
+    self.assertIsNone(g_tf_None[1]["truth"])
+    self.assertAllClose(g_tf_None[2].numpy(), g_jax_x)
+    # The next one is different
+    self.assertAllClose(g_tf_0[3].numpy(), np.zeros_like(xf_unused))
+    self.assertIsNone(g_tf_None[4])
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      dict(testcase_name=f"function={with_function}",
+           with_function=with_function)
+      for with_function in [False, True]))
+  def test_tf_gradients_int_argument(self, with_function=False):
+    # https://github.com/google/jax/issues/6975
+    # param: f32
+    # state: dict(array:f32, counter:i32, truth: bool)
+    # xf: f32
+    # xf_unused: f32 unused
+    # xi_unused: i32 unused
+    # return f32, state
+    def f_jax(param, state, xf, xf_unused, xi_unused):
+      return param * xf, state
 
   def test_convert_argument_non_callable_error(self):
     with self.assertRaisesRegex(TypeError, "Expected a callable value"):

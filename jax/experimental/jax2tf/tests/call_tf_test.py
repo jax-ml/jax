@@ -363,6 +363,37 @@ class CallTfTest(jtu.JaxTestCase):
     g = jax.grad(lambda *args: jnp.sum(f(*args)[0]))(param, state, x)
     self.assertAllClose(g_call_tf, g)
 
+  def test_grad_int_argument_unused(self):
+    batch_size = 5
+    inputs = np.ones((batch_size, 3), dtype=np.float32)
+    rng = np.array([1, 2], dtype=np.uint32)
+    params = np.float32(.5)
+
+    # rng is integer, unused
+    def jax_model(params, rng, inputs):
+      return jnp.ones([batch_size, 2], dtype=jnp.float32)
+
+    tf_model = jax2tf.convert(jax_model, with_gradient=True)
+
+    def _loss_fn(inference_fn, params, rng, inputs):
+      prediction = inference_fn(params, rng, inputs)
+      return jnp.mean(prediction)
+
+    jax_loss_fn = partial(_loss_fn, jax_model)
+    jax_grad = jax.grad(jax_loss_fn)(params, rng, inputs)
+
+    paramsv = tf.Variable(params)
+    with tf.GradientTape() as tape:
+      tf_prediction = tf_model(paramsv, rng, inputs)
+      tf_loss = tf.reduce_mean(tf_prediction)
+
+      tf_grad = tape.gradient(tf_loss, paramsv)
+    self.assertAllClose(jax_grad, tf_grad.numpy())
+
+    call_tf_loss_fn = partial(_loss_fn, jax2tf.call_tf(tf_model))
+    call_tf_grad = jax.grad(call_tf_loss_fn)(params, rng, inputs)
+    self.assertAllClose(jax_grad, call_tf_grad)
+
   def test_grad_with_float0_result(self):
     # Gradient over integer-argument functions, with float0 result
     def f_jax(x, y):  # x is an int, y is a float; res is a (int, float)

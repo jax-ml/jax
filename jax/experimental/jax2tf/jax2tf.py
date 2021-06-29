@@ -349,7 +349,19 @@ def convert(fun: Callable,
             fun_vjp_jax,
             with_gradient=False,
             polymorphic_shapes=vjp_polymorphic_shapes)(args, out_cts)
-      return in_cts
+      # We fix here the float0
+      # TODO: it would be better to fix these somewhere inside the converter
+      # because here we are already back in TF.
+      def fix_float0(arg: TfVal, in_ct: TfVal) -> TfVal:
+        _, arg_jax_dtype = _tfval_to_tensor_jax_dtype(arg)  # Maybe it is a scalar
+        if np.issubdtype(arg_jax_dtype, np.inexact):
+          return in_ct
+        else:
+          assert in_ct.dtype.as_numpy_dtype == tf.bfloat16
+          return tf.zeros(arg.shape, arg.dtype)
+
+      in_cts_fixed = tf.nest.map_structure(fix_float0, args, in_cts)
+      return in_cts_fixed
 
     try:
       assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
