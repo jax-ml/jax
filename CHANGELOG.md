@@ -11,12 +11,16 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.17 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...main).
 
+## jaxlib 0.1.69 (unreleased)
+
 ## jax 0.2.16 (June 23 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.15...jax-v0.2.16).
 
 ## jax 0.2.15 (June 23 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...jax-v0.2.15).
 * New features:
+  * [#7042](https://github.com/google/jax/pull/7042) Turned on TFRT CPU backend
+    with significant dispatch performance improvements on CPU.
   * The {func}`jax2tf.convert` supports inequalities and min/max for booleans
     ({jax-issue}`#6956`).
 
@@ -27,6 +31,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
   * Fixed bug that prevented round-tripping from JAX to TF and back:
     `jax2tf.call_tf(jax2tf.convert)` ({jax-issue}`#6947`).
+
+## jaxlib 0.1.68 (June 23 2021)
+* Bug fixes:
+  * Fixed bug in TFRT CPU backend that gets nans when transfer TPU buffer to
+    CPU.
 
 ## jax 0.2.14 (June 10 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...jax-v0.2.14).
@@ -56,7 +65,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * The {func}`jax2tf.convert` now has support for inequality comparisons and
     min/max for complex numbers ({jax-issue}`#6892`).
 
-## jaxlib 0.1.67 (unreleased)
+## jaxlib 0.1.67 (May 17 2021)
 
 ## jaxlib 0.1.66 (May 11 2021)
 
