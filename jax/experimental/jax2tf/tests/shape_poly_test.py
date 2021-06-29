@@ -535,6 +535,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     def f_fwd(x):
       # x: [b1, b2, d1, d2]
       # b: [b1, b2, d1, d1]
+      # res: [b1, b2, d1, d1]
       # residual: [b1, b2, d1, d2]
       return f(x), 3. * x
 
@@ -573,14 +574,13 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     # Now use TF tracing for the gradient
     tf_grad = tf.function(
-        tf_value_and_grad, autograph=False).get_concrete_function(
-            tf.TensorSpec([None, None, 8, 9]))
+       tf_value_and_grad, autograph=False).get_concrete_function(
+           tf.TensorSpec([3, 4, 8, 9]))
 
-    # The shape of the value. This should be (None, None, 8, 8) but the
-    # shape inference for XlaDot is broken, and returns too many unknown
-    # dimensions.
-    self.assertEqual((None, None, None, None), tuple(tf_grad.output_shapes[0]))
-    self.assertEqual((None, None, None, None), tuple(tf_grad.output_shapes[1]))
+    self.assertEqual((3, 4, 8, 8), tuple(tf_grad.output_shapes[0]))
+    # TODO(necula): Understand why we get partial shapes for the gradient, even
+    # though all inputs have known shapes.
+    self.assertEqual((3, 4, 8, None), tuple(tf_grad.output_shapes[1]))
 
   def test_gradients_pytree(self):
     """Shape polymorphism with gradients and pytrees for inputs and outputs."""

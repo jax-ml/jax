@@ -1643,9 +1643,6 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
         dnums_proto,
         precision_config_proto,
         preferred_element_type=preferred_element_type)
-    # TODO: in presence of None dimensions, XlaDot shape inference returns
-    # unknown shape.
-    res.set_shape(_aval_to_tf_shape(_out_aval))
     return res
 
   # This condition ensures that:
