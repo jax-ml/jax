@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """The Limited-Memory Broyden-Fletcher-Goldfarb-Shanno minimization algorithm."""
-from typing import Callable, NamedTuple, Optional, Union
+from typing import Any, Callable, NamedTuple, Optional, Union
 from functools import partial
 
 import jax
@@ -22,6 +22,8 @@ from .line_search import line_search
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 
+
+Array = Any
 
 class LBFGSResults(NamedTuple):
   """Results from L-BFGS optimization
@@ -47,32 +49,32 @@ class LBFGSResults(NamedTuple):
       5 = line search failed
     ls_status: integer describing the end status of the last line search
   """
-  converged: Union[bool, jnp.ndarray]
-  failed: Union[bool, jnp.ndarray]
-  k: Union[int, jnp.ndarray]
-  nfev: Union[int, jnp.ndarray]
-  ngev: Union[int, jnp.ndarray]
-  x_k: jnp.ndarray
-  f_k: jnp.ndarray
-  g_k: jnp.ndarray
-  s_history: jnp.ndarray
-  y_history: jnp.ndarray
-  rho_history: jnp.ndarray
-  gamma: Union[float, jnp.ndarray]
-  status: Union[int, jnp.ndarray]
-  ls_status: Union[int, jnp.ndarray]
+  converged: Union[bool, Array]
+  failed: Union[bool, Array]
+  k: Union[int, Array]
+  nfev: Union[int, Array]
+  ngev: Union[int, Array]
+  x_k: Array
+  f_k: Array
+  g_k: Array
+  s_history: Array
+  y_history: Array
+  rho_history: Array
+  gamma: Union[float, Array]
+  status: Union[int, Array]
+  ls_status: Union[int, Array]
 
 
 def _minimize_lbfgs(
     fun: Callable,
-    x0: jnp.ndarray,
-    maxiter: Optional[int] = None,
+    x0: Array,
+    maxiter: Optional[float] = None,
     norm=jnp.inf,
     maxcor: int = 10,
     ftol: float = 2.220446049250313e-09,
     gtol: float = 1e-05,
-    maxfun: Optional[int] = None,
-    maxgrad: Optional[int] = None,
+    maxfun: Optional[float] = None,
+    maxgrad: Optional[float] = None,
     maxls: int = 20,
 ):
   """

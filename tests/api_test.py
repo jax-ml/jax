@@ -55,6 +55,9 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
+numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
+
+
 class CPPJitTest(jtu.BufferDonationTestCase):
   """Shared tests between the Python and the C++ jax,jit implementations.
 
@@ -171,7 +174,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.jit.cache_clear()
 
     def f(x, y, z):
-      print(x, y, z)
       side.append(None)
       return 100 * x + 10 * y + z
 
@@ -1158,7 +1160,7 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose((45., 9.), api.jvp(func, (5.,), (1.,)))
 
   def test_linear_transpose_abstract(self):
-    x = types.SimpleNamespace(shape=(3,), dtype=np.float32)
+    x = types.SimpleNamespace(shape=(3,), dtype=np.dtype(np.float32))
     y = jnp.arange(3, dtype=np.float32)
     transpose_fun = api.linear_transpose(lambda x: 2 * x, x)
     z, = transpose_fun(y)
@@ -1399,7 +1401,7 @@ class APITest(jtu.JaxTestCase):
     class MyArgArray(object):
       def __init__(self, shape, dtype):
         self.shape = shape
-        self.dtype = dtype
+        self.dtype = np.dtype(dtype)
 
     A = MyArgArray((3, 4), jnp.float32)
     b = MyArgArray((5,), jnp.float32)
@@ -1426,7 +1428,7 @@ class APITest(jtu.JaxTestCase):
     class MyArgArray(object):
       def __init__(self, shape, dtype, named_shape):
         self.shape = shape
-        self.dtype = dtype
+        self.dtype = jnp.dtype(dtype)
         self.named_shape = named_shape
 
     x = MyArgArray((3, 2), jnp.float32, {'i': 10})
@@ -1485,6 +1487,8 @@ class APITest(jtu.JaxTestCase):
        r"sub-dtype of np.floating or np.complexfloating\), but got int.*."),
       lambda: dfn(3))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_jvp_of_int_identity(self):
     primals = (1,)
     tangents = (np.zeros(shape=(), dtype=float0),)
@@ -1492,6 +1496,8 @@ class APITest(jtu.JaxTestCase):
     _, out = api.jvp(lambda x: x, primals, tangents)
     self.assertEqual(out, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_jvp_of_int_add(self):
     primals = (2,)
     tangents = (np.zeros(shape=(), dtype=float0),)
@@ -1499,6 +1505,8 @@ class APITest(jtu.JaxTestCase):
     _, out_tangent = api.jvp(lambda x: x+1, primals, tangents)
     self.assertEqual(out_tangent, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_jit_jvp_of_int(self):
     primals = (2,)
     tangents = (np.zeros(shape=(), dtype=float0),)
@@ -1506,6 +1514,8 @@ class APITest(jtu.JaxTestCase):
     _, out_tangent = api.jvp(jax.jit(lambda x: x+1), primals, tangents)
     self.assertEqual(out_tangent, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_vjp_of_int_index(self):
     primal, fn_vjp = api.vjp(lambda x, i: x[i], np.ones(2)*2, 1)
     tangent_x, tangent_i = fn_vjp(1.)
@@ -1513,12 +1523,16 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(tangent_x, jnp.array([0., 1.]))
     self.assertEqual(tangent_i, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_vjp_of_int_shapes(self):
     out, fn_vjp = api.vjp(lambda x: lax.reshape(x, (2, 2)), np.ones((4, 1),
                                                                     dtype=int))
     tangent, = fn_vjp(out)
     self.assertArraysEqual(tangent, np.zeros(shape=(4, 1), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_jit_vjp_of_int(self):
     primal, fn_vjp = api.vjp(lambda x, y: x+y, 2, 1)
     tangent_x, tangent_i = jax.jit(fn_vjp)(1)
@@ -1526,6 +1540,8 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(tangent_x, np.zeros(shape=(), dtype=float0))
     self.assertEqual(tangent_i, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_vjp_of_int_fulllike(self):
     # Regression test for tangent and cotangent mismatch in convert_element_type
     # transpose rule wrt a ConstVar
@@ -1536,11 +1552,15 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(tangent_x, jnp.zeros((2, 2)))
     self.assertEqual(tangent_y, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_int(self):
     # Need real-valued output, but testing integer input.
     out = api.grad(lambda x: x+0., allow_int=True)(1)
     self.assertEqual(out, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_bool(self):
     def cond(pred):
       return lax.cond(pred, lambda _: 1., lambda _: 2., 1.)
@@ -1548,18 +1568,24 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(value, 1.)
     self.assertEqual(grd, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_grad_of_int_index(self):
     grad_x, grad_i = api.grad(lambda x, i: x[i], argnums=(0, 1),
                               allow_int=True)(np.ones(2), 1)
     self.assertAllClose(grad_x, jnp.array([0., 1.]))
     self.assertEqual(grad_i, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_jit_grad_of_int(self):
     grad_f = api.grad(lambda x, i: x[i], argnums=(0, 1), allow_int=True)
     grad_x, grad_i = jax.jit(grad_f)(np.ones(2), 1)
     self.assertAllClose(grad_x, jnp.array([0., 1.]))
     self.assertEqual(grad_i, np.zeros(shape=(), dtype=float0))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_float0_reshape(self):
     # dtype-agnostic operations are supported
     float0_array = jax.grad(lambda x: jnp.sum(x+0.),
@@ -3194,7 +3220,7 @@ class JaxprTest(jtu.JaxTestCase):
 
   def test_abstract_inputs(self):
     jaxpr = api.make_jaxpr(lambda x: x + 2.)(
-        types.SimpleNamespace(shape=(), dtype=np.float32))
+        types.SimpleNamespace(shape=(), dtype=np.dtype(np.float32)))
     self.assertEqual(jaxpr.in_avals[0].shape, ())
     self.assertEqual(jaxpr.in_avals[0].dtype, np.float32)
 
@@ -3262,7 +3288,7 @@ class JaxprTest(jtu.JaxTestCase):
       return x - lax.psum(x, 'i')
 
     x = types.SimpleNamespace(
-        shape=(2, 3), dtype=jnp.float32, named_shape={'i': 10})
+        shape=(2, 3), dtype=jnp.dtype(jnp.float32), named_shape={'i': 10})
     jaxpr = api.make_jaxpr(f, axis_env=[('i', 10)])(x)
     named_shapes = [v.aval.named_shape for v in jaxpr.jaxpr.eqns[1].invars]
     self.assertEqual(named_shapes, [{'i': 10}, {}])
@@ -3895,6 +3921,8 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     api.vmap(sample)(jax.random.split(jax.random.PRNGKey(1), 3))  # don't crash
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_float0(self):
     @api.custom_jvp
     def f(x, y):
@@ -3910,6 +3938,8 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertArraysEqual(api.jvp(f, primals, tangents),
                            (primals, expected_tangents))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_float0_initial_style(self):
     @api.custom_jvp
     def f(x, y):
@@ -4838,6 +4868,8 @@ class CustomVJPTest(jtu.JaxTestCase):
     ans = jax.grad(f)(4.)
     self.assertAllClose(ans, -2. * jnp.sin(4.))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_float0(self):
     @api.custom_vjp
     def f(x, _):
@@ -4854,6 +4886,8 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertEqual(api.grad(f, allow_int=True, argnums=(0, 1))(x, y),
                      (2., np.zeros(shape=(), dtype=float0)))
 
+  @unittest.skipIf(numpy_version == (1, 21, 0),
+                   "https://github.com/numpy/numpy/issues/19305")
   def test_float0_initial_style(self):
     @api.custom_vjp
     def f(x):

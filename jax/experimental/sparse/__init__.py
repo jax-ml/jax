@@ -17,6 +17,8 @@ from .ad import grad, value_and_grad
 from .ops import (
     bcoo_dot_general,
     bcoo_dot_general_p,
+    bcoo_dot_general_sampled,
+    bcoo_dot_general_sampled_p,
     bcoo_extract,
     bcoo_extract_p,
     bcoo_fromdense,
@@ -25,6 +27,8 @@ from .ops import (
     bcoo_rdot_general,
     bcoo_todense,
     bcoo_todense_p,
+    bcoo_transpose,
+    bcoo_transpose_p,
     coo_fromdense,
     coo_fromdense_p,
     coo_matmat,
@@ -46,3 +50,5 @@ from .ops import (
     CSR,
     BCOO,
 )
+
+from .transform import sparsify

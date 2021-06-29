@@ -8,8 +8,16 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.15 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...main).
+## jax 0.2.17 (unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...main).
+* Breaking changes:
+  * Removed deprecated `trace_function`, `TraceContext` & `StepTraceContext` profiler functions.
+
+## jax 0.2.16 (June 23 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.15...jax-v0.2.16).
+
+## jax 0.2.15 (June 23 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...jax-v0.2.15).
 * New features:
   * The {func}`jax2tf.convert` supports inequalities and min/max for booleans
     ({jax-issue}`#6956`).
@@ -22,8 +30,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Fixed bug that prevented round-tripping from JAX to TF and back:
     `jax2tf.call_tf(jax2tf.convert)` ({jax-issue}`#6947`).
 
-* Removed deprecated `trace_function`, `TraceContext` & `StepTraceContext` profiler functions.
- 
 ## jax 0.2.14 (June 10 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...jax-v0.2.14).
 * New features:

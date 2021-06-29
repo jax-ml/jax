@@ -1,10 +1,10 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-06-14* (YYYY-MM-DD)
+*Last generated on: 2021-06-28* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2604 test harnesses to test
+We use a set of 2668 test harnesses to test
 the implementation of 121 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
@@ -78,7 +78,7 @@ be updated.
 | div | 20 | inexact, integer | bool |
 | dot_general | 245 | all |  |
 | dynamic_slice | 64 | all |  |
-| dynamic_update_slice | 21 | all |  |
+| dynamic_update_slice | 42 | all |  |
 | eig | 72 | inexact | bool, integer |
 | eigh | 36 | inexact | bool, integer |
 | eq | 17 | all |  |
@@ -89,7 +89,7 @@ be updated.
 | expm1 | 6 | inexact | bool, integer |
 | fft | 20 | complex, float32, float64 | bfloat16, bool, float16, integer |
 | floor | 4 | floating | bool, complex, integer |
-| gather | 37 | all |  |
+| gather | 80 | all |  |
 | ge | 17 | all |  |
 | gt | 17 | all |  |
 | igamma | 6 | floating | bool, complex, integer |
