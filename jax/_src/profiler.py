@@ -16,7 +16,6 @@ from contextlib import contextmanager
 from functools import wraps
 import threading
 from typing import Callable, Optional
-import warnings
 
 from jax.lib import xla_bridge
 from jax.lib import xla_client
