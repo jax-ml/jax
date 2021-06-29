@@ -403,7 +403,7 @@ development on a laptop, you can run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax[cpu]
+pip install --upgrade "jax[cpu]"
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
@@ -424,7 +424,7 @@ Next, run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax[cuda111] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install --upgrade "jax[cuda111]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
