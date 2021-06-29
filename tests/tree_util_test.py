@@ -150,7 +150,7 @@ TREE_STRINGS = (
 STRS = []
 for tree_str in TREE_STRINGS:
     tree_str = re.escape(tree_str)
-    tree_str = tree_str.replace("__main__", "(__main__|tree_util_test)")
+    tree_str = tree_str.replace("__main__", ".*")
     STRS.append(tree_str)
 TREE_STRINGS = STRS
 

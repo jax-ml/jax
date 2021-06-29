@@ -335,7 +335,7 @@ def convert(fun: Callable,
             in_tree.children()[0], polymorphic_shapes_flat)
         out_cts_polymorphic_shapes = tree_util.tree_unflatten(
             out_tree,
-            tuple(str(out_aval.shape)
+            tuple(str(out_aval.shape)  # Note: may be polynomials, not just DimVar
                   for out_aval in _out_cts_avals))  # type: ignore
         vjp_polymorphic_shapes = [
             args_polymorphic_shapes, out_cts_polymorphic_shapes
@@ -584,18 +584,19 @@ def _args_to_avals_and_env(
     aval_shape = shape_poly.parse_spec(polymorphic_shape, arg_shape)
 
     for i, d in enumerate(aval_shape):
-      if type(d) is int:
+      if not shape_poly.is_poly_dim(d):
         assert d == arg_shape[i]
-      elif shape_poly.is_poly_dim(d) and d not in shapeenv:
-        # Even if the shape of `arg` is known, we still use `tf.shape` for
-        # safety, because the promise is that we will convert the function
-        # to work for any value of the dimension.
-        v = d.to_var()  # type: ignore
-        assert v is not None
-        shapeenv[v] = tf.shape(arg)[i]  # type: ignore[index]
       else:
-        # TODO: add an assertion tf.shape(arg)[i] == env[d]
-        pass
+        d_var = d.to_var()  # type: ignore
+        if d_var is not None and d_var not in shapeenv:
+          # Even if the shape of `arg` is known, we still use `tf.shape` for
+          # safety, because the promise is that we will convert the function
+          # to work for any value of the dimension.
+          shapeenv[d_var] = tf.shape(arg)[i]  # type: ignore[index]
+        else:
+          # TODO: add an assertion tf.shape(arg)[i] == env[d]
+          pass
+
 
     return core.ShapedArray(aval_shape, arg_jax_dtype)
 
@@ -979,6 +980,7 @@ tf_not_yet_impl = [
     "lu_pivots_to_permutation",
     "rng_bit_generator",
     "xla_pmap",
+    "tridiagonal_solve",
 ]
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
@@ -1597,6 +1599,7 @@ def _conv_general_dilated(lhs, rhs, *,
   # Follow the lowering for complex convolutions from
   # lax._conv_general_dilated_translation. We can use the same conversion on all
   # platforms because on XLA:TPU the compiler does the same as a rewrite.
+  preferred_float_et: Optional[Any]
   if np.issubdtype(_in_avals[0].dtype, np.complexfloating):
     if preferred_element_type is not None:
       # Convert complex dtype to types used for real and imaginary parts
@@ -1802,10 +1805,9 @@ tf_impl[lax.transpose_p] = _transpose
 
 axes_to_axis = lambda func: lambda operand, axes: func(operand, axis=axes)
 
-tf_impl[lax.reduce_sum_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_sum), argnums=[0]))
-tf_impl[lax.reduce_prod_p] = (
-    bool_to_int8(axes_to_axis(tf.reduce_prod), argnums=[0]))
+# reduce_sum and reduce_prod are not supported for bool
+tf_impl[lax.reduce_sum_p] = axes_to_axis(tf.reduce_sum)
+tf_impl[lax.reduce_prod_p] = axes_to_axis(tf.reduce_prod)
 tf_impl[lax.reduce_max_p] = (
     bool_to_int8(axes_to_axis(tf.reduce_max), argnums=[0]))
 tf_impl[lax.reduce_min_p] = (
@@ -1921,7 +1923,7 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
   reducer_fn = tf.function(
       reducer, autograph=False).get_concrete_function(o_spec, o_spec)
 
-  if not isinstance(init_val, tf.Tensor):
+  if not isinstance(init_val, (tf.Tensor, tf.Variable)):
     init_val = tf.constant(init_val, operand.dtype)
   out = tfxla.reduce_window(
       operand,

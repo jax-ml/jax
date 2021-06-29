@@ -70,7 +70,7 @@ class CallTfTest(jtu.JaxTestCase):
     self.assertAllClose(jnp.sin(x), res)
 
   @parameterized_jit
-  def test_eval_scalar_res(self, with_jit=False):
+  def test_eval_scalar_res(self, with_jit=True):
     x = 3.
     res = _maybe_jit(with_jit, jax2tf.call_tf(lambda x: 4.))(x)
     self.assertAllClose(4., res, check_dtypes=False)
@@ -124,7 +124,8 @@ class CallTfTest(jtu.JaxTestCase):
     res = fun_jax(x, y)
     self.assertAllClose((np.float32(12.), np.float64(11.)), res)
 
-  def test_eval_non_compileable(self):
+  call_tf_non_compileable = "Error compiling TensorFlow function. call_tf can used in a staged context .* only with compileable functions"
+  def test_eval_non_compileable_strings(self):
     # Check that in op-by-op we call a function in eager mode.
     def f_tf_non_compileable(x):
       return tf.strings.length(tf.strings.format("Hello {}!", [x]))
@@ -132,7 +133,26 @@ class CallTfTest(jtu.JaxTestCase):
     f_jax = jax2tf.call_tf(f_tf_non_compileable)
     x = np.float32(0.7)
     self.assertAllClose(f_tf_non_compileable(x).numpy(), f_jax(x))
+    with self.assertRaisesRegex(ValueError,
+                                CallTfTest.call_tf_non_compileable):
+      jax.jit(f_jax)(x)
 
+    with self.assertRaisesRegex(ValueError,
+                                CallTfTest.call_tf_non_compileable):
+      lax.cond(True, lambda x: f_jax(x), lambda x: f_jax(x), x)
+
+  def test_eval_non_compileable_dynamic_shape(self):
+    # Check that in op-by-op we call a function in eager mode.
+    def f_tf_non_compileable(x):
+      return tf.where(x)
+
+    f_jax = jax2tf.call_tf(f_tf_non_compileable)
+    x = np.array([True, False], dtype=np.bool_)
+    self.assertAllClose(f_tf_non_compileable(x).numpy(), f_jax(x))
+
+    with self.assertRaisesRegex(ValueError,
+                                CallTfTest.call_tf_non_compileable):
+      jax.jit(f_jax)(x)
 
   @parameterized_jit
   def test_control_flow(self, with_jit=True):
@@ -428,6 +448,13 @@ class CallTfTest(jtu.JaxTestCase):
     f_jax = jnp.sin
     f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax))
     x = np.float32(0.7)
+    self.assertAllClose(f_jax(x), f_jax_rt(x))
+
+  def test_round_trip_pytree(self):
+    def f_jax(x):  # x: dict(a=f32, b=f32)
+      return dict(a=x["a"]+1., b=x)
+    x = dict(a=0.7, b=0.8)
+    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax))
     self.assertAllClose(f_jax(x), f_jax_rt(x))
 
   def test_round_trip_custom_grad(self):

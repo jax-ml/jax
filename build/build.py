@@ -48,7 +48,11 @@ def is_windows():
 
 
 def shell(cmd):
-  output = subprocess.check_output(cmd)
+  try:
+    output = subprocess.check_output(cmd)
+  except subprocess.CalledProcessError as e:
+    print(e.output)
+    raise
   return output.decode("UTF-8").strip()
 
 

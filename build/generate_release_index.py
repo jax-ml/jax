@@ -20,6 +20,7 @@ To update public copy, use:
 gsutil cp jax_releases.html gs://jax-releases/
 """
 
+from itertools import chain
 import subprocess
 
 FILENAME = "jax_releases.html"
@@ -33,20 +34,34 @@ HEADER = """
 
 FOOTER = "</body>\n</html>\n"
 
-print("Running command: gsutil ls gs://jax-releases/cuda*")
-ls_output = subprocess.check_output(["gsutil", "ls", "gs://jax-releases/cuda*"])
+def get_entries(gcs_uri, whl_filter=".whl"):
+  entries = []
+  print(f"Running command: gsutil ls {gcs_uri}")
+  ls_output = subprocess.check_output(["gsutil", "ls", gcs_uri])
+  for line in ls_output.decode("utf-8").split("\n"):
+    # Skip incorrectly formatted wheel filenames and other gsutil output
+    if not whl_filter in line: continue
+    # Example lines:
+    #  gs://jax-releases/cuda101/jaxlib-0.1.52+cuda101-cp38-none-manylinux2010_x86_64.whl
+    #  gs://cloud-tpu-tpuvm-artifacts/wheels/libtpu-nightly/libtpu_nightly-0.1.dev20210615-py3-none-any.whl
+
+    # Link title should be the innermost directory + wheel filename
+    # Example link titles:
+    #  cuda101/jaxlib-0.1.52+cuda101-cp38-none-manylinux2010_x86_64.whl
+    #  libtpu-nightly/libtpu_nightly-0.1.dev20210615-py3-none-any.whl
+    link_title_idx = line.rfind('/', 0, line.rfind('/')) + 1
+    link_title = line[link_title_idx:]
+    link_href = line.replace("gs://", "https://storage.googleapis.com/")
+    entries.append(f'<a href="{link_href}">{link_title}</a><br>\n')
+  return entries
+
+jaxlib_cuda_entries = get_entries("gs://jax-releases/cuda*", whl_filter="+cuda")
+libtpu_entries = get_entries("gs://cloud-tpu-tpuvm-artifacts/wheels/libtpu-nightly/")
 
 print(f"Writing index to {FILENAME}")
 with open(FILENAME, "w") as f:
   f.write(HEADER)
-  for line in ls_output.decode("utf-8").split("\n"):
-    # Skip incorrectly formatted wheel filenames and other gsutil output
-    if not "+cuda" in line: continue
-    # Example line:
-    # gs://jax-releases/cuda101/jaxlib-0.1.52+cuda101-cp38-none-manylinux2010_x86_64.whl
-    assert line.startswith("gs://jax-releases/cuda")
-    link_title = line[len("gs://jax-releases/"):]
-    link_href = line.replace("gs://", "https://storage.googleapis.com/")
-    f.write(f'<a href="{link_href}">{link_title}</a><br>\n')
+  for entry in chain(jaxlib_cuda_entries, libtpu_entries):
+    f.write(entry)
   f.write(FOOTER)
 print("Done.")

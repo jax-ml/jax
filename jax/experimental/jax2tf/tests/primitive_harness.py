@@ -528,7 +528,7 @@ def _make_integer_pow_harness(name, *, shape=(20, 30), dtype=np.int32, y=3):
       y=y)
 
 
-for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
+for dtype in [d for d in jtu.dtypes.all if d not in jtu.dtypes.boolean]:
   # Validate dtypes and y values for some special cases.
   for y in range(-3, 5):
     if np.issubdtype(dtype, np.integer) and y < 0:

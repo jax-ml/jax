@@ -877,9 +877,9 @@ def _outside_call_translation_rule(
           [array_sharding_proto] * len(non_empty_flat_results_aval) +
           [token_sharding_proto])
 
-      shape = tuple(shape.with_major_to_minor_layout_if_absent()
-                    for x in non_empty_flat_results_aval
-                    for shape in xla.aval_to_xla_shapes(x))
+      shape = [shape.with_major_to_minor_layout_if_absent()
+               for x in non_empty_flat_results_aval
+               for shape in xla.aval_to_xla_shapes(x)]
 
       build_infeed = functools.partial(xops.InfeedWithToken,
                                        after_outfeed_itoken,

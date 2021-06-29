@@ -1414,7 +1414,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=1, atol=tol,
                       rtol=tol)
 
-class EighTridiagonalTest(jtu.JaxTestCase):
+class LaxLinalgTest(jtu.JaxTestCase):
 
   def run_test(self, alpha, beta):
     n = alpha.shape[-1]
@@ -1477,6 +1477,21 @@ class EighTridiagonalTest(jtu.JaxTestCase):
         self.assertAllClose(
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
+  @parameterized.parameters(np.float32, np.float64)
+  def test_tridiagonal_solve(self, dtype):
+    if jtu.device_under_test() != "gpu":
+      self.skipTest("Only supported on GPU")
+
+    dl = np.array([0.0, 1.0, 2.0], dtype=dtype)
+    d = np.ones(3, dtype=dtype)
+    du = np.array([1.0, 2.0, 0.0], dtype=dtype)
+    m = 3
+    B = np.ones([m, 1], dtype=dtype)
+    X = lax.linalg.tridiagonal_solve(dl, d, du, B)
+    A = np.eye(3, dtype=dtype)
+    A[[1, 2], [0, 1]] = dl[1:]
+    A[[0, 1], [1, 2]] = du[:-1]
+    np.testing.assert_allclose(A @ X, B)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

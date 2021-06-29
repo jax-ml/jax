@@ -50,7 +50,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-numpy_version = tuple(map(int, np.__version__.split('.')))
+numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
@@ -302,7 +302,13 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero,
               ["rev"], inexact=True),
     op_record("ediff1d", 3, [np.int32], all_shapes, jtu.rand_default, []),
-    op_record("unwrap", 1, float_dtypes, nonempty_nonscalar_array_shapes,
+    # TODO(phawkins): np.unwrap does not correctly promote its default period
+    # argument under NumPy 1.21 for bfloat16 inputs. It works fine if we
+    # explicitly pass a bfloat16 value that does not need promition. We should
+    # probably add a custom test harness for unwrap that tests the period
+    # argument anyway.
+    op_record("unwrap", 1, [t for t in float_dtypes if t != dtypes.bfloat16],
+              nonempty_nonscalar_array_shapes,
               jtu.rand_default, ["rev"],
               # numpy.unwrap always returns float64
               check_dtypes=False,
@@ -2420,7 +2426,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
     np_fun = partial(np.trapz, dx=dx, axis=axis)
     jnp_fun = partial(jnp.trapz, dx=dx, axis=axis)
-    tol = jtu.tolerance(dtype, {np.float64: 1e-12})
+    tol = jtu.tolerance(dtype, {np.float64: 1e-12,
+                                dtypes.bfloat16: 4e-2})
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol,
                             check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
@@ -5512,6 +5519,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
       'tri': ['like'],
+      'unwrap': ['period'],
       'zeros_like': ['subok', 'order']
     }
 

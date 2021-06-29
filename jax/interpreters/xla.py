@@ -339,7 +339,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     ans = rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
          *xla_args, **params)
   else:
-    raise NotImplementedError(f"XLA translation rule for {prim} not found")
+    raise NotImplementedError(f"XLA translation rule for {prim!r} on platform {platform!r} not found")
   assert isinstance(ans, xe.XlaOp)
   c.clear_op_metadata()
   try:
