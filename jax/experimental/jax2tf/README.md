@@ -589,6 +589,47 @@ jax2tf.convert(jax.grad(f_jax, allow_int=True))(2))
 # returns a `bfloat16` zero: tf.Tensor(0, shape=(), dtype=bfloat16)
 ```
 
+### Different behavior for gradients for unused arguments
+
+When differentiating functions with unused arguments, TF by default
+returns the value `None` for the corresponding gradients. The
+`tape.gradient` function takes the option `tf.UnconnectedGradients.ZERO`
+to ask that gradients for unused arguments be zero.
+
+Functions converted with `jax2tf.convert` behave the same way under
+`tf.UnconnectedGradients.ZERO`, but by default, they will return
+`None` only for gradients corresponding to integer arguments.
+
+```
+# x1 and x3 are not used. x3 has integer type.
+def fn(x0, x1, x2, x3):
+  return x0 * 0. + x2 * 2.
+
+xs = [tf.Variable(x) for x in [10., 11., 12., 13]]
+with tf.GradientTape(persistent=True) as tape:
+ res = fn(*xs)
+
+g_tf_native = tape.gradient(res, xs)
+# Returns: 0., None, 2., None
+
+g_tf_native_0 = tape.gradient(res, xs,
+                              unconnected_gradients=tf.UnconnectedGradients.ZERO)
+# Returns: 0., 0., 2., 0
+
+# Now with jax2tf.convert
+with tf.GradientTape() as tape:
+  res = jax2tf.convert(fn, with_gradient=True)(*xs0
+
+g_jax2tf = tape.gradient(res, xs)
+# Returns: 0., 0., 2., None
+# Note that the gradient for x1 is 0.
+
+g_jaxx2tf_0 = tape.gradient(res, xs,
+                            unconnected_gradients=tf.UnconnectedGradients.ZERO)
+# Returns: 0., 0., 2., 0
+# In this case we get the same result as for TF native.
+```
+
 ### Different 64-bit precision in JAX and TensorFlow
 
 JAX behaves somewhat differently than TensorFlow in the handling

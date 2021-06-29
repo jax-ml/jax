@@ -33,6 +33,7 @@ from jax import dtypes
 from jax import numpy as jnp
 from jax import tree_util
 from jax._src import util
+from jax._src import ad_util
 from jax.interpreters import xla
 from jax.lib import xla_client
 from . import jax2tf as jax2tf_internal
@@ -162,7 +163,18 @@ def call_tf(callable_tf: Callable) -> Callable:
       return dres_darg
 
     # Use call_tf to call the VJP function
-    return call_tf(tf_vjp_fun)(args_jax, ct_res_jax)
+    ct_args_jax = call_tf(tf_vjp_fun)(args_jax, ct_res_jax)
+    # We must make the float0s that JAX expects
+    def fix_float0(arg_jax, ct_arg_jax):
+      arg_dtype = dtypes.result_type(arg_jax)  # May be scalar
+      ct_arg_dtype = core.primal_dtype_to_tangent_dtype(arg_dtype)
+      if ct_arg_dtype != ct_arg_jax.dtype:
+        return ad_util.zeros_like_aval(core.ShapedArray(np.shape(arg_jax),
+                                                        ct_arg_dtype))
+      return ct_arg_jax
+
+    ct_args_jax_fixed = tree_util.tree_map(fix_float0, args_jax, ct_args_jax)
+    return ct_args_jax_fixed
 
   make_call.defvjp(make_call_vjp_fwd, make_call_vjp_bwd)
   return util.wraps(callable_tf)(make_call)
