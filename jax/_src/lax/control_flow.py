@@ -164,7 +164,7 @@ def fori_loop(lower, upper, body_fun, init_val):
   Unlike that Python version, ``fori_loop`` is implemented in terms of either a
   call to :func:`jax.lax.while_loop` or a call to :func:`jax.lax.scan`. If the
   trip count is static (meaning known at tracing time, perhaps because ``lower``
-  and ``upper` are Python integer literals) then the ``fori_loop`` is
+  and ``upper`` are Python integer literals) then the ``fori_loop`` is
   implemented in terms of ``scan`` and reverse-mode autodiff is supported;
   otherwise, a ``while_loop`` is used and reverse-mode autodiff is not
   supported.  See those functions' docstrings for more information.
