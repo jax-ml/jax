@@ -704,8 +704,9 @@ def parallel_callable(fun: lu.WrappedFun,
         for shape, aval in safe_zip(global_arg_shapes, sharded_avals)]
   else:
     global_sharded_avals = sharded_avals  # type: ignore
-  logging.vlog(2, "sharded_avals: %s", sharded_avals)
-  logging.vlog(2, "global_sharded_avals: %s", global_sharded_avals)
+  if logging.vlog_is_on(2):
+    logging.vlog(2, "sharded_avals: %s", sharded_avals)
+    logging.vlog(2, "global_sharded_avals: %s", global_sharded_avals)
 
   with core.extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
@@ -740,16 +741,17 @@ def parallel_callable(fun: lu.WrappedFun,
   if local_out_parts is None:
     local_out_parts = out_parts
 
-  logging.vlog(2, "num_replicas: %d  num_local_replicas: %d",
-               num_global_replicas, num_local_replicas)
-  logging.vlog(2, "num_partitions: %d  local_num_partitions: %d",
-               num_partitions, local_num_partitions)
-  logging.vlog(2, "arg_parts: %s", arg_parts)
-  logging.vlog(2, "local_arg_parts: %s", local_arg_parts)
-  logging.vlog(2, "out_parts: %s", out_parts)
-  logging.vlog(2, "local_out_parts: %s", local_out_parts)
-  logging.vlog(2, "devices: %s", devices)
-  logging.vlog(2, "local_devices: %s", local_devices)
+  if logging.vlog_is_on(2):
+    logging.vlog(2, "num_replicas: %d  num_local_replicas: %d",
+                 num_global_replicas, num_local_replicas)
+    logging.vlog(2, "num_partitions: %d  local_num_partitions: %d",
+                 num_partitions, local_num_partitions)
+    logging.vlog(2, "arg_parts: %s", arg_parts)
+    logging.vlog(2, "local_arg_parts: %s", local_arg_parts)
+    logging.vlog(2, "out_parts: %s", out_parts)
+    logging.vlog(2, "local_out_parts: %s", local_out_parts)
+    logging.vlog(2, "devices: %s", devices)
+    logging.vlog(2, "local_devices: %s", local_devices)
 
   num_local_shards = num_local_replicas * local_num_partitions
   num_global_shards = num_global_replicas * num_partitions
