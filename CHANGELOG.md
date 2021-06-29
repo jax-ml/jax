@@ -21,6 +21,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
   * Fixed bug that prevented round-tripping from JAX to TF and back:
     `jax2tf.call_tf(jax2tf.convert)` ({jax-issue}`#6947`).
+
+* Removed deprecated `trace_function`, `TraceContext` & `StepTraceContext` profiler functions.
  
 ## jax 0.2.14 (June 10 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...jax-v0.2.14).
