@@ -424,7 +424,7 @@ Next, run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade "jax[cuda111]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install --upgrade "jax[cuda111]"
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
@@ -451,6 +451,13 @@ create a symlink:
 sudo ln -s /path/to/cuda /usr/local/cuda-X.X
 ```
 
+or set the `xla_gpu_cuda_data_dir` XLA flag, e.g., via the `XLA_FLAGS` environment
+variable prior to running your program:
+
+```bash
+export XLA_FLAGS="--xla_gpu_cuda_data_dir=/path/to/cuda"
+```
+
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.
 
@@ -461,7 +468,7 @@ To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can
 the following in your cloud TPU VM:
 ```bash
 pip install --upgrade pip
-pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install "jax[tpu]>=0.2.16"
 ```
 
 ### Building JAX from source
