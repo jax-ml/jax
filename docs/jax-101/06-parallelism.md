@@ -223,7 +223,7 @@ There are two places to pay attention to:
 * the `update()` function
 * the replication of parameters and splitting of data across devices.
 
-If this example is too confusing, you can find the same example, but without parallelism, in the next notebook, [State in JAX](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/07-state-in-jax.ipynb). Once that example makes sense, you can compare the differences to understand how parallelism changes the picture.
+If this example is too confusing, you can find the same example, but without parallelism, in the next notebook, [State in JAX](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/07-state.ipynb). Once that example makes sense, you can compare the differences to understand how parallelism changes the picture.
 
 ```{code-cell}
 :id: cI8xQqzRrc-4
