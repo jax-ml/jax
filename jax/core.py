@@ -32,7 +32,7 @@ from ._src import dtypes
 from ._src import config as jax_config
 from ._src.config import FLAGS, config
 from .errors import (ConcretizationTypeError, TracerArrayConversionError,
-                     TracerIntegerConversionError)
+                     TracerIntegerConversionError, UnexpectedTracerError)
 from . import linear_util as lu
 
 from jax._src import source_info_util
@@ -459,8 +459,6 @@ def escaped_tracer_error(tracer, detail=None):
           'JAX_CHECK_TRACER_LEAKS or using the `jax.checking_leaks` context '
           'manager.')
   return UnexpectedTracerError(msg)
-
-class UnexpectedTracerError(Exception): pass
 
 class Tracer:
   __array_priority__ = 1000

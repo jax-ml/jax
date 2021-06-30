@@ -18,4 +18,5 @@ from ._src.errors import (JAXTypeError,
                           ConcretizationTypeError,
                           NonConcreteBooleanIndexError,
                           TracerArrayConversionError,
-                          TracerIntegerConversionError)
+                          TracerIntegerConversionError,
+                          UnexpectedTracerError)

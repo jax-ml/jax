@@ -432,3 +432,105 @@ class TracerIntegerConversionError(JAXTypeError):
   def __init__(self, tracer: "core.Tracer"):
     super().__init__(
         f"The __index__() method was called on the JAX Tracer object {tracer}")
+
+
+class UnexpectedTracerError(JAXTypeError):
+  """
+  This error occurs when you use a JAX value which has leaked out of a function.
+  What does it mean to leak a value? If you use a JAX transform on a
+  function which saves a value to an outer scope through a side-effect, this
+  will leak a `Tracer`. When you then use this leaked value in a different
+  operation, an `UnexpectedTracerError` will be thrown.
+  To fix this, you need to return the value out of the transformed function
+  explictly.
+
+  Tracers are created when you transform a function, eg. with `jit`, `pmap`,
+  `vmap`, `eval_shape`, ... Intermediate values of these transformed values will
+  be Tracers, and should not escape this function through a side-effect.
+
+  Life-cycle of a leaked Tracer
+    Consider the following example of a transformed function which leaks a value
+    to an outer scope::
+
+      >>> from jax import jit
+      >>> import jax.numpy as jnp
+
+      >>> outs = []
+      >>> @jit  # 1
+      ... def side_effecting(x):
+      ...   y = x+1  # 3
+      ...   outs.append(y) # 4
+      >>> x = 1
+      >>> side_effecting(x)  # 2
+      >>> outs[0]+1  # 5  # doctest: +IGNORE_EXCEPTION_DETAIL
+      Traceback (most recent call last):
+          ...
+      UnexpectedTracerError: Encountered an unexpected tracer.
+
+    In this example we leak a Traced value from an inner transformed scope to an
+    outer scope. We get an UnexpectedTracerError not when the value is leaked
+    but later, when the leaked value is used.
+
+    This example also demonstrates the life-cycle of a leaked Tracer:
+
+      1. A function is transformed (in this case, jitted)
+      2. The transformed function is called (kicking of an abstract trace of the
+         function and turning `x` into a Tracer)
+      3. The Tracer which will be leaked is created (an intermediate value of
+         a traced function is also a Tracer)
+      4. The Tracer is leaked (appended to a list in an outer scope, escaping
+         the function through a side-channel)
+      5. The leaked Tracer is used, and an UnexpectedTracerError is thrown.
+
+    The UnexpectedTracerError tries to point to these locations in your code by
+    including information about each stage. Respectively:
+
+      1. The name of the transformed function (`side_effecting`) and which
+         transform kicked of the trace (`jit`).
+      2. A reconstructed stack-trace of where the Tracer was created, which
+         includes where the transformed function was called. (`When the Tracer
+         was created, the final 5 stack frames (most recent last) excluding
+         JAX-internal frames were...`).
+      3. See the reconstructed stack-trace. This will point to the line of code
+         which created the leaked Tracer.
+      4. Currently not included in the error message, because this is difficult
+         to pin down! We can only tell you what the leaked value looks like
+         (what shape is has and where it was created) and what boundary it was
+         leaked over (the name of the transform and the name of the transformed
+         function).
+      5. The actual error stack-trace will point to where the value is used.
+
+    The error can be fixed by the returning the value out of the
+    transformed function::
+
+      >>> from jax import jit
+      >>> import jax.numpy as jnp
+
+      >>> outs = []
+      >>> @jit
+      ... def not_side_effecting(x):
+      ...   y = x+1
+      ...   return y
+      >>> x = 1
+      >>> y = not_side_effecting(x)
+      >>> outs.append(y)
+      >>> outs[0]+1  # all good! no longer a leaked value.
+      DeviceArray(3, dtype=int32)
+
+  Leak checker
+    As discussed in point 2 and 3 above, we show a reconstructed stack-trace
+    because we only throw an error when the leaked Tracer is used, not when the
+    Tracer is leaked. We need to know the location where the Tracer was leaked
+    to fix the error. The leak checker is a debug option you can use to throw an
+    error as soon as a Tracer is leaked. (To be more exact, it will throw an
+    error when the transformed function from which the Tracer is leaked returns)
+
+    To enable the leak checker you can use the `JAX_CHECK_TRACER_LEAKS`
+    environment variable or the `with jax.checking_leaks()` context manager.
+    Note that this util is experimental and may have some false positives. It
+    works by disabling some JAX caches, so should only be used when debugging
+    as it will have a negative effect on performance.
+  """
+
+  def __init__(self, msg: str):
+    super().__init__(msg)

@@ -30,6 +30,7 @@ import numpy.random as npr
 import jax
 from jax._src import api
 from jax import core
+from jax.errors import UnexpectedTracerError
 from jax import lax
 from jax import random
 from jax import test_util as jtu
@@ -2722,8 +2723,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(deriv(my_pow)(3.0, 1), 1.0, check_dtypes=False)
 
   def test_unexpected_tracer_error(self):
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "for while_loop"):
+    with self.assertRaisesRegex(UnexpectedTracerError, "for while_loop"):
       lst = []
       def side_effecting_body(val):
         lst.append(val)
@@ -2731,8 +2731,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.while_loop(lambda x: x < 2, side_effecting_body, 1)
       lst[0] += 1
 
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
-                                "for scan"):
+    with self.assertRaisesRegex(UnexpectedTracerError, "for scan"):
       lst = []
       def side_effecting_scan(carry, val):
         lst.append(val)
