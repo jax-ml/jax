@@ -31,7 +31,7 @@ from ..api_util import flattened_fun_in_tree
 from .._src.tree_util import tree_unflatten, tree_leaves
 from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,
                          split_list, cache, as_hashable_function)
-from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
+from ..core import (CallPrimitive, Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
                     dropvar, ConcreteArray, raise_to_shaped)
 from jax._src import source_info_util
@@ -746,6 +746,77 @@ def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
 
   return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
 
+def _reblake_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool]
+                   ) -> Tuple[Jaxpr, Jaxpr, List[bool], int]:
+  """Splits a JVP jaxpr into forward and backward, duplicating non-dots/convs"""
+  env: Dict[core.Var, bool] = {}
+  residuals = set()
+
+  def read(v: core.Atom) -> bool:
+    return type(v) is core.Var and env[v]
+
+  def write(unk: bool, v: core.Var) -> None:
+    env[v] = unk
+
+  def new_res(v: core.Var) -> core.Var:
+    return residuals.add(v) or v
+
+  eqns1, eqns2 = [], []
+  map(write, in_unknowns, jaxpr.invars)
+  for eqn in jaxpr.eqns:
+    unks_in = map(read, eqn.invars)
+    if eqn.primitive.name in ('xla_call',):
+      call_jaxpr = eqn.params['call_jaxpr']
+      jaxpr1, jaxpr2, unks_out, num_res = _reblake_jaxpr(call_jaxpr, unks_in)
+      ins = ins1, ins2 = [], []
+      for unk, v in zip(unks_in, eqn.invars):
+        ins[unk].append(v)
+      outs = outs1, outs2 = [], []
+      for unk, v in zip(unks_out, eqn.outvars):
+        outs[unk].append(v)
+      # these are fresh variables from the perspective of the outer jaxpr
+      call_res, _ = split_list(jaxpr2.invars, [num_res])
+      eqn1 = core.JaxprEqn(ins1, outs1 + call_res, eqn.primitive, dict(
+          eqn.params, call_jaxpr=jaxpr1, donated_invars=(False,) * len(jaxpr1.invars)),
+          eqn.source_info)
+      eqn2 = core.JaxprEqn(call_res + eqn.invars, outs2, eqn.primitive, dict(
+          eqn.params, call_jaxpr=jaxpr2, donated_invars=(False,) * (num_res + len(eqn.invars))),
+          eqn.source_info)
+      eqns1.append(eqn1)
+      eqns2.append(eqn2)
+      for v in call_res: new_res(v)
+      for v, unk in zip(eqn.outvars, unks_out): write(unk, v)
+    elif isinstance(eqn.primitive, core.CallPrimitive):
+      raise NotImplementedError
+    elif any(unks_in):
+      eqns2.append(eqn)
+      map(partial(write, True), eqn.outvars)
+    elif eqn.primitive.name in ('dot_general', 'conv_general_dilated'):
+      eqns1.append(eqn)
+      for v in eqn.outvars: new_res(v)
+      map(partial(write, False), eqn.outvars)
+    else:
+      eqns1.append(eqn)
+      eqns2.append(eqn)
+      map(partial(write, False), eqn.outvars)
+  out_unknowns = map(read, jaxpr.outvars)
+  res_list, num_res = list(residuals), len(residuals)
+
+  ins = ins1, ins2 = [], []
+  for unk, v in zip(in_unknowns, jaxpr.invars):
+    ins[unk].append(v)
+  outs = outs1, outs2 = [], []
+  for unk, v in zip(out_unknowns, jaxpr.outvars):
+    outs[unk].append(v)
+
+  # TODO: dedup outs1 + residuals
+  jaxpr1 = Jaxpr([], ins1, outs1 + res_list, eqns1)
+  jaxpr2 = Jaxpr([], res_list + jaxpr.invars, outs2, eqns2)
+  # typecheck_partial_eval_jaxpr(jaxpr, in_unknowns, out_unknowns, jaxpr1, jaxpr2)
+  core.check_jaxpr(jaxpr1)
+  core.check_jaxpr(jaxpr2)
+  return jaxpr1, jaxpr2, out_unknowns, num_res
+
 
 remat_call_p: core.Primitive = core.CallPrimitive('remat_call')
 remat_call = remat_call_p.bind
@@ -776,52 +847,66 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   # Convert consts to inputs, since they may contain Tracer instances.
   jaxpr = convert_constvars_jaxpr(jaxpr)
   const_tracers = map(trace.new_instantiated_const, consts)
-
-  # Since we traced with everything marked as unknown, but we need to know which
-  # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
   in_unknowns = ([False] * len(consts) +
                  [not t.is_known() for t in it.chain(env_tracers, tracers)])
-  jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
-      closed_jaxpr, in_unknowns, instantiate=False)  # type: ignore
-  out_knowns = [not b for b in out_unknowns]
-  out_known_pvals, out_unknown_pvals = _partition_knowns(eval_out_pvals, out_unknowns)
 
-  # Next, we need values for the outputs that should be known. Since consts
-  # weren't passed through Python for evaluation, we need to evaluate jaxpr_known,
-  # minus the residual outputs that we don't need. When `concrete=True`, as an
-  # optimization we can avoid redoing *some* redundant FLOPs, namely those that
-  # produced concrete avals at the output, simply by using those as computed
-  # values. For the use case of inverse-mode ad in op-by-op ("eager mode")
-  # evaluation, all the primal outputs should be concrete (thus not recomputed).
-  to_compute = [type(pval[0]) is not ConcreteArray
-                for uk, pval in zip(out_unknowns, eval_out_pvals) if not uk]
-  num_outputs = len(jaxpr_unknown.out_avals)
-  num_res = len(jaxpr_known.out_avals) - num_outputs
-  jaxpr_known_nores = _dce_jaxpr(jaxpr_known, out_knowns + [False] * num_res, drop_outputs=True)
-  jaxpr_known_comp = _dce_jaxpr(jaxpr_known_nores, to_compute)
-  _, in_consts = unzip2(t.pval for t in it.chain(env_tracers, tracers))
-  reconstructed_consts = core.jaxpr_as_fun(jaxpr_known_comp)(*consts, *in_consts)
-  out_known_pvals = map(_reconstruct_pval, out_known_pvals, reconstructed_consts)
+  if params['checkpoint_dots']:
+    jaxpr_known, jaxpr_unknown, out_unknowns, num_res = _reblake_jaxpr(jaxpr, in_unknowns)
+    known_inputs = consts + [t for t in it.chain(env_tracers, tracers) if t.is_known()]
+    # TODO: bind remat_call_p again?
+    residuals_and_known_outputs = core.eval_jaxpr(jaxpr_known, [], *known_inputs)
+    residuals, known_outputs = split_list(residuals_and_known_outputs, [num_res])
+    residual_tracers = map(trace.new_instantiated_const, residuals)
+    in_tracers = (*residual_tracers, *const_tracers, *env_tracers, *instantiated_tracers)
+    unknown_output_tracers = [JaxprTracer(trace, PartialVal.unknown(v.aval), None)
+                              for v in jaxpr_unknown.outvars]
+    new_params = dict(params, call_jaxpr=jaxpr_unknown)
+  else:
+    # Since we traced with everything marked as unknown, but we need to know which
+    # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
 
-  # Known outputs should keep propagating as constants
-  assert all(pv.is_known() for pv in out_known_pvals)
-  known_output_tracers = [trace.new_const(pval.get_known())
-                          for pval in out_known_pvals]
-  # Unknown outputs get wrapped in tracers with the appropriate recipe
-  unknown_output_tracers = [JaxprTracer(trace, out_pval, None)
-                            for out_pval in out_unknown_pvals]
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
+    jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
+        closed_jaxpr, in_unknowns, instantiate=False)  # type: ignore
 
-  # dce jaxpr outputs
-  new_jaxpr = _dce_jaxpr(closed_jaxpr, out_unknowns, drop_outputs=True).jaxpr
-  new_params = dict(params, call_jaxpr=new_jaxpr)
+    out_knowns = [not b for b in out_unknowns]
+    out_known_pvals, out_unknown_pvals = _partition_knowns(eval_out_pvals, out_unknowns)
 
-  # set up eqn for unknown outputs
-  in_tracers = (*const_tracers, *env_tracers, *instantiated_tracers)
+    # Next, we need values for the outputs that should be known. Since consts
+    # weren't passed through Python for evaluation, we need to evaluate jaxpr_known,
+    # minus the residual outputs that we don't need. When `concrete=True`, as an
+    # optimization we can avoid redoing *some* redundant FLOPs, namely those that
+    # produced concrete avals at the output, simply by using those as computed
+    # values. For the use case of inverse-mode ad in op-by-op ("eager mode")
+    # evaluation, all the primal outputs should be concrete (thus not recomputed).
+    to_compute = [type(pval[0]) is not ConcreteArray
+                  for uk, pval in zip(out_unknowns, eval_out_pvals) if not uk]
+    num_outputs = len(jaxpr_unknown.out_avals)
+    num_res = len(jaxpr_known.out_avals) - num_outputs
+    jaxpr_known_nores = _dce_jaxpr(jaxpr_known, out_knowns + [False] * num_res, drop_outputs=True)
+    jaxpr_known_comp = _dce_jaxpr(jaxpr_known_nores, to_compute)
+    _, in_consts = unzip2(t.pval for t in it.chain(env_tracers, tracers))
+    reconstructed_consts = core.jaxpr_as_fun(jaxpr_known_comp)(*consts, *in_consts)
+    out_known_pvals = map(_reconstruct_pval, out_known_pvals, reconstructed_consts)
+
+    # Known outputs should keep propagating as constants
+    assert all(pv.is_known() for pv in out_known_pvals)
+    known_outputs = [trace.new_const(pval.get_known())
+                     for pval in out_known_pvals]
+    # Unknown outputs get wrapped in tracers with the appropriate recipe
+    unknown_output_tracers = [JaxprTracer(trace, out_pval, None)
+                              for out_pval in out_unknown_pvals]
+
+    # dce jaxpr outputs
+    new_jaxpr = _dce_jaxpr(closed_jaxpr, out_unknowns, drop_outputs=True).jaxpr
+    new_params = dict(params, call_jaxpr=new_jaxpr)
+
+    # set up eqn for unknown outputs
+    in_tracers = (*const_tracers, *env_tracers, *instantiated_tracers)
   eqn = new_eqn_recipe(in_tracers, unknown_output_tracers, remat_call_p, new_params,
-                       source_info_util.current())
+                      source_info_util.current())
   for t in unknown_output_tracers: t.recipe = eqn
-  return _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
+  return _zip_knowns(known_outputs, unknown_output_tracers, out_unknowns)
 call_partial_eval_rules[remat_call_p] = _remat_partial_eval
 
 def _partition_knowns(pvals, unknowns: Sequence[bool]):
@@ -950,6 +1035,7 @@ class JaxprStackFrame:
     outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.items())
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns)
+    # jaxpr = _extend_remats(jaxpr)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     out_avals = [t.aval for t in out_tracers]
     return jaxpr, out_avals, constvals
@@ -1003,6 +1089,44 @@ def _inline_literals(jaxpr, constvals):
   new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
   new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns)
   return new_jaxpr, new_constvals
+
+def _extend_remats(jaxpr):
+  remats = [eqn for eqn in jaxpr.eqns
+            if eqn.primitive is remat_call_p and eqn.params['extend']]
+  newvar = core.gensym(suffix='_remat')
+  for remat in remats:
+    consumers = [eqn for eqn in jaxpr.eqns if any(
+      invar in remat.outvars for invar in eqn.invars)]
+    remat_outvar_map = dict(zip(remat.outvars, remat.params['call_jaxpr'].outvars))
+    old_to_new_invars = dict()
+    old_to_new_outvars = dict()
+    for consumer in consumers:
+      if 'dot_general' in consumer.primitive.name:
+        new_consumer_invars = []
+        for v in consumer.invars:
+          if v in remat_outvar_map:
+            new_v = remat_outvar_map[v]
+          else:
+            new_v = newvar(v.aval)
+            old_to_new_invars[v] = new_v
+          new_consumer_invars.append(new_v)
+        new_consumer_outvars = [newvar(v.aval) for v in consumer.outvars]
+        old_to_new_outvars.update(zip(consumer.outvars, new_consumer_outvars))
+        new_consumer = core.JaxprEqn(
+          new_consumer_invars, new_consumer_outvars, consumer.primitive,
+          consumer.params, consumer.source_info)
+        remat.params['call_jaxpr'].eqns.append(new_consumer)
+        jaxpr.eqns.remove(consumer)
+    new_remat_invars = remat.invars + list(old_to_new_invars.keys())
+    remat.params['call_jaxpr'].invars += old_to_new_invars.values()
+    new_remat_outvars = remat.outvars + list(old_to_new_outvars.keys())
+    remat.params['call_jaxpr'].outvars += old_to_new_outvars.values()
+    new_remat = core.JaxprEqn(
+      new_remat_invars, new_remat_outvars, remat_call_p,
+      remat.params, remat.source_info)
+    jaxpr.eqns[jaxpr.eqns.index(remat):jaxpr.eqns.index(remat) + 1] = [new_remat]
+  # potentially DCE here
+  return jaxpr
 
 class DynamicJaxprTrace(core.Trace):
   __slots__ = []  # type: ignore

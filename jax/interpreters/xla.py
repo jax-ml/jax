@@ -1464,8 +1464,13 @@ def _remat_using_while(
 
 def _remat_translation_rule(c, axis_env, in_nodes,
                             name_stack, backend, name, call_jaxpr,
-                            device=None, concrete=None):
-  del device, concrete  # Unused.
+                            device=None, concrete=None,
+                            checkpoint_dots=None, gadget=None):
+  del device, concrete, checkpoint_dots  # Unused.
+  if not gadget:
+    return _named_call_translation_rule(
+      c, axis_env, in_nodes, name_stack, name="remat_call",
+      backend=backend, call_jaxpr=call_jaxpr)
   if backend == "gpu":
     return _remat_using_while(
         c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr)

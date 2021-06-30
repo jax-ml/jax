@@ -2408,7 +2408,8 @@ def eval_shape(fun: Callable, *args, **kwargs):
   return tree_unflatten(out_tree(), out)
 
 
-def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
+def checkpoint(fun: Callable, concrete: bool = False,
+               checkpoint_dots: bool = False, gadget: bool = True) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
   The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
@@ -2436,6 +2437,13 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
 
   See the examples below.
 
+  The "checkpoint_dots" option triggers an evaluation strategy intermediate
+  between checkpointing everything and rematerializing everything: storing as
+  few linearization points as possible without resulting in additional dot/conv
+  evaluations in the backward pass. This is a good fit for situations where 
+  dot/conv operations are expensive, but other operations can be cheaply fused
+  into them.
+
   Args:
     fun: Function for which the autodiff evaluation strategy is to be changed
       from the default of storing all intermediate linearization points to
@@ -2446,6 +2454,18 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
       control flow is optional, and disabled by default, because in some
       edge-case compositions with :func:`jax.jit` it can lead to some extra
       computation.
+    checkpoint_dots: Optional, boolean indicating whether reverse-mode
+      differentiating ``fun`` should still store linearization points
+      corresponding to the outputs of dot and conv primitives (but avoid
+      storing others). This is often the optimal evaluation schedule for 
+      platforms where other operations can be cheaply fused into matmuls. 
+      Defaults to False.
+    gadget: Optional, boolean indicating whether to insert a control flow
+      block around ``fun`` to prevent XLA from undoing the effect of
+      rematerialization through fusion or common-subexpression elimination.
+      This "gadget" is not needed if the function is already inside a
+      :func:`jax.lax.scan`, or if op-by-op evaluation is being used. Defaults
+      to True.
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -2495,8 +2515,9 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
-                             concrete=concrete)
+    out_flat = pe.remat_call(
+        flat_fun, *args_flat, name=flat_fun.__name__, concrete=concrete,
+        checkpoint_dots=checkpoint_dots, gadget=gadget)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint
