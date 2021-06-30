@@ -598,7 +598,7 @@ This program is valid, because `jnp.sum` eliminates the axes that cannot co-occu
 
 ### Why `axis_resources` and not a more direct mapping to hardware?
 
-At this point you might wonder why go through the detour of introducing yet another concept of resource axes in the mix. For as long as you're onlt interested in partitioning your computations over hardware, there is no good reason, but this mental framework is more flexible than that!
+At this point you might wonder why go through the detour of introducing yet another concept of resource axes in the mix. For as long as you're interested in partitioning your computations over hardware, there is no good reason, but this mental framework is more flexible than that!
 
 For example, there is one additional resource we all deal with: time! Just like a computation can be partitioned over multiple hardware devices, e.g. to lower its memory usage, the same thing can be achieved with a single accelerator that evaluates a chunk of the computation in multiple steps.
 
