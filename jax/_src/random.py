@@ -1306,7 +1306,10 @@ def categorical(key: jnp.ndarray,
     _check_shape("categorical", shape, batch_shape)
 
   sample_shape = shape[:len(shape)-len(batch_shape)]
-  return jnp.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
+  return jnp.argmax(
+      gumbel(key, sample_shape + logits.shape, logits.dtype) +
+      lax.expand_dims(logits, tuple(range(len(sample_shape)))),
+      axis=axis)
 
 
 def laplace(key: jnp.ndarray,
