@@ -1464,14 +1464,18 @@ def _remat_using_while(
 
 def _remat_translation_rule(c, axis_env, in_nodes,
                             name_stack, backend, name, call_jaxpr,
-                            device=None, concrete=None):
+                            prevent_cse, differentiated, concrete, device=None):
   del device, concrete  # Unused.
-  if backend == "gpu":
-    return _remat_using_while(
-        c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr)
+  if differentiated and prevent_cse:
+    if backend == "gpu":
+      return _remat_using_while(
+          c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr)
+    else:
+      return _remat_using_cond(
+          c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr)
   else:
-    return _remat_using_cond(
-        c, axis_env, in_nodes, name_stack, backend, name, call_jaxpr)
+    outs = jaxpr_subcomp(c, call_jaxpr, backend, axis_env, (), "", *in_nodes)
+    return xops.Tuple(c, outs)
 
 call_translations[pe.remat_call_p] = _remat_translation_rule  # type: ignore
 
