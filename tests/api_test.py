@@ -1340,6 +1340,60 @@ class APITest(jtu.JaxTestCase):
     expected = grad(f)(zs)
     self.assertAllClose(ans, expected)
 
+  def test_heterogeneous_jacfwd(self):
+    # See https://github.com/google/jax/issues/7157
+    # See https://github.com/google/jax/issues/7780
+    x = np.array([2.0], dtype=np.float16)
+    y = np.array([3.0], dtype=np.float32)
+    a = (x, y)
+
+    def f(tup):
+      jtu._check_dtypes_match(tup, a)
+      x, y = tup
+      return x, y, x + y
+
+    actual = jacfwd(f)(a)
+    desired = ((np.array(1., dtype=np.float16), np.array(0., dtype=np.float16)),
+               (np.array(0., dtype=np.float32), np.array(1., dtype=np.float32)),
+               (np.array(1., dtype=np.float32), np.array(1., dtype=np.float32)))
+    jtu._check_dtypes_match(actual, desired)
+    jtu.check_eq(actual, desired)
+
+  def test_heterogeneous_jacrev(self):
+    # See https://github.com/google/jax/issues/7157
+    # See https://github.com/google/jax/issues/7780
+    x = np.array([2.0], dtype=np.float16)
+    y = np.array([3.0], dtype=np.float32)
+    a = (x, y)
+
+    def f(tup):
+      jtu._check_dtypes_match(tup, a)
+      x, y = tup
+      return x, y, x + y
+
+    actual = jacrev(f)(a)
+    desired = ((np.array(1., dtype=np.float16), np.array(0., dtype=np.float32)),
+               (np.array(0., dtype=np.float16), np.array(1., dtype=np.float32)),
+               (np.array(1., dtype=np.float16), np.array(1., dtype=np.float32)))
+    jtu._check_dtypes_match(actual, desired)
+    jtu.check_eq(actual, desired)
+
+  def test_heterogeneous_grad(self):
+    # See https://github.com/google/jax/issues/7157
+    x = np.array(1.0+1j)
+    y = np.array(2.0)
+    a = (x, y)
+
+    def f(tup):
+      jtu._check_dtypes_match(tup, a)
+      x, y = tup
+      return jnp.square(jnp.abs(x)) + y
+
+    actual = grad(f)(a)
+    desired = (np.array(2 - 2j), np.array(1.))
+    jtu._check_dtypes_match(actual, desired)
+    jtu.check_eq(actual, desired)
+
   def test_complex_input_jacfwd_raises_error(self):
     self.assertRaises(TypeError, lambda: jacfwd(lambda x: jnp.sin(x))(1 + 2j))
 
@@ -1561,7 +1615,7 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       TypeError,
       (r"grad requires real- or complex-valued inputs \(input dtype that is a "
-       r"sub-dtype of np.floating or np.complexfloating\), but got int.*."),
+       r"sub-dtype of np.inexact\), but got int.*."),
       lambda: dfn(3))
 
   @unittest.skipIf(numpy_version == (1, 21, 0),
