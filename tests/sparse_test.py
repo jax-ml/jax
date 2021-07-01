@@ -49,15 +49,15 @@ MATMUL_TOL = {
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 
 
-def rand_sparse(rng, nnz=0.5, post=lambda x: x):
-  def _rand_sparse(shape, dtype, nnz=nnz):
+def rand_sparse(rng, nse=0.5, post=lambda x: x):
+  def _rand_sparse(shape, dtype, nse=nse):
     rand = jtu.rand_default(rng)
     size = np.prod(shape)
-    if 0 <= nnz < 1:
-      nnz = nnz * size
-    nnz = min(size, int(nnz))
+    if 0 <= nse < 1:
+      nse = nse * size
+    nse = min(size, int(nse))
     M = rand(shape, dtype)
-    indices = rng.choice(size, size - nnz, replace=False)
+    indices = rng.choice(size, size - nse, replace=False)
     M.flat[indices] = 0
     return post(M)
   return _rand_sparse
@@ -89,9 +89,9 @@ class cuSparseTest(jtu.JaxTestCase):
     M = rng(shape, dtype)
     M_csr = scipy.sparse.csr_matrix(M)
 
-    nnz = M_csr.nnz
+    nse = M_csr.nnz
     index_dtype = jnp.int32
-    fromdense = lambda M: sparse.csr_fromdense(M, nnz=nnz, index_dtype=jnp.int32)
+    fromdense = lambda M: sparse.csr_fromdense(M, nse=nse, index_dtype=jnp.int32)
 
     data, indices, indptr = fromdense(M)
     self.assertArraysEqual(data, M_csr.data.astype(dtype))
@@ -168,9 +168,9 @@ class cuSparseTest(jtu.JaxTestCase):
     M = rng(shape, dtype)
     M_coo = scipy.sparse.coo_matrix(M)
 
-    nnz = M_coo.nnz
+    nse = M_coo.nnz
     index_dtype = jnp.int32
-    fromdense = lambda M: sparse.coo_fromdense(M, nnz=nnz, index_dtype=jnp.int32)
+    fromdense = lambda M: sparse.coo_fromdense(M, nse=nse, index_dtype=jnp.int32)
 
     data, row, col = fromdense(M)
     self.assertArraysEqual(data, M_coo.data.astype(dtype))
@@ -247,13 +247,13 @@ class cuSparseTest(jtu.JaxTestCase):
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex
       for mat_type in ['csr', 'coo']))
-  def test_extra_nnz(self, shape, dtype, mat_type):
+  def test_extra_nse(self, shape, dtype, mat_type):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nnz = (M != 0).sum() + 5
+    nse = (M != 0).sum() + 5
     fromdense = getattr(sparse, f"{mat_type}_fromdense")
     todense = getattr(sparse, f"{mat_type}_todense")
-    args = fromdense(M, nnz=nnz, index_dtype=jnp.int32)
+    args = fromdense(M, nse=nse, index_dtype=jnp.int32)
     M_out = todense(*args, shape=M.shape)
     self.assertArraysEqual(M, M_out)
 
@@ -265,7 +265,7 @@ class cuSparseTest(jtu.JaxTestCase):
   def test_coo_todense_ad(self, shape, dtype):
     rng = rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
-    data, row, col = sparse.coo_fromdense(M, nnz=(M != 0).sum())
+    data, row, col = sparse.coo_fromdense(M, nse=(M != 0).sum())
     f = lambda data: sparse.coo_todense(data, row, col, shape=M.shape)
 
     # Forward-mode
@@ -287,15 +287,15 @@ class cuSparseTest(jtu.JaxTestCase):
   def test_coo_fromdense_ad(self, shape, dtype):
     rng = rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
-    nnz = (M != 0).sum()
-    f = lambda M: sparse.coo_fromdense(M, nnz=nnz)
+    nse = (M != 0).sum()
+    f = lambda M: sparse.coo_fromdense(M, nse=nse)
 
     # Forward-mode
     primals, tangents = api.jvp(f, [M], [jnp.ones_like(M)])
     self.assertArraysEqual(primals[0], f(M)[0])
     self.assertArraysEqual(primals[1], f(M)[1])
     self.assertArraysEqual(primals[2], f(M)[2])
-    self.assertArraysEqual(tangents[0], jnp.ones(nnz, dtype=dtype))
+    self.assertArraysEqual(tangents[0], jnp.ones(nse, dtype=dtype))
     self.assertEqual(tangents[1].dtype, dtypes.float0)
     self.assertEqual(tangents[2].dtype, dtypes.float0)
 
@@ -323,7 +323,7 @@ class cuSparseTest(jtu.JaxTestCase):
     rng_b = jtu.rand_default(self.rng())
 
     M = rng(shape, dtype)
-    data, row, col = sparse.coo_fromdense(M, nnz=(M != 0).sum())
+    data, row, col = sparse.coo_fromdense(M, nse=(M != 0).sum())
     x = rng_b(bshape, dtype)
     xdot = rng_b(bshape, dtype)
 
@@ -1011,7 +1011,7 @@ class BCOOTest(jtu.JaxTestCase):
     M = rng(shape, dtype)
 
     def make_bcoo(M):
-      return sparse.BCOO.fromdense(M, nnz=np.prod(M.shape[:-1], dtype=int), n_dense=1)
+      return sparse.BCOO.fromdense(M, nse=np.prod(M.shape[:-1], dtype=int), n_dense=1)
 
     for _ in range(3):
       make_bcoo = vmap(make_bcoo)
@@ -1052,7 +1052,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     assert isinstance(M, Obj)
     assert M.shape == shape
     assert M.dtype == dtype
-    assert M.nnz == (M.todense() != 0).sum()
+    assert M.nse == (M.todense() != 0).sum()
     assert M.data.dtype == dtype
 
     if isinstance(M, sparse.CSR):

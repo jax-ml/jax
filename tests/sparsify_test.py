@@ -88,7 +88,7 @@ class SparsifyTest(jtu.JaxTestCase):
 
     # Distinct indices
     out = sparsify(operator.add)(x, y)
-    self.assertEqual(out.nnz, 8)  # uses concatenation.
+    self.assertEqual(out.nse, 8)  # uses concatenation.
     self.assertArraysEqual(out.todense(), 3 * jnp.arange(5))
 
     # Shared indices – requires lower level call
