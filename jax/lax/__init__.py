@@ -76,6 +76,7 @@ from jax._src.lax.lax import (
   clamp,
   clamp_p,
   clz,
+  clz_p,
   collapse,
   complex,
   complex_p,
