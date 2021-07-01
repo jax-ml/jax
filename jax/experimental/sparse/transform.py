@@ -39,7 +39,7 @@ DeviceArray([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
 
 >>> mat_sparse = BCOO.fromdense(mat)
 >>> mat_sparse
-BCOO(float32[5, 5], nnz=8)
+BCOO(float32[5, 5], nse=8)
 
 >>> sparsify(f)(mat_sparse, vec)
 DeviceArray([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
