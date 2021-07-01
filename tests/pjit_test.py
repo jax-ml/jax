@@ -14,6 +14,7 @@
 
 from functools import partial
 import logging
+import threading
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -31,6 +32,7 @@ from jax.experimental.maps import xmap, mesh
 from jax.experimental.pjit import pjit, pjit_p, with_sharding_constraint, SpecSync
 from jax.interpreters import pxla
 from jax.interpreters import xla
+from jax.lib import xla_client
 from jax._src.util import prod, curry
 
 from jax.config import config
@@ -391,6 +393,41 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     self.assertAllClose(res0, res, check_dtypes=True)
 
+  def testOutfeed(self):
+    devices = np.array(jax.local_devices())
+    nr_devices = len(devices)
+    shape = (nr_devices * 3, nr_devices * 5)
+
+    def f(x):
+      token = lax.create_token(x)
+      token = lax.outfeed(token, x, partitions=(None,))
+      token = lax.outfeed(token, x, partitions=(P(nr_devices, 1),))
+      token = lax.outfeed(token, x, partitions=(P(1, nr_devices),))
+      return x
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+
+    def dispatch():
+      with mesh(devices, ['d']):
+        logging.info('Making pjit call')
+        pjit(f, in_axis_resources=(P('d'),), out_axis_resources=P('d'))(x)
+    execution = threading.Thread(target=dispatch)
+    execution.start()
+
+    def check_outfeed(d, x):
+      y, = d.transfer_from_outfeed(
+          xla_client.shape_from_pyval((x,)).with_major_to_minor_layout_if_absent())
+      self.assertAllClose(x, y, check_dtypes=True)
+
+    logging.info('Transfering from outfeed for the pjit call')
+    for didx, d in enumerate(devices):
+      # Transfer the whole array from all devices for replicated.
+      check_outfeed(d, x)
+      # For sharded outfeed, the results are sliced.
+      check_outfeed(d, x[3 * didx:3 * didx + 3, :])
+      check_outfeed(d, x[:, 5 * didx:5 * didx + 5])
+
+    execution.join()
 
 @curry
 def check_1d_2d_mesh(f, set_mesh):
