@@ -16,7 +16,6 @@ from contextlib import contextmanager
 from functools import wraps
 import threading
 from typing import Callable, Optional
-import warnings
 
 from jax.lib import xla_bridge
 from jax.lib import xla_client
@@ -125,15 +124,6 @@ class TraceAnnotation(xla_client.profiler.TraceMe):
   pass
 
 
-# TODO: remove this sometime after jax 0.2.11 is released
-class TraceContext(TraceAnnotation):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-        "TraceContext has been renamed to TraceAnnotation. This alias "
-        "will eventually be removed; please update your code.")
-    super().__init__(*args, **kwargs)
-
-
 class StepTraceAnnotation(TraceAnnotation):
   """Context manager that generates a step trace event in the profiler.
 
@@ -158,15 +148,6 @@ class StepTraceAnnotation(TraceAnnotation):
 
   def __init__(self, name: str, **kwargs):
     super().__init__(name, _r=1, **kwargs)
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-class StepTraceContext(StepTraceAnnotation):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-        "StepTraceContext has been renamed to StepTraceAnnotation. This alias "
-        "will eventually be removed; please update your code.")
-    super().__init__(*args, **kwargs)
 
 
 def annotate_function(func: Callable, name: Optional[str] = None, **kwargs):
@@ -202,15 +183,6 @@ def annotate_function(func: Callable, name: Optional[str] = None, **kwargs):
       return func(*args, **kwargs)
     return wrapper
   return wrapper
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-def trace_function(*args, **kwargs):
-  warnings.warn(
-      "trace_function has been renamed to annotate_function. This alias "
-      "will eventually be removed; please update your code.")
-  return annotate_function(*args, **kwargs)
-
 
 
 def device_memory_profile(backend: Optional[str] = None) -> bytes:

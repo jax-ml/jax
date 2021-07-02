@@ -15,9 +15,7 @@
 # flake8: noqa: F401
 from jax._src.profiler import (
   StepTraceAnnotation,
-  StepTraceContext,
   TraceAnnotation,
-  TraceContext,
   device_memory_profile,
   save_device_memory_profile,
   start_server,
@@ -25,5 +23,4 @@ from jax._src.profiler import (
   stop_trace,
   trace,
   annotate_function,
-  trace_function,
 )

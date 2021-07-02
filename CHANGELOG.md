@@ -10,6 +10,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.2.17 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...main).
+* Breaking changes:
+  * Removed deprecated `trace_function`, `TraceContext` & `StepTraceContext` profiler functions.
 
 ## jaxlib 0.1.69 (unreleased)
 
