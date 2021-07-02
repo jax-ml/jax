@@ -1472,3 +1472,29 @@ class BCOO(JAXSparse):
           + tuple(sparse_shape)
           + tuple(data.shape[n_batch + 1:]))
     return cls(children, shape=shape)
+
+  # TODO(jakevdp): refactor to avoid circular imports - we can use the same strategy
+  #                we use when adding methods to DeviceArray within lax_numpy.py
+  def __neg__(self):
+    from jax.experimental.sparse import sparsify
+    return sparsify(jnp.negative)(self)
+
+  def __mul__(self, other):
+    from jax.experimental.sparse import sparsify
+    return sparsify(jnp.multiply)(self, other)
+
+  def __rmul__(self, other):
+    from jax.experimental.sparse import sparsify
+    return sparsify(jnp.multiply)(other, self)
+
+  def __add__(self, other):
+    from jax.experimental.sparse import sparsify
+    return sparsify(jnp.add)(self, other)
+
+  def __radd__(self, other):
+    from jax.experimental.sparse import sparsify
+    return sparsify(jnp.add)(other, self)
+
+  def sum(self, *args, **kwargs):
+    from jax.experimental.sparse import sparsify
+    return sparsify(lambda x: x.sum(*args, **kwargs))(self)

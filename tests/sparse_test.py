@@ -1117,6 +1117,20 @@ class SparseObjectTest(jtu.JaxTestCase):
 
     self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
 
+  def test_bcoo_methods(self):
+    M = jnp.arange(12).reshape(3, 4)
+    Msp = sparse.BCOO.fromdense(M)
+
+    self.assertArraysEqual(-M, (-Msp).todense())
+
+    self.assertArraysEqual(2 * M, (2 * Msp).todense())
+    self.assertArraysEqual(M * 2, (Msp * 2).todense())
+
+    self.assertArraysEqual(M + M, (Msp + Msp).todense())
+
+    self.assertArraysEqual(M.sum(0), Msp.sum(0).todense())
+    self.assertArraysEqual(M.sum(1), Msp.sum(1).todense())
+    self.assertArraysEqual(M.sum(), Msp.sum())
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
