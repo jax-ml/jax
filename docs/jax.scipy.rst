@@ -105,6 +105,7 @@ jax.scipy.special
    ndtr
    ndtri
    polygamma
+   sph_harm
    xlog1py
    xlogy
    zeta

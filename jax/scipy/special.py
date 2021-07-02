@@ -39,6 +39,7 @@ from jax._src.scipy.special import (
   ndtr,
   ndtri,
   polygamma,
+  sph_harm,
   xlogy,
   xlog1py,
   zeta,
