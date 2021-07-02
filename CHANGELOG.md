@@ -10,6 +10,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.2.17 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...main).
+* New features:
+  * New SciPy function {py:func}`jax.scipy.special.sph_harm`.
 
 ## jaxlib 0.1.69 (unreleased)
 
@@ -23,6 +25,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     with significant dispatch performance improvements on CPU.
   * The {func}`jax2tf.convert` supports inequalities and min/max for booleans
     ({jax-issue}`#6956`).
+  * New SciPy function {py:func}`jax.scipy.special.lpmn_values`.
 
 * Breaking changes:
   * Support for NumPy 1.16 has been dropped, per the
@@ -51,6 +54,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * The {func}`jax2tf.convert` generates custom attributes with location information
    in TF ops. The code that XLA generates after jax2tf
    has the same location information as JAX/XLA.
+  * New SciPy function {py:func}`jax.scipy.special.lpmn`.
 
 * Bug fixes:
   * The {func}`jax2tf.convert` now ensures that it uses the same typing rules
