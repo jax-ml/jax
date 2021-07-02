@@ -46,7 +46,7 @@ setup(
 
         # CPU-only jaxlib can be installed via:
         # $ pip install jax[cpu]
-        'cpu': [f'jaxlib>={_minimum_jaxlib_version}'],
+        'cpu': [f'jaxlib=={_current_jaxlib_version}'],
 
         # Cloud TPU VM jaxlib can be installed via:
         # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_releases.html
