@@ -5433,7 +5433,7 @@ class NumpyGradTests(jtu.JaxTestCase):
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     rng = rng_factory(self.rng())
     tol = jtu.join_tolerance(tol, {np.float32: 1e-1, np.float64: 1e-3,
-                                   np.complex64: 1e-1, np.complex64: 1e-3})
+                                   np.complex64: 1e-1, np.complex128: 1e-3})
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 
