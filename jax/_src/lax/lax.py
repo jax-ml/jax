@@ -2432,7 +2432,7 @@ acos_p = standard_unop(_float | _complex, 'acos',
 ad.defjvp(acos_p, lambda g, x: mul(g, -rsqrt(_const(x, 1) - square(x))))
 
 def atan_translation_rule(x):
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+  if jax.lib._xla_extension_version < 26 and dtypes.issubdtype(_dtype(x), np.complexfloating):
     return mul(_const(x, -1j), atanh(mul(_const(x, 1j), x)))
   else:
     return atan2(x, _const(x, 1))
@@ -2442,7 +2442,7 @@ atan_p = standard_unop(_float | _complex, 'atan',
                                                       multiple_results=False))
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
 
-atan2_p = standard_naryop([_float, _float], 'atan2')
+atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
           lambda g, x, y: g * (y / (square(x) + square(y))),
           lambda g, x, y: g * -x / (square(x) + square(y)))

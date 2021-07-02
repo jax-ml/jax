@@ -1106,7 +1106,21 @@ tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(lax.asin_translation_rule,
 tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(lax.atan_translation_rule,
                                                    multiple_results=False)
 
-tf_impl[lax.atan2_p] = tf.math.atan2
+def _atan2(y, x, **kwargs):
+  if x.dtype.is_complex or y.dtype.is_complex:
+    complex_component_dtype = {
+      tf.complex64: tf.float32,
+      tf.complex128: tf.float64
+    }.get(y.dtype)
+    zero = tf.constant(0, complex_component_dtype)
+    one = tf.constant(1, complex_component_dtype)
+    i = tf.complex(zero, one)
+    return -i * tf.math.log((x + i * y)/tf.math.sqrt(x * x + y * y))
+  else:
+    return tf.math.atan2(y, x)
+
+
+tf_impl[lax.atan2_p] = _atan2
 tf_impl[lax.acosh_p] = tf.math.acosh
 tf_impl[lax.atanh_p] = tf.math.atanh
 tf_impl[lax.asinh_p] = tf.math.asinh
