@@ -849,7 +849,10 @@ bcoo_transpose_p = core.Primitive('bcoo_transpose')
 bcoo_transpose_p.multiple_results = True
 
 def bcoo_transpose(data, indices, *, permutation, shape):
-  return bcoo_transpose_p.bind(data, indices, permutation=permutation, shape=shape)
+  if tuple(permutation) == tuple(range(len(shape))):
+    return data, indices
+  else:
+    return bcoo_transpose_p.bind(data, indices, permutation=permutation, shape=shape)
 
 def _validate_permutation(data, indices, permutation, shape):
   if not isinstance(permutation, (tuple, list, np.ndarray)):
