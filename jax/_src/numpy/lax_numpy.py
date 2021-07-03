@@ -656,45 +656,65 @@ def power(x1, x2):
 @custom_jvp
 @_wraps(np.logaddexp)
 def logaddexp(x1, x2):
-  x1, x2 = _promote_shapes("logaddexp", *_promote_dtypes_inexact(x1, x2))
+  x1, x2 = _promote_args_inexact("logaddexp", x1, x2)
   amax = lax.max(x1, x2)
-  delta = lax.sub(x1, x2)
-  return lax.select(isnan(delta),
-                    lax.add(x1, x2),  # NaNs or infinities of the same sign.
-                    lax.add(amax, lax.log1p(lax.exp(-lax.abs(delta)))))
+  if issubdtype(x1.dtype, np.floating):
+    delta = lax.sub(x1, x2)
+    return lax.select(isnan(delta),
+                      lax.add(x1, x2),  # NaNs or infinities of the same sign.
+                      lax.add(amax, lax.log1p(lax.exp(lax.neg(lax.abs(delta))))))
+  else:
+    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, _constant_like(amax, 2)))
+    out = lax.add(amax, lax.log1p(lax.exp(delta)))
+    return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi))
+
+def _wrap_between(x, _a):
+  """Wraps `x` between `[-a, a]`."""
+  a = _constant_like(x, _a)
+  two_a = _constant_like(x, 2 * _a)
+  zero = _constant_like(x, 0)
+  rem = lax.rem(lax.add(x, a), two_a)
+  rem = lax.select(lax.lt(rem, zero), lax.add(rem, two_a), rem)
+  return lax.sub(rem, a)
 
 @logaddexp.defjvp
 def _logaddexp_jvp(primals, tangents):
   x1, x2 = primals
   t1, t2 = tangents
-  x1, x2, t1, t2 = broadcast_arrays(x1, x2, t1, t2)
+  x1, x2, t1, t2 = _promote_args_inexact("logaddexp_jvp", x1, x2, t1, t2)
   primal_out = logaddexp(x1, x2)
-  tangent_out = (t1 * exp(_replace_inf(x1) - _replace_inf(primal_out)) +
-                 t2 * exp(_replace_inf(x2) - _replace_inf(primal_out)))
+  tangent_out = lax.add(lax.mul(t1, exp(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
+                        lax.mul(t2, exp(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
   return primal_out, tangent_out
 
 def _replace_inf(x):
-  return lax.select(isposinf(x), zeros_like(x), x)
+  return lax.select(isposinf(real(x)), zeros_like(x), x)
 
 
 @custom_jvp
 @_wraps(np.logaddexp2)
 def logaddexp2(x1, x2):
-  x1, x2 = _promote_shapes("logaddexp2", *_promote_dtypes_inexact(x1, x2))
+  x1, x2 = _promote_args_inexact("logaddexp2", x1, x2)
   amax = lax.max(x1, x2)
-  delta = lax.sub(x1, x2)
-  return lax.select(isnan(delta),
-                    lax.add(x1, x2),  # NaNs or infinities of the same sign.
-                    lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(delta))),
-                                          _constant_like(x1, np.log(2)))))
+  if issubdtype(x1.dtype, np.floating):
+    delta = lax.sub(x1, x2)
+    return lax.select(isnan(delta),
+                      lax.add(x1, x2),  # NaNs or infinities of the same sign.
+                      lax.add(amax, lax.div(lax.log1p(exp2(lax.neg(lax.abs(delta)))),
+                                            _constant_like(x1, np.log(2)))))
+  else:
+    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, _constant_like(amax, 2)))
+    out = lax.add(amax, lax.div(lax.log1p(exp2(delta)), _constant_like(x1, np.log(2))))
+    return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi / np.log(2)))
+
 @logaddexp2.defjvp
 def _logaddexp2_jvp(primals, tangents):
   x1, x2 = primals
   t1, t2 = tangents
-  x1, x2, t1, t2 = broadcast_arrays(x1, x2, t1, t2)
+  x1, x2, t1, t2 = _promote_args_inexact("logaddexp2_jvp", x1, x2, t1, t2)
   primal_out = logaddexp2(x1, x2)
-  tangent_out = (t1 * 2 ** (_replace_inf(x1) - _replace_inf(primal_out)) +
-                 t2 * 2 ** (_replace_inf(x2) - _replace_inf(primal_out)))
+  tangent_out = lax.add(lax.mul(t1, exp2(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
+                        lax.mul(t2, exp2(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
   return primal_out, tangent_out
 
 
