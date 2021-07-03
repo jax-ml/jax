@@ -407,7 +407,15 @@ flags.DEFINE_integer(
           'until the Python callback consume more outfeeds.'),
     lower_bound=int(16 * 1e6)
 )
-
+flags.DEFINE_bool(
+    'jax_host_callback_outfeed',
+    bool_env('JAX_HOST_CALLBACK_OUTFEED', False),
+    help=(
+        'Use outfeed implementation for host_callback, even on CPU and GPU. '
+        'If false, use the CustomCall implementation. '
+        'Has no effect on TPU, since only the outfeed mechanism is implemented.'
+    )
+)
 
 enable_checks = config.define_bool_state(
     name='jax_enable_checks',
