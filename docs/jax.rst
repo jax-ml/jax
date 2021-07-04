@@ -36,6 +36,7 @@ Just-in-time compilation (:code:`jit`)
     device_put
     device_put_replicated
     device_put_sharded
+    device_get
     default_backend
     named_call
 
@@ -91,6 +92,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: device_put
 .. autofunction:: device_put_replicated
 .. autofunction:: device_put_sharded
+.. autofunction:: device_get
 .. autofunction:: default_backend
 .. autofunction:: named_call
 
