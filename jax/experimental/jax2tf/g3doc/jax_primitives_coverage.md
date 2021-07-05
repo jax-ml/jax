@@ -1,10 +1,10 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-06-28* (YYYY-MM-DD)
+*Last generated on: 2021-07-05* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2668 test harnesses to test
+We use a set of 2667 test harnesses to test
 the implementation of 121 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
@@ -132,7 +132,7 @@ be updated.
 | rem | 18 | floating, integer | bool, complex |
 | reshape | 19 | all |  |
 | rev | 19 | all |  |
-| round | 7 | floating | bool, complex, integer |
+| round | 6 | floating | bool, complex, integer |
 | rsqrt | 6 | inexact | bool, integer |
 | scatter_add | 15 | all |  |
 | scatter_max | 15 | all |  |
