@@ -481,14 +481,6 @@ for rounding_method in [
   _make_round_harness(
       "rounding_methods", operand=operand, rounding_method=rounding_method)
 
-# Validate edge cases
-for name, operand in [
-    # Checks that https://github.com/google/jax/issues/4952 is resolved
-    ("round_away_from_0",
-     np.array([[0.5, 1.5, 2.5], [-0.5, -1.5, -2.5]], dtype=np.float32)),
-]:
-  _make_round_harness(f"edge_case_{name}", operand=operand)
-
 
 def _make_convert_element_type_harness(name,
                                        *,

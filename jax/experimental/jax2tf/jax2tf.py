@@ -1033,8 +1033,11 @@ tf_impl[lax.floor_p] = tf.math.floor
 tf_impl[lax.ceil_p] = tf.math.ceil
 
 
-def _round(operand, *, rounding_method):
+def _round(operand, *, rounding_method,
+           _in_avals: Sequence[core.AbstractValue],
+           _out_aval: core.AbstractValue):
   if rounding_method is lax.RoundingMethod.AWAY_FROM_ZERO:
+    # JAX uses a single HLO op Round here
     sign = _sign(operand)
     operand *= sign
     floor = tf.math.floor(operand)
@@ -1043,11 +1046,12 @@ def _round(operand, *, rounding_method):
     return sign * (
         tf.where(cond, tf.constant(np.array(1), operand.dtype),
                  tf.math.round(operand)) + floor)
-  else:
-    return tf.math.round(operand)
+  else:  # rounding_method is RoundingMethod.TO_NEAREST_EVEN
+    rounding_fun = _convert_jax_impl(
+        lax._round_to_nearest_even, multiple_results=False)
+    return rounding_fun(operand, _in_avals=_in_avals, _out_aval=_out_aval)
 
-
-tf_impl[lax.round_p] = _round
+tf_impl_with_avals[lax.round_p] = _round
 tf_impl[lax.nextafter_p] = tf.math.nextafter
 
 
