@@ -520,9 +520,8 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
 
   # Run the known part of the while. Prepare the inputs, as constants (if known), or
   # as core.unit.
-  in_consts = [ core.unit if uk else t.pval.get_known()
-                for uk, t in zip(cond_consts_uk + body_consts_uk + carry_uk,
-                                 tracers)]
+  in_consts = [core.unit if uk else t.pval.get_known()
+               for uk, t in zip(cond_consts_uk + body_consts_uk + carry_uk, tracers)]
   # There should be no residuals for the cond_jaxpr_known
   assert 1 == len(cond_jaxpr_known.out_avals)
   # We ignore the residuals from the body_jaxpr_known, so the type of inputs matches
@@ -541,7 +540,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   out_all: Sequence[pe.Tracer] = trace.default_process_primitive(while_p, tracers, params)
   out_tracers: Sequence[pe.Tracer] = [
     out_unknown if uk
-    else pe.JaxprTracer(trace, pe.PartialVal.known(known), out_unknown.recipe)
+    else pe.JaxprTracer(trace, pe.PartialVal.known(known), core.unit)
     for uk, out_unknown, known in zip(carry_uk, out_all, out_known)]
 
   return out_tracers
@@ -936,7 +935,7 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   eqn = pe.new_eqn_recipe(
       [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
       source_info_util.current())
-  for t in out_tracers: t.recipe = eqn
+  for t in out_tracers: t.recipe = eqn if t.pval.is_unknown() else core.unit
   return out_tracers
 
 # When partially evaluating conditionals, each branch produces residuals
@@ -1632,7 +1631,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   out_carry, out_extensive = split_list(out_flat, [num_carry])
   out_extensive_iter = iter(out_extensive)
   out_extensive = [next(out_extensive_iter) if i is None
-                   else _maybe_device_put(tracers[i].pval[1]) if tracers[i].is_known()
+                   else _maybe_device_put(tracers[i].pval[1]) if tracers[i].pval.is_known()
                    else tracers[i] for i in fwd_extensive]
   assert all(a.strip_named_shape() == core.raise_to_shaped(
                  core.get_aval(out)).strip_named_shape()
@@ -1664,7 +1663,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                                num_carry=num_carry, linear=tuple(linear_2),
                                unroll=unroll),
                           source_info_util.current())
-  for t in out_tracers: t.recipe = eqn
+  for t in out_tracers: t.recipe = eqn if t.pval.is_unknown() else core.unit
   return out_tracers
 
 def _maybe_device_put(x):

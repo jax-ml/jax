@@ -44,6 +44,7 @@ from jax._src import api
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
+from jax.interpreters import partial_eval as pe
 from jax.interpreters.sharded_jit import PartitionSpec as P
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
@@ -2891,7 +2892,7 @@ class RematTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_remat_grad_python_control_flow(self):
-    @partial(api.remat, concrete=True)
+    @api.remat
     def g(x):
       if x > 0:
         return lax.sin(x), 3.
@@ -3008,16 +3009,16 @@ class RematTest(jtu.JaxTestCase):
     num_calls = len(called)
     self.assertLessEqual(num_calls, 1)
 
-  def test_remat_binomial_checkpointing(self):
-    def binom_checkpoint(funs):
+  def test_remat_recursive_checkpointing(self):
+    def recursive_checkpoint(funs):
       if len(funs) == 1:
         return funs[0]
       else:
-        f1 = binom_checkpoint(funs[:len(funs)//2])
-        f2 = binom_checkpoint(funs[len(funs)//2:])
+        f1 = recursive_checkpoint(funs[:len(funs)//2])
+        f2 = recursive_checkpoint(funs[len(funs)//2:])
         return api.remat(lambda x: f1(f2(x)))
 
-    f1 = binom_checkpoint([jnp.sin, jnp.sin, jnp.sin, jnp.sin])
+    f1 = recursive_checkpoint([jnp.sin, jnp.sin, jnp.sin, jnp.sin])
     f2 = lambda x: jnp.sin(jnp.sin(jnp.sin(jnp.sin(x))))
     x = 4.
     self.assertAllClose(f1(x), f2(x), check_dtypes=False)
@@ -3157,7 +3158,7 @@ class RematTest(jtu.JaxTestCase):
     def assertEvals(n):
       start = num_evals
       yield
-      assert num_evals - start == n
+      self.assertEqual(num_evals - start, n)
 
     def add_one_impl(x):
       nonlocal num_evals

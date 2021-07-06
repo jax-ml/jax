@@ -562,8 +562,8 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in,
   # (in this case via partial_eval) before we call into backward_pass again.
   typed_call_jaxpr = core.ClosedJaxpr(call_jaxpr, [])
   unknowns = map(is_undefined_primal, primals_in)
-  primal_jaxpr, tangent_jaxpr, out_unknowns = \
-    pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True)  # type: ignore
+  primal_jaxpr, tangent_jaxpr, out_unknowns = pe.partial_eval_jaxpr(
+      typed_call_jaxpr, unknowns=unknowns, instantiate=True)
 
   def do_transpose(primals_in, cotangents_in):
     # NOTE: This is passing in undefined primals in place of tangent arguments, but it

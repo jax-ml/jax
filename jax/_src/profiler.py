@@ -238,7 +238,7 @@ def device_memory_profile(backend: Optional[str] = None) -> bytes:
   Returns:
     A byte string containing a binary `pprof`-format protocol buffer.
   """
-  return xla_client.heap_profile(xla_bridge.get_backend(backend))
+  return xla_client.heap_profile(xla_bridge.get_backend(backend))  # type: ignore
 
 
 def save_device_memory_profile(filename, backend: Optional[str] = None):

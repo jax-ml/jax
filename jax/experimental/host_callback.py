@@ -1249,8 +1249,7 @@ def _outside_call_partial_eval_rule(trace, *args, **params):
   outs_primals_unknown, outs_tangents_unknown = util.split_list(
       outs_all_unknown, [nr_primals])
   outs_combined = (
-      [pe.JaxprTracer(trace, pe.PartialVal.known(primal_known),
-                      primal_unknown.recipe)
+      [pe.JaxprTracer(trace, pe.PartialVal.known(primal_known), core.unit)
        for primal_known, primal_unknown in util.safe_zip(outs_known, outs_primals_unknown)] +
       outs_tangents_unknown)
   return tuple(outs_combined)

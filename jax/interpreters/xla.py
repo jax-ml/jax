@@ -1050,7 +1050,7 @@ token = Token()
 
 pytype_aval_mappings[Token] = lambda _: abstract_token
 core.pytype_aval_mappings[Token] = lambda _: abstract_token
-xla_shape_handlers[AbstractToken] = lambda _: (xc.Shape.token_shape(),)
+xla_shape_handlers[AbstractToken] = lambda _: (xc.Shape.token_shape(),)  # type: ignore
 xla_result_handlers[AbstractToken] = lambda _, __: lambda _: token
 canonicalize_dtype_handlers[Token] = identity
 device_put_handlers[Token] = lambda x, _: (x,)

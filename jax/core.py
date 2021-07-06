@@ -1895,7 +1895,7 @@ def check_call(prim, in_avals, params):
 
   # These checks also happen in recursive call, but give better errors here.
   typecheck_assert(len(in_avals) == len(call_jaxpr.invars),
-                   f"Call primitive {prim} with {len(call_jaxpr.invars)} "
+                   f"Call primitive {prim} with {len(in_avals)} "
                    f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
                    f"inputs")
   binder_avals = [v.aval for v in call_jaxpr.invars]
