@@ -100,9 +100,10 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     inserted_window_dims=indexer.dnums.collapsed_slice_dims,
     scatter_dims_to_operand_dims=indexer.dnums.start_index_map
   )
-  out = scatter_op(x, indexer.gather_indices, y, dnums,
-                   indices_are_sorted=indices_are_sorted,
-                   unique_indices=indexer.unique_indices or unique_indices)
+  out = scatter_op(
+    x, indexer.gather_indices, y, dnums,
+    indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
+    unique_indices=indexer.unique_indices or unique_indices)
   return lax.convert_element_type(out, dtype)
 
 
