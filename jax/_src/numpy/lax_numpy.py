@@ -4980,18 +4980,20 @@ def unique(ar, return_index=False, return_inverse=False,
 
 ### Indexing
 
-def _rewriting_take(arr, idx):
+def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
   arr = asarray(arr)
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
-  return _gather(arr, treedef, static_idx, dynamic_idx)
+  return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
+                 unique_indices)
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(1, 2))
-def _gather(arr, treedef, static_idx, dynamic_idx):
+def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
+            unique_indices):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
   y = arr
@@ -5003,10 +5005,10 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if not core.is_empty_shape(indexer.gather_indices.shape):
-    y = lax.gather(y, indexer.gather_indices, indexer.dnums,
-                   indexer.gather_slice_shape,
-                   unique_indices=indexer.unique_indices,
-                   indices_are_sorted=indexer.indices_are_sorted)
+    y = lax.gather(
+      y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
+      unique_indices=unique_indices or indexer.unique_indices,
+      indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:
@@ -6063,6 +6065,20 @@ class _IndexUpdateRef:
 
   def __repr__(self):
     return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
+
+  def get(self, indices_are_sorted=False, unique_indices=False):
+    """Equivalent to ``x[idx]``.
+
+    Returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexing <numpy.doc.indexing>` ``x[idx]``. This function differs from
+    the usual array indexing syntax in that it allows additional keyword
+    arguments ``indices_are_sorted`` and ``unique_indices`` to be passed.
+
+    See :mod:`jax.ops` for details.
+    """
+    return _rewriting_take(self.array, self.index,
+                           indices_are_sorted=indices_are_sorted,
+                           unique_indices=unique_indices)
 
   def set(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] = y``.

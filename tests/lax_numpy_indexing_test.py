@@ -442,6 +442,21 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list({
+      "testcase_name": "{}_inshape={}_indexer={}".format(
+          name, jtu.format_shape_dtype_string( shape, dtype), indexer),
+       "shape": shape, "dtype": dtype, "indexer": indexer
+  } for name, index_specs in STATIC_INDEXING_TESTS
+    for shape, indexer in index_specs
+    for dtype in all_dtypes))
+  def testStaticIndexingWithAtGet(self, shape, dtype, indexer):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda x: np.asarray(x)[indexer]
+    jnp_fun = lambda x: jnp.asarray(x).at[indexer].get()
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @parameterized.named_parameters({
       "testcase_name":
           "{}_inshape={}_indexer={}".format(name,
