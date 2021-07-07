@@ -5379,6 +5379,50 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_object_list = np.array(object_list)
     self.assertRaises(TypeError, jnp.array, np_object_list)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": jtu.format_test_name_suffix("", shapes, dtypes),
+     "shapes": shapes, "dtypes": dtypes}
+    for shapes in filter(
+      _shapes_are_broadcast_compatible,
+      itertools.combinations_with_replacement(all_shapes, 2))
+    for dtypes in itertools.product(
+      *(_valid_dtypes_for_shape(s, complex_dtypes) for s in shapes))))
+  def testLogaddexpComplex(self, shapes, dtypes):
+    @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
+    def np_op(x1, x2):
+      return np.log(np.exp(x1) + np.exp(x2))
+
+    rng = jtu.rand_some_nan(self.rng())
+    args_maker = lambda: tuple(rng(shape, dtype) for shape, dtype in zip(shapes, dtypes))
+    if jtu.device_under_test() == 'tpu':
+      tol = {np.complex64: 1e-3, np.complex128: 1e-10}
+    else:
+      tol = {np.complex64: 1e-5, np.complex128: 1e-14}
+    self._CheckAgainstNumpy(_promote_like_jnp(np_op), jnp.logaddexp, args_maker, tol=tol)
+    self._CompileAndCheck(jnp.logaddexp, args_maker, rtol=tol, atol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": jtu.format_test_name_suffix("", shapes, dtypes),
+     "shapes": shapes, "dtypes": dtypes}
+    for shapes in filter(
+      _shapes_are_broadcast_compatible,
+      itertools.combinations_with_replacement(all_shapes, 2))
+    for dtypes in itertools.product(
+      *(_valid_dtypes_for_shape(s, complex_dtypes) for s in shapes))))
+  def testLogaddexp2Complex(self, shapes, dtypes):
+    @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
+    def np_op(x1, x2):
+      return np.log2(np.exp2(x1) + np.exp2(x2))
+
+    rng = jtu.rand_some_nan(self.rng())
+    args_maker = lambda: tuple(rng(shape, dtype) for shape, dtype in zip(shapes, dtypes))
+    if jtu.device_under_test() == 'tpu':
+      tol = {np.complex64: 1e-3, np.complex128: 1e-10}
+    else:
+      tol = {np.complex64: 1e-5, np.complex128: 1e-14}
+    self._CheckAgainstNumpy(_promote_like_jnp(np_op), jnp.logaddexp2, args_maker, tol=tol)
+    self._CompileAndCheck(jnp.logaddexp2, args_maker, rtol=tol, atol=tol)
+
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 
@@ -5488,6 +5532,37 @@ class NumpyGradTests(jtu.JaxTestCase):
 
     check_grads(f, (1.,), order=1)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": jtu.format_test_name_suffix("", shapes, itertools.repeat(dtype)),
+     "shapes": shapes, "dtype": dtype}
+    for shapes in filter(
+      _shapes_are_broadcast_compatible,
+      itertools.combinations_with_replacement(nonempty_shapes, 2))
+    for dtype in (np.complex128, )))
+  def testGradLogaddexpComplex(self, shapes, dtype):
+    rng = jtu.rand_default(self.rng())
+    args = tuple(rng(shape, dtype) for shape in shapes)
+    if jtu.device_under_test() == "tpu":
+      tol = 5e-2
+    else:
+      tol = 3e-2
+    check_grads(jnp.logaddexp, args, 1, ["fwd", "rev"], tol, tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": jtu.format_test_name_suffix("", shapes, itertools.repeat(dtype)),
+     "shapes": shapes, "dtype": dtype}
+    for shapes in filter(
+      _shapes_are_broadcast_compatible,
+      itertools.combinations_with_replacement(nonempty_shapes, 2))
+    for dtype in (np.complex128, )))
+  def testGradLogaddexp2Complex(self, shapes, dtype):
+    rng = jtu.rand_default(self.rng())
+    args = tuple(rng(shape, dtype) for shape in shapes)
+    if jtu.device_under_test() == "tpu":
+      tol = 5e-2
+    else:
+      tol = 3e-2
+    check_grads(jnp.logaddexp2, args, 1, ["fwd", "rev"], tol, tol)
 
 class NumpySignaturesTest(jtu.JaxTestCase):
 
