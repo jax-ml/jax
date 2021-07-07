@@ -14,7 +14,41 @@
 
 import hashlib
 import jax
+from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
+from jax.lib import xla_client
+from typing import Optional
 
+_cache = None
+
+def initialize_cache(path):
+    """Creates a global cache object. Should only be called once per process."""
+    global _cache
+    assert _cache == None, f"The cache path has already been initialized to {_cache}"
+    _cache = FileSystemCache(path)
+
+def get_executable(xla_computation, compile_options) -> Optional[xla_client.Executable]:
+    """Returns the cached executable if present, or None otherwise."""
+    assert _cache is not None, "initialize_cache must be called before calling this function."
+    cache_key = get_cache_key(xla_computation, compile_options)
+    xla_executable_serialized = _cache.get(cache_key)
+    if not xla_executable_serialized:
+        return None
+    backend = jax.lib.xla_bridge.get_backend()
+    # TODO(skye): xla_computation.get_hlo_module() is the unoptimized HLO but it should
+     #be optimized
+    xla_executable_deserialized = backend.deserialize_executable(
+                                  xla_executable_serialized,
+                                  xla_computation.get_hlo_module(),
+                                  compile_options)
+    return xla_executable_deserialized
+
+def put_executable(xla_computation, compile_options, executable: xla_client.Executable):
+    """Adds 'executable' to the cache, possibly evicting older entries."""
+    assert _cache is not None, "initialize_cache must be called before calling this function."
+    cache_key = get_cache_key(xla_computation, compile_options)
+    backend = jax.lib.xla_bridge.get_backend()
+    serialized_executable = backend.serialize_executable(executable)
+    _cache.put(cache_key, serialized_executable)
 
 def get_cache_key(xla_computation, compile_options) -> str:
     """Creates a hashed string to use as a key to the compilation cache.

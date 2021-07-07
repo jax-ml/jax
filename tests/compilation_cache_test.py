@@ -19,7 +19,9 @@ import jax
 import jax.test_util as jtu
 import numpy as np
 import random
+import tempfile
 import unittest
+from unittest import SkipTest
 
 class CompilationCacheTest(jtu.JaxTestCase):
 
@@ -116,6 +118,56 @@ class CompilationCacheTest(jtu.JaxTestCase):
                        num_replicas=1, num_partitions=1)
     self.assertNotEqual(cc.get_cache_key(computation1, compile_options),
                         cc.get_cache_key(computation2, compile_options))
+
+  @unittest.skipIf(jax.lib.version < (0, 1, 69), "fails with earlier jaxlibs")
+  def test_get_no_executable(self):
+      if jtu.device_under_test() != "tpu":
+          raise SkipTest("serialize executable only works on TPU")
+      cc._cache = None
+      with tempfile.TemporaryDirectory() as tmpdir:
+          cc.initialize_cache(tmpdir)
+          computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+          compile_options = jax.lib.xla_bridge.get_compile_options(
+                               num_replicas=1, num_partitions=1)
+          self.assertEqual(cc.get_executable(computation, compile_options), None)
+
+  @unittest.skipIf(jax.lib.version < (0, 1, 69), "fails with earlier jaxlibs")
+  def test_diff_executables(self):
+      if jtu.device_under_test() != "tpu":
+          raise SkipTest("serialize executable only works on TPU")
+      cc._cache = None
+      with tempfile.TemporaryDirectory() as tmpdir:
+          cc.initialize_cache(tmpdir)
+          computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
+          computation2 = jax.xla_computation(lambda x, y: x * y)(2, 2)
+          compile_options = jax.lib.xla_bridge.get_compile_options(
+                                num_replicas=1, num_partitions=1)
+          backend = jax.lib.xla_bridge.get_backend()
+          executable1 = backend.compile(computation1, compile_options)
+          executable2 = backend.compile(computation2, compile_options)
+          cc.put_executable(computation1, compile_options, executable1)
+          cc.put_executable(computation2, compile_options, executable2)
+          self.assertNotEqual(cc.get_executable(computation1, compile_options),
+                              cc.get_executable(computation2, compile_options))
+
+  @unittest.skipIf(jax.lib.version < (0, 1, 69), "fails with earlier jaxlibs")
+  def test_put_executable(self):
+      if jtu.device_under_test() != "tpu":
+          raise SkipTest("serialize executable only works on TPU")
+      cc._cache = None
+      with tempfile.TemporaryDirectory() as tmpdir:
+          cc.initialize_cache(tmpdir)
+          computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+          compile_options = jax.lib.xla_bridge.get_compile_options(
+                               num_replicas=1, num_partitions=1)
+          backend = jax.lib.xla_bridge.get_backend()
+          executable = backend.compile(computation, compile_options)
+          cc.put_executable(computation, compile_options, executable)
+          deserialized_executable = cc.get_executable(computation, compile_options)
+          inputs_to_executable = (np.array(1, dtype=np.int32), np.array(2, dtype=np.int32))
+          expected = jax.lib.xla_client.execute_with_python_values(executable, inputs_to_executable, backend)
+          actual = jax.lib.xla_client.execute_with_python_values(deserialized_executable, inputs_to_executable, backend)
+          self.assertEqual(expected, actual)
 
   def create_new_debug_options(self, debug_options_obj):
     debug_options_obj.xla_cpu_enable_fast_math = False
