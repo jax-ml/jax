@@ -4,7 +4,7 @@ flatbuffers==1.12
 # TODO(jakevdp): unpin maximum version when minimum jaxlib supports newer numpy
 numpy>=1.17,<1.21
 mypy==0.902
-pillow~=8.2.0
+pillow>=8.3.1
 pytest-benchmark
 pytest-xdist
 wheel
