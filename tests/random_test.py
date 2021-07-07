@@ -379,6 +379,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     ]
     for sample_shape in [(10000,), (5000, 2)]
     for dtype in jtu.dtypes.floating))
+  @jtu.disable_implicit_rank_promotion
   def testCategorical(self, p, axis, dtype, sample_shape):
     key = random.PRNGKey(0)
     p = np.array(p, dtype=dtype)
