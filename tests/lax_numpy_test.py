@@ -4098,6 +4098,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in [0, 5]
       for n in [2, 4]
       for increasing in [False, True]))
+  @jax.numpy_rank_promotion('raise')
   def testVander(self, shape, dtype, n, increasing):
     rng = jtu.rand_default(self.rng())
     def np_fun(arg):

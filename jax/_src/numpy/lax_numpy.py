@@ -4522,7 +4522,7 @@ def vander(x, N=None, increasing=False):
   if not increasing:
     iota = lax.sub(lax._const(iota, N - 1), iota)
 
-  return power(x[..., None], iota)
+  return power(x[..., None], expand_dims(iota, tuple(range(x.ndim))))
 
 
 ### Misc
