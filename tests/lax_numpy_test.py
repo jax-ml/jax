@@ -3787,6 +3787,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in [(8,), (3, 8)]  # last dim = 8 to ensure shape compatibility
       for a_dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)
       for dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)))
+  @jax.numpy_rank_promotion('raise')
   def testView(self, shape, a_dtype, dtype):
     if jtu.device_under_test() == 'tpu':
       if jnp.dtype(a_dtype).itemsize in [1, 2] or jnp.dtype(dtype).itemsize in [1, 2]:

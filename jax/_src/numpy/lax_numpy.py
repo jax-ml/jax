@@ -5828,11 +5828,11 @@ def _view(arr, dtype=None, type=None):
   dt_out = byte_dtypes[nbits_out]
   arr_bytes = lax.bitcast_convert_type(arr, dt_in)
   if nbits_in < nbits_out:
-    shifts = arange(0, nbits_out, nbits_in, dtype=dt_out)
     arr_bytes = arr_bytes.reshape(arr.shape[:-1] + (-1, nbits_out // nbits_in)).astype(dt_out)
+    shifts = expand_dims(arange(0, nbits_out, nbits_in, dtype=dt_out), tuple(range(arr_bytes.ndim - 1)))
     arr_bytes = (arr_bytes << shifts).sum(-1).astype(dt_out)
   else:
-    shifts = arange(0, nbits_in, nbits_out, dtype=dt_in)
+    shifts = lax.expand_dims(arange(0, nbits_in, nbits_out, dtype=dt_in), tuple(range(arr_bytes.ndim)))
     arr_bytes = ((arr_bytes[..., newaxis] >> shifts) & iinfo(dt_out).max).astype(dt_out)
     arr_bytes = arr_bytes.reshape(arr_bytes.shape[:-2] + (-1,))
   if dtype == bool_:
