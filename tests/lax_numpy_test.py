@@ -3298,7 +3298,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(arg_shape, dtype)]
     self._CompileAndCheck(jnp_fun, args_maker)
 
-    if isinstance(dim, tuple) and numpy_version < (1, 18, 0):
+    if isinstance(dim, (tuple, list)) and numpy_version < (1, 18, 0):
       raise SkipTest("support for multiple axes added in NumPy 1.18.0")
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
