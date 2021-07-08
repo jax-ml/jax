@@ -348,8 +348,8 @@ for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
 def _shard_device_array(x, devices, indices):
-  start_indices, limit_indices, removed_dims = map(tuple, unzip3(
-      _as_slice_indices(x, idx) for idx in indices))
+  start_indices, limit_indices, removed_dims = unzip3(
+      _as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   return device_put(shards, devices)
 shard_arg_handlers[xla._DeviceArray] = _shard_device_array
