@@ -3986,6 +3986,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in [(1, 2, 3, 4)]
       for axis in [None, 0, 1, -2, -1]
       for count in [None, 20]))
+  @jax.numpy_rank_promotion('raise')
   def testUnpackbits(self, shape, dtype, axis, bitorder, count):
     rng = jtu.rand_int(self.rng(), 0, 256)
     args_maker = lambda: [rng(shape, dtype)]

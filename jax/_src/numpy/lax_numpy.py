@@ -4736,7 +4736,7 @@ def unpackbits(a, axis: Optional[int] = None, count=None, bitorder='big'):
     a = a.ravel()
     axis = 0
   a = swapaxes(a, axis, -1)
-  unpacked = ((a[..., None] & bits) > 0).astype('uint8')
+  unpacked = ((a[..., None] & expand_dims(bits, tuple(range(a.ndim)))) > 0).astype('uint8')
   unpacked = unpacked.reshape(unpacked.shape[:-2] + (-1,))[..., :count]
   return swapaxes(unpacked, axis, -1)
 
