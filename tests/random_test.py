@@ -46,6 +46,15 @@ uint_dtypes = jtu.dtypes.all_unsigned
 
 class LaxRandomTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+    super().setUp()
+
+  def tearDown(self):
+    super().tearDown()
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+
   def _CheckCollisions(self, samples, nbits):
     fail_prob = 0.01  # conservative bound on statistical fail prob by Chebyshev
     nitems = len(samples)
@@ -379,7 +388,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     ]
     for sample_shape in [(10000,), (5000, 2)]
     for dtype in jtu.dtypes.floating))
-  @jtu.disable_implicit_rank_promotion
   def testCategorical(self, p, axis, dtype, sample_shape):
     key = random.PRNGKey(0)
     p = np.array(p, dtype=dtype)
@@ -409,7 +417,8 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testBernoulliShape(self):
     key = random.PRNGKey(0)
-    x = random.bernoulli(key, np.array([0.2, 0.3]), shape=(3, 2))
+    with jax.numpy_rank_promotion('allow'):
+      x = random.bernoulli(key, np.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -628,7 +637,8 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testParetoShape(self):
     key = random.PRNGKey(0)
-    x = random.pareto(key, np.array([0.2, 0.3]), shape=(3, 2))
+    with jax.numpy_rank_promotion('allow'):
+      x = random.pareto(key, np.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -666,8 +676,9 @@ class LaxRandomTest(jtu.JaxTestCase):
                    shape=(10000,), method=method)
     crand = api.jit(rand)
 
-    uncompiled_samples = np.asarray(rand(key), np.float64)
-    compiled_samples = np.asarray(crand(key), np.float64)
+    with jax.numpy_rank_promotion('allow'):
+      uncompiled_samples = np.asarray(rand(key), np.float64)
+      compiled_samples = np.asarray(crand(key), np.float64)
 
     inv_scale = scipy.linalg.lapack.dtrtri(np.linalg.cholesky(cov), lower=True)[0]
     for samples in [uncompiled_samples, compiled_samples]:
@@ -701,7 +712,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     cov = np.einsum('...ij,...kj->...ik', cov_factor, cov_factor)
     cov += 1e-3 * np.eye(dim)
     shape = shape + eff_batch_size
-    samples = random.multivariate_normal(key, mean, cov, shape=shape)
+    with jax.numpy_rank_promotion('allow'):
+      samples = random.multivariate_normal(key, mean, cov, shape=shape)
     assert samples.shape == shape + (dim,)
 
   def testMultivariateNormalCovariance(self):
@@ -716,7 +728,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     out_np = np.random.RandomState(0).multivariate_normal(mean, cov, N)
 
     key = random.PRNGKey(0)
-    out_jnp = random.multivariate_normal(key, mean=mean, cov=cov, shape=(N,))
+    with jax.numpy_rank_promotion('allow'):
+      out_jnp = random.multivariate_normal(key, mean=mean, cov=cov, shape=(N,))
 
     var_np = out_np.var(axis=0)
     var_jnp = out_jnp.var(axis=0)
@@ -819,10 +832,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     # test for broadcast issue in https://github.com/google/jax/issues/4033
     key = random.PRNGKey(0)
     shape = (10, 2)
-    x = random.uniform(key, shape, minval=jnp.zeros(2), maxval=jnp.ones(2))
-    assert x.shape == shape
-    x = random.randint(key, shape, jnp.array([0, 1]), jnp.array([1, 2]))
-    assert x.shape == shape
+    with jax.numpy_rank_promotion('allow'):
+      x1 = random.uniform(key, shape, minval=jnp.zeros(2), maxval=jnp.ones(2))
+      x2 = random.randint(key, shape, jnp.array([0, 1]), jnp.array([1, 2]))
+    assert x1.shape == shape
+    assert x2.shape == shape
 
   def testMaxwellSample(self):
     num_samples = 10**5
