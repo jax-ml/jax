@@ -569,8 +569,6 @@ class LaxVmapTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   @jtu.ignore_warning(message="Using reduced precision for gradient.*")
   def testSelectAndGatherAdd(self, dtype, padding):
-    if jtu.device_under_test() == "tpu" and dtype == dtypes.bfloat16:
-      raise SkipTest("bfloat16 _select_and_gather_add doesn't work on tpu")
     rng = jtu.rand_small(self.rng())
     all_configs = itertools.chain(
         itertools.product(
@@ -626,7 +624,6 @@ class LaxVmapTest(jtu.JaxTestCase):
       for shape in [(5,), (3, 4, 5), (2, 3, 4, 5)]
       for bdims in all_bdims(shape)
       for fft_ndims in range(0, min(3, len(shape)) + 1)))
-  @jtu.skip_on_devices("tpu")  # TODO(b/137993701): unimplemented cases.
   def testFft(self, fft_ndims, shape, bdims):
     rng = jtu.rand_default(self.rng())
     ndims = len(shape)

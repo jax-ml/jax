@@ -238,12 +238,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.complex64, np.complex128],
             devices=("cpu", "gpu"),
             modes="compiled"),
-        missing_tf_kernel(
-            # Interesting: on TPU, complex64 works in eager
-            # mode, but fails otherwise.
-            dtypes=[np.complex64, np.complex128],
-            devices="tpu",
-            modes=("graph", "compiled")),
         # TODO: very high tolerance
         custom_numeric(
             dtypes=[np.float32, np.complex64],
@@ -518,14 +512,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       check_right_eigenvectors(operand, all_w_tf, all_vr_tf)
 
     return [
-        # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
-        # TODO(b/181414529): enable after XLA/GPU bug is fixed.
-        Jax2TfLimitation(
-            "XLA lowering bug",
-            dtypes=(np.complex64, np.complex128),
-            devices=("gpu",),
-            modes="compiled",
-            skip_tf_run=True),
         missing_tf_kernel(
             dtypes=dtypes.bfloat16,
             devices="tpu",
