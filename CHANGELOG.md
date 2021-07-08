@@ -12,6 +12,13 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...main).
 * New features:
   * New SciPy function {py:func}`jax.scipy.special.sph_harm`.
+  * Reverse-mode autodiff functions ({func}`jax.grad`,
+    {func}`jax.value_and_grad`, {func}`jax.vjp`, and
+    {func}`jax.linear_transpose`) support a parameter that indicates which named
+    axes should be summed over in the backward pass if they were broadcasted
+    over in the forward pass. This enables use of these APIs in a
+    non-per-example way inside maps (initially only
+    {func}`jax.experimental.maps.xmap`) ({jax-issue}`#6950`).
 
 ## jaxlib 0.1.69 (unreleased)
 

@@ -3324,11 +3324,42 @@ class JaxprTest(jtu.JaxTestCase):
     def f(x):
       return x - lax.psum(x, 'i')
 
-    x = types.SimpleNamespace(
+    x = api.ShapeDtypeStruct(
         shape=(2, 3), dtype=jnp.dtype(jnp.float32), named_shape={'i': 10})
     jaxpr = api.make_jaxpr(f, axis_env=[('i', 10)])(x)
     named_shapes = [v.aval.named_shape for v in jaxpr.jaxpr.eqns[1].invars]
     self.assertEqual(named_shapes, [{'i': 10}, {}])
+
+  @parameterized.parameters(True, False)
+  def test_vjp_reduce_axes_jaxpr(self, gy_batched):
+    def f(w, x):
+      return jnp.sin(jnp.dot(x, w))
+
+    w = api.ShapeDtypeStruct(
+        shape=(3, 4), dtype=jnp.float32, named_shape={})
+    x = api.ShapeDtypeStruct(
+        shape=(3,), dtype=jnp.float32, named_shape={'batch': 2})
+    gy = api.ShapeDtypeStruct(
+        shape=(4,), dtype=jnp.float32,
+        named_shape={'batch': 2} if gy_batched else {})
+
+    # per-example
+    jaxpr, shapes = api.make_jaxpr(
+        lambda w, x, gy: api.vjp(f, w, x)[1](gy), axis_env=[('batch', 2)],
+        return_shape=True)(w, x, gy)
+    expected = (api.ShapeDtypeStruct(
+        shape=(3, 4), dtype=jnp.float32, named_shape={'batch': 2}), x)
+    self.assertEqual(shapes, expected)
+    self.assertNotIn('psum', str(jaxpr))
+
+    # reduced
+    jaxpr, shapes = api.make_jaxpr(
+        lambda w, x, gy: api.vjp(f, w, x, reduce_axes=('batch',))[1](gy),
+        axis_env=[('batch', 2)],
+        return_shape=True)(w, x, gy)
+    expected = (w, x)
+    self.assertEqual(shapes, expected)
+    self.assertIn('psum', str(jaxpr))
 
 
 class CustomJVPTest(jtu.JaxTestCase):

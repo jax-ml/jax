@@ -578,9 +578,9 @@ def xla_computation(fun: Callable,
     return_shape: Optional boolean, defaults to ``False``. If ``True``, the
       wrapped function returns a pair where the first element is the XLA
       computation and the second element is a pytree with the same structure as
-      the output of ``fun`` and where the leaves are objects with ``shape`` and
-      ``dtype`` attributes representing the corresponding types of the output
-      leaves.
+      the output of ``fun`` and where the leaves are objects with ``shape``,
+      ``dtype``, and ``named_shape`` attributes representing the corresponding
+      types of the output leaves.
     donate_argnums: Specify which arguments are "donated" to the computation.
       It is safe to donate arguments if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
@@ -597,7 +597,7 @@ def xla_computation(fun: Callable,
     ``as_hlo_dot_graph``. If the argument ``return_shape`` is ``True``, then the
     wrapped function returns a pair where the first element is the XLA
     Computation and the second element is a pytree representing the structure,
-    shapes, and dtypes of the output of ``fun``.
+    shapes, dtypes, and named shapes of the output of ``fun``.
 
     Concrete example arguments are not always necessary. For those arguments not
     indicated by ``static_argnums``, any object with ``shape`` and ``dtype``
@@ -750,7 +750,8 @@ def xla_computation(fun: Callable,
       shapes = [str(c.GetShape(a)) for a, d in zip(xla_args, donated_invars) if d]
       warn(f"Some donated buffers were not usable: {', '.join(shapes)}")
     built = c.build(out_tuple)
-    out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
+    out_shapes_flat = [
+        ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)
     for out_aval in out_avals:
       if not isinstance(out_aval, xla.ShapedArray):
@@ -767,7 +768,8 @@ def xla_computation(fun: Callable,
 
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
          has_aux: bool = False, holomorphic: bool = False,
-         allow_int: bool = False) -> Callable:
+         allow_int: bool = False,
+         reduce_axes: Sequence[AxisName] = ()) -> Callable:
   """Creates a function which evaluates the gradient of ``fun``.
 
   Args:
@@ -787,6 +789,13 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
+    reduce_axes: Optional, tuple of axis names. If an axis is listed here, and
+      ``fun`` implicitly broadcasts a value over that axis, the backward pass
+      will perform a ``psum`` of the corresponding gradient. Otherwise, the
+      gradient will be per-example over named axes. For example, if ``'batch'``
+      is a named batch axis, ``grad(f, reduce_axes=('batch',))`` will create a
+      function that computes the total gradient while ``grad(f)`` will create
+      one that computes the per-example gradient.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the gradient
@@ -806,7 +815,8 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   """
   value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
                                     holomorphic=holomorphic,
-                                    allow_int=allow_int)
+                                    allow_int=allow_int,
+                                    reduce_axes=reduce_axes)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -829,7 +839,8 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
-                   allow_int: bool = False) -> Callable[..., Tuple[Any, Any]]:
+                   allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
+) -> Callable[..., Tuple[Any, Any]]:
   """Create a function which evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
@@ -847,6 +858,14 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
+    reduce_axes: Optional, tuple of axis names. If an axis is listed here, and
+      ``fun`` implicitly broadcasts a value over that axis, the backward pass
+      will perform a ``psum`` of the corresponding gradient. Otherwise, the
+      gradient will be per-example over named axes. For example, if ``'batch'``
+      is a named batch axis, ``value_and_grad(f, reduce_axes=('batch',))`` will
+      create a function that computes the total gradient while
+      ``value_and_grad(f)`` will create one that computes the per-example
+      gradient.
 
   Returns:
     A function with the same arguments as ``fun`` that evaluates both ``fun``
@@ -879,9 +898,10 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     f_partial, dyn_args = argnums_partial(f, argnums, args)
     tree_map(partial(_check_input_dtype_grad, holomorphic, allow_int), dyn_args)
     if not has_aux:
-      ans, vjp_py = _vjp(f_partial, *dyn_args)
+      ans, vjp_py = _vjp(f_partial, *dyn_args, reduce_axes=reduce_axes)
     else:
-      ans, vjp_py, aux = _vjp(f_partial, *dyn_args, has_aux=True)
+      ans, vjp_py, aux = _vjp(
+          f_partial, *dyn_args, has_aux=True, reduce_axes=reduce_axes)
     _check_scalar(ans)
     dtype = dtypes.result_type(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
@@ -1891,12 +1911,14 @@ if sys.version_info >= (3, 8):
   @overload  # type: ignore
   def vjp(fun: Callable[..., T],
           *primals: Any,
-          has_aux: Literal[False] = False) -> Tuple[T, Callable]:
+          has_aux: Literal[False] = False,
+          reduce_axes: Sequence[AxisName] = ()) -> Tuple[T, Callable]:
     ...
 
   @overload
   def vjp(fun: Callable[..., Tuple[T, U]], *primals: Any,
-          has_aux: Literal[True]) -> Tuple[T, Callable, U]:
+          has_aux: Literal[True],
+          reduce_axes: Sequence[AxisName] = ()) -> Tuple[T, Callable, U]:
     ...
 else:
 
@@ -1907,12 +1929,14 @@ else:
   @overload
   def vjp(
       fun: Callable[..., Any], *primals: Any,
-      has_aux: bool) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
+      has_aux: bool,
+      reduce_axes: Sequence[AxisName] = ()
+  ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
     ...
 
 
 def vjp(  # type: ignore
-    fun: Callable, *primals, has_aux: bool = False,
+    fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
 ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
@@ -1929,6 +1953,13 @@ def vjp(  # type: ignore
     has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
+    reduce_axes: Optional, tuple of axis names. If an axis is listed here, and
+      ``fun`` implicitly broadcasts a value over that axis, the backward pass
+      will perform a ``psum`` of the corresponding gradient. Otherwise, the
+      VJP will be per-example over named axes. For example, if ``'batch'``
+      is a named batch axis, ``vjp(f, *args, reduce_axes=('batch',))`` will
+      create a VJP function that sums over the batch while ``vjp(f, *args)``
+      will create a per-example VJP.
 
   Returns:
     If ``has_aux`` is ``False``, returns a ``(primals_out, vjpfun)`` pair, where
@@ -1953,19 +1984,22 @@ def vjp(  # type: ignore
   -0.2524413
   """
   _check_callable(fun)
-  return _vjp(lu.wrap_init(fun), *primals, has_aux=has_aux)
+  return _vjp(
+      lu.wrap_init(fun), *primals, has_aux=has_aux, reduce_axes=reduce_axes)
 
-def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
+def _vjp(fun: lu.WrappedFun, *primals, has_aux=False, reduce_axes=()):
   """Variant of vjp() that takes an lu.WrappedFun."""
   primals_flat, in_tree = tree_flatten(primals)
   for arg in primals_flat: _check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primal, out_vjp = ad.vjp(flat_fun, primals_flat)
+    out_primal, out_vjp = ad.vjp(
+        flat_fun, primals_flat, reduce_axes=reduce_axes)
     out_tree = out_tree()
   else:
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
+    out_primal, out_vjp, aux = ad.vjp(
+        flat_fun, primals_flat, has_aux=True, reduce_axes=reduce_axes)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
   ct_dtypes = [core.primal_dtype_to_tangent_dtype(_dtype(x)) for x in out_primal]
@@ -1981,7 +2015,7 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
-def linear_transpose(fun: Callable, *primals) -> Callable:
+def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   """Transpose a function that is promised to be linear.
 
   For linear functions, this transformation is equivalent to ``vjp``, but
@@ -2002,6 +2036,14 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
       is not required: only the ``shape`` and ``dtype`` attributes are accessed.
       See below for an example. (Note that the duck-typed objects cannot be
       namedtuples because those are treated as standard Python containers.)
+    reduce_axes: Optional, tuple of axis names. If an axis is listed here, and
+      ``fun`` implicitly broadcasts a value over that axis, the backward pass
+      will perform a ``psum`` of the corresponding cotangent. Otherwise, the
+      transposed function will be per-example over named axes. For example, if
+      ``'batch'`` is a named batch axis, ``linear_transpose(f, *args,
+      reduce_axes=('batch',))`` will create a transpose function that sums over
+      the batch while ``linear_transpose(f, args)`` will create a per-example
+      transpose.
 
   Returns:
     A callable that calculates the transpose of ``fun``. Valid input into this
@@ -2046,7 +2088,7 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
     dummies = [ad.UndefinedPrimal(a) for a in in_avals]
     in_cotangents = map(
         ad.instantiate_zeros,
-        ad.backward_pass(jaxpr, consts, dummies, out_cotangents))
+        ad.backward_pass(jaxpr, reduce_axes, consts, dummies, out_cotangents))
     return tree_unflatten(in_tree, in_cotangents)
 
   return transposed_fun
@@ -2071,11 +2113,11 @@ def make_jaxpr(fun: Callable,
       specifies the axis name/size environment that would be set up by
       applications of :py:func:`jax.pmap`.
     return_shape: Optional boolean, defaults to ``False``. If ``True``, the
-      wrapped function returns a pair where the first element is the ``jaxpr``
-      and the second element is a pytree with the same structure as
-      the output of ``fun`` and where the leaves are objects with ``shape`` and
-      ``dtype`` attributes representing the corresponding types of the output
-      leaves.
+      wrapped function returns a pair where the first element is the XLA
+      computation and the second element is a pytree with the same structure as
+      the output of ``fun`` and where the leaves are objects with ``shape``,
+      ``dtype``, and ``named_shape`` attributes representing the corresponding
+      types of the output leaves.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
@@ -2083,7 +2125,7 @@ def make_jaxpr(fun: Callable,
     argument ``return_shape`` is ``True``, then the returned function instead
     returns a pair where the first element is the ``ClosedJaxpr``
     representation of ``fun`` and the second element is a pytree representing
-    the structure, shape, and dtypes of the output of ``fun``.
+    the structure, shape, dtypes, and named shapes of the output of ``fun``.
 
   A ``jaxpr`` is JAX's intermediate representation for program traces. The
   ``jaxpr`` language is based on the simply-typed first-order lambda calculus
@@ -2135,7 +2177,8 @@ def make_jaxpr(fun: Callable,
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, in_avals)
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     if return_shape:
-      out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
+      out_shapes_flat = [
+          ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
       return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)
     return closed_jaxpr
 

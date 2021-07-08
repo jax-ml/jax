@@ -22,7 +22,7 @@ import re
 import unittest
 from itertools import product, permutations
 from typing import (Tuple, List, NamedTuple, Dict, Generator, Sequence, Set,
-                    Any, Hashable, Iterable, Iterator, Union)
+                    Any, Hashable, Iterable, Iterator, Union, Optional)
 from unittest import SkipTest, skip, skipIf
 
 import numpy as np
@@ -1249,6 +1249,86 @@ class XMapErrorTest(jtu.JaxTestCase):
              r"collectives\), but `i` violates that rule")
     with self.assertRaisesRegex(RuntimeError, error):
       fm(x)
+
+
+class NamedAutodiffTests(jtu.JaxTestCase):
+
+  def testVjpReduceAxes(self):
+    def f(w, x):
+      return jnp.sin(jnp.dot(x, w))
+
+    def vjp_f(w, x, gy):
+      _, pullback = jax.vjp(f, w, x)
+      return pullback(gy)
+
+    def vjp_f_reduced(w, x, gy):
+      _, pullback = jax.vjp(f, w, x, reduce_axes=('batch',))
+      return pullback(gy)
+
+    w = np.arange(12, dtype=np.float32).reshape(3, 4)
+    x = np.arange(6, dtype=np.float32).reshape(2, 3)
+    gy = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    # per-example
+    error = (r"One of xmap results has an out_axes specification of {}, but is "
+             r"actually mapped along more axes defined by this xmap call: "
+             r"batch")
+    with self.assertRaisesRegex(TypeError, error):
+      xmap(vjp_f,
+           in_axes=({}, {0: 'batch'}, {0: 'batch'}),
+           out_axes=({}, {0: 'batch'}))(w, x, gy)
+    out = xmap(vjp_f,
+               in_axes=({}, {0: 'batch'}, {0: 'batch'}),
+               out_axes=({0: 'batch'}, {0: 'batch'}))(w, x, gy)
+    expected = vmap(vjp_f, in_axes=(None, 0, 0), out_axes=(0, 0))(w, x, gy)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+    # reduced
+    out = xmap(vjp_f_reduced,
+               in_axes=({}, {0: 'batch'}, {0: 'batch'}),
+               out_axes=({}, {0: 'batch'}))(w, x, gy)
+    # the reduced VJP is also the VJP when using a positional batch axis
+    expected = vjp_f(w, x, gy)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+  def testVjpReduceAxesCollective(self):
+
+    # lax.psum has the wrong transpose, so test with a corrected version for now
+    @functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
+    def psum_idrev(x, axis_name: Optional[AxisNames] = None):
+      if axis_name is None:
+        return x
+      return jax.lax.psum(x, axis_name)
+
+    def psum_idrev_fwd(x, axis_name):
+      return psum_idrev(x, axis_name), None
+
+    def psum_idrev_bwd(axis_name, res, g):
+      del axis_name, res
+      return (g,)
+
+    psum_idrev.defvjp(psum_idrev_fwd, psum_idrev_bwd)
+
+    def f_named(w, x):
+      return psum_idrev(jnp.sin(jnp.dot(x, w)).sum(), 'batch')
+
+    def f_positional(w, x):
+      return jnp.sin(jnp.dot(x, w)).sum()
+
+    w = np.arange(12, dtype=np.float32).reshape(3, 4)
+    x = np.arange(6, dtype=np.float32).reshape(2, 3)
+
+    # forward
+    out = xmap(f_named, in_axes=({}, {0: 'batch'}), out_axes={})(w, x)
+    expected = f_positional(w, x)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+    # gradient
+    out = xmap(jax.grad(f_named, (0, 1), reduce_axes=('batch',)),
+               in_axes=({}, {0: 'batch'}),
+               out_axes=({}, {0: 'batch'}))(w, x)
+    expected = jax.grad(f_positional, (0, 1))(w, x)
+    self.assertAllClose(out, expected, check_dtypes=True)
 
 
 if __name__ == '__main__':

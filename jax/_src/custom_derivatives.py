@@ -369,11 +369,12 @@ xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
 # If a (multi)linear function is defined with a custom jvp, then
 # custom_jvp_call_jaxpr can appear in jaxprs to be transposed. Since it's
 # already been linearized, we can drop the jvp rule.
-def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk,
-                                     num_consts):
+def _custom_jvp_call_jaxpr_transpose(reduce_axes, cts, *args, fun_jaxpr,
+                                     jvp_jaxpr_thunk, num_consts):
   del jvp_jaxpr_thunk, num_consts
-  return ad.backward_pass(fun_jaxpr.jaxpr, fun_jaxpr.consts, args, cts)
-ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
+  return ad.backward_pass(
+      fun_jaxpr.jaxpr, reduce_axes, fun_jaxpr.consts, args, cts)
+ad.reducing_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
 
 ### VJPs

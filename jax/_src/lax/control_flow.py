@@ -1020,7 +1020,7 @@ def _ordered_unique(xs):
   d = collections.OrderedDict((x, None) for x in xs)
   return list(d.keys())
 
-def _transpose_cond_jaxpr(jaxpr, num_res):
+def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
   primal_avals = _map(raise_to_shaped, primal_avals)
 
@@ -1029,19 +1029,19 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
     res, cts_out = split_list(args, [num_res])
     primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
     cts_in = ad.backward_pass(
-        jaxpr.jaxpr, jaxpr.consts, primals, cts_out)
+        jaxpr.jaxpr, reduce_axes, jaxpr.consts, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
     return _map(ad.instantiate_zeros_aval, primal_avals, cts_in)
 
   return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
-def _cond_transpose(cts, *args, branches, linear):
+def _cond_transpose(reduce_axes, cts, *args, branches, linear):
   index, *ops = args
   in_avals = _map(raise_to_shaped, branches[0].in_avals)
   num_res = len(ops) - sum(linear)
 
   branches_trans = tuple(
-      _transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches)
+      _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes) for jaxpr in branches)
   lin_in_avals = [raise_to_shaped(a, weak_type=False)
                   for a, l in zip(in_avals, linear) if l]
   assert all(core.typematch(out_aval, lin_in_aval)
@@ -1131,7 +1131,7 @@ cond_p.def_impl(partial(xla.apply_primitive, cond_p))
 cond_p.def_abstract_eval(_cond_abstract_eval)
 cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp
-ad.primitive_transposes[cond_p] = _cond_transpose
+ad.reducing_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.initial_style_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
@@ -1673,8 +1673,8 @@ def _maybe_device_put(x):
   else:
     return x
 
-def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
-                    linear, unroll):
+def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
+                    num_carry, jaxpr, linear, unroll):
   # we've only implemented transposing scans with specific lin/nonlin patterns
   consts_lin, init_lin, xs_lin = split_list(linear, [num_consts, num_carry])
   num_ires = len(consts_lin) - sum(consts_lin)
@@ -1702,7 +1702,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a])
   jaxpr_trans = _transpose_scan_jaxpr(
-      num_ires, num_consts - num_ires, num_eres, jaxpr)
+      num_ires, num_consts - num_ires, num_eres, jaxpr, reduce_axes)
   linear_trans = ([False] * num_ires +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
@@ -1717,8 +1717,10 @@ def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
 
 # transpose_scan_jaxpr :: ([res1, c, a, res2] -> b)
 #                         -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
-def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
+def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr, reduce_axes):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
+  # TODO: allow input cotangent avals to be batched relative to jaxpr.in_avals
+  # if an axis isn't reduced
   res1_avals, c_avals, a_avals, res2_avals = split_list(
       jaxpr.in_avals, [num_res1, num_c, num_a])
   num_b = len(jaxpr.out_avals)
@@ -1730,7 +1732,8 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
         res1_cbar_bbar_res2, [num_res1, num_c, num_b])
     primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
                [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
-    cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.consts, primals, b_bar)
+    cbar_abar = ad.backward_pass(jaxpr.jaxpr, reduce_axes, jaxpr.consts,
+                                 primals, b_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
     a_bar = _map(ad.instantiate_zeros_aval, a_avals, a_bar)
     c_bar = _map(ad.instantiate_zeros_aval, c_avals,
@@ -1879,7 +1882,7 @@ scan_p.def_custom_bind(scan_bind)
 scan_p.def_impl(partial(xla.apply_primitive, scan_p))
 scan_p.def_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
-ad.primitive_transposes[scan_p] = _scan_transpose
+ad.reducing_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.initial_style_translations[scan_p] = xla.lower_fun_initial_style(_scan_impl)
 batching.initial_style_batchers[scan_p] = _scan_batching_rule
