@@ -3289,7 +3289,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for arg_shape in [(), (3,), (3, 4)]
       for dtype in default_dtypes
       for dim in (list(range(-len(arg_shape)+1, len(arg_shape)))
-                  + [np.array(0), np.array(-1), (0,), (np.array(0),),
+                  + [np.array(0), np.array(-1), (0,), [np.array(0)],
                      (len(arg_shape), len(arg_shape) + 1)])))
   def testExpandDimsStaticDim(self, arg_shape, dtype, dim):
     rng = jtu.rand_default(self.rng())
