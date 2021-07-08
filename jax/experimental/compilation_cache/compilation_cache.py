@@ -28,7 +28,7 @@ def initialize_cache(path):
 
 def get_executable(xla_computation, compile_options) -> Optional[xla_client.Executable]:
     """Returns the cached executable if present, or None otherwise."""
-    assert _cache is not None, "initialize_cache must be called before calling this function."
+    assert _cache is not None, "initialize_cache must be called before you can call get_executable()"
     cache_key = get_cache_key(xla_computation, compile_options)
     xla_executable_serialized = _cache.get(cache_key)
     if not xla_executable_serialized:
@@ -44,7 +44,7 @@ def get_executable(xla_computation, compile_options) -> Optional[xla_client.Exec
 
 def put_executable(xla_computation, compile_options, executable: xla_client.Executable):
     """Adds 'executable' to the cache, possibly evicting older entries."""
-    assert _cache is not None, "initialize_cache must be called before calling this function."
+    assert _cache is not None, "initialize_cache must be called before you can call put_executable()"
     cache_key = get_cache_key(xla_computation, compile_options)
     backend = jax.lib.xla_bridge.get_backend()
     serialized_executable = backend.serialize_executable(executable)
@@ -123,3 +123,6 @@ def _hash_bool(hash_obj, bool_var):
 
 def _hash_string(hash_obj, str_var):
     hash_obj.update(str_var.encode('utf-8').strip())
+
+def is_initialized():
+    return _cache is not None
