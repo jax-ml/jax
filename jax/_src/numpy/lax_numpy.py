@@ -1469,11 +1469,9 @@ def squeeze(a, axis: Optional[Union[int, Tuple[int, ...]]] = None):
 
 
 @_wraps(np.expand_dims)
-def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
+def expand_dims(a, axis: Union[int, Sequence[int]]):
   _check_arraylike("expand_dims", a)
-  if not isinstance(axis, tuple):
-    axis = (axis,)
-  return lax.expand_dims(a, axis)
+  return lax.expand_dims(a, _ensure_index_tuple(axis))
 
 
 @_wraps(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
