@@ -766,12 +766,19 @@ def signbit(x):
 def trapz(y, x=None, dx=1.0, axis: int = -1):
   _check_arraylike('trapz', y)
   y = moveaxis(y, axis, -1)
+  ybar = y[..., 1:] + y[..., :-1]
   if x is not None:
     if ndim(x) == 1:
       dx = diff(x)
     else:
       dx = moveaxis(diff(x, axis=axis), axis, -1)
-  return 0.5 * (dx * (y[..., 1:] + y[..., :-1])).sum(-1)
+  if np.ndim(dx) > 0:
+    # Avoid implicit rank promotion:
+    if ybar.ndim < dx.ndim:
+      ybar = expand_dims(ybar, tuple(range(dx.ndim - ybar.ndim)))
+    elif dx.ndim < ybar.ndim:
+      dx = expand_dims(dx, tuple(range(ybar.ndim - dx.ndim)))
+  return 0.5 * (dx * ybar).sum(-1)
 
 
 @_wraps(np.trunc)
