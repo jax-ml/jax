@@ -31,7 +31,7 @@ import numpy as np
 _EXCLUDED_TYPES = [np.ndarray]
 
 _SCALAR_NUMPY_TYPES = [
-    x for x in jax.abstract_arrays.array_types if x not in _EXCLUDED_TYPES
+    x for x in jax._src.abstract_arrays.array_types if x not in _EXCLUDED_TYPES
 ]
 
 

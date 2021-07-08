@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import contextlib
+import dataclasses
 import logging
+import os
 
 from typing import Any, Callable, List, Optional, Sequence
 
-
+from absl.testing import absltest
 import jax
 from jax import dtypes
 from jax import numpy as jnp
@@ -30,26 +32,16 @@ from jax.interpreters import masking
 from jax._src import util
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
+from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
 DType = Any
 
-def _make_tf_args(args):
-  def _convert_to_tensor(v):
-    if hasattr(v, "dtype"):
-      return tf.convert_to_tensor(v)
-    return v
-
-  return tf.nest.map_structure(_convert_to_tensor, args)
-
-
 def _make_tf_input_signature(*tf_args) -> List[tf.TensorSpec]:
   # tf_args can be PyTrees
-  def _make_one_arg_signature(tf_arg):
-    if np.isscalar(tf_arg):
-      tf_arg = np.array(tf_arg)
-    return tf.TensorSpec(np.shape(tf_arg), tf_arg.dtype)
+  def _make_one_array_signature(tf_arg):
+    return tf.TensorSpec(np.shape(tf_arg), jax2tf.dtype_of_val(tf_arg))
 
-  return tf.nest.map_structure(_make_one_arg_signature, list(tf_args))
+  return tf.nest.map_structure(_make_one_array_signature, list(tf_args))
 
 def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   if mode == "eager":
@@ -71,6 +63,38 @@ def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   else:
     assert False, (
         f"Expected 'eager', 'graph', or 'compiled' for mode: got '{mode}'")
+
+
+## Helper functions for matching OpMetadata in TF graphs
+@dataclasses.dataclass(order=True, frozen=True)
+class OpMetadataGraph:
+  tf_type: str  # The standard Tf.Operation.type
+  op_type: str  # The rest are OpMetadata fields from _Xla... attributes
+  op_name: str
+  source_file: str
+  source_line: str
+
+
+def SaveAndLoadModel(model: tf.Module,
+                     save_gradients=True) -> tf.Module:
+  # Roundtrip through saved model on disk.
+  model_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
+  tf.saved_model.save(
+      model, model_dir,
+      options=tf.saved_model.SaveOptions(experimental_custom_gradients=save_gradients))
+  restored_model = tf.saved_model.load(model_dir)
+  return restored_model
+
+def SaveAndLoadFunction(f_tf: Callable,
+                        input_signature: Sequence[tf.TensorSpec],
+                        save_gradients=True) -> Callable:
+  # Roundtrip through saved model on disk
+  model = tf.Module()
+  model.f = tf.function(f_tf,
+                        autograph=False,
+                        input_signature=input_signature)
+  restored = SaveAndLoadModel(model, save_gradients=save_gradients)
+  return restored.f
 
 
 class JaxToTfTestCase(jtu.JaxTestCase):
@@ -133,7 +157,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     result_tf = None
 
     func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
-    tf_args = _make_tf_args(args)
 
     unexpected_successes: List[str] = []
     # Run the "compiled" mode first, it is most important
@@ -149,7 +172,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         continue
 
       try:
-        result_tf = _run_tf_function(func_tf, *tf_args, mode=mode)
+        result_tf = _run_tf_function(func_tf, *args, mode=mode)
         tf_exception = None
       except Exception as e:
         tf_exception = e
@@ -218,12 +241,18 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         logging.info(f"[{self._testMethodName}] "
                      f"JAX NON_OPT HLO\n{jax_hlo}")
 
+        tf_args_signature = _make_tf_input_signature(*args)
+        # If we give the signature, we cannot pass scalars
+        tf_args_no_scalars = tuple(
+            map(lambda a, sig: tf.convert_to_tensor(a, dtype=sig.dtype),
+                args, tf_args_signature))
+
         tf_func_compiled = tf.function(
             func_tf,
             autograph=False,
             jit_compile=True,
-            input_signature=_make_tf_input_signature(*tf_args))
-        tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+            input_signature=tf_args_signature)
+        tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
                     stage="hlo")
         logging.info(f"[{self._testMethodName}] TF NON OPT HLO\n{tf_hlo}")
 
@@ -239,7 +268,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
           print(f"[{self._testMethodName}] Not logging TF OPT HLO because of "
                 f"crash in tf.experimental_get_compiler_ir (b/189265364)")
         else:
-          tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args)(
+          tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
                       stage="optimized_hlo")
           logging.info(f"[{self._testMethodName}] TF OPT HLO\n{tf_opt_hlo}")
 
@@ -287,22 +316,26 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       return self.ConvertAndCompare(grad_func, t_arg)
     assert False, transform
 
+
   def CheckShapePolymorphism(self, f_jax: Callable, *,
                              input_signature: Sequence[tf.TensorSpec],
                              polymorphic_shapes: Optional[Sequence[Any]],
-                             expected_output_signature: tf.TensorSpec):
-    """Convert a function using polymorphic shapes.
+                             expected_output_signature: Optional[tf.TensorSpec] = None,
+                             enable_xla: bool = True):
+    """Converts a function using polymorphic shapes.
 
     Args:
       f_jax: a JAX function of `n` arguments
       input_signature: used as the input signature for the tf.function.
-      in_shapes: if given, it must be a sequence of `n` shape specifications and
-        must match the `input_signature`. (see jax2tf.convert).
+      polymorphic_shapes: Specifies input shapes to be treated polymorphically
+        during conversion.
+      expected_output_signature: if given, this function tests whether the
+        actual output signature is equal to this one.
+      enable_xla: Whether to enable XLA conversion for jax2tf.convert.
     """
-    f_tf = tf.function(
-        jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes),
-        autograph=False,
-        input_signature=input_signature)
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
+                             enable_xla=enable_xla)
+    f_tf = tf.function(f_tf, autograph=False, input_signature=input_signature)
     concrete_f_tf = f_tf.get_concrete_function(*input_signature)
     if expected_output_signature:
       # Strangely, output_shapes can be a single shape for a function with a
@@ -333,3 +366,59 @@ class JaxToTfTestCase(jtu.JaxTestCase):
           dtype=tf.float32)
 
     return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)
+
+  def CheckOpMetadata(self, jax_fun, x,
+                      expected: Sequence[OpMetadataGraph],
+                      include_xla_op_metadata=True):
+    """Checks that the tf.Graph obtained by converting `jax_fun` for argument
+    `x` contains all the given OpMetadata.
+
+    If `not include_xla_op_metadata` then disable the generation of the
+    OpMetadata attributes, and check that we don't find any ops with
+    metadata.
+    """
+    f_tf = tf.function(
+        jax2tf.convert(jax_fun,
+                       include_xla_op_metadata=include_xla_op_metadata),
+        autograph=False,
+        input_signature=[tf.TensorSpec(x.shape, x.dtype)])
+    # Trace the TF function to a graph
+    f_tf_concrete = f_tf.get_concrete_function(tf.convert_to_tensor(x))
+
+    found_tf_ops = []
+    def iter_nested_graph(graph: tf.Graph):
+      for n in graph._nodes_by_id.values():
+        try:
+          op_metadata = n.get_attr("_XlaOpMetadata")
+          op_metadata_proto = xla_data_pb2.OpMetadata()
+          op_metadata_proto.ParseFromString(op_metadata)
+          found_tf_ops.append(
+              OpMetadataGraph(
+                  tf_type=n.type,
+                  op_name=op_metadata_proto.op_name,
+                  op_type=op_metadata_proto.op_type,
+                  source_file=op_metadata_proto.source_file,
+                  source_line=op_metadata_proto.source_line))
+        except ValueError:
+          continue
+
+        # Look for nested graphs. There probably is a better way!
+        if n.type == "StatelessWhile":
+          iter_nested_graph(n._body_graph)
+          iter_nested_graph(n._cond_graph)
+        if n.type == "StatelessCase":
+          for idx in range(10):  # How can I tell how many cases there are?
+            branch = getattr(n, f"_branch_graph_{idx}", None)
+            if branch is None:
+              break
+            iter_nested_graph(branch)
+
+    iter_nested_graph(f_tf_concrete.graph)
+    try:
+      if include_xla_op_metadata:
+        self.assertContainsSubset(expected, found_tf_ops)
+      else:
+        self.assertEmpty(found_tf_ops)
+    except Exception:
+      print("Found nodes:\n  ", "\n   ".join([str(md) for md in found_tf_ops]))
+      raise

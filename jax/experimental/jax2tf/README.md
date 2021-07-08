@@ -1,7 +1,7 @@
 # JAX and TensorFlow interoperation (jax2tf/call_tf)
 
 This package provides experimental support for interoperation between JAX and TensorFlow.
-There are two interoperation directions: 
+There are two interoperation directions:
 
 - `jax2tf.convert`: for using JAX functions in a TensorFlow context, e.g.,
 for eager or graph execution, or for saving as a TensorFlow SavedModel; and
@@ -20,25 +20,25 @@ or TensorFlow Hub.
 This package also contains the `jax2tf.call_tf` mechanism to call TensorFlow functions
 from JAX. These functions can be called in JAX's op-by-op execution mode,
 in which case the callee is executed in eager mode, or in JAX's jit (staged) context,
-in which case the callee is compiled to XLA and embedded in JAX's staged XLA. 
+in which case the callee is compiled to XLA and embedded in JAX's staged XLA.
 
-Both interoperation directions rely on the ability of 
-TensorFlow to use the XLA compiler (`tf.function(jit_compile=True)`). For the 
+Both interoperation directions rely on the ability of
+TensorFlow to use the XLA compiler (`tf.function(jit_compile=True)`). For the
 `jax2tf.convert` direction the JIT compilation of the resulting TensorFlow code ensures
 that the performance characteristics of the code match those of the JAX source.
-For the `call_tf` direction, JIT compilation is an essential part of the implementation 
-mechanism. Only TensorFlow functions that can be JIT-compiled can be called from 
-JAX. Since the TensorFlow functions that are produced by `jax2tf.convert` can 
-be JIT-compiled by design, we can round-trip from JAX to TensorFlow 
-(e.g., a SavedModel) and back. 
+For the `call_tf` direction, JIT compilation is an essential part of the implementation
+mechanism. Only TensorFlow functions that can be JIT-compiled can be called from
+JAX. Since the TensorFlow functions that are produced by `jax2tf.convert` can
+be JIT-compiled by design, we can round-trip from JAX to TensorFlow
+(e.g., a SavedModel) and back.
 
-We describe below some general concepts and capabilities, first for 
+We describe below some general concepts and capabilities, first for
 `jax2tf.convert` and [later](#calling-tensorflow-functions-from-jax)
 for `jax2tf.call_tf`.
 
 More involved examples, including using jax2tf with
 Flax models and their use with TensorFlow Hub and Keras, are described in the
-[examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
+[examples directory](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md).
 
 For details on saving a batch-polymorphic SavedModel see [below](#shape-polymorphic-conversion).
 
@@ -94,8 +94,10 @@ is trivial:
 # You can save the model just like you would with any other TensorFlow function:
 my_model = tf.Module()
 # Save a function that can take scalar inputs.
-my_model.f = tf.function(jax2tf.convert(f_jax), input_signature=[tf.TensorSpec([], tf.float32)])
-tf.saved_model.save(my_model, '/some/directory')
+my_model.f = tf.function(jax2tf.convert(f_jax), autograph=False,
+                         input_signature=[tf.TensorSpec([], tf.float32)])
+tf.saved_model.save(my_model, '/some/directory',
+                    options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
 
 # Restoring (note: the restored model does *not* require JAX to run, just XLA).
 restored_model = tf.saved_model.load('/some/directory')
@@ -113,11 +115,39 @@ SavedModel multiple versions of a function for different input shapes, by
 my_model.f = tf.function(jax2tf.convert(f_jax), autograph=False)
 my_model.f(tf.ones([1, 28, 28]))  # a batch size of 1
 my_model.f(tf.ones([16, 28, 28]))  # a batch size of 16
-tf.saved_model.save(my_model, '/some/directory')
+tf.saved_model.save(my_model, '/some/directory',
+                    options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
+```
+
+Some special care is needed to ensure that the model parameters are not embedded
+as constants in the graph and are instead saved separately as variables.
+This is useful for two reasons:
+the parameters could be very large and exceed the limits of the
+GraphDef part of the SavedModel, or you may want to fine-tune the
+model and change the value of the parameters.
+
+```python
+def model_jax(params, inputs):
+  return params[0] + params[1] * inputs
+
+# Wrap the parameter constants as tf.Variables; this will signal to the model
+# saving code to save those constants as variables.
+params_vars = tf.nest.map_structure(tf.Variable, params)
+
+# Build the prediction function by closing over the `params_vars`. If you
+# instead were to close over `params` your SavedModel would have no variables
+# and the parameters will be included in the function graph.
+prediction_tf = lambda inputs: jax2tf.convert(model_jax)(params_vars, inputs)
+
+my_model = tf.Module()
+# Tell the model saver what are the variables.
+my_model.variables = tf.nest.flatten(params_vars)
+my_model.f = tf.function(prediction_tf, jit_compile=True)
+tf.saved_model.save(my_model)
 ```
 
 For examples of how to save a Flax model as a SavedModel see the
-[examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
+[examples directory](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md).
 
 
 ## Differentiation
@@ -137,8 +167,38 @@ custom gradients and wrap instead the converted function with
 ``tf.raw_ops.PreventGradient`` to generated an error in case a gradient
 computation is attempted.
 
-Currently, there is a bug that prevents using custom gradients with SavedModel
-(see [Caveats](#caveats) below).
+SavedModels enables saving custom derivative rules by using the `experimental_custom_gradients` option:
+
+```
+options = tf.saved_model.SaveOptions(experimental_custom_gradients=True)
+tf.saved_model.save(model, path, options=options)
+```
+
+If you use `with_gradient=True` and forget to use the `experimental_custom_gradients=True` parameter
+to `tf.saved_model.save` when you later load the saved model you will see a warning:
+
+```
+WARNING:absl:Importing a function (__inference_converted_fun_25) with ops with unsaved custom gradients. Will likely fail if a gradient is requested.
+```
+
+and if you do attempt to take a gradient of the loaded model you may get an error:
+
+```
+TypeError: An op outside of the function building code is being passed
+a "Graph" tensor. It is possible to have Graph tensors
+leak out of the function building context by including a
+tf.init_scope in your function building code.
+For example, the following function will fail:
+  @tf.function
+  def has_init_scope():
+    my_constant = tf.constant(1.)
+    with tf.init_scope():
+      added = my_constant * 2
+The graph tensor has name: args_0:0
+```
+
+(We are working with the TF team to give a more explicit error in this case.)
+
 
 ## Shape-polymorphic conversion
 
@@ -153,10 +213,10 @@ certain constraints. This is useful, e.g., to allow a single SavedModel
 to be used for multiple batch sizes.
 
 The standard TensorFlow technique for producing a shape-polymorphic graph is
-to warm the function on partially-specified (shape-polymorphic) inputs, e.g.,
+to warm the `tf.function` on partially-specified (shape-polymorphic) inputs, e.g.,
 `tf.TensorSpec([None, 28, 28], tf.float32)` for a function that processes a
 batch (of unspecified batch size) of 28x28 images.
-For jax2tf it is also necessary to specify an additional `polymorphic_shapes` parameter
+For jax2tf it is **additionally** necessary to specify an additional `polymorphic_shapes` parameter
 for the `jax2tf.convert` function:
 
 ```
@@ -166,21 +226,24 @@ f_tf = tf.function(jax2tf.convert(f_jax,
 f_tf.get_concrete_function(tf.TensorSpec([None, 28, 28], tf.float32))
 ```
 
-The `polymorphic_shapes` parameter, in the form of a list of strings corresponding
-to the list of
+The `polymorphic_shapes` parameter, in the form of a sequence of strings corresponding
+to the sequence of positional
 arguments, introduces one or more shape variables, e.g., `b`, to stand for shape
-dimensions that are unknown at JAX tracing time.
+dimensions that are assumed to be unknown at JAX tracing time, even if the actual
+parameter value (here `tf.TensorSpec(...)`) happens to have fully known shape.
+Shape variables are assumed to range
+over all strictly positive integers.
 In this particular example, we can
-also use the `polymorphic_shapes=["(b, _, _)"]`,
+also abbreviate `polymorphic_shapes=["(b, _, _)"]`,
 because the `_` placeholders take their value
 from the corresponding dimension of the `tf.TensorSpec` (which must be known).
-As a shortcut for a series of `_` at the end of a shape specification you can
-use `...`: `polymorphic_shapes=["(b, ...)"]`
+As a further shortcut for a series of `_` at the end of a shape specification you can
+use `...`: `polymorphic_shapes=["(b, ...)"]`.
 
 In the example above, the `polymorphic_shapes` specification does
 not convey more information than the partial `tf.TensorSpec`,
-except that it gives a name to the unknown dimension so that it
-can be recognized in the error messages. The need for named shape
+except that it gives a name to the unknown dimension, which improves
+error messages. The real need for named shape
 variables arises when there are
 multiple unknown dimensions and there is a relationship between them.
 For example,
@@ -197,14 +260,14 @@ f_tf.get_concrete_function(tf.TensorSpec([None, None, None], tf.float32))
 The JAX tracing mechanism performs shape checking using the same strict rules as
 when the shapes are fully known. For example, given the `"(b, d, d)"`
 specification for the argument `x` of a function, JAX will know that a conditional
-`x.shape[-2] == x.shape[-1]` is `True`, will know that `x` and `jnp.sin(x)` have the
+`x.shape[-2] == x.shape[-1]` is `True`, and will also know that `x` and `jnp.sin(x)` have the
 same shape of a batch of square matrices that can be passed to `jnp.matmul`.
 
 
 ### Correctness of shape-polymorphic tracing
 
 We want to trust that the converted program produces the same results as the
-original JAX program:
+original JAX program. More precisely:
 
 For any function `f_jax` and any input signature `abs_sig` containing partially
 known `tf.TensorSpec`, and any concrete input `x` whose shape matches `abs_sig`:
@@ -221,13 +284,14 @@ to a SavedModel and reloaded in an environment where `f_jax` and the JAX
 tracing machinery are not available anymore.
 
 Correctness is very important because it would be nasty to debug a subtle discrepancy
-of the code running in production from the expected behavior written in JAX.
+of the code loaded from a SavedModel from the expected behavior written in JAX.
 We help ensure correctness
 by reusing the same JAX tracing and shape checking mechanism as when the shapes are fully known.
 
 ### Coverage of shape-polymorphic tracing
 
-A complementary goal is to be able to convert many shape-polymorphic programs, but at the very
+Besides correctness, a secondary goal is to be able to convert many shape-polymorphic programs,
+but at the very
 least batch-size-polymorphic programs, so that one SavedModel can be used for any batch sizes.
 For example, we want to ensure that any function written using `jax.vmap` at the top level can be
 converted with the batch dimension polymorphic and the remaining dimensions concrete.
@@ -256,8 +320,7 @@ A shape specifier is combined with a `TensorSpec` as follows:
   * Otherwise, the specifier must be a comma-separated string of dimension specifiers: `(dim_1, ..., dim_n)`, denoting
     an n-dimensional array. The `TensorSpec` must also be of rank ``n``.
     An `...` at the end of the shape specifier is expanded to a list of `_` or appropriate length.
-    The
-    corresponding dimensions from the shape specifier and the `TensorSpec` are matched:
+    The corresponding dimensions from the shape specifier and the `TensorSpec` are matched:
 
        * the dimension specifier of `_` means that the size of the dimension is given by
          the actual `TensorSpec`, which must have a known size in the corresponding dimension.
@@ -283,18 +346,59 @@ A few examples of shape specifications and uses:
     with `TensorSpec`s `[None, 28, 28]` and `[28, 16]` for the first and second argument
     respectively. An alternative `TensorSpec` pair can be `[1, 28, 28]` and `[28, 16]`,
     in which case the JAX tracing is done for the same polymorphic shape given by
-    `polymorphic_shapes=["(b, 28, 28)", "(28, 16)"]` but the TensorFlow graph is monomorphic
-    for the shapes given by `TensorSpec`.
+    `polymorphic_shapes=["(b, 28, 28)", "(28, 16)"]`.
 
   * `polymorphic_shapes=["(batch, _)", "(batch,)"]`: the leading dimensions of the two arguments
      must match, and are assumed to be greater than 0.
      The second dimension of the first argument is taken from the
      actual `TensorSpec`. This can be used with a `TensorSpec` pair `[None, 16]`
-     and `[None]`. It can also be used with a pair `[8, 16]` and `[5]`.
+     and `[None]`. It can also be used with a pair of shapes `[8, 16]` and `[8]`.
 
-### Shape variables used in the computation
+### Computing with dimension variables
 
-There are some situations when shape variables arise in the computation itself.
+JAX keeps track of the shape of all intermediate results. When those shapes depend
+on dimension variables JAX computes them as multi-variate polynomials
+involving dimension variables, which are assumed to range over strictly positive
+integers.
+The dimension polynomials have the following behavior for arithmetic operations:
+
+  * addition, subtraction, multiplication are supported without restrictions, and
+    are overloaded, such that `+`, `*`, `np.sum`, `np.prod` work directly on
+    dimension polynomials.
+    These arise, e.g., in `jax.numpy.concatenate` or `jax.numpy.reshape`.
+  * division is a special case. It is also overloaded, but it is only partially
+    supported, when either (a) there is no remainder, or (b) the divisor is a constant
+    in which case there may be a constant remainder. The need for division in JAX core
+    arises in a couple of specific situations, e.g.,
+    `jax.numpy.reshape(-1)` and operations involving striding.
+  * equality and disequality are partially supported. They result in a boolean value only when
+    the same result would be obtained for any valuation of the dimension variables. In
+    other situations, an exception `core.InconclusiveDimensionOperation` is raised.
+    The latter would happen, e.g., when comparing `a == b` or `b == 1`.
+    The `==` and `!=` operations are overloaded for dimension polynomials, to prevent
+    an unsafe default behavior to be used.
+  * inequality is partially supported, in a similar way as equality. However, in this
+    case we take into consideration that dimension variables range over strictly positive
+    integers. E.g., `b >= 1`, `b >= 0`, `2 * a + b >= 3` are `True`, while `b >= 2`,
+    `a >= b`, `a - b >= 0` are inconclusive and result in an exception.
+
+For example, the following code raises the exception
+`core.InconclusiveDimensionOperation` with the message
+`Dimension polynomial comparison 'a + 1' == 'b' is inconclusive`.
+
+```
+jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
+                polymorphic_shapes=["(a, b)"])(np.ones((3, 4))
+```
+
+Note that it would be unsound for JAX to compute `x.shape[0] + 1 == x.shape[1]`
+as `False` and produce a converted function that returns `1` just because the dimension polynomials
+are not identical: there are some concrete input shapes for which the function
+should return `0`.
+
+### Dimension variables appearing in the numeric computation
+
+There are some situations when dimension variables arise in the staged computation itself.
 You can see in the following example how elements from the input shapes
 `(1024, 28, 28)` and `(28, 28)` appear in the computation and specifically
 in the `shape` parameter of the `broadcast_in_dim` JAX primitive.
@@ -311,7 +415,7 @@ print(jax.make_jaxpr(image_mask_jax)(np.ones((1024, 28, 28)), np.ones((28, 28)))
 >>      d = mul a c
 >>   in (d,) }
 
-# will invoke broadcast_in_dim with shape=(1, w, w)
+# The following will invoke broadcast_in_dim with shape=(1, w, w)
 jax2tf.convert(image_mask_jax, polymorphic_shapes=["(b, w, w)", "(w, w)"])
 ```
 
@@ -338,6 +442,9 @@ using `tf.shape` on the input parameters.
 
 ### Errors in presence of shape polymorphism
 
+In addition to the `InconclusiveDimensionOperation` error discussed above,
+one may encounter other kinds of errors.
+
 When tracing with shape polymorphism we can encounter shape errors:
 
 ```
@@ -356,34 +463,38 @@ jax2tf.convert(lambda x: jnp.matmul(x, x),
              polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
 ```
 
-will result in the error `Shape variable comparison v == 4 is inconclusive`. What is
+will result in the error `dot_general requires contracting dimensions to have the same shape, got [4] and [v]`. What is
 happening here is that in the process of type checking the `matmul` operation, JAX
 will want to ensure the size of the two axes is the same (`v == 4`).
 Note that `v` can stand for any integer greater than 0, so the value of the
-equality expression can be true or false. In this case you will see
-the `core.InconclusiveDimensionOperation` exception with the above message.
-Since the converted function work only for square matrices, the correct
+equality expression can be true or false. Since it is not always true
+that `v == 4`, the shape checking rules fail with the above error.
+Since the converted function works only for square matrices, the correct
 `polymorphic_shapes` is `["(v, v)"]`.
 
 You would also encounter shape errors if the code attempts to use the
-dimension variables in arithmetic operations, such as in the code
-below that attempts to flatten an array with a polymorphic batch
-dimension:
+dimension variables in unsupported arithmetic operations, such as in the code
+below that fails to compute the inferred dimension for a `reshape` operations:
 
 ```
-jax2tf.convert(lambda x: jnp.reshape(x, np.prod(x.shape)),
-             polymorphic_shapes=["(b, ...)"])(np.ones((3, 4, 5)))
+jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+               polymorphic_shapes=["(b, ...)"])(np.ones((4, 5, 7)))
 ```
 
-In this case you will see the error `TypeError: unsupported operand type(s) for *: 'DimVar' and 'int'`.
-The most flattening you can do is on the known dimensions, keeping the variable
-dimension intact:
+In this case you will see the error `Cannot divide evenly the sizes of shapes (b, 5, 7) and (2, -1)`.
+This is because the shape of `x` is `(b, 5, 7)`, with a total size represented as the
+dimension polynomial `35 b`, which is not divisible by `2`.
+Note that the following will succeed:
 
 ```
-jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0], np.prod(x.shape[1:]))),
-               polymorphic_shapes=["(b, _, _)"])(np.ones((3, 4, 5)))
-```
+## The resulting symbolic shape is (2, 15 b).
+jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+               polymorphic_shapes=["(b, ...)"])(np.ones((4, 5, 6)))
 
+## The resulting symbolic shape is (6 b2, b1).
+jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
+               polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
+```
 
 Finally, certain codes that use shapes in the actual computation may not yet work
 if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
@@ -401,49 +512,15 @@ jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
 There are a number of cases when the TensorFlow ops that are used by the
 jax2tf converter are not supported by TensorFlow for the same data types as in JAX.
 There is an
-[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 
-There are two kinds of errors you may see. For the primitives in the
-[unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md)
-that are shown to be undefined on all devices and for all execution modes
-(`eager`, `graph`, `compiled`), e.g., `lax.min` for booleans,
-the conversion typically uses a TensorFlow operator that is not
-registered for a certain data type:
-
-```python
-jax2tf.convert(lambda x: lax.min(x, x))(np.array([True]))
-
->>> InvalidArgumentError: Value for attr 'T' of bool is not in the list of allowed values:
->>>    bfloat16, half, float, double, uint8, int16, int32, int64;
->>>    NodeDef: {{node Minimum}};
->>>    Op<name=Minimum; signature=x:T, y:T -> z:T; attr=T:type,allowed=[DT_BFLOAT16, DT_HALF, DT_FLOAT, DT_DOUBLE, DT_UINT8, DT_INT16, DT_INT32, DT_INT64]> [Op:Minimum]
-```
-
-In the above cases, you should file a bug with JAX or TensorFlow, or consider
-changing your JAX code. We are working on eliminating this kind of problem.
-
-In other cases, the TensorFlow op is registered for the data type, but for the
-`eager` or `graph` execution modes there is no TensorFlow kernel defined.
-Such primitives appear in the
-[unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md)
-as unimplemented for `eager` and `graph`, e.g., `lax.sign` for unsigned integers:
-
-```python
-jax2tf.convert(lax.sign)(np.array([5], dtype=np.uint32))
-
->>> NotFoundError: Could not find device for node: {{node Minimum}} = Acos[T=DT_UINT32]
->>> All kernels registered for op Minimum:
->>>  device='CPU'; T in [DT_FLOAT]
->>>  device='CPU'; T in [DT_DOUBLE]
->>>  ...
-```
-
-In this situation, you can still run the converted program if you compile it with
-XLA:
-```python
-tf.function(jax2tf.convert(lax.sign),
-            autograph=False, jit_compile=True)(np.array([5], dtype=np.uint32))
-```
+If you try to convert and run in TensorFlow a program with partially supported primitives, you may see TensorFlow errors that
+a TensorFlow op is used with an supported data type, or that
+there is no supported TensorFlow kernel for the op for the given
+data type. The former case can happen even if you `jit_compile`
+the TensorFlow program, and it is a priority to fit. The latter
+case only appears in TensorFlow non-compiled mode and you can
+avoid the problem if you use XLA to `jit_compile` (always recommended).
 
 Our priority is to ensure numerical and performance accuracy for
 the converted program **when using XLA to compile the converted program**.
@@ -471,21 +548,29 @@ the function to a SavedModel, knowing that upon restore the
 JAX-converted code will be compiled.
 
 For a more elaborate example, see the test `test_tf_mix_jax_with_uncompileable`
-in [savedmodel_test.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/tests/savedmodel_test.py).
+in [savedmodel_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/savedmodel_test.py).
 
 ### Missing converter features
 
-There is currently no support for replicated (e.g. `pmap`) or multi-device
-(e.g. `sharded_jit`) functions. The collective operations are not yet handled.
+There is currently no support for `pmap` or`xmap`, nor for the collective
+operations. There is support for `sharded_jit` and `pjit`.
 
-### No SavedModel fine-tuning
+### SavedModel may be large
 
-Currently, TensorFlow SavedModel does not properly save the `tf.custom_gradient`.
-It does save however some attributes that on model restore result in a warning
-that the model might not be differentiable, and trigger an error if differentiation
-is attempted. The plan is to fix this. Note that if no gradients are requested,
-the PreventGradient ops will be saved along with the converted code and will
-give a nice error if differentiation of the converted code is attempted.
+If you suspect that the SavedModel is larger than it should be, check first
+that you are not including the parameters as constants in the graph (see [above](#usage-saved-model)).
+
+Additionally, the SavedModel obtained from a `jax2tf.convert`-ed function may include source
+location information. This ensures that the debugging experience is similar
+for JAX with XLA vs. `jax2tf.convert` with XLA. However, this debugging information
+increases the size of the SavedModel, even possibly doubling it. You can
+disable the generation of this metadata with the parameter
+`include_xla_op_metadata`.
+
+### SavedModel supports only first-order gradients
+
+The `jax2tf`-converted function supports higher-order gradients, but when the
+function is saved in a SavedModel, only the first-order gradient is saved.
 
 ### Converting gradients for integer-argument functions
 
@@ -504,6 +589,160 @@ jax2tf.convert(jax.grad(f_jax, allow_int=True))(2))
 # returns a `bfloat16` zero: tf.Tensor(0, shape=(), dtype=bfloat16)
 ```
 
+### Different behavior for gradients for unused arguments
+
+When differentiating functions with unused arguments, TF by default
+returns the value `None` for the corresponding gradients. The
+`tape.gradient` function takes the option `tf.UnconnectedGradients.ZERO`
+to ask that gradients for unused arguments be zero.
+
+Functions converted with `jax2tf.convert` behave the same way under
+`tf.UnconnectedGradients.ZERO`, but by default, they will return
+`None` only for gradients corresponding to integer arguments.
+
+```
+# x1 and x3 are not used. x3 has integer type.
+def fn(x0, x1, x2, x3):
+  return x0 * 0. + x2 * 2.
+
+xs = [tf.Variable(x) for x in [10., 11., 12., 13]]
+with tf.GradientTape(persistent=True) as tape:
+ res = fn(*xs)
+
+g_tf_native = tape.gradient(res, xs)
+# Returns: 0., None, 2., None
+
+g_tf_native_0 = tape.gradient(res, xs,
+                              unconnected_gradients=tf.UnconnectedGradients.ZERO)
+# Returns: 0., 0., 2., 0
+
+# Now with jax2tf.convert
+with tf.GradientTape() as tape:
+  res = jax2tf.convert(fn, with_gradient=True)(*xs0
+
+g_jax2tf = tape.gradient(res, xs)
+# Returns: 0., 0., 2., None
+# Note that the gradient for x1 is 0.
+
+g_jaxx2tf_0 = tape.gradient(res, xs,
+                            unconnected_gradients=tf.UnconnectedGradients.ZERO)
+# Returns: 0., 0., 2., 0
+# In this case we get the same result as for TF native.
+```
+
+### Different 64-bit precision in JAX and TensorFlow
+
+JAX behaves somewhat differently than TensorFlow in the handling
+of 32-bit vs. 64-bit values. However, the `jax2tf.convert` function
+always behaves like the JAX function.
+
+JAX interprets the type of Python scalars differently based on
+`JAX_ENABLE_X64` flag. (See
+[JAX - The Sharp Bits: Double (64bit) precision](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision).)
+In the default configuration, the
+flag is unset, and JAX interprets Python constants as 32-bit,
+e.g., the type of `3.14` is `float32`. This is also what
+TensorFlow always does. JAX goes further, it forces
+all explicitly-specified 64-bit values to be interpreted as
+32-bit:
+
+```
+# with JAX_ENABLE_X64=0
+jnp.sin(3.14)  # Has type float32
+tf.math.sin(3.14)  # Has type float32
+
+jnp.sin(np.float64(3.14))  # Also has type float32
+tf.math.sin(np.float64(3.14))  # Has type float64
+
+# The jax2tf.convert function behaves like the JAX function.
+jax2tf.convert(jnp.sin)(3.14)  # Has type float32
+jax2tf.convert(jnp.sin)(np.float64(3.14))  # Has type float32
+
+# The following will still compute `sin` in float32 (with a tf.cast on the argument).
+tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, tf.float64))
+```
+
+When the `JAX_ENABLE_X64` flas is set, JAX uses 64-bit types
+for Python scalars and respects the explicit 64-bit types:
+
+```
+# with JAX_ENABLE_X64=1
+jnp.sin(3.14)  # Has type float64
+tf.math.sin(3.14)  # Has type float32
+
+# The jax2tf.convert function behaves like the JAX function.
+jax2tf.convert(jnp.sin)(3.14)  # Has type float64
+
+# The following will compute `sin` in float64.
+tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, tf.float64))
+
+# The following will compute `sin` in float32.
+tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14))
+```
+
+This is achieved by inserting `tf.cast` operations
+on the input arguments inside the converted function,
+if necessary.
+
+If you want to create a `tf.Variable` or `tf.TensorSpec` with the
+same dtype, you should use `jax2tf.dtype_of_val`:
+
+```
+# The following two calls will convert jax_fun at the same dtypes
+# independently of the value of JAX_ENABLE_X64.
+jax2tf.convert(jax_fun)(3.14)
+jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14))
+```
+
+### Unchecked assumption that the dimension variables take strictly positive values
+
+The shape polymorphic conversion is sound with the assumption that the dimension
+variables take non-zero values. In the following example, the function to be converted
+has different behavior for empty shapes. The broken assumption is caught by jax2tf if
+the converted function is executed eagerly, but not if it is first traced to a
+TensorFlow graph:
+
+```
+def f_jax(x):
+  return 0 if x.shape[0] == 0 else 1
+
+x0 = np.array([], np.float32)
+self.assertEqual(0, f_jax(x0))  # JAX sees that the x.shape[0] == 0
+
+# jax2tf catches the broken assumption b >= 1 if the converted function is executed
+# eagerly.
+# Raises: ValueError: PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)
+jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0))
+
+# However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
+f_tf = tf.function(
+        jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
+self.assertEqual(1, f_tf(x0))
+```
+
+Another possible source of unsoundness is that JAX assumes that all unknown
+dimensions represented by the same dimension variable have equal size. As before,
+this assumption is checked if the converted function is executed eagerly, but
+it may be missed if it is first traced to a TensorFlow graph:
+
+```
+def f_jax(x):
+  return 0 if x.shape[0] != x.shape[1] else 1
+
+x45 = np.ones((4, 5), dtype=np.float32)
+self.assertEqual(0, f_jax(x45))  # JAX seems that x.shape[0] != x.shape[1]
+
+# jax2tf catches the broken assumption x.shape[0] == x.shape[1] if the converted
+# function is executed eagerly.
+# Raises: ValueError: PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)
+jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
+
+# However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
+f_tf = tf.function(
+    jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
+self.assertEqual(1, f_tf(x45))
+```
+
 ### TensorFlow XLA ops
 
 For most JAX primitives there is a natural TF op that fits the needed semantics.
@@ -519,9 +758,10 @@ we use a set of special TF ops that are thin wrappers over HLO ops
 and implemented in,
 e.g.,
 [tf2xla/kernels/xla_pad_op.cc](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/tf2xla/kernels/xla_pad_op.cc).)
-We refer to these ops here as the TFXLA ops.
+We refer to these ops here as the XLA TF ops. Note that these are
+still regular TF ops, e.g., they can be saved in a SavedModel.
 
-There are several drawbacks of using TFXLA ops:
+There are several drawbacks of using XLA TF ops:
 
    * These ops will only be executable by a consumer that has XLA linked in.
    This should not be a problem for TPU execution, since that requires XLA anyway.
@@ -529,7 +769,7 @@ There are several drawbacks of using TFXLA ops:
    * These ops are not yet recognized by tools that process
    tf.Graph, e.g., TensorFlow.js converter.
 
-We use the following TFXLA ops:
+We use the following XLA TF ops:
 
    * `XlaPad` (wraps XLA Pad operator). We use this instead of `tf.pad` in order to
      support `lax.pad` interior padding (dilation) or negative edge padding.
@@ -561,7 +801,7 @@ before conversion. (This is a hypothesis, we have not yet verified it extensivel
 
 There is one know case when the performance of the converted code will be different.
 JAX programs use a [stateless
-deterministic PRNG](https://github.com/google/jax/blob/master/design_notes/prng.md)
+deterministic PRNG](https://github.com/google/jax/blob/main/design_notes/prng.md)
 and it has an internal JAX primitive for it.
 This primitive is at the moment converted to a soup of tf.bitwise operations,
 which has a clear performance penalty. We plan to look into using the
@@ -592,7 +832,7 @@ A similar example is that of an LSTM cell.
 The function ```call_tf``` allows JAX functions to call
 TensorFlow functions. These functions can be called anywhere in a JAX
 computation, including in staging contexts ``jax.jit``, ``jax.pmap``, ``jax.xmap``,
-or inside JAX's control-flow primitives. In non-staging contexts, 
+or inside JAX's control-flow primitives. In non-staging contexts,
 the TensorFlow function is called in eager mode.
 For now, only reverse-mode autodiff is supported for these functions
 (no forward-mode autodiff, nor ``vmap``).
@@ -607,7 +847,7 @@ As a trivial example, consider computing ``sin(cos(1.))`` with ``sin`` done in J
   # It should return a similar result. This function will be called using
   # TensorFlow eager mode if called from outside JAX staged contexts (`jit`,
   # `pmap`, or control-flow primitives), and will be called using TensorFlow
-  # graph mode otherwise. In the latter case, the function must be compileable
+  # compiled mode otherwise. In the latter case, the function must be compileable
   # with XLA (`tf.function(func, jit_compile=True)`)
   def cos_tf(x):
     return tf.math.cos(x)
@@ -657,13 +897,19 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
       sine.16 = f32[] sine(get-tuple-element.15)
       ROOT tuple.17 = (f32[]) tuple(sine.16)
     }
-
 ```
+
+For a more elaborate example, including round-tripping from JAX
+to TensorFlow and back through a SavedModel, with support for
+custom gradients,
+see the test `test_round_trip_custom_grad_saved_model`
+in [call_tf_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/call_tf_test.py).
 
 ## Notes:
 
   * The TF function must be compileable (`tf.function(func, jit_compile=True`)
-    when used in a JAX staging context.
+    when used in a JAX staging context, but not when used in a
+    JAX op-by-op mode.
   * All the metadata inserted by TF during tracing and compilation, e.g.,
     source location information and op names, is carried through to the
     JAX XLA computation.
@@ -707,7 +953,6 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
 
   * Ensure that there is no array copy through the host when running in eager
     mode (JAX op-by-op).
-  * Show how use ``call_tf`` to load a SavedModel into JAX.
 
 
 # Additional notes
@@ -715,13 +960,15 @@ the ``a_inference_cos_tf_68__``HLO function that was compiled by TF from ``cos_t
 ## TensorFlow versions supported
 
 The ``jax2tf.convert`` and `call_tf` require very recent versions of TensorFlow.
-As of today, the tests are run using `tf_nightly==2.5.0-dev20210315`.
+As of today, the tests are run using `tf_nightly==2.6.0-dev20210611`.
+
 
 ## Running on GPU
 
+
 To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
 for CUDA. One must be mindful to install a version of CUDA that is compatible
-with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
+with both [jaxlib](https://github.com/google/jax/blob/main/README.md#pip-installation) and
 [TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
 
 ## Updating the limitations documentation
@@ -733,9 +980,9 @@ JAX primitive, data type, device type, and TensorFlow execution mode (`eager`,
 `graph`, or `compiled`). These limitations are also used
 to generate tables of limitations, e.g.,
 
-   * [List of primitives not supported in JAX](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primtives_coverage.md),
+   * [List of primitives not supported in JAX](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md),
      e.g., due to unimplemented cases in the XLA compiler, and
-   * [List of primitives not supported in jax2tf](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md),
+   * [List of primitives not supported in jax2tf](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md),
      e.g., due to unimplemented cases in TensorFlow. This list is incremental
      on top of the unsupported JAX primitives.
 

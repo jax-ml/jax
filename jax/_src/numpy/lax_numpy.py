@@ -656,45 +656,65 @@ def power(x1, x2):
 @custom_jvp
 @_wraps(np.logaddexp)
 def logaddexp(x1, x2):
-  x1, x2 = _promote_shapes("logaddexp", *_promote_dtypes_inexact(x1, x2))
+  x1, x2 = _promote_args_inexact("logaddexp", x1, x2)
   amax = lax.max(x1, x2)
-  delta = lax.sub(x1, x2)
-  return lax.select(isnan(delta),
-                    lax.add(x1, x2),  # NaNs or infinities of the same sign.
-                    lax.add(amax, lax.log1p(lax.exp(-lax.abs(delta)))))
+  if issubdtype(x1.dtype, np.floating):
+    delta = lax.sub(x1, x2)
+    return lax.select(isnan(delta),
+                      lax.add(x1, x2),  # NaNs or infinities of the same sign.
+                      lax.add(amax, lax.log1p(lax.exp(lax.neg(lax.abs(delta))))))
+  else:
+    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, _constant_like(amax, 2)))
+    out = lax.add(amax, lax.log1p(lax.exp(delta)))
+    return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi))
+
+def _wrap_between(x, _a):
+  """Wraps `x` between `[-a, a]`."""
+  a = _constant_like(x, _a)
+  two_a = _constant_like(x, 2 * _a)
+  zero = _constant_like(x, 0)
+  rem = lax.rem(lax.add(x, a), two_a)
+  rem = lax.select(lax.lt(rem, zero), lax.add(rem, two_a), rem)
+  return lax.sub(rem, a)
 
 @logaddexp.defjvp
 def _logaddexp_jvp(primals, tangents):
   x1, x2 = primals
   t1, t2 = tangents
-  x1, x2, t1, t2 = broadcast_arrays(x1, x2, t1, t2)
+  x1, x2, t1, t2 = _promote_args_inexact("logaddexp_jvp", x1, x2, t1, t2)
   primal_out = logaddexp(x1, x2)
-  tangent_out = (t1 * exp(_replace_inf(x1) - _replace_inf(primal_out)) +
-                 t2 * exp(_replace_inf(x2) - _replace_inf(primal_out)))
+  tangent_out = lax.add(lax.mul(t1, exp(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
+                        lax.mul(t2, exp(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
   return primal_out, tangent_out
 
 def _replace_inf(x):
-  return lax.select(isposinf(x), zeros_like(x), x)
+  return lax.select(isposinf(real(x)), zeros_like(x), x)
 
 
 @custom_jvp
 @_wraps(np.logaddexp2)
 def logaddexp2(x1, x2):
-  x1, x2 = _promote_shapes("logaddexp2", *_promote_dtypes_inexact(x1, x2))
+  x1, x2 = _promote_args_inexact("logaddexp2", x1, x2)
   amax = lax.max(x1, x2)
-  delta = lax.sub(x1, x2)
-  return lax.select(isnan(delta),
-                    lax.add(x1, x2),  # NaNs or infinities of the same sign.
-                    lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(delta))),
-                                          _constant_like(x1, np.log(2)))))
+  if issubdtype(x1.dtype, np.floating):
+    delta = lax.sub(x1, x2)
+    return lax.select(isnan(delta),
+                      lax.add(x1, x2),  # NaNs or infinities of the same sign.
+                      lax.add(amax, lax.div(lax.log1p(exp2(lax.neg(lax.abs(delta)))),
+                                            _constant_like(x1, np.log(2)))))
+  else:
+    delta = lax.sub(lax.add(x1, x2), lax.mul(amax, _constant_like(amax, 2)))
+    out = lax.add(amax, lax.div(lax.log1p(exp2(delta)), _constant_like(x1, np.log(2))))
+    return lax.complex(lax.real(out), _wrap_between(lax.imag(out), np.pi / np.log(2)))
+
 @logaddexp2.defjvp
 def _logaddexp2_jvp(primals, tangents):
   x1, x2 = primals
   t1, t2 = tangents
-  x1, x2, t1, t2 = broadcast_arrays(x1, x2, t1, t2)
+  x1, x2, t1, t2 = _promote_args_inexact("logaddexp2_jvp", x1, x2, t1, t2)
   primal_out = logaddexp2(x1, x2)
-  tangent_out = (t1 * 2 ** (_replace_inf(x1) - _replace_inf(primal_out)) +
-                 t2 * 2 ** (_replace_inf(x2) - _replace_inf(primal_out)))
+  tangent_out = lax.add(lax.mul(t1, exp2(lax.sub(_replace_inf(x1), _replace_inf(primal_out)))),
+                        lax.mul(t2, exp2(lax.sub(_replace_inf(x2), _replace_inf(primal_out)))))
   return primal_out, tangent_out
 
 
@@ -1064,7 +1084,7 @@ def sinc(x):
   x, = _promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, lax._const(x, 0))
   pi_x = lax.mul(lax._const(x, pi), x)
-  safe_pi_x = where(eq_zero, lax._const(x, 0), pi_x)
+  safe_pi_x = where(eq_zero, lax._const(x, 1), pi_x)
   return where(eq_zero, _sinc_maclaurin(0, pi_x),
                lax.div(lax.sin(safe_pi_x), safe_pi_x))
 
@@ -1082,15 +1102,18 @@ def _sinc_maclaurin_jvp(k, primals, tangents):
   (x,), (t,) = primals, tangents
   return _sinc_maclaurin(k, x), _sinc_maclaurin(k + 1, x) * t
 
+_ARRAY_VIEW_DOC = """
+The JAX version of this function will return a copy rather than a view of the input.
+"""
 
-@_wraps(np.transpose)
+@_wraps(np.transpose, lax_description=_ARRAY_VIEW_DOC)
 def transpose(a, axes=None):
   _check_arraylike("transpose", a)
   axes = np.arange(ndim(a))[::-1] if axes is None else axes
   return lax.transpose(a, axes)
 
 
-@_wraps(np.rot90)
+@_wraps(np.rot90, lax_description=_ARRAY_VIEW_DOC)
 def rot90(m, k=1, axes=(0, 1)):
   _check_arraylike("rot90", m)
   ax1, ax2 = axes
@@ -1112,7 +1135,7 @@ def rot90(m, k=1, axes=(0, 1)):
       return flip(transpose(m, perm), ax2)
 
 
-@_wraps(np.flip)
+@_wraps(np.flip, lax_description=_ARRAY_VIEW_DOC)
 def flip(m, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   _check_arraylike("flip", m)
   if axis is None:
@@ -1121,12 +1144,12 @@ def flip(m, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   return lax.rev(m, [_canonicalize_axis(ax, ndim(m)) for ax in axis])
 
 
-@_wraps(np.fliplr)
+@_wraps(np.fliplr, lax_description=_ARRAY_VIEW_DOC)
 def fliplr(m):
   return flip(m, 1)
 
 
-@_wraps(np.flipud)
+@_wraps(np.flipud, lax_description=_ARRAY_VIEW_DOC)
 def flipud(m):
   return flip(m, 0)
 
@@ -1304,7 +1327,7 @@ def isrealobj(x):
   return not iscomplexobj(x)
 
 
-@_wraps(np.reshape)
+@_wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a, newshape, order="C"):
   _check_arraylike("reshape", a)
   try:
@@ -1353,7 +1376,7 @@ def _transpose(a, *args):
     axis = _ensure_index_tuple(args)
   return transpose(a, axis)
 
-@_wraps(np.ravel)
+@_wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
 def ravel(a, order="C"):
   _check_arraylike("ravel", a)
   if order == "K":
@@ -1413,7 +1436,8 @@ def unravel_index(indices, shape):
   cumulative_sizes = cumulative_sizes.reshape([-1] + [1] * indices.ndim)
   clipped_indices = expand_dims(clipped_indices, axis=0)
   idx = clipped_indices % cumulative_sizes[:-1] // cumulative_sizes[1:]
-  return tuple(idx)
+  # TODO(jakevdp): return tuple(idx) once it behaves properly (#3821)
+  return tuple(lax.index_in_dim(idx, i, keepdims=False) for i in range(idx.shape[0]))
 
 @_wraps(np.resize)
 def resize(a, new_shape):
@@ -1433,7 +1457,7 @@ def resize(a, new_shape):
 
   return reshape(a, new_shape)
 
-@_wraps(np.squeeze)
+@_wraps(np.squeeze, lax_description=_ARRAY_VIEW_DOC)
 def squeeze(a, axis: Optional[Union[int, Tuple[int, ...]]] = None):
   _check_arraylike("squeeze", a)
   if axis is None:
@@ -1452,7 +1476,7 @@ def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
   return lax.expand_dims(a, axis)
 
 
-@_wraps(np.swapaxes)
+@_wraps(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
 def swapaxes(a, axis1: int, axis2: int):
   _check_arraylike("swapaxes", a)
   perm = np.arange(ndim(a))
@@ -1460,7 +1484,7 @@ def swapaxes(a, axis1: int, axis2: int):
   return lax.transpose(a, perm)
 
 
-@_wraps(np.moveaxis)
+@_wraps(np.moveaxis, lax_description=_ARRAY_VIEW_DOC)
 def moveaxis(a, source: Union[int, Sequence[int]],
              destination: Union[int, Sequence[int]]):
   _check_arraylike("moveaxis", a)
@@ -1585,13 +1609,25 @@ def setdiff1d(ar1, ar2, assume_unique=False):
   return ar1[idx]
 
 
-@_wraps(np.union1d)
-def union1d(ar1, ar2):
-  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in union1d()")
-  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in union1d()")
+_UNION1D_DOC = """\
+Because the size of the output of ``union1d`` is data-dependent, the function is not
+typically compatible with JIT. The JAX version adds the optional `size` argument which
+specifies the size of the output array: it must be specified statically for ``jnp.union1d``
+to be traced. If specified, the first `size` unique elements will be returned; if there are
+fewer unique elements than `size` indicates, the return value will be padded with
+the minimum value of the union."""
 
-  conc = concatenate((ar1, ar2), axis=None)
-  return unique(conc)
+@_wraps(np.union1d, lax_description=_UNION1D_DOC)
+def union1d(ar1, ar2, *, size=None):
+  # TODO(jakevdp): call _check_arraylike on inputs
+  ar1 = asarray(ar1)
+  ar2 = asarray(ar2)
+  if size is None:
+    ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
+    ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
+  else:
+    size = core.concrete_or_error(operator.index, size, "The error arose in union1d()")
+  return unique(concatenate((ar1, ar2), axis=None), size=size)
 
 
 @_wraps(np.setxor1d, lax_description="""
@@ -1700,14 +1736,19 @@ _WHERE_DOC = """\
 At present, JAX does not support JIT-compilation of the single-argument form
 of :py:func:`jax.numpy.where` because its output shape is data-dependent. The
 three-argument form does not have a data-dependent shape and can be JIT-compiled
-successfully.
+successfully. Alternatively, you can specify the optional ``size`` keyword:
+if specified, the first ``size`` True elements will be returned; if there
+are fewer True elements than ``size`` indicates, the index arrays will be
+padded with zeros.
 """
 
 @_wraps(np.where, update_doc=False, lax_description=_WHERE_DOC)
-def where(condition, x=None, y=None):
+def where(condition, x=None, y=None, *, size=None):
   if x is None and y is None:
-    return nonzero(asarray(condition))
+    return nonzero(asarray(condition), size=size)
   else:
+    if size is not None:
+      raise ValueError("size argument cannot be used in three-term where function.")
     return _where(condition, x, y)
 
 
@@ -1828,7 +1869,7 @@ def _split(op, ary, indices_or_sections, axis=0):
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
-@_wraps(np.split)
+@_wraps(np.split, lax_description=_ARRAY_VIEW_DOC)
 def split(ary, indices_or_sections, axis: int = 0):
   return _split("split", ary, indices_or_sections, axis=axis)
 
@@ -2302,9 +2343,9 @@ def nonzero(a, *, size=None):
   strides = np.cumprod(a.shape[::-1])[::-1] // a.shape
   return tuple((flat_indices // stride) % size for stride, size in zip(strides, a.shape))
 
-@_wraps(np.flatnonzero)
-def flatnonzero(a):
-  return nonzero(ravel(a))[0]
+@_wraps(np.flatnonzero, lax_description=_NONZERO_DOC)
+def flatnonzero(a, *, size=None):
+  return nonzero(ravel(a), size=size)[0]
 
 
 def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
@@ -2780,15 +2821,19 @@ def stack(arrays, axis: int =0, out=None):
     raise ValueError("Need at least one array to stack.")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.stack is not supported.")
-  _check_arraylike("stack", *arrays)
-  shape0 = shape(arrays[0])
-  axis = _canonicalize_axis(axis, len(shape0) + 1)
-  new_arrays = []
-  for a in arrays:
-    if shape(a) != shape0:
-      raise ValueError("All input arrays must have the same shape.")
-    new_arrays.append(expand_dims(a, axis))
-  return concatenate(new_arrays, axis=axis)
+  if isinstance(arrays, ndarray):
+    axis = _canonicalize_axis(axis, arrays.ndim)
+    return concatenate(expand_dims(arrays, axis + 1), axis=axis)
+  else:
+    _check_arraylike("stack", *arrays)
+    shape0 = shape(arrays[0])
+    axis = _canonicalize_axis(axis, len(shape0) + 1)
+    new_arrays = []
+    for a in arrays:
+      if shape(a) != shape0:
+        raise ValueError("All input arrays must have the same shape.")
+      new_arrays.append(expand_dims(a, axis))
+    return concatenate(new_arrays, axis=axis)
 
 @_wraps(np.tile)
 def tile(A, reps):
@@ -2797,15 +2842,32 @@ def tile(A, reps):
     iter(reps)
   except TypeError:
     reps = (reps,)
-  reps = tuple(operator.index(rep) for rep in reps)
+  reps = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
+               for rep in reps)
   A_shape = (1,) * (len(reps) - ndim(A)) + shape(A)
   reps = (1,) * (len(A_shape) - len(reps)) + reps
   result = broadcast_to(reshape(A, [j for i in A_shape for j in [1, i]]),
                         [k for pair in zip(reps, A_shape) for k in pair])
   return reshape(result, tuple(np.multiply(A_shape, reps)))
 
+def _concatenate_array(arr, axis: int):
+  # Fast path for concatenation when the input is an ndarray rather than a list.
+  arr = asarray(arr)
+  if arr.ndim == 0 or arr.shape[0] == 0:
+    raise ValueError("Need at least one array to concatenate.")
+  if axis is None:
+    return lax.reshape(arr, (arr.size,))
+  if arr.ndim == 1:
+    raise ValueError("Zero-dimensional arrays cannot be concatenated.")
+  axis = _canonicalize_axis(axis, arr.ndim - 1)
+  shape = arr.shape[1:axis + 1] + (arr.shape[0] * arr.shape[axis + 1],) + arr.shape[axis + 2:]
+  dimensions = [*range(1, axis + 1), 0, *range(axis + 1, arr.ndim)]
+  return lax.reshape(arr, shape, dimensions)
+
 @_wraps(np.concatenate)
 def concatenate(arrays, axis: int = 0):
+  if isinstance(arrays, ndarray):
+    return _concatenate_array(arrays, axis)
   _check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
@@ -2830,32 +2892,41 @@ def concatenate(arrays, axis: int = 0):
 
 @_wraps(np.vstack)
 def vstack(tup):
-  return concatenate([atleast_2d(m) for m in tup], axis=0)
+  if isinstance(tup, ndarray):
+    arrs = jax.vmap(atleast_2d)(tup)
+  else:
+    arrs = [atleast_2d(m) for m in tup]
+  return concatenate(arrs, axis=0)
 row_stack = vstack
 
 
 @_wraps(np.hstack)
 def hstack(tup):
-  arrs = [atleast_1d(m) for m in tup]
-  if arrs[0].ndim == 1:
-    return concatenate(arrs, 0)
-  return concatenate(arrs, 1)
+  if isinstance(tup, ndarray):
+    arrs = jax.vmap(atleast_1d)(tup)
+    arr0_ndim = arrs.ndim - 1
+  else:
+    arrs = [atleast_1d(m) for m in tup]
+    arr0_ndim = arrs[0].ndim
+  return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1)
 
 
 @_wraps(np.dstack)
 def dstack(tup):
-  return concatenate([atleast_3d(m) for m in tup], axis=2)
+  if isinstance(tup, ndarray):
+    arrs = jax.vmap(atleast_3d)(tup)
+  else:
+    arrs = [atleast_3d(m) for m in tup]
+  return concatenate(arrs, axis=2)
 
 
 @_wraps(np.column_stack)
 def column_stack(tup):
-  arrays = []
-  for v in tup:
-    arr = asarray(v)
-    if arr.ndim < 2:
-      arr = atleast_2d(arr).T
-    arrays.append(arr)
-  return concatenate(arrays, 1)
+  if isinstance(tup, ndarray):
+    arrs = jax.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
+  else:
+    arrs = [atleast_2d(arr).T if arr.ndim < 2 else arr for arr in map(asarray, tup)]
+  return concatenate(arrs, 1)
 
 
 @_wraps(np.choose, skip_params=['out'])
@@ -2910,8 +2981,7 @@ def block(arrays):
   out, _ = _block(arrays)
   return out
 
-
-@_wraps(np.atleast_1d, update_doc=False)
+@_wraps(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 def atleast_1d(*arys):
   if len(arys) == 1:
     arr = asarray(arys[0])
@@ -2920,7 +2990,7 @@ def atleast_1d(*arys):
     return [atleast_1d(arr) for arr in arys]
 
 
-@_wraps(np.atleast_2d, update_doc=False)
+@_wraps(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = asarray(arys[0])
@@ -2934,7 +3004,7 @@ def atleast_2d(*arys):
     return [atleast_2d(arr) for arr in arys]
 
 
-@_wraps(np.atleast_3d, update_doc=False)
+@_wraps(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 def atleast_3d(*arys):
   if len(arys) == 1:
     arr = asarray(arys[0])
@@ -3242,7 +3312,7 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
   return lax.convert_element_type(res, dtype)
 
 
-@_wraps(np.meshgrid)
+@_wraps(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
 def meshgrid(*args, **kwargs):
   indexing = kwargs.get("indexing", "xy")
   sparse = kwargs.get("sparse", False)
@@ -3281,6 +3351,21 @@ def meshgrid(*args, **kwargs):
   return output
 
 
+def _make_1d_grid_from_slice(s: slice, op_name: str):
+  start =core.concrete_or_error(None, s.start,
+                                f"slice start of jnp.{op_name}") or 0
+  stop = core.concrete_or_error(None, s.stop,
+                                f"slice stop of jnp.{op_name}")
+  step = core.concrete_or_error(None, s.step,
+                                f"slice step of jnp.{op_name}") or 1
+  if np.iscomplex(step):
+    newobj = linspace(start, stop, int(_abs(step)))
+  else:
+    newobj = arange(start, stop, step)
+
+  return newobj
+
+
 class _IndexGrid:
   def __getitem__(self, key):
     single_slice = isinstance(key, slice)
@@ -3288,15 +3373,7 @@ class _IndexGrid:
       key = (key,)
     output = []
     for k in key:
-      start = core.concrete_or_error(None, k.start,
-                                     "slice start of jnp.mgrid") or 0
-      stop = core.concrete_or_error(None, k.stop, "slice stop of jnp.mgrid")
-      step = core.concrete_or_error(None, k.step,
-                                    "slice step of jnp.mgrid") or 1
-      if np.iscomplex(step):
-        output.append(linspace(start, stop, int(_abs(step))))
-      else:
-        output.append(arange(start, stop, step))
+      output.append(_make_1d_grid_from_slice(k, op_name=self.op_name))
     if single_slice:
       return output[0]
     output = meshgrid(*output, indexing='ij', sparse=self.sparse)
@@ -3332,6 +3409,7 @@ class _Mgrid(_IndexGrid):
                   [0, 1, 2]]], dtype=int32)
   """
   sparse = False
+  op_name = "mgrid"
 
 mgrid = _Mgrid()
 
@@ -3364,21 +3442,10 @@ class _Ogrid(_IndexGrid):
      DeviceArray([[0, 1, 2]], dtype=int32)]
   """
   sparse = True
+  op_name = "ogrid"
 
 
 ogrid = _Ogrid()
-
-
-def _make_1d_grid_from_slice(s: slice):
-  start = s.start or 0
-  stop = s.stop
-  step = s.step or 1
-  if np.iscomplex(step):
-    newobj = linspace(start, stop, int(_abs(step)))
-  else:
-    newobj = arange(start, stop, step)
-
-  return newobj
 
 
 class _AxisConcat:
@@ -3417,7 +3484,7 @@ class _AxisConcat:
     output = []
     for item in key:
       if isinstance(item, slice):
-        newobj = _make_1d_grid_from_slice(item)
+        newobj = _make_1d_grid_from_slice(item, op_name=self.op_name)
       elif isinstance(item, str):
         raise ValueError("string directive must be placed at the beginning")
       else:
@@ -3516,6 +3583,7 @@ class RClass(_AxisConcat):
   axis = 0
   ndmin = 1
   trans1d = -1
+  op_name = "r_"
 
 
 r_ = RClass()
@@ -3563,6 +3631,7 @@ class CClass(_AxisConcat):
   axis = -1
   ndmin = 2
   trans1d = 0
+  op_name = "c_"
 
 
 c_ = CClass()
@@ -3803,7 +3872,7 @@ def diag_indices_from(arr):
 
   return diag_indices(arr.shape[0], ndim=arr.ndim)
 
-@_wraps(np.diagonal)
+@_wraps(np.diagonal, lax_description=_ARRAY_VIEW_DOC)
 def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
   _check_arraylike("diagonal", a)
   a_shape = shape(a)
@@ -3829,7 +3898,7 @@ def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
   return lax.slice_in_dim(d, 0, diag_size, axis=-1)
 
 
-@_wraps(np.diag)
+@_wraps(np.diag, lax_description=_ARRAY_VIEW_DOC)
 def diag(v, k=0):
   _check_arraylike("diag", v)
   v_shape = shape(v)
@@ -4208,10 +4277,25 @@ def einsum(*operands, out=None, optimize='greedy', precision=None,
 
   optimize = 'greedy' if optimize is True else optimize
   # using einsum_call=True here is an internal api for opt_einsum
-  operands, contractions = opt_einsum.contract_path(
-      *operands, einsum_call=True, use_blas=True, optimize=optimize)
+
+  # Allow handling of shape polymorphism
+  non_constant_dim_types = {
+      type(d) for op in operands if not isinstance(op, str)
+      for d in np.shape(op) if not core.is_constant_dim(d)
+  }
+  if not non_constant_dim_types:
+    einsum_contract_path_fn = opt_einsum.contract_path
+  else:
+    einsum_contract_path_fn = _polymorphic_einsum_contract_path_handlers[next(iter(non_constant_dim_types))]
+  operands, contractions = einsum_contract_path_fn(
+        *operands, einsum_call=True, use_blas=True, optimize=optimize)
+
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
   return _einsum(operands, contractions, precision)
+
+# Enable other modules to override einsum_contact_path.
+# Indexed by the type of the non constant dimension
+_polymorphic_einsum_contract_path_handlers = {}  # type: ignore
 
 @_wraps(np.einsum_path)
 def einsum_path(subscripts, *operands, optimize='greedy'):
@@ -4256,7 +4340,7 @@ def _einsum(operands: Sequence,
     new_names = []
     for i, d in enumerate(names):
       other_i = other_names.find(d)
-      if s[i] != 1 or other_i == -1 or other_shape[other_i] == 1:
+      if not core.symbolic_equal_dim(s[i], 1) or other_i == -1 or core.symbolic_equal_dim(other_shape[other_i], 1):
         new_shape.append(s[i])
         new_names.append(d)
     return reshape(operand, tuple(new_shape)), "".join(new_names)
@@ -4443,10 +4527,18 @@ def vander(x, N=None, increasing=False):
 
 ### Misc
 
+_ARGWHERE_DOC = """\
+Because the size of the output of ``argwhere`` is data-dependent, the function is not
+typically compatible with JIT. The JAX version adds the optional ``size`` argument, which
+specifies the size of the leading dimension of the output - it must be specified statically
+for ``jnp.argwhere`` to be traced. If ``size`` is specified, the indices of the first ``size``
+True elements will be returned; if there are fewer nonzero elements than `size` indicates,
+the index arrays will be zero-padded.
+"""
 
-@_wraps(np.argwhere)
-def argwhere(a):
-  result = transpose(vstack(nonzero(a)))
+@_wraps(np.argwhere, lax_description=_ARGWHERE_DOC)
+def argwhere(a, *, size=None):
+  result = transpose(vstack(nonzero(a, size=size)))
   if ndim(a) == 0:
     return result[:0].reshape(result.shape[0], 0)
   return result.reshape(result.shape[0], ndim(a))
@@ -4589,7 +4681,7 @@ def roll(a, shift, axis: Optional[Union[int, Sequence[int]]] = None):
   return _roll(a, shift, axis)
 
 
-@_wraps(np.rollaxis)
+@_wraps(np.rollaxis, lax_description=_ARRAY_VIEW_DOC)
 def rollaxis(a, axis: int, start=0):
   _check_arraylike("rollaxis", a)
   start = core.concrete_or_error(operator.index, start, "'start' argument of jnp.rollaxis()")
@@ -4786,8 +4878,7 @@ def _unique1d_sorted_mask(ar, optional_indices=False):
   ar = asarray(ar).flatten()
 
   if optional_indices:
-    perm = ar.argsort()
-    aux = ar[perm]
+    aux, perm = lax.sort_key_val(ar, lax.iota(int, len(ar)))
   else:
     perm = np.empty(0, dtype=int)
     aux = ar.sort()
@@ -4797,22 +4888,30 @@ def _unique1d_sorted_mask(ar, optional_indices=False):
   return aux, mask, perm
 
 def _unique1d(ar, return_index=False, return_inverse=False,
-              return_counts=False):
+              return_counts=False, size=None):
   """
   Find the unique elements of an array, ignoring shape.
   """
-  aux, mask, perm = _unique1d_sorted_mask(ar, return_index or return_inverse)
+  if ar.size == 0 and size is not None and size > 0:
+    raise ValueError("jnp.unique(): Cannot pass nonzero size for zero-sized array.")
 
-  ret = (aux[mask],)
+  aux, mask, perm = _unique1d_sorted_mask(ar, return_index or return_inverse)
+  ind = mask if size is None else nonzero(mask, size=size)
+
+  ret = (aux[ind],)
   if return_index:
-    ret += (perm[mask],)
+    ret += (perm[ind],)
   if return_inverse:
     imask = cumsum(mask) - 1
     inv_idx = zeros(mask.shape, dtype=dtypes.canonicalize_dtype(int_))
     inv_idx = inv_idx.at[perm].set(imask)
     ret += (inv_idx,)
   if return_counts:
-    idx = concatenate(nonzero(mask) + (array([mask.size]),))
+    if size is None:
+      idx = append(nonzero(mask)[0], mask.size)
+    else:
+      idx = nonzero(mask, size=size + 1)[0]
+      idx = idx.at[1:].set(where(idx[1:], idx[1:], mask.size))
     ret += (diff(idx),)
 
   return ret
@@ -4866,13 +4965,34 @@ def _unique_axis(ar, axis, return_index=False, return_inverse=False,
 
   return ret
 
-@_wraps(np.unique, skip_params=['axis'])
+_UNIQUE_DOC = """\
+Because the size of the output of ``unique`` is data-dependent, the function is not
+typically compatible with JIT. The JAX version adds the optional `size` argument which
+specifies the size of the data-dependent output arrays: it must be specified statically for
+``jnp.unique`` to be traced. If specified, the first `size` unique elements will be returned;
+if there are fewer unique elements than `size` indicates, the return value will be padded with
+the minimum value in the input array.
+
+The `size` cannot currently be used with the `axis` argument."""
+
+
+@_wraps(np.unique, skip_params=['axis'], lax_description=_UNIQUE_DOC)
 def unique(ar, return_index=False, return_inverse=False,
-           return_counts=False, axis: Optional[int] = None):
-  ar = core.concrete_or_error(asarray, ar, "The error arose in jnp.unique()")
+           return_counts=False, axis: Optional[int] = None, *, size=None):
+  # TODO(jakevdp): call _check_arraylike on input.
+  if axis is not None and size is not None:
+    # TODO(jakevdp): implement size & axis together.
+    raise NotImplementedError("jnp.unique `size` and `axis` arguments cannot be used together.")
+
+  ar = asarray(ar)
+
+  if size is None:
+    ar = core.concrete_or_error(None, ar, "The error arose for the first argument of jnp.unique()")
+  else:
+    size = core.concrete_or_error(operator.index, size, "The error arose for the size argument of jnp.unique()")
 
   if axis is None:
-    ret = _unique1d(ar, return_index, return_inverse, return_counts)
+    ret = _unique1d(ar, return_index, return_inverse, return_counts, size=size)
   else:
     ret = _unique_axis(ar, axis, return_index, return_inverse, return_counts)
 
@@ -4880,18 +5000,20 @@ def unique(ar, return_index=False, return_inverse=False,
 
 ### Indexing
 
-def _rewriting_take(arr, idx):
+def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
   arr = asarray(arr)
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
-  return _gather(arr, treedef, static_idx, dynamic_idx)
+  return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
+                 unique_indices)
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(1, 2))
-def _gather(arr, treedef, static_idx, dynamic_idx):
+def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
+            unique_indices):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
   y = arr
@@ -4903,8 +5025,10 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if not core.is_empty_shape(indexer.gather_indices.shape):
-    y = lax.gather(y, indexer.gather_indices, indexer.dnums,
-                   indexer.gather_slice_shape)
+    y = lax.gather(
+      y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
+      unique_indices=unique_indices or indexer.unique_indices,
+      indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:
@@ -4925,6 +5049,12 @@ _Indexer = collections.namedtuple("_Indexer", [
 
   # A GatherDimensionNumbers object describing the gather to perform.
   "dnums",
+
+  # Are the gather_indices known to be non-overlapping and/or sorted?
+  # (In practice, these translate to "there no advanced indices", because
+  # only advanced indices could lead to index repetition.)
+  "unique_indices",
+  "indices_are_sorted",
 
   # Slice dimensions that have negative strides, and so must be reversed after
   # the gather.
@@ -5165,7 +5295,9 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     gather_slice_shape=gather_slice_shape,
     reversed_y_dims=reversed_y_dims,
     dnums=dnums,
-    gather_indices=gather_indices_array)
+    gather_indices=gather_indices_array,
+    unique_indices=advanced_indexes is None,
+    indices_are_sorted=advanced_indexes is None)
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
@@ -5894,7 +6026,7 @@ def _multi_slice(arr,
   for starts, limits, removed in safe_zip(start_indices, limit_indices, removed_dims):
     sliced = lax.slice(arr, starts, limits)
     if removed:
-      sliced = sliced.reshape(np.delete(sliced.shape, removed_dims))
+      sliced = lax.squeeze(sliced, removed)
     results.append(sliced)
   return results
 setattr(_DeviceArray, "_multi_slice", _multi_slice)
@@ -5953,6 +6085,20 @@ class _IndexUpdateRef:
 
   def __repr__(self):
     return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
+
+  def get(self, indices_are_sorted=False, unique_indices=False):
+    """Equivalent to ``x[idx]``.
+
+    Returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexing <numpy.doc.indexing>` ``x[idx]``. This function differs from
+    the usual array indexing syntax in that it allows additional keyword
+    arguments ``indices_are_sorted`` and ``unique_indices`` to be passed.
+
+    See :mod:`jax.ops` for details.
+    """
+    return _rewriting_take(self.array, self.index,
+                           indices_are_sorted=indices_are_sorted,
+                           unique_indices=unique_indices)
 
   def set(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] = y``.

@@ -25,7 +25,7 @@ from jax import numpy as jnp
 from jax._src import dtypes
 from jax.core import NamedShape
 from jax._src.api import jit, vmap
-from jax._src.numpy.lax_numpy import _constant_like, _convert_and_clip_integer, asarray
+from jax._src.numpy.lax_numpy import _constant_like, _convert_and_clip_integer, _check_arraylike
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
@@ -86,14 +86,6 @@ def _is_prng_key(key: jnp.ndarray) -> bool:
 ### utilities
 
 
-# TODO(mattjj,jakevdp): add more info to error message, use this utility more
-def _asarray(x):
-  """A more restrictive jnp.asarray, only accepts JAX arrays and np.ndarrays."""
-  if not isinstance(x, (np.ndarray, jnp.ndarray)):
-    raise TypeError(f"Function requires array input, got {x} of type {type(x)}.")
-  return jnp.asarray(x)
-
-
 def _make_rotate_left(dtype):
   if not jnp.issubdtype(dtype, np.integer):
     raise TypeError("_rotate_left only accepts integer dtypes.")
@@ -143,7 +135,7 @@ def rolled_loop_step(i, state):
   x, ks, rotations = state
   for r in rotations[0]:
     x = apply_round(x, r)
-  new_x = [x[0] + ks[0], x[1] + ks[1] + asarray(i + 1, dtype=np.uint32)]
+  new_x = [x[0] + ks[0], x[1] + ks[1] + jnp.asarray(i + 1, dtype=np.uint32)]
   return new_x, rotate_list(ks), rotate_list(rotations)
 
 def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
@@ -312,14 +304,15 @@ def _random_bits(key, bit_width, shape):
   max_count = int(np.ceil(bit_width * size / 32))
 
   nblocks, rem = divmod(max_count, jnp.iinfo(np.uint32).max)
+
   if not nblocks:
     bits = threefry_2x32(key, lax.iota(np.uint32, rem))
   else:
-    *subkeys, last_key = split(key, nblocks + 1)
-    blocks = [threefry_2x32(k, lax.iota(np.uint32, jnp.iinfo(np.uint32).max))
-              for k in subkeys]
+    keys = split(key, nblocks + 1)
+    subkeys, last_key = keys[:-1], keys[-1]
+    blocks = vmap(threefry_2x32, in_axes=(0, None))(subkeys, lax.iota(np.uint32, jnp.iinfo(np.uint32).max))
     last = threefry_2x32(last_key, lax.iota(np.uint32, rem))
-    bits = lax.concatenate(blocks + [last], 0)
+    bits = lax.concatenate([blocks.ravel(), last], 0)
 
   dtype = _UINT_DTYPES[bit_width]
   if bit_width == 64:
@@ -445,8 +438,9 @@ def _randint(key, shape, minval, maxval, dtype):
   if not jnp.issubdtype(dtype, np.integer):
     raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
 
-  minval = _asarray(minval)
-  maxval = _asarray(maxval)
+  _check_arraylike("randint", minval, maxval)
+  minval = jnp.asarray(minval)
+  maxval = jnp.asarray(maxval)
   if not jnp.issubdtype(minval.dtype, np.integer):
     minval = minval.astype(int)
   if not jnp.issubdtype(maxval.dtype, np.integer):
@@ -603,10 +597,11 @@ def choice(key: jnp.ndarray,
                     f"got {shape}")
   if np.ndim(a) not in [0, 1]:
     raise ValueError("a must be an integer or 1-dimensional")
+  _check_arraylike("choice", a)
   if np.ndim(a) == 0:
-    a = int(a)
+    a = core.concrete_or_error(int, a, "The error occurred in jax.random.choice()")
   else:
-    a = _asarray(a)
+    a = jnp.asarray(a)
   n_inputs = int(a) if np.ndim(a) == 0 else len(a)  # type: ignore[arg-type]
   n_draws = prod(shape)
   if n_draws == 0:
@@ -676,7 +671,7 @@ def _normal(key, shape, dtype) -> jnp.ndarray:
 @partial(jit, static_argnums=(1, 2))
 def _normal_real(key, shape, dtype) -> jnp.ndarray:
   _check_shape("normal", shape)
-  lo = np.nextafter(np.array(-1., dtype), 0., dtype=dtype)
+  lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
   hi = np.array(1., dtype)
   u = uniform(key, shape, dtype, lo, hi)  # type: ignore[arg-type]
   return np.array(np.sqrt(2), dtype) * lax.erf_inv(u)
@@ -1311,7 +1306,10 @@ def categorical(key: jnp.ndarray,
     _check_shape("categorical", shape, batch_shape)
 
   sample_shape = shape[:len(shape)-len(batch_shape)]
-  return jnp.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
+  return jnp.argmax(
+      gumbel(key, sample_shape + logits.shape, logits.dtype) +
+      lax.expand_dims(logits, tuple(range(len(sample_shape)))),
+      axis=axis)
 
 
 def laplace(key: jnp.ndarray,

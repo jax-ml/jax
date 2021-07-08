@@ -403,7 +403,9 @@ def pjit_callable(
 
   in_axes = [get_array_mapping(axes) for axes in in_axis_resources]
   out_axes = [get_array_mapping(axes) for axes in out_axis_resources]
-  fun = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+  f = core.jaxpr_as_fun(jaxpr)
+  f.__name__ = name
+  fun = lu.wrap_init(f)
   local_in_avals = global_to_local(resource_env.physical_mesh,
                                    jaxpr.in_avals, in_axis_resources)
   # TODO(skye): allow for using a submesh of physical_mesh
@@ -449,7 +451,8 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
 xla.call_translations[pjit_p] = _pjit_translation_rule
 
 
-def _pjit_batcher(vals_in, dims_in,
+def _pjit_batcher(insert_axis,
+                  vals_in, dims_in,
                   axis_name, main_type,
                   jaxpr, in_axis_resources, out_axis_resources,
                   resource_env, donated_invars, name):
@@ -462,11 +465,12 @@ def _pjit_batcher(vals_in, dims_in,
       jaxpr, axis_size, is_mapped_in,
       instantiate=False, axis_name=axis_name, main_type=main_type)
 
+  new_parts = (axis_name,) if insert_axis else ()
   in_axis_resources = tuple(
-      spec.insert_axis_partitions(0, ()) if is_mapped else spec
+      spec.insert_axis_partitions(0, new_parts) if is_mapped else spec
       for is_mapped, spec in zip(is_mapped_in, in_axis_resources))
   out_axis_resources = tuple(
-      spec.insert_axis_partitions(0, ()) if is_mapped else spec
+      spec.insert_axis_partitions(0, new_parts) if is_mapped else spec
       for is_mapped, spec in zip(is_mapped_out, out_axis_resources))
   vals_out = pjit_p.bind(
     *vals_in,
@@ -478,7 +482,8 @@ def _pjit_batcher(vals_in, dims_in,
     name=name)
   dims_out = [0 if batched else batching.not_mapped for batched in is_mapped_out]
   return vals_out, dims_out
-batching.initial_style_batchers[pjit_p] = _pjit_batcher
+batching.initial_style_batchers[pjit_p] = partial(_pjit_batcher, False)
+pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True)
 
 
 def _pjit_jvp(primals_in, tangents_in,
@@ -590,13 +595,20 @@ def get_array_mapping(axis_resources: ParsedPartitionSpec) -> pxla.ArrayMapping:
                      for i, axes in enumerate(axis_resources)
                      for axis in axes)
 
-def get_sharding_proto(c, xla_op, axis_resources, mesh):
+def get_sharding_proto(c, xla_op, axis_resources: ParsedPartitionSpec,
+                       mesh: maps.Mesh) -> xc.OpSharding:
   xla_shape = c.GetShape(xla_op)
   if xla_shape.is_token():
     aval = core.abstract_token
     assert axis_resources is REPLICATED
   else:
-    aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.element_type())
+    aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.element_type())  # type: ignore
+  return get_aval_sharding_proto(aval, axis_resources, mesh)
+
+
+def get_aval_sharding_proto(aval: core.AbstractValue,
+                            axis_resources: ParsedPartitionSpec,
+                            mesh: maps.Mesh) -> xc.OpSharding:
   array_mapping = get_array_mapping(axis_resources)
   sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(
       aval, array_mapping)

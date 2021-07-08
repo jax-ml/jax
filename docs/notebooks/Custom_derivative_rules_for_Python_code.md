@@ -15,7 +15,7 @@ kernelspec:
 
 # Custom derivative rules for JAX-transformable Python functions
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb)
 
 *mattjj@ Mar 19 2020, last updated Oct 14 2020*
 

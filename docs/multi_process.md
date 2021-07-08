@@ -12,17 +12,17 @@ operations (e.g. {func}`jax.lax.psum`) in multi-process settings, although other
 communication methods may be useful too depending on your use case (e.g. RPC,
 [mpi4jax](https://github.com/mpi4jax/mpi4jax)). If you’re not already familiar
 with JAX’s collective operations, we recommend starting with the
-{doc}`/jax-101/06-parallelism` notebook. Note that an important feature of
-multi-process environments is direct communication links between accelerators,
-e.g. the high-speed interconnects for Cloud TPUs or
-[NCCL](https://developer.nvidia.com/nccl) for GPUs. This is what allows
+{doc}`/jax-101/06-parallelism` notebook. An important feature of multi-process
+environments is direct communication links between accelerators, e.g. the
+high-speed interconnects for Cloud TPUs or
+[NCCL](https://developer.nvidia.com/nccl) for GPUs. These links are what allow
 collective operations to run across multiple process’ worth of accelerators.
 
 
 ## Multi-process programming model
 
 Key concepts:
-*   All JAX processes must be manually run.
+*   You must run at least one JAX process per host.
 *   Each process has a distinct set of _local_ devices it can address. The
     _global_ devices are the set of all devices across all processes.
 *   Use standard JAX parallelism APIs like {func}`~jax.pmap` and
@@ -64,8 +64,8 @@ documentation for more details). You can see a process’s local devices via
 span devices across processes and perform collective operations via the direct
 communication links between devices, as long as each process launches the
 computation on its local devices. You can see all available global devices via
-{func}`jax.devices()`. Note that a process’s local devices are always a subset
-of the global devices.
+{func}`jax.devices()`. A process’s local devices are always a subset of the
+global devices.
 
 
 ### Running multi-process computations
@@ -109,17 +109,17 @@ function is global. The mesh is also global.
 TODO: xmap example
 
 **It’s very important that all processes run the same cross-process computations
-in the same order.** This usually happens naturally if you run the same JAX
-Python program in each process. Some common pitfalls to look out for that may
-cause differences:
+in the same order.** Running the same JAX Python program in each process is
+usually sufficient. Some common pitfalls to look out for that may cause
+differently-ordered computations despite running the same program:
 
-*   Different devices running differently-shaped shards of the data, which can
-    cause hangs or incorrect return values. This can be caused by different
-    processes passing in differently-shaped inputs to the same parallel
-    function. Differently-shaped inputs are only a problem if they result in
-    differently-shaped shards across processes; e.g. passing in different
-    leading batch sizes in order to run on different numbers of local devices
-    per process is ok.
+*   Processes passing differently-shaped inputs to the same parallel function
+    can cause hangs or incorrect return values. Differently-shaped inputs are
+    safe so long as they result in identically-shaped per-device data shards
+    across processes; e.g. passing in different leading batch sizes in order to
+    run on different numbers of local devices per process is ok, but having each
+    process pad its batch to a different max example length is not.
+
 *   “Last batch” issues where a parallel function is called in a (training)
     loop, and one or more processes exit the loop earlier than the rest. This
     will cause the rest to hang waiting for the already-finished processes to

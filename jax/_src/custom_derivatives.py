@@ -27,7 +27,7 @@ from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
 from jax._src.util import cache, safe_zip, safe_map, split_list
 from jax.api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from jax.core import raise_to_shaped
-from jax.ad_util import Zero, zeros_like_aval, stop_gradient_p
+from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -242,8 +242,12 @@ def _flatten_jvp(in_tree, *args):
     msg = ("Custom JVP rule must produce primal and tangent outputs with equal "
            "container (pytree) structures, but got {} and {} respectively.")
     raise TypeError(msg.format(out_tree, out_tree2))
-  primal_avals_out = [raise_to_shaped(core.get_aval(x), weak_type=False) for x in primals_out]
-  tangent_avals_out = [raise_to_shaped(core.get_aval(t), weak_type=False) for t in tangents_out]
+  primal_avals_out = [
+      raise_to_shaped(core.get_aval(x), weak_type=False).strip_named_shape()
+      for x in primals_out]
+  tangent_avals_out = [
+      raise_to_shaped(core.get_aval(t), weak_type=False).strip_named_shape()
+      for t in tangents_out]
   if primal_avals_out != tangent_avals_out:
     if len(primal_avals_out) == 1:
       (av1,), (av2,) = primal_avals_out, tangent_avals_out
@@ -365,11 +369,12 @@ xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
 # If a (multi)linear function is defined with a custom jvp, then
 # custom_jvp_call_jaxpr can appear in jaxprs to be transposed. Since it's
 # already been linearized, we can drop the jvp rule.
-def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk,
-                                     num_consts):
+def _custom_jvp_call_jaxpr_transpose(reduce_axes, cts, *args, fun_jaxpr,
+                                     jvp_jaxpr_thunk, num_consts):
   del jvp_jaxpr_thunk, num_consts
-  return ad.backward_pass(fun_jaxpr.jaxpr, fun_jaxpr.consts, args, cts)
-ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
+  return ad.backward_pass(
+      fun_jaxpr.jaxpr, reduce_axes, fun_jaxpr.consts, args, cts)
+ad.reducing_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
 
 ### VJPs
@@ -501,7 +506,7 @@ def _check_for_tracers(x):
            "arguments should typically not be indicated as nondiff_argnums. "
            "\n\n"
            "This behavior recently changed in JAX. "
-           "See https://github.com/google/jax/blob/master/docs/custom_vjp_update.md "
+           "See https://github.com/google/jax/blob/main/docs/custom_vjp_update.md "
            "for more information.")
     raise core.UnexpectedTracerError(msg)
 

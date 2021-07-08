@@ -28,7 +28,7 @@ import numpy as np
 
 import jax
 from jax import core
-from jax import ad_util
+from jax._src import ad_util
 from jax._src import api
 from jax import api_util
 from jax import linear_util as lu
@@ -38,7 +38,7 @@ from jax._src.config import config
 from jax.core import (Primitive, _canonicalize_dimension, UnshapedArray,
                       ShapedArray, ConcreteArray, raise_to_shaped,
                       abstract_token, canonicalize_shape)
-from jax.abstract_arrays import array_types
+from jax._src.abstract_arrays import array_types
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import pxla
@@ -502,7 +502,7 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
   return concatenate_p.bind(*operands, dimension=dimension)
 
 Precision = xla_client.PrecisionConfig.Precision
-Precision.__str__ = lambda precision: precision.name
+Precision.__str__ = lambda precision: precision.name  # type: ignore
 PrecisionType = Any
 PrecisionLike = Union[None, str, PrecisionType, Tuple[str, str],
                       Tuple[PrecisionType, PrecisionType]]
@@ -656,7 +656,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   Returns:
     An array containing the product.
   """
-  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and lhs.shape[-1] == rhs.shape[0]:
+  if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.symbolic_equal_dim(lhs.shape[-1], rhs.shape[0]):
     return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
                        precision=precision, preferred_element_type=preferred_element_type)
   else:
@@ -779,7 +779,7 @@ def reshape(operand: Array, new_sizes: Shape,
   """
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
-  same_shape = np.shape(operand) == new_sizes
+  same_shape = core.symbolic_equal_shape(np.shape(operand), new_sizes)
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(np.ndim(operand)))
   if np.shape(operand) and same_shape and same_dims:
     return operand
@@ -951,7 +951,10 @@ class GatherDimensionNumbers(NamedTuple):
 
 def gather(operand: Array, start_indices: Array,
            dimension_numbers: GatherDimensionNumbers,
-           slice_sizes: Shape) -> Array:
+           slice_sizes: Shape,
+           *,
+           unique_indices: bool = False,
+           indices_are_sorted: bool = False) -> Array:
   """Gather operator.
 
   Wraps `XLA's Gather operator
@@ -969,13 +972,20 @@ def gather(operand: Array, start_indices: Array,
       how dimensions of `operand`, `start_indices` and the output relate.
     slice_sizes: the size of each slice. Must be a sequence of non-negative
       integers with length equal to `ndim(operand)`.
+    indices_are_sorted: whether `indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether the indices in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve
+      performance on some backends.
 
   Returns:
     An array containing the gather output.
   """
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
-      slice_sizes=canonicalize_shape(slice_sizes))
+      slice_sizes=canonicalize_shape(slice_sizes),
+      unique_indices=bool(unique_indices),
+      indices_are_sorted=bool(indices_are_sorted))
 
 
 class ScatterDimensionNumbers(NamedTuple):
@@ -1206,7 +1216,7 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   operator.
   """
   permutation = tuple(permutation)
-  if permutation == tuple(range(len(permutation))):
+  if permutation == tuple(range(np.ndim(operand))):
     return operand
   else:
     return transpose_p.bind(operand, permutation=permutation)
@@ -2264,22 +2274,22 @@ def _unbroadcast(aval, x):
   if not isinstance(aval, ShapedArray):
     raise TypeError("transpose with implicit broadcasting of unshaped values")
   x_shape = np.shape(x)
-  if aval.shape == x_shape:
+  if core.symbolic_equal_shape(aval.shape, x_shape):
     return x
   assert not aval.shape or len(x_shape) == len(aval.shape)
   if not aval.shape:
     return _reduce_sum(x, list(range(len(x_shape))))
   else:
-    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if a != b]
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.symbolic_equal_dim(a, b)]
     if config.jax_enable_checks: assert all(aval.shape[i] == 1 for i in dims)
     return reshape(_reduce_sum(x, dims), aval.shape)
 
 def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)
-  if x_shape == target_shape:
+  if core.symbolic_equal_shape(x_shape, target_shape):
     return x
   else:
-    dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape)) if a == b]
+    dims = [i for i, (a, b) in enumerate(zip(x_shape, target_shape)) if core.symbolic_equal_dim(a, b)]
     squeeze_shape = [x_shape[i] for i in dims]
     return broadcast_in_dim(reshape(x, squeeze_shape), target_shape, dims)
 
@@ -2386,7 +2396,6 @@ tan_p = standard_unop(_float | _complex, 'tan',
 ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
 
 
-@partial(xla.lower_fun, multiple_results=False)
 def asin_translation_rule(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
     return mul(_const(x, -1j), asinh(mul(_const(x, 1j), x)))
@@ -2395,11 +2404,11 @@ def asin_translation_rule(x):
                atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
 asin_p = standard_unop(_float | _complex, 'asin',
-                       translation_rule=asin_translation_rule)
+                       translation_rule=xla.lower_fun(asin_translation_rule,
+                                                      multiple_results=False))
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
 
 
-@partial(xla.lower_fun, multiple_results=False)
 def acos_translation_rule(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
     result = mul(_const(x, 1j), acosh(x))
@@ -2418,21 +2427,22 @@ def acos_translation_rule(x):
         full_like(x, np.pi))
 
 acos_p = standard_unop(_float | _complex, 'acos',
-                       translation_rule=acos_translation_rule)
+                       translation_rule=xla.lower_fun(acos_translation_rule,
+                                                      multiple_results=False))
 ad.defjvp(acos_p, lambda g, x: mul(g, -rsqrt(_const(x, 1) - square(x))))
 
-@partial(xla.lower_fun, multiple_results=False)
 def atan_translation_rule(x):
-  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+  if jax.lib._xla_extension_version < 26 and dtypes.issubdtype(_dtype(x), np.complexfloating):
     return mul(_const(x, -1j), atanh(mul(_const(x, 1j), x)))
   else:
     return atan2(x, _const(x, 1))
 
 atan_p = standard_unop(_float | _complex, 'atan',
-                       translation_rule=atan_translation_rule)
+                       translation_rule=xla.lower_fun(atan_translation_rule,
+                                                      multiple_results=False))
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
 
-atan2_p = standard_naryop([_float, _float], 'atan2')
+atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
           lambda g, x, y: g * (y / (square(x) + square(y))),
           lambda g, x, y: g * -x / (square(x) + square(y)))
@@ -2783,27 +2793,35 @@ def _broadcasting_select(c, which, x, y):
   return xops.Select(which, x, y)
 
 
-def _minmax_translation_rule(c, x, y, *, minmax=None, cmp=None):
+def _minmax_complex_lowering(x, y, *, lax_cmp_pick_x):
+  result_shape = broadcast_shapes(np.shape(x), np.shape(y))
+  x = _maybe_broadcast(result_shape, x)
+  y = _maybe_broadcast(result_shape, y)
+  rx = real(x)
+  ry = real(y)
+  pick_x = select(eq(rx, ry), lax_cmp_pick_x(imag(x), imag(y)),
+                  lax_cmp_pick_x(rx, ry))
+  return select(pick_x, x, y)
+
+def _minmax_translation_rule(c, x, y, *, op_minmax=None, lax_cmp_pick_x=None):
   dtype = c.get_shape(x).numpy_dtype()
   if dtypes.issubdtype(dtype, np.complexfloating):
-    rx = xops.Real(x)
-    ry = xops.Real(y)
-    return _broadcasting_select(
-        c, xops.Select(xops.Eq(rx, ry), cmp(xops.Imag(x), xops.Imag(y)),
-                       cmp(rx, ry)),
-        x, y)
-  return minmax(x, y)
+    return xla.lower_fun(partial(_minmax_complex_lowering,
+                                 lax_cmp_pick_x=lax_cmp_pick_x),
+                         multiple_results=False)(c, x, y)
+  else:
+    return op_minmax(x, y)
 
 max_p: core.Primitive = standard_naryop(
   [_any, _any], 'max', translation_rule=partial(
-    _minmax_translation_rule, minmax=xops.Max, cmp=xops.Gt))
+    _minmax_translation_rule, op_minmax=xops.Max, lax_cmp_pick_x=gt))
 ad.defjvp2(max_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
 
 min_p: core.Primitive = standard_naryop(
   [_any, _any], 'min', translation_rule=partial(
-    _minmax_translation_rule, minmax=xops.Min, cmp=xops.Lt))
+    _minmax_translation_rule, op_minmax=xops.Min, lax_cmp_pick_x=lt))
 ad.defjvp2(min_p,
            lambda g, ans, x, y: mul(g, _balanced_eq(x, ans, y)),
            lambda g, ans, x, y: mul(g, _balanced_eq(y, ans, x)))
@@ -2889,6 +2907,12 @@ def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
   return operand.shape
 
 def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
+  old_dtype = dtypes.canonicalize_dtype(operand.dtype)
+  if dtypes.issubdtype(old_dtype, np.bool_) or dtypes.issubdtype(old_dtype, np.complexfloating):
+    if old_dtype != new_dtype:
+      raise TypeError(f"`bitcast_convert_type` for operand type ({old_dtype}) cannot have different destination type ({new_dtype})")
+  if np.dtype(old_dtype).itemsize != np.dtype(new_dtype).itemsize:
+    raise TypeError(f"`bitcast_convert_type` for operand type ({old_dtype}) must have destination type ({new_dtype}) of same size.")
   return new_dtype
 
 def _bitcast_convert_type_translation_rule(c, operand, *, new_dtype):
@@ -2923,7 +2947,7 @@ def _conv_general_dilated_shape_rule(
     msg = ("conv_general_dilated feature_group_count must divide lhs feature "
            "dimension size, but {} does not divide {}.")
     raise ValueError(msg.format(feature_group_count, lhs_feature_count))
-  if quot != rhs.shape[dimension_numbers.rhs_spec[1]]:
+  if not core.symbolic_equal_dim(quot, rhs.shape[dimension_numbers.rhs_spec[1]]):
     msg = ("conv_general_dilated lhs feature dimension size divided by "
            "feature_group_count must equal the rhs input feature dimension "
            "size, but {} // {} != {}.")
@@ -3361,13 +3385,13 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
     raise TypeError(msg.format(rhs_batch, rhs_contracting))
   lhs_batch_shape = np.take(lhs.shape, lhs_batch)
   rhs_batch_shape = np.take(rhs.shape, rhs_batch)
-  if not np.all(np.equal(lhs_batch_shape, rhs_batch_shape)):
+  if not core.symbolic_equal_shape(lhs_batch_shape, rhs_batch_shape):
     msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
            "to have the same shape, got {} and {}.")
     raise TypeError(msg.format(lhs_batch_shape, rhs_batch_shape))
   lhs_contracting_shape = np.take(lhs.shape, lhs_contracting)
   rhs_contracting_shape = np.take(rhs.shape, rhs_contracting)
-  if not np.all(np.equal(lhs_contracting_shape, rhs_contracting_shape)):
+  if not core.symbolic_equal_shape(lhs_contracting_shape, rhs_contracting_shape):
     msg = ("dot_general requires contracting dimensions to have the same "
            "shape, got {} and {}.")
     raise TypeError(msg.format(lhs_contracting_shape, rhs_contracting_shape))
@@ -3582,6 +3606,43 @@ def _clamp_shape_rule(min, operand, max):
 _clamp_dtype_rule = partial(naryop_dtype_rule, _input_dtype, [_any, _any, _any],
                             'clamp')
 
+def _clamp_batch_rule(batched_args, batch_dims, **params):
+  min, x, max = batched_args
+  min_bdim, x_bdim, max_bdim = batch_dims
+  size = next(x.shape[i] for x, i in zip(batched_args, batch_dims)
+              if i is not None)
+
+  # avoid transposes and some broadcasts in special cases
+  if min_bdim == x_bdim == max_bdim:
+    if np.shape(min) == np.shape(x) == np.shape(max):
+      return clamp_p.bind(min, x, max), x_bdim
+    elif np.ndim(min) == np.ndim(max) == 0:
+      return clamp_p.bind(min, x, max), x_bdim
+    elif np.ndim(min) == np.ndim(max) == 1:
+      min = broadcast_in_dim(min, x.shape, [min_bdim])
+      max = broadcast_in_dim(max, x.shape, [max_bdim])
+      return clamp_p.bind(min, x, max), x_bdim
+  elif np.ndim(min) == 0 and np.ndim(max) == 0 and x_bdim is not None:
+    return clamp_p.bind(min, x, max), x_bdim
+
+  min = batching.bdim_at_front(min, min_bdim, size) if np.shape(min) else min
+  max = batching.bdim_at_front(max, max_bdim, size) if np.shape(max) else max
+  x = batching.bdim_at_front(x, x_bdim, size) if np.shape(x) else x
+  if np.ndim(min) == 0 and np.ndim(x) > 0:
+    min = broadcast(min, x.shape)
+  if np.ndim(max) == 0 and np.ndim(x) > 0:
+    max = broadcast(max, x.shape)
+  if 0 < np.ndim(min) < np.ndim(x):
+    assert np.ndim(min) == 1, np.ndim(min)
+    min = broadcast_in_dim(min, x.shape, [0])
+  if 0 < np.ndim(max) < np.ndim(x):
+    assert np.ndim(max) == 1, np.ndim(max)
+    max = broadcast_in_dim(max, x.shape, [0])
+  if np.ndim(min) > np.ndim(x):
+    assert np.ndim(x) == 0, np.ndim(x)
+    x = broadcast(x, min.shape)
+  return clamp_p.bind(min, x, max), 0
+
 clamp_p = standard_primitive(_clamp_shape_rule, _clamp_dtype_rule, 'clamp')
 ad.defjvp(clamp_p,
           lambda g, min, operand, max:
@@ -3592,8 +3653,7 @@ ad.defjvp(clamp_p,
                  g, _zeros(operand)),
           lambda g, min, operand, max:
           select(lt(max, operand), g, _zeros(operand)))
-batching.defbroadcasting(clamp_p)
-
+batching.primitive_batchers[clamp_p] = _clamp_batch_rule
 
 def _concatenate_shape_rule(*operands, **kwargs):
   dimension = kwargs.pop('dimension')
@@ -3782,7 +3842,7 @@ def _compute_squeeze_shape(shape, dimensions):
     raise ValueError(f"dimensions are not unique: {dimensions}")
   if not all(0 <= d < len(shape) for d in dims_set):
     raise ValueError(f"dimensions outside range [0, ndim): {dimensions}")
-  if any(shape[d] != 1 for d in dimensions):
+  if any(not core.symbolic_equal_dim(shape[d], 1) for d in dimensions):
     raise ValueError(
         "cannot select an axis to squeeze out which has size not equal to "
         f"one, got shape={shape} and dimensions={dimensions}")
@@ -4223,7 +4283,7 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
   index, index_bdim = _batch_dynamic_slice_indices(start_indices, start_idx_bds)
   return _gather_batching_rule(
     [operand, index], [operand_bd, index_bdim], dimension_numbers=dnums,
-    slice_sizes=slice_sizes)
+    slice_sizes=slice_sizes, unique_indices=True, indices_are_sorted=True)
 
 
 dynamic_slice_p = standard_primitive(
@@ -4243,7 +4303,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
     msg = ("dynamic_update_slice start_indices must have length equal to the "
            "rank of operand, got indices {} for operand shape {}.")
     raise TypeError(msg.format(start_indices, operand.shape))
-  if not np.all(np.less_equal(update.shape, operand.shape)):
+  if not core.greater_equal_shape(operand.shape, update.shape):
     msg = ("dynamic_update_slice update shape must be smaller than operand "
            "shape, got update shape {} for operand shape {}.")
     raise TypeError(msg.format(update.shape, operand.shape))
@@ -4360,7 +4420,7 @@ def _no_duplicate_dims(dims, op_name, name):
     raise TypeError(f"{name} in {op_name} op must not repeat; got: {dims}.")
 
 def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
-                       slice_sizes):
+                       slice_sizes, unique_indices, indices_are_sorted):
   """Validates the well-formedness of the arguments to Gather.
 
   The code implements the checks based on the detailed operation semantics of
@@ -4473,19 +4533,23 @@ def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
                else next(start_indices_shape) for i in range(output_shape_rank))
 
 def _gather_translation_rule(c, operand, start_indices, *, dimension_numbers,
-                             slice_sizes):
+                             slice_sizes, unique_indices, indices_are_sorted):
   indices_shape = c.get_shape(start_indices)
+  # We don't consume unique_indices directly in gather(), only in its transpose
+  # (scatter).
   return xops.Gather(
     operand, start_indices,
     _gather_dimensions_proto(indices_shape, dimension_numbers), slice_sizes,
-    indices_are_sorted=False)
+    indices_are_sorted=indices_are_sorted)
 
 def _gather_jvp_rule(g, operand, start_indices, *, dimension_numbers,
-                     slice_sizes):
-  return gather(g, start_indices, dimension_numbers, slice_sizes)
+                     slice_sizes, unique_indices, indices_are_sorted):
+  return gather(g, start_indices, dimension_numbers, slice_sizes,
+                unique_indices=unique_indices,
+                indices_are_sorted=indices_are_sorted)
 
 def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
-                          slice_sizes):
+                           slice_sizes, unique_indices, indices_are_sorted):
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
   if type(t) is ad_util.Zero:
@@ -4497,12 +4561,12 @@ def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
       inserted_window_dims=dimension_numbers.collapsed_slice_dims,
       scatter_dims_to_operand_dims=dimension_numbers.start_index_map)
     out = scatter_add(zeros, start_indices, t, scatter_dnums,
-                      indices_are_sorted=False,
-                      unique_indices=False)
+                      unique_indices=unique_indices,
+                      indices_are_sorted=indices_are_sorted)
   return [out, None]
 
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
-                          slice_sizes):
+                          slice_sizes, unique_indices, indices_are_sorted):
   operand, start_indices = batched_args
   operand_bdim, start_indices_bdim = batch_dims
 
@@ -4517,7 +4581,8 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         collapsed_slice_dims=collapsed_slice_dims,
         start_index_map=start_index_map)
     return gather(operand, start_indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes), 0
+                  slice_sizes=slice_sizes, unique_indices=unique_indices,
+                  indices_are_sorted=indices_are_sorted), 0
 
   elif operand_bdim is None and start_indices_bdim is not None:
     start_indices = batching.moveaxis(start_indices, start_indices_bdim, 0)
@@ -4526,8 +4591,11 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         offset_dims=offset_dims,
         collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
         start_index_map=dimension_numbers.start_index_map)
+    # If batching indexed accesses into the same array, the batched gather may
+    # no longer have sorted or unique indices.
     return gather(operand, start_indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes), 0
+                  slice_sizes=slice_sizes, unique_indices=False,
+                  indices_are_sorted=False), 0
 
   else:
     # move batch dimensions to the front to simplify logic
@@ -4554,7 +4622,8 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         collapsed_slice_dims=collapsed_slice_dims,
         start_index_map=start_index_map)
     return gather(operand, start_indices, dimension_numbers=dnums,
-                  slice_sizes=slice_sizes), 0
+                  slice_sizes=slice_sizes, unique_indices=unique_indices,
+                  indices_are_sorted=indices_are_sorted), 0
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',

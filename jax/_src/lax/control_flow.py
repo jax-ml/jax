@@ -49,8 +49,8 @@ from jax._src.util import (partial, unzip2, unzip3, safe_map, safe_zip,
                            split_list, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
-                           tree_leaves)
-from jax import ad_util
+                           tree_leaves, tree_structure)
+from jax._src import ad_util
 from jax.config import config
 
 xops = xla_client.ops
@@ -151,7 +151,7 @@ def fori_loop(lower, upper, body_fun, init_val):
 
   .. code-block:: haskell
 
-    fori_loop :: Int -> Int -> ((int, a) -> a) -> a -> a
+    fori_loop :: Int -> Int -> ((Int, a) -> a) -> a -> a
 
   The semantics of ``fori_loop`` are given by this Python implementation::
 
@@ -164,7 +164,7 @@ def fori_loop(lower, upper, body_fun, init_val):
   Unlike that Python version, ``fori_loop`` is implemented in terms of either a
   call to :func:`jax.lax.while_loop` or a call to :func:`jax.lax.scan`. If the
   trip count is static (meaning known at tracing time, perhaps because ``lower``
-  and ``upper` are Python integer literals) then the ``fori_loop`` is
+  and ``upper`` are Python integer literals) then the ``fori_loop`` is
   implemented in terms of ``scan`` and reverse-mode autodiff is supported;
   otherwise, a ``while_loop`` is used and reverse-mode autodiff is not
   supported.  See those functions' docstrings for more information.
@@ -1020,7 +1020,7 @@ def _ordered_unique(xs):
   d = collections.OrderedDict((x, None) for x in xs)
   return list(d.keys())
 
-def _transpose_cond_jaxpr(jaxpr, num_res):
+def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
   primal_avals = _map(raise_to_shaped, primal_avals)
 
@@ -1029,19 +1029,19 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
     res, cts_out = split_list(args, [num_res])
     primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
     cts_in = ad.backward_pass(
-        jaxpr.jaxpr, jaxpr.consts, primals, cts_out)
+        jaxpr.jaxpr, reduce_axes, jaxpr.consts, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
     return _map(ad.instantiate_zeros_aval, primal_avals, cts_in)
 
   return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
-def _cond_transpose(cts, *args, branches, linear):
+def _cond_transpose(reduce_axes, cts, *args, branches, linear):
   index, *ops = args
   in_avals = _map(raise_to_shaped, branches[0].in_avals)
   num_res = len(ops) - sum(linear)
 
   branches_trans = tuple(
-      _transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches)
+      _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes) for jaxpr in branches)
   lin_in_avals = [raise_to_shaped(a, weak_type=False)
                   for a, l in zip(in_avals, linear) if l]
   assert all(core.typematch(out_aval, lin_in_aval)
@@ -1131,7 +1131,7 @@ cond_p.def_impl(partial(xla.apply_primitive, cond_p))
 cond_p.def_abstract_eval(_cond_abstract_eval)
 cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp
-ad.primitive_transposes[cond_p] = _cond_transpose
+ad.reducing_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.initial_style_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
@@ -1673,8 +1673,8 @@ def _maybe_device_put(x):
   else:
     return x
 
-def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
-                    linear, unroll):
+def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
+                    num_carry, jaxpr, linear, unroll):
   # we've only implemented transposing scans with specific lin/nonlin patterns
   consts_lin, init_lin, xs_lin = split_list(linear, [num_consts, num_carry])
   num_ires = len(consts_lin) - sum(consts_lin)
@@ -1702,7 +1702,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a])
   jaxpr_trans = _transpose_scan_jaxpr(
-      num_ires, num_consts - num_ires, num_eres, jaxpr)
+      num_ires, num_consts - num_ires, num_eres, jaxpr, reduce_axes)
   linear_trans = ([False] * num_ires +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
@@ -1717,8 +1717,10 @@ def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr,
 
 # transpose_scan_jaxpr :: ([res1, c, a, res2] -> b)
 #                         -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
-def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
+def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr, reduce_axes):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
+  # TODO: allow input cotangent avals to be batched relative to jaxpr.in_avals
+  # if an axis isn't reduced
   res1_avals, c_avals, a_avals, res2_avals = split_list(
       jaxpr.in_avals, [num_res1, num_c, num_a])
   num_b = len(jaxpr.out_avals)
@@ -1730,7 +1732,8 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
         res1_cbar_bbar_res2, [num_res1, num_c, num_b])
     primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
                [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
-    cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.consts, primals, b_bar)
+    cbar_abar = ad.backward_pass(jaxpr.jaxpr, reduce_axes, jaxpr.consts,
+                                 primals, b_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
     a_bar = _map(ad.instantiate_zeros_aval, a_avals, a_bar)
     c_bar = _map(ad.instantiate_zeros_aval, c_avals,
@@ -1879,7 +1882,7 @@ scan_p.def_custom_bind(scan_bind)
 scan_p.def_impl(partial(xla.apply_primitive, scan_p))
 scan_p.def_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
-ad.primitive_transposes[scan_p] = _scan_transpose
+ad.reducing_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.initial_style_translations[scan_p] = xla.lower_fun_initial_style(_scan_impl)
 batching.initial_style_batchers[scan_p] = _scan_batching_rule
@@ -1954,7 +1957,19 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
         f"{tree_unflatten(tree2, avals2)}.")
 
 
-def _check_tree(func_name, expected_name, actual_tree, expected_tree):
+def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=False):
+  if has_aux:
+    actual_tree_children = actual_tree.children()
+
+    if len(actual_tree_children) == 2:
+      # select first child as result tree
+      actual_tree = tree_structure(actual_tree_children[0])
+    else:
+      raise ValueError(
+        f"{func_name}() produced a pytree with structure "
+        f"{actual_tree}, but a pytree tuple with auxiliary "
+        f"output was expected because has_aux was set to True.")
+
   if actual_tree != expected_tree:
     raise TypeError(
         f"{func_name}() output pytree structure must match {expected_name}, "
@@ -2006,7 +2021,7 @@ def _split_root_args(args, const_lengths):
 
 
 @api_boundary
-def custom_root(f, initial_guess, solve, tangent_solve):
+def custom_root(f, initial_guess, solve, tangent_solve, has_aux=False):
   """Differentiably solve for a roots of a function.
 
   This is a low-level routine, mostly intended for internal use in JAX.
@@ -2037,6 +2052,8 @@ def custom_root(f, initial_guess, solve, tangent_solve):
       - For vector ``y``, you could use a linear solve with the Jacobian, if
         dimensionality of ``y`` is not too large:
         ``lambda g, y: np.linalg.solve(jacobian(g)(y), y)``.
+    has_aux: bool indicating whether the ``solve`` function returns
+      auxiliary data like solver diagnostics as a second argument.
 
   Returns:
     The result of calling solve(f, initial_guess) with gradients defined via
@@ -2048,11 +2065,11 @@ def custom_root(f, initial_guess, solve, tangent_solve):
       f, in_args_tree, guess_avals)
 
   in_tree, = treedef_children(in_args_tree)
-  _check_tree("f", "initial_guess", out_tree, in_tree)
+  _check_tree("f", "initial_guess", out_tree, in_tree, False)
 
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
       partial(solve, _stop_gradient_fun(f)), in_args_tree, guess_avals)
-  _check_tree("solve", "initial_guess", solution_tree, in_tree)
+  _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
 
   def linearize_and_solve(x, b):
     unchecked_zeros, f_jvp = jax.linearize(f, x)
@@ -2060,15 +2077,15 @@ def custom_root(f, initial_guess, solve, tangent_solve):
 
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
       linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2)
-  _check_tree("tangent_solve", "x", out_tree, in_tree)
+  _check_tree("tangent_solve", "x", out_tree, in_tree, False)
 
   all_consts = [f_consts, solve_consts, l_and_s_consts]
   const_lengths = _RootTuple(*_map(len, all_consts))
   jaxprs = _RootTuple(f_jaxpr, solve_jaxpr, l_and_s_jaxpr)
 
-  out_flat = _custom_root(
+  solution_flat = _custom_root(
       const_lengths, jaxprs, *(_flatten(all_consts) + guess_flat))
-  return tree_unflatten(out_tree, out_flat)
+  return tree_unflatten(solution_tree, solution_flat)
 
 
 @partial(jax.custom_jvp, nondiff_argnums=(0, 1))
@@ -2081,7 +2098,10 @@ def _custom_root(const_lengths, jaxprs, *args):
 @_custom_root.defjvp
 def _root_jvp(const_lengths, jaxprs, primals, tangents):
   params, _ = _split_root_args(primals, const_lengths)
-  solution = _custom_root(const_lengths, jaxprs, *primals)
+  sol = _custom_root(const_lengths, jaxprs, *primals)
+
+  f_out_vals = len(jaxprs.f.out_avals)
+  solution, aux = split_list(sol, [f_out_vals])
 
   params_dot, _ = _split_root_args(tangents, const_lengths)
 
@@ -2102,6 +2122,9 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
       params.f, params_dot.f)
   solution_dot = _map(
       operator.neg, linearize_and_solve(*itertools.chain(solution, rhs)))
+  # append aux, create symbolic zero tangents for the aux values
+  solution += aux
+  solution_dot += _map(lax.zeros_like_array, aux)
 
   return solution, solution_dot
 
@@ -2141,7 +2164,7 @@ def _check_shapes(func_name, expected_name, actual, expected):
 
 @api_boundary
 def custom_linear_solve(
-    matvec, b, solve, transpose_solve=None, symmetric=False):
+    matvec, b, solve, transpose_solve=None, symmetric=False, has_aux=False):
   """Perform a matrix-free linear solve with implicitly defined gradients.
 
   This function allows for overriding or defining gradients for a linear
@@ -2160,7 +2183,7 @@ def custom_linear_solve(
     b: constant right handle side of the equation. May be any nested structure
       of arrays.
     solve: higher level function that solves for solution to the linear
-      equation, i.e., ``solve(matvec, x)) == x`` for all ``x`` of the same form
+      equation, i.e., ``solve(matvec, x) == x`` for all ``x`` of the same form
       as ``b``. This function need not be differentiable.
     transpose_solve: higher level function for solving the transpose linear
       equation, i.e., ``transpose_solve(vecmat, x) == x``, where ``vecmat`` is
@@ -2169,10 +2192,12 @@ def custom_linear_solve(
       ``symmetric=True``, in which case ``solve`` provides the default value.
     symmetric: bool indicating if it is safe to assume the linear map
       corresponds to a symmetric matrix, i.e., ``matvec == vecmat``.
+    has_aux: bool indicating whether the ``solve`` and ``transpose_solve`` functions
+      return auxiliary data like solver diagnostics as a second argument.
 
   Returns:
     Result of ``solve(matvec, b)``, with gradients defined assuming that the
-    solution ``x`` satisfies the linear equation ``matvec(x) == b``.
+      solution ``x`` satisfies the linear equation ``matvec(x) == b``.
   """
   if transpose_solve is None and symmetric:
     transpose_solve = solve
@@ -2182,22 +2207,29 @@ def custom_linear_solve(
 
   tree, = treedef_children(in_args_tree)
 
-  def _shape_checked(fun, name):
+  def _shape_checked(fun, name, has_aux):
     def f(x):
       y = fun(x)
       _check_shapes(name, "b", y, b_flat)
       return y
-    return f
 
+    def f_aux(x):
+      y, aux = fun(x)
+      _check_shapes(name, "b", y, b_flat)
+      return y, aux
+
+    return f_aux if has_aux else f
+
+  # no auxiliary data assumed for matvec
   matvec_jaxpr, matvec_consts, out_tree = _initial_style_jaxpr(
-      _shape_checked(matvec, "matvec"), in_args_tree, b_avals,
+      _shape_checked(matvec, "matvec", False), in_args_tree, b_avals,
       'custom_linear_solve')
-  _check_tree("matvec", "b", out_tree, tree)
+  _check_tree("matvec", "b", out_tree, tree, False)
 
   solve_jaxpr, solve_consts, out_tree = _initial_style_jaxpr(
-      _shape_checked(partial(solve, matvec), "solve"), in_args_tree, b_avals,
+      _shape_checked(partial(solve, matvec), "solve", has_aux), in_args_tree, b_avals,
       'custom_linear_solve')
-  _check_tree("solve", "b", out_tree, tree)
+  _check_tree("solve", "b", out_tree, tree, has_aux)
 
   if transpose_solve is None:
     vecmat_jaxpr = tr_solve_jaxpr = None
@@ -2214,9 +2246,9 @@ def custom_linear_solve(
       assert out_tree == tree
 
     tr_solve_jaxpr, tr_solve_consts, out_tree = _initial_style_jaxpr(
-        _shape_checked(partial(transpose_solve, vecmat), "transpose_solve"),
+        _shape_checked(partial(transpose_solve, vecmat), "transpose_solve", has_aux),
         in_args_tree, b_avals, 'custom_linear_solve')
-    _check_tree("transpose_solve", "b", out_tree, tree)
+    _check_tree("transpose_solve", "b", out_tree, tree, has_aux)
 
   all_consts = [matvec_consts, vecmat_consts, solve_consts, tr_solve_consts]
   const_lengths = _LinearSolveTuple(*_map(len, all_consts))
@@ -2226,11 +2258,21 @@ def custom_linear_solve(
   out_flat = linear_solve_p.bind(
       *(_flatten(all_consts) + b_flat),
       const_lengths=const_lengths, jaxprs=jaxprs)
-  return tree_unflatten(tree, out_flat)
+
+  return tree_unflatten(out_tree, out_flat)
 
 
 def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
-  return _map(raise_to_shaped, args[sum(const_lengths):])
+  args_to_raise = args[sum(const_lengths):]
+
+  # raise aux_args to shaped arrays as well if present
+  # number of aux args is the difference in out_avals
+  # of solve and matvec (since they map to the same vector space)
+
+  num_aux = len(jaxprs.solve.out_avals) - len(jaxprs.matvec.out_avals)
+  if num_aux > 0:
+    args_to_raise += tuple(jaxprs.solve.out_avals[-num_aux:])
+  return _map(raise_to_shaped, args_to_raise)
 
 
 def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
@@ -2263,15 +2305,28 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
   params, _ = _split_linear_solve_args(primals, const_lengths)
   params_dot, b_dot = _split_linear_solve_args(tangents, const_lengths)
 
+  num_x_leaves = len(b_dot)
+  # x is a flat tree with possible aux values appended
+  # since x_tree == b_tree == b_dot_tree, we can cut off
+  # aux values with len info provided by b_dot tree here
+  x_leaves, _ = split_list(x, [num_x_leaves])
+
   if all(type(p) is ad_util.Zero for p in params_dot.matvec):
     # no need to evaluate matvec_tangents
     rhs = b_dot
   else:
     matvec_tangents = _tangent_linear_map(
-        core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec, *x)
+        core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec, *x_leaves)
     rhs = _map(ad.add_tangents, b_dot, _map(operator.neg, matvec_tangents))
 
   x_dot = linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)
+
+  # split into x tangents and aux tangents (these become zero)
+  dx_leaves, daux_leaves = split_list(x_dot, [num_x_leaves])
+
+  daux_leaves = _map(ad_util.Zero.from_value, daux_leaves)
+
+  x_dot = dx_leaves + daux_leaves
 
   return x, x_dot
 
@@ -2282,10 +2337,14 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
                     'differentiation of custom_linear_solve')
 
   params, b = _split_linear_solve_args(primals, const_lengths)
+  # split off symbolic zeros in the cotangent if present
+  x_cotangent, _ = split_list(cotangent, [len(b)])
   assert all(ad.is_undefined_primal(x) for x in b)
-  cotangent_b = linear_solve_p.bind(
-      *(_flatten(params.transpose()) + cotangent),
+  cotangent_b_full = linear_solve_p.bind(
+      *(_flatten(params.transpose()) + x_cotangent),
       const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose())
+  # drop aux values in cotangent computation
+  cotangent_b, _ = split_list(cotangent_b_full, [len(b)])
   return [None] * sum(const_lengths) + cotangent_b
 
 
@@ -2302,6 +2361,7 @@ def _linear_solve_batching_rule(args, dims, axis_name, main_type, const_lengths,
   (matvec, vecmat, solve, solve_t) = jaxprs
   (matvec_bat, vecmat_bat, solve_bat, solve_t_bat) = params_bat
 
+  num_aux = len(solve.out_avals) - len(matvec.out_avals)
   # Fixpoint computation of which parts of x and b are batched; we need to
   # ensure this is consistent between all four jaxprs
   b_bat = orig_b_bat
@@ -2318,7 +2378,9 @@ def _linear_solve_batching_rule(args, dims, axis_name, main_type, const_lengths,
       vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
           vecmat, size, vecmat_bat + b_bat, instantiate=x_bat,
           axis_name=axis_name, main_type=main_type)
-      x_bat_out = _map(operator.or_, vecmat_x_bat, solve_x_bat)
+      # batch all aux data by default
+      x_bat_out = _map(operator.or_, vecmat_x_bat + [True] * num_aux, solve_x_bat)
+
     # Apply matvec and solve_t -> new batched parts of b
     matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
         matvec, size, matvec_bat + x_bat_out, instantiate=b_bat,
@@ -2360,7 +2422,7 @@ def _linear_solve_batching_rule(args, dims, axis_name, main_type, const_lengths,
       *(new_params + new_b),
       const_lengths=const_lengths,
       jaxprs=batched_jaxprs)
-  out_dims = [0 if batched else batching.not_mapped for batched in b_bat]
+  out_dims = [0 if batched else batching.not_mapped for batched in solve_x_bat]
   return outs, out_dims
 
 
@@ -2459,7 +2521,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   if not all(int(elem.shape[axis]) == num_elems for elem in elems_flat[1:]):
     raise ValueError('Array inputs to associative_scan must have the same '
                      'first dimension. (saw: {})'
-                     .format([elems.shape for elem in elems_flat]))
+                     .format([elem.shape for elem in elems_flat]))
 
 
   # Summary of algorithm:

@@ -18,12 +18,16 @@ import numpy as np
 import scipy.special as osp_special
 
 from jax._src import api
+from jax import jit
 from jax import lax, core
+from jax import ops
 from jax.interpreters import ad
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
                                       _promote_args_inexact)
 from jax._src.numpy.util import _wraps
+
+from typing import Optional, Tuple
 
 
 @_wraps(osp_special.gammaln)
@@ -44,7 +48,8 @@ def betainc(a, b, x):
   return lax.betainc(a, b, x)
 
 
-@_wraps(osp_special.digamma, update_doc=False)
+@_wraps(osp_special.digamma, lax_description="""\
+The JAX version only accepts real-valued inputs.""")
 def digamma(x):
   x, = _promote_args_inexact("digamma", x)
   return lax.digamma(x)
@@ -108,23 +113,33 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
     a, = _promote_args_inexact("logsumexp", a)
   pos_dims, dims = _reduction_dims(a, axis)
   amax = jnp.max(a, axis=dims, keepdims=keepdims)
-  amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
+  amax = lax.stop_gradient(lax.select(jnp.isfinite(amax), amax, lax.full_like(amax, 0)))
   amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
-  if b is None:
+  # fast path if the result cannot be negative.
+  if b is None and not np.issubdtype(a.dtype, np.complexfloating):
     out = lax.add(lax.log(jnp.sum(lax.exp(lax.sub(a, amax_with_dims)),
                                   axis=dims, keepdims=keepdims)),
                   amax)
     sign = jnp.where(jnp.isnan(out), np.nan, 1.0).astype(out.dtype)
     sign = jnp.where(out == -np.inf, 0.0, sign)
   else:
-    sumexp = jnp.sum(lax.mul(lax.exp(lax.sub(a, amax_with_dims)), b),
-                     axis=dims, keepdims=keepdims)
-    sign = lax.stop_gradient(lax.sign(sumexp))
-    out = lax.add(lax.log(lax.abs(sumexp)), amax)
+    expsub = lax.exp(lax.sub(a, amax_with_dims))
+    if b is not None:
+      expsub = lax.mul(expsub, b)
+    sumexp = jnp.sum(expsub, axis=dims, keepdims=keepdims)
+
+    sign = lax.stop_gradient(jnp.sign(sumexp))
+    if np.issubdtype(sumexp.dtype, np.complexfloating):
+      if return_sign:
+        sumexp = sign*sumexp
+      out = lax.add(lax.log(sumexp), amax)
+    else:
+      out = lax.add(lax.log(lax.abs(sumexp)), amax)
   if return_sign:
     return (out, sign)
   if b is not None:
-    out = jnp.where(sign < 0, np.nan, out)
+    if not np.issubdtype(out.dtype, np.complexfloating):
+      out = jnp.where(sign < 0, np.nan, out)
   return out
 
 
@@ -657,3 +672,416 @@ def i1e(x):
 def i1(x):
   x, = _promote_args_inexact("i1", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))
+
+
+def _gen_recurrence_mask(
+    l_max: int, is_normalized: bool = True
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+  """Generates mask for recurrence relation on the remaining entries.
+
+  The remaining entries are with respect to the diagonal and offdiagonal
+  entries.
+
+  Args:
+    l_max: see `gen_normalized_legendre`.
+    is_normalized: True if the recurrence mask is used by normalized associated
+      Legendre functions.
+
+  Returns:
+    Arrays representing the mask used by the recurrence relations.
+  """
+
+  # Computes all coefficients.
+  m_mat, l_mat = jnp.mgrid[:l_max + 1, :l_max + 1]
+  if is_normalized:
+    c0 = l_mat * l_mat
+    c1 = m_mat * m_mat
+    c2 = 2.0 * l_mat
+    c3 = (l_mat - 1.0) * (l_mat - 1.0)
+    d0 = jnp.sqrt((4.0 * c0 - 1.0) / (c0 - c1))
+    d1 = jnp.sqrt(((c2 + 1.0) * (c3 - c1)) / ((c2 - 3.0) * (c0 - c1)))
+  else:
+    d0 = (2.0 * l_mat - 1.0) / (l_mat - m_mat)
+    d1 = (l_mat + m_mat - 1.0) / (l_mat - m_mat)
+
+  d0_mask_indices = jnp.triu_indices(l_max + 1, 1)
+  d1_mask_indices = jnp.triu_indices(l_max + 1, 2)
+  d_zeros = jnp.zeros((l_max + 1, l_max + 1))
+  d0_mask = d_zeros.at[d0_mask_indices].set(d0[d0_mask_indices])
+  d1_mask = d_zeros.at[d1_mask_indices].set(d1[d1_mask_indices])
+
+  # Creates a 3D mask that contains 1s on the diagonal plane and 0s elsewhere.
+  # i = jnp.arange(l_max + 1)[:, None, None]
+  # j = jnp.arange(l_max + 1)[None, :, None]
+  # k = jnp.arange(l_max + 1)[None, None, :]
+  i, j, k = jnp.ogrid[:l_max + 1, :l_max + 1, :l_max + 1]
+  mask = 1.0 * (i + j - k == 0)
+
+  d0_mask_3d = jnp.einsum('jk,ijk->ijk', d0_mask, mask)
+  d1_mask_3d = jnp.einsum('jk,ijk->ijk', d1_mask, mask)
+
+  return (d0_mask_3d, d1_mask_3d)
+
+
+@partial(jit, static_argnums=(2))
+def _gen_derivatives(p: jnp.ndarray,
+                     x: jnp.ndarray,
+                     is_normalized: bool) -> jnp.ndarray:
+  """Generates derivatives of associated Legendre functions of the first kind.
+
+  Args:
+    p: The 3D array containing the values of associated Legendre functions; the
+      dimensions are in the sequence of order (m), degree (l), and evalution
+      points.
+    x: A vector of type `float32` or `float64` containing the sampled points.
+    is_normalized: True if the associated Legendre functions are normalized.
+  Returns:
+    The 3D array representing the derivatives of associated Legendre functions
+    of the first kind.
+  """
+
+  num_m, num_l, num_x = p.shape
+
+  # p_{l-1}^m.
+  p_m_lm1 = jnp.pad(p, ((0, 0), (1, 0), (0, 0)))[:, :num_l, :]
+
+  # p_{l-1}^{m+2}.
+  p_mp2_lm1 = jnp.pad(p_m_lm1, ((0, 2), (0, 0), (0, 0)))[2:num_m + 2, :, :]
+
+  # p_{l-1}^{m-2}.
+  p_mm2_lm1 = jnp.pad(p_m_lm1, ((2, 0), (0, 0), (0, 0)))[:num_m, :, :]
+
+  # Derivative computation requires negative orders.
+  if is_normalized:
+    raise NotImplementedError(
+        'Negative orders for normalization is not implemented yet.')
+  else:
+    if num_l > 1:
+      l_vec = jnp.arange(1, num_l - 1)
+      p_p1 = p[1, 1:num_l - 1, :]
+      coeff = -1.0 / ((l_vec + 1) * l_vec)
+      update_p_p1 = jnp.einsum('i,ij->ij', coeff, p_p1)
+      p_mm2_lm1 = p_mm2_lm1.at[ops.index[1, 2:num_l, :]].set(update_p_p1)
+
+    if num_l > 2:
+      l_vec = jnp.arange(2, num_l - 1)
+      p_p2 = p[2, 2:num_l - 1, :]
+      coeff = 1.0 / ((l_vec + 2) * (l_vec + 1) * l_vec)
+      update_p_p2 = jnp.einsum('i,ij->ij', coeff, p_p2)
+      p_mm2_lm1 = p_mm2_lm1.at[ops.index[0, 3:num_l, :]].set(update_p_p2)
+
+  m_mat, l_mat = jnp.mgrid[:num_m, :num_l]
+
+  coeff_zeros = jnp.zeros((num_m, num_l))
+  upper_0_indices = jnp.triu_indices(num_m, 0, num_l)
+  zero_vec = jnp.zeros((num_l,))
+
+  a0 = -0.5 / (m_mat - 1.0)
+  a0_masked = coeff_zeros.at[upper_0_indices].set(a0[upper_0_indices])
+  a0_masked = a0_masked.at[1, :].set(zero_vec)
+
+  b0 = l_mat + m_mat
+  c0 = a0 * (b0 - 2.0) * (b0 - 1.0)
+  c0_masked = coeff_zeros.at[upper_0_indices].set(c0[upper_0_indices])
+  c0_masked = c0_masked.at[1, :].set(zero_vec)
+
+  # p_l^{m-1}.
+  p_mm1_l = (jnp.einsum('ij,ijk->ijk', a0_masked, p_m_lm1) +
+             jnp.einsum('ij,ijk->ijk', c0_masked, p_mm2_lm1))
+
+  d0 = -0.5 / (m_mat + 1.0)
+  d0_masked = coeff_zeros.at[upper_0_indices].set(d0[upper_0_indices])
+  e0 = d0 * b0 * (b0 + 1.0)
+  e0_masked = coeff_zeros.at[upper_0_indices].set(e0[upper_0_indices])
+
+  # p_l^{m+1}.
+  p_mp1_l = (jnp.einsum('ij,ijk->ijk', d0_masked, p_mp2_lm1) +
+             jnp.einsum('ij,ijk->ijk', e0_masked, p_m_lm1))
+
+  f0 = b0 * (l_mat - m_mat + 1.0) / 2.0
+  f0_masked = coeff_zeros.at[upper_0_indices].set(f0[upper_0_indices])
+  p_derivative = jnp.einsum('ij,ijk->ijk', f0_masked, p_mm1_l) - 0.5 * p_mp1_l
+
+  # Special treatment of the singularity at m = 1.
+  if num_m > 1:
+    l_vec = jnp.arange(num_l)
+    g0 = jnp.einsum('i,ij->ij', (l_vec + 1) * l_vec, p[0, :, :])
+    if num_l > 2:
+      g0 = g0 -  p[2, :, :]
+    p_derivative_m0 = jnp.einsum('j,ij->ij', 0.5 / jnp.sqrt(1 - x * x), g0)
+    p_derivative = p_derivative.at[1, :, :].set(p_derivative_m0)
+    p_derivative = p_derivative.at[1, 0, :].set(jnp.zeros((num_x,)))
+
+  return p_derivative
+
+
+@partial(jit, static_argnums=(0, 2))
+def _gen_associated_legendre(l_max: int,
+                             x: jnp.ndarray,
+                             is_normalized: bool) -> jnp.ndarray:
+  r"""Computes associated Legendre functions (ALFs) of the first kind.
+
+  The ALFs of the first kind are used in spherical harmonics. The spherical
+  harmonic of degree `l` and order `m` can be written as
+  `Y_l^m(θ, φ) = N_l^m * P_l^m(cos(θ)) * exp(i m φ)`, where `N_l^m` is the
+  normalization factor and θ and φ are the colatitude and longitude,
+  repectively. `N_l^m` is chosen in the way that the spherical harmonics form
+  a set of orthonormal basis function of L^2(S^2). For the computational
+  efficiency of spherical harmonics transform, the normalization factor is
+  used in the computation of the ALFs. In addition, normalizing `P_l^m`
+  avoids overflow/underflow and achieves better numerical stability. Three
+  recurrence relations are used in the computation.
+
+  Args:
+    l_max: The maximum degree of the associated Legendre function. Both the
+      degrees and orders are `[0, 1, 2, ..., l_max]`.
+    x: A vector of type `float32`, `float64` containing the sampled points in
+      spherical coordinates, at which the ALFs are computed; `x` is essentially
+      `cos(θ)`. For the numerical integration used by the spherical harmonics
+      transforms, `x` contains the quadrature points in the interval of
+      `[-1, 1]`. There are several approaches to provide the quadrature points:
+      Gauss-Legendre method (`scipy.special.roots_legendre`), Gauss-Chebyshev
+      method (`scipy.special.roots_chebyu`), and Driscoll & Healy
+      method (Driscoll, James R., and Dennis M. Healy. "Computing Fourier
+      transforms and convolutions on the 2-sphere." Advances in applied
+      mathematics 15, no. 2 (1994): 202-250.). The Gauss-Legendre quadrature
+      points are nearly equal-spaced along θ and provide exact discrete
+      orthogonality, (P^m)^T W P_m = I, where `T` represents the transpose
+      operation, `W` is a diagonal matrix containing the quadrature weights,
+      and `I` is the identity matrix. The Gauss-Chebyshev points are equally
+      spaced, which only provide approximate discrete orthogonality. The
+      Driscoll & Healy qudarture points are equally spaced and provide the
+      exact discrete orthogonality. The number of sampling points is required to
+      be twice as the number of frequency points (modes) in the Driscoll & Healy
+      approach, which enables FFT and achieves a fast spherical harmonics
+      transform.
+    is_normalized: True if the associated Legendre functions are normalized.
+      With normalization, `N_l^m` is applied such that the spherical harmonics
+      form a set of orthonormal basis functions of L^2(S^2).
+
+  Returns:
+    The 3D array of shape `(l_max + 1, l_max + 1, len(x))` containing the values
+    of the ALFs at `x`; the dimensions in the sequence of order, degree, and
+    evalution points.
+  """
+  p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]))
+
+  a_idx = jnp.arange(1, l_max + 1)
+  b_idx = jnp.arange(l_max)
+  if is_normalized:
+    initial_value = 0.5 / jnp.sqrt(jnp.pi)  # The initial value p(0,0).
+    f_a = jnp.cumprod(-1 * jnp.sqrt(1.0 + 0.5 / a_idx))
+    f_b = jnp.sqrt(2.0 * b_idx + 3.0)
+  else:
+    initial_value = 1.0  # The initial value p(0,0).
+    f_a = jnp.cumprod(1.0 - 2.0 * a_idx)
+    f_b = 2.0 * b_idx + 1.0
+
+  p = p.at[(0, 0)].set(initial_value)
+
+  # Compute the diagonal entries p(l,l) with recurrence.
+  y = jnp.cumprod(
+      jnp.broadcast_to(jnp.sqrt(1.0 - x * x), (l_max, x.shape[0])),
+      axis=0)
+  p_diag = initial_value * jnp.einsum('i,ij->ij', f_a, y)
+  diag_indices = jnp.diag_indices(l_max + 1)
+  p = p.at[(diag_indices[0][1:], diag_indices[1][1:])].set(p_diag)
+
+  # Compute the off-diagonal entries with recurrence.
+  p_offdiag = jnp.einsum('ij,ij->ij',
+                         jnp.einsum('i,j->ij', f_b, x),
+                         p[jnp.diag_indices(l_max)])
+  offdiag_indices = (diag_indices[0][:l_max], diag_indices[1][:l_max] + 1)
+  p = p.at[offdiag_indices].set(p_offdiag)
+
+  # Compute the remaining entries with recurrence.
+  d0_mask_3d, d1_mask_3d = _gen_recurrence_mask(
+      l_max, is_normalized=is_normalized)
+
+  def body_fun(i, p_val):
+    coeff_0 = d0_mask_3d[i]
+    coeff_1 = d1_mask_3d[i]
+    h = (jnp.einsum('ij,ijk->ijk',
+                    coeff_0,
+                    jnp.einsum(
+                        'ijk,k->ijk', jnp.roll(p_val, shift=1, axis=1), x)) -
+         jnp.einsum('ij,ijk->ijk', coeff_1, jnp.roll(p_val, shift=2, axis=1)))
+    p_val = p_val + h
+    return p_val
+
+  if l_max > 1:
+    p = lax.fori_loop(lower=2, upper=l_max+1, body_fun=body_fun, init_val=p)
+
+  return p
+
+
+def lpmn(m: int, n: int, z: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+  """The associated Legendre functions (ALFs) of the first kind.
+
+  Args:
+    m: The maximum order of the associated Legendre functions.
+    n: The maximum degree of the associated Legendre function, often called
+      `l` in describing ALFs. Both the degrees and orders are
+      `[0, 1, 2, ..., l_max]`, where `l_max` denotes the maximum degree.
+    z: A vector of type `float32` or `float64` containing the sampling
+      points at which the ALFs are computed.
+
+  Returns:
+    A 2-tuple of 3D arrays of shape `(l_max + 1, l_max + 1, len(z))` containing
+    the values and derivatives of the associated Legendre functions of the
+    first kind. The return type matches the type of `z`.
+
+  Raises:
+    TypeError if elements of array `z` are not in (float32, float64).
+    ValueError if array `z` is not 1D.
+    NotImplementedError if `m!=n`.
+  """
+  dtype = lax.dtype(z)
+  if dtype not in (jnp.float32, jnp.float64):
+    raise TypeError(
+        'z.dtype={} is not supported, see docstring for supported types.'
+        .format(dtype))
+
+  if z.ndim != 1:
+    raise ValueError('z must be a 1D array.')
+
+  m = core.concrete_or_error(int, m, 'Argument m of lpmn.')
+  n = core.concrete_or_error(int, n, 'Argument n of lpmn.')
+
+  if m != n:
+    raise NotImplementedError('Computations for m!=n are not yet supported.')
+
+  l_max = n
+  is_normalized = False
+  p_vals = _gen_associated_legendre(l_max, z, is_normalized)
+  p_derivatives = _gen_derivatives(p_vals, z, is_normalized)
+
+  return (p_vals, p_derivatives)
+
+
+def lpmn_values(m: int, n: int, z: jnp.ndarray, is_normalized: bool) -> jnp.ndarray:
+  r"""The associated Legendre functions (ALFs) of the first kind.
+
+  Unlike `lpmn`, this function only computes the values of ALFs.
+  The ALFs of the first kind can be used in spherical harmonics. The
+  spherical harmonic of degree `l` and order `m` can be written as
+  :math:`Y_l^m(\theta, \phi) = N_l^m * P_l^m(\cos \theta) * \exp(i m \phi)`,
+  where :math:`N_l^m` is the normalization factor and θ and φ are the
+  colatitude and longitude, repectively. :math:`N_l^m` is chosen in the
+  way that the spherical harmonics form a set of orthonormal basis function
+  of :math:`L^2(S^2)`. Normalizing :math:`P_l^m` avoids overflow/underflow
+  and achieves better numerical stability.
+
+  Args:
+    m: The maximum order of the associated Legendre functions.
+    n: The maximum degree of the associated Legendre function, often called
+      `l` in describing ALFs. Both the degrees and orders are
+      `[0, 1, 2, ..., l_max]`, where `l_max` denotes the maximum degree.
+    z: A vector of type `float32` or `float64` containing the sampling
+      points at which the ALFs are computed.
+    is_normalized: True if the associated Legendre functions are normalized.
+      With normalization, :math:`N_l^m` is applied such that the spherical
+      harmonics form a set of orthonormal basis functions of :math:`L^2(S^2)`.
+
+  Returns:
+    A 3D array of shape `(l_max + 1, l_max + 1, len(z))` containing
+    the values of the associated Legendre functions of the first kind. The
+    return type matches the type of `z`.
+
+  Raises:
+    TypeError if elements of array `z` are not in (float32, float64).
+    ValueError if array `z` is not 1D.
+    NotImplementedError if `m!=n`.
+  """
+  dtype = lax.dtype(z)
+  if dtype not in (jnp.float32, jnp.float64):
+    raise TypeError(
+        'z.dtype={} is not supported, see docstring for supported types.'
+        .format(dtype))
+
+  if z.ndim != 1:
+    raise ValueError('z must be a 1D array.')
+
+  m = core.concrete_or_error(int, m, 'Argument m of lpmn.')
+  n = core.concrete_or_error(int, n, 'Argument n of lpmn.')
+
+  if m != n:
+    raise NotImplementedError('Computations for m!=n are not yet supported.')
+
+  l_max = n
+
+  return _gen_associated_legendre(l_max, z, is_normalized)
+
+
+
+@partial(jit, static_argnums=(4,))
+def _sph_harm(m: jnp.ndarray,
+              n: jnp.ndarray,
+              theta: jnp.ndarray,
+              phi: jnp.ndarray,
+              n_max: int) -> jnp.ndarray:
+  """Computes the spherical harmonics."""
+
+  cos_colatitude = jnp.cos(phi)
+
+  legendre = _gen_associated_legendre(n_max, cos_colatitude, True)
+  legendre_val = legendre[abs(m), n, jnp.arange(len(n))]
+
+  angle = abs(m) * theta
+  vandermonde = lax.complex(jnp.cos(angle), jnp.sin(angle))
+  harmonics = lax.complex(legendre_val * jnp.real(vandermonde),
+                          legendre_val * jnp.imag(vandermonde))
+
+  # Negative order.
+  harmonics = jnp.where(m < 0,
+                        (-1.0)**abs(m) * jnp.conjugate(harmonics),
+                        harmonics)
+
+  return harmonics
+
+
+def sph_harm(m: jnp.ndarray,
+             n: jnp.ndarray,
+             theta: jnp.ndarray,
+             phi: jnp.ndarray,
+             n_max: Optional[int] = None) -> jnp.ndarray:
+  r"""Computes the spherical harmonics.
+
+  The JAX version has one extra argument `n_max`, the maximum value in `n`.
+
+  The spherical harmonic of degree `n` and order `m` can be written as
+  :math:`Y_n^m(\theta, \phi) = N_n^m * P_n^m(\cos \phi) * \exp(i m \theta)`,
+  where :math:`N_n^m = \sqrt{\frac{\left(2n+1\right) \left(n-m\right)!}
+  {4 \pi \left(n+m\right)!}}` is the normalization factor and :math:`\phi` and
+  :math:\theta` are the colatitude and longitude, repectively. :math:`N_n^m` is
+  chosen in the way that the spherical harmonics form a set of orthonormal basis
+  functions of :math:`L^2(S^2)`.
+
+  Args:
+    m: The order of the harmonic; must have `|m| <= n`. Return values for
+      `|m| > n` ara undefined.
+    n: The degree of the harmonic; must have `n >= 0`. The standard notation for
+      degree in descriptions of spherical harmonics is `l (lower case L)`. We
+      use `n` here to be consistent with `scipy.special.sph_harm`. Return
+      values for `n < 0` are undefined.
+    theta: The azimuthal (longitudinal) coordinate; must be in [0, 2*pi].
+    phi: The polar (colatitudinal) coordinate; must be in [0, pi].
+    n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
+      maximum value of `n`, the results are clipped to `n_max`. For example,
+      `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
+      acutually returns
+      `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
+  Returns:
+    A 1D array containing the spherical harmonics at (m, n, theta, phi).
+  """
+
+  if jnp.isscalar(phi):
+    phi = jnp.array([phi])
+
+  if n_max is None:
+    n_max = jnp.max(n)
+  n_max = core.concrete_or_error(
+      int, n_max, 'The `n_max` argument of `jnp.scipy.special.sph_harm` must '
+      'be statically specified to use `sph_harm` within JAX transformations.')
+
+  return _sph_harm(m, n, theta, phi, n_max)

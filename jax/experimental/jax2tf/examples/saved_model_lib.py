@@ -41,7 +41,7 @@ def convert_and_save_model(
     with_gradient: bool = False,
     enable_xla: bool = True,
     compile_model: bool = True,
-    save_model_options: Optional[tf.saved_model.SaveOptions] = None):
+    saved_model_options: Optional[tf.saved_model.SaveOptions] = None):
   """Convert a JAX function and saves a SavedModel.
 
   This is an example, for serious uses you will likely want to copy and
@@ -89,7 +89,7 @@ def convert_and_save_model(
       `polymorphic_shapes` argument to jax2tf.convert for the second parameter of
       `jax_fn`. In this case, a single `input_signatures` is supported, and
       should have `None` in the polymorphic dimensions.
-    save_model_options: options to pass to savedmodel.save.
+    saved_model_options: options to pass to savedmodel.save.
   """
   if not input_signatures:
     raise ValueError("At least one input_signature must be given")
@@ -124,8 +124,13 @@ def convert_and_save_model(
     # If there are more signatures, trace and cache a TF function for each one
     tf_graph.get_concrete_function(input_signature)
   wrapper = _ReusableSavedModelWrapper(tf_graph, param_vars)
+  if with_gradient:
+    if not saved_model_options:
+      saved_model_options = tf.saved_model.SaveOptions(experimental_custom_gradients=True)
+    else:
+      saved_model_options.experimental_custom_gradients = True
   tf.saved_model.save(wrapper, model_dir, signatures=signatures,
-                      options=save_model_options)
+                      options=saved_model_options)
 
 
 class _ReusableSavedModelWrapper(tf.train.Checkpoint):

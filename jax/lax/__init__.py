@@ -76,6 +76,7 @@ from jax._src.lax.lax import (
   clamp,
   clamp_p,
   clz,
+  clz_p,
   collapse,
   complex,
   complex_p,
@@ -354,4 +355,5 @@ from jax._src.lax.parallel import (
 from jax._src.lax.other import (
   conv_general_dilated_patches
 )
+from jax._src.ad_util import stop_gradient_p
 from . import linalg

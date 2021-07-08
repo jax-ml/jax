@@ -27,7 +27,7 @@ from jax import core
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
-from jax.abstract_arrays import make_shaped_array
+from jax._src.abstract_arrays import make_shaped_array
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves

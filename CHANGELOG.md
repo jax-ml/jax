@@ -5,28 +5,78 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 <!--
 Remember to align the itemized text with the first line of an item within a list.
 
-PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.14 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...master).
+## jax 0.2.17 (unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...main).
 * New features:
+  * New SciPy function {py:func}`jax.scipy.special.sph_harm`.
+  * Reverse-mode autodiff functions ({func}`jax.grad`,
+    {func}`jax.value_and_grad`, {func}`jax.vjp`, and
+    {func}`jax.linear_transpose`) support a parameter that indicates which named
+    axes should be summed over in the backward pass if they were broadcasted
+    over in the forward pass. This enables use of these APIs in a
+    non-per-example way inside maps (initially only
+    {func}`jax.experimental.maps.xmap`) ({jax-issue}`#6950`).
+
+## jaxlib 0.1.69 (unreleased)
+
+## jax 0.2.16 (June 23 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.15...jax-v0.2.16).
+
+## jax 0.2.15 (June 23 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.14...jax-v0.2.15).
+* New features:
+  * [#7042](https://github.com/google/jax/pull/7042) Turned on TFRT CPU backend
+    with significant dispatch performance improvements on CPU.
+  * The {func}`jax2tf.convert` supports inequalities and min/max for booleans
+    ({jax-issue}`#6956`).
+  * New SciPy function {py:func}`jax.scipy.special.lpmn_values`.
 
 * Breaking changes:
+  * Support for NumPy 1.16 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
 
 * Bug fixes:
+  * Fixed bug that prevented round-tripping from JAX to TF and back:
+    `jax2tf.call_tf(jax2tf.convert)` ({jax-issue}`#6947`).
+
+## jaxlib 0.1.68 (June 23 2021)
+* Bug fixes:
+  * Fixed bug in TFRT CPU backend that gets nans when transfer TPU buffer to
+    CPU.
+
+## jax 0.2.14 (June 10 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.13...jax-v0.2.14).
+* New features:
+  * The {func}`jax2tf.convert` now has support for `pjit` and `sharded_jit`.
+  * A new configuration option JAX_TRACEBACK_FILTERING controls how JAX filters
+    tracebacks.
+  * A new traceback filtering mode using `__tracebackhide__` is now enabled by
+    default in sufficiently recent versions of IPython.
+  * The {func}`jax2tf.convert` supports shape polymorphism even when the
+    unknown dimensions are used in arithmetic operations, e.g., `jnp.reshape(-1)`
+    ({jax-issue}`#6827`).
+  * The {func}`jax2tf.convert` generates custom attributes with location information
+   in TF ops. The code that XLA generates after jax2tf
+   has the same location information as JAX/XLA.
+  * New SciPy function {py:func}`jax.scipy.special.lpmn`.
+
+* Bug fixes:
+  * The {func}`jax2tf.convert` now ensures that it uses the same typing rules
+    for Python scalars and for choosing 32-bit vs. 64-bit computations
+    as JAX ({jax-issue}`#6883`).
   * The {func}`jax2tf.convert` now scopes the `enable_xla` conversion parameter
     properly to apply only during the just-in-time conversion
     ({jax-issue}`#6720`).
-  * Fixed assertion failure in {func}`jax2tf.call_tf` when used with captured
-    `tf.Variable` ({jax-issue}`#6572`).
-
-* Bug fixes:
   * The {func}`jax2tf.convert` now converts `lax.dot_general` using the
     `XlaDot` TensorFlow op, for better fidelity w.r.t. JAX numerical precision
     ({jax-issue}`#6717`).
+  * The {func}`jax2tf.convert` now has support for inequality comparisons and
+    min/max for complex numbers ({jax-issue}`#6892`).
 
-## jaxlib 0.1.67 (unreleased)
+## jaxlib 0.1.67 (May 17 2021)
 
 ## jaxlib 0.1.66 (May 11 2021)
 
@@ -113,7 +163,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
     * `TraceContext` --> {func}`~jax.profiler.TraceAnnotation`
     * `StepTraceContext` --> {func}`~jax.profiler.StepTraceAnnotation`
     * `trace_function` --> {func}`~jax.profiler.annotate_function`
-  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/master/design_notes/omnistaging.md)
+  * Omnistaging can no longer be disabled. See [omnistaging](https://github.com/google/jax/blob/main/design_notes/omnistaging.md)
     for more information.
   * Python integers larger than the maximum `int64` value will now lead to an overflow
     in all cases, rather than being silently converted to `uint64` in some cases ({jax-issue}`#6047`).
@@ -161,7 +211,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
   * {func}`jax.scipy.stats.betabinom` is now available as a distribution with logpmf and pmf methods.
   * Added {func}`jax.experimental.jax2tf.call_tf` to call TensorFlow functions
     from JAX ({jax-issue}`#5627`)
-    and [README](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
+    and [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax)).
   * Extended the batching rule for `lax.pad` to support batching of the padding values.
 * Bug fixes:
   * {func}`jax.numpy.take` properly handles negative indices ({jax-issue}`#5768`)
@@ -276,7 +326,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.5...jax-v0.2.6).
 * New Features:
   * Add support for shape-polymorphic tracing for the jax.experimental.jax2tf converter.
-    See [README.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md).
+    See [README.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
 * Breaking change cleanup
 
   * Raise an error on non-hashable static arguments for jax.jit and
@@ -336,7 +386,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * Improvements:
   * Ensure that `check_jaxpr` does not perform FLOPS.  See {jax-issue}`#4650`.
   * Expanded the set of JAX primitives converted by jax2tf.
-    See [primitives_with_limited_support.md](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/primitives_with_limited_support.md).
+    See [primitives_with_limited_support.md](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/primitives_with_limited_support.md).
 
 ## jax 0.2.4 (October 19 2020)
 
@@ -373,7 +423,7 @@ PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0).
 * Improvements:
   * Omnistaging on by default. See {jax-issue}`#3370` and
-    [omnistaging](https://github.com/google/jax/blob/master/design_notes/omnistaging.md)
+    [omnistaging](https://github.com/google/jax/blob/main/design_notes/omnistaging.md)
 
 ## jax (0.1.77) (September 15 2020)
 

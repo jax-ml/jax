@@ -99,10 +99,13 @@ jax.scipy.special
    log_ndtr
    logit
    logsumexp
+   lpmn
+   lpmn_values
    multigammaln
    ndtr
    ndtri
    polygamma
+   sph_harm
    xlog1py
    xlogy
    zeta

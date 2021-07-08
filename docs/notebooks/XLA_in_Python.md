@@ -16,7 +16,7 @@ kernelspec:
 
 # XLA in Python
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/XLA_in_Python.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/XLA_in_Python.ipynb)
 
 <img style="height:100px;" src="https://raw.githubusercontent.com/tensorflow/tensorflow/master/tensorflow/compiler/xla/g3doc/images/xlalogo.png"> <img style="height:100px;" src="https://upload.wikimedia.org/wikipedia/commons/c/c3/Python-logo-notext.svg">
 
@@ -50,11 +50,11 @@ https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/pyt
 
 __jax__: you can see how jax interacts with the XLA compute layer for execution and JITing in these files.
 
-https://github.com/google/jax/blob/master/jax/lax.py
+https://github.com/google/jax/blob/main/jax/lax.py
 
-https://github.com/google/jax/blob/master/jax/lib/xla_bridge.py
+https://github.com/google/jax/blob/main/jax/lib/xla_bridge.py
 
-https://github.com/google/jax/blob/master/jax/interpreters/xla.py
+https://github.com/google/jax/blob/main/jax/interpreters/xla.py
 
 +++ {"id": "3XR2NGmrzBGe"}
 

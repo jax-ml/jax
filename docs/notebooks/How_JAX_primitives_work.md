@@ -15,7 +15,7 @@ kernelspec:
 
 # How JAX primitives work
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/How_JAX_primitives_work.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/How_JAX_primitives_work.ipynb)
 
 *necula@google.com*, October 2019.
 
@@ -308,7 +308,7 @@ In the latter case, JAX uses the actual concrete value wrapped as an abstract va
 :id: ctQmEeckIbdo
 :outputId: e751d0cc-460e-4ffd-df2e-fdabf9cffdc2
 
-from jax import abstract_arrays
+from jax._src import abstract_arrays
 @trace("multiply_add_abstract_eval")
 def multiply_add_abstract_eval(xs, ys, zs):
   """Abstract evaluation of the primitive.

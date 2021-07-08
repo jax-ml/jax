@@ -169,7 +169,7 @@ class StepTraceContext(StepTraceAnnotation):
     super().__init__(*args, **kwargs)
 
 
-def annotate_function(func: Callable, name: str = None, **kwargs):
+def annotate_function(func: Callable, name: Optional[str] = None, **kwargs):
   """Decorator that generates a trace event for the execution of a function.
 
   For example:

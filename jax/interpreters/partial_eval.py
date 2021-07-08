@@ -26,7 +26,7 @@ import numpy as np
 from .. import core
 from .._src import dtypes
 from .. import linear_util as lu
-from ..ad_util import Zero
+from jax._src.ad_util import Zero
 from ..api_util import flattened_fun_in_tree
 from .._src.tree_util import tree_unflatten, tree_leaves
 from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,
@@ -452,7 +452,7 @@ class JaxprTracer(Tracer):
       return self
 
   def is_known(self):
-      return self.pval.is_known()
+    return self.pval.is_known()
 
 # TODO(necula): this could return a ClosedJaxpr with out_pvals
 def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
@@ -814,12 +814,12 @@ def _remat_partial_eval(trace, _, f, tracers, params):
 
   # dce jaxpr outputs
   new_jaxpr = _dce_jaxpr(closed_jaxpr, out_unknowns, drop_outputs=True).jaxpr
-  new_params = dict(params, call_jaxpr=new_jaxpr)
+  new_params = dict(params, call_jaxpr=new_jaxpr, differentiated=True)
 
   # set up eqn for unknown outputs
   in_tracers = (*const_tracers, *env_tracers, *instantiated_tracers)
-  eqn = new_eqn_recipe(in_tracers, unknown_output_tracers, remat_call_p, new_params,
-                       source_info_util.current())
+  eqn = new_eqn_recipe(in_tracers, unknown_output_tracers, remat_call_p,
+                       new_params, source_info_util.current())
   for t in unknown_output_tracers: t.recipe = eqn
   return _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
 call_partial_eval_rules[remat_call_p] = _remat_partial_eval

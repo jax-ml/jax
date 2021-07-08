@@ -156,18 +156,18 @@ class Config:
       if not FLAGS.jax_omnistaging:
         raise Exception(
           "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
-          "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.\n"
+          "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md.\n"
           "To remove this warning, unset the JAX_OMNISTAGING environment variable.")
 
   def enable_omnistaging(self):
     warnings.warn(
         "enable_omnistaging() is a no-op in JAX versions 0.2.12 and higher;\n"
-        "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md")
+        "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md")
 
   def disable_omnistaging(self):
     raise Exception(
       "Disabling of omnistaging is no longer supported in JAX version 0.2.12 and higher: "
-      "see https://github.com/google/jax/blob/master/design_notes/omnistaging.md.")
+      "see https://github.com/google/jax/blob/main/design_notes/omnistaging.md.")
 
   def define_bool_state(
     self, name: str, default: bool, help: str, *,
@@ -250,7 +250,10 @@ class Config:
     See docstring for ``define_bool_state``.
     """
     name = name.lower()
-    self.DEFINE_enum(name, os.getenv(name.upper(), default),
+    default = os.getenv(name.upper(), default)
+    if default is not None and default not in enum_values:
+      raise ValueError(f"Invalid value \"{default}\" for JAX flag {name}")
+    self.DEFINE_enum(name, default,
                      enum_values=enum_values, help=help,
                      update_hook=update_global_hook)
     self._contextmanager_flags.add(name)
@@ -404,7 +407,15 @@ flags.DEFINE_integer(
           'until the Python callback consume more outfeeds.'),
     lower_bound=int(16 * 1e6)
 )
-
+flags.DEFINE_bool(
+    'jax_host_callback_outfeed',
+    bool_env('JAX_HOST_CALLBACK_OUTFEED', False),
+    help=(
+        'Use outfeed implementation for host_callback, even on CPU and GPU. '
+        'If false, use the CustomCall implementation. '
+        'Has no effect on TPU, since only the outfeed mechanism is implemented.'
+    )
+)
 
 enable_checks = config.define_bool_state(
     name='jax_enable_checks',
@@ -517,3 +528,17 @@ default_matmul_precision = config.define_enum_state(
       update_global_jit_state(default_matmul_precision=val),
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(default_matmul_precision=val))
+
+traceback_filtering = config.define_enum_state(
+    name = 'jax_traceback_filtering',
+    enum_values=["off", "tracebackhide", "remove_frames", "auto"],
+    default="auto",
+    help="Controls how JAX filters internal frames out of tracebacks.\n\n"
+         "Valid values are:\n"
+         " * \"off\": disables traceback filtering.\n"
+         " * \"auto\": use \"tracebackhide\" if running under a sufficiently "
+         "new IPython, or \"remove_frames\" otherwise.\n"
+         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to "
+         " hidden stack frames, which some traceback printers support.\n"
+         " * \"remove_frames\": removes hidden frames from tracebacks, and adds "
+         " the unfiltered traceback as a __cause__ of the exception.\n")

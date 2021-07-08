@@ -246,7 +246,7 @@ class Primitive:
   multiple_results = False  # set for multi-output primitives
   call_primitive = False    # set for call primitives processed in final style
   map_primitive = False     # set for map primitives processed in final style
-  _dispatch_on_params = False  # whether to include axis names form params in dispatch
+  _dispatch_on_params = False  # whether to include axis names from params in dispatch
 
   def __init__(self, name: str):
     self.name = name
@@ -416,7 +416,7 @@ class Trace:
            "primitives")
     raise NotImplementedError(msg)
 
-  def process_map(self, call_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f, tracers, params):
     msg = (f"{type(self)} must override process_map to handle map-like "
            "primitives")
     raise NotImplementedError(msg)
@@ -1080,7 +1080,7 @@ class ShapedArray(UnshapedArray):
                        self.weak_type, self.named_shape)
 
   def join(self, other):
-    if self.shape == other.shape and self.dtype == other.dtype:
+    if symbolic_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
       named_shape = join_named_shapes(self.named_shape, other.named_shape)
       return self.update(weak_type=weak_type, named_shape=named_shape)
@@ -1260,11 +1260,11 @@ class DimensionHandler:
     """
     return d1 - d2
 
-  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> int:
-    """Computes the division of the sizes of the shapes.
+  def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
+    """Computes integer "i" such that i  * size(s2) == size(s1).
 
-    Raise InconclusiveDimensionOperation if the result is different in different
-    contexts, or if the division is not even.
+    Raise InconclusiveDimensionOperation if there is no such integer for all
+    contexts,
     """
     sz1 = int(np.prod(s1))
     sz2 = int(np.prod(s2))
@@ -1347,7 +1347,9 @@ def diff_dim(d1: DimSize, d2: DimSize) -> DimSize:
 def diff_shape(s1: Shape, s2: Shape) -> Shape:
   return tuple(map(diff_dim, s1, s2))
 
-def divide_shape_sizes(s1: Shape, s2: Shape) -> int:
+def divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
+  """Returns an integer "i" s.t., i * size(s2) == size(s1).
+  Raises if there is no such integer."""
   s1 = s1 or (1,)
   s2 = s2 or (1,)
   handler, ds = _dim_handler_and_canonical(*s1, *s2)
@@ -1691,9 +1693,11 @@ def used_axis_names(primitive: Primitive, params: ParamDict) -> Set[AxisName]:
   subst_axis_names(primitive, params, register_name)
   return axis_names
 
-def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst) -> ParamDict:
+def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst, traverse: bool = True) -> ParamDict:
   if primitive in axis_substitution_rules:
-    return axis_substitution_rules[primitive](params, subst)
+    return axis_substitution_rules[primitive](params, subst, traverse)
+  if not traverse:
+    return params
   # Default implementation: substitute names in all jaxpr parameters
   if isinstance(primitive, MapPrimitive):
     def shadowed_subst(name):
@@ -1737,7 +1741,7 @@ def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: Dict[Var, Var
     e.eqn = eqn
     raise
   params = subst_axis_names(eqn.primitive, eqn.params, subst)
-  return JaxprEqn(invars, outvars, eqn.primitive, params, eqn.source_info)
+  return new_jaxpr_eqn(invars, outvars, eqn.primitive, params, eqn.source_info)
 
 def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   consts = None
@@ -1754,7 +1758,7 @@ def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
     return ClosedJaxpr(new_jaxpr, consts)
   return new_jaxpr
 
-axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst], ParamDict]] = {}
+axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst, bool], ParamDict]] = {}
 
 # ------------------- AxisPrimitive -------------------
 # Primitives that store axis names in params and want those axis names to

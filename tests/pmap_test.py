@@ -561,8 +561,9 @@ class PmapTest(jtu.JaxTestCase):
     if replicas % 2 != 0:
       raise SkipTest("Test expected an even number of devices greater than 1.")
 
-    axis_index_groups = np.arange(replicas).reshape(
-        2, replicas // 2).tolist()
+    axis_index_groups = np.arange(replicas, dtype=np.int32)
+    axis_index_groups = axis_index_groups.reshape((replicas // 2, 2)).T
+    axis_index_groups = axis_index_groups.tolist()
 
     f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
     f = pmap(f, 'i')
@@ -572,11 +573,11 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = f(x)
 
-    expected_1 = np.broadcast_to(
-        x[:replicas // 2], (replicas // 2, replicas // 2, x.shape[1]))
-    expected_2 = np.broadcast_to(
-        x[replicas // 2:], (replicas // 2, replicas // 2, x.shape[1]))
-    expected = np.concatenate([expected_1, expected_2], 0)
+    group_1_result = x[0::2]
+    group_2_result = x[1::2]
+    expected = np.empty((replicas, replicas // 2, x.shape[1]))
+    expected[0::2] = group_1_result
+    expected[1::2] = group_2_result
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1134,8 +1135,8 @@ class PmapTest(jtu.JaxTestCase):
   def testAllToAllReplicaGroups(self):
     # If num_devices = 4, these would be the inputs/outputs:
     # input = [[0, 1], [2, 3], [4, 5], [6, 7]]
-    # axis_index_groups = [[0, 1], [2, 3]]
-    # output = [[0, 2], [1, 3], [4, 6], [5, 7]]
+    # axis_index_groups = [[0, 2], [1, 3]]
+    # output = [[0, 4], [2, 6], [1, 5], [3, 7]]
     #
     # This is essentially like spliting the number of rows in the input in two
     # groups of rows, and swaping the two inner axes (axis=1 and axis=2), which
@@ -1147,7 +1148,7 @@ class PmapTest(jtu.JaxTestCase):
     x = np.arange(prod(shape)).reshape(shape)
 
     axis_index_groups = np.arange(device_count, dtype=np.int32)
-    axis_index_groups = axis_index_groups.reshape((2, device_count // 2))
+    axis_index_groups = axis_index_groups.reshape((device_count // 2, 2)).T
     axis_index_groups = axis_index_groups.tolist()
 
     @partial(pmap, axis_name='i')
@@ -1155,8 +1156,8 @@ class PmapTest(jtu.JaxTestCase):
       return lax.all_to_all(x, 'i', 0, 0, axis_index_groups=axis_index_groups)
 
     expected = np.swapaxes(
-        x.reshape((2, device_count // 2, device_count // 2)),
-        1, 2).reshape(shape)
+        x.reshape((device_count // 2, 2, device_count // 2)),
+        0, 2).reshape(shape)
     self.assertAllClose(fn(x), expected, check_dtypes=False)
 
   @ignore_slow_all_to_all_warning()

@@ -987,6 +987,9 @@ class LaxTest(jtu.JaxTestCase):
     if (jtu.device_under_test() == "tpu" and
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("np.complex128 is not yet supported on TPU")
+    if jtu.device_under_test() == "gpu":
+      # TODO(b/189287598)
+      raise SkipTest("dot_general with preferred_element_type returns NaN non-deterministically on GPU")
     rng = jtu.rand_default(self.rng())
     x = rng(lhs_shape, dtype)
     y = rng(rhs_shape, dtype)
@@ -2421,6 +2424,17 @@ class LaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(np.full((1, 30), np.float32(42)),
                            f(np.zeros((1, 24), dtype=np.float32)))
 
+  def testDynamicSliceU8Index(self):
+    # Regression test for u8 index in dynamic-slice (#6122)
+    # TODO(b/183216273): enable this test for CPU & GPU when possible.
+    if jtu.device_under_test() == "cpu":
+      raise unittest.SkipTest("DynamicSliceU8Index test is a known failure on CPU.")
+    if jtu.device_under_test() == "gpu":
+      raise unittest.SkipTest("DynamicSliceU8Index test is a known failure on GPU.")
+    x = np.arange(200)
+    np.testing.assert_equal(
+        np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -2593,6 +2607,14 @@ class LazyConstantTest(jtu.JaxTestCase):
     x = lax.full((1,), 1)
     out = lax.cumsum(x)
     self.assertArraysEqual(out, x)
+
+  @unittest.skipIf(jax.lib._xla_extension_version < 24,
+                   "Test requires Jaxlib 0.1.68")
+  def testLog1pNearOne(self):
+    np.testing.assert_array_almost_equal_nulp(
+        np.log1p(np.float32(1e-5)), lax.log1p(np.float32(1e-5)))
+    np.testing.assert_array_almost_equal_nulp(
+        np.log1p(np.float32(1e-5)), lax.log1p(np.complex64(1e-5)))
 
 
 class LaxNamedShapeTest(jtu.JaxTestCase):

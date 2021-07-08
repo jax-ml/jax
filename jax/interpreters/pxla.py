@@ -43,7 +43,7 @@ import numpy as np
 from .._src.config import config
 from .. import core
 from .. import linear_util as lu
-from ..abstract_arrays import array_types
+from jax._src.abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
 from .._src import source_info_util
 from .._src.util import (partial, unzip3, prod, safe_map, safe_zip,
@@ -348,8 +348,8 @@ for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
 def _shard_device_array(x, devices, indices):
-  start_indices, limit_indices, removed_dims = map(tuple, unzip3(
-      _as_slice_indices(x, idx) for idx in indices))
+  start_indices, limit_indices, removed_dims = unzip3(
+      _as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   return device_put(shards, devices)
 shard_arg_handlers[xla._DeviceArray] = _shard_device_array
@@ -469,11 +469,12 @@ class ShardedDeviceArray(xla.DeviceArray):  # type: ignore
   ]
 
   # TODO(skye): expose PyLocalBuffers in xla_client
-  def __init__(self,
-               aval: ShapedArray,
-               sharding_spec, # TODO(skye): add type annotation back, see below
-               device_buffers: List[xb.xla_client._xla.PyLocalBuffer] = None,
-               indices: Optional[Tuple[Index, ...]] = None):
+  def __init__(
+      self,
+      aval: ShapedArray,
+      sharding_spec,  # TODO(skye): add type annotation back, see below
+      device_buffers: Optional[List[xb.xla_client._xla.PyLocalBuffer]] = None,
+      indices: Optional[Tuple[Index, ...]] = None):
     xla.DeviceArray.__init__(self)
 
     # TODO(skye): this is temporary staging while we switch users over to
@@ -661,10 +662,15 @@ def parallel_callable(fun: lu.WrappedFun,
         f"Specified axis_size {global_axis_size} doesn't match received "
         f"axis_size {axis_size}.")
 
+  if devices is not None and backend_name is None:
+    backend = xb.get_device_backend(devices[0])
+  else:
+    backend = xb.get_backend(backend_name)
+
   must_run_on_all_devices = False
   no_nested_sharding = False
   if global_axis_size is None:
-    if xb.process_count() == 1:
+    if xb.process_count(backend) == 1:
       global_axis_size = axis_size
     elif devices:
       # This allows each host in a multi-host pmap to run on a different number
@@ -677,13 +683,13 @@ def parallel_callable(fun: lu.WrappedFun,
       # this assumption is true by requiring that the pmap is run on all devices
       # (and making the further assumption that each host has the same number of
       # devices). Nested sharding is ok in this case.
-      global_axis_size = axis_size * xb.process_count()
-      assert all(len(xb.local_devices(process_index)) == xb.local_device_count()
-                 for process_index in range(xb.process_count()))
+      global_axis_size = axis_size * xb.process_count(backend)
+      assert all(len(xb.local_devices(process_index, backend)) == xb.local_device_count(backend)
+                 for process_index in range(xb.process_count(backend)))
       must_run_on_all_devices = True
 
   if devices:
-    local_devices = [d for d in devices if d.process_index == xb.process_index()]
+    local_devices = [d for d in devices if d.process_index == xb.process_index(backend)]
     assert len(local_devices) > 0
   else:
     local_devices = None  # type: ignore
@@ -698,8 +704,9 @@ def parallel_callable(fun: lu.WrappedFun,
         for shape, aval in safe_zip(global_arg_shapes, sharded_avals)]
   else:
     global_sharded_avals = sharded_avals  # type: ignore
-  logging.vlog(2, "sharded_avals: %s", sharded_avals)
-  logging.vlog(2, "global_sharded_avals: %s", global_sharded_avals)
+  if logging.vlog_is_on(2):
+    logging.vlog(2, "sharded_avals: %s", sharded_avals)
+    logging.vlog(2, "global_sharded_avals: %s", global_sharded_avals)
 
   with core.extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
@@ -714,7 +721,7 @@ def parallel_callable(fun: lu.WrappedFun,
   if devices is not None:
     is_multi_host_pmap = len(local_devices) != len(devices)
   else:
-    is_multi_host_pmap = xb.process_count() > 1
+    is_multi_host_pmap = xb.process_count(backend) > 1
   if is_multi_host_pmap:
     check_multihost_collective_allowlist(jaxpr)
 
@@ -734,35 +741,36 @@ def parallel_callable(fun: lu.WrappedFun,
   if local_out_parts is None:
     local_out_parts = out_parts
 
-  logging.vlog(2, "num_replicas: %d  num_local_replicas: %d",
-               num_global_replicas, num_local_replicas)
-  logging.vlog(2, "num_partitions: %d  local_num_partitions: %d",
-               num_partitions, local_num_partitions)
-  logging.vlog(2, "arg_parts: %s", arg_parts)
-  logging.vlog(2, "local_arg_parts: %s", local_arg_parts)
-  logging.vlog(2, "out_parts: %s", out_parts)
-  logging.vlog(2, "local_out_parts: %s", local_out_parts)
-  logging.vlog(2, "devices: %s", devices)
-  logging.vlog(2, "local_devices: %s", local_devices)
+  if logging.vlog_is_on(2):
+    logging.vlog(2, "num_replicas: %d  num_local_replicas: %d",
+                 num_global_replicas, num_local_replicas)
+    logging.vlog(2, "num_partitions: %d  local_num_partitions: %d",
+                 num_partitions, local_num_partitions)
+    logging.vlog(2, "arg_parts: %s", arg_parts)
+    logging.vlog(2, "local_arg_parts: %s", local_arg_parts)
+    logging.vlog(2, "out_parts: %s", out_parts)
+    logging.vlog(2, "local_out_parts: %s", local_out_parts)
+    logging.vlog(2, "devices: %s", devices)
+    logging.vlog(2, "local_devices: %s", local_devices)
 
   num_local_shards = num_local_replicas * local_num_partitions
   num_global_shards = num_global_replicas * num_partitions
 
-  if (xb.process_count() > 1 and must_run_on_all_devices and
-      num_local_shards != xb.local_device_count()):
+  if (xb.process_count(backend) > 1 and must_run_on_all_devices and
+      num_local_shards != xb.local_device_count(backend)):
     if num_local_shards == axis_size:
       raise ValueError(
          f"On multi-host platforms, the input to pmapped functions must have "
          f"leading axis size equal to the number of local devices if no "
          f"`devices` argument is specified. Got axis_size={axis_size}, "
-         f"num_local_devices={xb.local_device_count()}")
+         f"num_local_devices={xb.local_device_count(backend)}")
     else:
       raise ValueError(
         f"On multi-host platforms, pmapped functions must run across all "
         f"devices, i.e. num_replicas * num_partitions should equal the "
         f"number of local devices. Got num_replicas={num_local_replicas}, "
         f"num_partitions={num_partitions}, and "
-        f"num_local_devices={xb.local_device_count()}")
+        f"num_local_devices={xb.local_device_count(backend)}")
 
   if no_nested_sharding and (jaxpr_replicas > 1 or num_partitions > 1):
     raise ValueError(
@@ -796,7 +804,7 @@ def parallel_callable(fun: lu.WrappedFun,
     out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
   else:
     out_tuple = build_out_tuple()
-  backend = xb.get_backend(backend_name)
+
   if backend.platform in ("gpu", "tpu"):
     donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
   built = c.Build(out_tuple)
@@ -817,8 +825,8 @@ def parallel_callable(fun: lu.WrappedFun,
     if num_global_shards > num_local_shards:
       # TODO(skye): use a locality-aware assignment that satisfies the above
       # constraint.
-      devices = [d for process_index in range(xb.process_count())
-                 for d in xb.local_devices(process_index)]
+      devices = [d for process_index in range(xb.process_count(backend))
+                 for d in xb.local_devices(process_index, backend)]
     else:
       devices = xb.get_backend(backend).get_default_device_assignment(
           num_global_replicas, num_partitions)
@@ -1344,15 +1352,6 @@ class Mesh:
     assert is_local_device[subcube_indices].all()
     return Mesh(self.devices[subcube_indices], self.axis_names)
 
-  def __getitem__(self, new_axes):
-    axis_pos = {name: i for i, name in enumerate(self.axis_names)}
-    new_devices = self.devices.transpose(tuple(axis_pos[axis] for axis in new_axes) +
-                                         tuple(axis_pos[axis] for axis in self.axis_names
-                                               if axis not in new_axes))
-    new_devices = new_devices[(slice(None),) * len(new_axes) +
-                              (0,) * (len(self.axis_names) - len(new_axes))]
-    return Mesh(new_devices, new_axes)
-
   @property
   def device_ids(self):
     return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
@@ -1393,6 +1392,18 @@ def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
     named_shape.pop(name, None)  # The name might be missing --- it's a broadcast.
   return aval.update(shape=tuple(shape), named_shape=named_shape)
 
+
+class SPMDBatchTrace(batching.BatchTrace):
+  def get_primitive_batcher(self, primitive):
+    if primitive in spmd_primitive_batchers:
+      return partial(spmd_primitive_batchers[primitive],
+                     axis_name=self.axis_name,
+                     main_type=self.main.trace_type)
+    return super().get_primitive_batcher(primitive)
+
+spmd_primitive_batchers: Dict[core.Primitive, Callable] = {}
+
+
 def vtile_by_mesh(fun: lu.WrappedFun,
                   mesh: Mesh,
                   in_axes: Sequence[ArrayMapping],
@@ -1407,7 +1418,7 @@ def vtile_by_mesh(fun: lu.WrappedFun,
                          tuple(a.get(name, None) for a in out_axes),
                          tile_size=size,
                          axis_name=name,
-                         main_type=batching.SPMDBatchTrace)
+                         main_type=SPMDBatchTrace)
   return fun
 
 def mesh_callable(fun: lu.WrappedFun,
@@ -1496,7 +1507,10 @@ def mesh_callable(fun: lu.WrappedFun,
     out_nodes = xla.jaxpr_subcomp(
         c, jaxpr, backend_name, axis_env, xla_consts,
         extend_name_stack(wrap_name(transformed_name, 'xmap')), *xla_args)
-  backend = xb.get_backend(backend_name)
+  if backend_name is None:
+    backend = xb.get_device_backend(mesh.devices.flat[0])
+  else:
+    backend = xb.get_backend(backend_name)
   if spmd_lowering:
     out_partitions_t = xb.tuple_sharding_proto(out_partitions)
     out_tuple = xb.with_sharding_proto(c, out_partitions_t, xops.Tuple, c, out_nodes)

@@ -30,7 +30,7 @@ in Tensorflow errors (for some devices and compilation modes). These limitations
 are captured as jax2tf_limitations.Jax2TfLimitation objects.
 
 From the limitations objects, we generate a
-[report](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+[report](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 The report has instructions for how to re-generate it.
 
 If a harness run fails with error, and a limitation that matches the device
@@ -99,8 +99,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(
-      primitive_harness.all_harnesses, include_jax_unimpl=False,
-      )
+      primitive_harness.all_harnesses, include_jax_unimpl=False)
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
   def test_prim(self, harness: primitive_harness.Harness):

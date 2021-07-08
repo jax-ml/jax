@@ -130,11 +130,14 @@ Jax's type promotion rules differ from those of NumPy, as given by
 :func:`numpy.promote_types`, in those cells highlighted with a green background
 in the table above. There are three key differences:
 
-* when promoting a Python scalar value against a typed JAX value of the same category,
+* When promoting a Python scalar value against a typed JAX value of the same category,
   JAX always prefers the precision of the JAX value. For example, ``jnp.int16(1) + 1``
-  will return ``int16`` rather than promoting to ``int64`` as in Numpy.
+  will return ``int16`` rather than promoting to ``int64`` as in NumPy.
+  Note that this applies only to Python scalar values; if the constant is a NumPy
+  array then the above lattice is used for type promotion.
+  For example, ``jnp.int16(1) + np.array(1)`` will return ``int64``.
 
-* when promoting an integer or boolean type against a floating-point or complex
+* When promoting an integer or boolean type against a floating-point or complex
   type, JAX always prefers the type of the floating-point or complex type.
 
 * JAX supports the
@@ -144,7 +147,7 @@ in the table above. There are three key differences:
   The only notable promotion behavior is with respect to IEEE-754
   :code:`float16`, with which :code:`bfloat16` promotes to a :code:`float32`.
 
-These differences are motivated by the fact that
+The differences between NumPy and JAX are motivated by the fact that
 accelerator devices, such as GPUs and TPUs, either pay a significant
 performance penalty to use 64-bit floating point types (GPUs) or do not
 support 64-bit floating point types at all (TPUs). Classic NumPy's promotion
@@ -155,3 +158,11 @@ JAX uses floating point promotion rules that are more suited to modern
 accelerator devices and are less aggressive about promoting floating point
 types. The promotion rules used by JAX for floating-point types are similar to
 those used by PyTorch.
+
+Note that operators like `+` will dispatch based on the Python type of the two
+values being added. This means that, for example, `np.int16(1) + 1` will
+promote using NumPy rules, whereas `jnp.int16(1) + 1` will promote using JAX rules.
+This can lead to potentially confusing non-associative promotion semantics when
+the two types of promotion are combined;
+for example with `np.int16(1) + 1 + jnp.int16(1)`.
+

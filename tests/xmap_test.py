@@ -22,7 +22,7 @@ import re
 import unittest
 from itertools import product, permutations
 from typing import (Tuple, List, NamedTuple, Dict, Generator, Sequence, Set,
-                    Any, Hashable, Iterable, Iterator, Union)
+                    Any, Hashable, Iterable, Iterator, Union, Optional)
 from unittest import SkipTest, skip, skipIf
 
 import numpy as np
@@ -39,7 +39,7 @@ from jax import lax
 from jax import core
 from jax.core import NamedShape, JaxprTypeError
 from jax.experimental import maps
-from jax.experimental.maps import Mesh, mesh, xmap
+from jax.experimental.maps import Mesh, mesh, xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
 from jax.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
@@ -70,34 +70,6 @@ def tearDownModule():
   else:
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
-
-# -------------------- Mesh parametrization helpers --------------------
-
-MeshSpec = List[Tuple[str, int]]
-
-@contextmanager
-def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
-  """Test utility for setting up meshes given mesh data from `schedules`."""
-  # This is similar to the `with_mesh` function above, but isn't a decorator.
-  axis_names, shape = unzip2(named_shape)
-  size = prod(shape)
-  local_devices = list(jax.local_devices())
-  if len(local_devices) < size:
-    raise SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(local_devices[:size]).reshape(shape)
-  with mesh(mesh_devices, axis_names):
-    yield
-
-def with_mesh_from_kwargs(f):
-  return lambda *args, **kwargs: with_mesh(kwargs['mesh'])(f)(*args, **kwargs)
-
-def with_and_without_mesh(f):
-  return parameterized.named_parameters(
-    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
-    for name, mesh, axis_resources in (
-      ('', (), ()),
-      ('Mesh', (('x', 2),), (('i', 'x'),))
-    ))(with_mesh_from_kwargs(f))
 
 
 # -------------------- Itertools helpers --------------------
@@ -135,7 +107,7 @@ def ensure_bdim(x, axis_name, bdim):
 AxisResources = Dict[str, Union[str, Tuple[str, ...]]]
 
 def schedules(sizes: Dict[str, int]
-              ) -> Generator[Tuple[AxisResources, MeshSpec], None, None]:
+              ) -> Generator[Tuple[AxisResources, jtu.MeshSpec], None, None]:
   """Test utility generating xmap parallel schedules from logical names & sizes.
 
   Args:
@@ -275,7 +247,7 @@ class XMapTest(XMapTestCase):
       self.assertAllClose(c, a * 2)
       self.assertAllClose(d, b * 4)
 
-  @with_mesh([('x', 2), ('y', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testCollectiveReduce(self):
     fm = xmap(lambda a, b: (lax.psum(a * 2, 'a'), b * 4),
               in_axes=[['a', 'b', ...], {0: 'c'}],
@@ -289,7 +261,7 @@ class XMapTest(XMapTestCase):
     self.assertAllClose(c, (a * 2).sum(0))
     self.assertAllClose(d, b * 4)
 
-  @with_mesh([('x', 2), ('y', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testCollectivePermute2D(self):
     perm = np.array([3, 1, 2, 0])
     x = jnp.arange(4).reshape((2, 2))
@@ -313,7 +285,7 @@ class XMapTest(XMapTestCase):
                   in_axes=['i', ...], out_axes=['i', ...])(x)
     self.assertAllClose(result, x + x[jnp.newaxis].T)
 
-  @with_mesh([('x', 2), ('y', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testOneLogicalTwoMeshAxesBasic(self):
     def f(v):
       return lax.psum(v * 2, 'a'), v * 4
@@ -325,7 +297,7 @@ class XMapTest(XMapTestCase):
     self.assertAllClose(ans, (v * 2).sum(0))
     self.assertAllClose(ans2, v.T * 4)
 
-  @with_mesh([('x', 2), ('y', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testOneLogicalTwoMeshAxesSharding(self):
     def f(v):
       return v * 4
@@ -346,7 +318,7 @@ class XMapTest(XMapTestCase):
         pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
                           (pxla.ShardedAxis(1), pxla.ShardedAxis(0))))
 
-  @with_mesh([('x', 2), ('y', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testSkipFirstMeshDim(self):
     def run(axis_resources):
       return xmap(lambda x: x * 2, in_axes=['i', ...], out_axes=['i', ...],
@@ -379,7 +351,7 @@ class XMapTest(XMapTestCase):
       ('OneToOne', (('x', 2), ('y', 2)), (('a', 'y'), ('b', 'x'))),
       ('Multiple', (('x', 2), ('y', 2), ('z', 2)), (('a', 'y'), ('b', ('x', 'z')))),
     ))
-  @with_mesh_from_kwargs
+  @jtu.with_mesh_from_kwargs
   def testNestedMesh(self, mesh, axis_resources):
     @partial(xmap, in_axes={1: 'a'}, out_axes=({0: 'a'}, {}),
               axis_resources=dict([axis_resources[0]]))
@@ -405,7 +377,7 @@ class XMapTest(XMapTestCase):
       # Make sure that there are non-partial sharding specs in the HLO
       self.assertRegex(hlo, r"sharding={devices=\[[0-9,]+\][0-9,]+}")
 
-  @with_and_without_mesh
+  @jtu.with_and_without_mesh
   def testMultipleCalls(self, mesh, axis_resources):
     def f(x, y):
       assert x.shape == y.shape == (3, 5)
@@ -420,7 +392,7 @@ class XMapTest(XMapTestCase):
     for i in range(10):
       self.assertAllClose(f_mapped(x, x), expected)
 
-  @with_and_without_mesh
+  @jtu.with_and_without_mesh
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def testBufferDonation(self, mesh, axis_resources):
     shard = lambda x: x
@@ -443,7 +415,7 @@ class XMapTest(XMapTestCase):
     xmap(lambda x: lax.fori_loop(0, 10, lambda _, x: lax.psum(x, 'i'), x),
          in_axes=['i', ...], out_axes=['i', ...])(x)
 
-  @with_and_without_mesh
+  @jtu.with_and_without_mesh
   def testAxisSizes(self, mesh, axis_resources):
     result = xmap(lambda: lax.axis_index('i'),
                   in_axes=(), out_axes=['i', ...],
@@ -551,7 +523,7 @@ class XMapTest(XMapTestCase):
     y = jnp.arange(20, dtype=jnp.float32).reshape((4, 5)) / 100
     jtu.check_grads(f, (x, y), order=2, modes=['fwd'])
 
-  @with_and_without_mesh
+  @jtu.with_and_without_mesh
   def testNamedShape(self, mesh, axis_resources):
     x = np.arange(4,)
     y = 2
@@ -563,7 +535,7 @@ class XMapTest(XMapTestCase):
     self.assertEqual(z.aval.named_shape, {})
     self.assertEqual(w.aval.named_shape, {})
 
-  @with_and_without_mesh
+  @jtu.with_and_without_mesh
   def testBroadcast(self, mesh, axis_resources):
     x = jnp.asarray(2.0)
     f = xmap(lambda x: x, in_axes={}, out_axes=['i'],
@@ -575,6 +547,34 @@ class XMapTest(XMapTestCase):
     f = xmap(lambda x: x, in_axes={}, out_axes=['i'], axis_sizes={'i': 4})
     g = xmap(f, in_axes={}, out_axes=['j', ...], axis_sizes={'j': 7})
     self.assertAllClose(g(x), jnp.tile(x.reshape((1, 1)), (7, 4)))
+
+  @serial_loop('l', 4)
+  def testLoopBasic(self):
+    x = jnp.arange(16)
+    y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
+              axis_resources={'i': 'l'})(x)
+    self.assertAllClose(y, x + 4)
+
+  @jtu.with_mesh([('x', 2)])
+  @serial_loop('l', 4)
+  def testLoopWithMesh(self):
+    x = jnp.arange(16)
+    y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
+              axis_resources={'i': ('x', 'l')})(x)
+    self.assertAllClose(y, x + 4)
+
+  def testLoopAnonBasic(self):
+    x = jnp.arange(16)
+    y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
+              axis_resources={'i': SerialLoop(4)})(x)
+    self.assertAllClose(y, x + 4)
+
+  @jtu.with_mesh([('x', 2)])
+  def testLoopAnonWithMesh(self):
+    x = jnp.arange(16)
+    y = xmap(lambda x: x + 4, in_axes=['i'], out_axes=['i'],
+              axis_resources={'i': ('x', SerialLoop(4))})(x)
+    self.assertAllClose(y, x + 4)
 
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):
@@ -590,7 +590,7 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
         raise SkipTest
     super().setUp()
 
-  @with_mesh([('x', 2), ('y', 2), ('z', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2), ('z', 2)])
   def testNestedMeshSPMD(self):
     h = xmap(lambda y: (jnp.sin(y) * np.arange(y.size), lax.psum(y, ('a', 'b', 'c'))),
              in_axes={0: 'c'}, out_axes=({1: 'c'}, {}),
@@ -670,7 +670,7 @@ class NamedRandomTest(XMapTestCase):
       ((f"_mesh={mesh}_resources={sorted(axis_resources.items())}",
         {"axis_resources": tuple(axis_resources.items()), "mesh": tuple(mesh)})
        for axis_resources, mesh in schedules({'i': 4, 'j': 6})), subset=True)
-  @with_mesh_from_kwargs
+  @jtu.with_mesh_from_kwargs
   def testSamplerResourceIndependence(self, distr_sample, axis_resources, mesh):
     def sample(axis_resources):
       return xmap(lambda: distr_sample(jax.random.PRNGKey(0), shape=NamedShape(3, i=4, j=6)),
@@ -743,7 +743,7 @@ class NewPrimitiveTest(XMapTestCase):
     x_explode = x.reshape((3, 3, 3))
     self.assertAllClose(pgather(x, idx, 0), pgather(x_explode, idx, (0, 1)))
 
-  @with_and_without_mesh
+  @jtu.with_and_without_mesh
   def testGather(self, mesh, axis_resources):
     if axis_resources and not jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING:
       raise SkipTest("pgather over mesh axes without SPMD lowering not implemented")
@@ -851,7 +851,7 @@ def gen_axis_names():
 
 def schedules_from_pdot_spec(
     spec: PdotTestSpec, lhs_shape: Tuple[int], rhs_shape: Tuple[int]
-    ) -> Generator[Tuple[AxisResources, MeshSpec], None, None]:
+    ) -> Generator[Tuple[AxisResources, jtu.MeshSpec], None, None]:
   logical_sizes = {
       name: shape[ax]
       for shape, in_axes in [(lhs_shape, spec.lhs_in_axes),
@@ -862,7 +862,7 @@ def schedules_from_pdot_spec(
 
 class PDotTests(XMapTestCase):
 
-  @with_mesh([('r1', 2)])
+  @jtu.with_mesh([('r1', 2)])
   def testPdotBasic(self):
     def f(x, y):
       return lax.pdot(x, y, 'i')
@@ -880,7 +880,7 @@ class PDotTests(XMapTestCase):
 
     self.assertAllClose(z, jnp.dot(x, y))
 
-  @with_mesh([('r1', 2)])
+  @jtu.with_mesh([('r1', 2)])
   def testPdotBatching(self):
     def f(x, y):
       return lax.pdot(x, y, 'i')
@@ -898,7 +898,7 @@ class PDotTests(XMapTestCase):
 
     self.assertAllClose(z, jnp.einsum('nij,njk->nik', x, y))
 
-  @with_mesh([('r1', 2)])
+  @jtu.with_mesh([('r1', 2)])
   def testPdotBatchingShardUncontractedDim(self):
     def f(x, y):
       return lax.pdot(x, y, 'i')
@@ -945,7 +945,7 @@ class PDotTests(XMapTestCase):
                out_axes=[*pdot_spec.batch_names, ...],
                axis_resources=axis_resources)
 
-    with with_mesh(mesh_data):
+    with jtu.with_mesh(mesh_data):
       result = fun(lhs, rhs)
 
     expected = lax.dot_general(lhs, rhs, pdot_spec.dot_general_dim_nums)
@@ -989,7 +989,7 @@ class PDotTests(XMapTestCase):
                out_axes=(pdot_spec.lhs_in_axes, pdot_spec.rhs_in_axes),
                axis_resources=axis_resources)
 
-    with with_mesh(mesh_data):
+    with jtu.with_mesh(mesh_data):
       lhs_bar, rhs_bar = fun(lhs, rhs, out_bar)
 
     tol = 1e-1 if jtu.device_under_test() == "tpu" else None
@@ -1062,7 +1062,7 @@ class PDotTests(XMapTestCase):
 
 class XMapErrorTest(jtu.JaxTestCase):
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testRepeatedAxisResource(self):
     def f(v):
       return v * 4
@@ -1070,7 +1070,7 @@ class XMapErrorTest(jtu.JaxTestCase):
       fxy = xmap(f, in_axes=['a', ...], out_axes=['a', ...],
                  axis_resources={'a': ('x', 'x')})
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testNestedDifferentResources(self):
     @partial(xmap, in_axes={0: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'x'})
     def f(x):
@@ -1082,14 +1082,14 @@ class XMapErrorTest(jtu.JaxTestCase):
     xshape = (2, 5, 6)
     x = jnp.arange(np.prod(xshape)).reshape(xshape)
     with self.assertRaisesRegex(RuntimeError,
-                                "Changing the resource environment.*"):
+                                "Changing the physical mesh is not allowed.*"):
       f(x)
 
   def testEmptyArgumentTrees(self):
     with self.assertRaisesRegex(ValueError, "Failed to infer size of axes: i."):
       xmap(lambda x: x, in_axes=['i', ...], out_axes=['i', ...])({})
 
-  @with_mesh([('x', 2), ('y', 2)])
+  @jtu.with_mesh([('x', 2), ('y', 2)])
   def testAxesNotDivisibleByResources(self):
     with self.assertRaisesRegex(ValueError, r"Size of axis i \(5\) is not divisible.*"
                                             r"\(\('x', 'y'\), 4 in total\)"):
@@ -1154,7 +1154,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, error):
       fm(x, y)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testResourceConflictArgs(self):
     fm = xmap(lambda x: lax.psum(x, ('a', 'b')),
               in_axes=['a', 'b'], out_axes=[],
@@ -1166,7 +1166,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       fm(x)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testResourceConflictInner(self):
     fm = xmap(lambda x, y: x + y,
               in_axes=(['a', ...], ['b', ...]), out_axes=['a', 'b', ...],
@@ -1178,7 +1178,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       fm(x, y)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testResourceConflictOut(self):
     fm = xmap(lambda x, y: x,
               in_axes=(['a', ...], ['b', ...]), out_axes=['a', 'b', ...],
@@ -1191,7 +1191,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       fm(x, y)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testResourceConflictNestArgs(self):
     f = xmap(lambda x: x, in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
     h = xmap(f, in_axes=['j', ...], out_axes=['j', ...], axis_resources={'j': 'x'})
@@ -1202,7 +1202,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       h(x)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testResourceConflictNestInner(self):
     f = xmap(lambda x: lax.axis_index('i') + x,
              in_axes=[], out_axes=['i'], axis_sizes={'i': 4}, axis_resources={'i': 'x'})
@@ -1214,7 +1214,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(JAXTypeError, error):
       h(x)
 
-  @with_mesh([('x', 2)])
+  @jtu.with_mesh([('x', 2)])
   def testResourceConflictNestOut(self):
     f = xmap(lambda x: x,
              in_axes=[], out_axes=['i'], axis_sizes={'i': 4}, axis_resources={'i': 'x'})
@@ -1225,6 +1225,110 @@ class XMapErrorTest(jtu.JaxTestCase):
              r"already partitioned along `x`, because its named shape contains `j`")
     with self.assertRaisesRegex(JAXTypeError, error):
       h(x)
+
+  @serial_loop('l', 2)
+  def testResourceConflictArgsLoop(self):
+    fm = xmap(lambda x: x,
+              in_axes=['a', 'b'], out_axes=['a', 'b'],
+              axis_resources={'a': 'l', 'b': 'l'})
+    x = np.arange(16).reshape(4, 4)
+    error = (r"Axes `a` and `b` are both mapped to the resource `l`, but they "
+             r"coincide in the named_shape of an input to an xmapped function "
+             r"<lambda>")
+    with self.assertRaisesRegex(JAXTypeError, error):
+      fm(x)
+
+  @serial_loop('l', 2)
+  def testLoopCollectives(self):
+    fm = xmap(lambda x: lax.psum(x, 'i'),
+              in_axes=['i'], out_axes=[],
+              axis_resources={'i': 'l'})
+    x = np.arange(16)
+    error = (r"Named axes with loop resources assigned to them cannot be "
+             r"referenced inside the xmapped computation \(e.g. in "
+             r"collectives\), but `i` violates that rule")
+    with self.assertRaisesRegex(RuntimeError, error):
+      fm(x)
+
+
+class NamedAutodiffTests(jtu.JaxTestCase):
+
+  def testVjpReduceAxes(self):
+    def f(w, x):
+      return jnp.sin(jnp.dot(x, w))
+
+    def vjp_f(w, x, gy):
+      _, pullback = jax.vjp(f, w, x)
+      return pullback(gy)
+
+    def vjp_f_reduced(w, x, gy):
+      _, pullback = jax.vjp(f, w, x, reduce_axes=('batch',))
+      return pullback(gy)
+
+    w = np.arange(12, dtype=np.float32).reshape(3, 4)
+    x = np.arange(6, dtype=np.float32).reshape(2, 3)
+    gy = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    # per-example
+    error = (r"One of xmap results has an out_axes specification of {}, but is "
+             r"actually mapped along more axes defined by this xmap call: "
+             r"batch")
+    with self.assertRaisesRegex(TypeError, error):
+      xmap(vjp_f,
+           in_axes=({}, {0: 'batch'}, {0: 'batch'}),
+           out_axes=({}, {0: 'batch'}))(w, x, gy)
+    out = xmap(vjp_f,
+               in_axes=({}, {0: 'batch'}, {0: 'batch'}),
+               out_axes=({0: 'batch'}, {0: 'batch'}))(w, x, gy)
+    expected = vmap(vjp_f, in_axes=(None, 0, 0), out_axes=(0, 0))(w, x, gy)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+    # reduced
+    out = xmap(vjp_f_reduced,
+               in_axes=({}, {0: 'batch'}, {0: 'batch'}),
+               out_axes=({}, {0: 'batch'}))(w, x, gy)
+    # the reduced VJP is also the VJP when using a positional batch axis
+    expected = vjp_f(w, x, gy)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+  def testVjpReduceAxesCollective(self):
+
+    # lax.psum has the wrong transpose, so test with a corrected version for now
+    @functools.partial(jax.custom_vjp, nondiff_argnums=(1,))
+    def psum_idrev(x, axis_name: Optional[AxisNames] = None):
+      if axis_name is None:
+        return x
+      return jax.lax.psum(x, axis_name)
+
+    def psum_idrev_fwd(x, axis_name):
+      return psum_idrev(x, axis_name), None
+
+    def psum_idrev_bwd(axis_name, res, g):
+      del axis_name, res
+      return (g,)
+
+    psum_idrev.defvjp(psum_idrev_fwd, psum_idrev_bwd)
+
+    def f_named(w, x):
+      return psum_idrev(jnp.sin(jnp.dot(x, w)).sum(), 'batch')
+
+    def f_positional(w, x):
+      return jnp.sin(jnp.dot(x, w)).sum()
+
+    w = np.arange(12, dtype=np.float32).reshape(3, 4)
+    x = np.arange(6, dtype=np.float32).reshape(2, 3)
+
+    # forward
+    out = xmap(f_named, in_axes=({}, {0: 'batch'}), out_axes={})(w, x)
+    expected = f_positional(w, x)
+    self.assertAllClose(out, expected, check_dtypes=True)
+
+    # gradient
+    out = xmap(jax.grad(f_named, (0, 1), reduce_axes=('batch',)),
+               in_axes=({}, {0: 'batch'}),
+               out_axes=({}, {0: 'batch'}))(w, x)
+    expected = jax.grad(f_positional, (0, 1))(w, x)
+    self.assertAllClose(out, expected, check_dtypes=True)
 
 
 if __name__ == '__main__':

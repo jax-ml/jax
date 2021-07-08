@@ -98,14 +98,14 @@ except ImportError:
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
-# number that can be used to perform changes without breaking the master
+# number that can be used to perform changes without breaking the main
 # branch on the Jax github.
 _xla_extension_version = getattr(xla_client, '_version', 0)
 
 try:
-  from jaxlib import tpu_client  # pytype: disable=import-error
+  from jaxlib import tpu_client as tpu_driver_client  # pytype: disable=import-error
 except:
-  tpu_client = None
+  tpu_driver_client = None  # type: ignore
 
 
 cuda_path: Optional[str]

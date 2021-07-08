@@ -15,6 +15,7 @@
 from jax import core
 from jax import numpy as jnp
 from jax.interpreters import xla
+import jax.lib
 from jax.lib import xla_client
 from jax.lib import xla_bridge
 
@@ -50,13 +51,22 @@ def from_dlpack(dlpack, backend=None):
 
   Args:
     dlpack: a DLPack tensor, on either CPU or GPU.
-    backend: experimental, optional: the platform on which `dlpack` lives.
+    backend: deprecated, do not use.
   """
-  # TODO(phawkins): ideally the user wouldn't need to provide a backend and we
-  # would be able to figure it out from the DLPack.
-  backend = backend or xla_bridge.get_backend()
-  client = getattr(backend, "client", backend)
-  buf = xla_client._xla.dlpack_managed_tensor_to_buffer(dlpack, client)
+  if jax.lib._xla_extension_version >= 25:
+    cpu_backend = xla_bridge.get_backend("cpu")
+    try:
+      gpu_backend = xla_bridge.get_backend("gpu")
+    except RuntimeError:
+      gpu_backend = None
+    buf = xla_client._xla.dlpack_managed_tensor_to_buffer(
+        dlpack, cpu_backend, gpu_backend)
+  else:
+    # TODO(phawkins): drop the backend argument after deleting this case.
+    backend = backend or xla_bridge.get_backend()
+    client = getattr(backend, "client", backend)
+    buf = xla_client._xla.dlpack_managed_tensor_to_buffer(dlpack, client)
+
   xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())

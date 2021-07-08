@@ -31,7 +31,7 @@ particular test, we write them as `Limitation` objects that can be reused in
 multiple tests and can also be used to generate documentation, e.g.,
 the report of [unsupported and
 partially-implemented JAX
-primitives](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
+primitives](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md)
 
 The limitations are used to filter out from tests the harnesses that are known
 to fail. A Limitation is specific to a harness.
@@ -47,7 +47,7 @@ from absl import testing
 import jax
 from jax import config
 from jax import dtypes
-from jax import ad_util
+from jax._src import ad_util
 from jax import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
@@ -481,14 +481,6 @@ for rounding_method in [
   _make_round_harness(
       "rounding_methods", operand=operand, rounding_method=rounding_method)
 
-# Validate edge cases
-for name, operand in [
-    # Checks that https://github.com/google/jax/issues/4952 is resolved
-    ("round_away_from_0",
-     np.array([[0.5, 1.5, 2.5], [-0.5, -1.5, -2.5]], dtype=np.float32)),
-]:
-  _make_round_harness(f"edge_case_{name}", operand=operand)
-
 
 def _make_convert_element_type_harness(name,
                                        *,
@@ -528,7 +520,7 @@ def _make_integer_pow_harness(name, *, shape=(20, 30), dtype=np.int32, y=3):
       y=y)
 
 
-for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean):
+for dtype in [d for d in jtu.dtypes.all if d not in jtu.dtypes.boolean]:
   # Validate dtypes and y values for some special cases.
   for y in range(-3, 5):
     if np.issubdtype(dtype, np.integer) and y < 0:
@@ -718,32 +710,36 @@ for dtype in jtu.dtypes.all:
       shape=shape,
       dtype=dtype)
 
-_LAX_COMPARATORS = (lax.eq_p, lax.ge_p, lax.gt_p, lax.le_p, lax.lt_p, lax.ne_p)
+_LAX_COMPARATORS = dict(eq=jnp.equal, ne=jnp.not_equal,
+                        ge=jnp.greater_equal, gt=jnp.greater,
+                        le=jnp.less_equal, lt=jnp.less)
 
 
 def _make_comparator_harness(name,
                              *,
                              dtype=np.float32,
                              op=lax.eq_p,
+                             op_name="eq",
                              lhs_shape=(),
                              rhs_shape=()):
   define(
-      op.name,
+      op_name,
       f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
-      lambda *args: op.bind(*args),
+      lambda *args: op(*args),
       [RandArg(lhs_shape, dtype),
        RandArg(rhs_shape, dtype)],
       op=op,
+      op_name=op_name,
       lhs_shape=lhs_shape,
       rhs_shape=rhs_shape,
       dtype=dtype)
 
 
-for op in _LAX_COMPARATORS:
+for op_name, op in _LAX_COMPARATORS.items():
   for dtype in (jtu.dtypes.all if op in [lax.eq_p, lax.ne_p] else
-                set(jtu.dtypes.all) - set(jtu.dtypes.complex)):
+                set(jtu.dtypes.all)):
     # Validate dtypes
-    _make_comparator_harness("dtypes", dtype=dtype, op=op)
+    _make_comparator_harness("dtypes", dtype=dtype, op=op, op_name=op_name)
 
   # Validate broadcasting behavior
   for lhs_shape, rhs_shape in [
@@ -751,7 +747,8 @@ for op in _LAX_COMPARATORS:
       ((1, 2), (3, 2)),  # broadcast along specific axis
   ]:
     _make_comparator_harness(
-        "broadcasting", lhs_shape=lhs_shape, rhs_shape=rhs_shape, op=op)
+        "broadcasting", lhs_shape=lhs_shape, rhs_shape=rhs_shape,
+        op=op, op_name=op_name)
 
 for dtype in jtu.dtypes.all:
   shape = (3, 4, 5)
@@ -917,6 +914,7 @@ for prim in [lax.div_p, lax.rem_p]:
 def _make_binary_elementwise_harnesses(prim,
                                        dtypes,
                                        default_dtype=np.float32,
+                                       broadcasting_dtypes=None,
                                        jax_unimplemented=lambda **kwargs: []):
 
   def _make(name, *, shapes=((20, 20), (20, 20)), dtype):
@@ -931,15 +929,18 @@ def _make_binary_elementwise_harnesses(prim,
         prim=prim,
         dtype=dtype,
         shapes=shapes)
-
-  return (tuple(  # Validate dtypes
-      _make("dtypes", dtype=dtype)
-      for dtype in dtypes) + tuple(  # Validate broadcasting
-          _make("broadcasting", dtype=default_dtype, shapes=shapes)
-          for shapes in [
+  broadcasting_dtypes = broadcasting_dtypes or (default_dtype,)
+  return (
+      # Validate dtypes
+      tuple(_make("dtypes", dtype=dtype) for dtype in dtypes) +
+      # Validate broadcasting
+      tuple(_make("broadcasting", dtype=dtype, shapes=shapes)
+            for shapes in [
               ((20, 20), (1, 20)),  # broadcasting rhs
               ((1, 20), (20, 20)),  # broadcasting lhs
-          ]))
+            ]
+            for dtype in broadcasting_dtypes)
+  )
 
 
 _make_binary_elementwise_harnesses(
@@ -1004,7 +1005,9 @@ _min_max_special_cases = tuple(
                      (np.array([-np.inf, -np.inf], dtype=dtype),
                       np.array([np.nan, np.nan], dtype=dtype))])
 
-_make_binary_elementwise_harnesses(prim=lax.min_p, dtypes=jtu.dtypes.all)
+_make_binary_elementwise_harnesses(
+    prim=lax.min_p, dtypes=jtu.dtypes.all,
+    broadcasting_dtypes=(np.float32, np.complex64, np.complex128))
 # Validate special cases
 for lhs, rhs in _min_max_special_cases:
   define(
@@ -1014,7 +1017,9 @@ for lhs, rhs in _min_max_special_cases:
       prim=lax.min_p,
       dtype=lhs.dtype)
 
-_make_binary_elementwise_harnesses(prim=lax.max_p, dtypes=jtu.dtypes.all)
+_make_binary_elementwise_harnesses(
+    prim=lax.max_p, dtypes=jtu.dtypes.all,
+    broadcasting_dtypes=(np.float32, np.complex64, np.complex128))
 # Validate special cases
 for lhs, rhs in _min_max_special_cases:
   define(
@@ -1101,63 +1106,86 @@ for dtype in set(jtu.dtypes.all):
   axis = 0
   define(
       lax.gather_p,
-      f"dtypes_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}",
+      f"dtypes_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}_enable_xla=True",
       lambda a, i, axis: jnp.take(a, i, axis=axis),
       [RandArg(shape, dtype), indices,
        StaticArg(axis)],
-      dtype=dtype)
+      dtype=dtype,
+      enable_xla=True)
 
 # Construct gather harnesses using take
 _gather_input = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))
-for indices in [
-    # Ensure each set of indices has a distinct shape
-    np.array(2, dtype=np.int32),
-    np.array([2], dtype=np.int32),
-    np.array([2, 4], dtype=np.int32),
-    np.array([[2, 4], [5, 6]], dtype=np.int32),
-    np.array([0, 1, 10], dtype=np.int32),  # Index out of bounds
-    np.array([0, 1, 2, -1], dtype=np.int32),  # Index out of bounds
+for indices, index_oob, indices_name in [
+    # Ensure each set of indices has a distinct name
+    (np.array(2, dtype=np.int32), False, "1"),
+    (np.array([2], dtype=np.int32), False, "2"),
+    (np.array([2, 4], dtype=np.int32), False, "3"),
+    (np.array([[2, 4], [5, 6]], dtype=np.int32), False, "4"),
+    (np.array([[0], [1], [10]], dtype=np.int32), True, "5_oob"), # Index out of bounds too high
+    (np.array([[0, 1], [2, -1]], dtype=np.int32), False, "6_neg"), # Negative index is from the end
+    (np.array([0, 1, 2, 3, -10], dtype=np.int32), False, "7_neg"), # Index out of bounds, but works
+    (np.array([[[0], [1]], [[3], [-11]]], dtype=np.int32), True, "8_neg_oob")  # Index out of bounds, too low
 ]:
   for axis in [0, 1, 2]:
+    for enable_xla in [True, False]:
+      define(
+          lax.gather_p,
+          f"from_take_indices_name={indices_name}_axis={axis}_enable_xla={enable_xla}",
+          lambda a, i, axis: jnp.take(a, i, axis=axis),
+          [_gather_input, indices, StaticArg(axis)],
+          dtype=_gather_input.dtype,
+          enable_xla=enable_xla,
+          index_oob=index_oob)
+
+# Construct gather harnesses using array indexing and slicing.
+for slices, name in [
+    ((0,), "[0]"),
+    ((0, 1), "[0,1]"),
+    ((slice(0, 10), 2, slice(0, 10)), "[:,:2,:]"),
+    ((slice(2, 5), 5), "[2:5,5]"),
+    ((-1, -5, -200), "[-1,-5,-200]"),
+    ((slice(5, -2), 300), "[5:-2,300]"),
+]:
+  for enable_xla in [False, True]:
     define(
         lax.gather_p,
-        f"from_take_indices_shape={indices.shape}_axis={axis}",
-        lambda a, i, axis: jnp.take(a, i, axis=axis),
-        [_gather_input, indices, StaticArg(axis)],
-        dtype=_gather_input.dtype)
+        f"from_slicing_name={name}_enable_xla={enable_xla}",
+        lambda arr, *s: jnp.array(arr).__getitem__(*s),
+        [_gather_input, StaticArg(slices)],
+        dtype=_gather_input.dtype,
+        enable_xla=enable_xla)
 
 # Directly from lax.gather in lax_test.py.
-for shape, idxs, dnums, slice_sizes in [
+for shape, idxs, dnums, slice_sizes, needs_xla in [
     ((5,), np.array([[0], [2]]),
      lax.GatherDimensionNumbers(
          offset_dims=(), collapsed_slice_dims=(0,),
-         start_index_map=(0,)), (1,)),
+         start_index_map=(0,)), (1,), False),
     ((10,), np.array([[0], [0], [0]]),
      lax.GatherDimensionNumbers(
          offset_dims=(1,), collapsed_slice_dims=(),
-         start_index_map=(0,)), (2,)),
-    ((
-        10,
-        5,
-    ), np.array([[0], [2], [1]]),
+         start_index_map=(0,)), (2,), True),
+    ((10, 5,), np.array([[0], [2], [1]]),
      lax.GatherDimensionNumbers(
          offset_dims=(1,), collapsed_slice_dims=(0,),
-         start_index_map=(0,)), (1, 3)),
-    ((10, 5), np.array([[0, 2], [1, 0]]),
+         start_index_map=(0,)), (1, 3), True),
+    ((10, 6), np.array([[0, 2], [1, 0]]),
      lax.GatherDimensionNumbers(
          offset_dims=(1,), collapsed_slice_dims=(0,),
-         start_index_map=(0, 1)), (1, 3)),
+         start_index_map=(0, 1)), (1, 3), True),
 ]:
   dtype = np.float32
-  define(
-      lax.gather_p,
-      f"_shape={shape}_idxs_shape={idxs.shape}_dnums={dnums}_slice_sizes={slice_sizes}",
-      lambda op, idxs, dnums, slice_sizes: lax.gather(
-          op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
-      [RandArg(shape, dtype), idxs,
-       StaticArg(dnums),
-       StaticArg(slice_sizes)],
-      dtype=dtype)
+  for enable_xla in ([True] if needs_xla else [True, False]):
+    define(
+        lax.gather_p,
+        f"shape={shape}_idxs_shape={idxs.shape}_dnums={dnums}_slice_sizes={slice_sizes}_enable_xla={enable_xla}",
+        lambda op, idxs, dnums, slice_sizes: lax.gather(
+            op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
+        [RandArg(shape, dtype), idxs,
+         StaticArg(dnums),
+         StaticArg(slice_sizes)],
+        dtype=dtype,
+        enable_xla=enable_xla)
 
 
 def _make_scatter_harness(name,
@@ -1189,7 +1217,11 @@ def _make_scatter_harness(name,
               "unimplemented",
               devices="tpu",
               dtypes=np.complex64,
-              enabled=(f_lax in [lax.scatter_max, lax.scatter_min]))
+              enabled=(f_lax in [lax.scatter_max, lax.scatter_min])),
+          Limitation(
+              "unimplemented",
+              dtypes=np.bool_,
+              enabled=(f_lax in [lax.scatter_add, lax.scatter_mul])),
       ],
       f_lax=f_lax,
       shape=shape,
@@ -1206,8 +1238,8 @@ for dtype in jtu.dtypes.all:
   for f_lax in [
       lax.scatter_add, lax.scatter_mul, lax.scatter_max, lax.scatter_min
   ]:
-    if f_lax in [lax.scatter_add, lax.scatter_mul] and dtype == np.bool_:
-      continue
+    #if f_lax in [lax.scatter_add, lax.scatter_mul] and dtype == np.bool_:
+    #  continue
     _make_scatter_harness("dtypes", dtype=dtype, f_lax=f_lax)
 
 # Validate f_lax/update_jaxpr
@@ -1649,10 +1681,6 @@ for dtype in jtu.dtypes.all_inexact:
           ],
           jax_unimplemented=[
               Limitation(
-                  "complex eigh not supported ",
-                  devices="tpu",
-                  dtypes=[np.complex64, np.complex128]),
-              Limitation(
                   "unimplemented",
                   devices=("cpu", "gpu"),
                   dtypes=[np.float16, dtypes.bfloat16]),
@@ -1914,20 +1942,22 @@ def _make_dynamic_slice_harness(name,
                                 start_indices=(1,),
                                 limit_indices=(2,),
                                 dtype=np.float32):
-  define(
-      lax.dynamic_slice_p,
-      f"{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_start_indices={start_indices}_limit_indices={limit_indices}",
-      # type: ignore
-      lax.dynamic_slice,
-      [
-          RandArg(shape, dtype),  # type: ignore
-          np.array(list(start_indices)),
-          StaticArg(tuple(map(operator.sub, limit_indices, start_indices)))
-      ],  # type: ignore
-      dtype=dtype,
-      shape=shape,  # type: ignore
-      start_indices=start_indices,  # type: ignore
-      limit_indices=limit_indices)  # type: ignore
+  for enable_xla in [False, True]:
+    define(
+        lax.dynamic_slice_p,
+        f"{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_start_indices={start_indices}_limit_indices={limit_indices}_enablexla={enable_xla}",
+        # type: ignore
+        lax.dynamic_slice,
+        [
+            RandArg(shape, dtype),  # type: ignore
+            np.array(list(start_indices)),
+            StaticArg(tuple(map(operator.sub, limit_indices, start_indices)))
+        ],  # type: ignore
+        dtype=dtype,
+        shape=shape,  # type: ignore
+        start_indices=start_indices,  # type: ignore
+        limit_indices=limit_indices,  # type: ignore
+        enable_xla=enable_xla)
 
 
 # Test first all dtypes
@@ -1966,22 +1996,24 @@ def _make_dynamic_update_slice_harness(name,
                                        start_indices=(1,),
                                        dtype=np.float32,
                                        update_shape=(1,)):
-  define(
-      lax.dynamic_update_slice_p,
-      (
-          f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}"  # type: ignore
-          f"_update={jtu.format_shape_dtype_string(update_shape, dtype)}"
-          f"_start_indices={start_indices}"),
-      lax.dynamic_update_slice,
-      [
-          RandArg(shape, dtype),  # type: ignore
-          RandArg(update_shape, dtype),  # type: ignore
-          np.array(start_indices)
-      ],  # type: ignore
-      dtype=dtype,
-      shape=shape,  # type: ignore
-      start_indices=start_indices,  # type: ignore
-      update_shape=update_shape)  # type: ignore
+  for enable_xla in [False, True]:
+    define(
+        lax.dynamic_update_slice_p,
+        (
+            f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}"  # type: ignore
+            f"_update={jtu.format_shape_dtype_string(update_shape, dtype)}"
+            f"_start_indices={start_indices}_enablexla={enable_xla}"),
+        lax.dynamic_update_slice,
+        [
+            RandArg(shape, dtype),  # type: ignore
+            RandArg(update_shape, dtype),  # type: ignore
+            np.array(start_indices)
+        ],  # type: ignore
+        dtype=dtype,
+        shape=shape,  # type: ignore
+        start_indices=start_indices,  # type: ignore
+        update_shape=update_shape,  # type: ignore
+        enable_xla=enable_xla)
 
 
 # Test first all dtypes
@@ -2336,10 +2368,15 @@ def _make_clamp_harness(name,
       min_shape=min_arr.shape,
       operand_shape=operand_shape,
       max_shape=max_arr.shape,
-      dtype=dtype)
+      dtype=dtype,
+      jax_unimplemented=[
+          Limitation(
+              "unimplemented",
+              dtypes=[np.bool_, np.complex64, np.complex128])],
+  )
 
 
-for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex + [np.bool_]):
+for dtype in set(jtu.dtypes.all):
   _make_clamp_harness("dtypes", dtype=dtype)
 
 # Validate broadcasting of min/max arrays

@@ -66,20 +66,30 @@ class DLPackTest(jtu.JaxTestCase):
       self.skipTest("DLPack not supported on TPU")
 
   @parameterized.named_parameters(jtu.cases_from_list(
-     {"testcase_name": "_{}_take_ownership={}".format(
+     {"testcase_name": "_{}_take_ownership={}_gpu={}".format(
         jtu.format_shape_dtype_string(shape, dtype),
-        take_ownership),
-     "shape": shape, "dtype": dtype, "take_ownership": take_ownership}
+        take_ownership, gpu),
+      "shape": shape, "dtype": dtype, "take_ownership": take_ownership,
+      "gpu": gpu}
      for shape in all_shapes
      for dtype in dlpack_dtypes
-     for take_ownership in [False, True]))
-  def testJaxRoundTrip(self, shape, dtype, take_ownership):
+     for take_ownership in [False, True]
+     for gpu in [False, True]))
+  def testJaxRoundTrip(self, shape, dtype, take_ownership, gpu):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
-    x = jnp.array(np)
+    if gpu and jax.default_backend() == "cpu":
+      raise unittest.SkipTest("Skipping GPU test case on CPU")
+    if (not gpu and jax.default_backend() == "gpu" and
+        jax.lib._xla_extension_version < 25):
+      raise unittest.SkipTest("Mixed CPU/GPU dlpack support requires jaxlib "
+                              "0.1.68 or newer")
+    device = jax.devices("gpu" if gpu else "cpu")[0]
+    x = jax.device_put(np, device)
     dlpack = jax.dlpack.to_dlpack(x, take_ownership=take_ownership)
     self.assertEqual(take_ownership, x.device_buffer.is_deleted())
     y = jax.dlpack.from_dlpack(dlpack)
+    self.assertEqual(y.device(), device)
     self.assertAllClose(np.astype(x.dtype), y)
 
     self.assertRaisesRegex(RuntimeError,

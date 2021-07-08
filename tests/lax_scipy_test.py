@@ -26,6 +26,7 @@ import numpy as np
 import scipy.special as osp_special
 
 from jax._src import api
+from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.scipy import special as lsp_special
 
@@ -40,6 +41,7 @@ compatible_shapes = [[(), ()],
                      [(2, 3, 4), (2, 1, 4)]]
 
 float_dtypes = jtu.dtypes.floating
+complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.integer
 
 OpRecord = collections.namedtuple(
@@ -106,7 +108,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "shapes": shapes, "dtype": dtype,
        "axis": axis, "keepdims": keepdims,
        "return_sign": return_sign, "use_b": use_b}
-      for shape_group in compatible_shapes for dtype in float_dtypes + int_dtypes
+      for shape_group in compatible_shapes for dtype in float_dtypes + complex_dtypes + int_dtypes
       for use_b in [False, True]
       for shapes in itertools.product(*(
         (shape_group, shape_group) if use_b else (shape_group,)))
@@ -237,6 +239,171 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def testGradOfXlog1pyAtZero(self):
     partial_xlog1py = functools.partial(lsp_special.xlog1py, 0.)
     self.assertAllClose(api.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_maxdegree={}_inputsize={}".format(l_max, num_z),
+       "l_max": l_max,
+       "num_z": num_z}
+       for l_max, num_z in zip([1, 2, 3], [6, 7, 8])))
+  def testLpmn(self, l_max, num_z):
+    # Points on which the associated Legendre functions areevaluated.
+    z = np.linspace(-0.2, 0.9, num_z)
+    actual_p_vals, actual_p_derivatives = lsp_special.lpmn(m=l_max, n=l_max, z=z)
+
+    # The expected results are obtained from scipy.
+    expected_p_vals = np.zeros((l_max + 1, l_max + 1, num_z))
+    expected_p_derivatives = np.zeros((l_max + 1, l_max + 1, num_z))
+
+    for i in range(num_z):
+      val, derivative = osp_special.lpmn(l_max, l_max, z[i])
+      expected_p_vals[:, :, i] = val
+      expected_p_derivatives[:, :, i] = derivative
+
+    with self.subTest('Test values.'):
+      self.assertAllClose(actual_p_vals, expected_p_vals, rtol=1e-6, atol=3.2e-6)
+
+    with self.subTest('Test derivatives.'):
+      self.assertAllClose(actual_p_derivatives,expected_p_derivatives,
+              rtol=1e-6, atol=8.4e-4)
+
+    with self.subTest('Test JIT compatibility'):
+      args_maker = lambda: [z]
+      lsp_special_fn = lambda z: lsp_special.lpmn(l_max, l_max, z)
+      self._CompileAndCheck(lsp_special_fn, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_maxdegree={}_inputsize={}".format(l_max, num_z),
+       "l_max": l_max,
+       "num_z": num_z}
+       for l_max, num_z in zip([3, 4, 6, 32], [2, 3, 4, 64])))
+  def testNormalizedLpmnValues(self, l_max, num_z):
+    # Points on which the associated Legendre functions areevaluated.
+    z = np.linspace(-0.2, 0.9, num_z)
+    is_normalized = True
+    actual_p_vals = lsp_special.lpmn_values(l_max, l_max, z, is_normalized)
+
+    # The expected results are obtained from scipy.
+    expected_p_vals = np.zeros((l_max + 1, l_max + 1, num_z))
+    for i in range(num_z):
+      expected_p_vals[:, :, i] = osp_special.lpmn(l_max, l_max, z[i])[0]
+
+    def apply_normalization(a):
+      """Applies normalization to the associated Legendre functions."""
+      num_m, num_l, _ = a.shape
+      a_normalized = np.zeros_like(a)
+      for m in range(num_m):
+        for l in range(num_l):
+          c0 = (2.0 * l + 1.0) * osp_special.factorial(l - m)
+          c1 = (4.0 * np.pi) * osp_special.factorial(l + m)
+          c2 = np.sqrt(c0 / c1)
+          a_normalized[m, l] = c2 * a[m, l]
+      return a_normalized
+
+    # The results from scipy are not normalized and the comparison requires
+    # normalizing the results.
+    expected_p_vals_normalized = apply_normalization(expected_p_vals)
+
+    with self.subTest('Test accuracy.'):
+      self.assertAllClose(actual_p_vals, expected_p_vals_normalized, rtol=1e-6, atol=3.2e-6)
+
+    with self.subTest('Test JIT compatibility'):
+      args_maker = lambda: [z]
+      lsp_special_fn = lambda z: lsp_special.lpmn_values(l_max, l_max, z, is_normalized)
+      self._CompileAndCheck(lsp_special_fn, args_maker)
+
+  def testSphHarmAccuracy(self):
+    m = jnp.arange(-3, 3)[:, None]
+    n = jnp.arange(3, 6)
+    n_max = 5
+    theta = 0.0
+    phi = jnp.pi
+
+    expected = lsp_special.sph_harm(m, n, theta, phi, n_max)
+
+    actual = osp_special.sph_harm(m, n, theta, phi)
+
+    self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
+
+  def testSphHarmOrderZeroDegreeZero(self):
+    """Tests the spherical harmonics of order zero and degree zero."""
+    theta = jnp.array([0.3])
+    phi = jnp.array([2.3])
+    n_max = 0
+
+    expected = jnp.array([1.0 / jnp.sqrt(4.0 * np.pi)])
+    actual = jnp.real(
+        lsp_special.sph_harm(jnp.array([0]), jnp.array([0]), theta, phi, n_max))
+
+    self.assertAllClose(actual, expected, rtol=1.1e-7, atol=3e-8)
+
+  def testSphHarmOrderZeroDegreeOne(self):
+    """Tests the spherical harmonics of order one and degree zero."""
+    theta = jnp.array([2.0])
+    phi = jnp.array([3.1])
+    n_max = 1
+
+    expected = jnp.sqrt(3.0 / (4.0 * np.pi)) * jnp.cos(phi)
+    actual = jnp.real(
+        lsp_special.sph_harm(jnp.array([0]), jnp.array([1]), theta, phi, n_max))
+
+    self.assertAllClose(actual, expected, rtol=7e-8, atol=1.5e-8)
+
+  def testSphHarmOrderOneDegreeOne(self):
+    """Tests the spherical harmonics of order one and degree one."""
+    theta = jnp.array([2.0])
+    phi = jnp.array([2.5])
+    n_max = 1
+
+    expected = (-1.0 / 2.0 * jnp.sqrt(3.0 / (2.0 * np.pi)) *
+                jnp.sin(phi) * jnp.exp(1j * theta))
+    actual = lsp_special.sph_harm(
+        jnp.array([1]), jnp.array([1]), theta, phi, n_max)
+
+    self.assertAllClose(actual, expected, rtol=1e-8, atol=6e-8)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {'testcase_name': '_maxdegree={}_inputsize={}_dtype={}'.format(
+        l_max, num_z, dtype),
+       'l_max': l_max, 'num_z': num_z, 'dtype': dtype}
+      for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
+      for dtype in jtu.dtypes.all_integer))
+  def testSphHarmForJitAndAgainstNumpy(self, l_max, num_z, dtype):
+    """Tests against JIT compatibility and Numpy."""
+    n_max = l_max
+    shape = (num_z,)
+    rng = jtu.rand_int(self.rng(), -l_max, l_max + 1)
+
+    lsp_special_fn = partial(lsp_special.sph_harm, n_max=n_max)
+
+    def args_maker():
+      m = rng(shape, dtype)
+      n = abs(m)
+      theta = jnp.linspace(-4.0, 5.0, num_z)
+      phi = jnp.linspace(-2.0, 1.0, num_z)
+      return m, n, theta, phi
+
+    with self.subTest('Test JIT compatibility'):
+      self._CompileAndCheck(lsp_special_fn, args_maker)
+
+    with self.subTest('Test against numpy.'):
+      self._CheckAgainstNumpy(osp_special.sph_harm, lsp_special_fn, args_maker)
+
+  def testSphHarmCornerCaseWithWrongNmax(self):
+    """Tests the corner case where `n_max` is not the maximum value of `n`."""
+    m = jnp.array([2])
+    n = jnp.array([10])
+    n_clipped = jnp.array([6])
+    n_max = 6
+    theta = jnp.array([0.9])
+    phi = jnp.array([0.2])
+
+    expected = lsp_special.sph_harm(m, n, theta, phi, n_max)
+
+    actual = lsp_special.sph_harm(m, n_clipped, theta, phi, n_max)
+
+    self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
 
 
 if __name__ == "__main__":

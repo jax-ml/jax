@@ -16,7 +16,7 @@ kernelspec:
 
 # Training a Simple Neural Network, with PyTorch Data Loading
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Neural_Network_and_Data_Loading.ipynb)
 
 **Copyright 2018 Google LLC.**
 
@@ -33,9 +33,9 @@ limitations under the License.
 
 +++ {"id": "B_XlLLpcWjkA"}
 
-![JAX](https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png)
+![JAX](https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png)
 
-Let's combine everything we showed in the [quickstart notebook](https://colab.research.google.com/github/google/jax/blob/master/docs/notebooks/quickstart.ipynb) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use PyTorch's data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library).
+Let's combine everything we showed in the [quickstart notebook](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/quickstart.ipynb) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use PyTorch's data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library).
 
 Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for builidng our model.
 
