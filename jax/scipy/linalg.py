@@ -35,3 +35,8 @@ from jax._src.scipy.linalg import (
   tril,
   triu,
 )
+
+from jax._src.lax.polar import (
+  polar,
+  polar_unitary
+)
