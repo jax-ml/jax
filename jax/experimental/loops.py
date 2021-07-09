@@ -500,8 +500,7 @@ class _BoundedLoopBuilder(_LoopBuilder):
   def build_output_vals(self, scope, carried_state_names, carried_tree,
                         init_vals, body_closed_jaxpr, body_const_vals):
     arange_val = jnp.arange(self.start, stop=self.stop, step=self.step)
-    return lax_control_flow.scan_p.bind(*itertools.chain(body_const_vals,
-                                                         init_vals, [arange_val]),
+    return lax_control_flow.scan_p.bind(*body_const_vals, *init_vals, arange_val,
                                         reverse=False, length=arange_val.shape[0],
                                         jaxpr=body_closed_jaxpr,
                                         num_consts=len(body_const_vals),
@@ -532,7 +531,7 @@ class _CondBuilder(_LoopBuilder):
           in_tree,
           tuple(in_avals)))
     assert len(pass_through_const_vals) == 0
-    args = list(itertools.chain(body_const_vals, init_vals))
+    args = [*body_const_vals, *init_vals]
     return lax_control_flow.cond_p.bind(
         self.index, *args,
         branches=(pass_through_closed_jaxpr, body_closed_jaxpr),
@@ -579,9 +578,7 @@ class _WhileBuilder(_LoopBuilder):
       raise TypeError(f"cond_fun must return a boolean scalar, but got output type(s) "
                       f"{cond_jaxpr.out_avals}.")
 
-    return lax_control_flow.while_p.bind(*itertools.chain(cond_consts,
-                                                          body_const_vals,
-                                                          init_vals),
+    return lax_control_flow.while_p.bind(*cond_consts, *body_const_vals, *init_vals,
                                          cond_nconsts=len(cond_consts),
                                          cond_jaxpr=cond_jaxpr,
                                          body_nconsts=len(body_const_vals),
