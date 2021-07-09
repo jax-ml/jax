@@ -4948,6 +4948,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         atol=atol,
                         rtol=rtol)
 
+  def testS_(self):
+    self.assertEqual(np.s_[1:2:20],jnp.s_[1:2:20])
+
+  def testIndex_exp(self):
+    self.assertEqual(np.index_exp[5:3:2j],jnp.index_exp[5:3:2j])
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"

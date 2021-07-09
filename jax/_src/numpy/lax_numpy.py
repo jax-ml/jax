@@ -3631,9 +3631,11 @@ class CClass(_AxisConcat):
   trans1d = 0
   op_name = "c_"
 
-
 c_ = CClass()
 
+s_ = np.s_
+
+index_exp = np.index_exp
 
 @_wraps(np.i0)
 def i0(x):
