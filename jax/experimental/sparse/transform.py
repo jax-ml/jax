@@ -232,15 +232,16 @@ for _prim in [
   sparse_rules[_prim] = _zero_preserving_unary_op(_prim)
 
 def _dot_general_sparse(spenv, *argspecs, dimension_numbers, precision, preferred_element_type):
-  assert len(argspecs) == 2
-  assert argspecs[0].is_sparse() and not argspecs[1].is_sparse()
-  args = argspecs_to_arrays(spenv, argspecs)
-
-  result = sparse.bcoo_dot_general(args[0].data, args[0].indices, args[1],
-                                   lhs_shape=args[0].shape,
-                                   dimension_numbers=dimension_numbers)
-  argspec = ArgSpec(result.shape, spenv.push(result), None)
-  return [argspec]
+  if argspecs[0].is_sparse() and argspecs[1].is_sparse():
+    raise NotImplementedError("dot_general between two sparse matrices.")
+  A, B = argspecs_to_arrays(spenv, argspecs)
+  if argspecs[0].is_sparse():
+    result = sparse.bcoo_dot_general(A.data, A.indices, B, lhs_shape=A.shape,
+                                    dimension_numbers=dimension_numbers)
+  else:
+    result = sparse.bcoo_rdot_general(A, B.data, B.indices, rhs_shape=B.shape,
+                                      dimension_numbers=dimension_numbers)
+  return [ArgSpec(result.shape, spenv.push(result), None)]
 
 sparse_rules[lax.dot_general_p] = _dot_general_sparse
 
