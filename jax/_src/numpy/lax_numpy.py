@@ -4718,6 +4718,7 @@ def packbits(a, axis: Optional[int] = None, bitorder='big'):
                 (a.ndim - 1) * [(0, 0, 0)] + [(0, 8 - remainder, 0)])
 
   a = a.reshape(a.shape[:-1] + (a.shape[-1] // 8, 8))
+  bits = expand_dims(bits, tuple(range(a.ndim - 1)))
   packed = (a << bits).sum(-1).astype('uint8')
   return swapaxes(packed, axis, -1)
 
