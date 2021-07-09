@@ -158,7 +158,7 @@ def register_backend_factory(name, factory, *, priority=0):
 if jax.lib._xla_extension_version >= 23:
   register_backend_factory('interpreter', xla_client.make_interpreter_client,
                            priority=-100)
-  if jax.lib._xla_extension_version >= 24:
+  if jax.lib._xla_extension_version >= 27:
     if FLAGS.jax_cpu_backend_variant == 'stream_executor':
       register_backend_factory('cpu',
                                partial(xla_client.make_cpu_client, use_tfrt=False),

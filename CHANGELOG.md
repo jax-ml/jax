@@ -8,8 +8,17 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.17 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...main).
+## jax 0.2.18 (unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.17...main).
+
+## jaxlib 0.1.69 (unreleased)
+
+## jax 0.2.17 (July 9 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...jax-v0.2.17).
+* Bug fixes:
+  * Default to the older "stream_executor" CPU runtime for jaxlib <= 0.1.68
+    to work around #7229, which caused wrong outputs on CPU due to a concurrency
+    problem.
 * New features:
   * New SciPy function {py:func}`jax.scipy.special.sph_harm`.
   * Reverse-mode autodiff functions ({func}`jax.grad`,
@@ -20,7 +29,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     non-per-example way inside maps (initially only
     {func}`jax.experimental.maps.xmap`) ({jax-issue}`#6950`).
 
-## jaxlib 0.1.69 (unreleased)
 
 ## jax 0.2.16 (June 23 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.15...jax-v0.2.16).
