@@ -228,7 +228,7 @@ class Config:
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
-    return _BoolStateContextManager(name, help, update_thread_local_hook)
+    return _StateContextManager(name, help, update_thread_local_hook)
 
   def define_enum_state(
       self, name: str, enum_values: List[str], default: Optional[str],
@@ -263,27 +263,55 @@ class Config:
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
-    @contextlib.contextmanager
-    def set_state(new_val: Optional[str]):
+    def validate(new_val):
       if (new_val is not None and
           (type(new_val) is not str or new_val not in enum_values)):
         raise ValueError(f"new enum value must be None or in {enum_values}, "
                          f"got {new_val} of type {type(new_val)}.")
-      prev_val = getattr(_thread_local_state, name, unset)
-      setattr(_thread_local_state, name, new_val)
-      if update_thread_local_hook: update_thread_local_hook(new_val)
-      try:
-        yield
-      finally:
-        if prev_val is unset:
-          delattr(_thread_local_state, name)
-          if update_thread_local_hook: update_thread_local_hook(None)
-        else:
-          setattr(_thread_local_state, name, prev_val)
-          if update_thread_local_hook: update_thread_local_hook(prev_val)
-    set_state.__name__ = name[4:] if name.startswith('jax_') else name
-    set_state.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
-    return set_state
+
+    return _StateContextManager(name, help, update_thread_local_hook, validate)
+
+  def define_string_state(
+      self, name: str, default: Optional[str], help: str,
+      update_global_hook: Optional[Callable[[str], None]] = None,
+      update_thread_local_hook: Optional[Callable[[Optional[str]], None]] = None):
+    """Set up thread-local state and return a contextmanager for managing it.
+
+    See docstring for ``define_bool_state``.
+
+    Args:
+      name: string, converted to lowercase to define the name of the config
+        option (and absl flag). It is converted to uppercase to define the
+        corresponding shell environment variable.
+      default: string, a default value for the option.
+      help: string, used to populate the flag help information as well as the
+        docstring of the returned context manager.
+      update_global_hook: an optional callback that is called with the updated
+        value of the global state when it is altered or set initially.
+      update_thread_local_hook: an optional callback that is called with the
+        updated value of the thread-local state when it is altered or set
+        initially.
+
+    Returns:
+      A contextmanager to control the thread-local state value.
+    """
+    name = name.lower()
+    default = os.getenv(name.upper(), default)
+    self.DEFINE_string(name, default, help=help,
+                       update_hook=update_global_hook)
+    self._contextmanager_flags.add(name)
+
+    def get_state(self):
+      val = getattr(_thread_local_state, name, unset)
+      return val if val is not unset else self._read(name)
+    setattr(Config, name, property(get_state))
+
+    def validate(new_val):
+      if new_val is not None and not isinstance(new_val, str):
+        raise ValueError(f"new string config value must be None or of type str,"
+                         f" got {new_val} of type {type(new_val)}.")
+
+    return _StateContextManager(name, help, update_thread_local_hook, validate)
 
   def _trace_context(self):
     """Returns a tuple of configuration values that affect tracing.
@@ -295,33 +323,40 @@ class Config:
     return (self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision)
 
-class _BoolStateContextManager:
-  def __init__(self, name, help, update_thread_local_hook):
+class _StateContextManager:
+  def __init__(self, name, help, update_thread_local_hook,
+               validate_new_val_hook: Optional[Callable[[Any], None]] = None):
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
     self.__doc__ = f"Context manager for `{name}` config option.\n\n{help}"
-    self._hook = update_thread_local_hook
+    self._update_thread_local_hook = update_thread_local_hook
+    self._validate_new_val_hook = validate_new_val_hook
 
   @contextlib.contextmanager
-  def __call__(self, new_val: bool):
+  def __call__(self, new_val):
+    if self._validate_new_val_hook:
+      self._validate_new_val_hook(new_val)
     prev_val = getattr(_thread_local_state, self._name, unset)
     setattr(_thread_local_state, self._name, new_val)
-    if self._hook is not None: self._hook(new_val)
+    if self._update_thread_local_hook:
+      self._update_thread_local_hook(new_val)
     try:
       yield
     finally:
       if prev_val is unset:
         delattr(_thread_local_state, self._name)
-        if self._hook is not None: self._hook(None)
+        if self._update_thread_local_hook:
+          self._update_thread_local_hook(None)
       else:
         setattr(_thread_local_state, self._name, prev_val)
-        if self._hook is not None: self._hook(prev_val)
+        if self._update_thread_local_hook:
+          self._update_thread_local_hook(prev_val)
 
   def _add_hooks(self, update_global_hook, update_thread_local_hook):
     """Private method that adds hooks to an existing context-manager.
 
     Used to avoid cyclic import dependencies."""
-    self._hook = update_thread_local_hook
+    self._update_thread_local_hook = update_thread_local_hook
     config._update_hooks[self._name] = update_global_hook
     update_global_hook(config._read(self._name))
 
