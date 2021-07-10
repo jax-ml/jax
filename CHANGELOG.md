@@ -16,7 +16,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     not used with invalid `axis` value, or with an empty reduction dimension.
     ({jax-issue}`#7196`)
 
-## jaxlib 0.1.69 (unreleased)
+## jaxlib 0.1.70 (unreleased)
+
+## jaxlib 0.1.69 (July 9 2021)
+* Fix bugs in TFRT CPU backend that results in incorrect results.
 
 ## jax 0.2.17 (July 9 2021)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.16...jax-v0.2.17).

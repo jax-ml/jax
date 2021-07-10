@@ -15,7 +15,7 @@
 from setuptools import setup, find_packages
 
 # The following should be updated with each new jaxlib release.
-_current_jaxlib_version = '0.1.68'
+_current_jaxlib_version = '0.1.69'
 _available_cuda_versions = ['101', '102', '110', '111']
 
 _dct = {}
@@ -24,7 +24,7 @@ with open('jax/version.py') as f:
 __version__ = _dct['__version__']
 _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 
-_libtpu_version = '0.1.dev20210615'
+_libtpu_version = '0.1.dev20210709'
 
 setup(
     name='jax',
