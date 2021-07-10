@@ -1589,9 +1589,9 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
   #   else:
   #     return ar1 == ar2[ind]
   if invert:
-    return (ar1[:, None] != ar2).all(-1)
+    return (ar1[:, None] != ar2[None, :]).all(-1)
   else:
-    return (ar1[:, None] == ar2).any(-1)
+    return (ar1[:, None] == ar2[None, :]).any(-1)
 
 @_wraps(np.setdiff1d, lax_description="""
 In the JAX version, the `assume_unique` argument is not referenced.

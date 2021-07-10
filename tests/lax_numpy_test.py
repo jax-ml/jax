@@ -1232,6 +1232,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for test_shape in all_shapes
       for dtype in default_dtypes
       for invert in [True, False]))
+  @jax.numpy_rank_promotion('raise')
   def testIn1d(self, element_shape, test_shape, dtype, invert):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(element_shape, dtype), rng(test_shape, dtype)]
@@ -1249,6 +1250,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype2 in [s for s in default_dtypes if s != jnp.bfloat16]
       for shape1 in all_shapes
       for shape2 in all_shapes))
+  @jax.numpy_rank_promotion('raise')
   def testSetdiff1d(self, shape1, shape2, dtype1, dtype2):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
