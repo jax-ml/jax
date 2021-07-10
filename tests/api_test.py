@@ -1148,6 +1148,17 @@ class APITest(jtu.JaxTestCase):
       "Type of cotangent input to vjp pullback.*is not the expected tangent type",
       lambda: pullback((np.float16(42))))
 
+  def test_vjp_bad_cotangent_shape(self):
+    x = np.ones((2, 5), dtype=np.float32)
+    y = np.ones((5, 3), dtype=np.float32)
+    def f_jax(x, y):
+      return jnp.matmul(x, y)
+    res, pullback = jax.vjp(f_jax, x, y)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Shape of cotangent input to vjp pullback function .* is not the expected shape"):
+      pullback(np.ones((2, 4), dtype=np.float32))
+
   def test_jvp_jit_cached(self):
     """Bug in caching in presence of JVP and JIT."""
 
