@@ -17,7 +17,7 @@ import dataclasses
 import logging
 import os
 
-from typing import Any, Callable, List, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from absl.testing import absltest
 import jax
@@ -87,14 +87,17 @@ def SaveAndLoadModel(model: tf.Module,
 
 def SaveAndLoadFunction(f_tf: Callable,
                         input_signature: Sequence[tf.TensorSpec],
-                        save_gradients=True) -> Callable:
-  # Roundtrip through saved model on disk
-  model = tf.Module()
+                        variables: Sequence[tf.Variable] = (),
+                        save_gradients=True) -> Tuple[Callable, tf.train.Checkpoint]:
+  # Roundtrip through saved model on disk. Return the Checkpoint also
+  # for the cases when there are variables.
+  model = tf.train.Checkpoint()
   model.f = tf.function(f_tf,
                         autograph=False,
                         input_signature=input_signature)
+  model.variables = variables
   restored = SaveAndLoadModel(model, save_gradients=save_gradients)
-  return restored.f
+  return restored.f, restored
 
 
 class JaxToTfTestCase(jtu.JaxTestCase):

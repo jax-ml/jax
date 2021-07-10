@@ -76,7 +76,7 @@ class CallTfTest(jtu.JaxTestCase):
     self.assertAllClose(4., res, check_dtypes=False)
 
   @parameterized_jit
-  def test_eval_numpy_arg(self, with_jit=False):
+  def test_eval_numpy_arg(self, with_jit=True):
     x = np.ones((2, 3), dtype=np.float32)
     res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
     self.assertAllClose(jnp.sin(x), res)
@@ -207,21 +207,23 @@ class CallTfTest(jtu.JaxTestCase):
     self.assertAllClose(
         np.array([True, False, False, False], dtype=np.bool_), res)
 
-  def test_x64_input(self):
+  @parameterized_jit
+  def test_x64_input(self, with_jit=True):
     def f_tf(x):
       return tf.math.sin(x)
 
     x = 5.  # TF interprets this as f64
-    res_call_tf = jax2tf.call_tf(f_tf)(x)
+    res_call_tf = _maybe_jit(with_jit, jax2tf.call_tf(f_tf))(x)
     res_jax = jnp.sin(x)
     self.assertAllClose(res_call_tf, res_jax)
 
-  def test_x64_output(self):
+  @parameterized_jit
+  def test_x64_output(self, with_jit=True):
     def f_tf(x):
       return (tf.constant(3., tf.float64), x)
 
     x = np.float32(5.)
-    res_call_tf = jax2tf.call_tf(f_tf)(x)
+    res_call_tf = _maybe_jit(with_jit, jax2tf.call_tf(f_tf))(x)
     res_jax = (3., x)
     self.assertAllClose(res_call_tf, res_jax)
 
@@ -237,6 +239,20 @@ class CallTfTest(jtu.JaxTestCase):
 
     def fun_tf(x):
       return x * outer_var + 1.
+
+    x = np.array([2., 5.,], dtype=np.float32)
+    res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
+    self.assertAllClose(x * outer_var_array + 1., res, check_dtypes=False)
+
+  @parameterized_jit
+  def test_with_var_read_x64(self, with_jit=True):
+    if jtu.device_under_test() == "gpu":
+      raise unittest.SkipTest("Test fails on GPU")
+    outer_var_array = np.array([3., 4.], dtype=np.float64)
+    outer_var = tf.Variable(outer_var_array)
+
+    def fun_tf(x):
+      return x * tf.cast(outer_var, x.dtype) + 1.
 
     x = np.array([2., 5.,], dtype=np.float32)
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
@@ -278,6 +294,28 @@ class CallTfTest(jtu.JaxTestCase):
 
     def fun_tf(x):
       return x * outer_tensor + 1.
+
+    x = np.float32(2.)
+    res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
+    self.assertAllClose(x * 3. + 1., res, check_dtypes=False)
+
+  @parameterized_jit
+  def test_with_tensor_capture_x64(self, with_jit=True):
+    outer_tensor = tf.constant(3., dtype=np.float64)
+
+    def fun_tf(x):
+      return x * tf.cast(outer_tensor * 3.14, tf.float32) + 1.
+
+    x = np.float32(2.)
+    res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
+    self.assertAllClose(x * 3. * 3.14 + 1., res, check_dtypes=False)
+
+  @parameterized_jit
+  def test_with_value_capture(self, with_jit=True):
+    outer_val = np.array(3., dtype=np.float32)
+
+    def fun_tf(x):
+      return x * outer_val + 1.
 
     x = np.float32(2.)
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
@@ -475,137 +513,108 @@ class CallTfTest(jtu.JaxTestCase):
     res = jax.pmap(fun_jax)(x)
     self.assertAllClose(np.float32(3. * (x + 2)), res)
 
-  def test_round_trip(self):
-    f_jax = jnp.sin
-    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax))
-    x = np.float32(0.7)
-    self.assertAllClose(f_jax(x), f_jax_rt(x))
+  def test_function_compile_time_constant_inputs(self):
+    # Call a function for which shape inference does not give an output
+    # shape.
+    x = np.array([1, 2, 3], dtype=np.int32)
+    def fun_tf(x):  # x:i32[3]
+      # Indexing with a dynamic slice makes the TF shape inference return
+      # a partially known shape.
+      end_idx = x[1]
+      res = x[0:end_idx]
+      return res
 
-  def test_round_trip_pytree(self):
-    def f_jax(x):  # x: dict(a=f32, b=f32)
-      return dict(a=x["a"]+1., b=x)
-    x = dict(a=0.7, b=0.8)
-    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax))
-    self.assertAllClose(f_jax(x), f_jax_rt(x))
+    # Call in eager mode. Should work!
+    res1 = jax2tf.call_tf(fun_tf)(x)
+    self.assertAllClose(x[0:x[1]], res1)
 
-  def test_round_trip_custom_grad(self):
-    @jax.custom_vjp
-    def f(x):
-      return x * x
+    # Now under jit, should fail because the function is not compileable
+    with self.assertRaisesRegex(ValueError,
+                                "Compiled TensorFlow function has unexpected parameter types"):
+      fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
+      fun_jax(x)
 
-    # f_fwd: a -> (b, residual)
-    def f_fwd(x):
-      return f(x), np.float32(3.) * x
-    # f_bwd: (residual, CT b) -> [CT a]
-    def f_bwd(residual, ct_b):
-      return residual * ct_b,
+  def test_experimental_get_compiler_ir_design_doc(self):
+    # Not a test of call_tf, but more of how experimental_get_compiler_ir works.
+    # Examples are from the design doc.
 
-    f.defvjp(f_fwd, f_bwd)
+    # Constant slice. This is the common case.
+    x = np.zeros((10,), dtype=np.int32)
 
-    f_rt = jax2tf.call_tf(jax2tf.convert(f, with_gradient=True))
-    x = np.float32(0.7)
-    self.assertAllClose(f(x), f_rt(x))
-    self.assertAllClose(jax.grad(f)(x), jax.grad(f_rt)(x))
+    def fun_tf(x):
+      begin = 0
+      return x[begin:5]  # x must be a compile-time constant
 
-  def test_round_trip_shape_poly(self):
-    f_jax = jnp.sin
-    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax,
-                                             polymorphic_shapes=["(b, ...)"]))
-    x = np.array([0.7, 0.8], dtype=np.float32)
-    self.assertAllClose(f_jax(x), f_jax_rt(x))
+    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    self.assertIn("(arg0.1: s32[10]) -> s32[5]", hlo)
 
-  def test_round_trip_saved_model_shape_poly(self):
-    tracing_count = 0
-    def f_jax(x):
-      nonlocal tracing_count
-      tracing_count += 1
-      return jnp.sin(x)
+    # Non-constant slice, but compile-time constant depending only on values.
+    x = np.zeros((10,), dtype=np.int32)
 
-    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
-    x = np.array([0.7, 0.8], dtype=np.float32)
-    res_jax = f_jax(x)
-    self.assertEqual(1, tracing_count)
-    # Will trace twice, it seems. Once to get the result signature, and once again
-    # for the actual saving.
-    restored_f = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
-    self.assertGreaterEqual(tracing_count, 2)
-    tracing_count = 0
-    f_jax_rt = jax2tf.call_tf(restored_f)
-    self.assertAllClose(res_jax, f_jax_rt(x))
-    # Ensure that restored_f works at other batch size as well
-    y = np.concatenate([x, x])
-    self.assertEqual(0, tracing_count)
-    res_jax_y = f_jax(y)
-    self.assertEqual(1, tracing_count)
-    # No more tracing for f_jax_rt
-    self.assertAllClose(res_jax_y, f_jax_rt(y))
-    self.assertEqual(1, tracing_count)
+    def fun_tf(x):
+      begin = x[0]
+      return x[begin:5]  # x must be a compile-time constant
 
-  def test_round_trip_custom_grad_saved_model(self):
-    @jax.custom_vjp
-    def f(x):
-      return x * x
+    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    self.assertIn("() -> s32[5]", hlo)
+    x = np.ones((10,), dtype=np.int32)
+    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    self.assertIn("() -> s32[4]", hlo)
 
-    # f_fwd: a -> (b, residual)
-    def f_fwd(x):
-      return f(x), np.float32(3.) * x
-    # f_bwd: (residual, CT b) -> [CT a]
-    def f_bwd(residual, ct_b):
-      return residual * ct_b,
+    # Non-constant slice, but compile-time constant depending only on shapes.
+    x = np.zeros((10,), dtype=np.int32)
 
-    f.defvjp(f_fwd, f_bwd)
-    def g(x):
-      return jnp.sum(f(x))
+    def fun_tf(x):
+      begin = tf.shape(x)[0] - 2  # begin is a compile-time constant, even if x is not
+      return x[begin:]
 
-    g_tf = tf_test_util.SaveAndLoadFunction(
-        jax2tf.convert(g, with_gradient=True, polymorphic_shapes=["b, ..."]),
-        [tf.TensorSpec([None], dtype=tf.float32)])
-    g_rt = jax2tf.call_tf(g_tf)
-    x = np.array([0.7], dtype=np.float32)
-    self.assertAllClose(g(x), g_rt(x))
-    self.assertAllClose(jax.grad(g)(x), jax.grad(g_rt)(x))
+    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    self.assertIn("(arg0.1: s32[10]) -> s32[2]", hlo)
 
-  def test_round_trip_without_gradient_saved_model(self):
-    # Explicitly with_gradient=False
-    f_jax = jnp.sum
+    # Capture a variable
+    outer_var = tf.Variable(np.array([3.], dtype=np.float32))
+    x = np.array([2., 3., 4.], dtype=np.float32)
 
-    x = np.array([0.7, 0.8], dtype=np.float32)
-    f_tf = tf_test_util.SaveAndLoadFunction(
-        jax2tf.convert(f_jax, with_gradient=False),
-        [tf.TensorSpec(x.shape, dtype=x.dtype)])
-    f_rt = jax2tf.call_tf(f_tf)
+    def fun_tf(x):
+      return x * tf.broadcast_to(outer_var, x.shape) + 1.
 
-    self.assertAllClose(f_jax(x), f_rt(x))
-    with self.assertRaisesRegex(Exception,
-                                "Gradient explicitly disabled.*jax2tf-converted function does not support gradients. Use `with_gradient` parameter to enable gradients"):
-      jax.grad(f_rt)(x)
+    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    self.assertIn("(arg0.1: f32[3], arg1.2: f32[1]) -> f32[3]", hlo)
 
-  def test_round_trip_saved_model_no_gradients(self):
-    # Save without gradients
-    f_jax = jnp.sum
+    # Capture a constant
+    outer_ct = np.array([3.], dtype=np.float32)
+    x = np.array([2., 3., 4.], dtype=np.float32)
 
-    x = np.array([0.7, 0.8], dtype=np.float32)
-    f_tf = tf_test_util.SaveAndLoadFunction(
-        jax2tf.convert(f_jax, with_gradient=True),
-        [tf.TensorSpec(x.shape, dtype=x.dtype)],
-        save_gradients=False)
-    f_rt = jax2tf.call_tf(f_tf)
+    def fun_tf(x):
+      return x * tf.broadcast_to(outer_ct, x.shape) + 1.
 
-    self.assertAllClose(f_jax(x), f_rt(x))
-    # TODO: clean this up b/191117111: it should fail with a clear error
-    # The following results in a confusing error:
-    # TypeError: An op outside of the function building code is being passed
-    # a "Graph" tensor. It is possible to have Graph tensors
-    # leak out of the function building context by including a
-    # tf.init_scope in your function building code.
-    # For example, the following function will fail:
-    #   @tf.function
-    #   def has_init_scope():
-    #     my_constant = tf.constant(1.)
-    #     with tf.init_scope():
-    #       added = my_constant * 2
-    # The graph tensor has name: args_0:0
-    # g = jax.grad(f_rt)(x)
+    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    self.assertIn("(arg0.1: f32[3]) -> f32[3]", hlo)
+
+    # Call get_compiler_ir in a function context
+    x = np.array([2., 3., 4.], dtype=np.float32)
+
+    # TODO(b/193754660)
+    # def fun_tf_outer(x):
+    #   x_const = tf.constant(0, shape=x.shape, dtype=x.dtype)
+    #   _ = tf.function(tf.math.sin, jit_compile=True).experimental_get_compiler_ir(x_const)()
+
+    # with self.assertRaisesRegex(
+    #     TypeError, "An op outside of the function building code is being passed"):
+    #   tf.function(fun_tf_outer)(x)
+    #
+    # with self.assertRaisesRegex(
+    #     TypeError, "An op outside of the function building code is being passed"):
+    #   tf.function(fun_tf_outer, jit_compile=True)(x)
+
+    # Call get_concrete_function in a graph context
+    def fun_tf_outer(x):
+      _ = tf.function(tf.math.sin, jit_compile=True).get_concrete_function(tf.TensorSpec(x.shape, x.dtype))
+      return x
+
+    # Outside of a function context, this works.
+    _ = tf.function(fun_tf_outer)(x)
+    _ = tf.function(fun_tf_outer, jit_compile=True)(x)
 
   def test_module_documentation(self):
     def cos_tf(x):
@@ -630,12 +639,289 @@ class CallTfTest(jtu.JaxTestCase):
     print(jax.make_jaxpr(cos_tf_sin_jax)(x))
     print(jax.xla_computation(cos_tf_sin_jax)(x).as_hlo_text())
 
-  def test_round_trip_reverse(self):
-    f_tf = tf.math.sin
-    f_tf_rt = jax2tf.convert(jax2tf.call_tf(f_tf))
-    x = np.float32(0.7)
-    self.assertAllClose(f_tf(x).numpy(), f_tf_rt(x).numpy())
+class RoundTripToJaxTest(jtu.JaxTestCase):
+  "Reloading output of jax2tf into JAX with call_tf"
+  def setUp(self):
+    if tf is None:
+      raise unittest.SkipTest("Test requires tensorflow")
+    # TODO(b/171320191): this line works around a missing context initialization
+    # bug in TensorFlow.
+    _ = tf.add(1, 1)
+    super().setUp()
 
+  def test_simple(self):
+    f_jax = jnp.sin
+    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax))
+    x = np.float32(0.7)
+    self.assertAllClose(f_jax(x), f_jax_rt(x))
+
+  def test_pytree(self):
+    def f_jax(x):  # x: dict(a=f32, b=f32)
+      return dict(a=x["a"]+1., b=x)
+    x = dict(a=0.7, b=0.8)
+    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax))
+    self.assertAllClose(f_jax(x), f_jax_rt(x))
+
+  def test_custom_grad(self):
+    @jax.custom_vjp
+    def f(x):
+      return x * x
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), np.float32(3.) * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * ct_b,
+
+    f.defvjp(f_fwd, f_bwd)
+
+    f_rt = jax2tf.call_tf(jax2tf.convert(f, with_gradient=True))
+    x = np.float32(0.7)
+    self.assertAllClose(f(x), f_rt(x))
+    self.assertAllClose(jax.grad(f)(x), jax.grad(f_rt)(x))
+
+  def test_shape_poly(self):
+    f_jax = jnp.sin
+    f_jax_rt = jax2tf.call_tf(jax2tf.convert(f_jax,
+                                             polymorphic_shapes=["(b, ...)"]))
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    self.assertAllClose(f_jax(x), f_jax_rt(x))
+
+  def test_saved_model_simple(self):
+    def f_jax(x):
+      return jnp.sin(x)
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    f_tf = jax2tf.convert(f_jax)
+    restored_tf, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec(x.shape, x.dtype)])
+    restored_jax = jax2tf.call_tf(restored_tf)
+    self.assertAllClose(f_jax(x), restored_jax(x))
+
+  def test_saved_model_variables(self):
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    param = np.array([1., 2.], dtype=np.float32)
+    def f_jax(param, x):
+      return jnp.sin(x) + jnp.cos(param)
+
+    param_v = tf.Variable(param)
+    f_tf = jax2tf.convert(f_jax)
+    _, restored_model = tf_test_util.SaveAndLoadFunction(
+        lambda x: f_tf(param_v, x),
+        [tf.TensorSpec(x.shape, x.dtype)],
+        variables=(param_v,))
+    restored_jax = jax2tf.call_tf(restored_model.f)
+    self.assertAllClose(f_jax(param, x), restored_jax(x))
+    self.assertAllClose(f_jax(param, x), jax.jit(restored_jax)(x))
+
+  def test_saved_model_shape_poly(self):
+    tracing_count = 0
+    def f_jax(x):
+      nonlocal tracing_count
+      tracing_count += 1
+      return jnp.sin(x)
+
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    res_jax = f_jax(x)
+    self.assertEqual(1, tracing_count)
+    # Will trace twice, it seems. Once to get the result signature, and once again
+    # for the actual saving.
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
+    self.assertGreaterEqual(tracing_count, 2)
+    tracing_count = 0
+    f_jax_rt = jax2tf.call_tf(restored_f)
+    self.assertAllClose(res_jax, f_jax_rt(x))
+    # Ensure that restored_f works at other batch size as well
+    y = np.concatenate([x, x])
+    self.assertEqual(0, tracing_count)
+    res_jax_y = f_jax(y)
+    self.assertEqual(1, tracing_count)
+    # No more tracing for f_jax_rt
+    self.assertAllClose(res_jax_y, f_jax_rt(y))
+    self.assertEqual(1, tracing_count)
+
+  def test_custom_grad_saved_model(self):
+    @jax.custom_vjp
+    def f(x):
+      return x * x
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), np.float32(3.) * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * ct_b,
+
+    f.defvjp(f_fwd, f_bwd)
+    def g(x):
+      return jnp.sum(f(x))
+
+    g_tf, _ = tf_test_util.SaveAndLoadFunction(
+        jax2tf.convert(g, with_gradient=True, polymorphic_shapes=["b, ..."]),
+        [tf.TensorSpec([None], dtype=tf.float32)])
+    g_rt = jax2tf.call_tf(g_tf)
+    x = np.array([0.7], dtype=np.float32)
+    self.assertAllClose(g(x), g_rt(x))
+    self.assertAllClose(jax.grad(g)(x), jax.grad(g_rt)(x))
+
+  def test_without_gradient_saved_model(self):
+    # Explicitly with_gradient=False
+    f_jax = jnp.sum
+
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    f_tf, _ = tf_test_util.SaveAndLoadFunction(
+        jax2tf.convert(f_jax, with_gradient=False),
+        [tf.TensorSpec(x.shape, dtype=x.dtype)])
+    f_rt = jax2tf.call_tf(f_tf)
+
+    self.assertAllClose(f_jax(x), f_rt(x))
+    with self.assertRaisesRegex(Exception,
+                                "Gradient explicitly disabled.*jax2tf-converted function does not support gradients. Use `with_gradient` parameter to enable gradients"):
+      jax.grad(f_rt)(x)
+
+  def test_saved_model_no_gradients(self):
+    # Save without gradients
+    f_jax = jnp.sum
+
+    x = np.array([0.7, 0.8], dtype=np.float32)
+    f_tf, _ = tf_test_util.SaveAndLoadFunction(
+        jax2tf.convert(f_jax, with_gradient=True),
+        [tf.TensorSpec(x.shape, dtype=x.dtype)],
+        save_gradients=False)
+    f_rt = jax2tf.call_tf(f_tf)
+
+    self.assertAllClose(f_jax(x), f_rt(x))
+    # TODO: clean this up b/191117111: it should fail with a clear error
+    # The following results in a confusing error:
+    # TypeError: An op outside of the function building code is being passed
+    # a "Graph" tensor. It is possible to have Graph tensors
+    # leak out of the function building context by including a
+    # tf.init_scope in your function building code.
+    # For example, the following function will fail:
+    #   @tf.function
+    #   def has_init_scope():
+    #     my_constant = tf.constant(1.)
+    #     with tf.init_scope():
+    #       added = my_constant * 2
+    # The graph tensor has name: args_0:0
+    # g = jax.grad(f_rt)(x)
+
+class RoundTripToTfTest(jtu.JaxTestCase):
+  "Reloading output of call_tf into TF with jax2tf."
+
+  def setUp(self):
+    if tf is None:
+      raise unittest.SkipTest("Test requires tensorflow")
+    # TODO(b/171320191): this line works around a missing context initialization
+    # bug in TensorFlow.
+    _ = tf.add(1, 1)
+    super().setUp()
+
+  def test_alternate(self):
+    # Alternate sin/cos with sin in TF and cos in JAX
+    f_tf_inner = tf.math.sin
+    def f_jax(x_jax):
+      y_jax = jnp.cos(x_jax)
+      z_jax = jax2tf.call_tf(f_tf_inner)(y_jax)
+      return jnp.cos(z_jax)
+    def f_tf_outer(x_tf):
+      y_tf = tf.math.sin(x_tf)
+      z_tf = jax2tf.convert(f_jax)(y_tf)
+      return tf.math.sin(z_tf)
+
+    x = np.float32(0.7)
+
+    self.assertAllClose(np.sin(np.cos(np.sin(np.cos(np.sin(x))))),
+                        f_tf_outer(x).numpy())
+    xv = tf.Variable(x)
+    with tf.GradientTape() as tape:
+      res = f_tf_outer(xv)
+    g_tf = tape.gradient(res, xv)
+    # Eager
+    expected_res = np.sin(np.cos(np.sin(np.cos(np.sin(x)))))
+    self.assertAllClose(expected_res, f_tf_outer(x).numpy())
+
+    # Gradient
+    expected_grad = (np.cos(np.cos(np.sin(np.cos(np.sin(x))))) *
+                     np.sin(np.sin(np.cos(np.sin(x)))) *
+                     np.cos(np.cos(np.sin(x))) *
+                     np.sin(np.sin(x)) *
+                     np.cos(x))
+    self.assertAllClose(expected_grad, g_tf.numpy())
+
+    # Graph
+    self.assertAllClose(expected_res,
+                        tf.function(f_tf_outer, autograph=False)(x).numpy())
+
+    # Compiled
+    self.assertAllClose(expected_res,
+                        tf.function(f_tf_outer, autograph=False,
+                                    jit_compile=True)(x).numpy())
+
+  def test_saved_model(self):
+    x = np.array([.7, .8], dtype=np.float32)
+    def fun_tf(x):
+      return tf.math.sin(x)
+    def fun_jax(x):
+      return jax2tf.call_tf(fun_tf)(x)
+
+    # Now convert and save to SavedModel
+    fun_tf_rt = jax2tf.convert(fun_jax)
+    res = fun_tf_rt(x)
+    self.assertAllClose(np.sin(x), res.numpy())
+
+    # TODO(b/193754660)
+    res = tf.function(fun_tf_rt)(x)
+    self.assertAllClose(np.sin(x), res.numpy())
+
+    res = tf.function(fun_tf_rt, jit_compile=True)(x)
+    self.assertAllClose(np.sin(x), res.numpy())
+
+    reloaded_f, _ = tf_test_util.SaveAndLoadFunction(
+        fun_tf_rt, input_signature=[tf.TensorSpec(x.shape, x.dtype)])
+    res = reloaded_f(x)
+    self.assertAllClose(np.sin(x), res.numpy())
+
+  def test_function_dynamic_shape(self):
+    # Call a function for which shape inference does not give an output
+    # shape.
+    x = np.array([-1, 0, 1], dtype=np.int32)
+    def fun_tf(x):  # x:i32[3]
+      # The shape depends on the value of x
+      res = tf.where(x >= 0)
+      return res
+
+    # Call in eager mode. Should work!
+    res1 = jax2tf.call_tf(fun_tf)(x)
+    expected = np.array([[1], [2]])
+    self.assertAllClose(expected, res1, check_dtypes=False)
+
+    # Now under jit, should fail because the function is not compileable
+    with self.assertRaisesRegex(ValueError,
+                                "Error compiling TensorFlow function. call_tf can used in a staged context"):
+      fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
+      fun_jax(x)
+
+    # TODO(necula): this should work in op-by-op mode, but it fails because
+    # jax2tf.convert does abstract evaluation.
+    with self.assertRaisesRegex(ValueError,
+                                "Error compiling TensorFlow function. call_tf can used in a staged context"):
+      fun_tf_rt = jax2tf.convert(jax2tf.call_tf(fun_tf))
+      fun_tf_rt(x)
+
+  def test_shape_polymorphism_error(self):
+    x = np.array([.7, .8], dtype=np.float32)
+    def fun_tf(x):
+      return tf.math.sin(x)
+
+    fun_jax = jax2tf.call_tf(fun_tf)
+
+    fun_tf_rt = jax2tf.convert(fun_jax,
+                               polymorphic_shapes=["b, ..."])
+    with self.assertRaisesRegex(
+        ValueError,
+        "call_tf cannot be applies to shape-polymorphic arguments"):
+      fun_tf_rt(x)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

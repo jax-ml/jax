@@ -721,7 +721,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     f_jax = jnp.sin
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
     x = np.array([0.7, 0.8], dtype=np.float32)
-    restored_f = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
     self.assertAllClose(f_jax(x), restored_f(x))
     # Ensure that restored_f works at other batch size as well
     y = np.concatenate([x, x])
@@ -1369,7 +1369,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # test will be called "test_prim_xxx_...".
   # If you want to run this test for only one harness that includes "foo"
   # in the name, add parameter `one_containing="foo"` to parameterized below.
-  @primitive_harness.parameterized(_POLY_SHAPE_TEST_HARNESSES)
+  @primitive_harness.parameterized(_POLY_SHAPE_TEST_HARNESSES,
+                                   one_containing="dynamic_slice_enable_xla=True_poly_axes=[0]")
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())
     poly_axes = harness.params["poly_axes"]  # type: Sequence[Sequence[int]]

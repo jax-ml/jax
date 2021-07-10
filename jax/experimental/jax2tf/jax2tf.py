@@ -769,6 +769,7 @@ class TensorFlowTracer(core.Tracer):
 
       if config.jax_enable_checks:
         assert aval_dtype == val_dtype, f"expected {aval_dtype} == {val_dtype}"
+        assert len(self._aval.shape) == len(val_shape), f"_aval.shape={self._aval.shape} different rank than val_shape={val_shape}"
         for aval_dim, val_dim in zip(
             self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
@@ -853,6 +854,9 @@ class TensorFlowTrace(core.Trace):
                         params) -> TensorFlowTracer:
     impl, impl_needs_avals = self.get_primitive_impl(primitive)
     args_avals: Sequence[core.AbstractValue] = tuple(t.aval for t in tracers)
+    # This is a bit conservative, doing abstract_eval even in op-by-op execution
+    # but we needed it for, e.g., shape_polymorphism where only JAX's
+    # abstract evaluation rules can properly track polymorphic shapes.
     out_aval = primitive.abstract_eval(*args_avals, **params)
     args_tf: Sequence[TfVal] = [t.val for t in tracers]
     def invoke_impl() -> TfVal:
@@ -2475,7 +2479,8 @@ def _slice(operand, start_indices, limit_indices, strides, _in_avals,
                      _eval_shape(strides)))
   out = operand[slices]
   # TODO(b/184503314): improve shape inference for __getitem__
-  out.set_shape(_aval_to_tf_shape(_out_aval))
+  #out.set_shape(_aval_to_tf_shape(_out_aval))
+  #assert False, f"start_indices={start_indices}, limit_indices={limit_indices}, strides={strides}, out={out}"
   return out
 
 
