@@ -1156,7 +1156,7 @@ class APITest(jtu.JaxTestCase):
     res, pullback = jax.vjp(f_jax, x, y)
     with self.assertRaisesRegex(
         ValueError,
-        "Shape of cotangent input to vjp pullback function .* is not the expected shape"):
+        "Shape of cotangent input to vjp pullback function .* must be the same as the shape of corresponding primal input .*"):
       pullback(np.ones((2, 4), dtype=np.float32))
 
   def test_jvp_jit_cached(self):

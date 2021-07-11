@@ -1902,10 +1902,11 @@ def _vjp_pullback_wrapper(cotangent_dtypes, cotangent_shapes,
           f"Type of cotangent input to vjp pullback function ({ct_dtype}) is not "
           f"the expected tangent type ({expected_tangent_dtype}) of corresponding primal output "
           f"with dtype {_dtype(arg)}.")
-    if np.shape(arg) != cotangent_shapes:
+    if np.shape(arg) != ct_shape:
       raise ValueError(
-          f"Shape of cotangent input to vjp pullback function ({np.shape(arg)}) is not "
-          f"the expected shape ({ct_shape}) of corresponding primal output.")
+          f"Shape of cotangent input to vjp pullback function {np.shape(arg)} "
+          "must be the same as the shape of corresponding primal input "
+          f"{ct_shape}.")
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
