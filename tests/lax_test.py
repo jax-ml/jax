@@ -764,6 +764,22 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
     self._CheckAgainstNumpy(np.dot, jnp_fun, args_maker, tol=.1)
 
+  def testGradConv0D(self):
+    # Reproduces a failure in neural_tangents not caught in our presubmit tests
+    # See cl/367416742.
+    lhs = np.ones((2, 5), dtype=np.float32)
+    rhs = np.ones((5, 10), dtype=np.float32)
+
+    def f_jax(lhs, rhs):
+      return lax.conv_general_dilated(
+          lhs, rhs, window_strides=(),
+          padding=(), lhs_dilation=(), rhs_dilation=(),
+          dimension_numbers=lax.ConvDimensionNumbers((0, 1), (1, 0), (0, 1)),
+          batch_group_count=1, feature_group_count=1, precision=None,
+          preferred_element_type=None)
+    res, pullback = jax.vjp(f_jax, lhs, rhs)
+    grad = pullback(np.ones_like(res))
+    self.assertAllClose((lhs * 10., rhs * 2.), grad)
 
   @staticmethod
   def _conv_transpose_via_grad(data, kernel, strides, padding,
