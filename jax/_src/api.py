@@ -1888,19 +1888,25 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
 
   return apply_flat_fun(fun, io_tree, *py_args)
 
-def _vjp_pullback_wrapper(cotangent_dtypes, io_tree, fun, py_args):
+def _vjp_pullback_wrapper(cotangent_dtypes, cotangent_shapes,
+                          io_tree, fun, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
   if in_tree != in_tree_expected:
     raise TypeError(f"Tree structure of cotangent input {in_tree}, does not match structure of "
                     f"primal output {in_tree_expected}.")
-  for arg, ct_dtype in safe_zip(args, cotangent_dtypes):
+  for arg, ct_dtype, ct_shape in safe_zip(args, cotangent_dtypes, cotangent_shapes):
     expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(_dtype(arg))
     if expected_tangent_dtype != ct_dtype:
       raise TypeError(
           f"Type of cotangent input to vjp pullback function ({ct_dtype}) is not "
           f"the expected tangent type ({expected_tangent_dtype}) of corresponding primal output "
           f"with dtype {_dtype(arg)}.")
+    if np.shape(arg) != ct_shape:
+      raise ValueError(
+          f"Shape of cotangent input to vjp pullback function {np.shape(arg)} "
+          "must be the same as the shape of corresponding primal input "
+          f"{ct_shape}.")
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -2003,10 +2009,11 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False, reduce_axes=()):
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
   ct_dtypes = [core.primal_dtype_to_tangent_dtype(_dtype(x)) for x in out_primal]
+  ct_shapes = [np.shape(x) for x in out_primal]
   # Ensure that vjp_py is a PyTree so that we can pass it from the forward to the
   # backward pass in a custom VJP.
   vjp_py = Partial(partial(_vjp_pullback_wrapper,
-                           ct_dtypes,
+                           ct_dtypes, ct_shapes,
                            (out_tree, in_tree)),
                    out_vjp)
   if not has_aux:
