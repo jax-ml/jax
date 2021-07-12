@@ -51,7 +51,9 @@ setup(
         # Cloud TPU VM jaxlib can be installed via:
         # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_releases.html
         'tpu': [f'jaxlib=={_current_jaxlib_version}',
-                f'libtpu-nightly=={_libtpu_version}'],
+                f'libtpu-nightly=={_libtpu_version}',
+                # Required by cloud_tpu_init.py
+                'requests'],
 
         # CUDA installations require adding jax releases URL; e.g.
         # $ pip install jax[cuda110] -f https://storage.googleapis.com/jax-releases/jax_releases.html
