@@ -40,6 +40,11 @@ parser.add_argument(
   default=None,
   required=True,
   help="Path to which the output wheel should be written. Required.")
+parser.add_argument(
+  "--cpu",
+  default=None,
+  required=True,
+  help="Target CPU architecture. Required.")
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -215,18 +220,15 @@ def prepare_wheel(sources_path):
     patch_copy_tpu_client_py(jaxlib_dir)
 
 
-def build_wheel(sources_path, output_path):
+def build_wheel(sources_path, output_path, cpu):
   """Builds a wheel in `output_path` using the source tree in `sources_path`."""
-  if platform.system() == "Windows":
-    cpu_name = "amd64"
-    platform_name = "win"
-  else:
-    platform_name, cpu_name = {
-      ("Linux", "x86_64"): ("manylinux2010", "x86_64"),
-      ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
-      ("Darwin", "x86_64"): ("macosx_10_9", "x86_64"),
-      ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
-    }[(platform.system(), platform.machine())]
+  platform_name, cpu_name = {
+    ("Linux", "x86_64"): ("manylinux2010", "x86_64"),
+    ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
+    ("Darwin", "x86_64"): ("macosx_10_9", "x86_64"),
+    ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
+    ("Windows", "x86_64"): ("win", "amd64"),
+  }[(platform.system(), cpu)]
   python_tag_arg = (f"--python-tag=cp{sys.version_info.major}"
                     f"{sys.version_info.minor}")
   platform_tag_arg = f"--plat-name={platform_name}_{cpu_name}"
@@ -252,7 +254,7 @@ if sources_path is None:
 try:
   os.makedirs(args.output_path, exist_ok=True)
   prepare_wheel(sources_path)
-  build_wheel(sources_path, args.output_path)
+  build_wheel(sources_path, args.output_path, args.cpu)
 finally:
   if tmpdir:
     tmpdir.cleanup()
