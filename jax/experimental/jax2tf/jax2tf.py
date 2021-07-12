@@ -1620,7 +1620,8 @@ def _conv_general_dilated(lhs, rhs, *,
         dnums_proto,
         feature_group_count=feature_group_count,
         precision_config=precision_config_proto,
-        preferred_element_type=preferred_element_type)
+        preferred_element_type=preferred_element_type,
+        use_v2=True)
     # TODO: implement shape inference for XlaConv
     out.set_shape(out_tf_shape)
     return out
@@ -1671,7 +1672,8 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
         rhs,
         dnums_proto,
         precision_config_proto,
-        preferred_element_type=preferred_element_type)
+        preferred_element_type=preferred_element_type,
+        use_v2=True)
     return res
 
   # This condition ensures that:

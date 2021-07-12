@@ -773,8 +773,8 @@ We use the following XLA TF ops:
 
    * `XlaPad` (wraps XLA Pad operator). We use this instead of `tf.pad` in order to
      support `lax.pad` interior padding (dilation) or negative edge padding.
-   * `XlaConv` and `XlaConv2` (wrap XLA ConvGeneralDilated operator).
-   * `XlaDot` and `XlaDotV2` (wrap XLA DotGeneral operator).
+   * `XlaConv2` (wraps XLA ConvGeneralDilated operator).
+   * `XlaDotV2` (wraps XLA DotGeneral operator).
    * `XlaGather` (wraps XLA Gather operator). We could use `tf.gather` in some
      cases but not always. Also, `tf.gather` has a different semantics than `lax.gather`
      for index out of bounds.
