@@ -231,6 +231,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=5e-4)
     self._CompileAndCheck(lax_fun, args_maker)
 
+  def testGammaLogPdfZero(self):
+    # Regression test for https://github.com/google/jax/issues/7256
+    self.assertAllClose(
+      osp_stats.gamma.pdf(0.0, 1.0), lsp_stats.gamma.pdf(0.0, 1.0), atol=1E-6)
+
   @genNamedParametersNArgs(3)
   def testLaplaceLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
