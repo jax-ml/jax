@@ -4679,6 +4679,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for ddof in [None, 2, 3]
         for fweights in [True, False]
         for aweights in [True, False]))
+  @jax.numpy_rank_promotion('raise')
   def testCov(self, shape, dtype, y_shape, y_dtype, rowvar, ddof, bias, fweights, aweights):
     rng = jtu.rand_default(self.rng())
     wrng = jtu.rand_positive(self.rng())
