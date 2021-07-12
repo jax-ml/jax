@@ -477,7 +477,7 @@ for dtype in jtu.dtypes.all_floating:
 for rounding_method in [
     lax.RoundingMethod.AWAY_FROM_ZERO, lax.RoundingMethod.TO_NEAREST_EVEN
 ]:
-  operand = np.array([[0.5, 1.5, 2.5], [-0.5, -1.5, -2.5]], dtype=np.float32)
+  operand = np.array([[0.5, 1.2, 1.5, 1.7, 2.5], [-0.5, -1.2, -1.5, -1.7, -2.5]], dtype=np.float32)
   _make_round_harness(
       "rounding_methods", operand=operand, rounding_method=rounding_method)
 
@@ -793,19 +793,22 @@ def _make_argminmax_harness(prim,
                             dtype=jnp.float32,
                             axes=(0,),
                             index_dtype=np.int32,
-                            arr=None):
+                            arr=None,
+                            works_without_xla=True):
   arr = arr if arr is not None else RandArg(shape, dtype)
   dtype, shape = arr.dtype, arr.shape
   index_dtype = dtypes.canonicalize_dtype(index_dtype)
-  define(
-      prim,
-      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axes={axes}_indexdtype={index_dtype}",
-      lambda arg: prim.bind(arg, axes=axes, index_dtype=index_dtype), [arr],
-      shape=shape,
-      dtype=dtype,
-      axes=axes,
-      index_dtype=index_dtype,
-      prim=prim)
+  for enable_xla in [True, False]:
+    define(
+        prim,
+        f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axes={axes}_indexdtype={index_dtype}_enablexla={enable_xla}",
+        lambda arg: prim.bind(arg, axes=axes, index_dtype=index_dtype), [arr],
+        shape=shape,
+        dtype=dtype,
+        axes=axes,
+        index_dtype=index_dtype,
+        prim=prim,
+        enable_xla=enable_xla)
 
 
 for prim in [lax.argmin_p, lax.argmax_p]:
@@ -819,6 +822,22 @@ for prim in [lax.argmin_p, lax.argmax_p]:
   # Validate index dtype for each primitive
   for index_dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned:
     _make_argminmax_harness(prim, "index_dtype", index_dtype=index_dtype)
+
+      # Some special cases, with equal elements and NaN
+  for name, operand in [
+      ("nan_0", np.array([np.nan, np.nan, 2., -2., -np.nan, -np.nan], np.float32)),
+      ("nan_1", np.array([np.nan, -np.nan, 2., -2.], np.float32)),
+      ("inf_0", np.array([2., np.inf, np.inf, -2.], np.float32)),
+      ("inf_1", np.array([2., np.inf, -np.inf, -2.], np.float32)),
+      ("inf_2", np.array([2., -np.inf, np.inf, -2.], np.float32)),
+      ("inf_3", np.array([2., -np.inf, -np.inf, -2.], np.float32)),
+      ("nan_inf_0", np.array([2., np.nan, np.inf, -2.], np.float32)),
+      ("nan_inf_1", np.array([2., np.nan, -np.inf, -2.], np.float32)),
+      ("equal", np.array([2., 2., 2.], np.int32)),
+      ("singleton", np.array([1.], np.float32)),
+      ]:
+    _make_argminmax_harness(prim, f"special_{name}", shape=operand.shape,
+                            arr=operand)
 
 # TODO(bchetioui): the below documents a limitation of argmin and argmax when a
 # dimension of the input is too large. However, it is not categorizable as it
@@ -2201,6 +2220,59 @@ for base_dilation, window_dilation in [
   _make_select_and_gather_add_harness(
       "dilations", base_dilation=base_dilation, window_dilation=window_dilation)
 
+def _make_reduce_harness(name, *,
+                         shape=(4, 6),  # The shape of all operands
+                         nr_operands=1,  # How many operands
+                         computation=lax.add,  # Takes Tuple(op1, [op2,]) and Tuple(init_val1, [init_val2]). Returns Tuple(out_val1, [out_val2]).
+                         dimensions: Sequence[int] = (0,),
+                         init_value=0,  # The init value for first operand
+                         dtype=np.float32):  # The dtype of first operand
+  def reducer(*args):
+    init_val = np.array(init_value, dtype=dtype)
+    init_values = [init_val]
+    if nr_operands == 2:
+      init_values.append(np.int32(0.))
+    return lax.reduce(args[0:nr_operands], tuple(init_values),
+                      computation, dimensions)
+  define(
+      lax.reduce_p,
+      f"gen_{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_nr_operands={nr_operands}_dimensions={dimensions}".replace(" ", ""),
+      reducer,
+      [
+          RandArg(shape, dtype),
+          # Second operand (optional, always i32). We cannot mix multiple float
+          # types in XLA.
+          RandArg(shape, np.int32),
+      ],
+      shape=shape,
+      dtype=dtype,
+      init_value=init_value,
+      computation=computation,
+      dimensions=dimensions)
+
+for dtype in jtu.dtypes.all:
+  for name, nr_operands, computation, init_value in [
+      ("add_scalar", 1,
+       lambda ops, inits: (lax.add(ops[0], inits[0]),), 3),
+      # Compute the max (starting with 3) and the min (from 0), in parallel
+      ("max_min", 2,
+       lambda ops, inits: (lax.max(ops[0], inits[0]),
+                           lax.min(ops[1], inits[1])), 3),
+  ]:
+    if not (dtype == np.bool_ and name == "add_scalar"):
+      _make_reduce_harness(name, nr_operands=nr_operands,
+                           computation=computation, init_value=init_value,
+                           dtype=dtype)
+    # Test the dimensions, but only for int32 (to keep the # of tests small)
+    if dtype == np.int32:
+        _make_reduce_harness(name, nr_operands=nr_operands,
+                             computation=computation, init_value=init_value,
+                             dimensions=(1,),
+                             dtype=dtype)
+        _make_reduce_harness(name, nr_operands=nr_operands,
+                             computation=computation, init_value=init_value,
+                             dimensions=(0, 1),
+                             dtype=dtype)
 
 def _make_reduce_window_harness(name,
                                 *,

@@ -11,6 +11,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.18 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.17...main).
 
+* Bug fixes:
+  * Tightened the checks for lax.argmin and lax.argmax to ensure they are
+    not used with invalid `axis` value, or with an empty reduction dimension.
+    ({jax-issue}`#7196`)
+
 ## jaxlib 0.1.69 (unreleased)
 
 ## jax 0.2.17 (July 9 2021)

@@ -5488,6 +5488,11 @@ _masking_defreducer(reduce_min_p,
 
 def _argminmax_shape_rule(operand, *, axes, index_dtype):
   axis, = axes
+  if not (0 <= axis < len(operand.shape)):
+    raise ValueError(f"Invalid axis {axis} for operand shape {operand.shape}")
+  if not core.greater_equal_dim(operand.shape[axis], 1):
+    raise ValueError("argmin and argmax require non-empty reduced dimension. "
+                     f"operand.shape={operand.shape} axis={axis}")
   return tuple(np.delete(operand.shape, axis))
 
 def _argminmax_dtype_rule(operand, *, axes, index_dtype):
@@ -5496,34 +5501,29 @@ def _argminmax_dtype_rule(operand, *, axes, index_dtype):
                     .format(np.dtype(index_dtype).name))
   return index_dtype
 
-def _argminmax_translation_rule(value_comparator, identity,
-                                c, operand, *, axes, index_dtype):
+def _compute_argminmax(value_comparator, get_identity,
+                       operand, *, index_dtype, axes):
+  # value_comparator is either lax.lt (for argmin) or lax.gt
+  # get_identity(operand.dtype) is inf for argmin or -inf for argmax
   axis, = axes
-  shape = c.get_shape(operand)
-  dtype = shape.numpy_dtype()
-
-  subc = xb.make_computation_builder("argminmax_comparator")
-  value_shape = xc.Shape.array_shape(shape.xla_element_type(), ())
-  index_shape = xc.Shape.array_shape(index_dtype, ())
-  x_value = xb.parameter(subc, 0, value_shape)
-  x_index = xb.parameter(subc, 1, index_shape)
-  y_value = xb.parameter(subc, 2, value_shape)
-  y_index = xb.parameter(subc, 3, index_shape)
-  which_value = xops.Or(value_comparator(x_value, y_value),
-                        xops.Ne(x_value, x_value))
-  which_index = xops.Or(which_value, xops.And(xops.Eq(x_value, y_value),
-                                              xops.Lt(x_index, y_index)))
-  xops.Tuple(subc, [xops.Select(which_value, x_value, y_value),
-                    xops.Select(which_index, x_index, y_index)])
-  comparator = subc.build()
-
-  iota_shape = xc.Shape.array_shape(index_dtype, shape.dimensions())
-  iota = xc.ops.Iota(c, iota_shape, axis)
-  out = xops.Reduce(
-    c, [operand, iota],
-    [xb.constant(c, identity(dtype)),
-     xb.constant(c, np.array(0, index_dtype))], comparator, [axis])
-  return xops.GetTupleElement(out, 1)
+  indices = broadcasted_iota(index_dtype, np.shape(operand), axis)
+  def reducer_fn(op_val_index, acc_val_index):
+    op_val, op_index = op_val_index
+    acc_val, acc_index = acc_val_index
+    # Pick op_val if Lt (for argmin) or if NaN
+    pick_op_val = bitwise_or(value_comparator(op_val, acc_val),
+                             ne(op_val, op_val))
+    # If x and y are not NaN and x = y, then pick the first
+    pick_op_index = bitwise_or(pick_op_val,
+                               bitwise_and(eq(op_val, acc_val),
+                                           lt(op_index, acc_index)))
+    return (select(pick_op_val, op_val, acc_val),
+            select(pick_op_index, op_index, acc_index))
+  res = reduce([operand, indices],
+               [get_identity(operand.dtype), np.array(0, index_dtype)],
+               reducer_fn,
+               axes)
+  return res[1]
 
 def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
   axis, = axes
@@ -5534,10 +5534,13 @@ def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
   mask_idxs = select(eq(a, maxvals) | ne(a, a), idxs, maxval)
   return _reduce_min(mask_idxs, (axis,))
 
-_argmin_translation_rule = partial(_argminmax_translation_rule, xops.Lt,
-                                   _get_min_identity)
-_argmax_translation_rule = partial(_argminmax_translation_rule, xops.Gt,
-                                   _get_max_identity)
+_argmin_translation_rule = xla.lower_fun(
+  partial(_compute_argminmax, lt, _get_min_identity),
+  multiple_results=False)
+
+_argmax_translation_rule = xla.lower_fun(
+  partial(_compute_argminmax, gt, _get_max_identity),
+  multiple_results=False)
 
 argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmin', _argmin_translation_rule,

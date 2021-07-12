@@ -786,6 +786,7 @@ We use the following XLA TF ops:
    * `XlaReduceWindow` (wraps XLA ReduceWindow operator). These are used
      for `lax.reduce_window_sum_p`, `lax.reduce_window_min_p`,
      `lax.reduce_window_max_p`, and `lax.reduce_window_p`.
+   * `XlaVariadicReduceV2` (for `lax.reduce`, `lax.argmin`, `lax.argmax`).
    * `XlaVariadicSort` (wraps XLA Sort operator).
 
 ### Different performance characteristics

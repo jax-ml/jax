@@ -36,6 +36,9 @@ Our priority is to ensure same coverage and numerical behavior with JAX
 in the "compiled" mode, i.e., **when using XLA to compile the converted program**.
 We are pretty close to that goal.
 
+The converter has a mode in which it attempts to avoid special XLA TF ops
+(`enable_xla=False`). In this mode, some primitives have additional limitations.
+
 This table only shows errors for cases that are working in JAX (see [separate
 list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
 

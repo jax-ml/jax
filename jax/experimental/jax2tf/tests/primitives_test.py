@@ -182,7 +182,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       modes = ", ".join(sorted(l.modes))
       description = l.description
       if l.skip_comparison:
-        description = "Numeric comparision disabled: " + description
+        description = "Numeric comparison disabled: " + description
       if l.expect_tf_error:
         description = "TF error: " + description
       if l.skip_tf_run:

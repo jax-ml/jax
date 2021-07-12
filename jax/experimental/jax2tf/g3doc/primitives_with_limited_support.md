@@ -36,6 +36,9 @@ Our priority is to ensure same coverage and numerical behavior with JAX
 in the "compiled" mode, i.e., **when using XLA to compile the converted program**.
 We are pretty close to that goal.
 
+The converter has a mode in which it attempts to avoid special XLA TF ops
+(`enable_xla=False`). In this mode, some primitives have additional limitations.
+
 This table only shows errors for cases that are working in JAX (see [separate
 list of unsupported or partially-supported primitives](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/jax_primitives_coverage.md) )
 
@@ -126,27 +129,29 @@ with jax2tf. The following table lists that cases when this does not quite hold:
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |
 | --- | --- | --- | --- | --- |
 | acosh | May return different but still correct results | complex | cpu, gpu, tpu | eager, graph |
+| argmax | Numeric comparison disabled: different results when the input contains NaN and enable_xla=False | inexact | cpu, gpu, tpu | compiled, eager, graph |
+| argmin | Numeric comparison disabled: different results when the input contains NaN and enable_xla=False | inexact | cpu, gpu, tpu | compiled, eager, graph |
 | asin | May return different but still correct results | complex | cpu, gpu, tpu | eager, graph |
 | asinh | May return different but still correct results | complex | cpu, gpu, tpu | eager, graph |
 | atan | May return different but still correct results | complex | cpu, gpu, tpu | eager, graph |
 | atanh | May return different but still correct results | complex | cpu, gpu, tpu | eager, graph |
 | cholesky | May return different values in the strictly upper triangular part of the result. This does not matter for correctness, because this part of the matrix is not considered in the result. | all | cpu, gpu, tpu | compiled, eager, graph |
-| custom_linear_solve | Numeric comparision disabled: TODO: large numerical discrepancy | float32 | tpu | compiled, eager, graph |
+| custom_linear_solve | Numeric comparison disabled: TODO: large numerical discrepancy | float32 | tpu | compiled, eager, graph |
 | digamma | May return different results at singularity points 0 and -1.JAX returns nan and TF returns inf | bfloat16 | cpu, gpu, tpu | eager, graph |
 | eig | May return the eigenvalues and eigenvectors in a potentially different order. The eigenvectors may also be different, but equally valid. | all | cpu, gpu, tpu | eager, graph |
 | eigh | May return the eigenvalues and eigenvectors in a potentially different order. The eigenvectors may also be different, but equally valid. | all | cpu, gpu, tpu | compiled, eager, graph |
-| eigh | Numeric comparision disabled: TODO: numeric discrepancies | float16 | tpu | compiled, eager, graph |
+| eigh | Numeric comparison disabled: TODO: numeric discrepancies | float16 | tpu | compiled, eager, graph |
 | erf_inv | May return different results at undefined points (< -1 or > 1): JAX returns `NaN` and TF returns `+inf` or `-inf`. | float32, float64 | cpu, gpu, tpu | eager, graph |
 | igamma | May return different results at undefined points (both arguments 0). JAX returns `NaN` and TF returns 0 or JAX returns 1 and TF returns `NaN` | all | cpu, gpu, tpu | eager, graph |
 | igammac | May return different results at undefined points (both arguments less or equal 0). JAX returns `NaN` and TF returns 0 or JAX returns 1 and TF returns `NaN` | all | cpu, gpu | eager, graph |
-| integer_pow | Numeric comparision disabled: Different overflow behavior for large exponents.  | bfloat16, complex, float16, float32, signed | cpu, gpu, tpu | eager, graph |
-| integer_pow | Numeric comparision disabled: Different overflow behavior.  | bfloat16, float16 | tpu | eager, graph |
+| integer_pow | Numeric comparison disabled: Different overflow behavior for large exponents.  | bfloat16, complex, float16, float32, signed | cpu, gpu, tpu | eager, graph |
+| integer_pow | Numeric comparison disabled: Different overflow behavior.  | bfloat16, float16 | tpu | eager, graph |
 | integer_pow | custom numeric comparison | complex | cpu, gpu, tpu | eager, graph |
 | lu | May return different, but also correct, results when the decomposition is not unique | all | cpu, gpu | compiled, eager, graph |
 | max | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
 | min | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
 | pow | custom numeric comparison | complex | cpu, gpu, tpu | eager, graph |
-| sort | Numeric comparision disabled: TODO: TF non-stable multiple-array sort | all | gpu | compiled, eager, graph |
+| sort | Numeric comparison disabled: TODO: TF non-stable multiple-array sort | all | gpu | compiled, eager, graph |
 | svd | custom numeric comparison when compute_uv | all | cpu, gpu | compiled, eager, graph |
 | top_k | Produces different results when the array contains `inf` and `NaN` (they are sorted differently in TF vs. XLA). | floating | cpu, gpu, tpu | eager, graph |
 

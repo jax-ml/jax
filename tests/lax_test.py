@@ -2577,6 +2577,24 @@ class LazyConstantTest(jtu.JaxTestCase):
       jax_fn(np.ones((2, 2)), axis=0, index_dtype=index_dtype)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_fn={}".format(jax_fn.__name__),
+       "jax_fn": jax_fn}
+      for jax_fn in [lax.argmin, lax.argmax]))
+  def testArgMinMaxEmptyError(self, jax_fn):
+    with self.assertRaisesRegex(ValueError,
+                                "require non-empty reduced dimension"):
+      jax_fn(np.ones((0, 2)), axis=0, index_dtype=np.int32)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_fn={}".format(jax_fn.__name__),
+       "jax_fn": jax_fn}
+      for jax_fn in [lax.argmin, lax.argmax]))
+  def testArgMinMaxInvalidAxisError(self, jax_fn):
+    with self.assertRaisesRegex(ValueError,
+                                "Invalid axis -1 for operand"):
+      jax_fn(np.ones((2, 3)), axis=-1, index_dtype=np.int32)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fn={}_weaktype={}".format(jax_fn.__name__, weak_type),
        "jax_fn": jax_fn, "weak_type": weak_type}
       for jax_fn in [lax.argmin, lax.argmax]

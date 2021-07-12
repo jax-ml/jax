@@ -1116,6 +1116,20 @@ _POLY_SHAPE_TEST_HARNESSES = [
 
 for enable_xla in [False, True]:
   _POLY_SHAPE_TEST_HARNESSES.extend([
+      # Reduce the poly dimension
+      _make_harness("argmax", f"0_enable_xla={enable_xla}",
+                    lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
+                    [RandArg((3, 4, 5), _f32)],
+                    poly_axes=[0],
+                    enable_xla=enable_xla),
+
+      # Reduce the non-poly dimension
+      _make_harness("argmax", f"1_enable_xla={enable_xla}",
+                    lambda op: lax.argmax(op, axis=1, index_dtype=np.int32),
+                    [RandArg((3, 4, 5), _f32)],
+                    poly_axes=[0],
+                    enable_xla=enable_xla),
+
       _make_harness("dynamic_slice", f"enable_xla={enable_xla}",
                     # x:shape: (b, 4)
                     lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),

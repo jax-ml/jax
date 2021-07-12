@@ -967,7 +967,6 @@ for unexpected in xla.call_translations:  # Call primitives are inlined
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-    "reduce",
     "rng_uniform",
     "clz",
     "igamma_grad_a",
@@ -1843,18 +1842,42 @@ tf_impl[lax.reduce_or_p] = axes_to_axis(tf.reduce_any)
 tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
 
-def _argminmax(fn, operand, axes, index_dtype):
+def _argminmax(is_min: bool, operand: TfVal, axes: Sequence[int],
+               index_dtype: DType,
+               _in_avals: Sequence[core.AbstractValue],
+               _out_aval: core.AbstractValue):
+  if _thread_local_state.enable_xla:
+    # Follow the JAX implementation, using a XlaReduce with a custom comparator
+    if is_min:
+      extra_name_stack = "argmin"
+      value_comparator = lax.lt
+      get_identity = lax._get_min_identity
+    else:
+      extra_name_stack = "argmax"
+      value_comparator = lax.gt
+      get_identity = lax._get_max_identity
+
+    res = _convert_jax_impl(
+        partial(lax._compute_argminmax, value_comparator, get_identity),
+        multiple_results=False, extra_name_stack=extra_name_stack)(
+        operand, index_dtype=index_dtype, axes=axes,
+        _in_avals=_in_avals, _out_aval=_out_aval)
+    return res
+
+  # The following is known to diverge from JAX behavior for NaN.
   axis, = axes
   output_type = tf.int32
   if dtypes.iinfo(index_dtype).bits > 32:
     output_type = tf.int64
   # TODO(phawkins): handle axes larger than 2^31.
+  fn = tf.math.argmin if is_min else tf.math.argmax
   result = fn(operand, axis=axis, output_type=output_type)
   return tf.cast(result, _to_tf_dtype(index_dtype))
 
 
-tf_impl[lax.argmin_p] = partial(_argminmax, tf.math.argmin)
-tf_impl[lax.argmax_p] = partial(_argminmax, tf.math.argmax)
+tf_impl_with_avals[lax.argmin_p] = partial(_argminmax, True)
+tf_impl_with_avals[lax.argmax_p] = partial(_argminmax, False)
+
 
 _add_fn = tf.function(_add, autograph=False)
 _ge_fn = tf.function(tf.math.greater_equal, autograph=False)
@@ -2156,18 +2179,56 @@ tf_impl_with_avals[lax.reduce_window_max_p] = (
 tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
+def _reduce(*operands: TfVal,
+            computation: Callable,
+            jaxpr: core.Jaxpr,
+            consts:  Sequence[Any],
+            dimensions: Sequence[int],
+            _in_avals: Sequence[core.AbstractValue],
+            _out_aval: core.AbstractValue) -> Sequence[TfVal]:
+
+  if not _thread_local_state.enable_xla:
+    raise _xla_disabled_error("reduce")
+  del computation
+  assert not consts
+  assert len(operands) % 2 == 0
+  # operands: op1, op2, ..., init_val1, init_val2, ...
+  # reducer takes op1[i], op2[i], ..., init_val1, init_val2, ...
+  nr_operands = len(operands) // 2
+  init_vals = operands[nr_operands:]
+  operands = operands[0:nr_operands]
+
+  reducer_arg_spec = tuple([tf.TensorSpec((), op.dtype) for op in init_vals] * 2)
+
+  def reducer_computation(*args: TfVal) -> TfVal:
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    res = _interpret_jaxpr(closed_jaxpr, *args, extra_name_stack=None)
+    return res
+
+  xla_reducer_computation = (
+      tf.function(reducer_computation,
+                  autograph=False).get_concrete_function(*reducer_arg_spec))
+
+  out = tfxla.variadic_reduce_v2(operands, init_vals,
+                                 dimensions_to_reduce=dimensions,
+                                 reducer=xla_reducer_computation)
+  return out
+
+tf_impl_with_avals[lax.reduce_p] = _reduce
+
+
 # We use lax_control_flow._cumred_tpu_translation_rule to convert cummax,
 # cummin, cumsum and cumprod. This is efficient on TPU, but the complexity is
 # O(n^2) on other backends. This may be implemented using associative_scan
 # instead to favor different backends.
 tf_impl_with_avals[lax_control_flow.cummin_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-                      lax._reduce_window_min),
+            lax._reduce_window_min),
     multiple_results=False,
     extra_name_stack="cummin")
 tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-                      lax._reduce_window_max),
+            lax._reduce_window_max),
     multiple_results=False,
     extra_name_stack="cummin")
 # TODO(bchetioui): cumsum and cumprod can be converted using pure TF ops for
@@ -2177,12 +2238,12 @@ tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
 # tests will crash.
 tf_impl_with_avals[lax_control_flow.cumsum_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-                      lax._reduce_window_sum),
+            lax._reduce_window_sum),
     multiple_results=False,
     extra_name_stack="cumsum")
 tf_impl_with_avals[lax_control_flow.cumprod_p] = _convert_jax_impl(
     partial(lax_control_flow._cumred_tpu_translation_rule,
-                      lax._reduce_window_prod),
+            lax._reduce_window_prod),
     multiple_results=False,
     extra_name_stack="cumprod")
 
