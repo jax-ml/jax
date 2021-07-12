@@ -3971,6 +3971,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for bitorder in ['big', 'little']
       for shape in [(1, 2, 3, 4)]
       for axis in [None, 0, 1, -2, -1]))
+  @jax.numpy_rank_promotion('raise')
   def testPackbits(self, shape, dtype, axis, bitorder):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
