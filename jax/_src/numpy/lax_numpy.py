@@ -4011,7 +4011,7 @@ def polyint(p, m=1, k=None):
   if m == 0:
     return p
   else:
-    coeff = maximum(1, arange(len(p) + m, 0, -1) - 1 - arange(m)[:, newaxis]).prod(0)
+    coeff = maximum(1, arange(len(p) + m, 0, -1)[newaxis, :] - 1 - arange(m)[:, newaxis]).prod(0)
     return true_divide(concatenate((p, k)), coeff)
 
 
@@ -4023,7 +4023,7 @@ def polyder(p, m=1):
     raise ValueError("Order of derivative must be positive")
   if m == 0:
     return p
-  coeff = (arange(len(p), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
+  coeff = (arange(len(p), m, -1)[newaxis, :] - 1 - arange(m)[:, newaxis]).prod(0)
   return p[:-m] * coeff
 
 @_wraps(np.trim_zeros)

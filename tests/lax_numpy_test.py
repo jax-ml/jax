@@ -1865,6 +1865,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for a_shape in one_dim_array_shapes
       for order in range(5)
       for k in [np.arange(order, dtype=dtype), np.ones(1, dtype), None]))
+  @jax.numpy_rank_promotion('raise')
   def testPolyInt(self, a_shape, order, k, dtype):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda arg1: np.polyint(arg1, m=order, k=k)
@@ -1882,6 +1883,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype in default_dtypes
       for a_shape in one_dim_array_shapes
       for order in range(5)))
+  @jax.numpy_rank_promotion('raise')
   def testPolyDer(self, a_shape, order, dtype):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda arg1: np.polyder(arg1, m=order)
