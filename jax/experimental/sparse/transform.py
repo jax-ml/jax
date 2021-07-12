@@ -58,7 +58,7 @@ from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_unflatten
-from jax.util import safe_map
+from jax.util import safe_map, split_list
 from jax._src.util import canonicalize_axis
 from jax.experimental import sparse
 from jax.experimental.sparse import BCOO
@@ -360,3 +360,42 @@ def _squeeze_sparse(spenv, *argspecs, dimensions):
   return (ArgSpec(out_shape, spenv.push(data_out), spenv.push(indices_out)),)
 
 sparse_rules[lax.squeeze_p] = _squeeze_sparse
+
+def _sparsify_jaxpr(spenv, jaxpr, *argspecs):
+  # TODO(jakevdp): currently this approach discards all information about
+  #   shared data & indices when generating the sparsified jaxpr. The
+  #   current approach produces valid sparsified while loops, but they
+  #   don't work in corner cases (see associated TODO in sparsify_test.py)
+  @lu.wrap_init
+  def wrapped(*args_flat):
+    args = tree_unflatten(in_tree, args_flat)
+    argspecs = arrays_to_argspecs(spenv, args)
+    result = eval_sparse(jaxpr.jaxpr, jaxpr.consts, argspecs, spenv)
+    out = argspecs_to_arrays(spenv, result)
+    out_flat, _ = tree_flatten(out)
+    return out_flat
+
+  args = argspecs_to_arrays(spenv, argspecs)
+  args_flat, in_tree = tree_flatten(args)
+  avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
+  sp_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped, avals_flat)
+  sp_jaxpr = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(sp_jaxpr), consts)
+  return sp_jaxpr
+
+def _while_sparse(spenv, *argspecs, cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts):
+  cond_const_argspecs, body_const_argspecs, init_val_argspecs = split_list(
+    argspecs, [cond_nconsts, body_nconsts])
+
+  cond_sp_jaxpr = _sparsify_jaxpr(spenv, cond_jaxpr, *cond_const_argspecs, *init_val_argspecs)
+  body_sp_jaxpr = _sparsify_jaxpr(spenv, body_jaxpr, *body_const_argspecs, *init_val_argspecs)
+
+  cond_consts, _ = tree_flatten(argspecs_to_arrays(spenv, cond_const_argspecs))
+  body_consts, _ = tree_flatten(argspecs_to_arrays(spenv, body_const_argspecs))
+  init_vals, out_tree = tree_flatten(argspecs_to_arrays(spenv, init_val_argspecs))
+
+  out_flat = lax.while_p.bind(*cond_consts, *body_consts, *init_vals,
+                              cond_nconsts=len(cond_consts), cond_jaxpr=cond_sp_jaxpr,
+                              body_nconsts=len(body_consts), body_jaxpr=body_sp_jaxpr)
+  return arrays_to_argspecs(spenv, tree_unflatten(out_tree, out_flat))
+
+sparse_rules[lax.while_p] = _while_sparse

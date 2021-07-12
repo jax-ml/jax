@@ -183,6 +183,59 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(result_sparse, result_dense)
 
+  def testSparseWhileLoop(self):
+    def cond_fun(params):
+      i, A = params
+      return i < 5
+
+    def body_fun(params):
+      i, A = params
+      return i + 1, 2 * A
+
+    def f(A):
+      return lax.while_loop(cond_fun, body_fun, (0, A))
+
+    A = jnp.arange(4)
+    out_dense = f(A)
+
+    Asp = BCOO.fromdense(A)
+    out_sparse = sparsify(f)(Asp)
+
+    self.assertEqual(len(out_dense), 2)
+    self.assertEqual(len(out_sparse), 2)
+    self.assertArraysEqual(out_dense[0], out_dense[0])
+    self.assertArraysEqual(out_dense[1], out_sparse[1].todense())
+
+  def testSparseWhileLoopDuplicateIndices(self):
+    def cond_fun(params):
+      i, A, B = params
+      return i < 5
+
+    def body_fun(params):
+      i, A, B = params
+      # TODO(jakevdp): track shared indices through while loop & use this
+      #   version of the test, which requires shared indices in order for
+      #   the nse of the result to remain the same.
+      # return i + 1, A, A + B
+
+      # This version is fine without shared indices, and tests that we're
+      # flattening non-shared indices consistently.
+      return i + 1, B, A
+
+    def f(A):
+      return lax.while_loop(cond_fun, body_fun, (0, A, A))
+
+    A = jnp.arange(4).reshape((2, 2))
+    out_dense = f(A)
+
+    Asp = BCOO.fromdense(A)
+    out_sparse = sparsify(f)(Asp)
+
+    self.assertEqual(len(out_dense), 3)
+    self.assertEqual(len(out_sparse), 3)
+    self.assertArraysEqual(out_dense[0], out_dense[0])
+    self.assertArraysEqual(out_dense[1], out_sparse[1].todense())
+    self.assertArraysEqual(out_dense[2], out_sparse[2].todense())
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
