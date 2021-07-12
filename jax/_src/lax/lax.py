@@ -702,19 +702,18 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
                             preferred_element_type=preferred_element_type)
 
 def broadcast(operand: Array, sizes: Sequence[int]) -> Array:
-  """Broadcasts an array, adding new major dimensions.
-
-  Wraps XLA's `Broadcast
-  <https://www.tensorflow.org/xla/operation_semantics#broadcast>`_
-  operator.
+  """Broadcasts an array, adding new leading dimensions
 
   Args:
     operand: an array
     sizes: a sequence of integers, giving the sizes of new major dimensions
-      to add.
+      to add to the front of the array.
 
   Returns:
     An array containing the result.
+
+  See Also:
+    jax.lax.broadcast_in_dim : add new dimensions at any location in the array shape.
   """
   dims = tuple(range(len(sizes), len(sizes) + np.ndim(operand)))
   return broadcast_in_dim(operand, tuple(sizes) + np.shape(operand), dims)
@@ -724,6 +723,18 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   """Wraps XLA's `BroadcastInDim
   <https://www.tensorflow.org/xla/operation_semantics#broadcastindim>`_
   operator.
+
+  Args:
+    operand: an array
+    shape: the shape of the target array
+    broadcast_dimensions: which dimension in the target shape each dimension
+      of the operand shape corresponds to
+
+  Returns:
+    An array containing the result.
+
+  See Also:
+    jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
   shape = _broadcast_in_dim_shape_rule(
     operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
@@ -3521,21 +3532,6 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
-
-def _broadcast_shape_rule(operand, sizes):
-  _check_shapelike('broadcast', 'sizes', sizes)
-  return tuple(sizes) + operand.shape
-
-def _broadcast_batch_rule(batched_args, batch_dims, *, sizes):
-  operand, = batched_args
-  bdim, = batch_dims
-  new_bdim = None if bdim is None else bdim + len(sizes)
-  return broadcast(operand, sizes), new_bdim
-
-broadcast_p = standard_primitive(
-    _broadcast_shape_rule, _input_dtype, 'broadcast')
-ad.deflinear2(broadcast_p, lambda t, _, sizes: [_reduce_sum(t, range(len(sizes)))])
-batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
   _check_shapelike('broadcast_in_dim', 'shape', shape)

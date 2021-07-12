@@ -1083,28 +1083,6 @@ for shape, outshape, broadcast_dimensions in [
       outshape=outshape,
       broadcast_dimensions=broadcast_dimensions)
 
-
-def _make_broadcast_harness(name, *, dtype=np.float32, shape=(2,), sizes=()):
-  define(
-      lax.broadcast_p,
-      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_sizes={sizes}",
-      lambda operand: lax.broadcast_p.bind(operand, sizes=sizes),
-      [RandArg(shape, dtype)],
-      shape=shape,
-      dtype=dtype,
-      sizes=sizes)
-
-
-for dtype in jtu.dtypes.all:
-  _make_broadcast_harness("dtypes", dtype=dtype)
-
-# Validate sizes
-for sizes in [
-    (2,),  # broadcast 1 dim
-    (1, 2, 3),  # broadcast n > 1 dims
-]:
-  _make_broadcast_harness("sizes", sizes=sizes)
-
 for dtype in jtu.dtypes.all_floating:
   for arg1, arg2, arg3 in [
       (np.array([-1.6, -1.4, -1.0, 0.0, 0.1, 0.3, 1, 1.4, 1.6], dtype=dtype),
