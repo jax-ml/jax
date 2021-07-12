@@ -40,6 +40,7 @@ jobs:
             enable-x64: 0
             package-overrides: "none"
             num_generated_cases: 25
+            use-latest-jaxlib: false
           - name-prefix: "with numpy-dispatch"
             python-version: 3.9
             os: ubuntu-latest
@@ -47,6 +48,7 @@ jobs:
             # Test experimental NumPy dispatch
             package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 10
+            use-latest-jaxlib: false
           - name-prefix: "with internal numpy/scipy"
             python-version: 3.6
             os: ubuntu-latest
@@ -54,12 +56,15 @@ jobs:
             # Test with numpy version that matches Google-internal version
             package-overrides: "numpy==1.17.5 scipy==1.2.1"
             num_generated_cases: 10
+            use-latest-jaxlib: false
           - name-prefix: "with 3.7"
             python-version: 3.7
             os: ubuntu-latest
             enable-x64: 0
             package-overrides: "none"
             num_generated_cases: 8
+            # Test against latest jaxlib
+            use-latest-jaxlib: true
     steps:
     - name: Cancel previous
       uses: styfle/cancel-workflow-action@0.7.0
@@ -88,6 +93,9 @@ jobs:
         pip install -r build/test-requirements.txt
         if [ "${{ matrix.package-overrides }}" != "none" ]; then
           pip install ${{ matrix.package-overrides }}
+        fi
+        if [ "${{ matrix.use-latest-jaxlib }}" == "true" ]; then
+          pip install -e .[cpu]
         fi
 
     - name: Run tests
