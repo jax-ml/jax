@@ -461,7 +461,7 @@ To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can
 the following in your cloud TPU VM:
 ```bash
 pip install --upgrade pip
-pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 ### Building JAX from source
