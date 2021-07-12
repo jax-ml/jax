@@ -2844,6 +2844,19 @@ class APITest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(f)(3)
     self.assertNotIn('xla_call', str(jaxpr))
 
+  # Repro for https://github.com/google/jax/issues/7229.
+  def test_compute_with_large_transfer(self):
+    def f(x, delta):
+      return x + jnp.asarray(delta, x.dtype)
+
+    # A large and potentially unaligned array to trigger non-zero-copy and
+    # async device array copy.
+    xs = np.random.uniform(0., 1., size=(10, 131, 111, 3)).astype(np.float32)
+    for x in xs:
+      delta = np.random.uniform(-0.5, 0.5, size=())
+      jitted_f = api.jit(f)
+      np.testing.assert_allclose(jitted_f(x, delta), f(x, delta))
+
 
 class RematTest(jtu.JaxTestCase):
 
