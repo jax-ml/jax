@@ -31,6 +31,7 @@ import opt_einsum
 from jax import config
 from jax import core
 import numpy as np
+import tensorflow as tf  # type: ignore[import]
 
 DimSize = core.DimSize
 Shape = core.Shape
@@ -562,6 +563,8 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
     if isinstance(dim_spec, str):
       dim_spec = dim_spec.strip()
     dim_size = arg_shape[i]
+    if isinstance(dim_size, tf.compat.v1.Dimension):
+      dim_size = dim_size.value
     if dim_size is None:
       if dim_spec == "_":
         msg = (f"PolyShape '{spec}' in axis {i} must contain a shape variable "
