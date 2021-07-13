@@ -19,7 +19,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax import config, lax, partial
+from jax import config, jit, lax, partial
 import jax.numpy as jnp
 import jax.test_util as jtu
 from jax.experimental.sparse import BCOO, sparsify
@@ -236,6 +236,11 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_dense[0], out_dense[0])
     self.assertArraysEqual(out_dense[1], out_sparse[1].todense())
     self.assertArraysEqual(out_dense[2], out_sparse[2].todense())
+
+  def testXlaCallInSparsify(self):
+    # Test handling of xla_call within sparsify jaxpr interpreter.
+    out = sparsify(jit(lambda x: x + 1))(0.0)
+    self.assertEqual(out, 1.0)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

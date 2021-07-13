@@ -57,6 +57,7 @@ from jax import lax
 from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax.util import safe_map, split_list
 from jax._src.util import canonicalize_axis
@@ -181,7 +182,14 @@ def eval_sparse(
         raise NotImplementedError(f"sparse rule for {prim}")
       out = sparse_rules[prim](spenv, *invals, **eqn.params)
     else:
-      out_bufs = prim.bind(*(val.data(spenv) for val in invals), **eqn.params)
+      if prim is xla.xla_call_p:
+        # TODO(vanderplas,frostig): workaround for binding call primitives
+        # within a jaxpr interpreter
+        params = eqn.params.copy()
+        fun = lu.wrap_init(core.jaxpr_as_fun(pe.ClosedJaxpr(params.pop('call_jaxpr'), consts)))
+        out_bufs = prim.bind(fun, *(val.data(spenv) for val in invals), **params)
+      else:
+        out_bufs = prim.bind(*(val.data(spenv) for val in invals), **eqn.params)
       out_bufs = out_bufs if prim.multiple_results else [out_bufs]
       out = []
       for buf in out_bufs:
