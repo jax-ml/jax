@@ -67,18 +67,13 @@ Shape = core.Shape
 
 def _try_broadcast_shapes(shapes):
   assert shapes
-  if len(shapes) == 1: return shapes[0]
-  rank, *others = {len(shape) for shape in shapes}
-  if others: return None  # must have consistent rank
-  if not rank: return ()  # scalar case
-  result_shape = [None] * rank
-  for i, sizes in enumerate(zip(*shapes)):
-    non_1s = set([d for d in sizes if not core.symbolic_equal_dim(d, 1)])
-    if len(non_1s) > 1:
-      return None  # must have equal sizes other than 1-sized axes
-    result_shape[i] = next(iter(non_1s), 1)
-
-  return tuple(result_shape)
+  new_shape = []
+  for sizes in zip(*shapes):
+    non_1_sizes = [d for d in sizes if not core.symbolic_equal_dim(d, 1)]
+    if not core.symbolic_equal_shape(non_1_sizes[:-1], non_1_sizes[1:]):
+      return None
+    new_shape.append(next(iter(non_1_sizes), 1))
+  return tuple(new_shape)
 
 @cache()
 def broadcast_shapes(*shapes):
