@@ -309,7 +309,7 @@ def while_loop(cond_fun: Callable[[T], bool],
   _check_tree_and_avals("body_fun output and input",
                         body_tree, body_jaxpr.out_avals,
                         in_tree_children[0], init_avals)
-  outs = while_p.bind(*itertools.chain(cond_consts, body_consts, init_vals),
+  outs = while_p.bind(*cond_consts, *body_consts, *init_vals,
                       cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
   return tree_unflatten(body_tree, outs)
@@ -356,7 +356,7 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
                                    extend_name_stack(name_stack, 'body_pred'), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z, body_jaxpr.out_avals)
     assert _map(body_c.get_shape, new_z) == _map(body_c.get_shape, z) # no broadcast
-  new_carry = xops.Tuple(body_c, list(itertools.chain(x, y, new_z)))
+  new_carry = xops.Tuple(body_c, [*x, *y, *new_z])
 
   ans = xops.While(cond_c.build(pred), body_c.build(new_carry), init_carry)
   ans_elts = [xops.GetTupleElement(ans, i) for i in range(len(args))]
@@ -1297,7 +1297,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
                         out_tree_children[0], carry_avals_out,
                         init_tree, carry_avals)
 
-  out = scan_p.bind(*itertools.chain(consts, in_flat),
+  out = scan_p.bind(*consts, *in_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
                     num_consts=len(consts), num_carry=len(init_flat),
                     linear=(False,) * (len(consts) + len(in_flat)),
@@ -1800,8 +1800,7 @@ def _scan_masking_rule(padded_vals, logical_shapes, reverse, length,
   consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
   max_length, = {x.shape[0] for x in xs}
   const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
-  out_vals = scan_p.bind(
-      *itertools.chain([dynamic_length] + consts, [0], init, xs),
+  out_vals = scan_p.bind(dynamic_length, *consts, 0, *init, *xs,
       reverse=reverse, length=max_length, jaxpr=masked_jaxpr,
       num_consts=1 + num_consts, num_carry=1 + num_carry,
       linear=tuple([False] + const_linear + [False] + init_linear + xs_linear),
@@ -2117,11 +2116,11 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
   f = core.jaxpr_as_fun(jaxprs.f)
   linearize_and_solve = partial(
       core.jaxpr_as_fun(jaxprs.l_and_s), *params.l_and_s)
-  f_at_solution = lambda *params: f(*itertools.chain(params, solution))
+  f_at_solution = lambda *params: f(*params, *solution)
   _, rhs = ad.jvp(lu.wrap_init(f_at_solution)).call_wrapped(
       params.f, params_dot.f)
   solution_dot = _map(
-      operator.neg, linearize_and_solve(*itertools.chain(solution, rhs)))
+      operator.neg, linearize_and_solve(*solution, *rhs))
   # append aux, create symbolic zero tangents for the aux values
   solution += aux
   solution_dot += _map(lax.zeros_like_array, aux)
