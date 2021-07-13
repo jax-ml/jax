@@ -504,6 +504,15 @@ def _promote_like_jnp(fun, inexact=False):
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
 
+  def setUp(self):
+    super().setUp()
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+    super().tearDown()
+
   def _GetArgsMaker(self, rng, shapes, dtypes, np_arrays=True):
     def f():
       out = [rng(shape, dtype or jnp.float_)
@@ -535,6 +544,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
       for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
                                  JAX_COMPOUND_OP_RECORDS)))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOp(self, np_op, jnp_op, rng_factory, shapes, dtypes, check_dtypes,
              tolerance, inexact):
     np_op = jtu.ignore_warning(category=RuntimeWarning,
@@ -564,6 +574,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
       for rec in JAX_OPERATOR_OVERLOADS))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOperatorOverload(self, name, rng_factory, shapes, dtypes, tol):
     rng = rng_factory(self.rng())
     # np and jnp arrays have different type promotion rules; force the use of
@@ -584,6 +595,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
       for rec in JAX_RIGHT_OPERATOR_OVERLOADS))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testRightOperatorOverload(self, name, rng_factory, shapes, dtypes,
                                 op_tolerance):
     if shapes[1] is jtu.PYTHON_SCALAR_SHAPE:
@@ -643,9 +655,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # examples from the array_equiv() docstring.
     self.assertTrue(jnp.array_equiv([1, 2], [1, 2]))
     self.assertFalse(jnp.array_equiv([1, 2], [1, 3]))
-    self.assertTrue(jnp.array_equiv([1, 2], [[1, 2], [1, 2]]))
-    self.assertFalse(jnp.array_equiv([1, 2], [[1, 2, 1, 2], [1, 2, 1, 2]]))
-    self.assertFalse(jnp.array_equiv([1, 2], [[1, 2], [1, 3]]))
+    with jax.numpy_rank_promotion('allow'):
+      self.assertTrue(jnp.array_equiv([1, 2], [[1, 2], [1, 2]]))
+      self.assertFalse(jnp.array_equiv([1, 2], [[1, 2, 1, 2], [1, 2, 1, 2]]))
+      self.assertFalse(jnp.array_equiv([1, 2], [[1, 2], [1, 3]]))
 
   def testArrayModule(self):
     if numpy_dispatch is None:
@@ -680,6 +693,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           _dtypes_are_compatible_for_bitwise_ops,
           itertools.combinations_with_replacement(rec.dtypes, rec.nargs)))
       for rec in JAX_BITWISE_OP_RECORDS))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testBitwiseOp(self, np_op, jnp_op, rng_factory, shapes, dtypes):
     rng = rng_factory(self.rng())
     if not config.x64_enabled and any(
@@ -700,6 +714,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       itertools.combinations_with_replacement(nonzerodim_shapes, 2))
     for dtypes in itertools.product(
       *(_valid_dtypes_for_shape(s, int_dtypes_no_uint64) for s in shapes))))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testShiftOpAgainstNumpy(self, op, dtypes, shapes):
     dtype, shift_dtype = dtypes
     signed_mix = np.issubdtype(dtype, np.signedinteger) != \
@@ -1064,6 +1079,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           [(4, 5, 2), (4, 5, 2), (-1, -1, -1, None)] # same as before
       ]
       for lhs_dtype, rhs_dtype in itertools.combinations_with_replacement(number_dtypes, 2)))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testCross(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
@@ -1232,7 +1248,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for test_shape in all_shapes
       for dtype in default_dtypes
       for invert in [True, False]))
-  @jax.numpy_rank_promotion('raise')
   def testIn1d(self, element_shape, test_shape, dtype, invert):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(element_shape, dtype), rng(test_shape, dtype)]
@@ -1250,7 +1265,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype2 in [s for s in default_dtypes if s != jnp.bfloat16]
       for shape1 in all_shapes
       for shape2 in all_shapes))
-  @jax.numpy_rank_promotion('raise')
   def testSetdiff1d(self, shape1, shape2, dtype1, dtype2):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
@@ -1386,6 +1400,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                            (-np.ones(1), None),
                            (None, np.ones(1)),
                            (np.full(1, -0.9), np.ones(1))]))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testClipStaticBounds(self, shape, dtype, a_min, a_max):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda x: np.clip(x, a_min=a_min, a_max=a_max)
@@ -1865,7 +1880,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for a_shape in one_dim_array_shapes
       for order in range(5)
       for k in [np.arange(order, dtype=dtype), np.ones(1, dtype), None]))
-  @jax.numpy_rank_promotion('raise')
   def testPolyInt(self, a_shape, order, k, dtype):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda arg1: np.polyint(arg1, m=order, k=k)
@@ -1883,7 +1897,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype in default_dtypes
       for a_shape in one_dim_array_shapes
       for order in range(5)))
-  @jax.numpy_rank_promotion('raise')
   def testPolyDer(self, a_shape, order, dtype):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda arg1: np.polyder(arg1, m=order)
@@ -2137,7 +2150,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       elif out_dims == 1:
         return x * x[0]
       elif out_dims == 2:
-        return x[:, None] + x
+        return x[:, None] + x[None, :]
       else:
         raise NotImplementedError(f"out_dims={out_dims}")
     rng = jtu.rand_default(self.rng())
@@ -2425,6 +2438,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ((2, 3, 10), (3, 10), 1.0, -2),
         ]))
   @jtu.skip_on_devices("tpu")  # TODO(jakevdp): fix and reenable this test.
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testTrapz(self, yshape, xshape, dtype, dx, axis):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
@@ -2666,6 +2680,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for x1_shape, x2_shape in filter(_shapes_are_broadcast_compatible,
                                        itertools.combinations_with_replacement(array_shapes, 2))
       for x1_dtype in default_dtypes))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLdexp(self, x1_shape, x1_dtype, x2_shape, x1_rng_factory, x2_rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (x1_dtype not in [jnp.bfloat16, np.float16, np.float32]
@@ -3671,6 +3686,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in nonempty_nonscalar_array_shapes
       for order in ['C', 'F']
       for mode in ['wrap', 'clip', 'raise']))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testRavelMultiIndex(self, shape, order, mode):
     # generate indices in each dimension with a few out of bounds.
     rngs = [jtu.rand_int(self.rng(), low=-1, high=dim + 1)
@@ -3791,7 +3807,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in [(8,), (3, 8)]  # last dim = 8 to ensure shape compatibility
       for a_dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)
       for dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)))
-  @jax.numpy_rank_promotion('raise')
   def testView(self, shape, a_dtype, dtype):
     if jtu.device_under_test() == 'tpu':
       if jnp.dtype(a_dtype).itemsize in [1, 2] or jnp.dtype(dtype).itemsize in [1, 2]:
@@ -3973,7 +3988,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for bitorder in ['big', 'little']
       for shape in [(1, 2, 3, 4)]
       for axis in [None, 0, 1, -2, -1]))
-  @jax.numpy_rank_promotion('raise')
   def testPackbits(self, shape, dtype, axis, bitorder):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -3992,7 +4006,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in [(1, 2, 3, 4)]
       for axis in [None, 0, 1, -2, -1]
       for count in [None, 20]))
-  @jax.numpy_rank_promotion('raise')
   def testUnpackbits(self, shape, dtype, axis, bitorder, count):
     rng = jtu.rand_int(self.rng(), 0, 256)
     args_maker = lambda: [rng(shape, dtype)]
@@ -4103,7 +4116,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in [0, 5]
       for n in [2, 4]
       for increasing in [False, True]))
-  @jax.numpy_rank_promotion('raise')
   def testVander(self, shape, dtype, n, increasing):
     rng = jtu.rand_default(self.rng())
     def np_fun(arg):
@@ -4679,7 +4691,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for ddof in [None, 2, 3]
         for fweights in [True, False]
         for aweights in [True, False]))
-  @jax.numpy_rank_promotion('raise')
   def testCov(self, shape, dtype, y_shape, y_dtype, rowvar, ddof, bias, fweights, aweights):
     rng = jtu.rand_default(self.rng())
     wrng = jtu.rand_positive(self.rng())
@@ -4976,6 +4987,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for endpoint in [True, False]
         for retstep in [True, False]
         for dtype in number_dtypes + [None,]))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLinspace(self, start_shape, stop_shape, num, endpoint, retstep, dtype):
     if num == 1 and not endpoint and numpy_version < (1, 18):
       raise SkipTest("Numpy < 1.18 has a linspace bug.")
@@ -5041,6 +5053,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for endpoint in [True, False]
         for base in [10.0, 2, np.e]
         for dtype in inexact_dtypes + [None,]))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogspace(self, start_shape, stop_shape, num,
                    endpoint, base, dtype):
     if (dtype in int_dtypes and
@@ -5092,6 +5105,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for dtype in inexact_dtypes + [None,]
         for axis in range(-max(len(start_shape), len(stop_shape)),
                           max(len(start_shape), len(stop_shape)))))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testGeomspace(self, start_shape, stop_shape, num,
                     endpoint, dtype, axis):
     rng = jtu.rand_default(self.rng())
@@ -5402,6 +5416,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       itertools.combinations_with_replacement(all_shapes, 2))
     for dtypes in itertools.product(
       *(_valid_dtypes_for_shape(s, complex_dtypes) for s in shapes))))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogaddexpComplex(self, shapes, dtypes):
     @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
     def np_op(x1, x2):
@@ -5424,6 +5439,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       itertools.combinations_with_replacement(all_shapes, 2))
     for dtypes in itertools.product(
       *(_valid_dtypes_for_shape(s, complex_dtypes) for s in shapes))))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogaddexp2Complex(self, shapes, dtypes):
     @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
     def np_op(x1, x2):
