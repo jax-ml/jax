@@ -841,9 +841,9 @@ py::bytes BuildGtsv2Descriptor(int m, int n, int ldb) {
   return PackDescriptor(Gtsv2Descriptor{m, n, ldb});
 }
 
-template <typename T, typename F1, typename F2>
-void gtsv2(F1 computeGtsv2BufSize, F2 computeGtsv2, cudaStream_t stream,
-           void** buffers, const char* opaque, std::size_t opaque_len) {
+template <typename T, typename F>
+void gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
+           const char* opaque, std::size_t opaque_len) {
   auto handle = SparseHandlePool::Borrow();
 
   const Gtsv2Descriptor& descriptor =
@@ -857,6 +857,7 @@ void gtsv2(F1 computeGtsv2BufSize, F2 computeGtsv2, cudaStream_t stream,
   const T* du = (const T*)(buffers[2]);
   const T* B = (T*)(buffers[3]);
   T* X = (T*)(buffers[4]);
+  void* buffer = buffers[5];
 
   // The solution X is written in place to B. We need to therefore copy the
   // contents of B into the output buffer X and pass that into the kernel as B.
@@ -870,39 +871,36 @@ void gtsv2(F1 computeGtsv2BufSize, F2 computeGtsv2, cudaStream_t stream,
         cudaMemcpyAsync(X, B, B_bytes, cudaMemcpyDeviceToDevice, stream));
   }
 
-  size_t bufferSize;
   JAX_THROW_IF_ERROR(
-      computeGtsv2BufSize(handle.get(), m, n, dl, d, du, X, ldb, &bufferSize));
-
-  void* buffer;
-#if CUDA_VERSION >= 11020
-  JAX_THROW_IF_ERROR(cudaMallocAsync(&buffer, bufferSize, stream));
-#else
-  JAX_THROW_IF_ERROR(cudaMalloc(&buffer, bufferSize));
-#endif  // CUDA_VERSION >= 11020
-
-  auto computeStatus =
-      computeGtsv2(handle.get(), m, n, dl, d, du, /*B=*/X, ldb, buffer);
-
-#if CUDA_VERSION >= 11020
-  JAX_THROW_IF_ERROR(cudaFreeAsync(buffer, stream));
-#else
-  JAX_THROW_IF_ERROR(cudaFree(buffer));
-#endif  // CUDA_VERSION >= 11020
-
-  JAX_THROW_IF_ERROR(computeStatus);
+      computeGtsv2(handle.get(), m, n, dl, d, du, /*B=*/X, ldb, buffer));
 }
 
 void gtsv2_f32(cudaStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len) {
-  gtsv2<float>(cusparseSgtsv2_bufferSizeExt, cusparseSgtsv2, stream, buffers,
-               opaque, opaque_len);
+  gtsv2<float>(cusparseSgtsv2, stream, buffers, opaque, opaque_len);
 }
+
 
 void gtsv2_f64(cudaStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len) {
-  gtsv2<double>(cusparseDgtsv2_bufferSizeExt, cusparseDgtsv2, stream, buffers,
-                opaque, opaque_len);
+  gtsv2<double>(cusparseDgtsv2, stream, buffers, opaque, opaque_len);
+}
+
+template<typename F>
+size_t Gtsv2BufferSize(F f, int m, int n, int ldb) {
+  auto handle = SparseHandlePool::Borrow();
+  size_t size;
+  JAX_THROW_IF_ERROR(f(handle.get(), m, n, /*dl=*/nullptr, /*d=*/nullptr,
+                       /*du=*/nullptr, /*B=*/nullptr, ldb, &size));
+  return size;
+}
+
+size_t Gtsv2BufferSizeF32(int m, int n, int ldb) {
+  return Gtsv2BufferSize(cusparseSgtsv2_bufferSizeExt, m, n, ldb);
+}
+
+size_t Gtsv2BufferSizeF64(int m, int n, int ldb) {
+  return Gtsv2BufferSize(cusparseDgtsv2_bufferSizeExt, m, n, ldb);
 }
 
 py::dict Registrations() {
@@ -936,6 +934,8 @@ PYBIND11_MODULE(cusparse_kernels, m) {
   m.def("build_coo_matvec_descriptor", &BuildCooMatvecDescriptor);
   m.def("build_coo_matmat_descriptor", &BuildCooMatmatDescriptor);
 #endif
+  m.def("gtsv2_f32_buffer_size", &Gtsv2BufferSizeF32);
+  m.def("gtsv2_f64_buffer_size", &Gtsv2BufferSizeF64);
   m.def("build_gtsv2_descriptor", &BuildGtsv2Descriptor);
 }
 

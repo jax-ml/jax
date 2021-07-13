@@ -291,12 +291,20 @@ def coo_matmat(c, data, row, col, B, *, shape, transpose=False, compute_dtype=No
 
 def gtsv2(c, dl, d, du, B, *, m, n, ldb, t):
   """Calls `cusparse<t>gtsv2(dl, d, du, B, m, n, ldb)`."""
+  f32 = (t == np.float32)
   dl_shape, d_shape, du_shape, B_shape = map(c.get_shape, (dl, d, du, B))
-  return xla_client.ops.CustomCallWithLayout(
+  if f32:
+    buffer_size = cusparse_kernels.gtsv2_f32_buffer_size(m, n, ldb)
+  else:
+    buffer_size = cusparse_kernels.gtsv2_f64_buffer_size(m, n, ldb)
+  out = xla_client.ops.CustomCallWithLayout(
       c,
-      b"cusparse_gtsv2_" + (b"f32" if (t == np.float32) else b"f64"),
+      b"cusparse_gtsv2_" + (b"f32" if f32 else b"f64"),
       operands=(dl, d, du, B),
       operand_shapes_with_layout=(dl_shape, d_shape, du_shape, B_shape),
-      shape_with_layout=B_shape,
+      shape_with_layout=_Shape.tuple_shape(
+          (_Shape.array_shape(np.dtype(t), (ldb, n), (1, 0)),
+           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=cusparse_kernels.build_gtsv2_descriptor(m, n, ldb),
       has_side_effect=False)
+  return _ops.GetTupleElement(out, 0)
