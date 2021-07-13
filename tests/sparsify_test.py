@@ -237,10 +237,22 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_dense[1], out_sparse[1].todense())
     self.assertArraysEqual(out_dense[2], out_sparse[2].todense())
 
-  def testXlaCallInSparsify(self):
-    # Test handling of xla_call within sparsify jaxpr interpreter.
+  def testSparsifyDenseXlaCall(self):
+    # Test handling of dense xla_call within jaxpr interpreter.
     out = sparsify(jit(lambda x: x + 1))(0.0)
     self.assertEqual(out, 1.0)
+
+  def testSparsifySparseXlaCall(self):
+    # Test sparse lowering of XLA call
+    def func(M):
+      return 2 * M
+
+    M = jnp.arange(6).reshape(2, 3)
+    Msp = BCOO.fromdense(M)
+
+    out_dense = func(M)
+    out_sparse = sparsify(jit(func))(Msp)
+    self.assertArraysEqual(out_dense, out_sparse.todense())
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -186,7 +186,7 @@ def eval_sparse(
         # TODO(vanderplas,frostig): workaround for binding call primitives
         # within a jaxpr interpreter
         params = eqn.params.copy()
-        fun = lu.wrap_init(core.jaxpr_as_fun(pe.ClosedJaxpr(params.pop('call_jaxpr'), consts)))
+        fun = lu.wrap_init(core.jaxpr_as_fun(pe.ClosedJaxpr(params.pop('call_jaxpr'), ())))
         out_bufs = prim.bind(fun, *(val.data(spenv) for val in invals), **params)
       else:
         out_bufs = prim.bind(*(val.data(spenv) for val in invals), **eqn.params)
@@ -374,13 +374,16 @@ def _sparsify_jaxpr(spenv, jaxpr, *argspecs):
   #   shared data & indices when generating the sparsified jaxpr. The
   #   current approach produces valid sparsified while loops, but they
   #   don't work in corner cases (see associated TODO in sparsify_test.py)
+  out_tree = None
+
   @lu.wrap_init
   def wrapped(*args_flat):
+    nonlocal out_tree
     args = tree_unflatten(in_tree, args_flat)
     argspecs = arrays_to_argspecs(spenv, args)
     result = eval_sparse(jaxpr.jaxpr, jaxpr.consts, argspecs, spenv)
     out = argspecs_to_arrays(spenv, result)
-    out_flat, _ = tree_flatten(out)
+    out_flat, out_tree = tree_flatten(out)
     return out_flat
 
   args = argspecs_to_arrays(spenv, argspecs)
@@ -388,18 +391,18 @@ def _sparsify_jaxpr(spenv, jaxpr, *argspecs):
   avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
   sp_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped, avals_flat)
   sp_jaxpr = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(sp_jaxpr), consts)
-  return sp_jaxpr
+  return sp_jaxpr, out_tree
 
 def _while_sparse(spenv, *argspecs, cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts):
   cond_const_argspecs, body_const_argspecs, init_val_argspecs = split_list(
     argspecs, [cond_nconsts, body_nconsts])
 
-  cond_sp_jaxpr = _sparsify_jaxpr(spenv, cond_jaxpr, *cond_const_argspecs, *init_val_argspecs)
-  body_sp_jaxpr = _sparsify_jaxpr(spenv, body_jaxpr, *body_const_argspecs, *init_val_argspecs)
+  cond_sp_jaxpr, _ = _sparsify_jaxpr(spenv, cond_jaxpr, *cond_const_argspecs, *init_val_argspecs)
+  body_sp_jaxpr, out_tree = _sparsify_jaxpr(spenv, body_jaxpr, *body_const_argspecs, *init_val_argspecs)
 
   cond_consts, _ = tree_flatten(argspecs_to_arrays(spenv, cond_const_argspecs))
   body_consts, _ = tree_flatten(argspecs_to_arrays(spenv, body_const_argspecs))
-  init_vals, out_tree = tree_flatten(argspecs_to_arrays(spenv, init_val_argspecs))
+  init_vals, _ = tree_flatten(argspecs_to_arrays(spenv, init_val_argspecs))
 
   out_flat = lax.while_p.bind(*cond_consts, *body_consts, *init_vals,
                               cond_nconsts=len(cond_consts), cond_jaxpr=cond_sp_jaxpr,
@@ -407,3 +410,15 @@ def _while_sparse(spenv, *argspecs, cond_jaxpr, cond_nconsts, body_jaxpr, body_n
   return arrays_to_argspecs(spenv, tree_unflatten(out_tree, out_flat))
 
 sparse_rules[lax.while_p] = _while_sparse
+
+def _xla_call_sparse(spenv, *argspecs, call_jaxpr, donated_invars, **params):
+  if any(donated_invars):
+    raise NotImplementedError("sparse xla_call with donated_invars")
+  sp_call_jaxpr, out_tree = _sparsify_jaxpr(spenv, pe.ClosedJaxpr(call_jaxpr, ()), *argspecs)
+  fun = lu.wrap_init(core.jaxpr_as_fun(sp_call_jaxpr))
+  args_flat, _ = tree_flatten(argspecs_to_arrays(spenv, argspecs))
+  donated_invars = tuple(False for arg in args_flat)
+  out_flat = xla.xla_call_p.bind(fun, *args_flat, donated_invars=donated_invars, **params)
+  return arrays_to_argspecs(spenv, tree_unflatten(out_tree, out_flat))
+
+sparse_rules[xla.xla_call_p] = _xla_call_sparse
