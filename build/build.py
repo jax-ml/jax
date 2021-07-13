@@ -417,6 +417,12 @@ def main():
       parser,
       "enable_rocm",
       help_str="Should we build with ROCm enabled?")
+  add_boolean_argument(
+      parser,
+      "enable_nccl",
+      default=True,
+      help_str="Should we build with NCCL enabled? Has non effect for non-CUDA "
+               "builds.")
   parser.add_argument(
       "--cuda_path",
       default=None,
@@ -505,6 +511,7 @@ def main():
       print("CUDA version: {}".format(args.cuda_version))
     if args.cudnn_version:
       print("CUDNN version: {}".format(args.cudnn_version))
+    print("NCCL enabled: {}".format("yes" if args.enable_nccl else "no"))
 
   print("TPU enabled: {}".format("yes" if args.enable_tpu else "no"))
 
@@ -545,6 +552,8 @@ def main():
   if args.enable_cuda:
     config_args += ["--config=cuda"]
     config_args += ["--define=xla_python_enable_gpu=true"]
+    if not args.enable_nccl:
+      config_args += ["--config=nonccl"]
   if args.enable_tpu:
     config_args += ["--define=with_tpu_support=true"]
   if args.enable_rocm:
