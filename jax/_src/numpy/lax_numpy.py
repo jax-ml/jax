@@ -5538,7 +5538,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
     f = w_sum - ddof * sum(w * aweights) / w_sum
 
   X = X - avg[:, None]
-  X_T = X.T if w is None else (X * w).T
+  X_T = X.T if w is None else (X * lax.broadcast_to_rank(w, X.ndim)).T
   return true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
