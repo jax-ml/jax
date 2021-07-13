@@ -59,6 +59,13 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((2, 3), shape_poly.parse_spec("...", (2, 3)))
     self.assertEqual((2, 3), shape_poly.parse_spec(" ( 2 , 3 ) ", (2, 3)))
 
+    a, b = shape_poly.parse_spec("a, b", (2, 3))
+    self.assertEqual((a, 3), shape_poly.parse_spec("(a, ...) ", (None, 3)))
+    tshape = tf.TensorShape([None, 3])
+    self.assertEqual((a, 3), shape_poly.parse_spec("(a, ...) ", tshape))
+    # Test directly with tf.compat.v1.Dimension
+    self.assertEqual((a, 3), shape_poly.parse_spec("(a, ...) ", tshape.dims))
+
   a, b = shape_poly.parse_spec("a, b", (2, 3))
   @parameterized.named_parameters(
       dict(testcase_name=f"_dim_spec={dim_spec}",
@@ -71,7 +78,9 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
           ("a + 1", a + 1),
           ("a + -1", a - 1),
   ])
-  def test_parse_poly_spec_poly(self, dim_spec="3 * a * b * a + -2", dim_poly=3 * a * b * a - 2):
+  def test_parse_poly_spec_poly(self,
+                                dim_spec="3 * a * b * a + -2",
+                                dim_poly=3 * a * b * a - 2):
     # For internal usage only (the polymorphic_shapes of VJP) we need to
     # parse polynomials.
     self.assertEqual((dim_poly,), shape_poly.parse_spec(dim_spec, (2,)))
