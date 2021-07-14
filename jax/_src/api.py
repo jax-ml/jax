@@ -1320,16 +1320,17 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
   return batched_fun
 
 def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
-  def _get_axis_size(name: str, i:int, shape: Tuple[int, ...], axis: int):
+  def _get_axis_size(name: str, shape: Tuple[int, ...], axis: int):
     try:
       return shape[axis]
     except (IndexError, TypeError) as e:
-      ranks = tree_unflatten(tree, [np.ndim(x) for x, d in zip(vals, dims)])
-      raise ValueError(f"{name} got arg {i} of rank {len(shape)} but axis to be "
-                       f"mapped {axis}. The tree of ranks is:\n{ranks}") from e
+      min_rank = axis + 1 if axis >= 0 else -axis
+      raise ValueError(f"{name} was requested to map its argument along axis {axis}, "
+                       f"which implies that its rank should be at least {min_rank}, "
+                       f"but is only {len(shape)} (its shape is {shape})") from e
 
-  mapped_axis_sizes = {_get_axis_size(name, i, np.shape(x), d)
-                       for i, (x, d) in enumerate(zip(vals, dims))
+  mapped_axis_sizes = {_get_axis_size(name, np.shape(x), d)
+                       for x, d in zip(vals, dims)
                        if d is not None}
   try:
     size, = mapped_axis_sizes
