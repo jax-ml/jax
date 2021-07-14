@@ -89,7 +89,7 @@ void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
                                 /*dynamic_shared_mem_bytes=*/0, stream>>>(
       pivots, permutation_out, descriptor.batch_size, descriptor.pivot_size,
       descriptor.permutation_size);
-  ThrowIfError(cudaGetLastError());
+  JAX_THROW_IF_ERROR(cudaGetLastError());
 }
 
 }  // namespace jax

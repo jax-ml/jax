@@ -83,6 +83,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )

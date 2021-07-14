@@ -38,33 +38,6 @@ namespace {
 
 namespace py = pybind11;
 
-void ThrowIfErrorStatus(cublasStatus_t status) {
-  switch (status) {
-    case CUBLAS_STATUS_SUCCESS:
-      return;
-    case CUBLAS_STATUS_NOT_INITIALIZED:
-      throw std::runtime_error("cuBlas has not been initialized");
-    case CUBLAS_STATUS_ALLOC_FAILED:
-      throw std::runtime_error("cuBlas allocation failure");
-    case CUBLAS_STATUS_INVALID_VALUE:
-      throw std::runtime_error("cuBlas invalid value error");
-    case CUBLAS_STATUS_ARCH_MISMATCH:
-      throw std::runtime_error("cuBlas architecture mismatch");
-    case CUBLAS_STATUS_MAPPING_ERROR:
-      throw std::runtime_error("cuBlas mapping error");
-    case CUBLAS_STATUS_EXECUTION_FAILED:
-      throw std::runtime_error("cuBlas execution failed");
-    case CUBLAS_STATUS_INTERNAL_ERROR:
-      throw std::runtime_error("cuBlas internal error");
-    case CUBLAS_STATUS_NOT_SUPPORTED:
-      throw std::runtime_error("cuBlas not supported error");
-    case CUBLAS_STATUS_LICENSE_ERROR:
-      throw std::runtime_error("cuBlas license error");
-    default:
-      throw std::runtime_error("Unknown cuBlas error");
-  }
-}
-
 using BlasHandlePool = HandlePool<cublasHandle_t, cudaStream_t>;
 
 template <>
@@ -73,13 +46,13 @@ template <>
   absl::MutexLock lock(&pool->mu_);
   cublasHandle_t handle;
   if (pool->handles_.empty()) {
-    ThrowIfErrorStatus(cublasCreate(&handle));
+    JAX_THROW_IF_ERROR(cublasCreate(&handle));
   } else {
     handle = pool->handles_.back();
     pool->handles_.pop_back();
   }
   if (stream) {
-    ThrowIfErrorStatus(cublasSetStream(handle, stream));
+    JAX_THROW_IF_ERROR(cublasSetStream(handle, stream));
   }
   return Handle(pool, handle);
 }
@@ -155,9 +128,9 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
       *UnpackDescriptor<TrsmBatchedDescriptor>(opaque, opaque_len);
   auto handle = BlasHandlePool::Borrow(stream);
   if (buffers[2] != buffers[1]) {
-    ThrowIfError(cudaMemcpyAsync(buffers[2], buffers[1],
-                                 SizeOfType(d.type) * d.batch * d.m * d.n,
-                                 cudaMemcpyDeviceToDevice, stream));
+    JAX_THROW_IF_ERROR(cudaMemcpyAsync(buffers[2], buffers[1],
+                                       SizeOfType(d.type) * d.batch * d.m * d.n,
+                                       cudaMemcpyDeviceToDevice, stream));
   }
   const int lda = d.side == CUBLAS_SIDE_LEFT ? d.m : d.n;
   const int ldb = d.m;
@@ -168,7 +141,7 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
   // TODO(phawkins): ideally we would not need to synchronize here, but to
   // avoid it we need a way to keep the host-side buffer alive until the copy
   // completes.
-  ThrowIfError(cudaStreamSynchronize(stream));
+  JAX_THROW_IF_ERROR(cudaStreamSynchronize(stream));
   switch (d.type) {
     case Type::F32: {
       float* a = static_cast<float*>(buffers[0]);
@@ -177,7 +150,7 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
       float** b_batch_ptrs = static_cast<float**>(buffers[4]);
       // NOTE(phawkins): if alpha is in GPU memory, cuBlas seems to segfault.
       const float alpha = 1.0f;
-      ThrowIfErrorStatus(cublasStrsmBatched(
+      JAX_THROW_IF_ERROR(cublasStrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
           const_cast<const float**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
           d.batch));
@@ -189,7 +162,7 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
       double** a_batch_ptrs = static_cast<double**>(buffers[3]);
       double** b_batch_ptrs = static_cast<double**>(buffers[4]);
       const double alpha = 1.0;
-      ThrowIfErrorStatus(cublasDtrsmBatched(
+      JAX_THROW_IF_ERROR(cublasDtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
           const_cast<const double**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
           d.batch));
@@ -201,7 +174,7 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
       cuComplex** a_batch_ptrs = static_cast<cuComplex**>(buffers[3]);
       cuComplex** b_batch_ptrs = static_cast<cuComplex**>(buffers[4]);
       const cuComplex alpha = make_cuComplex(1.0f, 0.0f);
-      ThrowIfErrorStatus(cublasCtrsmBatched(
+      JAX_THROW_IF_ERROR(cublasCtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
           const_cast<const cuComplex**>(a_batch_ptrs), lda, b_batch_ptrs, ldb,
           d.batch));
@@ -215,7 +188,7 @@ void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
       cuDoubleComplex** b_batch_ptrs =
           static_cast<cuDoubleComplex**>(buffers[4]);
       const cuDoubleComplex alpha = make_cuDoubleComplex(1.0f, 0.0f);
-      ThrowIfErrorStatus(cublasZtrsmBatched(
+      JAX_THROW_IF_ERROR(cublasZtrsmBatched(
           handle.get(), d.side, d.uplo, d.trans, d.diag, d.m, d.n, &alpha,
           const_cast<const cuDoubleComplex**>(a_batch_ptrs), lda, b_batch_ptrs,
           ldb, d.batch));
@@ -245,9 +218,9 @@ void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
       *UnpackDescriptor<GetrfBatchedDescriptor>(opaque, opaque_len);
   auto handle = BlasHandlePool::Borrow(stream);
   if (buffers[0] != buffers[1]) {
-    ThrowIfError(cudaMemcpyAsync(buffers[1], buffers[0],
-                                 SizeOfType(d.type) * d.batch * d.n * d.n,
-                                 cudaMemcpyDeviceToDevice, stream));
+    JAX_THROW_IF_ERROR(cudaMemcpyAsync(buffers[1], buffers[0],
+                                       SizeOfType(d.type) * d.batch * d.n * d.n,
+                                       cudaMemcpyDeviceToDevice, stream));
   }
 
   int* ipiv = static_cast<int*>(buffers[2]);
@@ -257,33 +230,33 @@ void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
   // TODO(phawkins): ideally we would not need to synchronize here, but to
   // avoid it we need a way to keep the host-side buffer alive until the copy
   // completes.
-  ThrowIfError(cudaStreamSynchronize(stream));
+  JAX_THROW_IF_ERROR(cudaStreamSynchronize(stream));
   switch (d.type) {
     case Type::F32: {
       float* a = static_cast<float*>(buffers[1]);
       float** batch_ptrs = static_cast<float**>(buffers[4]);
-      ThrowIfErrorStatus(cublasSgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
+      JAX_THROW_IF_ERROR(cublasSgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
                                              ipiv, info, d.batch));
       break;
     }
     case Type::F64: {
       double* a = static_cast<double*>(buffers[1]);
       double** batch_ptrs = static_cast<double**>(buffers[4]);
-      ThrowIfErrorStatus(cublasDgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
+      JAX_THROW_IF_ERROR(cublasDgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
                                              ipiv, info, d.batch));
       break;
     }
     case Type::C64: {
       cuComplex* a = static_cast<cuComplex*>(buffers[1]);
       cuComplex** batch_ptrs = static_cast<cuComplex**>(buffers[4]);
-      ThrowIfErrorStatus(cublasCgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
+      JAX_THROW_IF_ERROR(cublasCgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
                                              ipiv, info, d.batch));
       break;
     }
     case Type::C128: {
       cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
       cuDoubleComplex** batch_ptrs = static_cast<cuDoubleComplex**>(buffers[4]);
-      ThrowIfErrorStatus(cublasZgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
+      JAX_THROW_IF_ERROR(cublasZgetrfBatched(handle.get(), d.n, batch_ptrs, d.n,
                                              ipiv, info, d.batch));
       break;
     }
