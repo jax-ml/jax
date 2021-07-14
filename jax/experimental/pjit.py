@@ -265,6 +265,7 @@ class SpecSync(IntEnum):
   We use this to make sure we don't show garbage modified values while claiming
   that the users have specified them like that.
   """
+  OUT_OF_SYNC = 0  # Arbitrary changes, including new axes inserted
   DIM_PERMUTE = 1  # Dimensions permuted, but no new sharding axes
   IN_SYNC = 2  # Entirely in sync
 
@@ -291,7 +292,7 @@ class ParsedPartitionSpec:
     if too_short > 0:
       parts += ((),) * too_short
     new_partitions = tuple_insert(parts, dim, val)
-    new_sync = SpecSync.DIM_PERMUTE if val == () else SpecSync.IN_SYNC
+    new_sync = SpecSync.DIM_PERMUTE if val == () else SpecSync.OUT_OF_SYNC
     return ParsedPartitionSpec(self.unsafe_user_spec, new_partitions, sync=new_sync)
 
   @classmethod
@@ -328,6 +329,10 @@ class ParsedPartitionSpec:
 
   def __iter__(self):
     return iter(self.partitions)
+
+  def __repr__(self):
+    return f"<partitions={self.partitions} sync={self.sync}>"
+
 
 REPLICATED = ParsedPartitionSpec(None, ())
 
@@ -566,19 +571,29 @@ def _sharding_constraint_impl(x, axis_resources, resource_env):
   raise NotImplementedError(
       "with_sharding_constraint() should only be called inside pjit()")
 
-def _sharding_constraint_translation_rule(c, x_node, axis_resources, resource_env):
-  mesh = resource_env.physical_mesh
-  return xb.set_sharding_proto(c, x_node,
-                               get_sharding_proto(c, x_node, axis_resources, mesh))
-
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
-sharding_constraint_p.def_abstract_eval(lambda x, **unused: x)
+sharding_constraint_p.def_abstract_eval(lambda x, **_: x)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, axis_resources, resource_env: (
                   sharding_constraint_p.bind(
                       ct, axis_resources=axis_resources, resource_env=resource_env),))
+
+def _sharding_constraint_translation_rule(c, x_node, axis_resources, resource_env):
+  mesh = resource_env.physical_mesh
+  return xb.set_sharding_proto(c, x_node,
+                               get_sharding_proto(c, x_node, axis_resources, mesh))
 xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
+
+def _sharding_constraint_batcher(vals_in, dims_in, axis_resources, resource_env):
+  x, = vals_in
+  d, = dims_in
+  y = sharding_constraint_p.bind(
+      x,
+      axis_resources=axis_resources.insert_axis_partitions(d, ()),
+      resource_env=resource_env)
+  return y, d
+batching.primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
 
 def _resource_typing_sharding_constraint(avals, params, source_info, named_axis_resources):
   aval, = avals

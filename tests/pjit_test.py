@@ -296,6 +296,17 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(z.sharding_spec.sharding, (pxla.NoSharding(), pxla.Chunked([2])))
     self.assertEqual(w.sharding_spec.sharding, (pxla.Chunked([2]),))
 
+  @jtu.with_mesh([('x', 2)])
+  def testVMapShardingConstraint(self):
+    f = pjit(lambda x: with_sharding_constraint(x, P('x')),
+             in_axis_resources=P(), out_axis_resources=P('x'))
+    x = jnp.arange(5*4).reshape((5, 4))
+    jaxpr = jax.make_jaxpr(jax.vmap(f))(x)
+    pjit_eqn, = jaxpr.eqns
+    constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
+    self.assertEqual(constraint_eqn.params['axis_resources'].partitions, ((), ('x',)))
+    self.assertEqual(constraint_eqn.params['axis_resources'].sync, SpecSync.DIM_PERMUTE)
+
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingInXMap(self):
     h = pjit(lambda x: x, in_axis_resources=P('x'), out_axis_resources=None)
