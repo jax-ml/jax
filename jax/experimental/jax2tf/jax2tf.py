@@ -2467,8 +2467,6 @@ def _dynamic_slice(operand, *start_indices, slice_sizes,
 
   if _thread_local_state.enable_xla:
     res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes)
-    # TODO: implement shape inference for XlaDynamicSlice
-    res.set_shape(_aval_to_tf_shape(_out_aval))
     return res
 
   operand_shape = _eval_shape(_in_avals[0].shape)
