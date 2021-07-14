@@ -177,6 +177,7 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_pocketfft.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft.py"))
+  copy_to_jaxlib(r.Rlocation("__main__/jaxlib/platform_config.so"))
   if r.Rlocation("__main__/jaxlib/cusolver_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.so"))

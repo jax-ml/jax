@@ -35,6 +35,7 @@ py_binary(
         "//jaxlib:lapack.so",
         "//jaxlib:_pocketfft.so",
         "//jaxlib:pocketfft_flatbuffers_py",
+        "//jaxlib:platform_config",
     ] + if_not_windows([
         "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
     ]) + if_cuda([

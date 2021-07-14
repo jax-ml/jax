@@ -355,3 +355,13 @@ pybind_extension(
         "@org_tensorflow//third_party/python_runtime:headers",
     ],
 )
+
+pybind_extension(
+    name = "platform_config",
+    copts = if_rocm_is_configured(["-DJAX_USE_ROCM=1"]),
+    srcs = ["platform_config.cc"],
+    module_name = "platform_config",
+    deps = [
+        "@pybind11",
+    ],
+)
