@@ -1059,7 +1059,11 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(jax.vmap(jnp.sum, in_axes=-1)(x),
                         jnp.sum(x, axis=(0, 1)))
 
-    with self.assertRaisesRegex(ValueError, "vmap got arg 0 of rank 3 but axis to be mapped -4"):
+
+    error = (r"vmap was requested to map its argument along axis -4, which "
+             r"implies that its rank should be at least 4, but is only 3 "
+             r"\(its shape is \(3, 4, 5\)\)")
+    with self.assertRaisesRegex(ValueError, error):
       jax.vmap(jnp.sum, in_axes=-4)(x)
 
     id = lambda y: y

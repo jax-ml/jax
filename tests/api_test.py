@@ -1968,8 +1968,10 @@ class APITest(jtu.JaxTestCase):
         r"\(10, \[2, 2\]\)"):
       api.vmap(h, in_axes=(0, 1))(X, [U, U])
 
-    with self.assertRaisesRegex(
-        ValueError, "vmap got arg 0 of rank 0 but axis to be mapped 0"):
+    error = (r"vmap was requested to map its argument along axis 0, which "
+             r"implies that its rank should be at least 1, but is only 0 "
+             r"\(its shape is \(\)\)")
+    with self.assertRaisesRegex(ValueError, error):
       # The mapped inputs cannot be scalars
       api.vmap(lambda x: x)(1.)
 
@@ -1978,8 +1980,10 @@ class APITest(jtu.JaxTestCase):
       # If the output is mapped, there must be a non-None in_axes
       api.vmap(lambda x: x, in_axes=None)(jnp.array([1., 2.]))
 
-    with self.assertRaisesRegex(
-        ValueError, "vmap got arg 0 of rank 1 but axis to be mapped 1"):
+    error = (r"vmap was requested to map its argument along axis 1, which "
+             r"implies that its rank should be at least 2, but is only 1 "
+             r"\(its shape is \(2,\)\)")
+    with self.assertRaisesRegex(ValueError, error):
       api.vmap(lambda x: x, in_axes=1)(jnp.array([1., 2.]))
 
     # Error is: TypeError: only integer scalar arrays can be converted to a scalar index
