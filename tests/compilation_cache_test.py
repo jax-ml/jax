@@ -23,6 +23,10 @@ import tempfile
 import unittest
 from unittest import SkipTest
 
+from jax.config import config
+config.parse_flags_with_absl()
+FLAGS = config.FLAGS
+
 class CompilationCacheTest(jtu.JaxTestCase):
 
   @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
@@ -123,6 +127,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_get_no_executable(self):
       if jtu.device_under_test() != "tpu":
           raise SkipTest("serialize executable only works on TPU")
+      if jax.lib.xla_bridge.get_backend().runtime_type == "tfrt":
+          raise SkipTest("the new TFRT runtime does not support serialization")
       cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
@@ -135,6 +141,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_diff_executables(self):
       if jtu.device_under_test() != "tpu":
           raise SkipTest("serialize executable only works on TPU")
+      if jax.lib.xla_bridge.get_backend().runtime_type == "tfrt":
+          raise SkipTest("the new TFRT runtime does not support serialization")
       cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
@@ -154,6 +162,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_put_executable(self):
       if jtu.device_under_test() != "tpu":
           raise SkipTest("serialize executable only works on TPU")
+      if jax.lib.xla_bridge.get_backend().runtime_type == "tfrt":
+          raise SkipTest("the new TFRT runtime does not support serialization")
       cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
