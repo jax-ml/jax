@@ -50,18 +50,19 @@ jobs:
             num_generated_cases: 10
             use-latest-jaxlib: false
           - name-prefix: "with internal numpy/scipy"
-            python-version: 3.6
+            python-version: 3.7
             os: ubuntu-latest
             enable-x64: 1
-            # Test with numpy version that matches Google-internal version
-            package-overrides: "numpy==1.17.5 scipy==1.2.1"
+            # Test with numpy version that matches Google's internal version
+            package-overrides: "numpy==1.19.5 scipy==1.2.1"
             num_generated_cases: 10
             use-latest-jaxlib: false
           - name-prefix: "with 3.7"
             python-version: 3.7
             os: ubuntu-latest
             enable-x64: 0
-            package-overrides: "none"
+            # Test with the oldest legal NumPy version.
+            package-overrides: "numpy==1.17.5 scipy==1.2.1"
             num_generated_cases: 8
             # Test against latest jaxlib
             use-latest-jaxlib: true

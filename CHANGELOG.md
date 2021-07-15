@@ -11,12 +11,22 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.18 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.17...main).
 
+* Breaking changes:
+  * Support for Python 3.6 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported Python version.
+
 * Bug fixes:
   * Tightened the checks for lax.argmin and lax.argmax to ensure they are
     not used with invalid `axis` value, or with an empty reduction dimension.
     ({jax-issue}`#7196`)
 
 ## jaxlib 0.1.70 (unreleased)
+* Breaking changes:
+  * Support for Python 3.6 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported Python version.
+
 
 ## jaxlib 0.1.69 (July 9 2021)
 * Fix bugs in TFRT CPU backend that results in incorrect results.

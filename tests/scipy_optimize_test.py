@@ -167,7 +167,9 @@ class TestLBFGS(jtu.JaxTestCase):
     jax_res = min_op(x0)
 
     # Note that without bounds, L-BFGS-B is just L-BFGS
-    scipy_res = scipy.optimize.minimize(func(np), x0, method='L-BFGS-B').x
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message=".*tostring.*is deprecated.*"):
+      scipy_res = scipy.optimize.minimize(func(np), x0, method='L-BFGS-B').x
 
     if func.__name__ == 'matyas':
       # scipy performs badly for Matyas, compare to true minimum instead
