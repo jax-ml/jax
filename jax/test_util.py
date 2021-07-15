@@ -37,7 +37,6 @@ from ._src.util import partial, prod, unzip2
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla
-from .experimental import maps
 from .experimental.maps import mesh
 
 
@@ -1062,13 +1061,11 @@ def with_and_without_mesh(f):
 old_spmd_lowering_flag = False
 def set_spmd_lowering_flag(val: bool):
   global old_spmd_lowering_flag
-  maps.make_xmap_callable.cache_clear()
-  old_spmd_lowering_flag = maps.EXPERIMENTAL_SPMD_LOWERING
-  maps.EXPERIMENTAL_SPMD_LOWERING = val
+  old_spmd_lowering_flag = config.experimental_xmap_spmd_lowering
+  config.update('experimental_xmap_spmd_lowering', val)
 
 def restore_spmd_lowering_flag():
-  maps.make_xmap_callable.cache_clear()
-  maps.EXPERIMENTAL_SPMD_LOWERING = old_spmd_lowering_flag
+  config.update('experimental_xmap_spmd_lowering', old_spmd_lowering_flag)
 
 class _cached_property:
   null = object()
