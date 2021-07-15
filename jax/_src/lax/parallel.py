@@ -954,13 +954,7 @@ batching.collective_rules[all_to_all_p] = _all_to_all_batched_collective
 core.axis_substitution_rules[all_to_all_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 
-def _expand(dim, size, index, x):
-  shape = list(x.shape)
-  shape.insert(dim, size)
-  out = lax.full(shape, lax._const(x, 0))
-  return lax.dynamic_update_index_in_dim(out, x, index, dim)
-
-def all_gather(x, axis_name, *, axis_index_groups=None):
+def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   """Gather values of x across all replicas.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -976,11 +970,21 @@ def all_gather(x, axis_name, *, axis_index_groups=None):
       an axis of size 4, [[0, 1], [2, 3]] would run all gather over the first
       two and last two replicas). Groups must cover all axis indices exactly
       once, and all groups must be the same size.
+    axis: a positional axis into which the chunks along ``axis_name`` will be
+      concatenated.
+    tiled: when ``False``, the chunks will be stacked into a fresh positional
+      axis at index ``axis`` in the output. When ``True``, ``axis`` has to
+      refer to an exising positional dimension and the chunks will be
+      concatenated into that dimension.
 
   Returns:
     Array(s) representing the result of an all-gather along the axis
-    ``axis_name``. Shapes are the same as ``x.shape``, but with a leading
-    dimension of the axis_size.
+    ``axis_name``. Shapes are the same as ``x.shape``, but:
+
+    - when ``tiled`` is ``False``, there is a new dimension equal to the
+      size of axis ``axis_name`` in position ``axis``,
+    - when ``tiled`` is ``True``, the size of dimension in position ``axis``
+      is multiplied by the size of axis ``axis_name``.
 
   For example, with 4 XLA devices available:
 
@@ -1015,45 +1019,64 @@ def all_gather(x, axis_name, *, axis_index_groups=None):
     [ 4  5  6  7]]]
   """
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
-  bind = partial(all_gather_p.bind, all_gather_dimension=0,
+  bind = partial(all_gather_p.bind, all_gather_dimension=axis,
                  axis_name=axis_name, axis_index_groups=axis_index_groups,
-                 axis_size=axis_size)
+                 axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
-def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+def _expand(dim, size, index, tiled, x):
+  shape = list(x.shape)
+  if tiled:
+    tile_size = shape[dim]
+    shape[dim] *= size
+    out = lax.full(shape, lax._const(x, 0))
+    return lax.dynamic_update_slice_in_dim(out, x, index * tile_size, dim)
+  else:
+    shape.insert(dim, size)
+    out = lax.full(shape, lax._const(x, 0))
+    return lax.dynamic_update_index_in_dim(out, x, index, dim)
+
+def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   index = _index_in_group(axis_name, axis_index_groups)
-  outs = tree_util.tree_map(partial(_expand, all_gather_dimension, axis_size, index), x)
+  outs = tree_util.tree_map(partial(_expand, all_gather_dimension, axis_size, index, tiled), x)
   return psum(outs, axis_name, axis_index_groups=axis_index_groups)
 
-def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   raise AssertionError("Unexpected call to _all_gather_impl")
 
-def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, axis_env, platform):
+def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled, axis_env, platform):
   # TODO(cjfj): Enable this for TPU also?
   if (platform == 'gpu') and (all_gather_dimension == 0):
-    new_shape = list(c.get_shape(x).dimensions())
-    new_shape.insert(all_gather_dimension, 1)
-    broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
-    x = xops.BroadcastInDim(x, new_shape, broadcast_dimensions)
+    if not tiled:
+      new_shape = list(c.get_shape(x).dimensions())
+      new_shape.insert(all_gather_dimension, 1)
+      broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
+      x = xops.BroadcastInDim(x, new_shape, broadcast_dimensions)
     replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
     return xops.AllGather(x, all_gather_dimension=all_gather_dimension, shard_count=axis_size,
                           replica_groups=xc.make_replica_groups(replica_groups))
   else:
     lowering = xla.lower_fun(_all_gather_via_psum, multiple_results=False, parallel=True)
     return lowering(c, x, all_gather_dimension=all_gather_dimension, axis_name=axis_name,
-                    axis_index_groups=axis_index_groups, axis_size=axis_size, axis_env=axis_env, platform=platform)
+                    axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled,
+                    axis_env=axis_env, platform=platform)
 
-def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   x_aval = raise_to_shaped(x)
   new_shape = list(x_aval.shape)
-  new_shape.insert(all_gather_dimension, axis_size)
+  if tiled:
+    new_shape[all_gather_dimension] *= axis_size
+  else:
+    new_shape.insert(all_gather_dimension, axis_size)
   new_named_shape = {name: size for name, size in x_aval.named_shape.items()
                      if name not in axis_name}
   return x_aval.update(shape=new_shape, named_shape=new_named_shape)
 
-def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
+  if tiled:
+    raise NotImplementedError("Please open a feature request!")
   # TODO(cjfj): Add reduce-scatter op to XLA?
   concat_axis = 0
   return (lax_numpy.sum(all_to_all(
@@ -1061,7 +1084,9 @@ def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_
       concat_axis=concat_axis, axis_index_groups=axis_index_groups),
       axis=concat_axis),)
 
-def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
+  if tiled:
+    raise NotImplementedError("Please open a feature request!")
   (x,), (d,) = vals_in, dims_in
   if d <= all_gather_dimension:
     all_gather_dimension += 1
@@ -1072,10 +1097,13 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
       all_gather_dimension=all_gather_dimension,
       axis_name=axis_name,
       axis_index_groups=axis_index_groups,
-      axis_size=axis_size)
+      axis_size=axis_size,
+      tiled=tiled)
   return result, d
 
-def _all_gather_batched_collective(frame, vals_in, dims_in, all_gather_dimension, axis_name, axis_index_groups, axis_size):
+def _all_gather_batched_collective(frame, vals_in, dims_in, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
+  if tiled:
+    raise NotImplementedError("Please open a feature request!")
   assert axis_index_groups is None, "axis_index_groups not supported in vmap"
   assert axis_size == frame.size, "axis size doesn't match"
   if not isinstance(axis_name, tuple):
