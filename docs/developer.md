@@ -131,7 +131,7 @@ sets up symbolic links from site-packages into the repository.
 
 To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
 parallel. First, install `pytest-xdist` and `pytest-benchmark` by running
-`ip install -r build/test-requirements.txt`.
+`pip install -r build/test-requirements.txt`.
 Then, from the repository root directory run:
 
 ```
