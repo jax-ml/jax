@@ -18,11 +18,25 @@ limitations under the License.
 
 #include <memory>
 
+#include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "third_party/gpus/cuda/include/cusolverDn.h"
+#include "third_party/gpus/cuda/include/cusparse.h"
+
+#define JAX_THROW_IF_ERROR(expr) \
+  jax::ThrowIfError(expr, __FILE__, __LINE__, #expr)
 
 namespace jax {
 
-void ThrowIfError(cudaError_t error);
+// Used via JAX_THROW_IF_ERROR(expr) macro.
+void ThrowIfError(cudaError_t error, const char* file, std::int64_t line,
+                  const char* expr);
+void ThrowIfError(cusolverStatus_t status, const char* file, std::int64_t line,
+                  const char* expr);
+void ThrowIfError(cusparseStatus_t status, const char* file, std::int64_t line,
+                  const char* expr);
+void ThrowIfError(cublasStatus_t status, const char* file, std::int64_t line,
+                  const char* expr);
 
 // Builds an array of pointers to each array in a batch, in device memory.
 // Caution: the return value must be kept alive (e.g., via a stream
