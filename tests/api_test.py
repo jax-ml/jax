@@ -50,7 +50,6 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
 import jax._src.util
-from jax._src.api import _ALLOW_STATIC_ARGNAMES
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -308,15 +307,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f(2)
     f(2)
     assert len(effects) == 3
-
-  # TODO(phawkins): delete this test after jaxlib 0.1.66 is the minimum.
-  @unittest.skipIf(_ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
-  def test_static_argnum_errors_on_keyword_arguments(self):
-    f = self.jit(lambda x: x, static_argnums=0)
-    msg = ("jitted function has static_argnums=(0,), donate_argnums=() but was "
-           "called with only 0 positional arguments.")
-    with self.assertRaisesRegex(ValueError, re.escape(msg)):
-      f(x=4)
 
   def test_static_argnum_on_method(self):
 
@@ -587,7 +577,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     assert argnums == ()
     assert argnames == ('foo', 'bar')
 
-  @unittest.skipIf(not _ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
   def test_jit_with_static_argnames(self):
 
     def f(x):
@@ -602,19 +591,16 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     assert f_names('foo') == 1
     assert f_names(x='foo') == 1
 
-  @unittest.skipIf(not _ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
   def test_new_static_argnum_on_keyword_arguments(self):
     f = self.jit(lambda x: x, static_argnums=0)
     y = f(x=4)
     assert y == 4
 
-  @unittest.skipIf(not _ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
   def test_new_static_argnum_with_default_arguments(self):
     f = self.jit(lambda x=4: x, static_argnums=0)
     y = f()
     assert y == 4
 
-  @unittest.skipIf(not _ALLOW_STATIC_ARGNAMES, "Test requires jaxlib 0.1.66")
   def test_jit_with_mismatched_static_argnames(self):
     x_is_tracer, y_is_tracer = False, False
     def f(x, y):
@@ -646,7 +632,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   # TODO(zhangqiaorjc): Test pruning constants after DCE pass prunes primitive
   # applications.
-  @unittest.skipIf(not xla._ALLOW_ARG_PRUNING, "Test requires jaxlib 0.1.66")
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_num_args={}".format(num_args),
      "num_args": num_args}
@@ -2697,8 +2682,6 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('Precision.HIGH', str(jaxpr))
     self.assertEqual(prev_val, config._read("jax_default_matmul_precision"))
 
-  @unittest.skipIf(jax.lib._xla_extension_version <= 17,
-                   "Test requires jaxlib 0.1.66")
   def test_dot_precision_forces_retrace(self):
     num_traces = 0
 
@@ -2738,9 +2721,6 @@ class APITest(jtu.JaxTestCase):
       finally:
         FLAGS.jax_default_matmul_precision = precision
 
-
-  @unittest.skipIf(jax.lib._xla_extension_version <= 17,
-                   "Test requires jaxlib 0.1.66")
   def test_rank_promotion_forces_retrace(self):
     num_traces = 0
 
@@ -5508,8 +5488,6 @@ class NamedCallTest(jtu.JaxTestCase):
       for jit_type in [None, "python", "cpp"]
       if not (jit_type is None and func == 'identity')))
   def test_integer_overflow(self, jit_type, func):
-    if jit_type == "cpp" and not config.x64_enabled and jax.lib.version < (0, 1, 65):
-      self.skipTest("int32 overflow detection not yet implemented in CPP JIT.")
     funcdict = {
       'identity': lambda x: x,
       'asarray': jnp.asarray,

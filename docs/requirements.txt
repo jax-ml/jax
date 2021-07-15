@@ -13,6 +13,5 @@ pytest-xdist
 # Packages used for notebook execution
 matplotlib
 scikit-learn
-# TODO(jakevdp) remove numpy pinning when minimum jaxlib supports newer numpy.
-numpy<1.21
+numpy
 .[cpu]  # Install jax from the current directory; jaxlib from pypi.

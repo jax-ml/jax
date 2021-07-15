@@ -2417,16 +2417,10 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.result_type(val), dtypes.result_type(const))
 
 
-  # TODO(phawkins): make this test unconditional after jaxlib 0.1.67 is the
-  # default.
-  @unittest.skipIf(jax.lib._xla_extension_version < 22,
-                   "Test requires jaxlib 0.1.67 or newer")
   def testIgammaSpecial(self):
     self.assertEqual(lax.igamma(1., np.inf), 1.)
     self.assertEqual(lax.igammac(1., np.inf), 0.)
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 66),
-                   "Test fails on jaxlib 0.1.65 or earlier.")
   def testRegressionIssue5728(self):
     # The computation in this test gave garbage data on CPU due to an LLVM bug.
     @jax.jit
@@ -2642,8 +2636,6 @@ class LazyConstantTest(jtu.JaxTestCase):
     out = lax.cumsum(x)
     self.assertArraysEqual(out, x)
 
-  @unittest.skipIf(jax.lib._xla_extension_version < 24,
-                   "Test requires Jaxlib 0.1.68")
   def testLog1pNearOne(self):
     np.testing.assert_array_almost_equal_nulp(
         np.log1p(np.float32(1e-5)), lax.log1p(np.float32(1e-5)))

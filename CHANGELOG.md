@@ -15,11 +15,15 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Support for Python 3.6 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
     Please upgrade to a supported Python version.
+  * The minimum jaxlib version is now 0.1.69.
+  * The `backend` argument to {py:func}`jax.dlpack.from_dlpack` has been
+    removed.
 
 * Bug fixes:
   * Tightened the checks for lax.argmin and lax.argmax to ensure they are
     not used with invalid `axis` value, or with an empty reduction dimension.
     ({jax-issue}`#7196`)
+
 
 ## jaxlib 0.1.70 (unreleased)
 * Breaking changes:

@@ -356,7 +356,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
                           rtol=1e-3)
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def testEighZeroDiagonal(self):
     a = np.array([[0., -1., -1.,  1.],
                   [-1.,  0.,  1., -1.],

@@ -90,10 +90,6 @@ def user_context(c):
   except Exception as e:
     if c is None or has_user_context(e):
       raise
-    # TODO(phawkins): remove the following condition after Jaxlib 0.1.66 is the
-    # minimum.
-    if not hasattr(c, 'as_python_traceback'):
-      raise
     filtered_tb = traceback_util.filter_traceback(c.as_python_traceback())
     if filtered_tb:
       msg = traceback_util.format_exception_only(e)

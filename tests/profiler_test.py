@@ -76,8 +76,7 @@ class ProfilerTest(unittest.TestCase):
       self.assertIn(b"/host:CPU", proto)
       if jtu.device_under_test() == "tpu":
         self.assertIn(b"/device:TPU", proto)
-      if jax.lib.version >= (0, 1, 65):
-        self.assertIn(b"pxla.py", proto)
+      self.assertIn(b"pxla.py", proto)
 
   def testProgrammaticProfilingErrors(self):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):

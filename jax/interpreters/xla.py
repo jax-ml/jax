@@ -38,7 +38,6 @@ from .._src.util import (partial, partialmethod, cache, prod, unzip2,
                     extend_name_stack, wrap_name, safe_zip, safe_map)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..lib import _xla_extension_version
 from . import partial_eval as pe
 from . import ad
 from . import masking
@@ -778,18 +777,8 @@ def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
   return tuple(out_donated_args)
 
 
-# Pruning unused JIT arguments require jaxlib 0.1.66 or newer.
-# TODO(zhangqiaorjc): remove when jaxlib 0.1.66 is the minimum.
-_ALLOW_ARG_PRUNING = _xla_extension_version >= 20
-
-
 def _prune_unused_inputs(
     jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, Set[int], Set[int]]:
-  if not _ALLOW_ARG_PRUNING:
-    kept_const_idx = range(len(jaxpr.constvars))
-    kept_var_idx = range(len(jaxpr.invars))
-    return jaxpr, set(kept_const_idx), set(kept_var_idx)
-
   used = {v for v in jaxpr.outvars if isinstance(v, core.Var)}
   # TODO(zhangqiaorjc): Improve the DCE algorithm by also pruning primitive
   # applications that do not produce used outputs. Must handle side-effecting
@@ -1111,11 +1100,9 @@ class _DeviceArray(DeviceArray):  # type: ignore
   """A DeviceArray is an ndarray backed by a single device memory buffer."""
   # We don't subclass ndarray because that would open up a host of issues,
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
-  # TODO(phawkins): make __weakref__ an unconditional slot when jaxlib 0.1.66
-  # is the minimum version.
   __slots__ = [
-      "aval", "device_buffer", "_npy_value", "_device"
-  ] + ([] if device_array_supports_weakrefs() else ["__weakref__"])
+      "aval", "device_buffer", "_npy_value", "_device", "__weakref__"
+  ]
   __array_priority__ = 100
 
   # DeviceArray has methods that are dynamically populated in lax_numpy.py,

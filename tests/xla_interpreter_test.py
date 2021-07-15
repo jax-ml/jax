@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-
 from absl.testing import absltest
 
 from jax import test_util as jtu
@@ -23,7 +21,6 @@ from jax.interpreters import xla
 
 class XlaInterpreterTest(jtu.JaxTestCase):
 
-  @unittest.skipIf(not xla._ALLOW_ARG_PRUNING, "Test requires jaxlib 0.1.66")
   def test_prune_jit_args(self):
     def f(*args):
       return args[0]

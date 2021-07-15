@@ -324,10 +324,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     if not config.x64_enabled:
       raise unittest.SkipTest("requires x64 mode")
 
-    # The LLVM bug that caused this appears to be fixed in jaxlib 0.1.67.
-    if jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 66):
-      raise unittest.SkipTest("test fails on CPU jaxlib <= 0.1.66")
-
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
     b = rng(shape[:1], dtype)

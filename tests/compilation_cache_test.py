@@ -20,7 +20,6 @@ import jax.test_util as jtu
 import numpy as np
 import random
 import tempfile
-import unittest
 from unittest import SkipTest
 
 from jax.config import config
@@ -29,7 +28,6 @@ FLAGS = config.FLAGS
 
 class CompilationCacheTest(jtu.JaxTestCase):
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_compile_options(self):
     compile_options_not_filled = jax.lib.xla_bridge.get_compile_options(
                       num_replicas=1, num_partitions=1)
@@ -40,7 +38,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertEqual(filled_hash1, filled_hash2)
     self.assertNotEqual(filled_hash1, not_filled_hash3)
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_executable_build_options(self):
     compile_options_not_filled = jax.lib.xla_bridge.get_compile_options(
                       num_replicas=1, num_partitions=1)
@@ -66,7 +63,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
     hash3 = self.get_hashed_value(cc._hash_debug_options, new_debug_options)
     self.assertNotEqual(hash1, hash3)
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_hash_platform(self):
     hash1 = self.get_hashed_value(cc._hash_platform, jax.lib.xla_bridge.get_backend())
     hash2 = self.get_hashed_value(cc._hash_platform, jax.lib.xla_bridge.get_backend())
@@ -97,7 +93,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertEqual(hash2, hash3)
     self.assertNotEqual(hash1, hash2)
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_same_hash_key(self):
     computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
     compile_options = jax.lib.xla_bridge.get_compile_options(
@@ -105,7 +100,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertEqual(cc.get_cache_key(computation, compile_options),
                      cc.get_cache_key(computation, compile_options))
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_different_hash_key(self):
     computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
     compile_options_not_filled = jax.lib.xla_bridge.get_compile_options(
@@ -114,7 +108,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertNotEqual(cc.get_cache_key(computation, compile_options_not_filled),
                         cc.get_cache_key(computation, compile_options_filled))
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_different_computations(self):
     computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
     computation2 = jax.xla_computation(lambda x, y: x * y)(2, 2)
@@ -123,7 +116,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertNotEqual(cc.get_cache_key(computation1, compile_options),
                         cc.get_cache_key(computation2, compile_options))
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 69), "fails with earlier jaxlibs")
   def test_get_no_executable(self):
       if jtu.device_under_test() != "tpu":
           raise SkipTest("serialize executable only works on TPU")
@@ -137,7 +129,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
                                num_replicas=1, num_partitions=1)
           self.assertEqual(cc.get_executable(computation, compile_options), None)
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 69), "fails with earlier jaxlibs")
   def test_diff_executables(self):
       if jtu.device_under_test() != "tpu":
           raise SkipTest("serialize executable only works on TPU")
@@ -158,7 +149,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
           self.assertNotEqual(cc.get_executable(computation1, compile_options),
                               cc.get_executable(computation2, compile_options))
 
-  @unittest.skipIf(jax.lib.version < (0, 1, 69), "fails with earlier jaxlibs")
   def test_put_executable(self):
       if jtu.device_under_test() != "tpu":
           raise SkipTest("serialize executable only works on TPU")

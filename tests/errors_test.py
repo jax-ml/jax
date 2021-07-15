@@ -26,7 +26,6 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax.lib import xla_extension
 
 
 from jax.config import config
@@ -57,11 +56,6 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=[],
     for frame, lineno in traceback.walk_tb(e.__traceback__):
       if filter_mode == "tracebackhide":
         if "__tracebackhide__"  in frame.f_locals.keys():
-          continue
-      elif filter_mode == "remove_frames":
-        # TODO(phawkins): remove this condition after jaxlib 0.1.66 is the minimum.
-        if (not hasattr(xla_extension, "replace_thread_exc_traceback") and
-            frame.f_code.co_name == "reraise_with_filtered_traceback"):
           continue
       frames.append((frame, lineno))
 
@@ -341,12 +335,9 @@ class UserContextTracebackTest(jtu.JaxTestCase):
       e = exc
     self.assertIsNot(e, None)
     self.assertIn("invalid value", str(e))
-    # TODO(phawkins): make this test unconditional after jaxlib 0.1.66 is the
-    # minimum.
-    if jax.lib._xla_extension_version >= 19:
-      self.assertIsInstance(
-          e.__cause__.__cause__,
-          source_info_util.JaxStackTraceBeforeTransformation)
+    self.assertIsInstance(
+        e.__cause__.__cause__,
+        source_info_util.JaxStackTraceBeforeTransformation)
 
 
 class CustomErrorsTest(jtu.JaxTestCase):

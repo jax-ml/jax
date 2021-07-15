@@ -437,15 +437,10 @@ def block_diag(*arrs):
   return acc
 
 
-# TODO(phawkins): use static_argnames when jaxlib 0.1.66 is the minimum and
-# remove this wrapper.
 @_wraps(scipy.linalg.eigh_tridiagonal)
+@partial(jit, static_argnames=("eigvals_only", "select", "select_range"))
 def eigh_tridiagonal(d, e, *, eigvals_only=False, select='a',
                      select_range=None, tol=None):
-  return _eigh_tridiagonal(d, e, eigvals_only, select, select_range, tol)
-
-@partial(jit, static_argnums=(2, 3, 4))
-def _eigh_tridiagonal(d, e, eigvals_only, select, select_range, tol):
   if not eigvals_only:
     raise NotImplementedError("Calculation of eigenvectors is not implemented")
 
