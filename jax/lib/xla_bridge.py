@@ -155,40 +155,23 @@ def register_backend_factory(name, factory, *, priority=0):
   _backend_factories[name] = (factory, priority)
 
 
-if jax.lib._xla_extension_version >= 23:
-  register_backend_factory('interpreter', xla_client.make_interpreter_client,
-                           priority=-100)
-  if jax.lib._xla_extension_version >= 27:
-    if FLAGS.jax_cpu_backend_variant == 'stream_executor':
-      register_backend_factory('cpu',
-                               partial(xla_client.make_cpu_client, use_tfrt=False),
-                               priority=0)
-    else:
-      assert FLAGS.jax_cpu_backend_variant == 'tfrt'
-      register_backend_factory('cpu',
-                               partial(xla_client.make_cpu_client, use_tfrt=True),
-                               priority=0)
-  else:
-    register_backend_factory('cpu',
-                              partial(xla_client.make_cpu_client, use_tfrt=False),
-                              priority=0)
-  register_backend_factory('tpu_driver', _make_tpu_driver_client,
-                           priority=100)
-  register_backend_factory('gpu', xla_client.make_gpu_client,
-                           priority=200)
-  register_backend_factory('tpu', xla_client.make_tpu_client,
-                           priority=300)
+register_backend_factory('interpreter', xla_client.make_interpreter_client,
+                         priority=-100)
+if FLAGS.jax_cpu_backend_variant == 'stream_executor':
+  register_backend_factory('cpu',
+                           partial(xla_client.make_cpu_client, use_tfrt=False),
+                           priority=0)
 else:
-  register_backend_factory('interpreter',
-                           xla_client._interpreter_backend_factory,
-                           priority=-100)
-  register_backend_factory('cpu', xla_client._cpu_backend_factory, priority=0)
-  register_backend_factory('tpu_driver', _make_tpu_driver_client,
-                           priority=100)
-  register_backend_factory('gpu', xla_client._gpu_backend_factory,
-                           priority=200)
-  register_backend_factory('tpu', xla_client._tpu_backend_factory,
-                           priority=300)
+  assert FLAGS.jax_cpu_backend_variant == 'tfrt'
+  register_backend_factory('cpu',
+                           partial(xla_client.make_cpu_client, use_tfrt=True),
+                           priority=0)
+register_backend_factory('tpu_driver', _make_tpu_driver_client,
+                         priority=100)
+register_backend_factory('gpu', xla_client.make_gpu_client,
+                         priority=200)
+register_backend_factory('tpu', xla_client.make_tpu_client,
+                         priority=300)
 
 _default_backend = None
 _backends = None
@@ -258,11 +241,6 @@ def get_backend(platform=None):
 def get_device_backend(device=None):
   """Returns the Backend associated with `device`, or the default Backend."""
   if device is not None:
-    # TODO(phawkins): remove this workaround after jaxlib 0.1.68 becomes the
-    # minimum and it is safe to call `.client` on a tpu_driver TpuDevice.
-    if tpu_driver_client and isinstance(
-        device, tpu_driver_client._tpu_client.TpuDevice):
-      return get_backend('tpu_driver')
     return device.client
   return get_backend()
 

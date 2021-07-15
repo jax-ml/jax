@@ -15,7 +15,6 @@
 
 import collections
 import re
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,7 +24,6 @@ from jax import tree_util
 from jax._src.tree_util import _process_pytree
 from jax import flatten_util
 import jax.numpy as jnp
-from jax import lib
 
 
 def _dummy_func(*args, **kwargs):
@@ -306,8 +304,6 @@ class TreeTest(jtu.JaxTestCase):
                                       FlatCache({"a": [3, 4], "b": [5, 6]}))
     self.assertEqual(expected, actual)
 
-  @unittest.skipIf(lib._xla_extension_version < 17,
-                   "Test requires jaxlib 0.1.66.")
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""

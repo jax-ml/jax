@@ -15,7 +15,6 @@
 from jax import core
 from jax import numpy as jnp
 from jax.interpreters import xla
-import jax.lib
 from jax.lib import xla_client
 from jax.lib import xla_bridge
 
@@ -44,28 +43,21 @@ def to_dlpack(x: xla.DeviceArrayProtocol, take_ownership: bool = False):
   return xla_client._xla.buffer_to_dlpack_managed_tensor(
       x.device_buffer, take_ownership=take_ownership)
 
-def from_dlpack(dlpack, backend=None):
+def from_dlpack(dlpack):
   """Returns a `DeviceArray` representation of a DLPack tensor `dlpack`.
 
   The returned `DeviceArray` shares memory with `dlpack`.
 
   Args:
     dlpack: a DLPack tensor, on either CPU or GPU.
-    backend: deprecated, do not use.
   """
-  if jax.lib._xla_extension_version >= 25:
-    cpu_backend = xla_bridge.get_backend("cpu")
-    try:
-      gpu_backend = xla_bridge.get_backend("gpu")
-    except RuntimeError:
-      gpu_backend = None
-    buf = xla_client._xla.dlpack_managed_tensor_to_buffer(
-        dlpack, cpu_backend, gpu_backend)
-  else:
-    # TODO(phawkins): drop the backend argument after deleting this case.
-    backend = backend or xla_bridge.get_backend()
-    client = getattr(backend, "client", backend)
-    buf = xla_client._xla.dlpack_managed_tensor_to_buffer(dlpack, client)
+  cpu_backend = xla_bridge.get_backend("cpu")
+  try:
+    gpu_backend = xla_bridge.get_backend("gpu")
+  except RuntimeError:
+    gpu_backend = None
+  buf = xla_client._xla.dlpack_managed_tensor_to_buffer(
+      dlpack, cpu_backend, gpu_backend)
 
   xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()

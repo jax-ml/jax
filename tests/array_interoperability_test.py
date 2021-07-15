@@ -80,10 +80,6 @@ class DLPackTest(jtu.JaxTestCase):
     np = rng(shape, dtype)
     if gpu and jax.default_backend() == "cpu":
       raise unittest.SkipTest("Skipping GPU test case on CPU")
-    if (not gpu and jax.default_backend() == "gpu" and
-        jax.lib._xla_extension_version < 25):
-      raise unittest.SkipTest("Mixed CPU/GPU dlpack support requires jaxlib "
-                              "0.1.68 or newer")
     device = jax.devices("gpu" if gpu else "cpu")[0]
     x = jax.device_put(np, device)
     dlpack = jax.dlpack.to_dlpack(x, take_ownership=take_ownership)

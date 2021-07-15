@@ -197,12 +197,6 @@ def _infer_argnums_and_argnames(
   return argnums, argnames
 
 
-# Static kwargs require jaxlib 0.1.66 or newer. (Technically the Python jit
-# implementation works with any jaxlib, but we want consistency between C++ and
-# Python implementations.)
-# TODO(phawkins): remove when jaxlib 0.1.66 is the minimum.
-_ALLOW_STATIC_ARGNAMES = lib._xla_extension_version >= 14
-
 def jit(
   fun: F,
   *,
@@ -285,10 +279,6 @@ def jit(
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
-  if not _ALLOW_STATIC_ARGNAMES:
-    if static_argnames is not None:
-      raise ValueError("static_argnames requires jaxlib 0.1.66 or newer")
-    static_argnames = ()
   if FLAGS.experimental_cpp_jit:
     return _cpp_jit(fun, static_argnums, static_argnames, device, backend,
                     donate_argnums, inline)
@@ -319,17 +309,10 @@ def _python_jit(
   def f_jitted(*args, **kwargs):
     if config.jax_disable_jit:
       return fun(*args, **kwargs)
-    if _ALLOW_STATIC_ARGNAMES:
-      if max(donate_argnums, default=-1) >= len(args):
-        raise ValueError(
-            f"jitted function has donate_argnums={donate_argnums} but "
-            f"was called with only {len(args)} positional arguments.")
-    else:
-      if max(static_argnums + donate_argnums, default=-1) >= len(args):
-        raise ValueError(
-            f"jitted function has static_argnums={static_argnums}, "
-            f"donate_argnums={donate_argnums} but "
-            f"was called with only {len(args)} positional arguments.")
+    if max(donate_argnums, default=-1) >= len(args):
+      raise ValueError(
+          f"jitted function has donate_argnums={donate_argnums} but "
+          f"was called with only {len(args)} positional arguments.")
 
     f = lu.wrap_init(fun)
     f, args = argnums_partial_except(f, static_argnums, args,
@@ -362,8 +345,7 @@ class _FastpathData(NamedTuple):
   lazy_exprs: Iterable[Any]
   kept_var_bitvec: Iterable[bool]
 
-if lib._xla_extension_version >= 16:
-  _cpp_jit_cache = jax_jit.CompiledFunctionCache()
+_cpp_jit_cache = jax_jit.CompiledFunctionCache()
 
 def _cpp_jit(
     fun: F,
@@ -398,17 +380,10 @@ def _cpp_jit(
     # An alternative would be for cache_miss to accept from C++ the arguments
     # (dyn_args, donated_invars, args_flat, in_tree), since otherwise we have
     # work/code that is redundant between C++ and Python. We can try that later.
-    if _ALLOW_STATIC_ARGNAMES:
-      if max(donate_argnums, default=-1) >= len(args):
-        raise ValueError(
-            f"jitted function has donate_argnums={donate_argnums} but "
-            f"was called with only {len(args)} positional arguments.")
-    else:
-      if max(static_argnums + donate_argnums, default=-1) >= len(args):
-        raise ValueError(
-            f"jitted function has static_argnums={static_argnums}, "
-            f"donate_argnums={donate_argnums} but "
-            f"was called with only {len(args)} positional arguments.")
+    if max(donate_argnums, default=-1) >= len(args):
+      raise ValueError(
+          f"jitted function has donate_argnums={donate_argnums} but "
+          f"was called with only {len(args)} positional arguments.")
     f = lu.wrap_init(fun)
     f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
     f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
@@ -452,14 +427,10 @@ def _cpp_jit(
         aval, sticky_device = result_handler.args
         avals.append(aval)
       assert len(avals) == len(out_flat)
-      if xla._ALLOW_ARG_PRUNING:
-        kept_var_bitvec = [i in kept_var_idx for i in range(len(args_flat))]
-        fastpath_data = _FastpathData(xla_executable, out_pytree_def,
-                                      sticky_device, avals, lazy_exprs,
-                                      kept_var_bitvec)
-      else:
-        fastpath_data = (xla_executable, out_pytree_def, sticky_device, avals,
-                         lazy_exprs)
+      kept_var_bitvec = [i in kept_var_idx for i in range(len(args_flat))]
+      fastpath_data = _FastpathData(xla_executable, out_pytree_def,
+                                    sticky_device, avals, lazy_exprs,
+                                    kept_var_bitvec)
     else:
       fastpath_data = None
 
@@ -477,21 +448,12 @@ def _cpp_jit(
 
     return _BackendAndDeviceInfo(default_device, committed_to_device)
 
-  if lib._xla_extension_version < 14:
-    cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info, static_argnums)
-    f_jitted = wraps(fun)(cpp_jitted_f)
-  elif lib._xla_extension_version < 16:
-    cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
-                               static_argnums=static_argnums,
-                               static_argnames=static_argnames)
-    f_jitted = wraps(fun)(cpp_jitted_f)
-  else:
-    cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
-                               static_argnums=static_argnums,
-                               static_argnames=static_argnames,
-                               donate_argnums=donate_argnums,
-                               cache=_cpp_jit_cache)
-    f_jitted = wraps(fun)(cpp_jitted_f)
+  cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
+                             static_argnums=static_argnums,
+                             static_argnames=static_argnames,
+                             donate_argnums=donate_argnums,
+                             cache=_cpp_jit_cache)
+  f_jitted = wraps(fun)(cpp_jitted_f)
 
   return f_jitted
 
@@ -627,7 +589,7 @@ def xla_computation(fun: Callable,
   Alternatively, the assignment to ``c`` above could be written:
 
   >>> import types
-  >>> scalar = types.SimpleNamespace(shape=(), dtype=np.float32)
+  >>> scalar = types.SimpleNamespace(shape=(), dtype=np.dtype(np.float32))
   >>> c = jax.xla_computation(f)(scalar)
 
 
@@ -2063,7 +2025,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   >>> import types
   >>>
   >>> f = lambda x, y: 0.5 * x - 0.5 * y
-  >>> scalar = types.SimpleNamespace(shape=(), dtype=np.float32)
+  >>> scalar = types.SimpleNamespace(shape=(), dtype=np.dtype(np.float32))
   >>> f_transpose = jax.linear_transpose(f, scalar, scalar)
   >>> f_transpose(1.0)
   (DeviceArray(0.5, dtype=float32), DeviceArray(-0.5, dtype=float32))
@@ -2441,7 +2403,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> class MyArgArray(object):
   ...   def __init__(self, shape, dtype):
   ...     self.shape = shape
-  ...     self.dtype = dtype
+  ...     self.dtype = jnp.dtype(dtype)
   ...
   >>> A = MyArgArray((2000, 3000), jnp.float32)
   >>> x = MyArgArray((3000, 1000), jnp.float32)

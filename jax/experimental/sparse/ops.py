@@ -23,8 +23,8 @@ product, sparse matrix/matrix product) for two common sparse representations
 
 These routines have reference implementations defined via XLA scatter/gather
 operations that will work on any backend, although they are not particularly
-performant. On GPU runtimes with jaxlib 0.1.66 or newer built against CUDA 11.0
-or newer, each operation is computed efficiently via cusparse.
+performant. On GPU runtimes built against CUDA 11.0 or newer, each operation is
+computed efficiently via cusparse.
 
 Further down are some examples of potential high-level wrappers for sparse objects.
 (API should be considered unstable and subject to change).

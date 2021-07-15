@@ -208,15 +208,8 @@ def api_boundary(fun):
         # There seems to be no way to alter the currently raised exception's
         # traceback, except via the C API. The currently raised exception
         # is part of the interpreter's thread state: value `e` is a copy.
-        if hasattr(xla_extension, 'replace_thread_exc_traceback'):
-          xla_extension.replace_thread_exc_traceback(filtered_tb)
-          raise
-        else:
-          # TODO(phawkins): remove this case when jaxlib 0.1.66 is the
-          # minimum.
-
-          # Fallback case for older jaxlibs; includes the current frame.
-          raise e.with_traceback(filtered_tb)
+        xla_extension.replace_thread_exc_traceback(filtered_tb)
+        raise
       finally:
         del filtered_tb
         del unfiltered
