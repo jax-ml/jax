@@ -216,10 +216,13 @@ class SPMDTestMixin:
     if jtu.device_under_test() not in ['tpu', 'gpu']:
       raise SkipTest
     super().setUp()
-    jtu.set_spmd_lowering_flag(True)
+    jax.experimental.maps.make_xmap_callable.cache_clear()
+    self.old_lowering_flag = jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING
+    jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = True
 
   def tearDown(self):
-    jtu.restore_spmd_lowering_flag()
+    jax.experimental.maps.make_xmap_callable.cache_clear()
+    jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING = self.old_lowering_flag
 
 
 class XMapTest(XMapTestCase):
@@ -369,7 +372,7 @@ class XMapTest(XMapTestCase):
                      (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
     self.assertEqual(y[0].sharding_spec.mesh_mapping,
                      (pxla.Replicated(2), pxla.ShardedAxis(0)) + (pxla.Replicated(2),) * (len(mesh) - 2))
-    if config.experimental_xmap_spmd_lowering:
+    if maps.EXPERIMENTAL_SPMD_LOWERING:
       hlo = jax.xla_computation(f)(x).as_hlo_text()
       # Make sure that there are non-partial sharding specs in the HLO
       self.assertRegex(hlo, r"sharding={devices=\[[0-9,]+\][0-9,]+}")
@@ -742,7 +745,7 @@ class NewPrimitiveTest(XMapTestCase):
 
   @jtu.with_and_without_mesh
   def testGather(self, mesh, axis_resources):
-    if axis_resources and not config.experimental_xmap_spmd_lowering:
+    if axis_resources and not jax.experimental.maps.EXPERIMENTAL_SPMD_LOWERING:
       raise SkipTest("pgather over mesh axes without SPMD lowering not implemented")
     x = jnp.arange(12, dtype=np.float32).reshape((4, 3))
     y = jnp.arange(35).reshape((5, 7)) % 3

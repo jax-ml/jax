@@ -32,7 +32,7 @@ from .._src.tree_util import _replace_nones
 from ..api_util import (flatten_fun_nokwargs, flatten_axes, _ensure_index_tuple,
                         donation_vector)
 from .._src import source_info_util
-from .._src.config import config
+from ..config import config
 from ..errors import JAXTypeError
 from ..interpreters import partial_eval as pe
 from ..interpreters import pxla
@@ -51,6 +51,8 @@ map, unsafe_map = safe_map, map
 zip = safe_zip
 
 xops = xc.ops
+
+EXPERIMENTAL_SPMD_LOWERING = False
 
 class FrozenDict(abc.Mapping):
   def __init__(self, *args, **kwargs):
@@ -693,7 +695,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
                               mesh_in_axes,
                               mesh_out_axes,
                               donated_invars,
-                              config.experimental_xmap_spmd_lowering,
+                              EXPERIMENTAL_SPMD_LOWERING,
                               *in_avals,
                               tile_by_mesh_axes=True,
                               do_resource_typecheck=None)
@@ -1070,7 +1072,7 @@ core.initial_to_final_param_rules[xmap_p] = _xmap_initial_to_final_params
 # -------- nested xmap handling --------
 
 def _xmap_translation_rule(*args, **kwargs):
-  if config.experimental_xmap_spmd_lowering:
+  if EXPERIMENTAL_SPMD_LOWERING:
     return _xmap_translation_rule_spmd(*args, **kwargs)
   else:
     return _xmap_translation_rule_replica(*args, **kwargs)
@@ -1490,23 +1492,3 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
       return xmap(fun, in_axes=in_axes, out_axes={0: axis_name},
                   axis_resources={axis_name: 'devices'})(*args, **kwargs)
   return f_pmapped
-
-# -------- config flags --------
-
-def _thread_local_flag_unsupported(_):
-  raise RuntimeError("thread-local xmap flags not supported!")
-def _clear_compilation_cache(_):
-  make_xmap_callable.cache_clear()  # type: ignore
-
-try:
-  config.define_bool_state(
-      name="experimental_xmap_spmd_lowering",
-      default=False,
-      help=("When set, multi-device xmaps computations will be compiled through "
-            "the XLA SPMD partitioner instead of explicit cross-replica collectives. "
-            "Not supported on CPU!"),
-      update_global_hook=_clear_compilation_cache,
-      update_thread_local_hook=_thread_local_flag_unsupported)
-except Exception:
-  raise ImportError("jax.experimental.maps has to be imported before JAX flags "
-                    "are parsed")
