@@ -93,6 +93,8 @@ class Config:
 
   def add_option(self, name, default, opt_type, meta_args, meta_kwargs,
                  update_hook=None):
+    if already_configured_with_absl:
+      raise Exception("Adding a config option after command line flags have been parsed")
     if name in self.values:
       raise Exception("Config option {} already defined".format(name))
     self.values[name] = default
