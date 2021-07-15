@@ -1755,14 +1755,6 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
 tf_impl_with_avals[lax.dot_general_p] = _dot_general
 
 
-def _broadcast(operand, *, sizes):
-  result_shape = tf.TensorShape(sizes).concatenate(operand.shape)
-  return tf.broadcast_to(operand, result_shape)
-
-
-tf_impl[lax.broadcast_p] = _broadcast
-
-
 def _broadcast_in_dim(operand, *, shape, broadcast_dimensions):
   inshape = [1] * len(shape)
   for orig_shape_i, broadcast_dim_i in zip(operand.shape, broadcast_dimensions):
