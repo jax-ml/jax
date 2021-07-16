@@ -142,16 +142,16 @@ template <>
   SparseHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
   cusparseHandle_t handle;
-  if (pool->handles_.empty()) {
+  if (pool->handles_[stream].empty()) {
     JAX_THROW_IF_ERROR(cusparseCreate(&handle));
   } else {
-    handle = pool->handles_.back();
-    pool->handles_.pop_back();
+    handle = pool->handles_[stream].back();
+    pool->handles_[stream].pop_back();
   }
   if (stream) {
     JAX_THROW_IF_ERROR(cusparseSetStream(handle, stream));
   }
-  return Handle(pool, handle);
+  return Handle(pool, handle, stream);
 }
 
 cusparseIndexType_t DtypeToCuSparseIndexType(const py::dtype& np_type) {

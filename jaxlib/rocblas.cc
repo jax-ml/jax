@@ -58,11 +58,11 @@ template <>
   rocBlasHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
   rocblas_handle handle;
-  if (pool->handles_.empty()) {
+  if (pool->handles_[stream].empty()) {
     ThrowIfErrorStatus(rocblas_create_handle(&handle));
   } else {
-    handle = pool->handles_.back();
-    pool->handles_.pop_back();
+    handle = pool->handles_[stream].back();
+    pool->handles_[stream].pop_back();
   }
   if (stream) {
     ThrowIfErrorStatus(rocblas_set_stream(handle, stream));

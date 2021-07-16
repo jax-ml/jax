@@ -38,7 +38,7 @@ class HandlePool {
     Handle() = default;
     ~Handle() {
       if (pool_) {
-        pool_->Return(handle_);
+        pool_->Return(handle_, stream_);
       }
     }
 
@@ -62,10 +62,12 @@ class HandlePool {
 
    private:
     friend class HandlePool<HandleType, StreamType>;
-    Handle(HandlePool<HandleType, StreamType>* pool, HandleType handle)
-        : pool_(pool), handle_(handle) {}
+    Handle(HandlePool<HandleType, StreamType>* pool, HandleType handle,
+           StreamType stream)
+        : pool_(pool), handle_(handle), stream_(stream) {}
     HandlePool<HandleType, StreamType>* pool_ = nullptr;
     HandleType handle_ = nullptr;
+    StreamType stream_ = nullptr;
   };
 
   // Borrows a handle from the pool. If 'stream' is non-null, sets the stream
@@ -75,10 +77,10 @@ class HandlePool {
  private:
   static HandlePool<HandleType, StreamType>* Instance();
 
-  void Return(HandleType handle);
+  void Return(HandleType handle, StreamType stream);
 
   absl::Mutex mu_;
-  std::vector<HandleType> handles_ ABSL_GUARDED_BY(mu_);
+  std::map<StreamType, std::vector<HandleType>> handles_ ABSL_GUARDED_BY(mu_);
 };
 
 template <typename HandleType, typename StreamType>
@@ -89,9 +91,10 @@ HandlePool<HandleType, StreamType>::Instance() {
 }
 
 template <typename HandleType, typename StreamType>
-void HandlePool<HandleType, StreamType>::Return(HandleType handle) {
+void HandlePool<HandleType, StreamType>::Return(HandleType handle,
+                                                StreamType stream) {
   absl::MutexLock lock(&mu_);
-  handles_.push_back(handle);
+  handles_[stream].push_back(handle);
 }
 
 // template <typename HandleType, typename StreamType>
