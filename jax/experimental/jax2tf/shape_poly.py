@@ -435,7 +435,8 @@ def _einsum_contract_path(*operands, **kwargs):
   # sizes of operands and intermediate results.
   fake_ops = []
   for operand in operands:
-    if isinstance(operand, str):
+    # We replace only array operands
+    if not hasattr(operand, "dtype"):
       fake_ops.append(operand)
     else:
       shape = np.shape(operand)
