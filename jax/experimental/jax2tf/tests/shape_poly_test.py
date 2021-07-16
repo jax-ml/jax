@@ -982,13 +982,28 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
 
+    _make_harness("einsum", "0_alt",
+                  lambda x: jnp.einsum(x, (..., 1), [...]),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+
     _make_harness("einsum", "1",
                   lambda x, y: jnp.einsum("...ij,...jk->...ik", x, y),
                   [RandArg((3, 4, 5), _f32), RandArg((3, 5, 6), _f32)],
                   poly_axes=[0, 0]),
 
+    _make_harness("einsum", "1_alt",
+                  lambda x, y: jnp.einsum(x, [..., 0, 1], y, (..., 1, 2), [..., 0, 2]),
+                  [RandArg((3, 4, 5), _f32), RandArg((3, 5, 6), _f32)],
+                  poly_axes=[0, 0]),
+
     _make_harness("einsum", "2",
                   lambda x, y: jnp.einsum("...ij,jk->...ik", x, y),
+                  [RandArg((3, 4, 5), _f32), RandArg((5, 6), _f32)],
+                  poly_axes=[0, None]),
+
+    _make_harness("einsum", "2_alt",
+                  lambda x, y: jnp.einsum(x, [..., 0, 1], y, [1, 2], [..., 0, 2]),
                   [RandArg((3, 4, 5), _f32), RandArg((5, 6), _f32)],
                   poly_axes=[0, None]),
 
@@ -998,11 +1013,25 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[1, 0]),
 
+    _make_harness("einsum", "3_alt",
+                  # Reduced dimension is polymorphic
+                  lambda x, y: jnp.einsum(x, [0, 1], y, [1, 2], [0, 2]),
+                  [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
+                  poly_axes=[1, 0]),
+
     _make_harness("einsum", "4",
                   # Reduced dimension is polymorphic, and is 2*b
                   lambda x, y: jnp.einsum("ij,jk->ik",
                                           jnp.concatenate([x, x], axis=1),
                                           jnp.concatenate([y, y], axis=0)),
+                  [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
+                  poly_axes=[1, 0]),
+
+    _make_harness("einsum", "4_alt",
+                  # Reduced dimension is polymorphic, and is 2*b
+                  lambda x, y: jnp.einsum(jnp.concatenate([x, x], axis=1), [0, 1],
+                                          jnp.concatenate([y, y], axis=0), [1, 2],
+                                          [0, 2]),
                   [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[1, 0]),
 
