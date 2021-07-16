@@ -16,10 +16,13 @@ from absl.testing import absltest
 import hashlib
 from jax.experimental.compilation_cache import compilation_cache as cc
 import jax
+from jax import pmap, lax
 import jax.test_util as jtu
 import numpy as np
+import os
 import random
 import tempfile
+import unittest
 from unittest import SkipTest
 
 from jax.config import config
@@ -28,6 +31,14 @@ FLAGS = config.FLAGS
 
 class CompilationCacheTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    if jtu.device_under_test() != "tpu":
+        raise SkipTest("serialize executable only works on TPU")
+    if jax.lib.xla_bridge.get_backend().runtime_type == "tfrt":
+        raise SkipTest("the new TFRT runtime does not support serialization")
+
+  @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_compile_options(self):
     compile_options_not_filled = jax.lib.xla_bridge.get_compile_options(
                       num_replicas=1, num_partitions=1)
@@ -130,10 +141,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
           self.assertEqual(cc.get_executable(computation, compile_options), None)
 
   def test_diff_executables(self):
-      if jtu.device_under_test() != "tpu":
-          raise SkipTest("serialize executable only works on TPU")
-      if jax.lib.xla_bridge.get_backend().runtime_type == "tfrt":
-          raise SkipTest("the new TFRT runtime does not support serialization")
       cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
@@ -150,10 +157,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
                               cc.get_executable(computation2, compile_options))
 
   def test_put_executable(self):
-      if jtu.device_under_test() != "tpu":
-          raise SkipTest("serialize executable only works on TPU")
-      if jax.lib.xla_bridge.get_backend().runtime_type == "tfrt":
-          raise SkipTest("the new TFRT runtime does not support serialization")
       cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
@@ -168,6 +171,21 @@ class CompilationCacheTest(jtu.JaxTestCase):
           expected = jax.lib.xla_client.execute_with_python_values(executable, inputs_to_executable, backend)
           actual = jax.lib.xla_client.execute_with_python_values(deserialized_executable, inputs_to_executable, backend)
           self.assertEqual(expected, actual)
+
+  def test_pmap(self):
+      cc._cache = None
+      with tempfile.TemporaryDirectory() as tmpdir:
+          cc.initialize_cache(tmpdir)
+          f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+          x = np.arange(jax.device_count(), dtype=np.int64)
+          f(x)
+          files_in_directory = len(os.listdir(tmpdir))
+          self.assertEqual(files_in_directory, 1)
+          x = np.arange(jax.device_count(), dtype=np.float32)
+          f(x)
+          files_in_directory = len(os.listdir(tmpdir))
+          self.assertEqual(files_in_directory, 2)
+          #TODO: create a test for calling pmap with the same input more than once
 
   def create_new_debug_options(self, debug_options_obj):
     debug_options_obj.xla_cpu_enable_fast_math = False

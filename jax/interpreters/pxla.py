@@ -59,6 +59,20 @@ from . import partial_eval as pe
 from . import xla
 from . import ad
 
+def compile_or_get_cached(backend, computation, compile_options):
+    # Avoid import cycle between jax and jax.experimental
+    from jax.experimental.compilation_cache import compilation_cache as cc
+    if cc.is_initialized():
+        cached_executable = cc.get_executable(computation, compile_options)
+        if cached_executable is not None:
+            return cached_executable
+        else:
+            compiled = xla.backend_compile(backend, computation, compile_options)
+            cc.put_executable(computation, compile_options, compiled)
+            return compiled
+    else:
+        return xla.backend_compile(backend, computation, compile_options)
+
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
   pass
@@ -903,7 +917,8 @@ def parallel_callable(fun: lu.WrappedFun,
                                       input_indices, input_sharding_specs,
                                       handle_outs)
     return WeakRefList([execute_fun, None])
-  compiled = xla.backend_compile(backend, built, compile_options)
+
+  compiled = compile_or_get_cached(backend, built, compile_options)
   handle_args = partial(shard_args, compiled.local_devices(), input_indices)
   execute_fun = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
   fingerprint = getattr(compiled, "fingerprint", None)
