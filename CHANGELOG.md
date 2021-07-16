@@ -11,15 +11,18 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.19 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.18...main).
 
+* New features:
+  * Improved the support for shape polymorphism in jax2tf for operations that
+    need to use a dimension size in array computation, e.g., `jnp.mean`.
+    ({jax-issue}`#7317`)
+  
 ## jaxlib 0.1.70 (unreleased)
 * Breaking changes:
   * Support for Python 3.6 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
     Please upgrade to a supported Python version.
-
-
-* Breaking changes:
-  * The host_callback mechnism now uses one thread per local device for
+    
+  * The host_callback mechanism now uses one thread per local device for
     making the calls to the Python callbacks. Previously there was a single
     thread for all devices. This means that the callbacks may now be called
     interleaved. The callbacks corresponding to one device will still be

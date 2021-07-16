@@ -648,91 +648,6 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize]) -> Sequence[TfVal]:
   return shape_poly.eval_shape(shape, _thread_local_state.shape_env)
 
 
-def shape_as_value(x):
-  """Injects the shape of `x` as an array value.
-
-  **Experimental: please give feedback, and expect changes!**
-
-  This allows the use of a shape expression as array argument to JAX functions.
-  A typical example is for implementing a mean operation:
-
-     jnp.sum(x) / np.prod(jax2tf.shape_as_value(x))
-  """
-  # return shape_as_value_p.bind(x)
-  return NotImplementedError("shape_as_value is deprecated")
-
-
-# # TODO: move this to masking or to some common library, if approved
-# shape_as_value_p = core.Primitive("shape_as_value")
-# shape_as_value_p.multiple_results = True
-# def _shape_as_value_impl(x):
-#   x_shape = np.shape(x)
-#   def dim_to_int(dim: shape_poly.DimSize) -> int:
-#     dim_int = _poly_dim_to_tf_dim(dim)
-#     if dim_int is None:
-#       msg = ("shape_as_value is not implemented for non-constant shapes "
-#              "except for masking and jax2tf. "
-#              f"Has shape: {x_shape}")
-#       raise TypeError(msg)
-#     else:
-#       return dim_int
-#   return tuple(map(dim_to_int, x_shape))
-#
-# shape_as_value_p.def_impl(_shape_as_value_impl)
-#
-# def _shape_as_value_abstract(x_aval: core.AbstractValue) -> Sequence[core.AbstractValue]:
-#   rank = len(x_aval.shape)  # type: ignore[attr-defined]
-#   return (core.ShapedArray((), dtypes.canonicalize_dtype(np.int_), weak_type=True),) * rank
-#
-# shape_as_value_p.def_abstract_eval(_shape_as_value_abstract)
-#
-# def _shape_as_value_translation(comp, x):
-#   return xla_client._xla.ops.Tuple(comp,
-#                                    tuple(xb.constant(comp, d)
-#                                          for d in comp.GetShape(x).dimensions()))
-#
-# xla.translations[shape_as_value_p] = _shape_as_value_translation
-#
-# def _shape_as_value_jvp_rule(primals, tangents):
-#   # The shape does not depend on the contents of the input
-#   x, = primals
-#   zero = ad.Zero.from_value(0.)
-#   return shape_as_value(x), (zero,) * len(x.shape)
-#
-# ad.primitive_jvps[shape_as_value_p] = _shape_as_value_jvp_rule
-#
-# def _shape_as_value__batching_rule(batched_args, batch_dims):
-#   xv, = batched_args
-#   batch_dim, = batch_dims
-#   batch_size = xv.shape[batch_dim]
-#   batched_shape = shape_as_value(xv)
-#   one_shape = batched_shape[0:batch_dim] + batched_shape[batch_dim+1:]
-#   res = tuple(jnp.broadcast_to(d, (batch_size, 1)) for d in one_shape)
-#   return res, (0,) * len(one_shape)
-#
-# batching.primitive_batchers[shape_as_value_p] = _shape_as_value__batching_rule
-#
-# def _shape_as_value_masking_rule(operands, operands_logical_shapes):
-#   x_logical_shape, = operands_logical_shapes
-#   return tuple(x_logical_shape)
-#
-# masking.masking_rules[shape_as_value_p] = _shape_as_value_masking_rule
-#
-# def _shape_as_value_tf(x: TfVal,
-#                        _in_avals: Sequence[core.AbstractValue],
-#                        _out_aval: core.AbstractValue) -> TfVal:
-#   x_aval = _in_avals[0]
-#   def dim_to_tfval(dim: shape_poly.DimSize, dim_idx: int) -> TfVal:
-#     dim_int = _poly_dim_to_tf_dim(dim)
-#     if dim_int is not None:
-#       return tf.convert_to_tensor(dim_int)
-#     else:
-#       return tf.shape(x)[dim_idx]
-#   return tuple(dim_to_tfval(dim, dim_idx)
-#                for dim_idx, dim in enumerate(x_aval.shape))  # type: ignore[attr-defined]
-#
-# tf_impl_with_avals[shape_as_value_p] = _shape_as_value_tf
-
 # TODO(b/26854495): pylint doesn't understand slots and inheritance.
 # pylint: disable=assigning-non-slot
 
@@ -775,8 +690,7 @@ class TensorFlowTracer(core.Tracer):
         else:
           assert self._aval.dtype == _to_jax_dtype(val.dtype), f"expected {self._aval.dtype} == {val.dtype}"
 
-        for aval_dim, val_dim in zip(
-            self._aval.shape, val_shape):  # type: ignore[attr-defined]
+        for aval_dim, val_dim in zip(self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
             assert shape_poly.is_poly_dim(aval_dim), f"expected {self._aval.shape} == {val_shape}"  # type: ignore[attr-defined]
           elif not shape_poly.is_poly_dim(aval_dim):
@@ -2481,8 +2395,8 @@ def _slice(operand, start_indices, limit_indices, strides, _in_avals,
                      _eval_shape(strides)))
   out = operand[slices]
   # TODO(b/184503314): improve shape inference for __getitem__
-  #out.set_shape(_aval_to_tf_shape(_out_aval))
-  #assert False, f"start_indices={start_indices}, limit_indices={limit_indices}, strides={strides}, out={out}"
+  # E.g., operand.shape=(b, 5, 3), start_indices=(0, 1, 1), limit_indices=(b, 5, 3), strides=(1, 2, 1)
+  out.set_shape(_aval_to_tf_shape(_out_aval))
   return out
 
 
@@ -3075,3 +2989,5 @@ def _register_checkpoint_pytrees():
 
 
 _register_checkpoint_pytrees()
+
+shape_poly._register_conversion_rules()

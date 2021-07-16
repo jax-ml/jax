@@ -6763,7 +6763,8 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     raise TypeError(msg.format(fun_name, arg_name, bound_error, obj))
 
 
-def _dynamic_slice_indices(operand, start_indices):
+def  _dynamic_slice_indices(operand, start_indices):
+  # Normalize the start_indices w.r.t. operand.shape
   if len(start_indices) != operand.ndim:
     msg = ("Length of slice indices must match number of operand dimensions ({} "
           "vs {})")
@@ -6772,15 +6773,13 @@ def _dynamic_slice_indices(operand, start_indices):
     if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))
-    return select(lt(start_indices, _zeros(start_indices)),
-                  add(start_indices, _const(start_indices, operand.shape)),
-                  start_indices)
-  else:
-    return [np.asarray(i + d if i < 0 else i, getattr(i, 'dtype', dtypes.int_))
-            if isinstance(i, (int, np.integer))
-            else select(lt(i, _const(i, 0)), add(i, _const(i, d)), i)
-            for i, d in zip(start_indices, operand.shape)]
-
+    start_indices = [i for i in start_indices]
+  return [np.asarray(i + d if i < 0 else i, getattr(i, 'dtype', dtypes.int_))
+          if isinstance(i, (int, np.integer)) and core.is_constant_dim(d)
+          else select(lt(i, _const(i, 0)),
+                      add(i, convert_element_type(core.dimension_as_value(d), _dtype(i))),
+                      i)
+          for i, d in zip(start_indices, operand.shape)]
 
 def _const(example, val):
   dtype = _dtype(example)

@@ -30,6 +30,8 @@ from jax._src.numpy import lax_numpy
 import opt_einsum
 from jax import config
 from jax import core
+from . import jax2tf as jax2tf_internal
+
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
@@ -419,6 +421,10 @@ class DimensionHandlerPoly(core.DimensionHandler):
           f"window_size '{window_size}', stride '{window_stride}'. Reason: {e}.")
     return d
 
+  def as_value(self, d: DimSize):
+    """Turns a dimension size into a Jax value that we can compute with."""
+    return _dim_as_value(d)
+
 core._SPECIAL_DIMENSION_HANDLERS[_DimPolynomial] = DimensionHandlerPoly()
 
 def _einsum_contract_path(*operands, **kwargs):
@@ -467,6 +473,27 @@ def _einsum_contract_path(*operands, **kwargs):
   return contract_operands, contractions
 
 lax_numpy._polymorphic_einsum_contract_path_handlers[_DimPolynomial] = _einsum_contract_path
+
+# A JAX primitive with no array arguments but with a dimension parameter
+# that is a DimPoly. The value of the primitive is the value of the dimension.
+# This primitive is used only in the context of jax2tf, so it does not need
+# XLA translation rules.
+dim_as_value_p = core.Primitive("dim_as_value")
+def _dim_as_value_abstract(dim: DimSize) -> core.AbstractValue:
+  return core.ShapedArray((), np.int32)
+
+dim_as_value_p.def_abstract_eval(_dim_as_value_abstract)
+
+def _dim_as_value(dim: DimSize):
+  return dim_as_value_p.bind(dim=dim)
+
+def _dim_as_value_jax2tf(dim: DimSize):
+  dim_tf, = jax2tf_internal._eval_shape((dim,))
+  assert dim_tf.dtype == tf.int32
+  return dim_tf
+
+def _register_conversion_rules():
+  jax2tf_internal.tf_impl[dim_as_value_p] = _dim_as_value_jax2tf
 
 
 class PolyShape(tuple):
