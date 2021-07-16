@@ -1206,6 +1206,7 @@ def debug_info(fn: Callable, in_tree: Optional[PyTreeDef], has_kwargs: bool,
 def fun_sourceinfo(fun: Callable):
   while isinstance(fun, functools.partial):
     fun = fun.func
+  fun = inspect.unwrap(fun)
   try:
     filename = fun.__code__.co_filename
     lineno = fun.__code__.co_firstlineno
