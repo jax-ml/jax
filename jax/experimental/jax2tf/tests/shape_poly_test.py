@@ -1046,10 +1046,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   poly_axes=[0]),
 
     # TODO: random_gamma does not work yet.
-    # _make_harness("random_gamma", "",
-    #               lambda key, a: jax.random.gamma(key, a),
-    #               [RandArg((3, 2), np.uint32), RandArg((3, 3), _f32)],
-    #               poly_axes=[0, 0]),
+    _make_harness("random_gamma", "",
+                  lambda key, a: jax.random.gamma(key, a),
+                  [RandArg((3, 2), np.uint32), RandArg((3, 3), _f32)],
+                  poly_axes=[0, 0]),
 
     _make_harness("reshape", "0",
                   lambda x: x.reshape([x.shape[0], -1]),
@@ -1327,6 +1327,21 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     if harness.params["check_result"]:
       tol = harness.params["tol"]
       self.assertAllClose(res_jax, f_tf(*args), atol=tol, rtol=tol)
+
+  def test_vmap_while(self):
+    def cond_func(x):  # x: f32[3]
+      return jnp.sum(x) >= 0.
+    def body_func(x):  # x: f32[3]
+      return x - 1.
+    def f_jax(x):
+      return lax.while_loop(cond_func, body_func, x)
+
+    self.CheckShapePolymorphism(
+        jax.vmap(f_jax),
+        input_signature=[tf.TensorSpec((None, 3), dtype=tf.float32)],
+        polymorphic_shapes=["b, ..."],
+        expected_output_signature=tf.TensorSpec((None, 3), dtype=tf.float32)
+    )
 
   def test_reshape_error(self):
 
