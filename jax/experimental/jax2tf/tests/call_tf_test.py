@@ -51,7 +51,7 @@ parameterized_jit = parameterized.named_parameters(
     for with_jit in [True, False])
 
 
-class CallTfTest(jtu.JaxTestCase):
+class CallTfTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):
     if tf is None:
@@ -639,7 +639,7 @@ class CallTfTest(jtu.JaxTestCase):
     print(jax.make_jaxpr(cos_tf_sin_jax)(x))
     print(jax.xla_computation(cos_tf_sin_jax)(x).as_hlo_text())
 
-class RoundTripToJaxTest(jtu.JaxTestCase):
+class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of jax2tf into JAX with call_tf"
   def setUp(self):
     if tf is None:
@@ -806,7 +806,7 @@ class RoundTripToJaxTest(jtu.JaxTestCase):
     # The graph tensor has name: args_0:0
     # g = jax.grad(f_rt)(x)
 
-class RoundTripToTfTest(jtu.JaxTestCase):
+class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of call_tf into TF with jax2tf."
 
   def setUp(self):

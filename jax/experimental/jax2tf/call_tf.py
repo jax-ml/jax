@@ -280,7 +280,7 @@ def _code_generator_and_avals(
   # TODO(necula): For unoptimized HLO, does it make a difference which device we use?
   tf_device_name = "/device:CPU:0"
   with jax2tf_internal.inside_call_tf():
-    concrete_function_flat_tf = function_flat_tf.get_concrete_function(*args_tf_flat)
+    concrete_function_flat_tf = function_flat_tf.get_concrete_function(*args_flat_sig_tf)
 
   captured_inputs = []
   if concrete_function_flat_tf.captured_inputs:
