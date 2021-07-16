@@ -2634,16 +2634,15 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
     new_carry: Sequence[TfVal] = _interpret_jaxpr(body_jaxpr, *body_consts,
                                                   *carry,
                                                   extra_name_stack="while/body")
-
-    def select_one_carry(new_c: TfVal, c: TfVal) -> TfVal:
+    # We repeat those carries for which the loop termination condition is false
+    def select_one_carry(new_c: TfVal, c: TfVal, c_aval: core.AbstractValue) -> TfVal:
       pred_b_bcast = _broadcast_in_dim(
           pred_b,
-          shape=new_c.shape,
+          shape=c_aval.shape,  # a JAX shape
           broadcast_dimensions=list(range(len(pred_b.shape))))
       return tf.where(pred_b_bcast, new_c, c)
 
-    selected_carry: Sequence[TfVal] = list(
-        map(select_one_carry, new_carry, carry))
+    selected_carry: Sequence[TfVal] = list(map(select_one_carry, new_carry, carry, body_jaxpr.out_avals))
     next_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *selected_carry,
                                     extra_name_stack="body_pred")
     return (next_pred_b, *selected_carry)
