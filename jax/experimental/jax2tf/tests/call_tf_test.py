@@ -289,7 +289,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x * 4. + 1, res, check_dtypes=False)
 
   @parameterized_jit
-  def test_with_tensor_capture(self, with_jit=False):
+  def test_with_tensor_capture(self, with_jit=True):
     outer_tensor = tf.constant(3., dtype=np.float32)
 
     def fun_tf(x):
@@ -804,6 +804,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     #     with tf.init_scope():
     #       added = my_constant * 2
     # The graph tensor has name: args_0:0
+
     # g = jax.grad(f_rt)(x)
 
 class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):

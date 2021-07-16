@@ -295,9 +295,9 @@ def _code_generator_and_avals(
     for inp in concrete_function_flat_tf.captured_inputs:
       if inp.dtype == tf.resource:  # A variable; assume the next variable
         assert next_var_idx < len(concrete_function_flat_tf.variables)
-        # TODO(necula): better checking that we are picking the right variable
         var = concrete_function_flat_tf.variables[next_var_idx]
         next_var_idx += 1
+        assert inp is var.handle  # For extra safety
         captured_inputs.append(var)
       else:
         captured_inputs.append(inp)
