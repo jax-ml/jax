@@ -11,51 +11,110 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 
 
+# TODO: Allow singular value estimates to be manually specified
+@jax.jit
+def _add_to_diagonal(X, val):
+  new_diagonal = X.diagonal() + val
+  diag_indices = jnp.diag_indices(X.shape[0])
+  return jax.ops.index_update(X, diag_indices, new_diagonal)
+
+
+@jax.jit
 def _dot(a, b):
   return jnp.dot(a, b, precision=lax.Precision.HIGHEST)
 
 
-# TODO: Handle thin case with a preliminary QR factorization.
-# TODO: Handle fat case with a transpose
-# TODO: Handle the identity stacking
-# TODO: Allow singular avlue estimates to be manually specified
-# TODO: Lower precision
+def polar(a, side='right', method='qdwh', eps=None, maxiter=50):
+  """ Computes the polar decomposition.
 
-def polar(matrix, eps=None, maxiter=6, compute_posdef=True,
-          precision=lax.Precision.HIGHEST):
-  """
-  Computes the polar decomposition of the m x n matrix A, A = U @ H where U is
-  unitary (an m x n isometry in the m > n case) and H is n x n and positive
-  semidefinite (or positive definite if A is nonsingular) using the
-  QDWH method.
+  Given the (m x n) matrix `a`, returns the factors of the polar decomposition
+  `u` (m x n) and `p` such that `a = up` (if side is "right"; p is (n x n)) or
+  `a = pu` (if side is "left"; p is (m x m)), where `p` is positive
+  semidefinite.  If `a` is nonsingular, `p` is positive definite and the
+  decomposition is unique. `u` has orthonormal columns unless n > m, in which
+  case it has orthonormal rows.
+
+  Writing an SVD of `a` as `a = u_svd @ s_svd @ v^h_svd`, we have
+  `u = u_svd @ v^h_svd`. Thus the unitary factor `u` can be construed as
+  the application of the signum function to the singular values of `a`;
+  or, if `a` is Hermitian, the eigenvalues.
+
+  Several methods exist to compute the polar decomposition. Currently two
+  are supported:
+    `method`="svd": Computes the SVD of `a` and then forms
+                    `u = u_svd @ v^h_svd`. This fails on the TPU, since
+                    no SVD algorithm independent of the polar decomposition
+                    exists there.
+    `method`="qdwh": Applies a certain iterative expansion of the matrix
+                     signum function to `a` based on QR and Cholesky
+                     decompositions.
 
   Args:
-    matrix: The m x n input matrix. Currently n > m is unsupported.
+    a: The m x n input matrix.
+    side: Determines whether a right or left polar decomposition is computed.
+      If side is "right" then `a = up`. If side is "left" then `a = pu`. The
+      default is "right".
+    method: Determines the algorithm used, as described above.
+    precision: Controls the TPU matrix multiplication precision.
+
+    The remaining arguments are only meaningful if method is "qdwh".
     eps: The final result will satisfy |X_k - X_k-1| < |X_k| * (4*eps)**(1/3) .
     maxiter: Iterations will terminate after this many steps even if the
              above is unsatisfied.
-    compute_posdef: Whether to return the positive-definite factor.
   Returns:
     unitary: The unitary factor (m x n).
-    posdef: The positive-semidefinite factor (n x n) (None if compute_posdef
-            is False).
-    j_qr: Number of QR iterations.
-    j_chol: Number of Cholesky iterations.
+    posdef: The positive-semidefinite factor. Either (n, n) or (m, m)
+      depending on whether side is "right" or "left", respectively.
+    info: Stores convergence information.
+      if method is "svd": None
+      if method is "qdwh": j_qr: Number of QR iterations.
+                           j_chol: Number of Cholesky iterations.
+                           errs: Convergence history.
   """
-  scaled_matrix, q_factor, l0 = _initialize_qdwh(matrix)
-  unitary, j_qr, j_chol = _qdwh(scaled_matrix, l0, eps=eps, maxiter=maxiter)
-  unitary = _dot(q_factor, unitary)
-  posdef = None
-  if compute_posdef:
-    posdef = _dot(unitary.conj().T, matrix)
-    posdef = 0.5 * (posdef + posdef.conj().T)
-
-  return unitary, posdef, j_qr, j_chol
+  return _polar(a, side, method, eps, maxiter)
 
 
-def _qdwh(matrix, l0, eps=None, maxiter=6):
+@jax.partial(jax.jit, static_argnums=(1, 2, 4))
+def _polar(a, side, method, eps, maxiter):
+  if side not in ("left", "right"):
+    raise ValueError(f"side={side} was invalid.")
+
+  unitary, info = _polar_unitary(a, method, eps, maxiter)
+  if side == "right":
+    posdef = _dot(unitary.conj().T, a)
+  else:
+    posdef = _dot(a, unitary.conj().T)
+  posdef = 0.5 * (posdef + posdef.conj().T)
+  return unitary, posdef, info
+
+
+def polar_unitary(a, method="qdwh", eps=None, maxiter=50):
+  """ Computes the unitary factor u in the polar decomposition `a = u p`
+  (or `a = p u`).
   """
-  Computes the unitary factor in the polar decomposition of A using
+  return _polar_unitary(a, method, eps, maxiter)
+
+
+@jax.partial(jax.jit, static_argnums=(1, 3))
+def _polar_unitary(a, method, eps, maxiter):
+  if method not in ("svd", "qdwh"):
+    raise ValueError(f"method={method} is unsupported.")
+
+  if method == "svd":
+    u_svd, _, vh_svd = jnp.linalg.svd(a, full_matrices=False)
+    unitary = _dot(u_svd, vh_svd)
+    info = None
+  elif method == "qdwh":
+    unitary, j_qr, j_chol, errs = _qdwh(a, eps, maxiter)
+    info = (j_qr, j_chol, errs)
+  else:
+    raise ValueError("How did we get here?")
+  return unitary, info
+
+
+@jax.partial(jax.jit, static_argnums=(2,))
+def _qdwh(matrix, eps, maxiter):
+  """ Computes the unitary factor in the polar decomposition of A using
   the QDWH method. QDWH implements a 3rd order Pade approximation to the
   matrix sign function,
 
@@ -93,20 +152,34 @@ def _qdwh(matrix, l0, eps=None, maxiter=6):
     matrix: The unitary factor (m x n).
     jq: The number of QR iterations (1).
     jc: The number of Cholesky iterations (2).
+    errs: Convergence history.
   """
+  n_rows, n_cols = matrix.shape
+  fat = n_cols > n_rows
+  if fat:
+    matrix = matrix.T
+  matrix, q_factor, l0 = _initialize_qdwh(matrix)
+
   if eps is None:
-    eps = jnp.finfo(matrix.dtype).eps  # TODO: account for precision
-  eps = (4 * eps)**(1 / 3)
+    eps = jnp.finfo(matrix.dtype).eps
+  tol_lk = 5 * eps  # stop when lk differs from 1 by less
+  tol_delta = jnp.cbrt(tol_lk)  # stop when the iterates change by less
   coefs = _qdwh_coefs(l0)
-  matrix, j_qr, coefs, err = _qdwh_qr(matrix, coefs, 2 * eps, eps, maxiter)
-  matrix, j_chol, _, _ = _qdwh_cholesky(matrix, coefs, err, eps, maxiter - j_qr)
-  return matrix, j_qr, j_chol
+  errs = jnp.zeros(maxiter, dtype=matrix.real.dtype)
+  matrix, j_qr, coefs, errs = _qdwh_qr(
+    matrix, coefs, errs, tol_lk, tol_delta, maxiter)
+  matrix, j_chol, errs = _qdwh_cholesky(
+    matrix, coefs, errs, tol_lk, tol_delta, j_qr, maxiter)
+  matrix = _dot(q_factor, matrix)
+
+  if fat:
+    matrix = matrix.T
+  return matrix, j_qr, j_chol, errs
 
 
 @jax.jit
 def _initialize_qdwh(matrix):
-  """
-  Does preparatory computations for QDWH:
+  """ Does preparatory computations for QDWH:
     1. Computes an initial QR factorization of the input A. The iterations
        will be on the triangular factor R, whose condition is more easily
        estimated, and which is square even when A is rectangular.
@@ -121,29 +194,38 @@ def _initialize_qdwh(matrix):
     Q from A -> Q @ R;
     l0, the initial estimate for the QDWH coefficients.
   """
-  # alpha = jnp.linalg.norm(matrix)
-  # scaled_matrix = matrix / alpha
-  # one_norm = jnp.linalg.norm(scaled_matrix, ord=1)
-
   q_factor, r_factor = jnp.linalg.qr(matrix, mode="reduced")
   alpha = jnp.linalg.norm(r_factor)
   r_factor /= alpha
-  r_inv = jsp.linalg.solve_triangular(
-    r_factor, jnp.eye(*(r_factor.shape), dtype=r_factor.dtype),
-    overwrite_b=True)
+  eye = jnp.eye(*r_factor.shape, dtype=r_factor.dtype)
+  r_inv = jsp.linalg.solve_triangular(r_factor, eye, overwrite_b=True)
   one_norm_inv = jnp.linalg.norm(r_inv, ord=1)
-
-  #l0 = alpha / (1.1 * one_norm * one_norm_inv)
   l0 = 1 / (jnp.sqrt(matrix.shape[1]) * one_norm_inv)
+  eps = jnp.finfo(r_factor.dtype).eps
   l0 = jnp.array(l0, dtype=r_factor.real.dtype)
+  l0 = jnp.where(l0 < eps, x=eps, y=l0)
+  l0 = jnp.where(l0 > 1.0, x=1.0, y=l0)
   return r_factor, q_factor, l0
 
 
 @jax.jit
 def _qdwh_coefs(lk):
+  """ Computes a, b, c, l for the QDWH iterations.
+  The input lk must be in (0, 1]; lk=1 is a fixed point.
+  Some facts about the coefficients:
+    -for lk = 1 we have a=3, b=1, c=3, lk_new = 1.
+    -The float64 vs float32 computation of each coef appears to differ
+     only by noise on the order of 1E-9 to 1E-7 for all values of lk.
+     There is no apparent secular change in the (relative) error.
+    -All coefs change roughly as power laws; over e.g. [1E-14, 1]:
+      - a decreases from 5.43E9 to 3.
+      - b decreases from 7.37E18 to 1.
+      - c decreases from 7.37E18 to 3, only diverging from b near lk=1.
+      - lk increases from 5.45E-5 to 1.
+
+  lk is an estimate of the scaled matrix's smallest singular value
   """
-  Computes a, b, c, l for the QDWH iterations.
-  """
+  lk = jnp.where(lk > 1.0, x=1.0, y=lk)
   d = (4. * (1. - lk**2) / (lk**4))**(1 / 3)
   f = 8. * (2. - lk**2) / (lk**2 * (1. + d)**(1 / 2))
   a = (1. + d)**(1 / 2) + 0.5 * (8. - 4. * d + f)**0.5
@@ -154,9 +236,17 @@ def _qdwh_coefs(lk):
 
 
 @jax.jit
-def _qdwh_qr(matrix, coefs, err0, eps, maxiter):
-  """
-  Applies the QDWH iteration formulated as
+def _unconverged(lk, j, maxiter, err, tol_delta, tol_lk):
+  changing = err > tol_delta
+  far_from_end = jnp.abs(1 - lk) > tol_lk
+  unconverged = jnp.logical_or(changing, far_from_end)
+  iterating = j < maxiter
+  return jnp.logical_and(iterating, unconverged)[0]
+
+
+@jax.jit
+def _qdwh_qr(matrix, coefs, errs, tol_lk, tol_delta, maxiter):
+  """ Applies the QDWH iteration formulated as
 
   X' = (b / c) X + (1 / c)(a - b/c) Q1 Q2^H,   [Q1] R = [sqrt(c) X]
                                                [Q2]     [I        ]
@@ -164,42 +254,45 @@ def _qdwh_qr(matrix, coefs, err0, eps, maxiter):
   to X until either c < 100, ||X' - X|| < eps||X'||,
   or the iteration count exceeds maxiter.
   """
-  m, n = matrix.shape
-  eye = jnp.eye(n, dtype=matrix.dtype)
+  n_rows, n_cols = matrix.shape
+  eye = jnp.eye(n_cols, dtype=matrix.dtype)
 
   def _do_qr(args):
-    matrix, j, coefs, err = args
+    _, j, coefs, _, err = args
     c = coefs[2]
-    ill_conditioned = c >= 100.
-    unconverged = err > (eps * jnp.linalg.norm(matrix))
-    iterating = j < maxiter
-    keep_going = jnp.logical_and(ill_conditioned, unconverged)
-    return jnp.logical_and(keep_going, iterating)[0]
+    lk = coefs[-1]
+    unconverged = _unconverged(lk, j, maxiter, err, tol_delta, tol_lk)
+    ill_conditioned = c > 100.
+    return jnp.logical_and(ill_conditioned, unconverged)
 
   def _qr_work(args):
-    matrix, j, coefs, err0 = args
+    matrix, j, coefs, errs, _ = args
     a, b, c, lk = coefs
     csqrt = jnp.sqrt(c)
     matrixI = jnp.vstack((csqrt * matrix, eye))
+    # Note: it should be possible to compute the QR of csqrt * matrix
+    # and build the concatenation with I at O(N).
     Q, _ = jnp.linalg.qr(matrixI, mode="reduced")
-    Q1 = Q[:m, :]
-    Q2 = Q[m:, :]
+    Q1 = Q[:n_rows, :]
+    Q2 = Q[n_rows:, :]
     coef = (1 / csqrt) * (a - (b / c))
-    matrix *= (b / c)
-    matrix += coef * _dot(Q1, Q2.T.conj())
-
-    err = jnp.linalg.norm(matrix - matrixI[:m, :] / csqrt).astype(err0.dtype)
+    new_matrix = (b / c) * matrix + coef * _dot(Q1, Q2.T.conj())
+    err = jnp.linalg.norm(matrix - new_matrix)
+    err = jnp.full(1, err).astype(errs[0].dtype)
+    errs = errs.at[j].set(err)
     coefs = _qdwh_coefs(lk)
-    return matrix, j + 1, coefs, err
+    return new_matrix, j + 1, coefs, errs, err
 
-  j = jnp.zeros(1, dtype=jnp.float32)
-  return jax.lax.while_loop(_do_qr, _qr_work, (matrix, j, coefs, err0))
+  j = jnp.zeros(1, dtype=jnp.int32)
+  err = jnp.full(1, 2 * tol_delta).astype(matrix.real.dtype)
+  matrix, j, coefs, errs, _ = jax.lax.while_loop(
+    _do_qr, _qr_work, (matrix, j, coefs, errs, err))
+  return matrix, j, coefs, errs
 
 
 @jax.jit
-def _qdwh_cholesky(matrix, coefs, err0, eps, maxiter):
-  """
-  Applies the QDWH iteration formulated as
+def _qdwh_cholesky(matrix, coefs, errs, tol_delta, tol_lk, j0, maxiter):
+  """ Applies the QDWH iteration formulated as
 
   matrix' = (b / c) matrix + (a - b/c) B,
     B = (matrix W^-1) W^-H,  W = chol(I + c matrix^H matrix).
@@ -207,29 +300,28 @@ def _qdwh_cholesky(matrix, coefs, err0, eps, maxiter):
   to matrix until either ||matrix' - matrix|| < eps * ||matrix'||,
   or the iteration count exceeds maxiter.
   """
-  m, n = matrix.shape
-  eye = jnp.eye(n, dtype=matrix.dtype)
 
   def _do_cholesky(args):
-    matrix, j, coefs, err = args
-    unconverged = err > (eps * jnp.linalg.norm(matrix))
-    iterating = j < maxiter
-    return jnp.logical_and(unconverged, iterating)[0]
+    _, j, coefs, errs = args
+    lk = coefs[-1]
+    return _unconverged(lk, j, maxiter, errs[j - 1], tol_delta, tol_lk)
 
   def _cholesky_work(args):
-    matrix, j, coefs, err0 = args
-    matrix0 = matrix
+    matrix, j, coefs, errs = args
     a, b, c, lk = coefs
-    Z = eye + c * _dot(matrix.T.conj(), matrix)
+    Z = c * _dot(matrix.T.conj(), matrix)
+    Z = _add_to_diagonal(Z, 1.)
     W = jsp.linalg.cholesky(Z)
     B = jsp.linalg.solve_triangular(W.T, matrix.T, lower=True).conj()
     B = jsp.linalg.solve_triangular(W, B).conj().T
-    matrix = (b / c) * matrix + (a - b / c) * B
-    err = jnp.linalg.norm(matrix - matrix0).astype(err0.dtype)
+    new_matrix = (b / c) * matrix + (a - b / c) * B
+    # possible instability if a ~ b / c
+    err = jnp.linalg.norm(new_matrix - matrix).astype(errs[0].dtype)
+    errs = errs.at[j].set(err)
     coefs = _qdwh_coefs(lk)
-    return matrix, j + 1, coefs, err
+    return new_matrix, j + 1, coefs, errs
 
-  j = jnp.zeros(1, dtype=jnp.float32)
-  carry = (matrix, j, coefs, err0)
-  carry = jax.lax.while_loop(_do_cholesky, _cholesky_work, carry)
-  return carry
+  carry = (matrix, j0, coefs, errs)
+  matrix, j_total, coefs, errs = jax.lax.while_loop(
+    _do_cholesky, _cholesky_work, carry)
+  return matrix, j_total - j0, errs

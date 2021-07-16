@@ -4,22 +4,19 @@ import pytest
 
 from jax import lax
 import jax.numpy as jnp
-from jax._src.scipy import qdwh
-import scipy as sp
+from . import qdwh
 
 
-shapes = [(12, 12), (16, 12), (16, 16), (128, 128)]  # Input shapes
-n_zero_svs = [0,]  # Number of zero singular values.
+shapes = [(16, 12), (12, 16), (128, 128)]  # Input shapes
+n_zero_svs = [0, 4]  # Number of zero singular values.
 degeneracy = [0, 4]  # The middle singular value will be
                      #  repeated this many times.
 geometric_spectrum = [False, True]  # False: linear spectrum; True: geometric.
-max_sv = [0.1, 1.0, 10.]  # The largest singular value.
-nonzero_condition_number = [10, 100, 1000, 10000] # The smallest nonzero
-                                                  # singular value will differ
-                                                  # from the largest by this
-                                                  # factor.
-precision = [lax.Precision.HIGHEST, ]  # TPU matmul precision.
-
+max_sv = [0.1, 10.]  # The largest singular value.
+nonzero_condition_number = [0.1, 100000] # The smallest nonzero
+                                        # singular value will differ
+                                        # from the largest by this
+                                        # factor.
 
 def _initialize(shape, n_zero_svs, degeneracy, geometric_spectrum, max_sv,
                 nonzero_condition_number):
@@ -57,15 +54,17 @@ def _initialize(shape, n_zero_svs, degeneracy, geometric_spectrum, max_sv,
 @pytest.mark.parametrize("max_sv", max_sv)
 @pytest.mark.parametrize("nonzero_condition_number", nonzero_condition_number)
 @pytest.mark.parametrize("shape", shapes)
-@pytest.mark.parametrize("precision", precision)
-def test_polar_qdwh(shape, precision, n_zero_svs, degeneracy,
-                    geometric_spectrum, max_sv, nonzero_condition_number):
+@pytest.mark.parametrize("method", ["qdwh", "svd"])
+@pytest.mark.parametrize("side", ["right", "left"])
+def test_polar_qdwh(shape, n_zero_svs, degeneracy,
+                    geometric_spectrum, max_sv, nonzero_condition_number,
+                    method, side):
   np.random.seed(10)
   matrix, _ = _initialize(
     shape, n_zero_svs, degeneracy, geometric_spectrum, max_sv,
     nonzero_condition_number)
-  _, _, l0 = qdwh._initialize_qdwh(matrix)
-  unitary, posdef, j_qr, j_chol = qdwh.polar(matrix, precision=precision)
+  unitary, posdef, info = qdwh.polar(matrix, method=method, side=side)
+  print(info)
 
   if shape[0] >= shape[1]:
     should_be_eye = jnp.matmul(unitary.conj().T, unitary,
@@ -73,23 +72,20 @@ def test_polar_qdwh(shape, precision, n_zero_svs, degeneracy,
   else:
     should_be_eye = jnp.matmul(unitary, unitary.conj().T,
                                precision=lax.Precision.HIGHEST)
-  #TODO: Account for precision
-  tol = 10 * nonzero_condition_number * jnp.finfo(matrix.dtype).eps
-  recon = jnp.matmul(unitary, posdef, precision=lax.Precision.HIGHEST)
-  np.testing.assert_allclose(matrix, recon, atol=10 * tol)
-
+  tol = 10 * jnp.finfo(matrix.dtype).eps
   eye_mat = jnp.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
-  np.testing.assert_allclose(eye_mat, should_be_eye, atol=10 * tol)
+  np.testing.assert_allclose(eye_mat, should_be_eye, atol=tol * min(shape))
 
-  np.testing.assert_allclose(posdef, posdef.conj().T, atol=tol)
+  np.testing.assert_allclose(
+    posdef, posdef.conj().T, atol=tol * jnp.linalg.norm(posdef))
 
   ev, _ = jnp.linalg.eigh(posdef)
-  ev = ev[jnp.abs(ev) > tol]
+  ev = ev[jnp.abs(ev) > tol * jnp.linalg.norm(posdef)]
   negative_ev = jnp.sum(ev < 0.)
   assert negative_ev == 0.
 
-  np.testing.assert_allclose(matrix, recon, atol=10 * tol)
-
-  if n_zero_svs == 0:
-    polar_factor, _ = sp.linalg.polar(matrix)
-    np.testing.assert_allclose(polar_factor, unitary, atol=10 * tol)
+  if side=="right":
+    recon = jnp.matmul(unitary, posdef, precision=lax.Precision.HIGHEST)
+  elif side=="left":
+    recon = jnp.matmul(posdef, unitary, precision=lax.Precision.HIGHEST)
+  np.testing.assert_allclose(matrix, recon, atol=tol * jnp.linalg.norm(matrix))
