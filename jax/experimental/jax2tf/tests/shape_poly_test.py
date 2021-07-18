@@ -335,7 +335,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       return tf.Variable(
           np.ones(initializer_shape, np.float32), dtype=tf.float32, shape=shape)
 
-
     # Known shapes for the arguments
     check_avals(
         args=[const((2, 3))],
@@ -482,19 +481,29 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(a, a)' has dimension variable 'a' corresponding to "
-            "multiple values ([2, 3]), for argument shape (2, 3)"
+            "PolyShape ('(a, a)',) has dimension variable 'a' corresponding to multiple values {2, 3}, for argument shapes (TensorShape([2, 3]),)"
         )):
       check_avals(
           args=[tf_var([2, 3], initializer_shape=(2, 3))],
           polymorphic_shapes=["(a, a)"],
           expected_avals=None)
 
+    # Same error across multiple arguments
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(a,)' has dimension variable 'a' corresponding to 0, "
-            "for argument shape (0,)"
+            "PolyShape ('a, ...', 'a') has dimension variable 'a' corresponding to multiple values {2, 5}"
+        )):
+      check_avals(
+          args=[tf_var([2, 3], initializer_shape=(2, 3)),
+                tf_var([5], initializer_shape=[5])],
+          polymorphic_shapes=["a, ...", "a"],
+          expected_avals=None)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape(
+            "PolyShape ('(a,)',) has dimension variable 'a' corresponding to 0, for argument shapes (TensorShape([0]),)"
         )):
       check_avals(
           args=[tf_var([0], initializer_shape=(0))],
@@ -741,7 +750,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # eagerly.
     # Raises: ValueError: PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)
     with self.assertRaisesRegex(ValueError,
-                                re.escape("PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)")):
+                                re.escape("PolyShape ('b',) has dimension variable 'b' corresponding to 0, for argument shapes (TensorShape([0]),)")):
       jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0)
 
     # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
@@ -761,7 +770,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # function is executed eagerly.
     # Raises: ValueError: PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)
     with self.assertRaisesRegex(ValueError,
-                                re.escape("PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)")):
+                                re.escape("PolyShape ('b, b',) has dimension variable 'b' corresponding to multiple values {4, 5}, for argument shapes (TensorShape([4, 5]),)")):
       jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
 
     # However, if we first trace to a TensorFlow graph, we may miss the broken assumption.

@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
+import collections
 from functools import partial
 import contextlib
 import os
 import re
 import string
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import jax
 from jax._src import ad_util
@@ -588,6 +589,10 @@ def _args_to_avals_and_env(
   """
   shapeenv: _ShapeEnv = {}
 
+  # Map shape variables to the set of integers they correspond to in the
+  # actual arguments
+  shape_var_map: Dict[str, Set[int]] = collections.defaultdict(set)
+
   def input_aval(arg: TfVal,
                  arg_jax_dtype: DType,
                  polymorphic_shape: Optional[str]) -> core.AbstractValue:
@@ -596,23 +601,38 @@ def _args_to_avals_and_env(
     aval_shape = shape_poly.parse_spec(polymorphic_shape, arg_shape)
 
     for i, d in enumerate(aval_shape):
+      dim_size = arg_shape[i]
+      if isinstance(dim_size, tf.compat.v1.Dimension):
+        dim_size = dim_size.value
       if not shape_poly.is_poly_dim(d):
-        assert d == arg_shape[i]
+        assert d == dim_size
       else:
         d_var = d.to_var()  # type: ignore
-        if d_var is not None and d_var not in shapeenv:
-          # Even if the shape of `arg` is known, we still use `tf.shape` for
-          # safety, because the promise is that we will convert the function
-          # to work for any value of the dimension.
-          shapeenv[d_var] = tf.shape(arg)[i]  # type: ignore[index]
-        else:
-          # TODO: add an assertion tf.shape(arg)[i] == env[d]
-          pass
-
+        if d_var is not None:
+          if d_var not in shapeenv:
+            # Even if the shape of `arg` is known, we still use `tf.shape` for
+            # safety, because the promise is that we will convert the function
+            # to work for any value of the dimension.
+            shapeenv[d_var] = tf.shape(arg)[i]  # type: ignore[index]
+          if dim_size is not None:
+            shape_var_map[d_var].add(int(dim_size))
 
     return core.ShapedArray(aval_shape, arg_jax_dtype)
 
   avals = tuple(map(input_aval, args, arg_jax_dtypes, polymorphic_shapes))  # type: ignore
+  arg_shapes = tuple(np.shape(a) for a in args)
+
+  for dim_var, dim_var_values in shape_var_map.items():
+    if len(dim_var_values) != 1:
+      msg = (f"PolyShape {tuple(polymorphic_shapes)} has dimension variable '{dim_var}' "
+             f"corresponding to multiple values {set(sorted(dim_var_values))}, for "
+             f"argument shapes {arg_shapes}")
+      raise ValueError(msg)
+    elif list(dim_var_values)[0] <= 0:
+      msg = (f"PolyShape {tuple(polymorphic_shapes)} has dimension variable '{dim_var}' "
+             f"corresponding to 0, for argument shapes {arg_shapes}")
+      raise ValueError(msg)
+
   return avals, shapeenv
 
 
