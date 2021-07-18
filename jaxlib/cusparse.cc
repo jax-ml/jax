@@ -38,6 +38,17 @@ limitations under the License.
 // Some functionality defined here is only available in CUSPARSE 11.3 or newer.
 #define JAX_CUSPARSE_11030 (CUSPARSE_VERSION >= 11300)
 
+// cuSPARSE generic APIs are not supported on Windows until 11.0
+// cusparseIndexType_t is used in very limited scope so manually define will
+// workaround compiling issue without harm.
+#if defined(_WIN32) && (CUSPARSE_VERSION < 11000)
+typedef enum {
+  CUSPARSE_INDEX_16U = 1,
+  CUSPARSE_INDEX_32I = 2,
+  CUSPARSE_INDEX_64I = 3
+} cusparseIndexType_t;
+#endif
+
 namespace jax {
 namespace {
 
