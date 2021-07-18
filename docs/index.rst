@@ -23,7 +23,6 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    :caption: Reference Documentation
 
    faq
-   transformations
    async_dispatch
    jaxpr
    notebooks/convolutions

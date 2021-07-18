@@ -117,6 +117,8 @@ exclude_patterns = [
     'notebooks/*.md',
     'jax-101/*.md',
     'autodidax.md',
+    # Attempt to fix RTD build failure
+    'transformations.md',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
