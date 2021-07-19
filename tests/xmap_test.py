@@ -512,13 +512,26 @@ class XMapTest(XMapTestCase):
     y = rng.randn(*yshape)
     self.assertAllClose(fm(x, y), fref(x, y))
 
-  def testJVP(self):
+  def testAutodiffBroadcast(self):
     f = xmap(lambda x, y: jnp.cos(lax.dot(x, jnp.sin(y),
                                           precision=lax.Precision.HIGHEST)),
              in_axes=[['i', ...], {}], out_axes=['i', ...])
     x = jnp.arange(12, dtype=jnp.float32).reshape((3, 4)) / 100
     y = jnp.arange(20, dtype=jnp.float32).reshape((4, 5)) / 100
     jtu.check_grads(f, (x, y), order=2, modes=['fwd'])
+    jtu.check_grads(f, (x, y), order=1, modes=['rev'])
+    with self.assertRaises(AssertionError):
+      # Second order reverse-mode differentiations seems to be broken,
+      # likely due to the transpose of psum being defined incorrectly.
+      jtu.check_grads(f, (x, y), order=2, modes=['rev'])
+
+  def testAutodiffNoBroadcast(self):
+    f = xmap(lambda x, y: jnp.cos(lax.dot(x, jnp.sin(y),
+                                          precision=lax.Precision.HIGHEST)),
+             in_axes=[['i', ...], [None, 'i']], out_axes=['i'])
+    x = jnp.arange(12, dtype=jnp.float32).reshape((3, 4)) / 100
+    y = jnp.arange(12, dtype=jnp.float32).reshape((4, 3)) / 100
+    jtu.check_grads(f, (x, y), order=2)
 
   @jtu.with_and_without_mesh
   def testNamedShape(self, mesh, axis_resources):
