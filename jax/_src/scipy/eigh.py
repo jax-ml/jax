@@ -1,14 +1,13 @@
 """Serial algorithm for eigh."""
-from jax._src.scipy import qdwh
+from jax._src.scipy import polar
 
 import jax
 import jax.numpy as jnp
 from jax import lax
-import numpy as np
 
 
 def _similarity_transform(
-  matrix_in, matrix_out, precision=lax.Precision.HIGHEST):
+    matrix_in, matrix_out, precision=lax.Precision.HIGHEST):
   """ Returns matrix_out.conj().T @ matrix_in @ matrix_out, done in
   order from left to right.
   """
@@ -21,12 +20,12 @@ def _projector_subspace(P, H, rank, maxiter=2):
   an `n x rank` isometry `Vm` such that `P = Vm @ Vm.conj().T` and
   an `n x (n - rank)` isometry `Vm` such that -(I - P) = Vp @ Vp.conj().T`.
 
-  The subspaces are computed using the naiive QR eigendecomposition 
+  The subspaces are computed using the naiive QR eigendecomposition
   algorithm, which converges very quickly due to the sharp separation
   between the relevant eigenvalues of the projector.
 
   Args:
-    P: A rank-`rank` Hermitian projector into the space of `H`'s 
+    P: A rank-`rank` Hermitian projector into the space of `H`'s
        first `rank` eigenpairs.
     H: The aforementioned Hermitian matrix, which is used to track
        convergence.
@@ -42,8 +41,8 @@ def _projector_subspace(P, H, rank, maxiter=2):
   X = X[:, :rank]
 
   H_norm = jnp.linalg.norm(H)
-  thresh = 10 * jnp.finfo(X.dtype).eps * H_norm 
-  
+  thresh = 10 * jnp.finfo(X.dtype).eps * H_norm
+
   # First iteration skips the matmul.
   def body_f_after_matmul(X):
     Q, _ = jnp.linalg.qr(X, mode="complete")
@@ -66,7 +65,7 @@ def _projector_subspace(P, H, rank, maxiter=2):
     X = jnp.dot(P, V1, precision=lax.Precision.HIGHEST)
     V1, V2, error = body_f_after_matmul(X)
     return V1, V2, j + 1, error
-  
+
   V1, V2, error = body_f_after_matmul(X)
   one = jnp.ones(1, dtype=jnp.int32)
   V1, V2, _, error = lax.while_loop(cond_f, body_f, (V1, V2, one, error))
@@ -100,13 +99,13 @@ def _split_spectrum_jittable(P, H, V0, rank, precision):
 
 
 def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
-  """ The Hermitian matrix `H` is split into two matrices `Hm` 
+  """ The Hermitian matrix `H` is split into two matrices `Hm`
   `Hp`, respectively sharing its eigenspaces beneath and above
   its `split_point`th eigenvalue.
 
-  Returns, in addition, `Vm` and `Vp`, isometries such that 
-  `Hi = Vi.conj().T @ H @ Vi`. If `V0` is not None, `V0 @ Vi` are 
-  returned instead; this allows the overall isometries mapping from 
+  Returns, in addition, `Vm` and `Vp`, isometries such that
+  `Hi = Vi.conj().T @ H @ Vi`. If `V0` is not None, `V0 @ Vi` are
+  returned instead; this allows the overall isometries mapping from
   an initial input matrix to progressively smaller blocks to be formed.
 
   Args:
@@ -118,7 +117,7 @@ def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
     Hm: A Hermitian matrix sharing the eigenvalues of `H` beneath
       `split_point`.
     Vm: An isometry from the input space of `V0` to `Hm`.
-    Hp: A Hermitian matrix sharing the eigenvalues of `H` above 
+    Hp: A Hermitian matrix sharing the eigenvalues of `H` above
       `split_point`.
     Vp: An isometry from the input space of `V0` to `Hp`.
   """
@@ -126,7 +125,7 @@ def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
     return jax.ops.index_update(X, jnp.diag_indices(X.shape[0]), vals)
 
   H_shift = _fill_diagonal(H, H.diagonal() - split_point)
-  U, _, _, _ = qdwh.polar(H_shift, precision=precision, compute_posdef=False)
+  U, _ = polar.polar_unitary(H_shift)
   P = -0.5 * _fill_diagonal(U, U.diagonal() - 1.)
   rank = jnp.round(jnp.trace(P)).astype(jnp.int32)
   rank = int(rank)
@@ -134,7 +133,7 @@ def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
 
 
 def _eigh_work(
-  H, V=None, precision=lax.Precision.HIGHEST, termination_size=128):
+    H, V=None, precision=lax.Precision.HIGHEST, termination_size=128):
   """ The main work loop performing the symmetric eigendecomposition of H.
   Each step recursively computes a projector into the space of eigenvalues
   above jnp.mean(jnp.diag(H)). The result of the projections into and out of
@@ -158,9 +157,9 @@ def _eigh_work(
     evals, evecs = jnp.linalg.eigh(H)
     if V is not None:
       evecs = jnp.dot(V, evecs, precision=precision)
-    return evals, evecs 
+    return evals, evecs
 
-  split_point = jnp.median(jnp.diag(H)) # TODO: Improve this?
+  split_point = jnp.median(jnp.diag(H))  # TODO: Improve this?
   Hm, Vm, Hp, Vp = split_spectrum(H, split_point, V0=V, precision=precision)
   Hm, Vm = _eigh_work(
     Hm, V=Vm, precision=precision, termination_size=termination_size)
@@ -169,15 +168,15 @@ def _eigh_work(
 
   if Hm.ndim != 1 or Hp.ndim != 1:
     raise ValueError(f"One of Hm.ndim={Hm.ndim} or Hp.ndim={Hp.ndim} != 1 ",
-                      "indicating recursion terminated unexpectedly.")
+                     "indicating recursion terminated unexpectedly.")
 
   evals = jnp.hstack((Hm, Hp))
   evecs = jnp.hstack((Vm, Vp))
   return evals, evecs
 
 
-def eigh(H, precision=lax.Precision.HIGHEST, symmetrize=True, 
-  termination_size=128):
+def eigh(
+    H, precision=lax.Precision.HIGHEST, symmetrize=True, termination_size=128):
   """ Computes the eigendecomposition of the symmetric/Hermitian matrix H.
 
   Args:
@@ -217,7 +216,7 @@ def svd(A, precision=lax.Precision.HIGHEST):
     V_dag: An `n` by `n` unitary matrix of `A`'s conjugate transposed
       right singular vectors.
   """
-  Up, H, _, _ = qdwh.polar(A, precision=precision)
+  Up, H, _ = polar.polar(A)
   S, V = eigh(H, precision=precision)
   U = jnp.dot(Up, V, precision=precision)
   return U, S, V.conj().T

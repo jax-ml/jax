@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 Ns = [16, 256]
-precisions = [lax.Precision.HIGHEST,]
+precisions = [lax.Precision.HIGHEST, ]
 
 @pytest.mark.parametrize("N", Ns)
 @pytest.mark.parametrize("precision", precisions)

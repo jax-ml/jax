@@ -29,9 +29,9 @@ import scipy.special as osp_special
 from jax._src import api
 from jax import numpy as jnp
 from jax import lax
+from jax import scipy as jsp
 from jax import test_util as jtu
 from jax.scipy import special as lsp_special
-from jax._src.scipy import polar
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -477,17 +477,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def testPolar(
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
       side, nonzero_condition_number, dtype, seed):
-    """ Tests jax.scipy.linalg.polar.polar."""
+    """ Tests jax.scipy.linalg.polar."""
     np.random.seed(seed)
     matrix, _ = _initialize_polar_test(
       shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
       nonzero_condition_number, dtype)
     if dtype in (jnp.bfloat16, np.float16):
       self.assertRaises(
-        NotImplementedError, polar.polar, matrix, method=method, side=side)
+        NotImplementedError, jsp.linalg.polar, matrix, method=method,
+        side=side)
       return
 
-    unitary, posdef, info = polar.polar(matrix, method=method, side=side)
+    unitary, posdef, info = jsp.linalg.polar(matrix, method=method, side=side)
 
     if shape[0] >= shape[1]:
       should_be_eye = jnp.matmul(unitary.conj().T, unitary,
