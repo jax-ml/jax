@@ -21,14 +21,17 @@ import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
+from jax._src.numpy.lax_numpy import nonzero
 
 import numpy as np
 import scipy.special as osp_special
 
 from jax._src import api
 from jax import numpy as jnp
+from jax import lax
 from jax import test_util as jtu
 from jax.scipy import special as lsp_special
+from jax._src.scipy import polar
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -43,6 +46,47 @@ compatible_shapes = [[(), ()],
 float_dtypes = jtu.dtypes.floating
 complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.integer
+
+# Params for the polar tests.
+polar_shapes = [(16, 12), (12, 16), (128, 128)]
+n_zero_svs = [0, 4]
+degeneracies = [0, 4]
+geometric_spectra = [False, True]
+max_svs = [0.1, 10.]
+nonzero_condition_numbers = [0.1, 100000]
+sides = ["right", "left"]
+methods = ["qdwh", "svd"]
+
+
+def _initialize_polar_test(shape, n_zero_svs, degeneracy, geometric_spectrum,
+                           max_sv, nonzero_condition_number):
+
+  n_rows, n_cols = shape
+  min_dim = min(shape)
+  left_vecs = np.random.randn(n_rows, min_dim).astype(np.float64)
+  left_vecs, _ = np.linalg.qr(left_vecs)
+  right_vecs = np.random.randn(n_cols, min_dim).astype(np.float64)
+  right_vecs, _ = np.linalg.qr(right_vecs)
+
+  min_nonzero_sv = max_sv / nonzero_condition_number
+  num_nonzero_svs = min_dim - n_zero_svs
+  if geometric_spectrum:
+    nonzero_svs = np.geomspace(min_nonzero_sv, max_sv, num=num_nonzero_svs,
+                               dtype=np.float64)
+  else:
+    nonzero_svs = np.linspace(min_nonzero_sv, max_sv, num=num_nonzero_svs,
+                              dtype=np.float64)
+  half_point = n_zero_svs // 2
+  for i in range(half_point, half_point + degeneracy):
+    nonzero_svs[i] = nonzero_svs[half_point]
+  svs = np.zeros(min(shape), dtype=np.float64)
+  svs[n_zero_svs:] = nonzero_svs
+  svs = svs[::-1]
+
+  result = np.dot(left_vecs * svs, right_vecs.conj().T).astype(np.float32)
+  result = jnp.array(result)
+  spectrum = jnp.array(svs.astype(np.float32))
+  return result, spectrum
 
 OpRecord = collections.namedtuple(
     "OpRecord",
@@ -405,6 +449,61 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {'testcase_name':
+        '_n_zero_sv={}_degeneracy={}_geometric_spectrum={}'
+        '_max_sv={}_shape={}_method={}_side={}'
+        '_nonzero_condition_number={}_dtype={}'.format(
+          n_zero_sv, degeneracy, geometric_spectrum, max_sv,
+          shape, method, side, nonzero_condition_number, dtype
+        ),
+        'n_zero_sv': n_zero_sv, 'degeneracy': degeneracy,
+        'geometric_spectrum': geometric_spectrum,
+        'max_sv': max_sv, 'shape': shape, 'method': method,
+        'side': side, 'nonzero_condition_number': nonzero_condition_number,
+        'dtype': dtype}
+      for n_zero_sv in n_zero_svs
+      for degeneracy in degeneracies
+      for geometric_spectrum in geometric_spectra
+      for max_sv in max_svs
+      for shape in polar_shapes
+      for method in methods
+      for side in sides
+      for nonzero_condition_number in nonzero_condition_numbers
+      for dtype in jtu.dtypes.all_floating))
+  def testPolar(
+    self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
+      side, nonzero_condition_number, dtype):
+    """ Tests jax.scipy.linalg.polar.polar."""
+    np.random.seed(10)
+    matrix, _ = _initialize_polar_test(
+      shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
+      nonzero_condition_number)
+    unitary, posdef, info = polar.polar(matrix, method=method, side=side)
+
+    if shape[0] >= shape[1]:
+      should_be_eye = jnp.matmul(unitary.conj().T, unitary,
+                                 precision=lax.Precision.HIGHEST)
+    else:
+      should_be_eye = jnp.matmul(unitary, unitary.conj().T,
+                                 precision=lax.Precision.HIGHEST)
+    tol = 10 * jnp.finfo(matrix.dtype).eps
+    eye_mat = jnp.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
+    self.assertAllClose(eye_mat, should_be_eye, atol=tol * min(shape))
+
+    self.assertAllClose(
+      posdef, posdef.conj().T, atol=tol * jnp.linalg.norm(posdef))
+
+    ev, _ = jnp.linalg.eigh(posdef)
+    ev = ev[jnp.abs(ev) > tol * jnp.linalg.norm(posdef)]
+    negative_ev = jnp.sum(ev < 0.)
+    assert negative_ev == 0.
+
+    if side == "right":
+      recon = jnp.matmul(unitary, posdef, precision=lax.Precision.HIGHEST)
+    elif side == "left":
+      recon = jnp.matmul(posdef, unitary, precision=lax.Precision.HIGHEST)
+    self.assertAllClose(matrix, recon, atol=tol * jnp.linalg.norm(matrix))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
