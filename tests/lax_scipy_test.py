@@ -32,6 +32,7 @@ from jax import lax
 from jax import scipy as jsp
 from jax import test_util as jtu
 from jax.scipy import special as lsp_special
+import jax._src.scipy.eigh
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -57,6 +58,8 @@ nonzero_condition_numbers = [0.1, 100000]
 sides = ["right", "left"]
 methods = ["qdwh", "svd"]
 seeds = [1, 10]
+
+linear_sizes = [16, 128, 256]
 
 
 def _initialize_polar_test(shape, n_zero_svs, degeneracy, geometric_spectrum,
@@ -143,6 +146,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   def _GetArgsMaker(self, rng, shapes, dtypes):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -519,6 +523,68 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     with self.subTest('Test reconstruction.'):
       self.assertAllClose(
         matrix, recon, atol=tol * jnp.linalg.norm(matrix))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {'testcase_name':
+      '_linear_size_={}_seed={}_dtype={}'.format(
+        linear_size, seed, dtype
+      ),
+      'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
+    for linear_size in linear_sizes
+    for seed in seeds
+    for dtype in jtu.dtypes.all_floating))
+  def test_spectral_doc_eigh(self, linear_size, seed, dtype):
+    np.random.seed(seed)
+    H = np.random.randn(linear_size, linear_size)
+    H = jnp.array(0.5 * (H + H.conj().T)).astype(dtype)
+    if dtype in (jnp.bfloat16, np.float16):
+      self.assertRaises(
+        NotImplementedError, jax._src.scipy.eigh.eigh, H)
+      return
+    evs, V = jax._src.scipy.eigh.eigh(H)
+    ev_exp, eV_exp = jnp.linalg.eigh(H)
+    HV = jnp.dot(H, V, precision=lax.Precision.HIGHEST)
+    vV = evs * V
+    eps = jnp.finfo(H.dtype).eps
+    atol = jnp.linalg.norm(H) * eps
+    self.assertAllClose(ev_exp, jnp.sort(evs), atol=20 * atol)
+    self.assertAllClose(HV, vV, atol=30 * atol)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {'testcase_name':
+      '_linear_size_={}_seed={}_dtype={}'.format(
+        linear_size, seed, dtype
+      ),
+      'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
+    for linear_size in linear_sizes
+    for seed in seeds
+    for dtype in jtu.dtypes.all_floating))
+  def test_spectral_doc_svd(self, linear_size, seed, dtype):
+    np.random.seed(seed)
+    A = np.random.randn(linear_size, linear_size).astype(dtype)
+    if dtype in (jnp.bfloat16, np.float16):
+      self.assertRaises(
+        NotImplementedError, jax._src.scipy.eigh.svd, A)
+      return
+    S_expected = np.linalg.svd(A, compute_uv=False)
+    U, S, V = jax._src.scipy.eigh.svd(A)
+    recon = jnp.dot((U * S), V)
+    eps = jnp.finfo(dtype).eps
+    eps = eps * jnp.linalg.norm(A) * 10
+    self.assertAllClose(np.sort(S), np.sort(S_expected), atol=eps)
+    self.assertAllClose(A, recon, atol=eps)
+
+    # U is unitary.
+    u_unitary_delta = jnp.dot(U.conj().T, U, precision=lax.Precision.HIGHEST)
+    u_eye = np.eye(u_unitary_delta.shape[0])
+    self.assertAllClose(u_unitary_delta, u_eye, atol=eps)
+
+    # V is unitary.
+    v_unitary_delta = jnp.dot(V.conj().T, V, precision=lax.Precision.HIGHEST)
+    v_eye = np.eye(v_unitary_delta.shape[0])
+    self.assertAllClose(v_unitary_delta, v_eye, atol=eps)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
