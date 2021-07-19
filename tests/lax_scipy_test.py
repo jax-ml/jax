@@ -21,7 +21,6 @@ import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-from jax._src.numpy.lax_numpy import nonzero
 
 import numpy as np
 import scipy.special as osp_special
