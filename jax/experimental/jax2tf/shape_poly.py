@@ -559,7 +559,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       return functools.reduce(op.mul, map(_parse_factor, factors))
     return functools.reduce(op.add, map(_parse_term, terms))
 
-  shape_var_map: Dict[str, Set[int]] = collections.defaultdict(set)
+
   def _process_dim(i: int, dim_spec: Union[str, int]):
     if isinstance(dim_spec, str):
       dim_spec = dim_spec.strip()
@@ -588,24 +588,9 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
                  f"for known dimension in argument shape {arg_shape}")
           raise ValueError(msg)
         return dim_size
-      # We have a dimension polynomial for a known dimension.
-      dim_var = dim_poly.to_var()  # type: ignore
-      if dim_var is not None:
-        shape_var_map[dim_spec].add(dim_size)  # type: ignore
       return dim_poly
 
   dims = tuple([_process_dim(i, ds) for i, ds in enumerate(spec_tuple)])
-  for dim_var, dim_var_values in shape_var_map.items():
-    if len(dim_var_values) != 1:
-      msg = (f"PolyShape '{spec}' has dimension variable '{dim_var}' "
-             f"corresponding to multiple values ({sorted(dim_var_values)}), for "
-             f"argument shape {arg_shape}")
-      raise ValueError(msg)
-    elif list(dim_var_values)[0] <= 0:
-      msg = (f"PolyShape '{spec}' has dimension variable '{dim_var}' "
-             f"corresponding to 0, for argument shape {arg_shape}")
-      raise ValueError(msg)
-
   return dims
 
 

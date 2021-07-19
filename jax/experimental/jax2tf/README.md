@@ -711,7 +711,7 @@ self.assertEqual(0, f_jax(x0))  # JAX sees that the x.shape[0] == 0
 
 # jax2tf catches the broken assumption b >= 1 if the converted function is executed
 # eagerly.
-# Raises: ValueError: PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)
+# Raises: ValueError: PolyShape ('b',) has dimension variable 'b' corresponding to 0, for argument shapes (TensorShape([0]),)
 jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0))
 
 # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
@@ -734,7 +734,7 @@ self.assertEqual(0, f_jax(x45))  # JAX seems that x.shape[0] != x.shape[1]
 
 # jax2tf catches the broken assumption x.shape[0] == x.shape[1] if the converted
 # function is executed eagerly.
-# Raises: ValueError: PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)
+# Raises: ValueError: PolyShape ('b, b',) has dimension variable 'b' corresponding to multiple values {4, 5}, for argument shapes (TensorShape([4, 5]),)
 jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
 
 # However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
