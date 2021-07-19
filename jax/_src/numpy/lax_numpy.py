@@ -1103,7 +1103,8 @@ def _sinc_maclaurin_jvp(k, primals, tangents):
   return _sinc_maclaurin(k, x), _sinc_maclaurin(k + 1, x) * t
 
 _ARRAY_VIEW_DOC = """
-The JAX version of this function will return a copy rather than a view of the input.
+The JAX version of this function may in some cases return a copy rather than a
+view of the input.
 """
 
 @_wraps(np.transpose, lax_description=_ARRAY_VIEW_DOC)
