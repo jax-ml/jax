@@ -61,6 +61,20 @@ XlaExecutable = Any # xla_extension.LocalExecutable
 # This flag is set on exit; no logging should be attempted
 _on_exit = False
 
+
+def compile_or_get_cached(backend, computation, compile_options):
+    # Avoid import cycle between jax and jax.experimental
+    from jax.experimental.compilation_cache import compilation_cache as cc
+    if cc.is_initialized():
+        cached_executable = cc.get_executable(computation, compile_options)
+        if cached_executable is not None:
+            return cached_executable
+        else:
+            compiled = backend_compile(backend, computation, compile_options)
+            cc.put_executable(computation, compile_options, compiled)
+            return compiled
+    return backend_compile(backend, computation, compile_options)
+
 def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
@@ -741,7 +755,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
       num_partitions=1,
       device_assignment=(device.id,) if device else None)
   options.parameter_is_tupled_arguments = tuple_args
-  compiled = backend_compile(backend, built, options)
+  compiled = compile_or_get_cached(backend, built, options)
   if nreps == 1:
     return partial(_execute_compiled, compiled, out_avals, result_handlers,
                    kept_var_idx)

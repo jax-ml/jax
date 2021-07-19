@@ -16,7 +16,7 @@ from absl.testing import absltest
 import hashlib
 from jax.experimental.compilation_cache import compilation_cache as cc
 import jax
-from jax import pmap, lax
+from jax import jit, lax, pmap
 import jax.test_util as jtu
 import numpy as np
 import os
@@ -186,6 +186,18 @@ class CompilationCacheTest(jtu.JaxTestCase):
           files_in_directory = len(os.listdir(tmpdir))
           self.assertEqual(files_in_directory, 2)
           #TODO: create a test for calling pmap with the same input more than once
+
+  def test_jit(self):
+      cc._cache = None
+      with tempfile.TemporaryDirectory() as tmpdir:
+          cc.initialize_cache(tmpdir)
+          f = jit(lambda x: x*x)
+          f(1)
+          files_in_directory = len(os.listdir(tmpdir))
+          self.assertEqual(files_in_directory, 1)
+          f(1.0)
+          files_in_directory = len(os.listdir(tmpdir))
+          self.assertEqual(files_in_directory, 2)
 
   def create_new_debug_options(self, debug_options_obj):
     debug_options_obj.xla_cpu_enable_fast_math = False
