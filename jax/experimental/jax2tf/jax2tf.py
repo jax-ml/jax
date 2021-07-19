@@ -2203,9 +2203,9 @@ def _reduce(*operands: TfVal,
       tf.function(reducer_computation,
                   autograph=False).get_concrete_function(*reducer_arg_spec))
 
-  out = tfxla.variadic_reduce_v2(operands, init_vals,
-                                 dimensions_to_reduce=dimensions,
-                                 reducer=xla_reducer_computation)
+  out = tfxla.variadic_reduce(operands, init_vals,
+                              dimensions_to_reduce=dimensions,
+                              reducer=xla_reducer_computation)
   return out
 
 tf_impl_with_avals[lax.reduce_p] = _reduce
