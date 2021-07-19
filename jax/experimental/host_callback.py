@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Primitives for calling from JAX accelerator code to Python functions on the host.
+"""Primitives for calling Python functions on the host from JAX accelerator code.
 
 **Experimental: please give feedback, and expect changes.**
 
@@ -338,11 +338,11 @@ runtime (one thread per device). The runtime maintains a buffer of
 configurable size (see the flag ``--jax_host_callback_max_queue_byte_size``).
 When the buffer is full, all the receiving threads are paused
 which eventually pauses the computation on devices. The runtime has one
-additional thread that invokes the Python user functions with the received data.
-If the processing of the callbacks is slow, it may actually lead to the runtime
-buffer filling up, and eventually pausing the computation on the devices
-when they need to send something. For more details on the outfeed receiver
-runtime mechanism see
+additional thread for each device to invoke the Python user functions with the
+received data. If the processing of the callbacks is slow, it may actually
+lead to the runtime buffer filling up, and eventually pausing the computation
+on the devices when they need to send something.
+For more details on the outfeed receiver runtime mechanism see
 `runtime code
 <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_.
 
