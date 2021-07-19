@@ -227,7 +227,7 @@ def build_wheel(sources_path, output_path, cpu):
     ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
     ("Darwin", "x86_64"): ("macosx_10_9", "x86_64"),
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
-    ("Windows", "x86_64"): ("win", "amd64"),
+    ("Windows", "AMD64"): ("win", "amd64"),
   }[(platform.system(), cpu)]
   python_tag_arg = (f"--python-tag=cp{sys.version_info.major}"
                     f"{sys.version_info.minor}")
