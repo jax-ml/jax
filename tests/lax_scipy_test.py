@@ -455,12 +455,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {'testcase_name':
+        '_shape={}'
         '_n_zero_sv={}_degeneracy={}_geometric_spectrum={}'
-        '_max_sv={}_shape={}_method={}_side={}'
-        '_nonzero_condition_number={}_dtype={}_seed={}'.format(
+        '_max_sv={}_method={}_side={}'
+        '_nonzero_condition_number={}_seed={}'.format(
+          jtu.format_shape_dtype_string(shape, jnp.dtype(dtype).name).replace(" ", ""),
           n_zero_sv, degeneracy, geometric_spectrum, max_sv,
-          shape, method, side, nonzero_condition_number, dtype,
-          seed
+          method, side, nonzero_condition_number, seed
         ),
         'n_zero_sv': n_zero_sv, 'degeneracy': degeneracy,
         'geometric_spectrum': geometric_spectrum,
@@ -481,9 +482,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
       side, nonzero_condition_number, dtype, seed):
     """ Tests jax.scipy.linalg.polar."""
-    if dtype in (jnp.bfloat16, np.float16):
-      if jtu.device_under_test() != "cpu":
+    if jtu.device_under_test() != "cpu":
+      if dtype in (jnp.bfloat16, np.float16):
         raise unittest.SkipTest("Skip half precision off CPU.")
+      if method == "svd":
+        raise unittest.SkipTest("Can't use SVD mode on TPU/GPU.")
+
     np.random.seed(seed)
     matrix, _ = _initialize_polar_test(
       shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
@@ -495,15 +499,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       return
 
     unitary, posdef, info = jsp.linalg.polar(matrix, method=method, side=side)
-
     if shape[0] >= shape[1]:
-      should_be_eye = jnp.matmul(unitary.conj().T, unitary,
-                                 precision=lax.Precision.HIGHEST)
+      should_be_eye = np.matmul(unitary.conj().T, unitary)
     else:
-      should_be_eye = jnp.matmul(unitary, unitary.conj().T,
-                                 precision=lax.Precision.HIGHEST)
+      should_be_eye = np.matmul(unitary, unitary.conj().T)
     tol = 10 * jnp.finfo(matrix.dtype).eps
-    eye_mat = jnp.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
+    eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
       self.assertAllClose(
         eye_mat, should_be_eye, atol=tol * min(shape))
@@ -512,8 +513,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self.assertAllClose(
         posdef, posdef.conj().T, atol=tol * jnp.linalg.norm(posdef))
 
-    ev, _ = jnp.linalg.eigh(posdef)
-    ev = ev[jnp.abs(ev) > tol * jnp.linalg.norm(posdef)]
+    ev, _ = np.linalg.eigh(posdef)
+    ev = ev[np.abs(ev) > tol * np.linalg.norm(posdef)]
     negative_ev = jnp.sum(ev < 0.)
     with self.subTest('Test positive definiteness.'):
       assert negative_ev == 0.
@@ -529,13 +530,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {'testcase_name':
       '_linear_size_={}_seed={}_dtype={}'.format(
-        linear_size, seed, dtype
+        linear_size, seed, jnp.dtype(dtype).name
       ),
       'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
     for linear_size in linear_sizes
     for seed in seeds
     for dtype in jtu.dtypes.all_floating))
-  def test_spectral_doc_eigh(self, linear_size, seed, dtype):
+  def test_spectral_dac_eigh(self, linear_size, seed, dtype):
     if dtype in (jnp.bfloat16, np.float16):
       if jtu.device_under_test() != "cpu":
         raise unittest.SkipTest("Skip half precision off CPU.")
@@ -555,17 +556,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(ev_exp, jnp.sort(evs), atol=20 * atol)
     self.assertAllClose(HV, vV, atol=30 * atol)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
     {'testcase_name':
       '_linear_size_={}_seed={}_dtype={}'.format(
-        linear_size, seed, dtype
+        linear_size, seed, jnp.dtype(dtype).name
       ),
       'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
     for linear_size in linear_sizes
     for seed in seeds
     for dtype in jtu.dtypes.all_floating))
-  def test_spectral_doc_svd(self, linear_size, seed, dtype):
+  def test_spectral_dac_svd(self, linear_size, seed, dtype):
     if dtype in (jnp.bfloat16, np.float16):
       if jtu.device_under_test() != "cpu":
         raise unittest.SkipTest("Skip half precision off CPU.")
@@ -578,7 +578,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       return
     S_expected = np.linalg.svd(A, compute_uv=False)
     U, S, V = jax._src.scipy.eigh.svd(A)
-    recon = jnp.dot((U * S), V)
+    recon = jnp.dot((U * S), V, precision=lax.Precision.HIGHEST)
     eps = jnp.finfo(dtype).eps
     eps = eps * jnp.linalg.norm(A) * 10
     self.assertAllClose(np.sort(S), np.sort(S_expected), atol=eps)
