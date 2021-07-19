@@ -67,7 +67,7 @@ template <>
   if (stream) {
     ThrowIfErrorStatus(rocblas_set_stream(handle, stream));
   }
-  return rocBlasHandlePool::Handle(pool, handle);
+  return rocBlasHandlePool::Handle(pool, handle, stream);
 }
 
 // Set of types known to Rocsolver.
