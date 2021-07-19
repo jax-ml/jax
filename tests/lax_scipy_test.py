@@ -576,12 +576,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     # U is unitary.
     u_unitary_delta = jnp.dot(U.conj().T, U, precision=lax.Precision.HIGHEST)
-    u_eye = np.eye(u_unitary_delta.shape[0])
+    u_eye = jnp.eye(u_unitary_delta.shape[0], dtype=dtype)
     self.assertAllClose(u_unitary_delta, u_eye, atol=eps)
 
     # V is unitary.
     v_unitary_delta = jnp.dot(V.conj().T, V, precision=lax.Precision.HIGHEST)
-    v_eye = np.eye(v_unitary_delta.shape[0])
+    v_eye = jnp.eye(v_unitary_delta.shape[0], dtype=dtype)
     self.assertAllClose(v_unitary_delta, v_eye, atol=eps)
 
 
