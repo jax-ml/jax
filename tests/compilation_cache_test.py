@@ -38,6 +38,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
     if jax.lib.xla_bridge.get_backend().runtime_type == "tfrt":
         raise SkipTest("the new TFRT runtime does not support serialization")
 
+  def tearDown(self):
+      super().tearDown()
+      cc._cache = None
+
   @unittest.skipIf(jax.lib.version < (0, 1, 68), "fails with earlier jaxlibs")
   def test_compile_options(self):
     compile_options_not_filled = jax.lib.xla_bridge.get_compile_options(
@@ -128,11 +132,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
                         cc.get_cache_key(computation2, compile_options))
 
   def test_get_no_executable(self):
-      if jtu.device_under_test() != "tpu":
-          raise SkipTest("serialize executable only works on TPU")
-      if jax.lib.xla_bridge.get_backend().runtime_type == "tfrt":
-          raise SkipTest("the new TFRT runtime does not support serialization")
-      cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
           computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
@@ -141,7 +140,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
           self.assertEqual(cc.get_executable(computation, compile_options), None)
 
   def test_diff_executables(self):
-      cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
           computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
@@ -157,7 +155,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
                               cc.get_executable(computation2, compile_options))
 
   def test_put_executable(self):
-      cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
           computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
@@ -173,7 +170,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
           self.assertEqual(expected, actual)
 
   def test_pmap(self):
-      cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
           f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
