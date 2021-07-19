@@ -1,8 +1,8 @@
 """Serial algorithm for eigh."""
-from jax._src.scipy import polar
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jax import lax
 
 
@@ -125,7 +125,7 @@ def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
     return jax.ops.index_update(X, jnp.diag_indices(X.shape[0]), vals)
 
   H_shift = _fill_diagonal(H, H.diagonal() - split_point)
-  U, _ = polar.polar_unitary(H_shift)
+  U, _ = jsp.linalg.polar_unitary(H_shift)
   P = -0.5 * _fill_diagonal(U, U.diagonal() - 1.)
   rank = jnp.round(jnp.trace(P)).astype(jnp.int32)
   rank = int(rank)
@@ -216,7 +216,7 @@ def svd(A, precision=lax.Precision.HIGHEST):
     V_dag: An `n` by `n` unitary matrix of `A`'s conjugate transposed
       right singular vectors.
   """
-  Up, H, _ = polar.polar(A)
+  Up, H, _ = jsp.linalg.polar(A)
   S, V = eigh(H, precision=precision)
   U = jnp.dot(Up, V, precision=precision)
   return U, S, V.conj().T
