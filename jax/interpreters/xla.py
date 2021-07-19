@@ -538,12 +538,14 @@ def _axis_groups(mesh_spec, mesh_axes):
       (prod(np.take(mesh_spec, mesh_axes)), -1))
   return tuple(unsafe_map(tuple, groups.T))
 
-def jaxpr_replicas(jaxpr: core.Jaxpr) -> int:
+def jaxpr_replicas(jaxpr) -> int:
   """The number of replicas needed for a jaxpr.
 
   For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
   subjaxprs. For a list of eqns, take the maximum number of replicas.
   """
+  if isinstance(jaxpr, core.ClosedJaxpr):
+    jaxpr = jaxpr.jaxpr
   return max(unsafe_map(eqn_replicas, jaxpr.eqns), default=1)
 
 # TODO(mattjj): this function assumes that only pmap has a parameter named
@@ -558,7 +560,7 @@ def eqn_replicas(eqn):
     return 1
 
 def initial_style_primitive_replicas(params):
-  return max(core.traverse_jaxpr_params(jaxpr_replicas, params), default=1)
+  return max(core.traverse_jaxpr_params(jaxpr_replicas, params).values(), default=1)
 
 # TODO(mattjj,skyewm): the functions here are utilities for checking if
 # not-yet-supported features are used with multi-host programming

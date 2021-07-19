@@ -1416,6 +1416,7 @@ class SPMDBatchTrace(batching.BatchTrace):
                      main_type=self.main.trace_type)
     return super().get_primitive_batcher(primitive)
 
+
 spmd_primitive_batchers: Dict[core.Primitive, Callable] = {}
 
 
@@ -1591,6 +1592,8 @@ _forbidden_primitives = {
   'sharded_call': 'sharded_jit',
 }
 def _sanitize_mesh_jaxpr(jaxpr):
+  if isinstance(jaxpr, core.ClosedJaxpr):
+    jaxpr = jaxpr.jaxpr
   for eqn in jaxpr.eqns:
     if eqn.primitive.name in _forbidden_primitives:
       raise RuntimeError(f"Nesting {_forbidden_primitives[eqn.primitive.name]} "
@@ -1601,6 +1604,8 @@ def _sanitize_mesh_jaxpr(jaxpr):
 custom_resource_typing_rules: Dict[core.Primitive, Callable] = {}
 
 def resource_typecheck(jaxpr, axis_resources, what_jaxpr_thunk):
+  if isinstance(jaxpr, core.ClosedJaxpr):
+    jaxpr = jaxpr.jaxpr
   def _check_aval(aval, what_thunk):
     if not hasattr(aval, 'named_shape'):
       return
@@ -1665,11 +1670,11 @@ def mesh_sharding_specs(axis_sizes, axis_names):
     return ShardingSpec(sharding, mesh_mapping)
   return mk_sharding_spec
 
+
 @contextmanager
 def maybe_extend_axis_env(*args, **kwargs):
   with core.extend_axis_env(*args, **kwargs):
     yield
-
 
 class DynamicAxisEnvFrame(object):
   __slots__ = ["name", "pmap_trace", "hard_size"]

@@ -308,9 +308,9 @@ def extract_call_jaxpr(
 
 def traverse_jaxpr_params(f, params):
   """Applies f to each jaxpr parameter and returns a tuple of returned values."""
-  return tuple(f(param if type(param) is Jaxpr else param.jaxpr)
-               for param in params.values()
-               if type(param) in (Jaxpr, ClosedJaxpr))
+  return {name: f(param)
+          for name, param in params.items()
+          if type(param) in (Jaxpr, ClosedJaxpr)}
 
 
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args):

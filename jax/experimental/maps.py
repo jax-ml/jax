@@ -676,6 +676,10 @@ def make_xmap_callable(fun: lu.WrappedFun,
                                  name=name),
                         None, {})
   jaxpr = plan.subst_axes_with_resources(jaxpr)
+  use_spmd_lowering = config.experimental_xmap_spmd_lowering
+  ensure_fixed_sharding = config.experimental_xmap_ensure_fixed_sharding
+  if use_spmd_lowering and ensure_fixed_sharding:
+    jaxpr = _fix_inferred_spmd_sharding(jaxpr, resource_env)
 
   f = lu.wrap_init(core.jaxpr_as_fun(core.ClosedJaxpr(jaxpr, consts)))
   f = hide_mapped_axes(f, tuple(in_axes), tuple(out_axes))
@@ -693,7 +697,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
                               mesh_in_axes,
                               mesh_out_axes,
                               donated_invars,
-                              config.experimental_xmap_spmd_lowering,
+                              use_spmd_lowering,
                               *in_avals,
                               tile_by_mesh_axes=True,
                               do_resource_typecheck=None)
@@ -1540,7 +1544,10 @@ def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
   yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
 
 
-def _jaxpr_resources(jaxpr: core.Jaxpr, resource_env) -> Set[ResourceAxisName]:
+def _jaxpr_resources(jaxpr, resource_env) -> Set[ResourceAxisName]:
+  if isinstance(jaxpr, core.ClosedJaxpr):
+    jaxpr = jaxpr.jaxpr
+  assert isinstance(jaxpr, core.Jaxpr)
   used_resources = set()
   for eqn in jaxpr.eqns:
     if eqn.primitive is xmap_p:
@@ -1548,7 +1555,7 @@ def _jaxpr_resources(jaxpr: core.Jaxpr, resource_env) -> Set[ResourceAxisName]:
         raise RuntimeError("Changing the physical mesh is not allowed inside xmap.")
       used_resources |= set(it.chain(*eqn.params['axis_resources'].values()))
     updates = core.traverse_jaxpr_params(
-        partial(_jaxpr_resources, resource_env=resource_env), eqn.params)
+        partial(_jaxpr_resources, resource_env=resource_env), eqn.params).values()
     for update in updates:
       used_resources |= update
   return used_resources
@@ -1631,6 +1638,8 @@ def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
 # TODO: We should relax this at least for "constructor primitives"
 #       such as axis_index or zeros.
 def _check_no_loop_collectives(jaxpr, loop_axis_resources):
+  if isinstance(jaxpr, core.ClosedJaxpr):
+    jaxpr = jaxpr.jaxpr
   def subst_no_loop(name):
     if loop_axis_resources.get(name, ()):
       raise RuntimeError(f"Named axes with loop resources assigned to them cannot "
@@ -1641,6 +1650,28 @@ def _check_no_loop_collectives(jaxpr, loop_axis_resources):
     core.subst_axis_names(eqn.primitive, eqn.params, subst_no_loop, traverse=False)
     rec = partial(_check_no_loop_collectives, loop_axis_resources=loop_axis_resources)
     core.traverse_jaxpr_params(rec, eqn.params)
+
+
+def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
+  from jax.experimental.pjit import sharding_constraint_p, ParsedPartitionSpec
+  rec = lambda jaxpr: _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name)
+  if isinstance(jaxpr, core.ClosedJaxpr):
+    return jaxpr.map_jaxpr(rec)
+  assert isinstance(jaxpr, core.Jaxpr)
+  if gen_fresh_name is None:
+    gen_fresh_name = core.gensym([jaxpr])
+  new_eqns = []
+  for eqn in jaxpr.eqns:
+    new_jaxpr_params = core.traverse_jaxpr_params(rec, eqn.params)
+    tmp_outvars = [gen_fresh_name(v.aval) for v in eqn.outvars]
+    new_eqns.append(core.JaxprEqn(eqn.invars, tmp_outvars, eqn.primitive,
+                                  dict(eqn.params, **new_jaxpr_params), eqn.source_info))
+    for outvar, tmpvar in zip(eqn.outvars, tmp_outvars):
+      new_eqns.append(core.JaxprEqn([tmpvar], [outvar], sharding_constraint_p,
+                      dict(resource_env=resource_env, axis_resources=ParsedPartitionSpec((), ())),
+                      eqn.source_info))
+  return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, new_eqns)
+
 
 # -------- soft_pmap --------
 
@@ -1679,6 +1710,14 @@ try:
       help=("When set, multi-device xmaps computations will be compiled through "
             "the XLA SPMD partitioner instead of explicit cross-replica collectives. "
             "Not supported on CPU!"),
+      update_global_hook=_clear_compilation_cache,
+      update_thread_local_hook=_thread_local_flag_unsupported)
+  config.define_bool_state(
+      name="experimental_xmap_ensure_fixed_sharding",
+      default=False,
+      help=("When set and `experimental_xmap_spmd_lowering` is enabled, the lowering will "
+            "try to limit the flexibility of the automated SPMD partitioner heuristics "
+            "by emitting additional sharding annotations for program intermediates."),
       update_global_hook=_clear_compilation_cache,
       update_thread_local_hook=_thread_local_flag_unsupported)
 except Exception:

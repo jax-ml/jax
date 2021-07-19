@@ -21,7 +21,6 @@ import itertools as it
 from functools import partial
 
 from . import maps
-from . import PartitionSpec
 from .. import core
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg
@@ -35,6 +34,7 @@ from ..interpreters import pxla
 from ..interpreters import xla
 from ..interpreters import batching
 from ..interpreters import partial_eval as pe
+from ..interpreters.sharded_jit import PartitionSpec
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_unflatten
@@ -585,15 +585,18 @@ def _sharding_constraint_translation_rule(c, x_node, axis_resources, resource_en
                                get_sharding_proto(c, x_node, axis_resources, mesh))
 xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
 
-def _sharding_constraint_batcher(vals_in, dims_in, axis_resources, resource_env):
+def _sharding_constraint_batcher(insert_axis, vals_in, dims_in, axis_resources, resource_env,
+                                 axis_name, main_type):
   x, = vals_in
   d, = dims_in
+  new_parts = (axis_name,) if insert_axis else ()
   y = sharding_constraint_p.bind(
       x,
-      axis_resources=axis_resources.insert_axis_partitions(d, ()),
+      axis_resources=axis_resources.insert_axis_partitions(d, new_parts),
       resource_env=resource_env)
   return y, d
-batching.primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher
+batching.initial_style_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, False)
+pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, True)
 
 def _resource_typing_sharding_constraint(avals, params, source_info, named_axis_resources):
   aval, = avals
