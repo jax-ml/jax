@@ -56,10 +56,11 @@ max_svs = [0.1, 10.]
 nonzero_condition_numbers = [0.1, 100000]
 sides = ["right", "left"]
 methods = ["qdwh", "svd"]
+seeds = [1, 10]
 
 
 def _initialize_polar_test(shape, n_zero_svs, degeneracy, geometric_spectrum,
-                           max_sv, nonzero_condition_number):
+                           max_sv, nonzero_condition_number, dtype):
 
   n_rows, n_cols = shape
   min_dim = min(shape)
@@ -83,9 +84,9 @@ def _initialize_polar_test(shape, n_zero_svs, degeneracy, geometric_spectrum,
   svs[n_zero_svs:] = nonzero_svs
   svs = svs[::-1]
 
-  result = np.dot(left_vecs * svs, right_vecs.conj().T).astype(np.float32)
-  result = jnp.array(result)
-  spectrum = jnp.array(svs.astype(np.float32))
+  result = np.dot(left_vecs * svs, right_vecs.conj().T)
+  result = jnp.array(result).astype(dtype)
+  spectrum = jnp.array(svs).astype(dtype)
   return result, spectrum
 
 OpRecord = collections.namedtuple(
@@ -453,15 +454,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       {'testcase_name':
         '_n_zero_sv={}_degeneracy={}_geometric_spectrum={}'
         '_max_sv={}_shape={}_method={}_side={}'
-        '_nonzero_condition_number={}_dtype={}'.format(
+        '_nonzero_condition_number={}_dtype={}_seed={}'.format(
           n_zero_sv, degeneracy, geometric_spectrum, max_sv,
-          shape, method, side, nonzero_condition_number, dtype
+          shape, method, side, nonzero_condition_number, dtype,
+          seed
         ),
         'n_zero_sv': n_zero_sv, 'degeneracy': degeneracy,
         'geometric_spectrum': geometric_spectrum,
         'max_sv': max_sv, 'shape': shape, 'method': method,
         'side': side, 'nonzero_condition_number': nonzero_condition_number,
-        'dtype': dtype}
+        'dtype': dtype, 'seed': seed}
       for n_zero_sv in n_zero_svs
       for degeneracy in degeneracies
       for geometric_spectrum in geometric_spectra
@@ -470,15 +472,21 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for method in methods
       for side in sides
       for nonzero_condition_number in nonzero_condition_numbers
-      for dtype in jtu.dtypes.all_floating))
+      for dtype in jtu.dtypes.all_floating
+      for seed in seeds))
   def testPolar(
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
-      side, nonzero_condition_number, dtype):
+      side, nonzero_condition_number, dtype, seed):
     """ Tests jax.scipy.linalg.polar.polar."""
-    np.random.seed(10)
+    np.random.seed(seed)
     matrix, _ = _initialize_polar_test(
       shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
-      nonzero_condition_number)
+      nonzero_condition_number, dtype)
+    if dtype in (jnp.bfloat16, np.float16):
+      self.assertRaises(
+        NotImplementedError, polar.polar, matrix, method=method, side=side)
+      return
+
     unitary, posdef, info = polar.polar(matrix, method=method, side=side)
 
     if shape[0] >= shape[1]:
@@ -489,21 +497,27 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                                  precision=lax.Precision.HIGHEST)
     tol = 10 * jnp.finfo(matrix.dtype).eps
     eye_mat = jnp.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
-    self.assertAllClose(eye_mat, should_be_eye, atol=tol * min(shape))
+    with self.subTest('Test unitarity.'):
+      self.assertAllClose(
+        eye_mat, should_be_eye, atol=tol * min(shape))
 
-    self.assertAllClose(
-      posdef, posdef.conj().T, atol=tol * jnp.linalg.norm(posdef))
+    with self.subTest('Test Hermiticity.'):
+      self.assertAllClose(
+        posdef, posdef.conj().T, atol=tol * jnp.linalg.norm(posdef))
 
     ev, _ = jnp.linalg.eigh(posdef)
     ev = ev[jnp.abs(ev) > tol * jnp.linalg.norm(posdef)]
     negative_ev = jnp.sum(ev < 0.)
-    assert negative_ev == 0.
+    with self.subTest('Test positive definiteness.'):
+      assert negative_ev == 0.
 
     if side == "right":
       recon = jnp.matmul(unitary, posdef, precision=lax.Precision.HIGHEST)
     elif side == "left":
       recon = jnp.matmul(posdef, unitary, precision=lax.Precision.HIGHEST)
-    self.assertAllClose(matrix, recon, atol=tol * jnp.linalg.norm(matrix))
+    with self.subTest('Test reconstruction.'):
+      self.assertAllClose(
+        matrix, recon, atol=tol * jnp.linalg.norm(matrix))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
