@@ -459,7 +459,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         '_n_zero_sv={}_degeneracy={}_geometric_spectrum={}'
         '_max_sv={}_method={}_side={}'
         '_nonzero_condition_number={}_seed={}'.format(
-          jtu.format_shape_dtype_string(shape, jnp.dtype(dtype).name).replace(" ", ""),
+          jtu.format_shape_dtype_string(
+            shape, jnp.dtype(dtype).name).replace(" ", ""),
           n_zero_sv, degeneracy, geometric_spectrum, max_sv,
           method, side, nonzero_condition_number, seed
         ),
@@ -483,7 +484,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       side, nonzero_condition_number, dtype, seed):
     """ Tests jax.scipy.linalg.polar."""
     if jtu.device_under_test() != "cpu":
-      if dtype in (jnp.bfloat16, np.float16):
+      if jnp.dtype(dtype).name in ("bfloat16", "float16"):
         raise unittest.SkipTest("Skip half precision off CPU.")
       if method == "svd":
         raise unittest.SkipTest("Can't use SVD mode on TPU/GPU.")
@@ -492,7 +493,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     matrix, _ = _initialize_polar_test(
       shape, n_zero_sv, degeneracy, geometric_spectrum, max_sv,
       nonzero_condition_number, dtype)
-    if dtype in (jnp.bfloat16, np.float16):
+    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
         NotImplementedError, jsp.linalg.polar, matrix, method=method,
         side=side)
@@ -537,13 +538,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     for seed in seeds
     for dtype in jtu.dtypes.all_floating))
   def test_spectral_dac_eigh(self, linear_size, seed, dtype):
-    if dtype in (jnp.bfloat16, np.float16):
+    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       if jtu.device_under_test() != "cpu":
         raise unittest.SkipTest("Skip half precision off CPU.")
     np.random.seed(seed)
     H = np.random.randn(linear_size, linear_size)
     H = jnp.array(0.5 * (H + H.conj().T)).astype(dtype)
-    if dtype in (jnp.bfloat16, np.float16):
+    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
         NotImplementedError, jax._src.scipy.eigh.eigh, H)
       return
@@ -566,13 +567,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     for seed in seeds
     for dtype in jtu.dtypes.all_floating))
   def test_spectral_dac_svd(self, linear_size, seed, dtype):
-    if dtype in (jnp.bfloat16, np.float16):
+    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       if jtu.device_under_test() != "cpu":
         raise unittest.SkipTest("Skip half precision off CPU.")
 
     np.random.seed(seed)
     A = np.random.randn(linear_size, linear_size).astype(dtype)
-    if dtype in (jnp.bfloat16, np.float16):
+    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       self.assertRaises(
         NotImplementedError, jax._src.scipy.eigh.svd, A)
       return
