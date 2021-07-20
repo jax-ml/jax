@@ -231,7 +231,7 @@ def svd(A, precision=lax.Precision.HIGHEST):
     V_dag: An `n` by `n` unitary matrix of `A`'s conjugate transposed
       right singular vectors.
   """
-  Up, H, _ = jsp.linalg.polar(A)
+  Up, H = jsp.linalg.polar(A)
   S, V = eigh(H, precision=precision)
   U = jnp.dot(Up, V, precision=precision)
   return U, S, V.conj().T
