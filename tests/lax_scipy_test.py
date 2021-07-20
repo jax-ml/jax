@@ -477,7 +477,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for method in methods
       for side in sides
       for nonzero_condition_number in nonzero_condition_numbers
-      for dtype in jtu.dtypes.all_floating
+      for dtype in [np.float32, ]
       for seed in seeds))
   def testPolar(
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
@@ -536,7 +536,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
     for linear_size in linear_sizes
     for seed in seeds
-    for dtype in jtu.dtypes.all_floating))
+    for dtype in [np.float32, ]))
   def test_spectral_dac_eigh(self, linear_size, seed, dtype):
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       if jtu.device_under_test() != "cpu":
@@ -565,7 +565,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
     for linear_size in linear_sizes
     for seed in seeds
-    for dtype in jtu.dtypes.all_floating))
+    for dtype in [np.float32, ]))
   def test_spectral_dac_svd(self, linear_size, seed, dtype):
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
       if jtu.device_under_test() != "cpu":
