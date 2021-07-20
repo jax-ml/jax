@@ -28,6 +28,7 @@ from jax._src.scipy.linalg import (
   lu,
   lu_factor,
   lu_solve,
+  polar,
   qr,
   solve,
   solve_triangular,
@@ -37,6 +38,5 @@ from jax._src.scipy.linalg import (
 )
 
 from jax._src.lax.polar import (
-  polar,
   polar_unitary
 )

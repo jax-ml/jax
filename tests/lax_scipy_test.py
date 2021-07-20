@@ -499,7 +499,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         side=side)
       return
 
-    unitary, posdef, info = jsp.linalg.polar(matrix, method=method, side=side)
+    unitary, posdef = jsp.linalg.polar(matrix, method=method, side=side)
     if shape[0] >= shape[1]:
       should_be_eye = np.matmul(unitary.conj().T, unitary)
     else:

@@ -19,6 +19,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * The `backend` argument to {py:func}`jax.dlpack.from_dlpack` has been
     removed.
 
+* New features:
+  * Added a polar decomposition ({py:func}`jax.scipy.linalg.polar`).
+
 * Bug fixes:
   * Tightened the checks for lax.argmin and lax.argmax to ensure they are
     not used with invalid `axis` value, or with an empty reduction dimension.

@@ -22,6 +22,7 @@ import textwrap
 from jax import jit, vmap, jvp
 from jax import lax
 from jax._src.lax import linalg as lax_linalg
+from jax._src.lax import polar as lax_polar
 from jax._src.numpy.util import _wraps
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg as np_linalg
@@ -589,3 +590,9 @@ def eigh_tridiagonal(d, e, *, eigvals_only=False, select='a',
 
   _, _, mid, _ = lax.while_loop(cond, body, (0, lower, mid, upper))
   return mid
+
+@_wraps(scipy.linalg.polar)
+def polar(a, side='right', method='qdwh', eps=None, maxiter=50):
+   unitary, posdef, _ = lax_polar.polar(a, side=side, method=method, eps=eps,
+                                        maxiter=maxiter)
+   return unitary, posdef
