@@ -2841,6 +2841,50 @@ class APITest(jtu.JaxTestCase):
       jitted_f = api.jit(f)
       np.testing.assert_allclose(jitted_f(x, delta), f(x, delta))
 
+  def test_vjp_fun_jit(self):
+    # test that the function returned by vjp can be returned
+    # from and passed to jitted functions
+    f = lambda x: 2. * x
+
+    @partial(jit, static_argnums=0)
+    def linearize_vjp(f, x):
+      _, vjp_fun = api.vjp(f, x)
+      return vjp_fun
+
+    linearized = linearize_vjp(f, 1.)
+    actual = jit(lambda f, x: f(x))(linearized, 3.)
+    expected = (6.,)
+    self.assertEqual(actual, expected)
+
+  def test_linearize_fun_jit(self):
+    # test that the function returned by linearize can be returned
+    # from and passed to jitted functions
+    f = lambda x: 2. * x
+
+    @partial(jit, static_argnums=0)
+    def linearize(f, x):
+      _, jvp_fun = api.linearize(f, x)
+      return jvp_fun
+
+    linearized = linearize(f, 1.)
+    actual = jit(lambda f, x: f(x))(linearized, 3.)
+    expected = 6.
+    self.assertEqual(actual, expected)
+
+  def test_linear_transpose_fun_jit(self):
+    # test that the function returned by linear_transpose can be returned
+    # from and passed to jitted functions
+    f = lambda x: 2. * x
+
+    @partial(jit, static_argnums=0)
+    def transpose(f, x):
+      return api.linear_transpose(f, x)
+
+    transposed = transpose(f, 1.)
+    actual = jit(lambda f, x: f(x))(transposed, 3.)
+    expected = (6.,)
+    self.assertEqual(actual, expected)
+
 
 class RematTest(jtu.JaxTestCase):
 
