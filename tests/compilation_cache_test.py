@@ -13,10 +13,15 @@
 # limitations under the License.
 
 from absl.testing import absltest
+from functools import partial
 import hashlib
+from jax.experimental import PartitionSpec as P
 from jax.experimental.compilation_cache import compilation_cache as cc
+from jax.experimental.maps import xmap
+from jax.experimental.pjit import pjit
 import jax
 from jax import jit, lax, pmap
+from jax._src.util import prod
 import jax.test_util as jtu
 import numpy as np
 import os
@@ -184,7 +189,6 @@ class CompilationCacheTest(jtu.JaxTestCase):
           #TODO: create a test for calling pmap with the same input more than once
 
   def test_jit(self):
-      cc._cache = None
       with tempfile.TemporaryDirectory() as tmpdir:
           cc.initialize_cache(tmpdir)
           f = jit(lambda x: x*x)
@@ -192,6 +196,46 @@ class CompilationCacheTest(jtu.JaxTestCase):
           files_in_directory = len(os.listdir(tmpdir))
           self.assertEqual(files_in_directory, 1)
           f(1.0)
+          files_in_directory = len(os.listdir(tmpdir))
+          self.assertEqual(files_in_directory, 2)
+
+  @jtu.with_mesh([('x', 2)])
+  def test_pjit(self):
+      with tempfile.TemporaryDirectory() as tmpdir:
+          cc.initialize_cache(tmpdir)
+          @partial(pjit,
+                   in_axis_resources=(P('x'), P('x')),
+                   out_axis_resources=None)
+          def f(x, y):
+              return x + y
+
+          shape = (8, 8)
+          x = np.arange(prod(shape), dtype=np.int64).reshape(shape)
+          f(x, x + 1)
+          files_in_directory = len(os.listdir(tmpdir))
+          self.assertEqual(files_in_directory, 1)
+          x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+          f(x, x + 1)
+          files_in_directory = len(os.listdir(tmpdir))
+          self.assertEqual(files_in_directory, 2)
+
+  @jtu.with_mesh([('x', 2)])
+  def test_xmap(self):
+      with tempfile.TemporaryDirectory() as tmpdir:
+          cc.initialize_cache(tmpdir)
+          def f(x):
+              return x * 2
+          devices = np.array(jax.local_devices()[:2])
+          if devices.size < 2:
+              raise SkipTest("Test requires 2 devices")
+          x = np.arange(8, dtype=np.int64).reshape((2, 2, 2))
+          xmap(f, in_axes=['a', ...], out_axes=['a', ...],
+               axis_resources={'a': 'x'})(x)
+          files_in_directory = len(os.listdir(tmpdir))
+          self.assertEqual(files_in_directory, 1)
+          x = np.arange(8, dtype=np.float32).reshape((2, 2, 2))
+          xmap(f, in_axes=['a', ...], out_axes=['a', ...],
+               axis_resources={'a': 'x'})(x)
           files_in_directory = len(os.listdir(tmpdir))
           self.assertEqual(files_in_directory, 2)
 

@@ -1569,7 +1569,7 @@ def compile_and_wrap_mesh_hlo(computation: xc.XlaComputation, backend,
     return backend.compile_replicated(computation, compile_options,
                                       input_indices, local_input_specs,
                                       handle_outs)
-  compiled = xla.backend_compile(backend, computation, compile_options)
+  compiled = xla.compile_or_get_cached(backend, computation, compile_options)
   handle_args = partial(shard_args, compiled.local_devices(), input_indices)
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
 
