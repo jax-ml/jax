@@ -2077,10 +2077,7 @@ class APITest(jtu.JaxTestCase):
     rep = jnp.ones(()) + 1.
     self.assertIsInstance(rep, jax.interpreters.xla.DeviceArray)
     msg = "JAX DeviceArray, like numpy.ndarray, is not hashable."
-    with self.assertRaisesRegex(TypeError, msg):
-      hash(rep)
-    with self.assertRaisesRegex(TypeError, msg):
-      hash(rep.device_buffer)
+    self.assertNotIsInstance(rep, collections.Hashable)
 
   def test_grad_without_enough_args_error_message(self):
     # https://github.com/google/jax/issues/1696

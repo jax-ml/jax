@@ -1311,11 +1311,6 @@ for device_array in [DeviceArray]:
   # clobbered when jax.numpy is imported, but useful in tests
   setattr(device_array, "__eq__", lambda self, other: self._value == other)
 
-  def __hash__(self):
-    raise TypeError("JAX DeviceArray, like numpy.ndarray, is not hashable.")
-
-  setattr(device_array, "__hash__", __hash__)
-
   # The following methods are dynamically overridden in lax_numpy.py.
   def raise_not_implemented():
     raise NotImplementedError
