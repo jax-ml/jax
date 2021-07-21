@@ -2077,6 +2077,8 @@ class APITest(jtu.JaxTestCase):
     rep = jnp.ones(()) + 1.
     self.assertIsInstance(rep, jax.interpreters.xla.DeviceArray)
     self.assertNotIsInstance(rep, collections.Hashable)
+    with self.assertRaisesRegex(TypeError, 'unhashable type'):
+      hash(rep)
 
   def test_grad_without_enough_args_error_message(self):
     # https://github.com/google/jax/issues/1696
