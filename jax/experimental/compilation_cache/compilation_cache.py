@@ -20,11 +20,14 @@ from typing import Optional
 
 _cache = None
 
-def initialize_cache(path):
-    """Creates a global cache object. Should only be called once per process."""
+def initialize_cache(path, max_cache_size_bytes=32 * 2**30):
+    """Creates a global cache object. Should only be called once per process.
+
+       max_cache_sixe defaults to 32GiB.
+    """
     global _cache
     assert _cache == None, f"The cache path has already been initialized to {_cache}"
-    _cache = FileSystemCache(path)
+    _cache = FileSystemCache(path, max_cache_size_bytes)
 
 def get_executable(xla_computation, compile_options) -> Optional[xla_client.Executable]:
     """Returns the cached executable if present, or None otherwise."""
