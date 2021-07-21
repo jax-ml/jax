@@ -2596,6 +2596,23 @@ class APITest(jtu.JaxTestCase):
       with self.assertRaisesRegex(Exception, r"Leaked sublevel"):
         f(3)
 
+  def test_leak_checker_avoids_false_positive_custom_jvp(self):
+    # see https://github.com/google/jax/issues/5636
+    with jax.checking_leaks():
+      @api.custom_jvp
+      def t(y):
+        return y
+
+      def t_jvp(p, t):
+        pass
+
+      t.defjvp(t_jvp)
+
+      @jit
+      def s(y):
+        return t(y)
+      s(3)  # doesn't crash
+
   def test_default_backend(self):
     first_local_device = api.local_devices()[0]
     self.assertEqual(first_local_device.platform, api.default_backend())
