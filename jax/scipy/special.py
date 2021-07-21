@@ -21,6 +21,7 @@ from jax._src.scipy.special import (
   entr,
   erf,
   erfc,
+  erfcx,
   erfinv,
   expit,
   gammainc,

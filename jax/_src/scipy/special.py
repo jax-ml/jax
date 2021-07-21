@@ -80,6 +80,46 @@ def erfc(x):
   return lax.erfc(x)
 
 
+@_wraps(osp_special.erfcx)
+def erfcx(x):
+    x, = _promote_args_inexact("erfcx", x)
+    a = lax.abs(x)
+    p = a + 2.0
+    r = 1.0 / p
+    q = (a - 2.0) * r
+    t = (q + 1.0) * (-2.0) + a
+    e = q * (-a) + t
+    q = r * e + q
+    p = float.fromhex('0x1.f10000p-15') # 5.92470169e-5
+    p = p * q + ( float.fromhex('0x1.521cc6p-13')) #  1.61224554e-4
+    p = p * q + (-float.fromhex('0x1.6b4ffep-12')) # -3.46481771e-4
+    p = p * q + (-float.fromhex('0x1.6e2a7cp-10')) # -1.39681227e-3
+    p = p * q + ( float.fromhex('0x1.3c1d7ep-10')) #  1.20588380e-3
+    p = p * q + ( float.fromhex('0x1.1cc236p-07')) #  8.69014394e-3
+    p = p * q + (-float.fromhex('0x1.069940p-07')) # -8.01387429e-3
+    p = p * q + (-float.fromhex('0x1.bc1b6cp-05')) # -5.42122945e-2
+    p = p * q + ( float.fromhex('0x1.4ff8acp-03')) #  1.64048523e-1
+    p = p * q + (-float.fromhex('0x1.54081ap-03')) # -1.66031078e-1
+    p = p * q + (-float.fromhex('0x1.7bf5cep-04')) # -9.27637145e-2
+    p = p * q + ( float.fromhex('0x1.1ba03ap-02')) #  2.76978403e-1
+    d = a + 0.5                 
+    r = 1.0 / d
+    r = r * 0.5
+    q = p * r + r
+    e = (p - q) - (q + q) * a + 1.0
+    r = e * r + q
+    r = jnp.where(a > float.fromhex('0x1.fffffep127'), 0.0, r)
+    s = x * x  
+    d = x * x - s
+    e = lax.exp(s)
+    r = jnp.where(x < 0,
+                  jnp.where(e > float.fromhex('0x1.fffffep127'),
+                            e,
+                            e - r + e * (d + d) + e),
+                  r)
+    return r
+
+
 @_wraps(osp_special.erfinv)
 def erfinv(x):
   x, = _promote_args_inexact("erfinv", x)
