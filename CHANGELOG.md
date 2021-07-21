@@ -8,8 +8,25 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.18 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.17...main).
+## jax 0.2.19 (unreleased)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.18...main).
+
+## jaxlib 0.1.70 (unreleased)
+* Breaking changes:
+  * Support for Python 3.6 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported Python version.
+
+
+* Breaking changes:
+  * The host_callback mechnism now uses one thread per local device for
+    making the calls to the Python callbacks. Previously there was a single
+    thread for all devices. This means that the callbacks may now be called
+    interleaved. The callbacks corresponding to one device will still be
+    called in sequence.
+
+## jax 0.2.18 (July 21 2021)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.17...jax-v0.2.18).
 
 * Breaking changes:
   * Support for Python 3.6 has been dropped, per the
@@ -27,20 +44,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     not used with invalid `axis` value, or with an empty reduction dimension.
     ({jax-issue}`#7196`)
 
-
-## jaxlib 0.1.70 (unreleased)
-* Breaking changes:
-  * Support for Python 3.6 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
-    Please upgrade to a supported Python version.
-
-
-* Breaking changes:
-  * The host_callback mechnism now uses one thread per local device for
-    making the calls to the Python callbacks. Previously there was a single
-    thread for all devices. This means that the callbacks may now be called
-    interleaved. The callbacks corresponding to one device will still be
-    called in sequence.
 
 ## jaxlib 0.1.69 (July 9 2021)
 * Fix bugs in TFRT CPU backend that results in incorrect results.
