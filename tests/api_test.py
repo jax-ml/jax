@@ -2292,6 +2292,12 @@ class APITest(jtu.JaxTestCase):
       jax.eval_shape(self.helper_save_tracer, 1)
       _ = self._saved_tracer+1
 
+  def test_escaped_tracer_shape_dtype(self):
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                r"shape \(4, 3\) and dtype int32"):
+      jax.jit(self.helper_save_tracer)(jnp.ones((4, 3), dtype=jnp.int32))
+      _ = self._saved_tracer+1
+
   def test_pmap_static_kwarg_error_message(self):
     # https://github.com/google/jax/issues/3007
     def f(a, b):

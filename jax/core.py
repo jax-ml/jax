@@ -445,7 +445,8 @@ def escaped_tracer_error(tracer, detail=None):
     pass
   else:
     msg += ('\nThe tracer that caused this error was created on line '
-            f'{source_info_util.summarize(line_info)}.\n')
+            f'{source_info_util.summarize(line_info)}. The tracer has'
+            f' shape {tracer.shape} and dtype {tracer.dtype}.\n')
     if num_frames > 0:
       msg += (f'When the tracer was created, the final {num_frames} stack '
               'frames (most recent last) excluding JAX-internal frames were:\n'
