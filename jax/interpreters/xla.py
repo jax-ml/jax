@@ -1021,7 +1021,8 @@ def lower_fun(fun, multiple_results, parallel=False, with_avals=False, backend=N
     wrapped_fun = lu.wrap_init(fun, params)
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+    with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
     outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts), '',
                          *xla_args)
     if multiple_results or any(v.aval._num_buffers > 1 for v in jaxpr.outvars):

@@ -1788,6 +1788,17 @@ class APITest(jtu.JaxTestCase):
   def test_xla_computation_donate_argnums(self):
     api.xla_computation(lambda x: None, donate_argnums=(0,))(3)  # doesn't crash
 
+  def test_xla_computation_lower_fun_axis_env(self):
+    axis_name = 'i'
+    def fn(x):
+      y = lax.all_gather(
+              x, axis_name=axis_name)
+      return y * lax.axis_index(axis_name).astype(jnp.float32)
+
+    input_x = jnp.ones((5,6,4))
+    axis_env = [(axis_name, api.local_device_count())]
+    _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
+
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
