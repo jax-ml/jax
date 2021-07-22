@@ -109,8 +109,11 @@ LAX_OPS = [
     op_record("cos", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("atan2", 2, float_dtypes, jtu.rand_default),
 
-    op_record("sqrt", 1, float_dtypes + complex_dtypes, jtu.rand_positive),
-    op_record("rsqrt", 1, float_dtypes + complex_dtypes, jtu.rand_positive),
+    op_record("sqrt", 1, float_dtypes, jtu.rand_positive),
+    op_record("sqrt", 1, complex_dtypes, jtu.rand_default),
+    op_record("rsqrt", 1, float_dtypes, jtu.rand_positive),
+    op_record("rsqrt", 1, complex_dtypes, jtu.rand_default),
+    op_record("cbrt", 1, float_dtypes, jtu.rand_default),
     op_record("square", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("reciprocal", 1, float_dtypes + complex_dtypes, jtu.rand_positive),
     op_record("tan", 1, float_dtypes + complex_dtypes, jtu.rand_default, {np.float32: 3e-5}),
@@ -2606,10 +2609,15 @@ class LazyConstantTest(jtu.JaxTestCase):
     self.assertEqual(lax.argmax(np.array([0., np.nan]), axis=0,
                                 index_dtype=np.int32), 1)
 
+  unary_op_types = {}
+  for r in LAX_OPS:
+    if r.nargs == 1:
+      unary_op_types[r.op] = (unary_op_types.get(r.op, set()) |
+                              set(np.dtype(t) for t in r.dtypes))
+
   @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_{}".format(rec.op),
-         "op_name": rec.op, "rec_dtypes": rec.dtypes}
-      for rec in LAX_OPS if rec.nargs == 1))
+        {"testcase_name": "_{}".format(op), "op_name": op, "rec_dtypes": dtypes}
+      for op, dtypes in unary_op_types.items()))
   def testUnaryWeakTypes(self, op_name, rec_dtypes):
     """Test that all lax unary ops propagate weak_type information appropriately."""
     # Find a valid dtype for the function.
@@ -2620,7 +2628,7 @@ class LazyConstantTest(jtu.JaxTestCase):
         lax_val = lax.full((), py_val, dtype)
         break
     else:
-      raise ValueError("no available dtypes")
+      raise ValueError(f"no available dtypes in {rec_dtypes}")
 
     op = getattr(lax, op_name)
     py_op = op(py_val)

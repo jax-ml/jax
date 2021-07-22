@@ -44,6 +44,7 @@ Operators
     broadcast
     broadcasted_iota
     broadcast_in_dim
+    cbrt
     ceil
     clamp
     collapse

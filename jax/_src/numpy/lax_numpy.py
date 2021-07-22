@@ -461,6 +461,7 @@ tanh = _one_to_one_unop(np.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(np.arcsinh, lax.asinh, True)
 arctanh = _one_to_one_unop(np.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(np.sqrt, lax.sqrt, True)
+cbrt = _one_to_one_unop(np.cbrt, lax.cbrt, True)
 
 
 add = _maybe_bool_binop(np.add, lax.add, lax.bitwise_or)
@@ -918,13 +919,6 @@ def fmod(x1, x2):
   if issubdtype(_dtype(x1, x2), integer):
     x2 = where(x2 == 0, 1, x2)
   return lax.rem(*_promote_args("fmod", x1, x2))
-
-
-@_wraps(np.cbrt)
-def cbrt(x):
-  _check_arraylike("cbrt", x)
-  x, = _promote_dtypes_inexact(x)
-  return lax.sign(x) * power(lax.abs(x), _constant_like(x, 1. / 3.))
 
 
 @_wraps(np.square)

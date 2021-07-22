@@ -54,6 +54,8 @@ atan2 = np.arctan2
 
 sqrt = np.sqrt
 rsqrt = lambda x: np.ones_like(x) / np.sqrt(x)
+cbrt = np.cbrt
+
 square = np.square
 reciprocal = np.reciprocal
 tan = np.tan

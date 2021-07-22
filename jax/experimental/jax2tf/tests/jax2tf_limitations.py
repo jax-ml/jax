@@ -125,8 +125,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   # We keep here the explicit set of groups for which we don't have limitations
   harness_groups_no_limitations = {
       "abs", "add", "add_any", "and", "atan2",
-      "bitcast_convert_type", "broadcast", "broadcast_in_dim", "ceil", "clamp",
-      "concatenate", "cos", "cosh", "complex", "conj", "convert_element_type",
+      "bitcast_convert_type", "broadcast", "broadcast_in_dim", "cbrt", "ceil",
+      "clamp", "concatenate", "cos", "cosh", "complex", "conj",
+      "convert_element_type",
       "cummax", "cummin", "device_put", "dynamic_slice",
       "dynamic_update_slice", "exp", "eq", "floor", "gather", "ge", "gt",
       "imag",

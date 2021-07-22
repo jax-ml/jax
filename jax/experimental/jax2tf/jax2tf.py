@@ -1151,6 +1151,11 @@ tf_impl[lax.asinh_p] = tf.math.asinh
 tf_impl[lax.sqrt_p] = tf.math.sqrt
 tf_impl[lax.rsqrt_p] = tf.math.rsqrt
 
+def _cbrt(x):
+  return tf.math.sign(x) * tf.math.pow(tf.math.abs(x), 1/3)
+
+tf_impl[lax.cbrt_p] = _cbrt
+
 tf_impl[lax.lgamma_p] = tf.math.lgamma
 tf_impl[lax.digamma_p] = tf.math.digamma
 tf_impl[lax.igamma_p] = tf.math.igamma

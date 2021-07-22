@@ -70,6 +70,8 @@ from jax._src.lax.lax import (
   broadcast_shapes,
   broadcast_to_rank,
   broadcasted_iota,
+  cbrt,
+  cbrt_p,
   ceil,
   ceil_p,
   clamp,

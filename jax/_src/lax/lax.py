@@ -311,6 +311,10 @@ def rsqrt(x: Array) -> Array:
   r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}`."""
   return rsqrt_p.bind(x)
 
+def cbrt(x: Array) -> Array:
+  r"""Elementwise cube root: :math:`\cbrt{x}`."""
+  return cbrt_p.bind(x)
+
 def bitwise_not(x: Array) -> Array:
   r"""Elementwise NOT: :math:`\neg x`."""
   return not_p.bind(x)
@@ -2614,6 +2618,34 @@ rsqrt_p = standard_unop(_float | _complex, 'rsqrt')
 ad.defjvp2(rsqrt_p,
            lambda g, ans, x:
            mul(g, mul(_const(x, -0.5), div(ans, x))))
+
+# TODO(phawkins): remove the fallback translation rule after the minimum jaxlib
+# is 0.1.70 or newer.
+if jax.lib._xla_extension_version >= 28:
+  _cbrt_translation_rule = None
+else:
+  def _cbrt_translation_rule(c, x):
+    dtype = c.get_shape(x).numpy_dtype()
+    return xops.Mul(
+      xops.Sign(x),
+      xops.Pow(xops.Abs(x), xb.constant(c, np.array(1/3, dtype=dtype))))
+
+cbrt_p = standard_unop(_float, 'cbrt',
+                       translation_rule=_cbrt_translation_rule)
+ad.defjvp2(cbrt_p,
+           lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
+
+# TODO(b/194222106): remove the TPU-specific translation rule after XLA's cbrt
+# is improved on TPU.
+def _cbrt_tpu(y):
+  abs_y = abs(y)
+  z = pow(abs_y, _const(y, -1/3))
+  # Newton-Raphson step: https://csclub.uwaterloo.ca/~pbarfuss/qbrt.pdf
+  z1 = z + _const(y, 1/3) * (z - (z * z) * (z * (z * abs_y)))
+  return select(eq(y, _zeros(y)), y, z1 * (z1 * y))
+
+xla.backend_specific_translations['tpu'][cbrt_p] = xla.lower_fun(
+  _cbrt_tpu, multiple_results=False)
 
 pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
 
