@@ -12,8 +12,8 @@ operations (e.g. {func}`jax.lax.psum`) in multi-process settings, although other
 communication methods may be useful too depending on your use case (e.g. RPC,
 [mpi4jax](https://github.com/mpi4jax/mpi4jax)). If you’re not already familiar
 with JAX’s collective operations, we recommend starting with the
-{doc}`/jax-101/06-parallelism` notebook. An important feature of multi-process
-environments is direct communication links between accelerators, e.g. the
+{doc}`/jax-101/06-parallelism` notebook. An important requirement of multi-process
+environments in JAX is direct communication links between accelerators, e.g. the
 high-speed interconnects for Cloud TPUs or
 [NCCL](https://developer.nvidia.com/nccl) for GPUs. These links are what allow
 collective operations to run across multiple process’ worth of accelerators.
