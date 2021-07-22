@@ -19,7 +19,6 @@ import operator as op
 from typing import Callable, Generic, Optional, Sequence, Tuple, TypeVar, Any
 
 from jax import core
-from jax._src import dtypes
 from jax import linear_util as lu
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                         tree_multimap, treedef_is_leaf, treedef_tuple,
@@ -831,18 +830,21 @@ def closure_convert(fun, *example_args):
   else:
     return _closure_convert_for_avals(fun, in_tree, in_avals)
 
+def _is_perturbed(x: Any) -> bool:
+  if isinstance(x, ad.JVPTracer):
+    return True
+  elif isinstance(x, core.Tracer):
+    return any(_is_perturbed(attr) for name, attr in x._contents())
+  else:
+    return False
+
 @cache()
 def _closure_convert_for_avals(fun, in_tree, in_avals):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
   out_tree = out_tree()
 
-  # We only want to closure convert for constants with respect to which we're
-  # differentiating. As a proxy for that, we hoist consts with float dtype.
-  # TODO(frostig,mattjj): revise this approach
-  from jax.numpy import inexact
-  is_float = lambda c: dtypes.issubdtype(dtypes.dtype(c), inexact)
-  (closure_consts, hoisted_consts), merge = partition_list(is_float, consts)
+  (closure_consts, hoisted_consts), merge = partition_list(_is_perturbed, consts)
   num_consts = len(hoisted_consts)
 
   def converted_fun(*args_hconsts):
