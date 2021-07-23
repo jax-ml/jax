@@ -1402,7 +1402,8 @@ def new_dynamic(main: MainTrace):
     dynamic_trace = prev_dynamic_trace
 
 @lru_cache()
-def make_jaxpr(f, *avals_in):
+def make_jaxpr(f: Callable, *avals_in: ShapedArray,
+               ) -> Tuple[Jaxpr, List[Any], PyTreeDef]:
   avals_in, in_tree = tree_flatten(avals_in)
   f, out_tree = flatten_fun(f, in_tree)
 
@@ -2051,14 +2052,17 @@ return a list of `PartialVal` outputs along with a jaxpr representing the
 delayed computation:
 
 ```{code-cell}
-def partial_eval_flat(f, pvals_in: List[PartialVal]):
+def partial_eval_flat(f: Callable, pvals_in: List[PartialVal]
+                      ) -> Tuple[Jaxpr, List[PartialVal], List[Any]]:
   with new_main(PartialEvalTrace) as main:
     trace = PartialEvalTrace(main)
     tracers_in = [trace.new_arg(pval) for pval in pvals_in]
     outs = f(*tracers_in)
     tracers_out = [full_raise(trace, out) for out in outs]
-    jaxpr, consts = tracers_to_jaxpr(tracers_in, tracers_out)
     pvals_out = [t.pval for t in tracers_out]
+    unk_tracers_in  = [t for t in tracers_in  if t.pval.is_unknown]
+    unk_tracers_out = [t for t in tracers_out if t.pval.is_unknown]
+    jaxpr, consts = tracers_to_jaxpr(unk_tracers_in, unk_tracers_out)
   return jaxpr, pvals_out, consts
 ```
 
@@ -2079,19 +2083,12 @@ class LambdaBindingRecipe(NamedTuple):
 class ConstRecipe(NamedTuple):
   val: Any
 
-class JaxprEqnRecipe:
+class JaxprEqnRecipe(NamedTuple):
   prim: Primitive
   tracers_in: List['PartialEvalTracer']
   params: Dict[str, Any]
   avals_out: List[ShapedArray]
   tracer_refs_out: List['ReferenceType[PartialEvalTracer]']
-
-  def __init__(self, prim, tracers_in, params, avals_out, tracer_refs_out):
-    self.prim = prim
-    self.tracers_in = tracers_in
-    self.params = params
-    self.avals_out = avals_out
-    self.tracer_refs_out = tracer_refs_out
 
 JaxprRecipe = Union[LambdaBindingRecipe, ConstRecipe, JaxprEqnRecipe]
 ```
@@ -2099,16 +2096,14 @@ JaxprRecipe = Union[LambdaBindingRecipe, ConstRecipe, JaxprEqnRecipe]
 ```{code-cell}
 class PartialEvalTracer(Tracer):
   pval: PartialVal
-  recipe: JaxprRecipe
+  recipe: Optional[JaxprRecipe]
 
   def __init__(self, trace, pval, recipe):
     self._trace = trace
     self.pval = pval
     self.recipe = recipe
 
-  @property
-  def aval(self):
-    return self.pval.aval
+  aval = property(lambda self: self.pval.aval)
 
   def full_lower(self):
     if self.pval.is_known:
@@ -2176,9 +2171,6 @@ The jaxpr corresponds to a topological sort of the graph.
 ```{code-cell}
 def tracers_to_jaxpr(tracers_in: List[PartialEvalTracer],
                      tracers_out: List[PartialEvalTracer]):
-  tracers_in  = [t for t in tracers_in  if t.pval.is_unknown]
-  tracers_out = [t for t in tracers_out if t.pval.is_unknown]
-
   tracer_to_var = {id(t): Var(raise_to_shaped(t.aval)) for t in tracers_in}
   constvar_to_val = {}
   constid_to_var = {}
@@ -2304,7 +2296,7 @@ def partial_eval_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool],
                        instantiate: Optional[List[bool]] = None,
                        ) -> Tuple[Jaxpr, Jaxpr, List[bool], int]:
   env: Dict[Var, bool] = {}
-  residuals = set()
+  residuals: Set[Var] = set()
 
   def read(v: Atom) -> bool:
     return type(v) is Var and env[v]
@@ -2312,8 +2304,9 @@ def partial_eval_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool],
   def write(unk: bool, v: Var) -> None:
     env[v] = unk
 
-  def new_res(v: Var) -> Var:
-    return residuals.add(v) or v
+  def new_res(x: Atom) -> Atom:
+    if type(x) is Var: residuals.add(x)
+    return x
 
   eqns1, eqns2 = [], []
   map(write, in_unknowns, jaxpr.in_binders)
