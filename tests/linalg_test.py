@@ -1478,10 +1478,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
   @parameterized.parameters(np.float32, np.float64)
   def test_tridiagonal_solve(self, dtype):
-    if jtu.device_under_test() != "gpu":
-      self.skipTest("Only supported on GPU")
-
-    dl = np.array([0.0, 1.0, 2.0], dtype=dtype)
+    dl = np.array([0.0, 2.0, 3.0], dtype=dtype)
     d = np.ones(3, dtype=dtype)
     du = np.array([1.0, 2.0, 0.0], dtype=dtype)
     m = 3
@@ -1490,7 +1487,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
     A = np.eye(3, dtype=dtype)
     A[[1, 2], [0, 1]] = dl[1:]
     A[[0, 1], [1, 2]] = du[:-1]
-    np.testing.assert_allclose(A @ X, B)
+    np.testing.assert_allclose(A @ X, B, rtol=1e-6, atol=1e-6)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
