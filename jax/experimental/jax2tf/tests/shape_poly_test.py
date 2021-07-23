@@ -283,8 +283,8 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
 
 class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
-  def test_simple(self):
-    """Test shape polymorphism for a simple case."""
+  def test_simple_unary(self):
+    """Test shape polymorphism for a simple case, unary function."""
 
     def f_jax(x):
       return x + jnp.sin(x)
@@ -305,6 +305,36 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         f_jax,
         input_signature=[tf.TensorSpec([None, None])],
         polymorphic_shapes=["h, h"],
+        expected_output_signature=tf.TensorSpec([None, None]))
+
+    self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([None, None])],
+        polymorphic_shapes="h, h",
+        expected_output_signature=tf.TensorSpec([None, None]))
+
+  def test_simple_binary(self):
+    """Test shape polymorphism for a simple case, binary function."""
+
+    def f_jax(x, y):
+      return x + jnp.sin(y)
+
+    self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([2, 3]), tf.TensorSpec([2, 3])],
+        polymorphic_shapes=None,
+        expected_output_signature=tf.TensorSpec([2, 3]))
+
+    self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([2, None]), tf.TensorSpec([2, 3])],
+        polymorphic_shapes="_, h",
+        expected_output_signature=tf.TensorSpec([2, 3]))
+
+    self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([None, None]), tf.TensorSpec([None, None])],
+        polymorphic_shapes=PS("h", "h"),
         expected_output_signature=tf.TensorSpec([None, None]))
 
   def test_arg_avals(self):
@@ -366,6 +396,16 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=[PS("_", 3)],
         expected_avals=(shaped_array("2, 3", [2, 3]),))
 
+    check_avals(
+        args=[tf_const((2, 3))],
+        polymorphic_shapes=["..."],
+        expected_avals=(shaped_array("2, 3", [2, 3]),))
+
+    check_avals(
+        args=[tf_const((2, 3))],
+        polymorphic_shapes=[PS(...)],
+        expected_avals=(shaped_array("2, 3", [2, 3]),))
+
     # Partially known shapes for the arguments
     check_avals(
         args=[tf_var([None, 3], initializer_shape=(2, 3))],
@@ -395,11 +435,18 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         expected_avals=(shaped_array("(b, 3)", (2, 3)),))
 
     # Some errors
-    for invalid_syntax in [")(", "2a", "a@", "a - 2"]:
+    for invalid_syntax in [")(", "2a", "a@", "a - 2", "'a'", "('a', ...)"]:
       with self.assertRaisesRegex(ValueError,
-                                  re.escape("PolyShape '" + invalid_syntax + "' has invalid syntax")):
+                                  re.escape("has invalid syntax")):
         check_avals(
             args=[const((2,))], polymorphic_shapes=[invalid_syntax],
+            expected_avals=None)
+
+    for invalid_syntax in [5.0, ["a list"], ("a tuple",), re.compile(".")]:
+      with self.assertRaisesRegex(ValueError,
+                                  re.escape("Invalid PolyShape element")):
+        check_avals(
+            args=[const((2,))], polymorphic_shapes=[PS([invalid_syntax])],
             expected_avals=None)
 
     with self.assertRaisesRegex(
@@ -413,7 +460,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '2, 3, 4, ...' must match the rank of arguments (2, 3).")
+            "PolyShape '2, 3, 4, ...' of rank 3 must match the rank 2 of argument shape (2, 3).")
     ):
       check_avals(
           args=[const((2, 3))],
@@ -423,7 +470,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(Ellipsis, 3)' can contain Ellipsis only at the end.")):
+            "PolyShape (Ellipsis, 3) can contain Ellipsis only at the end.")):
       check_avals(
           args=[const((2, 3))],
           polymorphic_shapes=[PS(..., 3)],
@@ -432,7 +479,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape 'None' in axis 1 must contain a shape variable for unknown dimension in argument shape (2, None)"
+            "PolyShape None in axis 1 must contain a shape variable for unknown dimension in argument shape (2, None)"
         )):
       check_avals(
           args=[tf_var([2, None], initializer_shape=(2, 3))],
@@ -441,7 +488,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape("PolyShape '()' must match the rank of arguments (2, 3)")):
+        re.escape("PolyShape '()' of rank 0 must match the rank 2 of argument shape (2, 3)")):
       check_avals(
           args=[const((2, 3))], polymorphic_shapes=["()"], expected_avals=None)
 
