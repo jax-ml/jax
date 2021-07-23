@@ -98,46 +98,46 @@ def check_scipy_version(python_bin_path):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/3.7.2/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/4.1.0/"
 BazelPackage = collections.namedtuple("BazelPackage",
                                       ["base_uri", "file", "sha256"])
 bazel_packages = {
     ("Linux", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-3.7.2-linux-x86_64",
+            file="bazel-4.1.0-linux-x86_64",
             sha256=
-            "70dc0bee198a4c3d332925a32d464d9036a831977501f66d4996854ad4e4fc0d"),
+            "0eb2e378d2782e7810753e2162245ad1179c1bb12f848c692b4a595b4edf779b"),
     ("Linux", "aarch64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-3.7.2-linux-arm64",
+            file="bazel-4.1.0-linux-arm64",
             sha256=
-            "6ebd9eccbcb8f63c92a324c0c86cec11963aa9dcb914dd4718f592fdfeda9823"),
+            "b3834742166379e52b880319dec4699082cb26fa96cbb783087deedc5fbb5f2b"),
     ("Darwin", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-3.7.2-darwin-x86_64",
+            file="bazel-4.1.0-darwin-x86_64",
             sha256=
-            "80c82e93a12ba30021692b11c78007807e82383a673be1602573b944beb359ab"),
+            "2eecc3abb0ff653ed0bffdb9fbfda7b08548c2868f13da4a995f01528db200a9"),
     ("Darwin", "arm64"):
         BazelPackage(
-            base_uri="https://github.com/bazelbuild/bazel/releases/download/4.1.0/",
+            base_uri=None,
             file="bazel-4.1.0-darwin-arm64",
             sha256=
             "c372d39ab9dac96f7fdfc2dd649e88b05ee4c94ce3d6cf2313438ef0ca6d5ac1"),
     ("Windows", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-3.7.2-windows-x86_64.exe",
+            file="bazel-4.1.0-windows-x86_64.exe",
             sha256=
-            "ecb696b1b9c9da6728d92fbfe8410bafb4b3a65c358980e49742233f33f74d10"),
+            "7b2077af7055b421fe31822f83c3c3c15e36ff39b69560ba2472dde92dd45b46"),
 }
 
 
-def download_and_verify_bazel(target_cpu):
+def download_and_verify_bazel():
   """Downloads a bazel binary from Github, verifying its SHA256 hash."""
-  package = bazel_packages.get((platform.system(), target_cpu))
+  package = bazel_packages.get((platform.system(), platform.machine()))
   if package is None:
     return None
 
@@ -182,16 +182,16 @@ def download_and_verify_bazel(target_cpu):
   return os.path.join(".", package.file)
 
 
-def get_bazel_paths(bazel_path_flag, target_cpu):
+def get_bazel_paths(bazel_path_flag):
   """Yields a sequence of guesses about bazel path. Some of sequence elements
   can be None. The resulting iterator is lazy and potentially has a side
   effects."""
   yield bazel_path_flag
   yield which("bazel")
-  yield download_and_verify_bazel(target_cpu)
+  yield download_and_verify_bazel()
 
 
-def get_bazel_path(bazel_path_flag, target_cpu):
+def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found. Also,
   it checks Bazel's version at lease newer than 2.0.0.
 
@@ -199,7 +199,7 @@ def get_bazel_path(bazel_path_flag, target_cpu):
   releases performs version check against .bazelversion (see for details
   https://blog.bazel.build/2019/12/19/bazel-2.0.html#other-important-changes).
   """
-  for path in filter(None, get_bazel_paths(bazel_path_flag, target_cpu)):
+  for path in filter(None, get_bazel_paths(bazel_path_flag)):
     if check_bazel_version(path):
       return path
 
@@ -500,13 +500,14 @@ def main():
   wheel_cpus = {
     "darwin_arm64": "arm64",
     "darwin_x86_64": "x86_64",
+    "ppc": "ppc64le",
   }
   # TODO(phawkins): support other bazel cpu overrides.
   wheel_cpu = (wheel_cpus[args.target_cpu] if args.target_cpu is not None
                else host_cpu)
 
   # Find a working Bazel.
-  bazel_path = get_bazel_path(args.bazel_path, wheel_cpu)
+  bazel_path = get_bazel_path(args.bazel_path)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
