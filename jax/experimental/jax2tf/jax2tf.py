@@ -176,7 +176,7 @@ def inside_call_tf():
 @partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun: Callable,
             *,
-            polymorphic_shapes: Optional[Sequence[Any]] = None,
+            polymorphic_shapes=None,
             with_gradient=True,
             enable_xla=True
             ) -> Callable:
@@ -192,26 +192,30 @@ def convert(fun: Callable,
       (pytrees).
     polymorphic_shapes: Specifies input shapes to be treated polymorphically
       during conversion.
+
       .. warning:: The shape-polymorphic conversion is an experimental feature.
         It is meant to be sound, but it is known to reject some JAX programs
-        that are shape polymorphic. The details of this feature can change.  It
-        should be a Python object with the same pytree structure as, or a prefix
-        of, the tuple of arguments to the function, but with a shape
-        specification corresponding to each argument. The default value is
-        `None`, which is a shortcut for a tuple of `None` one for each argument,
-        denoting that all shapes are monomorphic.
+        that are shape polymorphic. The details of this feature can change.
+
+      It should be `None` (all arguments are monomorphic), a single PolyShape
+      or string (applies to all arguments), or a tuple/list of the same length
+      as the function arguments. For each argument the shape specification
+      should be `None` (monomorphic argument), or a Python object with the
+      same pytree structure as the argument.
       See [how optional parameters are matched to
-        arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
-        A shape specification for an array argument should be an object
-        `PolyShape(dim0, dim1, ..., dimn)`
+      arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+
+      A shape specification for an array argument should be an object
+      `PolyShape(dim0, dim1, ..., dimn)`
       where each `dim` is a dimension specification: a positive integer denoting
-        a monomorphic dimension of the given size, or a string denoting a
-        dimension variable assumed to range over non-zero dimension sizes, or
-        the special placeholder string "_" denoting a monomorphic dimension
-        whose size is given by the actual argument. As a shortcut, an Ellipsis
-        suffix in the list of dimension specifications stands for a list of "_"
-        placeholders. For convenience, a shape specification can also be given
-        as a string
+      a monomorphic dimension of the given size, or a string denoting a
+      dimension variable assumed to range over non-zero dimension sizes, or
+      the special placeholder string "_" denoting a monomorphic dimension
+      whose size is given by the actual argument. As a shortcut, an Ellipsis
+      suffix in the list of dimension specifications stands for a list of "_"
+      placeholders.
+
+      For convenience, a shape specification can also be given as a string
       representation, e.g.: "batch, ...", "batch, height, width, _", possibly
       with surrounding parentheses: "(batch, ...)".
 
@@ -268,11 +272,13 @@ def convert(fun: Callable,
     args_flat = tuple(_apply_name(a, i) for i, a in enumerate(args_flat))
 
     if polymorphic_shapes is None:
-      polymorphic_shapes_ = (None,) * len(args)
+      polymorphic_shapes_ = (polymorphic_shapes,) * len(args)
+    elif isinstance(polymorphic_shapes, (PolyShape, str)):
+      polymorphic_shapes_ = (polymorphic_shapes,) * len(args)  # type: ignore
     else:
       if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
         msg = ("polymorphic_shapes must be a sequence with the same length as the positional argument list "
-               f"({len(args)}). Got polymorphic_shapes={polymorphic_shapes}.")
+               f"({len(args)}). Got polymorphic_shapes={repr(polymorphic_shapes)}.")
         raise TypeError(msg)
       polymorphic_shapes_ = tuple(polymorphic_shapes)
 

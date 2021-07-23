@@ -475,6 +475,11 @@ class PolyShape(tuple):
   See docstring of :func:`jax2tf.convert`.
   """
   def __new__(cls, *dim_specs):
+    for i, ds in enumerate(dim_specs):
+      if not isinstance(ds, (int, str)) and ds != ...:
+        msg = (f"Invalid PolyShape element: {repr(ds)}; must be a string "
+               "representing a dimension variable, or an integer, or ...")
+        raise ValueError(msg)
     return tuple.__new__(PolyShape, dim_specs)
 
 
@@ -507,7 +512,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
     else:
       spec_tuple = spec_.split(",")  # type: ignore
   else:
-    raise ValueError(f"PolyShape '{spec}' must be either None, a string, or PolyShape.")
+    raise ValueError(f"PolyShape {repr(spec)} must be either None, a string, or PolyShape.")
 
   # Process ...
   spec_tuple = tuple(map(lambda s: ... if isinstance(s, str) and s.strip() == "..." else s,
@@ -515,13 +520,13 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
   ds_ellipses = tuple(ds for ds in spec_tuple if ds == ...)
   if ds_ellipses:
     if len(ds_ellipses) > 1 or spec_tuple[-1] != ...:
-      raise ValueError(f"PolyShape '{spec}' can contain Ellipsis only at the end.")
+      raise ValueError(f"PolyShape {repr(spec)} can contain Ellipsis only at the end.")
     spec_tuple = spec_tuple[0:-1]
     if len(arg_shape) >= len(spec_tuple):
       spec_tuple = spec_tuple + ("_",) * (len(arg_shape) - len(spec_tuple))
 
   if len(arg_shape) != len(spec_tuple):
-    raise ValueError(f"PolyShape '{spec}' must match the rank of arguments {arg_shape}.")
+    raise ValueError(f"PolyShape {repr(spec)} of rank {len(spec_tuple)} must match the rank {len(arg_shape)} of argument shape {arg_shape}.")
 
   # The actual parsing.
   # We actually parse not just dimension variables, but polynomials.
@@ -533,24 +538,24 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       return dim_spec  #
     dim_spec = dim_spec.strip()
     if not dim_spec:
-      raise ValueError(f"PolyShape '{spec}' has invalid syntax (empty dimension {dim_spec}')")
+      raise ValueError(f"PolyShape {repr(spec)} has invalid syntax (empty dimension {dim_spec}')")
     # Terms are separated by "+"
     terms = dim_spec.split("+")
     if not terms:
-      raise ValueError(f"PolyShape '{spec}' has invalid syntax (empty dimension {dim_spec}')")
+      raise ValueError(f"PolyShape {repr(spec)} has invalid syntax (empty dimension {dim_spec}')")
     def _parse_term(term_spec: str) -> DimSize:
       term_spec = term_spec.strip()
       # Factors are separated by "*"
       factors = term_spec.split("*")
       if not factors:
-        raise ValueError(f"PolyShape '{spec}' has invalid syntax (unexpected term '{term_spec}')")
+        raise ValueError(f"PolyShape {repr(spec)} has invalid syntax (unexpected term '{term_spec}')")
       def _parse_factor(factor_spec: str) -> DimSize:
         factor_spec = factor_spec.strip()
         if re.match(r"^-?\d+$", factor_spec):
           return int(factor_spec)
         m = re.match(r"^([a-zA-Z]\w*)(\^(\d+))?$", factor_spec)
         if not m:
-          raise ValueError(f"PolyShape '{spec}' has invalid syntax (unexpected term '{factor_spec}')")
+          raise ValueError(f"PolyShape {repr(spec)} has invalid syntax (unexpected term '{factor_spec}')")
         var = _DimPolynomial.from_var(m.group(1))
         if m.group(3) is None:
           return var
@@ -568,12 +573,12 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       dim_size = dim_size.value
     if dim_size is None:
       if dim_spec == "_":
-        msg = (f"PolyShape '{spec}' in axis {i} must contain a shape variable "
+        msg = (f"PolyShape {repr(spec)} in axis {i} must contain a shape variable "
                f"for unknown dimension in argument shape {arg_shape}")
         raise ValueError(msg)
       dim_poly = _parse_dim(dim_spec)
       if not is_poly_dim(dim_poly):
-        msg = (f"PolyShape '{spec}' in axis {i} must contain a shape variable "
+        msg = (f"PolyShape {repr(spec)} in axis {i} must contain a shape variable "
                f"for unknown dimension in argument shape {arg_shape}")
         raise ValueError(msg)
       return dim_poly
@@ -584,7 +589,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       dim_poly = _parse_dim(dim_spec)
       if not is_poly_dim(dim_poly):
         if dim_poly != dim_size:
-          msg = (f"PolyShape '{spec}' in axis {i} must contain a constant or '_' "
+          msg = (f"PolyShape {repr(spec)} in axis {i} must contain a constant or '_' "
                  f"for known dimension in argument shape {arg_shape}")
           raise ValueError(msg)
         return dim_size
