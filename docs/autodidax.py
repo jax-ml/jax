@@ -261,7 +261,10 @@ class ShapedArray:
     raise Exception("ShapedArray can't be unambiguously converted to bool")
 
   def str_short(self):
-    return f'{self.dtype.name}[{",".join(str(d) for d in self.shape)}]'
+    dtype_name = self.dtype.name
+    for long_name, short_name in [('float', 'f'), ('int', 'i'), ('bool', 'b')]:
+      dtype_name = dtype_name.replace(long_name, short_name)
+    return f'{dtype_name}[{",".join(str(d) for d in self.shape)}]'
 
   def __hash__(self):
     return hash((self.shape, self.dtype))
@@ -1794,6 +1797,22 @@ def pprint_xla_call(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
 pp_rules[xla_call_p] = pprint_xla_call
 # -
 
+# Finally, we'll tweak how xla_call is pretty-printed in jaxprs.
+# + tags=["hide-input"]
+
+def pprint_xla_call(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
+  lhs = pp(' '.join(var_str(names, v) for v in eqn.out_binders))
+  params_without_jaxpr = {k:v for k, v in eqn.params.items() if k != 'jaxpr'}
+  rhs = (pp(eqn.primitive.name) >> pp_params(params_without_jaxpr) >>
+         pp(' '.join(names[x] if isinstance(x, Var) else str(x.val)
+                     for x in eqn.inputs)))
+  return vcat([lhs >> pp(' = ') >> rhs,
+               pp_jaxpr(eqn.params['jaxpr']).indent(2)])
+pp_rules[xla_call_p] = pprint_xla_call
+
+
+# -
+
 # ## Part 4: `linearize` and `vjp` (and `grad`!)
 #
 # The `linearize` and `vjp` autodiff functions are built on `jvp`, but involve
@@ -2871,3 +2890,263 @@ def pprint_cond(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
                pp_jaxpr(true_jaxpr).indent(2),
                pp_jaxpr(false_jaxpr).indent(2)])
 pp_rules[cond_p] = pprint_cond
+# -
+
+# ## User-cusotmizable remat policies (implementation prototype)
+#
+# We want to add a variant of partial evaluation which offers control over what
+# values are saveable as residuals. A value that isn't saveable is instead
+# recomputed in the staged-out computation. This upgrade allows experts more
+# control over JAX's automatic differentiation.
+#
+# ### Implementation of `partial_eval_jaxpr_custom`
+
+# +
+def partial_eval_jaxpr_custom(
+    jaxpr: Jaxpr, in_unknowns: List[bool], saveable: Callable[..., bool],
+  ) -> Tuple[Jaxpr, Jaxpr, List[bool], List[bool], int]:
+  env: Dict[Var, Tuple[bool, bool]] = {}
+  residuals: Set[Var] = set()
+
+  def read(x: Atom) -> Tuple[bool, bool]:
+    if type(x) is Var: return env[x]
+    return (False, True)
+
+  def write(unk: bool, inst: bool, v: Var) -> None:
+    env[v] = (unk, inst)
+
+  def ensure_instantiated(inst: bool, x: Atom) -> Atom:
+    if type(x) is Var and not inst: residuals.add(x)
+    return x
+
+  eqns1, eqns2 = [], []
+  map(write, in_unknowns, [True] * len(in_unknowns), jaxpr.in_binders)
+  for eqn in jaxpr.eqns:
+    unks_in, inst_in = unzip2(map(read, eqn.inputs))
+    rule = partial_eval_jaxpr_custom_rules.get(eqn.primitive)
+    if rule:
+      eqn1, eqn2, unks_out, inst_out, res = rule(saveable, unks_in, inst_in, eqn)
+      eqns1.append(eqn1); eqns2.append(eqn2); residuals.update(res)
+      map(write, unks_out, inst_out, eqn.out_binders)
+    elif any(unks_in):
+      inputs = map(ensure_instantiated, inst_in, eqn.inputs)
+      eqns2.append(JaxprEqn(eqn.primitive, inputs, eqn.params, eqn.out_binders))
+      map(partial(write, True, True), eqn.out_binders)
+    else:
+      eqns1.append(eqn)
+      if saveable(eqn.primitive, [x.aval for x in eqn.inputs], eqn.params):
+        map(partial(write, False, False), eqn.out_binders)
+      else:
+        inputs = map(ensure_instantiated, inst_in, eqn.inputs)
+        eqns2.append(JaxprEqn(eqn.primitive, inputs, eqn.params, eqn.out_binders))
+        map(partial(write, False, True), eqn.out_binders)
+  out_unknowns, out_inst = unzip2(map(read, jaxpr.outs))
+
+  residuals, num_res = list(residuals), len(residuals)
+  assert all(type(v) is Var for v in residuals), residuals
+
+  ins1, _ = partition_list(in_unknowns, jaxpr.in_binders)
+  outs1, _ = partition_list(out_unknowns, jaxpr.outs)
+  jaxpr1 = Jaxpr(ins1, eqns1, outs1 + residuals)
+  typecheck_jaxpr(jaxpr1)
+  # jaxpr1, used1 = dce_jaxpr(jaxpr1, [True] * len(jaxpr1.outs))  # optional
+  # assert all(used1)
+
+  _, outs2 = partition_list(out_inst, jaxpr.outs)
+  jaxpr2 = Jaxpr(residuals + jaxpr.in_binders, eqns2, outs2)
+  typecheck_jaxpr(jaxpr2)
+
+  return jaxpr1, jaxpr2, out_unknowns, out_inst, num_res
+
+partial_eval_jaxpr_custom_rules: Dict[Primitive, Callable] = {}
+# -
+
+# Notice that `jaxpr2` is generated with all the input binders as `jaxpr`,
+# whether or not they are ultimately consumed in jaxpr2, just for convenience to
+# the caller of this function; we rely on the DCE to follow to clean up any
+# unused input binders in `jaxpr2`. Moreover `jaxpr2` is constructed to output
+# all values which might be consumed downstream, rather than just all unknown
+# values; see Example 3 below.
+
+# The custom rules are basically for handling higher-order primitives. The
+# user-supplied callback function is essentially a typing rule for first-order
+# primitives, but we define the rules for higher-order primitives because their
+# properties are constrained by desiderata like jit invariance.
+
+# +
+def xla_call_peval_jaxpr_custom_rule(
+    saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
+    eqn: JaxprEqn) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[bool], List[Var]]:
+  jaxpr1, jaxpr2, unks_out, inst_out, num_res = partial_eval_jaxpr_custom(
+      eqn.params['jaxpr'], unks_in, saveable)
+  ins1, _ = partition_list(unks_in, eqn.inputs)
+  out_binders1, _ = partition_list(unks_out, eqn.out_binders)
+  _, out_binders2 = partition_list(inst_out, eqn.out_binders)
+  residuals = [Var(v.aval) for v in jaxpr2.in_binders[:num_res]]
+  eqn1 = JaxprEqn(xla_call_p, ins1, dict(jaxpr=jaxpr1, num_consts=0),
+                  out_binders1 + residuals)
+  eqn2 = JaxprEqn(xla_call_p, residuals + eqn.inputs,
+                  dict(jaxpr=jaxpr2, num_consts=0), out_binders2)
+  assert len(eqn2.inputs) == len(jaxpr2.in_binders)
+  new_inst = [x for x, inst in zip(eqn.inputs, inst_in)
+              if type(x) is Var and not inst]
+  return eqn1, eqn2, unks_out, inst_out, new_inst + residuals
+partial_eval_jaxpr_custom_rules[xla_call_p] = xla_call_peval_jaxpr_custom_rule
+
+def cond_peval_jaxpr_custom_rule(
+    saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
+    eqn: JaxprEqn) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[bool], List[Var]]:
+  breakpoint()  # TODO
+partial_eval_jaxpr_custom_rules[cond_p] = cond_peval_jaxpr_custom_rule
+# -
+
+# ### Implementation of dead-code elimination (DCE)
+
+# +
+def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
+              ) -> Tuple[Jaxpr, List[bool]]:
+  env: Dict[Var, bool] = {}
+
+  def read(v: Var) -> bool:
+    return env.get(v, False)
+
+  def write(x: Atom, b: bool) -> None:
+    if type(x) is Var:
+      env[x] = read(x) or b
+
+  new_eqns = []
+  map(write, jaxpr.outs, used_outputs)
+  for eqn in jaxpr.eqns[::-1]:
+    outputs_used = map(read, eqn.out_binders)
+    rule = dce_rules.get(eqn.primitive)
+    if rule:
+      inputs_used, new_eqn = rule(outputs_used, eqn)
+      if any(inputs_used): new_eqns.append(new_eqn)
+    else:
+      inputs_used = [any(outputs_used)] * len(eqn.inputs)
+      if any(inputs_used): new_eqns.append(eqn)
+    map(write, eqn.inputs, inputs_used)
+  used_inputs = map(read, jaxpr.in_binders)
+
+  new_jaxpr = Jaxpr([v for v, b in zip(jaxpr.in_binders, used_inputs) if b],
+                    new_eqns[::-1],
+                    [v for v, b in zip(jaxpr.outs, used_outputs) if b])
+  typecheck_jaxpr(new_jaxpr)
+
+  return new_jaxpr, used_inputs
+
+dce_rules: Dict[Primitive, Callable] = {}
+
+def xla_call_dce_rule(used_outputs: List[bool], eqn: JaxprEqn,
+                      ) -> Tuple[List[bool], JaxprEqn]:
+  new_jaxpr, used_inputs = dce_jaxpr(eqn.params['jaxpr'], used_outputs)
+  new_num_consts = sum(used_inputs[:eqn.params['num_consts']])
+  new_eqn = JaxprEqn(eqn.primitive,
+                     [x for x, b in zip(eqn.inputs, used_inputs) if b],
+                     dict(jaxpr=new_jaxpr, num_consts=new_num_consts),
+                     [v for v, b in zip(eqn.out_binders, used_outputs) if b])
+  return used_inputs, new_eqn
+dce_rules[xla_call_p] = xla_call_dce_rule
+
+def cond_dce_rule(used_outputs: List[bool], eqn: JaxprEqn,
+                  ) -> Tuple[List[bool], JaxprEqn]:
+  true_jaxpr,  used_inputs1 = dce_jaxpr(eqn.params['true_jaxpr'],  used_outputs)
+  false_jaxpr, used_inputs2 = dce_jaxpr(eqn.params['false_jaxpr'], used_outputs)
+  used_inputs = map(op.or_, used_inputs1, used_inputs2)
+  _, inputs1 = partition_list(used_inputs, eqn.params['true_jaxpr'] .in_binders)
+  _, inputs2 = partition_list(used_inputs, eqn.params['false_jaxpr'].in_binders)
+  true_jaxpr  = Jaxpr(inputs1, true_jaxpr.eqns,  true_jaxpr.outs)
+  false_jaxpr = Jaxpr(inputs2, false_jaxpr.eqns, false_jaxpr.outs)
+  typecheck_jaxpr(true_jaxpr) and typecheck_jaxpr(false_jaxpr)
+
+  new_inputs = [eqn.inputs[0], *partition_list(used_inputs, eqn.inputs[1:])[1]]
+  _, new_outputs = partition_list(used_outputs, eqn.outs)
+  new_eqn = JaxprEqn(eqn.primitive, new_inputs,
+                     dict(true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr),
+                     new_outputs)
+  return [True, *used_inputs], new_eqn
+dce_rules[cond_p] = cond_dce_rule
+# -
+
+# # ### Manual testing cruft below here
+
+# policies = [
+#     ('standard', lambda *_, **__: True),
+#     ('remat', lambda *_, **__: False),
+#     ('save sines', lambda prim, *_, **__: prim is sin_p),
+#     ('save muls', lambda prim, *_, **__: prim is mul_p),
+# ]
+
+# def typecheck_peval_jaxpr_custom(jaxpr, unks_in, unks_out, policy, jaxpr1, jaxpr2):
+#   jaxprty = typecheck_jaxpr(jaxpr)    # (a1, a2)       -> (b1, b2 )
+#   jaxpr1ty = typecheck_jaxpr(jaxpr1)  #  a1            -> (b1, res)
+#   jaxpr2ty = typecheck_jaxpr(jaxpr2)  # (res, a1_, a2) -> b2
+
+#   a1, _ = partition_list(unks_in, jaxprty.in_types)
+#   b1, b2 = partition_list(unks_out, jaxprty.out_types)
+#   b1_, res = split_list(jaxpr1ty.out_types, len(b1))
+#   res_, _ = split_list(jaxpr2ty.in_types, len(res))
+#   b2_ = jaxpr2ty.out_types
+
+#   if jaxpr1ty.in_types != a1: raise TypeError
+#   if jaxpr2ty.out_types != b2: raise TypeError
+#   if b1 != b1_: raise TypeError
+#   if res != res_: raise TypeError
+#   # if a2 != a2_: raise TypeError
+#   if b2 != b2_: raise TypeError
+
+# def run(jaxpr, in_uks):
+#   print('====')
+#   print(jaxpr)
+#   for name, policy in policies:
+#     print(f'== {name} policy')
+#     jaxpr1, jaxpr2, out_uks, out_inst, _ = partial_eval_jaxpr_custom(
+#         jaxpr, in_uks, policy)
+#     print(jaxpr1)
+#     _, used2 = partition_list(out_inst, out_uks)
+#     jaxpr2, _ = dce_jaxpr(jaxpr2, used2)  # TODO put this in top-level func
+#     print(jaxpr2)
+#     typecheck_peval_jaxpr_custom(jaxpr, in_uks, out_uks, policy, jaxpr1, jaxpr2)
+
+# def g(x, xdot):
+#   y, ydot = sin(x), cos(x) * xdot
+#   z, zdot = y * y, 2. * y * ydot
+#   w, wdot = sin(z), cos(z) * zdot
+#   return w, wdot
+
+# x = ShapedArray((), np.dtype('float64'))
+# jaxpr, *_ = make_jaxpr(g, x, x)
+# run(jaxpr, [False, True])
+
+
+# def g(x, xdot):
+#   y, ydot = sin(x), cos(x) * xdot
+#   z, zdot = jit(lambda y, ydot: (y * y, 2. * y * ydot))(y, ydot)
+#   w, wdot = sin(z), cos(z) * zdot
+#   return w, wdot
+
+# x = ShapedArray((), np.dtype('float64'))
+# jaxpr, *_ = make_jaxpr(g, x, x)
+# run(jaxpr, [False, True])
+
+
+# def g(x, xdot):
+#   y, ydot = sin(x), cos(x) * xdot
+#   z, zdot = y * y, 2. * y * ydot
+#   w, wdot = jit(lambda z, zdot: (sin(z), cos(z) * zdot))(z, zdot)
+#   return w, wdot
+
+# x = ShapedArray((), np.dtype('float64'))
+# jaxpr, *_ = make_jaxpr(g, x, x)
+# run(jaxpr, [False, True])
+
+
+# def g(x, xdot):
+#   y, ydot = sin(x), cos(x) * xdot
+#   z, zjac = jit(lambda y: (sin(y), cos(y)))(y)
+#   zdot = zjac * ydot
+#   return z, zdot
+
+# x = ShapedArray((), np.dtype('float64'))
+# jaxpr, *_ = make_jaxpr(g, x, x)
+# run(jaxpr, [False, True])
