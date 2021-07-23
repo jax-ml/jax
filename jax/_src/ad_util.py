@@ -75,8 +75,11 @@ class Zero:
   @staticmethod
   def from_value(val):
     return Zero(raise_to_shaped(get_aval(val)))
+  def to_concrete(self):
+    return zeros_like_aval(self.aval)
 
 register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
+core.pytype_aval_mappings[Zero] = lambda z: z.to_concrete()
 
 
 def _stop_gradient_impl(x):
