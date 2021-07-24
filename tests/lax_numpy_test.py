@@ -4813,7 +4813,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     assertAllEqual(np.mgrid[:3:2, :2, :5], jnp.mgrid[:3:2, :2, :5])
     # Corner cases
     assertAllEqual(np.mgrid[:], jnp.mgrid[:])
-    # When the step length is a complex number, becuase of float calculation,
+    # When the step length is a complex number, because of float calculation,
     # the values between jnp and np might slightly different.
     atol = 1e-6
     rtol = 1e-6

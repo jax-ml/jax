@@ -1148,7 +1148,7 @@ class PmapTest(jtu.JaxTestCase):
     # axis_index_groups = [[0, 2], [1, 3]]
     # output = [[0, 4], [2, 6], [1, 5], [3, 7]]
     #
-    # This is essentially like spliting the number of rows in the input in two
+    # This is essentially like splitting the number of rows in the input in two
     # groups of rows, and swaping the two inner axes (axis=1 and axis=2), which
     # is exactly what the test case checks.
     device_count = xla_bridge.device_count()

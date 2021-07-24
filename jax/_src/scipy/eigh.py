@@ -90,7 +90,7 @@ def _projector_subspace(P, H, rank, maxiter=2):
 @jax.partial(jax.jit, static_argnums=(3, 4))
 def _split_spectrum_jittable(P, H, V0, rank, precision):
   """ The jittable portion of `split_spectrum`. At this point the sizes of the
-  relavant matrix blocks have been concretized.
+  relevant matrix blocks have been concretized.
 
   Args:
     P: Projection matrix.
@@ -200,7 +200,7 @@ def eigh(
     symmetrize: If True, `0.5 * (H + H.conj().T)` rather than `H` is used.
     termination_size: Recursion ends once the blocks reach this linear size.
   Returns:
-    vals: The `n` eigenvalues of `H`, sorted from lowest to higest.
+    vals: The `n` eigenvalues of `H`, sorted from lowest to highest.
     vecs: A unitary matrix such that `vecs[:, i]` is a normalized eigenvector
       of `H` corresponding to `vals[i]`. We have `H @ vecs = vals * vecs` up
       to numerical error.

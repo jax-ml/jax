@@ -1624,7 +1624,7 @@ def union1d(ar1, ar2, *, size=None):
 
 
 @_wraps(np.setxor1d, lax_description="""
-In the JAX version, the input arrays are explicilty flattened regardless
+In the JAX version, the input arrays are explicitly flattened regardless
 of assume_unique value.
 """)
 def setxor1d(ar1, ar2, assume_unique=False):
@@ -5725,7 +5725,7 @@ def digitize(x, bins, right=False):
 
 _PIECEWISE_DOC = """\
 Unlike `np.piecewise`, :py:func:`jax.numpy.piecewise` requires functions in
-`funclist` to be traceable by JAX, as it is implemeted via :func:`jax.lax.switch`.
+`funclist` to be traceable by JAX, as it is implemented via :func:`jax.lax.switch`.
 See the :func:`jax.lax.switch` documentation for more information.
 """
 
