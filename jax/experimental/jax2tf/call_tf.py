@@ -342,17 +342,21 @@ def _code_generator_and_avals(
   # Check that the function does not have compile-time constant inputs that
   # have been inlined in the compiled code.
   xla_comp_parameter_shapes = xla_comp.program_shape().parameter_shapes()
+  found_parameter_avals = [
+      core.ShapedArray(found_xla_shape.dimensions(),
+                       found_xla_shape.numpy_dtype())
+      for found_xla_shape in xla_comp_parameter_shapes
+  ]
   # Add the captured_inputs to args_flat_sig_tf
   expected_args_flat_sig_tf = list(args_flat_sig_tf) + list(captured_inputs)
-  expected_parameter_shapes = [
-      xla_client.Shape.array_shape(
-          xla_client.dtype_to_etype(arg_sig.dtype.as_numpy_dtype),
-          arg_sig.shape.as_list()).with_major_to_minor_layout_if_absent()
+  expected_parameter_avals = [
+      core.ShapedArray(tuple(arg_sig.shape.as_list()),
+                       arg_sig.dtype.as_numpy_dtype)
       for arg_sig in expected_args_flat_sig_tf]
-  if xla_comp_parameter_shapes != expected_parameter_shapes:
+  if found_parameter_avals != expected_parameter_avals:
     msg = ("Compiled TensorFlow function has unexpected parameter types " +
-           f"{xla_comp_parameter_shapes}, while the expected types are " +
-           f"{expected_parameter_shapes}. Perhaps the TensorFlow function " +
+           f"{found_parameter_avals}, while the expected types are " +
+           f"{expected_parameter_avals}. Perhaps the TensorFlow function " +
            "has shape-influencing inputs, and thus needs to be recompiled " +
            "for each value of some inputs. " +
            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
