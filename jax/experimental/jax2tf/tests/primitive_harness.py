@@ -1833,6 +1833,17 @@ def _make_linear_solve_harnesses():
 
 _make_linear_solve_harnesses()
 
+# tridiagonal_solve_p
+for dtype in [np.float32, np.float64]:
+  define(
+      lax.linalg.tridiagonal_solve_p,
+      f"shape={jtu.format_shape_dtype_string((3,), dtype)}",
+      lax.linalg.tridiagonal_solve,
+      [ np.array([0.0, 2.0, 3.0], dtype=dtype),
+        np.ones(3, dtype=dtype),
+        np.array([1.0, 2.0, 0.0], dtype=dtype),
+        np.ones([3, 1], dtype=dtype)],
+      dtype=dtype)
 
 def _make_slice_harness(name,
                         shape=(3,),
