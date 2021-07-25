@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from absl.testing import absltest
+import os
 
 import jax
 from jax import lax
@@ -153,6 +154,61 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
       # g = tape.gradient(res, xv)
     #self.assertAllClose(g.numpy(), jax.grad(f_jax)(x))
 
+  def test_save_grad_integers(self):
+    # https://github.com/google/jax/issues/7123
+    # In the end this is a test that does not involve JAX at all
+    batch_size = 5
+    state = np.array([1], dtype=np.int32)  # Works if float32
+    params = np.ones((3, 3), dtype=np.float32)
+
+    # params: f32[3, 3], state: i32[1]
+    # returns f32[5, 2] constant, and the state
+    def tf_predict(params, state):
+      # state = tf.cast(state, tf.float32)
+      # Setup a custom-gradient, like jax2tf would
+      @tf.custom_gradient
+      def converted_fun_with_custom_gradient(params, state):
+        res_out = tf.zeros((batch_size, 2), dtype=tf.float32)
+        state_out = state  # tf.zeros((4, 4), np.int32),
+
+        return ((res_out, state_out), converted_grad_fn)
+
+      def converted_grad_fn(res_out_ct, state_out_ct, variables=None):
+        # The gradients for params and the state
+        return tf.zeros(params.shape, dtype=params.dtype), state_out_ct
+
+      res, state_out = converted_fun_with_custom_gradient(params, state)
+      # state_out = tf.cast(state_out, tf.int32)
+      return res, state_out
+
+    # Compute the gradient before saving. This works!
+    params_v = tf.Variable(params)
+    with tf.GradientTape() as tape:
+      preds = tf_predict(params_v, state)[0]
+      loss = tf.reduce_mean(preds)
+      g = tape.gradient(loss, params_v)
+    self.assertAllClose(g.numpy(), np.zeros(params.shape, dtype=params.dtype))
+
+    # TF -> SavedModel
+    model = tf.Module()
+    model.fn = tf.function(tf_predict, autograph=False)
+    model.fn.get_concrete_function(
+        tf.TensorSpec(params.shape, params.dtype),
+        tf.TensorSpec(state.shape, state.dtype))
+    save_dir = os.path.join(absltest.get_default_test_tmpdir(), str(id(model)))
+    options = tf.saved_model.SaveOptions(experimental_custom_gradients=True)
+    _ = tf.saved_model.save(model, save_dir, options=options)
+    restored_module = tf.saved_model.load(save_dir)
+
+    # It seems that saving and reloading is important
+    restored_fn = restored_module.fn
+
+    # Compute the gradients after saving and restoring. Fails!
+    with tf.GradientTape() as tape:
+      preds = restored_fn(params_v, state)[0]
+      loss = tf.reduce_mean(preds)
+      g = tape.gradient(loss, params_v)
+    self.assertAllClose(g.numpy(), np.zeros(params.shape, dtype=params.dtype))
 
   def _compare_with_saved_model(self, f_jax, *args):
     # Certain ops are converted to ensure an XLA context, e.g.,
