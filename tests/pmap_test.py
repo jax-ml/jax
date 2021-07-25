@@ -469,9 +469,11 @@ class PmapTest(jtu.JaxTestCase):
     y = f(x)
     self.assertIsInstance(y, jnp.ndarray)
     self.assertIsInstance(y, pxla.ShardedDeviceArray)
+    self.assertIsInstance(y, jax.interpreters.xla.DeviceArray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
     z = f(y)
     self.assertIsInstance(z, pxla.ShardedDeviceArray)
+    self.assertIsInstance(z, jax.interpreters.xla.DeviceArray)
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can pass in a regular DeviceArray
@@ -484,7 +486,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can handle device movement on dispatch
-    y.device_buffers = y.device_buffers[::-1]
+    y = pxla.ShardedDeviceArray(y.aval, y.sharding_spec, y.device_buffers[::-1])
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
@@ -1204,8 +1206,8 @@ class PmapTest(jtu.JaxTestCase):
     bufs = pxla.device_put(shard, xla_bridge.devices()[:4], replicate=True)
     aval = ShapedArray((6,4), shard.dtype)
     sharding_spec = pxla.ShardingSpec(
-        sharding=map(pxla.Chunked, ([2], [2])),
-        mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
+        sharding=list(map(pxla.Chunked, ([2], [2]))),
+        mesh_mapping=list(map(pxla.ShardedAxis, (0, 1))))
     arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
 
     r = pmap(lambda x: x + 1)(arr)
@@ -2183,8 +2185,8 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testShardsPerAxis(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, ([2], [2])),
-                             mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
+    spec = pxla.ShardingSpec(sharding=list(map(pxla.Chunked, ([2], [2]))),
+                             mesh_mapping=list(map(pxla.ShardedAxis, (0, 1))))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
                       (slice(0,2), slice(4,8)),
@@ -2193,8 +2195,8 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testShardedAxisPermutation(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, ([2], [2])),
-                             mesh_mapping=map(pxla.ShardedAxis, (1, 0)))
+    spec = pxla.ShardingSpec(sharding=list(map(pxla.Chunked, ([2], [2]))),
+                             mesh_mapping=list(map(pxla.ShardedAxis, (1, 0))))
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
                       (slice(2,4), slice(0,4)),
@@ -2203,10 +2205,10 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testShardedAxisPermutationAndReplication(self):
     shape = (4, 8)
-    spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, ([2], [2])),
-                             mesh_mapping=(pxla.Replicated(2),
+    spec = pxla.ShardingSpec(sharding=list(map(pxla.Chunked, ([2], [2]))),
+                             mesh_mapping=[pxla.Replicated(2),
                                            pxla.ShardedAxis(1),
-                                           pxla.ShardedAxis(0)))
+                                           pxla.ShardedAxis(0)])
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
                       (slice(2,4), slice(0,4)),
@@ -2297,10 +2299,8 @@ class SpecToIndicesTest(jtu.JaxTestCase):
 
   def testReplicatedScalar(self):
     shape = ()
-    spec = pxla.ShardingSpec(sharding=(),
-                             mesh_mapping=(pxla.Replicated(3),))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
-                     ((), (), ()))
+    spec = pxla.ShardingSpec(sharding=(), mesh_mapping=(pxla.Replicated(3),))
+    self.assertEqual(pxla.spec_to_indices(shape, spec), ((), (), ()))
 
 
 def _spec_str(spec):
@@ -2326,39 +2326,39 @@ class ShardArgsTest(jtu.JaxTestCase):
       for make_arg in [numpy_array, device_array]
       for shape, spec in [
           # pmap(in_axes=0)
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(4), pxla.NoSharding()),
-                                     mesh_mapping=(pxla.ShardedAxis(0),))],
+          [(4, 8), pxla.ShardingSpec(sharding=[pxla.Unstacked(4), pxla.NoSharding()],
+                                     mesh_mapping=[pxla.ShardedAxis(0)])],
           # pmap(in_axes=1)
-          [(2, 2), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.Unstacked(2)),
-                                     mesh_mapping=(pxla.ShardedAxis(0),))],
+          [(2, 2), pxla.ShardingSpec(sharding=[pxla.NoSharding(), pxla.Unstacked(2)],
+                                     mesh_mapping=[pxla.ShardedAxis(0)])],
           # unsharded
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
-                                     mesh_mapping=())],
+          [(4, 8), pxla.ShardingSpec(sharding=[pxla.NoSharding(), pxla.NoSharding()],
+                                     mesh_mapping=[])],
           # partitioned, 1 axis
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.NoSharding()),
-                                     mesh_mapping=(pxla.ShardedAxis(0),))],
+          [(4, 8), pxla.ShardingSpec(sharding=[pxla.Chunked([2]), pxla.NoSharding()],
+                                     mesh_mapping=[pxla.ShardedAxis(0)])],
           # partitioned, 2 axes
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.Chunked([2])),
-                                     mesh_mapping=map(pxla.ShardedAxis, (0, 1)))],
+          [(4, 8), pxla.ShardingSpec(sharding=[pxla.Chunked([2]), pxla.Chunked([2])],
+                                     mesh_mapping=list(map(pxla.ShardedAxis, (0, 1))))],
           # partitioned, 2 axes, permuted
-          [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.Chunked([2])),
-                                     mesh_mapping=map(pxla.ShardedAxis, (1, 0)))],
+          [(4, 8), pxla.ShardingSpec(sharding=[pxla.Chunked([2]), pxla.Chunked([2])],
+                                     mesh_mapping=list(map(pxla.ShardedAxis, (1, 0))))],
           # partitioned + sharding
-          [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked([2])),
-                                     mesh_mapping=map(pxla.ShardedAxis, (0, 1)))],
+          [(2, 8), pxla.ShardingSpec(sharding=[pxla.Unstacked(2), pxla.Chunked([2])],
+                                     mesh_mapping=list(map(pxla.ShardedAxis, (0, 1))))],
           # replication + sharding
-          [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
-                                     mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3)))],
+          [(2, 8), pxla.ShardingSpec(sharding=[pxla.Unstacked(2), pxla.NoSharding()],
+                                     mesh_mapping=[pxla.ShardedAxis(0), pxla.Replicated(3)])],
           # replication, no sharding
           [(2, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
-                                     mesh_mapping=(pxla.Replicated(3),))],
+                                     mesh_mapping=[pxla.Replicated(3)])],
           # multiple replicated axes
-          [(1, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(1), pxla.Chunked([2])),
-                                     mesh_mapping=(pxla.Replicated(2), pxla.ShardedAxis(0),
-                                                   pxla.Replicated(2), pxla.ShardedAxis(1)))],
+          [(1, 8), pxla.ShardingSpec(sharding=[pxla.Unstacked(1), pxla.Chunked([2])],
+                                     mesh_mapping=[pxla.Replicated(2), pxla.ShardedAxis(0),
+                                                   pxla.Replicated(2), pxla.ShardedAxis(1)])],
           # replicated scalar
-          [(), pxla.ShardingSpec(sharding=(),
-                                 mesh_mapping=(pxla.Replicated(2), pxla.Replicated(3)))],
+          [(), pxla.ShardingSpec(sharding=[],
+                                 mesh_mapping=[pxla.Replicated(2), pxla.Replicated(3)])],
       ])
   def testShardArgs(self, shape, spec, make_arg):
     indices = pxla.spec_to_indices(shape, spec)

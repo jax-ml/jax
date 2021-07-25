@@ -293,8 +293,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     z, w = jax.vmap(f, in_axes=(None, 0), out_axes=(0, None))(x, y)
     self.assertAllClose(z, x + y)
     self.assertAllClose(w, x)
-    self.assertEqual(z.sharding_spec.sharding, (pxla.NoSharding(), pxla.Chunked([2])))
-    self.assertEqual(w.sharding_spec.sharding, (pxla.Chunked([2]),))
+    self.assertEqual(z.sharding_spec.sharding,
+                     [pxla.NoSharding(), pxla.Chunked([2])])
+    self.assertEqual(w.sharding_spec.sharding, [pxla.Chunked([2])])
 
   @jtu.with_mesh([('x', 2)])
   def testVMapShardingConstraint(self):
