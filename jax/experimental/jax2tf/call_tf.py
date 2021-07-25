@@ -277,8 +277,15 @@ def _code_generator_and_avals(
                   shape=a.shape,
                   dtype=a.dtype) for a in args_flat_sig_tf]
 
-  # TODO(necula): For unoptimized HLO, does it make a difference which device we use?
-  tf_device_name = "/device:CPU:0"
+  # TODO(necula): We should use the proper device, because in some cases we
+  # generate different HLO for different devices.
+  # One example is when the code refers to variables on one device. Or, for
+  # sharding annotations (only supported on TPU).
+  # For now we just use the default device, but ideally we should pass the
+  # intended platform in. The problem is that we want to reuse and cache this
+  # function across abstract_eval and XLA translation, but for abstract_eval
+  # we do not know the platform.
+  tf_device_name = f"/device:{jax.default_backend().upper()}:0"
   with jax2tf_internal.inside_call_tf():
     concrete_function_flat_tf = function_flat_tf.get_concrete_function(*args_flat_sig_tf)
 
