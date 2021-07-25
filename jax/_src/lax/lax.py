@@ -1612,8 +1612,12 @@ def _device_put_raw(x, weak_type=None):
 
 def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
-  # The .astype is useful for float0
-  return broadcast(np.array(0).astype(aval.dtype), aval.shape)
+  scalar_zero = np.array(0).astype(aval.dtype)
+  if scalar_zero.dtype != aval.dtype:
+    # For numpy 1.17.5 we get here for float0. We use an alternate construction.
+    assert aval.dtype == dtypes.float0
+    scalar_zero = np.zeros((), dtype=aval.dtype)
+  return broadcast(scalar_zero, aval.shape)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
