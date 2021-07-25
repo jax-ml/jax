@@ -26,6 +26,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+from jax import core
 from jax._src import api
 from jax.config import config
 from jax import dtypes
@@ -1045,6 +1046,82 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         transforms: ['jvp', 'transpose'] what: pair
         ( 2.00
           False )""", testing_stream.output)
+
+  def test_tap_grad_float0_result(self):
+    # https://github.com/google/jax/issues/7340
+    # x is a Tuple[f32[2], s32[3]]
+    x = (np.array([.7, .8], dtype=np.float32),
+         np.array([11, 12, 13], dtype=np.int32))
+    def f_jax(x):
+      x = hcb.id_print(x, result=x, output_stream=testing_stream)  # result= is important
+      return (3. * x[0], x[1])
+
+    def f_jax_vjp(x):
+      res, pullback = jax.vjp(f_jax, x)
+      g, = pullback((np.ones(x[0].shape, dtype=x[0].dtype),
+                     np.zeros(x[1].shape, dtype=dtypes.float0)))
+      return g
+
+    g = f_jax_vjp(x)
+    self.assertAllClose(np.array([3., 3.], dtype=np.float32), g[0])
+    self.assertEqual(dtypes.float0, g[1].dtype)
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+        ( [0.70 0.80]
+          [11 12 13] )
+        transforms: ['jvp', 'transpose']
+        ( [0.00 0.00]
+          [False False False] )""", testing_stream.output)
+
+  def test_tap_higher_order_grad_float0_result(self):
+    # https://github.com/google/jax/issues/7340
+    # x is a Tuple[f32[2], s32[3]]
+    x = (np.array([.7, .8], dtype=np.float32),
+         np.array([11, 12, 13], dtype=np.int32))
+    def f_jax(x):
+      x = hcb.id_print(x, result=x, output_stream=testing_stream)  # result= is important
+      return (jnp.sin(x[0]), x[1])
+
+    def wrap_vjp(f, args, res_f_of_args):
+      # Given a function "f" and "args" return the f_vjp and args_vjp
+      def make_ct(res):
+        res_dtype = np.result_type(res)
+        if res_dtype == dtypes.float0:
+          return res
+        ct_dtype = core.primal_dtype_to_tangent_dtype(res_dtype)
+        return np.ones(np.shape(res), dtype=ct_dtype)
+      cts = tree_util.tree_map(make_ct, res_f_of_args)
+      def f_vjp(args, cts):
+        res, pullback = jax.vjp(f, *args)
+        return pullback(cts)
+      return (f_vjp, (args, cts))
+
+    res = f_jax(x)
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+        ( [0.70 0.80]
+          [11 12 13] )""", testing_stream.output)
+    testing_stream.reset()
+
+    # 1st order
+    f_jax_vjp1, args_vjp1 = wrap_vjp(f_jax, (x,), res)
+    res_vjp1 = f_jax_vjp1(*args_vjp1)
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+        ( [0.70 0.80]
+          [11 12 13] )
+        transforms: ['jvp', 'transpose']
+        ( [0.00 0.00]
+          [False False False] )""", testing_stream.output)
+    testing_stream.reset()
+
+    # 2nd order
+    f_jax_vjp2, args_vjp2 = wrap_vjp(f_jax_vjp1, args_vjp1, res_vjp1)
+    res_vjp2 = f_jax_vjp2(*args_vjp2)
+
+    # 3rd order
+    f_jax_vjp3, args_vjp3 = wrap_vjp(f_jax_vjp2, args_vjp2, res_vjp2)
+    _ = f_jax_vjp3(*args_vjp3)
 
   def test_tap_vmap(self):
     vmap_fun1 = api.vmap(fun1)

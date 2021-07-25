@@ -798,17 +798,24 @@ id_tap_dep_p.multiple_results = False
 id_tap_dep_p.def_impl(lambda r, _: r)
 xla.translations[id_tap_dep_p] = lambda comp, a_res, a_tap: a_res
 id_tap_dep_p.def_abstract_eval(lambda r_a, _: r_a)
-ad.primitive_jvps[id_tap_dep_p] = (
-    lambda primals, tangents: (
-        id_tap_dep_p.bind(primals[0], primals[1]),
-        id_tap_dep_p.bind(tangents[0], tangents[1])))
 
+def _id_tap_dep_jvp_rule(primals, tangents):
+  tangents_instantiated = tuple(map(_instantiate_zeros, tangents, primals))
+  return (id_tap_dep_p.bind(primals[0], primals[1]),
+          id_tap_dep_p.bind(tangents_instantiated[0], tangents_instantiated[1]))
+
+ad.primitive_jvps[id_tap_dep_p] = _id_tap_dep_jvp_rule
 
 def _id_tap_dep_transpose_rule(cts, arg_res, arg_tap):
-  assert ad.is_undefined_primal(arg_res)
-  assert ad.is_undefined_primal(arg_tap)
-  return (_instantiate_zeros(arg_res, cts), ad.Zero(arg_tap.aval))
-
+  if ad.is_undefined_primal(arg_res):
+    ct_res = _instantiate_zeros(cts, arg_res)
+  else:
+    ct_res = None
+  if ad.is_undefined_primal(arg_tap):
+    ct_tap = ad.Zero(arg_tap.aval)
+  else:
+    ct_tap = None
+  return (ct_res, ct_tap)
 
 ad.primitive_transposes[id_tap_dep_p] = _id_tap_dep_transpose_rule
 
@@ -1170,36 +1177,37 @@ def _add_transform(params: Dict, name: str, *transform_params) -> Dict:
 def _aval_is_empty(aval) -> bool:
   return np.prod(aval.shape) == 0
 
-# TODO(necula): there must be a better way to do this.
-# The AttributeError is for regular values, the KeyError is for ConcreteArray
-def _instantiate_zeros(arg, tan):
-  """Turn special ad.zero tangents into arrays of 0s for sending to host."""
-  # return ad.instantiate_zeros(tan)
+def _instantiate_zeros(tan, arg):
+  """Turn special ad.zero tangents into arrays of 0s for sending to host.
+  Args:
+    tan: the tangent.
+    arg: the argument for which we need to instantiate the tangent
+
+  Returns: tan if is is not ad.Zero, otherwise a 0 array of appropriate type
+    and shape
+  """
   if type(tan) is not ad.Zero:
     return tan
+  if tan.aval is not core.abstract_unit:
+    return ad.instantiate_zeros_aval(tan.aval, tan)
 
-  if tan.aval is core.abstract_unit:
-    if ad.is_undefined_primal(arg):
-      aval = arg.aval
-    else:
-      aval = core.raise_to_shaped(core.get_aval(arg))
+  if ad.is_undefined_primal(arg):
+    aval = arg.aval
   else:
-    aval = tan.aval
-  res = ad.instantiate_zeros_aval(aval, tan)
-  return res
-
+    aval = core.raise_to_shaped(core.get_aval(arg))
+  return ad.instantiate_zeros_aval(aval, tan)
 
 def _outside_call_jvp_rule(primals, tangents, **params):
   assert "has_token" not in params
   if not params["identity"]:
     raise NotImplementedError("JVP rule is implemented only for id_tap, not for call.")
-  tangent_instantiated = tuple(map(_instantiate_zeros, primals, tangents))
+  tangents_instantiated = tuple(map(_instantiate_zeros, tangents, primals))
 
   arg_treedef = params["arg_treedef"]
   # The argument to the jvp tap is a pair of the tapped primals and tangents
   jvp_flat_args, jvp_arg_treedef = api.tree_flatten(
       (arg_treedef.unflatten(primals),
-       arg_treedef.unflatten(tangent_instantiated)))
+       arg_treedef.unflatten(tangents_instantiated)))
   out_all = outside_call_p.bind(
       *jvp_flat_args,
       **dict(_add_transform(params, "jvp"),
@@ -1264,7 +1272,7 @@ def _outside_call_transpose_rule(cts, *args, **params):
     raise NotImplementedError("differentiation rules are implemented only for id_tap, not for call.")
   assert "has_token" not in params
   assert len(cts) == len(args)
-  cts_instantiated = tuple(map(_instantiate_zeros, args, cts))
+  cts_instantiated = tuple(map(_instantiate_zeros, cts, args))
 
   # The args have been prepared by the id_tap_jvp_rule: tapped_primals, tapped_tangents, rest_primals, rest_tangents
   transforms = params.get("transforms", ())
