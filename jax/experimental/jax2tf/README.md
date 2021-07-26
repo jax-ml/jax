@@ -906,30 +906,66 @@ custom gradients,
 see the test `test_round_trip_custom_grad_saved_model`
 in [call_tf_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/call_tf_test.py).
 
-## Notes:
+All the metadata inserted by TF during tracing and compilation, e.g.,
+source location information and op names, is carried through to the
+JAX XLA computation.
 
-  * The TF function must be compileable (`tf.function(func, jit_compile=True`)
-    when used in a JAX staging context, but not when used in a
-    JAX op-by-op mode.
-  * All the metadata inserted by TF during tracing and compilation, e.g.,
-    source location information and op names, is carried through to the
-    JAX XLA computation.
-  * The TF custom gradients are respected, since it is TF that generates the
-    gradient computation.
-  * In op-by-op mode, when we call TensorFlow in eager mode, we use
-    DLPack to try to avoid copying the data. This works for CPU (for
-    DeviceArray data or for np.ndarray that are aligned on 16-byte
-    boundaries) and on GPU (for DeviceArray).
-    The zero-copy does not yet work on TPU.
-  * ``call_tf`` works best with pure TF functions that do not capture
-    ``tf.Variable``s or tensors from the environment, and all such
-    context is passed in explicitly through arguments, and if variables
-    are modified, the resulting values are passed out through results.
-    There is a best-effort mechanism that can handle variable capture
-    and variable updates,
-    except in the case of a function that modifies ``tf.Variable``s
-    and is used in a JAX jitted context. Calling the ``inpure_func_tf``
-    will give an error:
+The TF custom gradients are respected, since it is TF that generates the
+gradient computation.
+
+In op-by-op mode, when we call TensorFlow in eager mode, we use
+DLPack to try to avoid copying the data. This works for CPU (for
+DeviceArray data or for np.ndarray that are aligned on 16-byte
+boundaries) and on GPU (for DeviceArray).
+The zero-copy does not yet work on TPU.
+
+
+### Limitations of call_tf
+
+The TF function must be compileable (`tf.function(func, jit_compile=True`)
+when used in a JAX staging context, e.g., `jax.jit`, `lax.scan`, `lax.cond`,
+but not when used in a JAX op-by-op mode. For example, the following
+function uses strings operations that are not supported by XLA:
+
+```python
+def f_tf_non_compileable(x):
+   return tf.strings.length(tf.strings.format("Hello {}!", [x]))
+
+f_jax = jax2tf.call_tf(f_tf_non_compileable)
+# Works in op-by-op mode
+f_jax(np.float32(42.))
+
+# Fails in jit mode
+jax.jit(f_jax)(np.float(42.))
+```
+
+Another similar situation is when a function uses input values in
+place of shapes. In this case TF actually does compile the function
+but re-compiles it for each distinct value of the input. This is
+not allowed when used from JAX:
+
+```python
+def f_tf_dynamic_shape(x):
+  return x[x[0]:5]
+x = np.array([1, 2], dtype=np.int32)
+
+f_jax = jax2tf.call_tf(f_tf_dynamic_shape)
+# Works in op-by-op mode
+f_jax(x)
+
+# Fails in jit mode
+jax.jit(f_jax)(x)
+```
+
+``call_tf`` works best with pure TF functions that do not capture
+``tf.Variable``s or tensors from the environment, and all such
+context is passed in explicitly through arguments, and if variables
+are modified, the resulting values are passed out through results.
+There is a best-effort mechanism that can handle variable capture
+and variable updates,
+except in the case of a function that modifies ``tf.Variable``s
+and is used in a JAX jitted context. Calling the ``inpure_func_tf``
+will give an error:
 
 ```python
        var1 = tf.Variable(1.)
@@ -940,7 +976,7 @@ in [call_tf_test.py](https://github.com/google/jax/blob/main/jax/experimental/ja
        jax.jit(jax2tf.call_tf(impure_func_tf))(tf.constant(2.))  # Fails in jit mode
 ```
 
-   The error can be avoided by passing the variable explicitly:
+The error can be avoided by passing the variable explicitly:
 
 ```python
        def pure_func_tf(x, var1)
@@ -948,24 +984,34 @@ in [call_tf_test.py](https://github.com/google/jax/blob/main/jax/experimental/ja
           return x + new_var1, new_var1
 ```
 
-   This use case is likely to be revisited.
+This use case is likely to be revisited.
 
-## TODO
+A TF function wrapped with `call_tf` cannot be applied to inputs whose
+shapes are not constants. The may arise when you try to apply
+`jax2tf.convert` with polymorphic shapes on the result of
+`call_tf`:
 
-  * Ensure that there is no array copy through the host when running in eager
-    mode (JAX op-by-op).
+```python
+def fun_jax(x):
+  return jax2tf.call_tf(tf.math.sin)(x)
 
+# The following will throw an error.
+jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])(x)
+```
 
-# Additional notes
+This is unsatisfying, because the result of the above conversion
+could be simply `tf.math.sin`, which is batch polymorphic. But
+JAX cannot keep track of shapes through a `call_tf` call, and it
+cannot be sure that the shape-polymorphic conversion is safe.
+
+# Misc notes
 
 ## TensorFlow versions supported
 
 The ``jax2tf.convert`` and `call_tf` require very recent versions of TensorFlow.
-As of today, the tests are run using `tf_nightly==2.6.0-dev20210611`.
-
+As of today, the tests are run using `tf_nightly==2.7.0.dev20210715`.
 
 ## Running on GPU
-
 
 To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
 for CUDA. One must be mindful to install a version of CUDA that is compatible

@@ -217,7 +217,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f_jax)
     res = f_tf(*args)
     input_signature = list(tf.TensorSpec(a.shape, a.dtype) for a in args)
-    restored_f = tf_test_util.SaveAndLoadFunction(f_tf, input_signature)
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, input_signature)
     res_restored = restored_f(*args)
     self.assertAllClose(res, res_restored)
 
@@ -264,7 +264,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
                         jnp.sin(np.array([3.14, 2.78], dtype=np.float16)))
 
     # Save and restore SavedModel
-    restored_f = tf_test_util.SaveAndLoadFunction(composed_fn,
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(composed_fn,
                                                   [tf.TensorSpec((2,), dtype=tf.string)])
     res_tf_restored = restored_f(x_str)
     self.assertAllClose(res_tf_restored.numpy(), res_tf.numpy())
