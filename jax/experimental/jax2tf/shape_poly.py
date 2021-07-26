@@ -62,7 +62,7 @@ class _DimMon(dict):
 
   The representation is a dictionary mapping var:exponent.
   The `var` are strings and the exponents are >= 1.
-  The shape variables are assumed to range over integers >= 1.
+  The dimension variables are assumed to range over integers >= 1.
   """
   def __hash__(self):
     return hash(frozenset(self.items()))
@@ -127,7 +127,7 @@ class _DimMon(dict):
 class _DimPolynomial(dict):
   """Polynomial with integer coefficients for polymorphic shapes.
 
-  The shape variables are assumed to range over integers >= 1.
+  The dimension variables are assumed to range over integers >= 1.
 
   We overload integer operations, but we do that soundly, raising
   :class:`InconclusiveDimensionOperation` when the result is not
@@ -599,15 +599,18 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
     if isinstance(dim_size, tf.compat.v1.Dimension):
       dim_size = dim_size.value
     if dim_size is None:
-      if dim_spec == "_":
-        msg = (f"PolyShape {repr(spec)} in axis {i} must contain a shape variable "
+      def need_dim_var_msg():
+        msg = (f"PolyShape {repr(spec)} in axis {i} must contain a dimension variable "
                f"for unknown dimension in argument shape {arg_shape}")
-        raise ValueError(msg)
+        if spec is None:
+          msg += ". Perhaps you forgot to add the polymorphic_shapes= parameter to jax2tf.convert?"
+        return msg
+
+      if dim_spec == "_":
+        raise ValueError(need_dim_var_msg())
       dim_poly = _parse_dim(dim_spec)
       if not is_poly_dim(dim_poly):
-        msg = (f"PolyShape {repr(spec)} in axis {i} must contain a shape variable "
-               f"for unknown dimension in argument shape {arg_shape}")
-        raise ValueError(msg)
+        raise ValueError(need_dim_var_msg())
       return dim_poly
     else:  # dim_size is known
       dim_size = int(dim_size)

@@ -228,10 +228,10 @@ f_tf.get_concrete_function(tf.TensorSpec([None, 28, 28], tf.float32))
 
 The `polymorphic_shapes` parameter, in the form of a sequence of strings corresponding
 to the sequence of positional
-arguments, introduces one or more shape variables, e.g., `b`, to stand for shape
+arguments, introduces one or more dimension variables, e.g., `b`, to stand for shape
 dimensions that are assumed to be unknown at JAX tracing time, even if the actual
 parameter value (here `tf.TensorSpec(...)`) happens to have fully known shape.
-Shape variables are assumed to range
+Dimension variables are assumed to range
 over all strictly positive integers.
 In this particular example, we can
 also abbreviate `polymorphic_shapes=["(b, _, _)"]`,
@@ -249,7 +249,7 @@ multiple unknown dimensions and there is a relationship between them.
 For example,
 if the function to be converted is also polymorphic on the size of each
 image while requiring the images to be square,
-we would add a shape variable `d` to stand for
+we would add a dimension variable `d` to stand for
 the unknown image size:
 
 ```
@@ -329,7 +329,7 @@ A shape specifier is combined with a `TensorSpec` as follows:
          The abstract value of the dimension is going to be set to this variable.
          The corresponding dimension in `TensorSpec` can be `None` or can be a
          constant.
-       * All occurrences of a shape variable in any dimension
+       * All occurrences of a dimension variable in any dimension
          for any argument are assumed to be equal.
 
 Note that `polymorphic_shapes` controls the shape abstraction used by JAX when tracing
@@ -429,14 +429,14 @@ values of the dimension variables `b` and `w`:
 
 ```
 def image_mask_tf(images, mask):
-  b, w, _ = tf.shape(images) # Compute the dynamic values for the shape variables "b" and "w"
+  b, w, _ = tf.shape(images) # Compute the dynamic values for the dimension variables "b" and "w"
   return tf.math.multiply(images,
                           tf.broadcast_to(tf.reshape(mask, [1, w, w]),
                                           [b, w, w]))
 ```
 
 To achieve this, when we start converting a function we construct a shape environment,
-mapping the shape variables in the `polymorphic_shapes` specification to TensorFlow expressions
+mapping the dimension variables in the `polymorphic_shapes` specification to TensorFlow expressions
 using `tf.shape` on the input parameters.
 
 
@@ -498,7 +498,7 @@ jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
 
 Finally, certain codes that use shapes in the actual computation may not yet work
 if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
-will have the value of the shape variable `v`. This case is not yet implemented:
+will have the value of the dimension variable `v`. This case is not yet implemented:
 
 ```
 jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
