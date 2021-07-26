@@ -762,14 +762,19 @@ class TensorFlowTracer(core.Tracer):
     self._aval = aval
     if aval is core.abstract_unit:
       self.val = val
-    elif isinstance(val, (tf.Tensor, tf.Variable)):
+      return
+
+    if isinstance(val, (tf.Tensor, tf.Variable)):
       val_shape = val.shape
-      val_dtype = _to_jax_dtype(val.dtype)
-      aval_dtype = np.dtype(self._aval.dtype)  # type: ignore[attr-defined]
 
       if config.jax_enable_checks:
-        assert aval_dtype == val_dtype, f"expected {aval_dtype} == {val_dtype}"
         assert len(self._aval.shape) == len(val_shape), f"_aval.shape={self._aval.shape} different rank than val_shape={val_shape}"
+        # To compare types, we must handle float0 in JAX and x64 in TF
+        if self._aval.dtype == dtypes.float0:
+          assert _to_tf_dtype(self._aval.dtype) == val.dtype, f"expected {self._aval.dtype} == {val.dtype}"
+        else:
+          assert self._aval.dtype == _to_jax_dtype(val.dtype), f"expected {self._aval.dtype} == {val.dtype}"
+
         for aval_dim, val_dim in zip(
             self._aval.shape, val_shape):  # type: ignore[attr-defined]
           if val_dim is None:
@@ -784,10 +789,8 @@ class TensorFlowTracer(core.Tracer):
               continue
             assert aval_int == val_dim, f"expected {self._aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
 
-      self.val = val
-    else:  # Must be a numeric value
-      self.val = _tfval_to_tensor_jax_dtype(
-          val, self._aval.dtype)[0]  # type: ignore[attr-defined]
+    self.val = _tfval_to_tensor_jax_dtype(val,
+                                          self._aval.dtype)[0]  # type: ignore[attr-defined]
 
   @property
   def aval(self):
