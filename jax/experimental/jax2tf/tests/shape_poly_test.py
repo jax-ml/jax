@@ -1301,9 +1301,7 @@ def _add_vmap_primitive_harnesses():
       # We do *= shapes in the batching rule for conv_general_dilated
       "conv_general_dilated",
 
-      # vmap(clamp) fails in JAX
-      "clamp",
-
+      "tridiagonal_solve",  # batching not implemented in JAX
       "iota",  # vmap does not make sense for 0-argument functions
   ])
 

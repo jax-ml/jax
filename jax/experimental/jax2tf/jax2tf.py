@@ -1017,7 +1017,6 @@ tf_not_yet_impl = [
     "lu_pivots_to_permutation",
     "rng_bit_generator",
     "xla_pmap",
-    "tridiagonal_solve",
 ]
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
@@ -2889,6 +2888,16 @@ def _linear_solve(*args: TfVal, const_lengths, jaxprs, _in_avals, _out_aval):
 
 tf_impl_with_avals[lax_control_flow.linear_solve_p] = _linear_solve
 
+def _tridiagonal_solve(*args: TfVal, _in_avals, _out_aval, **params):
+  return _convert_jax_impl(lax_linalg._tridiagonal_solve_jax,
+                           multiple_results=False,
+                           extra_name_stack="tridiagonal_solve")(
+      *args,
+      _in_avals=_in_avals,
+      _out_aval=_out_aval)
+
+
+tf_impl_with_avals[lax_linalg.tridiagonal_solve_p] = _tridiagonal_solve
 
 def _custom_jvp_call_jaxpr(*args: TfVal, fun_jaxpr: core.ClosedJaxpr,
                            jvp_jaxpr_thunk: Callable,

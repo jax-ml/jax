@@ -1088,6 +1088,9 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(dtypes=np.float32, tol=5e-3)
     ]
 
+  @classmethod
+  def tridiagonal_solve(cls, harness: primitive_harness.Harness):
+    return []
 
 def custom_numeric(
     *,
