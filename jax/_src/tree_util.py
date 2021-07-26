@@ -15,7 +15,8 @@
 import functools
 import collections
 import operator as op
-from typing import Any, Callable, Optional, Sequence, Tuple, Type, TypeVar, overload
+from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, Type,
+                    TypeVar, overload, TYPE_CHECKING)
 
 from ..lib import pytree
 
@@ -26,6 +27,12 @@ traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
 U = TypeVar("U")
+
+if TYPE_CHECKING:
+  PyTreeDef = pytree.PyTreeDef
+else:
+  PyTreeDef = Any
+
 
 def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Flattens a pytree.
@@ -97,11 +104,13 @@ def all_leaves(iterable):
   """
   return pytree.all_leaves(iterable)
 
-# The auxiliary is hashable, but because mypy has poor support for Hashable, we
-# annotate it as Any.
+
+_Children = TypeVar("_Children", bound=Iterable[Any])
+_AuxData = TypeVar("_AuxData", bound=Hashable)
+
 def register_pytree_node(nodetype: Type[T],
-                         flatten_func: Callable[[T], Tuple[Sequence[Any], Any]],
-                         unflatten_func: Callable[[Any, Sequence[Any]], T]):
+                         flatten_func: Callable[[T], Tuple[_Children, _AuxData]],
+                         unflatten_func: Callable[[_AuxData, _Children], T]):
   """Extends the set of types that are considered internal nodes in pytrees.
 
   See `example usage <pytrees.html>`_.
@@ -245,13 +254,13 @@ def tree_all(tree):
 
 register_pytree_node(
   collections.OrderedDict,
-  lambda x: (list(x.values()), list(x.keys())),
+  lambda x: (tuple(x.values()), tuple(x.keys())),
   lambda keys, values: collections.OrderedDict(safe_zip(keys, values)))
 
 register_pytree_node(
   collections.defaultdict,
   lambda x: (tuple(x.values()), (x.default_factory, tuple(x.keys()))),
-  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))
+  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))  # type: ignore[index]
 
 
 class Partial(functools.partial):
@@ -306,5 +315,5 @@ class Partial(functools.partial):
 register_pytree_node(
     Partial,
     lambda partial_: ((partial_.args, partial_.keywords), partial_.func),
-    lambda func, xs: Partial(func, *xs[0], **xs[1]),
+    lambda func, xs: Partial(func, *xs[0], **xs[1]),  # type: ignore[index]
 )

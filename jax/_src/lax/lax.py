@@ -2750,7 +2750,8 @@ def _add_inverse(r, x, y):
   yr = r - x
   return xr, yr
 
-add_p = standard_naryop([_num, _num], 'add')
+# TODO(slebedev): Why does mypy fail to infer the type here?
+add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 iad.definverse(add_p, _add_inverse)
@@ -6588,7 +6589,7 @@ rng_bit_generator_p.def_abstract_eval(
 xla.translations[rng_bit_generator_p] = _rng_bit_generator_translation_rule
 
 RandomAlgorithm = xops.RandomAlgorithm
-RandomAlgorithm.__str__ = lambda algorithm: algorithm.name
+RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
 
 
 def rng_bit_generator(key,

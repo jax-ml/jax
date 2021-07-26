@@ -28,7 +28,7 @@ from .._src import dtypes
 from .. import linear_util as lu
 from jax._src.ad_util import Zero
 from ..api_util import flattened_fun_in_tree
-from .._src.tree_util import tree_unflatten, tree_leaves
+from .._src.tree_util import PyTreeDef, tree_unflatten, tree_leaves
 from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,
                          split_list, cache, as_hashable_function)
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
@@ -1188,7 +1188,6 @@ class DebugInfo(NamedTuple):
   traced_for: str
   arg_info: Callable[[int], str]
 
-PyTreeDef = Any
 
 def debug_info_final(fn: lu.WrappedFun, traced_for: str) -> DebugInfo:
   in_tree, has_kwargs = flattened_fun_in_tree(fn) or (None, False)
