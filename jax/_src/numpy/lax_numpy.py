@@ -2162,9 +2162,9 @@ def mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 
   if where is None:
     if axis is None:
-      normalizer = size(a)
+      normalizer = core.dimension_as_value(size(a))
     else:
-      normalizer = _axis_size(a, axis)
+      normalizer = core.dimension_as_value(_axis_size(a, axis))
   else:
     normalizer = sum(broadcast_to(where, shape(a)), axis, dtype=dtype, keepdims=keepdims)
 
@@ -2187,9 +2187,9 @@ def average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
   if weights is None: # Treat all weights as 1
     avg = mean(a, axis=axis)
     if axis is None:
-      weights_sum = full((), size(a), dtype=avg.dtype)
+      weights_sum = full((), core.dimension_as_value(size(a)), dtype=avg.dtype)
     else:
-      weights_sum = full_like(avg, a.shape[axis], dtype=avg.dtype)
+      weights_sum = full_like(avg, core.dimension_as_value(a.shape[axis]), dtype=avg.dtype)
   else:
     weights = asarray(weights)
 
@@ -2212,7 +2212,7 @@ def average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None,
       if len(weights_shape) != 1:
         raise ValueError("1D weights expected when shapes of a and "
                          "weights differ.")
-      if weights_shape[0] != a_shape[axis]:
+      if not core.symbolic_equal_dim(weights_shape[0], a_shape[axis]):
         raise ValueError("Length of weights not "
                          "compatible with specified axis.")
 
@@ -2247,9 +2247,9 @@ def var(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 
   if where is None:
     if axis is None:
-      normalizer = size(a)
+      normalizer = core.dimension_as_value(size(a))
     else:
-      normalizer = _axis_size(a, axis)
+      normalizer = core.dimension_as_value(_axis_size(a, axis))
   else:
     normalizer = sum(broadcast_to(where, shape(a)), axis, dtype=dtype, keepdims=keepdims)
   normalizer = normalizer - ddof
@@ -4782,9 +4782,14 @@ def take(a, indices, axis: Optional[int] = None, out=None, mode=None):
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
+  if core.is_constant_dim(axis_size):
+    axis_size_val = _constant_like(index, axis_size)
+  else:
+    axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
+                                             _dtype(index))
   return lax.select(
     lax.lt(index, _constant_like(index, 0)),
-    lax.add(index, _constant_like(index, axis_size)),
+    lax.add(index, axis_size_val),
     index)
 
 @partial(jit, static_argnums=(2,))
@@ -5199,7 +5204,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       abstract_i = None
     # Handle basic int indexes.
     if isinstance(abstract_i, (ConcreteArray,ShapedArray)) and _int(abstract_i):
-      if x_shape[x_axis] == 0:
+      if core.symbolic_equal_dim(x_shape[x_axis], 0):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i

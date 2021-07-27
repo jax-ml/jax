@@ -338,8 +338,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     """
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
                              enable_xla=enable_xla)
-    f_tf = tf.function(f_tf, autograph=False, input_signature=input_signature)
-    concrete_f_tf = f_tf.get_concrete_function(*input_signature)
+    f_tf_func = tf.function(f_tf, autograph=False, input_signature=input_signature)
+    concrete_f_tf = f_tf_func.get_concrete_function(*input_signature)
     if expected_output_signature:
       # Strangely, output_shapes can be a single shape for a function with a
       # single result, or a list/tuple of shapes.

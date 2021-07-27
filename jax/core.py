@@ -1283,6 +1283,9 @@ class DimensionHandler:
     """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
     return 0 if d == 0 else 1 + dilation * (d - 1)
 
+  def as_value(self, d: DimSize):
+    """Turns a dimension size into a JAX value that we can compute with."""
+    return d
 
 _dimension_handler_int = DimensionHandler()
 _SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
@@ -1378,6 +1381,11 @@ def stride_shape(s: Shape, window_size: Shape, window_stride: Shape) -> Shape:
   """(s - window_size) // window_stride + 1"""
   return tuple(map(stride_dim, s, window_size, window_stride))
 
+def dimension_as_value(d: DimSize):
+  """Turns a dimension size into a JAX value that we can compute with.
+     This is the identity function for constant dimensions."""
+  handler, ds = _dim_handler_and_canonical(d)
+  return handler.as_value(*ds)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   if type(dim) in _SPECIAL_DIMENSION_HANDLERS:
