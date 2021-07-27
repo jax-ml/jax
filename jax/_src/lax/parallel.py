@@ -1131,7 +1131,7 @@ core.axis_substitution_rules[all_gather_p] = partial(_subst_all_names_in_param, 
 
 def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
   # In some cases axis_name is a tuple instead of string, so handling these types here.
-  if type(axis_name) in [tuple, list]:
+  if isinstance(axis_name,(tuple, list)):
       axis_name = axis_name[0]
   axis_pos = list(axis_env.names).index(axis_name)
   nreplicas = axis_env.nreps // prod(axis_env.sizes)
