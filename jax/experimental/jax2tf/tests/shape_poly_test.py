@@ -21,7 +21,6 @@ import functools
 from functools import partial
 import operator
 import re
-import unittest
 
 import jax
 from jax import core
@@ -112,7 +111,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertIn(b, {a, b})
     self.assertIn(a, [a, b])
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Dimension polynomial comparison 'b' == 'a' is inconclusive"):
+                                "Dimension polynomial comparison .* is inconclusive"):
       b in [a, b]
 
   def test_get_vars(self):
@@ -723,31 +722,40 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         res_jax,
         jax2tf.convert(f, polymorphic_shapes=["(b, h)", "h"])(x, y))
 
-  def test_grad_int_function(self):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      dict(testcase_name=f"function={with_function}",
+           with_function=with_function)
+      for with_function in [False, True]))
+  def test_grad_int(self, with_function=True):
     # https://github.com/google/jax/issues/7093
-    def f_jax(xi, yf):  # xi is int32 and yf is float32
-      # Return a triple: (1) float constant, with 0 tangent;
-      # (2) the integer input; (3) a float dependending on both inputs.
-      return jnp.zeros(xi.shape, dtype=jnp.float32), xi, xi.astype(np.float32) * 2. * yf
-
+    # Also issue #6975.
     x_shape = (2, 3, 4)
-    xi = np.arange(np.prod(x_shape), dtype=np.int32).reshape(x_shape)
+    xi = np.arange(np.prod(x_shape), dtype=np.int16).reshape(x_shape)
     yf = xi.astype(np.float32)
-    res, f_vjp = jax.vjp(f_jax, xi, yf)
-    _ = f_vjp((np.ones(x_shape, dtype=np.float32),
-               np.zeros(x_shape, dtype=jax.float0),
-               np.ones(x_shape, dtype=np.float32)))
+    xi_yf = (xi, yf)
+    zb = np.array([True, False], dtype=np.bool_)
+    def f_jax(xi_yf, zb):  # xi: s16[2, 3, 4], yf: f32[2, 3, 4], zb: bool[2]
+      xi, yf = xi_yf
+      # Return a tuple:
+      #   (1) float constant, with 0 tangent;
+      #   (2) a tuple with:
+      #     (2.1) the integer input;
+      #     (2.2) the boolean input;
+      #     (2.3) a float depending on both inputs.
+      # TODO: there is a problem if we add a None output
+      return (jnp.zeros(xi.shape, dtype=jnp.float32),
+              (xi, zb, xi.astype(np.float32) * 2. * yf))
 
-    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["b1, b2, 4", "b1, b2, 4"])
+    args = (xi_yf, zb)
 
-    xiv = tf.Variable(xi)
-    yfv = tf.Variable(yf)
-    with tf.GradientTape() as tape:
-      res_tf = f_tf(xiv, yfv)
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=[("b1, b2, 4", "b1, b2, 4"), "b1"])
+    if with_function:
+      f_tf = tf.function(f_tf, autograph=False)
 
-    g_tf_xi, g_tf_yf = tape.gradient(res_tf, (xiv, yfv))
-    self.assertIsNone(g_tf_xi)
-    self.assertAllClose(2. * xi.astype(np.float32), g_tf_yf)
+    res_tf, g_tf = tf_test_util.ComputeTfValueAndGrad(f_tf, args)
+    self.assertAllClose(g_tf[0][0], np.zeros_like(xi))
+    self.assertAllClose(g_tf[0][1], (xi * 2).astype(yf.dtype))
+    self.assertAllClose(g_tf[1], np.zeros_like(zb))
 
   def test_saved_model(self):
     f_jax = jnp.sin
@@ -760,17 +768,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(y), restored_f(y))
 
   def test_saved_model_int_function(self):
-    raise unittest.SkipTest("TODO: fix test")
-    def f_jax(x):  # x:[b, 3, 4]
-      return jnp.reshape(x, (-1,))  # : [b * 12]
+    def f_jax(x):  # x:s32[b, 3, 4]
+      return jnp.reshape(x, (-1,))  # : s32[b * 12]
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
+    f_tf = tf.function(f_tf, autograph=False)
     x_shape = (2, 3, 4)
     x = np.arange(np.prod(x_shape), dtype=np.int32).reshape(x_shape)
 
     # When saving the model with gradients, we trace the gradient function
     # and we used to get an error when creating zeros_like_aval for a
     # polymorphic shape
-    restored_f = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec((None,) + x.shape[1:], x.dtype)])
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec((None,) + x.shape[1:], x.dtype)])
     f_jax_rt = jax2tf.call_tf(restored_f)
     res_jax_rt = f_jax_rt(x)
     self.assertAllClose(f_jax(x), res_jax_rt)
@@ -1515,14 +1523,14 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
   # This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES.
 
-  # For each primitive "xxx" the
-  # test will be called "test_prim_xxx_...".
+  # For each primitive "xxx" the test will be called "test_prim_xxx_...".
   # If you want to run this test for only one harness that includes "foo"
   # in the name (after test_prim), add parameter `one_containing="foo"`
   # to parameterized below.
-  @primitive_harness.parameterized(_flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-                                   #one_containing="dynamic_slice_idx=tuple_arg_enable_xla=False_poly_axes=[0, None]"
-                                   )
+  @primitive_harness.parameterized(
+      _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
+      #one_containing="dynamic_slice_idx=tuple_arg_enable_xla=False_poly_axes=[0, None]"
+  )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())
     poly_axes = harness.params["poly_axes"]  # type: Sequence[Sequence[int]]

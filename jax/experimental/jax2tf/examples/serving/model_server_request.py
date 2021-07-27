@@ -18,7 +18,7 @@ See README.md for instructions.
 import grpc  # type: ignore[import]
 import json
 import logging
-import requests
+import requests  # type: ignore[import]
 
 from absl import app
 from absl import flags
