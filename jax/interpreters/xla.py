@@ -63,17 +63,14 @@ _on_exit = False
 
 
 def compile_or_get_cached(backend, computation, compile_options):
-    # Avoid import cycle between jax and jax.experimental
-    from jax.experimental.compilation_cache import compilation_cache as cc
-    if cc.is_initialized():
-        cached_executable = cc.get_executable(computation, compile_options)
-        if cached_executable is not None:
-            return cached_executable
-        else:
-            compiled = backend_compile(backend, computation, compile_options)
-            cc.put_executable(computation, compile_options, compiled)
-            return compiled
-    return backend_compile(backend, computation, compile_options)
+  compiled = backend_compile(backend, computation, compile_options)
+  backend = xb.get_backend()
+  serialized_executable = backend.serialize_executable(compiled)
+  executable_deserialized = backend.deserialize_executable(
+      serialized_executable,
+      computation.get_hlo_module(),
+      compile_options)
+  return executable_deserialized
 
 def identity(x): return x
 
