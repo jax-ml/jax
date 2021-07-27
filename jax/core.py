@@ -568,7 +568,7 @@ class Tracer:
 
   def __repr__(self):
     base = pp('Traced<{}>with<{}>'.format(self.aval, self._trace))
-    contents = self._contents()
+    contents = [(name, pp(repr(attr))) for name, attr in self._contents()]
     if contents:
       base += pp('  with ') >> vcat(pp('{} = '.format(name)) >> pp_payload
                                     for name, pp_payload in contents)
@@ -576,7 +576,7 @@ class Tracer:
 
   def _contents(self):
     try:
-      return [(name, pp(repr(getattr(self, name)))) for name in self.__slots__]
+      return [(name, getattr(self, name)) for name in self.__slots__]
     except AttributeError:
       return ()
 
