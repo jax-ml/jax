@@ -337,6 +337,14 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=PS("h", "h"),
         expected_output_signature=tf.TensorSpec([None, None]))
 
+  def test_forgot_polymorphic_shapes_error(self):
+    msg_re = "PolyShape None in axis .* must contain a dimension variable for unknown dimension in argument shape .*. Perhaps you forgot to add the polymorphic_shapes"
+    with self.assertRaisesRegex(ValueError, msg_re):
+      self.CheckShapePolymorphism(
+          jnp.sin,
+          input_signature=[tf.TensorSpec([1, None])],
+          polymorphic_shapes=None)
+
   def test_arg_avals(self):
     """Test conversion of actual arguments to abstract values."""
 
@@ -479,7 +487,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape None in axis 1 must contain a shape variable for unknown dimension in argument shape (2, None)"
+            "PolyShape None in axis 1 must contain a dimension variable for unknown dimension in argument shape (2, None)"
         )):
       check_avals(
           args=[tf_var([2, None], initializer_shape=(2, 3))],
@@ -495,7 +503,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(_, _)' in axis 1 must contain a shape variable "
+            "PolyShape '(_, _)' in axis 1 must contain a dimension variable "
             "for unknown dimension in argument shape (2, None)"
         )):
       check_avals(
@@ -517,7 +525,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(2, 3)' in axis 1 must contain a shape variable for "
+            "PolyShape '(2, 3)' in axis 1 must contain a dimension variable for "
             "unknown dimension in argument shape (2, None)"
         )):
       check_avals(
@@ -856,7 +864,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(1, f_tf(x0))
 
     # Unsoundness: not checking that the actual dimensions denoted by the same
-    # shape variables have equal sizes.
+    # dimension variables have equal sizes.
     def f_jax(x):
       return 0 if x.shape[0] != x.shape[1] else 1
 
@@ -986,7 +994,7 @@ def _make_harness(group_name: str, name: str,
   polymorphic axis), or a tuple of ints (for multiple polymorphic axes).
 
   For each argument, we use its `poly_axes` entry to generate the polymorphic_shapes
-  specification, creating shape variables `b0`, `b1, ..., for each of its
+  specification, creating dimension variables `b0`, `b1, ..., for each of its
   polymorphic axes. This means that separate arguments will share the same
   dimension variable names, in the order in which the axes are listed in
   poly_axes.
