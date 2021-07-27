@@ -159,6 +159,54 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testReduceScatter(self):
+    f = pmap(lambda x: lax.psum_scatter(x, 'i'), axis_name='i')
+
+    device_count = xla_bridge.device_count()
+    shape = (device_count, device_count)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.sum(x, axis=0)
+    ans = f(x)
+    for i, actual in enumerate(ans):
+      self.assertAllClose(actual, expected[i])
+
+  def testReduceScatterTiled(self):
+    f = pmap(lambda x: lax.psum_scatter(x, 'i', tiled=True), axis_name='i')
+
+    device_count = xla_bridge.device_count()
+    shape = (device_count, 4 * device_count)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.sum(x, axis=0)
+    ans = f(x)
+    scatter_len = len(expected) // device_count
+    for i, actual in enumerate(ans):
+      self.assertAllClose(actual,
+                          expected[i * scatter_len:(i + 1) * scatter_len])
+
+  def testReduceScatterReplicaGroupsTiled(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest
+    axis_index_groups = [[i for i in range(jax.device_count()) if i % 2 == 0],
+                         [i for i in range(jax.device_count()) if i % 2 != 0]]
+    f = lambda x: lax.psum_scatter(
+        x, 'i', axis_index_groups=axis_index_groups, tiled=True)
+    f = pmap(f, axis_name='i')
+
+    shape = (replicas, 4 * replicas)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    ans = f(x)
+
+    group_1_result = np.sum(x[0::2,:], axis=0)
+    group_2_result = np.sum(x[1::2,:], axis=0)
+    # the result is scattered over (replicas // 2) devices
+    scatter_len = len(group_1_result) * 2 // replicas
+
+    for i, actual in enumerate(ans):
+      expected = group_1_result if i % 2 == 0 else group_2_result
+      self.assertAllClose(
+          actual, expected[i // 2 * scatter_len:(i // 2 + 1) * scatter_len])
+
   @ignore_slow_all_to_all_warning()
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)

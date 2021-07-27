@@ -349,6 +349,7 @@ from jax._src.lax.parallel import (
   pshuffle,
   psum,
   psum_p,
+  psum_scatter,
   pswapaxes,
   pdot,
   xeinsum,
