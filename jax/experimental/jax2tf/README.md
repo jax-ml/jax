@@ -572,24 +572,43 @@ disable the generation of this metadata with the parameter
 The `jax2tf`-converted function supports higher-order gradients, but when the
 function is saved in a SavedModel, only the first-order gradient is saved.
 
-### Converting gradients for integer-argument functions
+### Converting gradients for functions with integer arguments or unused arguments
 
-When JAX differentiates over functions with integer arguments, the gradients will
+When JAX differentiates functions with integer or boolean arguments, the gradients will
 be zero-vectors with a special `float0` type (see PR 4039](https://github.com/google/jax/pull/4039)).
-This type is translated to `bfloat16` when converting to TF. For example,
+This type is translated to `int32` when converting to TF.
+For example,
 
 ```python
-def f_jax(x):  # x: int32
+x = np.int16(2)
+def f_jax(x):  # x: int16
   return x * 2.
 
-jax.grad(f_jax, allow_int=True)(2)
+jax.grad(f_jax, allow_int=True)(x)
 # returns a special `float0`: array((b'',), dtype=[('float0', 'V')])
 
-jax2tf.convert(jax.grad(f_jax, allow_int=True))(2))
-# returns a `bfloat16` zero: tf.Tensor(0, shape=(), dtype=bfloat16)
+jax2tf.convert(jax.grad(f_jax, allow_int=True))(x))
+# returns a tf.Tensor(0, shape=(), dtype=int32)
 ```
 
-### Different behavior for gradients for unused arguments
+Note that this is different from how TensorFlow handles gradients
+for integer or boolean arguments: sometimes the gradient is `None`,
+sometimes it is a zero with the same dtype as the argument, and
+sometimes it is a one with the same dtype as the argument (e.g.,
+for the identity function).
+
+```python
+def f_tf(x):  # x: int16
+  return tf.cast(x, tf.float32) * 2.
+
+xv = tf.Variable(x)
+with tf.GradientTape(persistent=True) as tape:
+  print(tape.gradient(f_tf(xv), xv))
+  # returns None
+  print(tape.gradient(f_tf(xv), xv,
+                      unconnected_gradients=tf.UnconnectedGradients.ZERO))
+  # returns 0 with the same shape and dtype as x
+```
 
 When differentiating functions with unused arguments, TF by default
 returns the value `None` for the corresponding gradients. The

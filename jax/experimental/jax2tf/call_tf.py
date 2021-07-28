@@ -374,7 +374,7 @@ def _code_generator_and_avals(
     # call_tf is a multiple_results primitive.
     result_shapes = (result_shape,)
   else:
-    result_shapes = result_shape.tuple_shapes()
+    result_shapes = result_shape.tuple_shapes()  # type: ignore
 
   result_avals = tuple(map(canonical_res_aval, result_shapes))  # type: ignore
 

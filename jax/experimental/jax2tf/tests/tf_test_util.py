@@ -99,6 +99,46 @@ def SaveAndLoadFunction(f_tf: Callable,
   restored = SaveAndLoadModel(model, save_gradients=save_gradients)
   return restored.f, restored
 
+def TransformJaxVJP(f: Callable, args, res_f_of_args):
+  # Given `f` and its `args` tuple and `res_f_of_args=f(*args)` return a pair of a function
+  # that computes the VJP of `f` and appropriate arguments tuple.
+  def make_ct(res):
+    res_dtype = np.result_type(res)
+    assert res_dtype != dtypes.float0
+    # We produce cotangents of the same type as the primal. It does not
+    # seem to matter whether we feed float0, and avoiding float0 makes things
+    # simpler with TF.
+    return np.ones(np.shape(res), dtype=res_dtype)
+
+  cts = tree_util.tree_map(make_ct, res_f_of_args)
+
+  def f_vjp(args, cts):
+    res, pullback = jax.vjp(f, *args)
+    return pullback(cts)
+  return (f_vjp, (args, cts))
+
+def TransformTfValueAndGrad(tf_f: Callable, tf_args,
+                          unconnected_gradients=tf.UnconnectedGradients.ZERO):
+  # Given a TF function `tf_f` and its `tf_args` tuple,
+  # return a pair of a function that computes both the value and the
+  # gradient and appropriate arguments tuple.
+  def wrapped(*tf_args):
+    tf_vars = tf.nest.map_structure(tf.Variable, tf_args)
+    with tf.GradientTape() as tape:
+      res_tf = tf_f(*tf_vars)
+
+    grad = tape.gradient(res_tf, tf_vars,
+                         unconnected_gradients=unconnected_gradients)
+    return (res_tf, grad)
+  return wrapped, tf_args
+
+
+def ComputeTfValueAndGrad(tf_f: Callable, tf_args,
+                          unconnected_gradients=tf.UnconnectedGradients.ZERO):
+  f1, args1 = TransformTfValueAndGrad(tf_f, tf_args,
+                                      unconnected_gradients=unconnected_gradients)
+  return f1(*args1)
+
 
 class JaxToTfTestCase(jtu.JaxTestCase):
 
