@@ -436,17 +436,20 @@ class TracerIntegerConversionError(JAXTypeError):
 
 class UnexpectedTracerError(JAXTypeError):
   """
-  This error occurs when you use a JAX value which has leaked out of a function.
-  What does it mean to leak a value? If you use a JAX transform on a
-  function which saves a value to an outer scope through a side-effect, this
-  will leak a `Tracer`. When you then use this leaked value in a different
-  operation, an `UnexpectedTracerError` will be thrown.
-  To fix this, you need to return the value out of the transformed function
-  explictly.
+  This error occurs when you use a JAX value that has leaked out of a function.
+  What does it mean to leak a value? If you use a JAX transformation on a
+  function ``f`` that stores, in some scope outside of ``f``, a reference to
+  an intermediate value, that value is considered to have been leaked.
+  Leaking values is a side effect.
+  
+  JAX detects leaks when you then use the leaked value in another
+  operation later on, at which point it raises `UnexpectedTracerError`.
+  To fix this, avoid side effects: if a function computes a value needed
+  in an outer scope, return that value from the transformed function explictly.
 
-  Tracers are created when you transform a function, eg. with `jit`, `pmap`,
-  `vmap`, `eval_shape`, ... Intermediate values of these transformed values will
-  be Tracers, and should not escape this function through a side-effect.
+  Specifically, ``Tracer``s are JAX's internal representation of a function's
+  intermediate values during transformations, e.g. within `jit`, `pmap`, `vmap`,
+  etc. Encountering a `Tracer` outside of a transformation implies a leak.
 
   Life-cycle of a leaked Tracer
     Consider the following example of a transformed function which leaks a value
@@ -473,32 +476,32 @@ class UnexpectedTracerError(JAXTypeError):
 
     This example also demonstrates the life-cycle of a leaked Tracer:
 
-      1. A function is transformed (in this case, jitted)
-      2. The transformed function is called (kicking of an abstract trace of the
+      1. A function is transformed (in this case, by `jit`)
+      2. The transformed function is called (initiating an abstract trace of the
          function and turning `x` into a Tracer)
       3. The Tracer which will be leaked is created (an intermediate value of
          a traced function is also a Tracer)
       4. The Tracer is leaked (appended to a list in an outer scope, escaping
          the function through a side-channel)
-      5. The leaked Tracer is used, and an UnexpectedTracerError is thrown.
+      5. The leaked Tracer is used, and an UnexpectedTracerError is raised.
 
     The UnexpectedTracerError tries to point to these locations in your code by
     including information about each stage. Respectively:
 
       1. The name of the transformed function (`side_effecting`) and which
          transform kicked of the trace (`jit`).
-      2. A reconstructed stack-trace of where the Tracer was created, which
+      2. A reconstructed stack trace of where the Tracer was created, which
          includes where the transformed function was called. (`When the Tracer
          was created, the final 5 stack frames (most recent last) excluding
          JAX-internal frames were...`).
-      3. See the reconstructed stack-trace. This will point to the line of code
-         which created the leaked Tracer.
-      4. Currently not included in the error message, because this is difficult
-         to pin down! We can only tell you what the leaked value looks like
+      3. From the reconstructed stack trace, the line of code that created
+         the leaked Tracer.
+      4. The leak location is not included in the error message. It is difficult
+         to pin down! JAX can only tell you what the leaked value looks like
          (what shape is has and where it was created) and what boundary it was
-         leaked over (the name of the transform and the name of the transformed
-         function).
-      5. The actual error stack-trace will point to where the value is used.
+         leaked over (the name of the transformation and the name of the
+         transformed function).
+      5. The current error's stack trace points to where the value is used.
 
     The error can be fixed by the returning the value out of the
     transformed function::
@@ -519,15 +522,15 @@ class UnexpectedTracerError(JAXTypeError):
 
   Leak checker
     As discussed in point 2 and 3 above, we show a reconstructed stack-trace
-    because we only throw an error when the leaked Tracer is used, not when the
+    because we only raise an error when the leaked Tracer is used, not when the
     Tracer is leaked. We need to know the location where the Tracer was leaked
-    to fix the error. The leak checker is a debug option you can use to throw an
-    error as soon as a Tracer is leaked. (To be more exact, it will throw an
+    to fix the error. The leak checker is a debug option you can use to raise an
+    error as soon as a Tracer is leaked. (To be more exact, it will raise an
     error when the transformed function from which the Tracer is leaked returns)
 
     To enable the leak checker you can use the `JAX_CHECK_TRACER_LEAKS`
     environment variable or the `with jax.checking_leaks()` context manager.
-    Note that this util is experimental and may have some false positives. It
+    Note that this tool is experimental and may report false positives. It
     works by disabling some JAX caches, so should only be used when debugging
     as it will have a negative effect on performance.
   """
