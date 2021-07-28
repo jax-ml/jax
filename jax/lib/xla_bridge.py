@@ -145,6 +145,22 @@ def _make_tpu_driver_client():
   return tpu_driver_client.TpuBackend.create(worker=FLAGS.jax_backend_target)
 
 
+def tpu_client_timer_callback(timer: float):
+  def _log_warning():
+    logging.warning('Did you run your code on all the hosts?')
+
+  # Will log a warning after `timer` secs.
+  t = threading.Timer(timer, _log_warning)
+  t.start()
+
+  try:
+    client = xla_client.make_tpu_client()
+  finally:
+    t.cancel()
+
+  return client
+
+
 # Backends, in increasing order of preference.
 # We have no particular opinion about how "backends" relate to "devices". For
 # example, there could be multiple backends that provide the same kind of
@@ -170,7 +186,7 @@ register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
 register_backend_factory('gpu', xla_client.make_gpu_client,
                          priority=200)
-register_backend_factory('tpu', xla_client.make_tpu_client,
+register_backend_factory('tpu', partial(tpu_client_timer_callback, timer=60.0),
                          priority=300)
 
 _default_backend = None

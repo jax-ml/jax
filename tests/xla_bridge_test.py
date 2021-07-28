@@ -12,12 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+import time
+import warnings
 
 from absl.testing import absltest
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client as xc
 from jax import test_util as jtu
 
+mock = absltest.mock
+
+
+def mock_tpu_client():
+  time.sleep(0.03)
+  return None
 
 class XlaBridgeTest(absltest.TestCase):
 
@@ -55,6 +64,12 @@ class XlaBridgeTest(absltest.TestCase):
       xb.local_devices(100)
     with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
       xb.local_devices(backend="foo")
+
+  @mock.patch('jax.lib.xla_client.make_tpu_client', side_effect=mock_tpu_client)
+  def test_timer_tpu_warning_1vm(self, _):
+    with self.assertLogs('absl', level='WARNING') as al:
+      xb.tpu_client_timer_callback(0.01)
+    self.assertIn('Did you run your code on all the hosts?', al.output[0])
 
 
 if __name__ == "__main__":
