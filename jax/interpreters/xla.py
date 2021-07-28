@@ -73,7 +73,16 @@ def compile_or_get_cached(backend, computation, compile_options):
             compiled = backend_compile(backend, computation, compile_options)
             cc.put_executable(computation, compile_options, compiled)
             return compiled
-    return backend_compile(backend, computation, compile_options)
+
+    compiled = backend_compile(backend, computation, compile_options)
+    backend = xb.get_backend()
+    serialized_executable = backend.serialize_executable(compiled)
+    executable_deserialized = backend.deserialize_executable(
+        serialized_executable,
+        computation.get_hlo_module(),
+        compile_options)
+    return executable_deserialized
+    # return backend_compile(backend, computation, compile_options)
 
 def identity(x): return x
 
