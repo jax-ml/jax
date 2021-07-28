@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import time
-import warnings
 
 from absl.testing import absltest
 from jax.lib import xla_bridge as xb
