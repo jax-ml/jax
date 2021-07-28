@@ -85,13 +85,21 @@ def SaveAndLoadModel(model: tf.Module,
   restored_model = tf.saved_model.load(model_dir)
   return restored_model
 
-def SaveAndLoadFunction(f_tf: Callable,
-                        input_signature: Sequence[tf.TensorSpec],
+def SaveAndLoadFunction(f_tf: Callable, *,
+                        input_signature: Optional[Sequence[tf.TensorSpec]] = None,
+                        input_args: Optional[Sequence[Any]] = None,
                         variables: Sequence[tf.Variable] = (),
                         save_gradients=True) -> Tuple[Callable, tf.train.Checkpoint]:
   # Roundtrip through saved model on disk. Return the Checkpoint also
-  # for the cases when there are variables.
+  # for the cases when there are variables. If you don't pass input_signature
+  # then it is created from the input_args.
   model = tf.train.Checkpoint()
+  if input_signature is None:
+    assert input_args is not None
+    input_signature = tf.nest.map_structure(lambda a: tf.TensorSpec(a.shape, a.dtype),
+                                            input_args)
+  else:
+    assert input_args is None
   model.f = tf.function(f_tf,
                         autograph=False,
                         input_signature=input_signature)
@@ -132,9 +140,9 @@ def TransformTfValueAndGrad(tf_f: Callable, tf_args,
     return (res_tf, grad)
   return wrapped, tf_args
 
-
-def ComputeTfValueAndGrad(tf_f: Callable, tf_args,
+def ComputeTfValueAndGrad(tf_f: Callable, tf_args: Sequence,
                           unconnected_gradients=tf.UnconnectedGradients.ZERO):
+  assert isinstance(tf_args, Sequence), f"tf_args must be a tuple: {tf_args}"
   f1, args1 = TransformTfValueAndGrad(tf_f, tf_args,
                                       unconnected_gradients=unconnected_gradients)
   return f1(*args1)

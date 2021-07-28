@@ -100,7 +100,7 @@ def call_tf(callable_tf: Callable) -> Callable:
     def make_tensorspec(a_jax):
       a_tf_dtype = jax2tf_internal._to_tf_dtype(a_jax.dtype)
       if any(not core.is_constant_dim(d) for d in a_jax.shape):
-        msg = ("call_tf cannot be applies to shape-polymorphic arguments. "
+        msg = ("call_tf cannot be applied to shape-polymorphic arguments. "
                f"Found argument shape: {a_jax.shape}. "
                "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
         raise ValueError(msg)
@@ -266,7 +266,11 @@ def _code_generator_and_avals(
 
   # Due to bugs like b/193754660, the compilation may fail. To work around this
   # issue we pass the `code_gen_optional` when in an abstract evaluation context
-  # in which case we fallback on TF shape inference.
+  # in which case we fallback on TF shape inference. Luckily it seen that
+  # it is never the case that we are under tf.function, and we call the
+  # XLA translation rule for call_tf. The latter happens only for jax.jit, but
+  # jax.jit under a tf.function must be under jax2tf.convert, which unrolls
+  # the jit.
 
   # TODO(necula): It seems that we need concrete tensors for get_compiler_ir?
   # We know of one case when TF is sensitive to the values of the tensors that

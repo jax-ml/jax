@@ -402,7 +402,7 @@ def convert(fun: Callable,
         out_flat = converted_fun_flat_with_custom_gradient(*args_flat)
       else:
         out_with_avals = _interpret_fun(flat_fun, args_flat, args_avals_flat,
-                                      name_stack)
+                                        name_stack)
         outs, out_avals = util.unzip2(out_with_avals)
         message = ("The jax2tf-converted function does not support gradients. "
                    "Use `with_gradient` parameter to enable gradients")
@@ -781,6 +781,8 @@ class TensorFlowTrace(core.Trace):
     # This is a bit conservative, doing abstract_eval even in op-by-op execution
     # but we needed it for, e.g., shape_polymorphism where only JAX's
     # abstract evaluation rules can properly track polymorphic shapes.
+    # Unfortunately under op-by-op execution this is a rare occasion where we
+    # need abstract evaluation.
     out_aval = primitive.abstract_eval(*args_avals, **params)
     args_tf: Sequence[TfVal] = [t.val for t in tracers]
     def invoke_impl() -> TfVal:
