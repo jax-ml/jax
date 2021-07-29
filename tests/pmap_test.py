@@ -1701,6 +1701,17 @@ class PmapTest(jtu.JaxTestCase):
     out_dtype = func(unused_arg).dtype
     self.assertEqual(out_dtype, dtype)
 
+  def test_num_replicas_with_switch(self):
+    # https://github.com/google/jax/issues/7411
+    def identity(x):
+      return x
+
+    def cond_of_pmap(x):
+      y = lax.cond(True, jax.pmap(identity), jax.pmap(identity), x)
+      return y
+
+    cond_of_pmap(jnp.zeros((xla_bridge.device_count(), 2)))
+
 
 class VmapOfPmapTest(jtu.JaxTestCase):
 
