@@ -116,6 +116,7 @@ from jax import lax, core
 from jax._src.lax import control_flow as lax_control_flow
 from jax import tree_util
 from jax import numpy as jnp
+from jax.errors import UnexpectedTracerError
 from jax.interpreters import partial_eval as pe
 from jax._src.util import safe_map
 
@@ -415,7 +416,7 @@ class _BodyTracer(object):
           in_tracers=in_tracers,
           out_tracers=body_out_tracers,
           trace=self.trace)
-    except core.UnexpectedTracerError as e:
+    except UnexpectedTracerError as e:
       if "Tracer not among input tracers" in str(e):
         raise ValueError("Body of cond_range or while_range should not use the "
                          "index variable returned by iterator.") from e

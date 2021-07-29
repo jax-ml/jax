@@ -42,6 +42,7 @@ from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import core, dtypes, lax
 from jax._src import api
 from jax.core import Primitive
+from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters.sharded_jit import PartitionSpec as P
@@ -2193,13 +2194,13 @@ class APITest(jtu.JaxTestCase):
   def test_escaped_tracers_different_top_level_traces(self):
     api.jit(self.helper_save_tracer)(0.)
     with self.assertRaisesRegex(
-        core.UnexpectedTracerError, "Encountered an unexpected tracer"):
+        UnexpectedTracerError, "Encountered an unexpected tracer"):
       api.jit(lambda x: self._saved_tracer)(0.)
 
   def test_escaped_tracers_cant_lift_sublevels(self):
     api.jit(self.helper_save_tracer)(0.)
     with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
+        UnexpectedTracerError,
         re.compile(
           "Encountered an unexpected tracer",
           re.DOTALL)):
@@ -2208,7 +2209,7 @@ class APITest(jtu.JaxTestCase):
   def test_escaped_tracers_tracer_from_higher_level(self):
     api.grad(self.helper_save_tracer)(0.)
     with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
+        UnexpectedTracerError,
         re.compile(
           "Encountered an unexpected tracer.*Tracer from a higher level",
           re.DOTALL)):
@@ -2220,7 +2221,7 @@ class APITest(jtu.JaxTestCase):
       # Use the tracer
       return x + self._saved_tracer
     with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
+        UnexpectedTracerError,
         re.compile("Encountered an unexpected tracer",
                    re.DOTALL)):
       api.jit(func1)(2.)
@@ -2230,7 +2231,7 @@ class APITest(jtu.JaxTestCase):
       api.grad(self.helper_save_tracer)(0.)
       return x + self._saved_tracer
     with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
+        UnexpectedTracerError,
         re.compile("Encountered an unexpected tracer.*Can't lift",
                    re.DOTALL)):
       api.grad(func1)(2.)
@@ -2242,7 +2243,7 @@ class APITest(jtu.JaxTestCase):
       return x + self._saved_tracer
 
     with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
+        UnexpectedTracerError,
         re.compile(
           "Encountered an unexpected tracer.*Tracer not among input tracers",
           re.DOTALL)):
@@ -2265,7 +2266,7 @@ class APITest(jtu.JaxTestCase):
     def g():
       lax.scan(f, None, None, length=2)
 
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
+    with self.assertRaisesRegex(UnexpectedTracerError,
                                 "was created on line"):
       g()
 
@@ -2279,24 +2280,24 @@ class APITest(jtu.JaxTestCase):
 
     lax.scan(f, None, None, length=2)  # leaked a tracer! (of level 1!)
 
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
+    with self.assertRaisesRegex(UnexpectedTracerError,
                                 "was created on line"):
       # The following call will try and raise the ones array to the count tracer
       # level, which is no longer live.
       jax.jit(jnp.add)(jnp.ones(()), count)
 
   def test_escaped_tracer_transform_name(self):
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
+    with self.assertRaisesRegex(UnexpectedTracerError,
                                 "for jit"):
       jax.jit(self.helper_save_tracer)(1)
       _ = self._saved_tracer+1
 
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
+    with self.assertRaisesRegex(UnexpectedTracerError,
                                 "for pmap"):
       jax.pmap(self.helper_save_tracer)(jnp.ones((1, 2)))
       _ = self._saved_tracer+1
 
-    with self.assertRaisesRegex(core.UnexpectedTracerError,
+    with self.assertRaisesRegex(UnexpectedTracerError,
                                 "for eval_shape"):
       jax.eval_shape(self.helper_save_tracer, 1)
       _ = self._saved_tracer+1
@@ -3278,7 +3279,7 @@ class RematTest(jtu.JaxTestCase):
       api.remat(g)()
       api.remat(g)()
 
-    with self.assertRaisesRegex(core.UnexpectedTracerError, "global state"):
+    with self.assertRaisesRegex(UnexpectedTracerError, "global state"):
       api.jit(f)()
 
   def test_no_cse_widget_on_primals(self):
@@ -4715,9 +4716,9 @@ class CustomVJPTest(jtu.JaxTestCase):
     def g(x, y):
       return f(x, y)
 
-    with self.assertRaisesRegex(core.UnexpectedTracerError, "custom_vjp"):
+    with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
       _ = g(2, 3.)
-    with self.assertRaisesRegex(core.UnexpectedTracerError, "custom_vjp"):
+    with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
       _ = api.grad(g, 1)(2., 3.)
 
   def test_vmap_axes(self):

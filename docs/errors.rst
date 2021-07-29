@@ -10,3 +10,4 @@ along with representative examples of how one might fix them.
 .. autoclass:: NonConcreteBooleanIndexError
 .. autoclass:: TracerArrayConversionError
 .. autoclass:: TracerIntegerConversionError
+.. autoclass:: UnexpectedTracerError

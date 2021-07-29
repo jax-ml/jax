@@ -26,6 +26,7 @@ from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
 from jax._src.util import cache, safe_zip, safe_map, split_list
 from jax.api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from jax.core import raise_to_shaped
+from jax.errors import UnexpectedTracerError
 from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
@@ -507,7 +508,7 @@ def _check_for_tracers(x):
            "This behavior recently changed in JAX. "
            "See https://github.com/google/jax/blob/main/docs/custom_vjp_update.md "
            "for more information.")
-    raise core.UnexpectedTracerError(msg)
+    raise UnexpectedTracerError(msg)
 
 @lu.transformation_with_aux
 def _flatten_fwd(in_tree, *args):

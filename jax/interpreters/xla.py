@@ -33,6 +33,7 @@ from jax._src import source_info_util
 from jax._src.abstract_arrays import (make_shaped_array, array_types)
 from ..core import (ConcreteArray, ShapedArray, AbstractToken,
                     Literal, pp_eqn_compact, raise_to_shaped, abstract_token)
+from ..errors import UnexpectedTracerError
 from jax._src.pprint_util import pp
 from .._src.util import (partial, partialmethod, cache, prod, unzip2,
                     extend_name_stack, wrap_name, safe_zip, safe_map)
@@ -682,7 +683,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(
       fun, abstract_args, pe.debug_info_final(fun, "jit"))
   if any(isinstance(c, core.Tracer) for c in consts):
-    raise core.UnexpectedTracerError("Encountered an unexpected tracer.")
+    raise UnexpectedTracerError("Encountered an unexpected tracer.")
   jaxpr, kept_const_idx, kept_var_idx = _prune_unused_inputs(jaxpr)
   consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
   pruned_arg_specs = (a for i, a in enumerate(arg_specs) if i in kept_var_idx)
