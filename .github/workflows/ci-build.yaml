@@ -62,7 +62,7 @@ jobs:
             os: ubuntu-latest
             enable-x64: 0
             # Test with the oldest legal NumPy version.
-            package-overrides: "numpy==1.17.5 scipy==1.2.1"
+            package-overrides: "numpy==1.18.5 scipy==1.2.1"
             num_generated_cases: 8
             # Test against latest jaxlib
             use-latest-jaxlib: true
