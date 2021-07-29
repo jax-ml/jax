@@ -1333,6 +1333,32 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda key, a: jax.random.gamma(key, a),
                   [RandArg((3, 2), np.uint32), RandArg((3, 3), _f32)],
                   poly_axes=[0, 0]),
+    # The known dimensions product must be even.
+    _make_harness("random_categorical", "axis=0",
+                  lambda key, a: jax.random.categorical(key, a, axis=0),
+                  [RandArg((2,), np.uint32), RandArg((3, 8), _f32)],
+                  poly_axes=[None, 0]),
+    _make_harness("random_categorical", "axis=1",
+                  lambda key, a: jax.random.categorical(key, a, axis=1),
+                  [RandArg((2,), np.uint32), RandArg((3, 8), _f32)],
+                  poly_axes=[None, 0]),
+    # Works when the known dimensions are known to be even or odd.
+    # See the random_uniform_error test also.
+    _make_harness("random_uniform", "even_1",
+                  lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
+                  [RandArg((2,), np.uint32), RandArg((3, 4), _f32)],
+                  poly_axes=[None, 0]),
+    _make_harness("random_uniform", "even_2",
+                  lambda key, a: jax.random.uniform(key, (2 * a.shape[0], a.shape[1]),
+                                                    dtype=_f32),
+                  [RandArg((2,), np.uint32), RandArg((3, 5), _f32)],
+                  poly_axes=[None, 0]),
+    # TODO(necula): not yet supported, but also unlikely to come up.
+    # _make_harness("random_uniform", "odd",
+    #               lambda key, a: jax.random.uniform(key, (2 * a.shape[0] + 1, a.shape[1]),
+    #                                                 dtype=_f32),
+    #               [RandArg((2,), np.uint32), RandArg((3, 5), _f32)],
+    #               poly_axes=[None, 0]),
     [
         _make_harness("reduce", reduce_op.__name__,
                       lambda x: reduce_op(x, axis=-1, keepdims=True),
@@ -1515,7 +1541,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="dynamic_slice_idx=tuple_arg_enable_xla=False_poly_axes=[0, None]"
+      #one_containing="uniform_odd_poly_axes=[None, 0]"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())
@@ -1656,6 +1682,15 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           polymorphic_shapes=["(2, a)", "(b, 3)"],
           expected_output_signature=tf.TensorSpec([None]))
 
+  def test_random_uniform_error(self):
+    with self.assertRaisesRegex(
+        core.InconclusiveDimensionOperation,
+        "the product of the known dimensions must be even"):
+      self.CheckShapePolymorphism(
+          lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
+          input_signature=[tf.TensorSpec([2], tf.uint32),
+                           tf.TensorSpec([None, 3], tf.float32)],
+          polymorphic_shapes=[None, "b, ..."])
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
