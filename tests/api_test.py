@@ -5615,7 +5615,6 @@ class NamedCallTest(jtu.JaxTestCase):
 class BackendsTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not sys.executable, "test requires sys.executable")
-  @unittest.skipIf(python_version < (3, 7), "test requires Python 3.7 or higher")
   @jtu.skip_on_devices("gpu", "tpu")
   def test_cpu_warning_suppression(self):
     warning_expected = (
