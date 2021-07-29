@@ -320,6 +320,19 @@ class _DimPolynomial(dict):
   def __rfloordiv__(self, other):
     return _ensure_poly(other).__floordiv__(self)
 
+  def __truediv__(self, divisor: DimSize):
+    # Used for "/"
+    q, r = self.divmod(divisor)
+    if r != 0:
+      raise InconclusiveDimensionOperation(
+          f"Dimension polynomial '{self}' is not a multiple of '{divisor}'")
+    return q
+
+  def __rtruediv__(self, dividend: DimSize):
+    # Used for "/", when dividend is not a _DimPolynomial
+    raise InconclusiveDimensionOperation(
+        f"Division of '{dividend}' by dimension polynomial '{self}' is not supported")
+
   def __mod__(self, divisor: DimSize) -> int:
     return self.divmod(divisor)[1]
 
