@@ -13,9 +13,7 @@
 # limitations under the License.
 
 import re
-import sys
 import traceback
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -70,13 +68,6 @@ def check_filtered_stack_trace(test, etype, f, frame_patterns=[],
           f', in {fname_pat}' r'\n\s*' f'{line_pat}')
       test.assertRegex(frame_fmt, full_pat)
 
-def skip_if_unsupported_filter_mode(filter_mode):
-  if (filter_mode == "remove_frames" and
-      not traceback_util.filtered_tracebacks_supported()):
-    raise unittest.SkipTest('Filtered tracebacks not supported')
-  elif filter_mode == "tracebackhide" and sys.version_info[:2] < (3, 7):
-    raise unittest.SkipTest('Tracebackhide requires Python 3.7 or newer')
-
 
 @parameterized.named_parameters(
   {"testcase_name": f"_{f}", "filter_mode": f}
@@ -84,8 +75,6 @@ def skip_if_unsupported_filter_mode(filter_mode):
 class FilteredTracebackTest(jtu.JaxTestCase):
 
   def test_nested_jit(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     @jit
     def innermost(x):
       assert False
@@ -106,8 +95,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         filter_mode=filter_mode)
 
   def test_nested_jit_and_vmap(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     @jit
     def innermost(x):
       assert False
@@ -128,8 +115,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         filter_mode=filter_mode)
 
   def test_nested_jit_and_grad(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     @jit
     def innermost(x):
       assert False
@@ -149,8 +134,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     ], filter_mode=filter_mode)
 
   def test_lax_cond(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(_):
       assert False
       return ()
@@ -164,8 +147,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         filter_mode=filter_mode)
 
   def test_lax_switch(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(_):
       assert False
       return ()
@@ -179,8 +160,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'assert False')], filter_mode=filter_mode)
 
   def test_lax_scan(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(*_):
       assert False
       return ()
@@ -193,8 +172,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'assert False')], filter_mode=filter_mode)
 
   def test_lax_fori_loop(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(*_):
       assert False
       return ()
@@ -207,8 +184,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'assert False')], filter_mode=filter_mode)
 
   def test_lax_while_loop(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(*_):
       assert False
       return ()
@@ -222,8 +197,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'assert False')], filter_mode=filter_mode)
 
   def test_lax_map(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(_):
       assert False
       return ()
@@ -237,8 +210,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'assert False')], filter_mode=filter_mode)
 
   def test_lax_custom_root(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(*_):
       assert False
       return ()
@@ -264,8 +235,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'assert False')], filter_mode=filter_mode)
 
   def test_lax_custom_linear_solve(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(*_):
       assert False
       return ()
@@ -287,8 +256,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'assert False')], filter_mode=filter_mode)
 
   def test_lax_associative_scan(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     def err(*_):
       assert False
       return ()
@@ -302,8 +269,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('err', 'assert False')], filter_mode=filter_mode)
 
   def test_cause_chain(self, filter_mode):
-    skip_if_unsupported_filter_mode(filter_mode)
-
     @jit
     def inner(x):
       raise ValueError('inner')

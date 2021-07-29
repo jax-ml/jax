@@ -13,10 +13,8 @@
 # limitations under the License.
 
 import os
-import sys
 import traceback
 import types
-import warnings
 
 import jax
 from jax.lib import xla_extension
@@ -69,10 +67,10 @@ def filter_traceback(tb):
   frames = list(traceback.walk_tb(tb))
   for f, lineno in reversed(frames):
     if include_frame(f):
-      out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
   if out is None and len(frames) > 0:
     f, lineno = frames[-1]
-    out = make_traceback(out, f, f.f_lasti, lineno)
+    out = types.TracebackType(out, f, f.f_lasti, lineno)
   return out
 
 def add_call_stack_frames(tb):
@@ -94,7 +92,7 @@ def add_call_stack_frames(tb):
     if reached_module_level and f.f_code.co_name != '<module>':
       break
     if include_frame(f):
-      out = make_traceback(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
     if f.f_code.co_name == '<module>':
       reached_module_level = True
   return out
@@ -112,12 +110,6 @@ def format_exception_only(e):
 
 class UnfilteredStackTrace(Exception): pass
 
-make_traceback = (types.TracebackType if sys.version_info >= (3, 7) else
-                  getattr(xla_extension, "make_python_traceback", None))
-
-def filtered_tracebacks_supported():
-  return make_traceback is not None
-
 def running_under_ipython():
   """Returns true if we appear to be in an IPython session."""
   try:
@@ -125,11 +117,6 @@ def running_under_ipython():
     return True
   except NameError:
     return False
-
-def python_supports_tracebackhide():
-  """Returns true we can add __tracebackhide__ to frames."""
-  # TODO(phawkins): remove this test after droppping Python 3.6 support.
-  return sys.version_info[:2] >= (3, 7)
 
 def ipython_supports_tracebackhide():
   """Returns true if the IPython version supports __tracebackhide__."""
@@ -139,15 +126,10 @@ def ipython_supports_tracebackhide():
 def filtering_mode():
   mode = jax.config.jax_traceback_filtering
   if mode is None or mode == "auto":
-    if (running_under_ipython() and ipython_supports_tracebackhide() and
-        python_supports_tracebackhide()):
+    if (running_under_ipython() and ipython_supports_tracebackhide()):
       mode = "tracebackhide"
     else:
       mode = "remove_frames"
-  if mode == "tracebackhide" and not python_supports_tracebackhide():
-    warnings.warn("--jax_traceback_filtering=tracebackhide requires Python 3.7 "
-                  "or newer.")
-    mode = "remove_frames"
   return mode
 
 def api_boundary(fun):
@@ -172,9 +154,6 @@ def api_boundary(fun):
   ``api_boundary``, such an exception is accompanied by an additional traceback
   that excludes the frames specific to JAX's implementation.
   '''
-
-  if not filtered_tracebacks_supported():
-    return fun
 
   @util.wraps(fun)
   def reraise_with_filtered_traceback(*args, **kwargs):
