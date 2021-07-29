@@ -6469,23 +6469,32 @@ infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
 infeed_p.def_abstract_eval(_infeed_abstract_eval)
 xla.translations[infeed_p] = _infeed_translation_rule
 
-def outfeed(token, xs):
+def outfeed(token, xs, partitions = None):
   """Outfeeds value `xs` to the host. Experimental.
 
   `token` is used to sequence infeed and outfeed effects.
+  `partitions` may be specified inside a `sharded_jit` or `pjit` function.
   """
+  if partitions is not None:
+    # We specifically use type() to raise an error for PartitionSpecs.
+    if type(partitions) != tuple:  # pylint: disable=unidiomatic-typecheck
+      raise ValueError(f"'partitions' argument to outfeed should be a tuple, "
+                       f"got {partitions}")
   flat_xs, _ = pytree.flatten(xs)
-  return outfeed_p.bind(token, *flat_xs)
+  return outfeed_p.bind(token, *flat_xs, partitions=partitions)
 
-def _outfeed_abstract_eval(token, *xs):
+def _outfeed_abstract_eval(token, *xs, partitions):
   if token is not abstract_token:
     raise TypeError("First argument to outfeed must be a token")
   return abstract_token
 
-
-def _outfeed_translation_rule(c, token, *xs):
+def _outfeed_translation_rule(c, token, *xs, partitions):
   t = xops.Tuple(c, xs)
-  return xops.OutfeedWithToken(t, token, c.get_shape(t))
+  if partitions is not None:
+    return xb.with_sharding(c, partitions, xops.OutfeedWithToken,
+                            t, token, c.get_shape(t))
+  else:
+    return xops.OutfeedWithToken(t, token, c.get_shape(t))
 
 outfeed_p = Primitive("outfeed")
 outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
