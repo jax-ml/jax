@@ -1222,11 +1222,11 @@ class APITest(jtu.JaxTestCase):
       return jnp.sum(jnp.cos(jnp.abs(z)))
 
     ans = grad(f)(zs)
-    expected = np.array([ 0.        +0.j,
-                          -0.80430663+0.40215331j,
-                          -0.70368982+0.35184491j,
-                           0.1886467 -0.09432335j,
-                           0.86873727-0.43436864j])
+    expected = np.array([ 0.          + 0.j,
+                          -0.80430663 + 0.40215331j,
+                          -0.70368982 + 0.35184491j,
+                           0.1886467  - 0.09432335j,
+                           0.86873727 - 0.43436864j])
     self.assertAllClose(ans, expected, check_dtypes=False,
                         atol=jtu.default_gradient_tolerance,
                         rtol=jtu.default_gradient_tolerance)

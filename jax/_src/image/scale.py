@@ -35,7 +35,7 @@ def _fill_keys_cubic_kernel(x):
   # IEEE Transactions on Acoustics, Speech, and Signal Processing,
   # 29(6):1153–1160, 1981.
   out = ((1.5 * x - 2.5) * x) * x + 1.
-  out = jnp.where(x >= 1., ((-0.5* x + 2.5) * x - 4.) * x + 2., out)
+  out = jnp.where(x >= 1., ((-0.5 * x + 2.5) * x - 4.) * x + 2., out)
   return jnp.where(x >= 2., 0., out)
 
 

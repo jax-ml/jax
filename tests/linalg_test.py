@@ -440,7 +440,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     new_w, new_v = f(new_a)
     new_a = (new_a + np.conj(new_a.T)) / 2
     # Assert rtol eigenvalue delta between perturbed eigenvectors vs new true eigenvalues.
-    RTOL=1e-2
+    RTOL = 1e-2
     assert np.max(
       np.abs((np.diag(np.dot(np.conj((v+dv).T), np.dot(new_a,(v+dv)))) - new_w) / new_w)) < RTOL
     # Redundant to above, but also assert rtol for eigenvector property with new true eigenvalues.
@@ -676,7 +676,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     # Check that q is close to unitary.
     self.assertTrue(np.all(
-        norm(np.eye(k) -np.matmul(np.conj(T(lq)), lq)) < 5))
+        norm(np.eye(k) - np.matmul(np.conj(T(lq)), lq)) < 5))
 
     if not full_matrices and m >= n:
         jtu.check_jvp(jnp.linalg.qr, partial(jvp, jnp.linalg.qr), (a,), atol=3e-3)
