@@ -1406,7 +1406,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = lambda x: np.clip(x, a_min=a_min, a_max=a_max)
     jnp_fun = lambda x: jnp.clip(x, a_min=a_min, a_max=a_max)
     args_maker = lambda: [rng(shape, dtype)]
-    # TODO(phawkins): the promotion behavior changed in Numpy 1.17.
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4226,8 +4225,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     else:
       args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
 
-    # TODO(jakevdp): remove this ignore_warning when minimum numpy version is 1.17.0
-    @jtu.ignore_warning(category=RuntimeWarning, message="Invalid value encountered.*")
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]

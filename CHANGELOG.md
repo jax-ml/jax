@@ -10,7 +10,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 ## jax 0.2.19 (unreleased)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.18...main).
-
+* Breaking changes:
+  * Support for NumPy 1.17 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
 * New features:
   * Improved the support for shape polymorphism in jax2tf for operations that
     need to use a dimension size in array computation, e.g., `jnp.mean`.
@@ -21,7 +24,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Support for Python 3.6 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
     Please upgrade to a supported Python version.
-    
+  * Support for NumPy 1.17 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to a supported NumPy version.
+
   * The host_callback mechanism now uses one thread per local device for
     making the calls to the Python callbacks. Previously there was a single
     thread for all devices. This means that the callbacks may now be called
