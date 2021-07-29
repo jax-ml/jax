@@ -236,7 +236,13 @@ def threefry_2x32(keypair, count):
     msg = "threefry_2x32 requires uint32 arguments, got {}"
     raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
 
-  odd_size = count.size % 2
+  try:
+    odd_size = count.size % 2
+  except core.InconclusiveDimensionOperation as e:
+    msg = ("jax.random functions have limited support for shape polymorphism. "
+           "In particular, the product of the known dimensions must be even.")
+    raise core.InconclusiveDimensionOperation(msg) from e
+
   if odd_size:
     x = list(jnp.split(jnp.concatenate([count.ravel(), np.uint32([0])]), 2))
   else:
@@ -301,9 +307,16 @@ def _random_bits(key, bit_width, shape):
     axis_index = lax.axis_index(name)
     key = fold_in(key, axis_index)
   size = prod(shape.positional)
-  max_count = int(np.ceil(bit_width * size / 32))
+  # Compute ceil(bit_width * size / 32) in a way that is friendly to shape
+  # polymorphism
+  max_count, r = divmod(bit_width * size, 32)
+  if r > 0:
+    max_count += 1
 
-  nblocks, rem = divmod(max_count, jnp.iinfo(np.uint32).max)
+  if core.is_constant_dim(max_count):
+    nblocks, rem = divmod(max_count, jnp.iinfo(np.uint32).max)
+  else:
+    nblocks, rem = 0, max_count
 
   if not nblocks:
     bits = threefry_2x32(key, lax.iota(np.uint32, rem))

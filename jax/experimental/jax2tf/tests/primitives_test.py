@@ -100,7 +100,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses, include_jax_unimpl=False,
-      #one_containing="tridiagonal"
+      #one_containing="random_uniform_shape=float32[5,4]"
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
@@ -310,7 +310,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_reduce_ops_with_boolean_input(self, f_jax):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

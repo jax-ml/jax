@@ -2411,6 +2411,44 @@ for key_i, key in enumerate([
       jax.jit(lambda key: jax.random.split(key, 2)), [key],
       dtype=key.dtype)
 
+# A few library functions from jax.random
+for dtype in jtu.dtypes.all_floating:
+  for shape in ((8,), (5, 4)):
+    for axis in range(len(shape)):
+      define(
+          "random_categorical",
+          f"shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}",
+          jax.random.categorical,
+          [np.array([42, 43], dtype=np.uint32), RandArg(shape, dtype),
+           StaticArg(axis)],
+          dtype=dtype,
+          axis=axis)
+
+for dtype in jtu.dtypes.all_floating:
+  for shape in ((), (5, 4), (32,)):
+    define(
+        "random_uniform",
+        f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+        jax.random.uniform,
+        [np.array([42, 43], dtype=np.uint32),
+         StaticArg(shape), StaticArg(dtype)],
+        dtype=dtype)
+
+for dtype in jtu.dtypes.all_integer:
+  for shape in ((), (5, 4), (32,)):
+    maxval = {
+        np.uint8: 256,   # Borderline
+    }.get(dtype, 5)
+    define(
+        "random_randint",
+        f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+        jax.random.randint,
+        [np.array([42, 43], dtype=np.uint32),
+         StaticArg(shape),
+         StaticArg(-5),  # minval
+         StaticArg(maxval),
+         StaticArg(dtype)],
+        dtype=dtype)
 
 def _make_clamp_harness(name,
                         *,
