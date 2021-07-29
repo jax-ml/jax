@@ -16,6 +16,7 @@ import hashlib
 import jax
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
 from jax.lib import xla_client
+from absl import logging
 from typing import Optional
 
 _cache = None
@@ -28,6 +29,7 @@ def initialize_cache(path, max_cache_size_bytes=32 * 2**30):
     global _cache
     assert _cache == None, f"The cache path has already been initialized to {_cache}"
     _cache = FileSystemCache(path, max_cache_size_bytes)
+    logging.warning(f"Initialized persistent compilation cache at {path}")
 
 def get_executable(xla_computation, compile_options) -> Optional[xla_client.Executable]:
     """Returns the cached executable if present, or None otherwise."""
@@ -67,9 +69,17 @@ def get_cache_key(xla_computation, compile_options) -> str:
     """
     hash_obj = hashlib.sha256()
     hash_obj.update(xla_computation.as_serialized_hlo_module_proto())
+    if logging.vlog_is_on(1):
+        logging.vlog(1, f"get_cache_key hash after serializing computation: {hash_obj.digest().hex()}")
     _hash_compile_options(hash_obj, compile_options)
+    if logging.vlog_is_on(1):
+        logging.vlog(1, f"get_cache_key hash after serializing compile_options: {hash_obj.digest().hex()}")
     hash_obj.update(bytes(jax.lib.version))
+    if logging.vlog_is_on(1):
+        logging.vlog(1, f"get_cache_key hash after serializing jax_lib version: {hash_obj.digest().hex()}")
     _hash_platform(hash_obj, jax.lib.xla_bridge.get_backend())
+    if logging.vlog_is_on(1):
+        logging.vlog(1, f"get_cache_key hash after serializing the backend: {hash_obj.digest().hex()}")
     return hash_obj.digest().hex()
 
 def _hash_compile_options(hash_obj, compile_options_obj):
