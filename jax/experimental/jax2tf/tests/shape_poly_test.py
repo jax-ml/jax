@@ -761,7 +761,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     f_jax = jnp.sin
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
     x = np.array([0.7, 0.8], dtype=np.float32)
-    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(
+        f_tf, input_signature=[tf.TensorSpec([None], x.dtype)])
     self.assertAllClose(f_jax(x), restored_f(x))
     # Ensure that restored_f works at other batch size as well
     y = np.concatenate([x, x])
@@ -778,7 +779,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # When saving the model with gradients, we trace the gradient function
     # and we used to get an error when creating zeros_like_aval for a
     # polymorphic shape
-    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec((None,) + x.shape[1:], x.dtype)])
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(
+        f_tf, input_signature=[tf.TensorSpec((None,) + x.shape[1:], x.dtype)])
     f_jax_rt = jax2tf.call_tf(restored_f)
     res_jax_rt = f_jax_rt(x)
     self.assertAllClose(f_jax(x), res_jax_rt)
@@ -789,7 +791,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
     x = np.array([0.7, 0.8], dtype=np.float32)
-    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(
+        f_tf, input_signature=[tf.TensorSpec([None], x.dtype)])
     self.assertAllClose(3., restored_f(x))
     self.assertAllClose(np.array([0., 0.], dtype=np.float32), jax.grad(f_jax)(x))
 
@@ -996,7 +999,8 @@ def _make_harness(group_name: str, name: str,
                   poly_axes: Sequence[Optional[Union[int, Sequence[int]]]],
                   check_result=True,
                   tol=None,
-                  **params) -> Harness:
+                  enable_and_diable_xla=False,
+                  **params) -> Union[Harness, Sequence[Harness]]:
   """The `poly_axes` must correspond to the non-static arguments, and for each
   one it must specify which axes are: None, or an int (for the index of the
   polymorphic axis), or a tuple of ints (for multiple polymorphic axes).
@@ -1012,7 +1016,19 @@ def _make_harness(group_name: str, name: str,
 
   `check_result` specifies if we want to check that the result of the shape
   polymorphic conversion produces the same result and the JAX function.
+
+  enable_and_diable_xla=True means that we generate two harnesses,
+  one with enable_xla=False.
   """
+  if enable_and_diable_xla:
+    return [
+        _make_harness(group_name, name + ("" if enable_xla else "_noxla"),  # type: ignore
+                      func, args, poly_axes=poly_axes,
+                      check_result=check_result, tol=tol, enable_xla=enable_xla,
+                      enable_and_diable_xla=False,
+                      **params)
+        for enable_xla in [True, False]
+    ]
   poly_axes_name = f"poly_axes={repr(poly_axes)}"
   assert isinstance(poly_axes, Sequence)
   # Make poly_axes: Sequence[Sequence[int]]
@@ -1036,27 +1052,27 @@ _f32 = np.float32
 
 # List containing either harnesses, or lists of harnesses
 _POLY_SHAPE_TEST_HARNESSES = [
-    _make_harness("jnp_add", "",
-                  jnp.add,
-                  [RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
-                  poly_axes=[0, 1]),
-
-    _make_harness("jnp_broadcast_to", "",
-                  lambda x: jnp.broadcast_to(x, [x.shape[0], x.shape[0], 4]),
-                  [RandArg((3, 4), _f32)],
-                  poly_axes=[0]),
-
+    # Reduce the poly dimension
+    _make_harness("argmax", "0",
+                  lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
+                  [RandArg((3, 4, 5), _f32)],
+                  poly_axes=[0],
+                  enable_and_diable_xla=True),
+    # Reduce the non-poly dimension
+    _make_harness("argmax", "1",
+                  lambda op: lax.argmax(op, axis=1, index_dtype=np.int32),
+                  [RandArg((3, 4, 5), _f32)],
+                  poly_axes=[0],
+                  enable_and_diable_xla=True),
     _make_harness("add_transpose", "",
                   jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=0) + x)),
                   [RandArg((3, 4), _f32)],
                    poly_axes=[0]),
-
     _make_harness("clamp", "",
                   lax.clamp,
                   [RandArg((3, 4, 5), _f32), RandArg((3, 4, 5), _f32),
                    RandArg((3, 4, 5), _f32)],
                   poly_axes=[0, 0, 0]),
-
     _make_harness("conv_general_dilated", "",
                   lambda lhs, rhs: lax.conv_general_dilated(lhs, rhs,
                                                             window_strides=(2, 3),
@@ -1069,60 +1085,85 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                             precision=None),
                   [RandArg((7, 3, 9, 10), _f32), RandArg((3, 3, 4, 5), _f32)],
                   poly_axes=[0, None]),
-
     _make_harness("cummax", "",
                   lambda x: lax_control_flow.cummax(x, axis=1, reverse=False),
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[0]),
-
     _make_harness("dot_general", "",
                   lambda lhs, rhs: lax.dot_general(lhs, rhs,
                                                    dimension_numbers=(((2,), (1,)), ((0,), (0,)))),
                   [RandArg((3, 4, 4), _f32), RandArg((3, 4), _f32)],
                   poly_axes=[0, 0]),
-
+    _make_harness("dynamic_slice", "idx=tuple_int",
+                  # x:shape: (b, 4)
+                  lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0],
+                  enable_and_diable_xla=True),
+    _make_harness("dynamic_slice", "idx=tuple_arg",
+                  # x:shape: (b, 4)
+                  lambda x, i0: lax.dynamic_slice(x, (i0, np.int32(1)), (x.shape[0], 2)),
+                  [RandArg((3, 4), _f32), np.array(-2, dtype=np.int32)],
+                  poly_axes=[0, None],
+                  enable_and_diable_xla=True),
+    _make_harness("dynamic_slice", "idx=array",
+                  # x:shape: (b, 4)
+                  lambda x, idx: lax.dynamic_slice(x, idx, (x.shape[0], 2)),
+                  [RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
+                  poly_axes=[0, None],
+                  enable_and_diable_xla=True),
+    _make_harness("dynamic_update_slice", "idx=tuple_int",
+                  # x:shape: (b, 4)
+                  lambda x: lax.dynamic_update_slice(x, x, (0, 0)),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0],
+                  enable_and_diable_xla=True),
+    _make_harness("dynamic_update_slice", "idx=tuple_arg",
+                  # x:shape: (b, 4)
+                  lambda x, i0: lax.dynamic_update_slice(x, x, (i0, np.int32(0))),
+                  [RandArg((3, 4), _f32), np.array(-2, dtype=np.int32)],
+                  poly_axes=[0, None],
+                  enable_and_diable_xla=True),
+    _make_harness("dynamic_update_slice", "idx=array",
+                  # x:shape: (b, 4)
+                  lambda x, idx: lax.dynamic_update_slice(x, x, idx),
+                  [RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
+                  poly_axes=[0, None],
+                  enable_and_diable_xla=True),
     _make_harness("einsum", "0",
                   lambda x: jnp.einsum("...i->...", x),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
-
     _make_harness("einsum", "0_alt",
                   lambda x: jnp.einsum(x, (..., 1), [...]),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
-
     _make_harness("einsum", "1",
                   lambda x, y: jnp.einsum("...ij,...jk->...ik", x, y),
                   [RandArg((3, 4, 5), _f32), RandArg((3, 5, 6), _f32)],
                   poly_axes=[0, 0]),
-
     _make_harness("einsum", "1_alt",
                   lambda x, y: jnp.einsum(x, [..., 0, 1], y, (..., 1, 2), [..., 0, 2]),
                   [RandArg((3, 4, 5), _f32), RandArg((3, 5, 6), _f32)],
                   poly_axes=[0, 0]),
-
     _make_harness("einsum", "2",
                   lambda x, y: jnp.einsum("...ij,jk->...ik", x, y),
                   [RandArg((3, 4, 5), _f32), RandArg((5, 6), _f32)],
                   poly_axes=[0, None]),
-
     _make_harness("einsum", "2_alt",
                   lambda x, y: jnp.einsum(x, [..., 0, 1], y, [1, 2], [..., 0, 2]),
                   [RandArg((3, 4, 5), _f32), RandArg((5, 6), _f32)],
                   poly_axes=[0, None]),
-
     _make_harness("einsum", "3",
                   # Reduced dimension is polymorphic
                   lambda x, y: jnp.einsum("ij,jk->ik", x, y),
                   [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[1, 0]),
-
     _make_harness("einsum", "3_alt",
                   # Reduced dimension is polymorphic
                   lambda x, y: jnp.einsum(x, [0, 1], y, [1, 2], [0, 2]),
                   [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[1, 0]),
-
     _make_harness("einsum", "4",
                   # Reduced dimension is polymorphic, and is 2*b
                   lambda x, y: jnp.einsum("ij,jk->ik",
@@ -1130,7 +1171,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                           jnp.concatenate([y, y], axis=0)),
                   [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[1, 0]),
-
     _make_harness("einsum", "4_alt",
                   # Reduced dimension is polymorphic, and is 2*b
                   lambda x, y: jnp.einsum(jnp.concatenate([x, x], axis=1), [0, 1],
@@ -1138,24 +1178,64 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                           [0, 2]),
                   [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[1, 0]),
-
     _make_harness("iota", "",
                   lambda x: x + lax.iota(_f32, x.shape[0]),
                   [RandArg((3,), _f32)],
                   poly_axes=[0]),
-
+    _make_harness("jnp_add", "",
+                  jnp.add,
+                  [RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
+                  poly_axes=[0, 1]),
+    [
+        _make_harness("jnp_average",
+                      f"axis={axis}_weights=None",
+                      lambda x, axis: jnp.average(x, axis=axis, returned=False, weights=None),
+                      [RandArg((7, 8, 4), _f32), StaticArg(axis)],
+                      poly_axes=[0])
+        for axis in [None, 0, 1]
+    ],
+    [
+        _make_harness("jnp_average",
+                      f"axis={axis}_weights=Some",
+                      lambda x, weights, axis: jnp.average(x, axis=axis, returned=False, weights=weights),
+                      [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), _f32), StaticArg(axis)],
+                      poly_axes=[0, 0])
+        for axis in [None, 0, 1]
+    ],
+    _make_harness("jnp_broadcast_to", "",
+                  lambda x: jnp.broadcast_to(x, [x.shape[0], x.shape[0], 4]),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+    # operand is non-poly, index is poly
+    _make_harness("jnp_getitem", "op=static_idx=poly",
+                  lambda a, i: a[i],
+                  [RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
+                  poly_axes=[None, 0], enable_and_diable_xla=True),
+    # operand is poly, index is integer
+    _make_harness("jnp_getitem", "op=poly_idx=const",
+                  lambda a: a[1],
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0], enable_and_diable_xla=True),
+    # operand is poly, index is dim poly
+    _make_harness("jnp_getitem", "op=poly_idx=dim",
+                  lambda a: a[jax.core.dimension_as_value(a.shape[0] - 2)],
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0], enable_and_diable_xla=True),
+    # Both the operand and the index are poly
+    _make_harness("jnp_getitem", "op=poly_idx=poly",
+                  lambda a, i: a[i],
+                  [RandArg((3, 4), _f32), np.array([1, 2, 0], np.int32)],
+                  poly_axes=[0, 0], enable_and_diable_xla=True),
     _make_harness("jnp_matmul", "0",
                   jnp.matmul,
                   [RandArg((7, 8, 4), _f32), RandArg((7, 4, 5), _f32)],
                   poly_axes=[0, 0],
                   tol=1e-5),
-
     _make_harness("jnp_matmul", "1",
                   jnp.matmul,
                   [RandArg((7, 8, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[0, None],
                   tol=1e-5),
-
     [
         _make_harness("jnp_mean",
                       f"axis={axis}_keepdims={keepdims}_where=None",
@@ -1165,7 +1245,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
         for keepdims in [False, True]
         for axis in [None, (0,), (0, 1), (1,)]
     ],
-
     [
         _make_harness("jnp_mean",
                       f"axis={axis}_keepdims={keepdims}_where=Some",
@@ -1175,25 +1254,22 @@ _POLY_SHAPE_TEST_HARNESSES = [
         for keepdims in [False, True]
         for axis in [None, (0,), (0, 1), (1,)]
     ],
-
-    [
-        _make_harness("jnp_average",
-                      f"axis={axis}_weights=None",
-                      lambda x, axis: jnp.average(x, axis=axis, returned=False, weights=None),
-                      [RandArg((7, 8, 4), _f32), StaticArg(axis)],
-                      poly_axes=[0])
-        for axis in [None, 0, 1]
-    ],
-
-    [
-        _make_harness("jnp_average",
-                      f"axis={axis}_weights=Some",
-                      lambda x, weights, axis: jnp.average(x, axis=axis, returned=False, weights=weights),
-                      [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), _f32), StaticArg(axis)],
-                      poly_axes=[0, 0])
-        for axis in [None, 0, 1]
-    ],
-
+    _make_harness("jnp_ones", "",
+                  lambda x: jnp.ones(x.shape, dtype=_f32),
+                  [RandArg((3, 2, 4), _f32)],
+                  poly_axes=[0]),
+    _make_harness("jnp_squeeze", "axis=None",
+                  jnp.squeeze,
+                  [RandArg((5,), _f32), StaticArg(())],
+                  poly_axes=[0]),
+    _make_harness("jnp_squeeze", "axis=1",
+                  jnp.squeeze,
+                  [RandArg((4, 1), _f32), StaticArg((1,))],
+                  poly_axes=[0]),
+    _make_harness("jnp_take", "",
+                  lambda a, i: jnp.take(a, i, axis=1),
+                  [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
+                  poly_axes=[0, None], enable_and_diable_xla=True),
     [
         _make_harness("jnp_var",
                       f"axis={axis}_keepdims={keepdims}_where=None",
@@ -1203,7 +1279,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
         for keepdims in [False, True]
         for axis in [None, (0,), (0, 1), (1,)]
     ],
-
     [
         _make_harness("jnp_var",
                       f"axis={axis}_keepdims={keepdims}_where=Some",
@@ -1213,58 +1288,42 @@ _POLY_SHAPE_TEST_HARNESSES = [
         for keepdims in [False, True]
         for axis in [None, (0,), (0, 1), (1,)]
     ],
-
     _make_harness("jnp_where", "",
                   jnp.where,
                   [RandArg((2,), np.bool_), RandArg((), _f32), RandArg((2,), _f32)],
                   poly_axes=[0, None, 0]),
-
     _make_harness("pad", "",
                   lax.pad,
                   [RandArg((3, 2, 5), _f32), np.float32(5.),
                    StaticArg(((0, 0, 0), (0, 0, 0), (1, 1, 1)))],
                   poly_axes=[0, None]),
-
-    _make_harness("jnp_ones", "",
-                  lambda x: jnp.ones(x.shape, dtype=_f32),
-                  [RandArg((3, 2, 4), _f32)],
-                  poly_axes=[0]),
-
     _make_harness("random_gamma", "",
                   lambda key, a: jax.random.gamma(key, a),
                   [RandArg((3, 2), np.uint32), RandArg((3, 3), _f32)],
                   poly_axes=[0, 0]),
-
+    [
+        _make_harness("reduce", reduce_op.__name__,
+                      lambda x: reduce_op(x, axis=-1, keepdims=True),
+                      [RandArg((3, 5), _f32)],
+                      poly_axes=[0])
+        for reduce_op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]
+    ],
     _make_harness("reshape", "0",
                   lambda x: x.reshape([x.shape[0], -1]),
                   [RandArg((3, 2, 3), _f32)],
                   poly_axes=[0]),
-
     _make_harness("reshape", "1",
                   lambda x: x.reshape([x.shape[0], -1]),
                   [RandArg((3, 2, 3), _f32)],
                   poly_axes=[(0, 1)]),
-
     _make_harness("reshape", "2",
                   lambda x: x.reshape([x.shape[0], -1, x.shape[3], x.shape[2]]),
                   [RandArg((3, 4, 5, 6, 7), _f32)],
                   poly_axes=[(0, 2, 3)]),
-
     _make_harness("reshape", "3",
                   lambda x: jnp.reshape(x, [2, -1]),
                   [RandArg((3, 4, 5, 6, 7), _f32)],
                   poly_axes=[(0, 2)]),
-
-    _make_harness("jnp_squeeze", "axis=None",
-                  jnp.squeeze,
-                  [RandArg((5,), _f32), StaticArg(())],
-                  poly_axes=[0]),
-
-    _make_harness("jnp_squeeze", "axis=1",
-                  jnp.squeeze,
-                  [RandArg((4, 1), _f32), StaticArg((1,))],
-                  poly_axes=[0]),
-
     _make_harness("scatter_add", "",
                   partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True),
                   [RandArg((7, 4), _f32),
@@ -1272,139 +1331,34 @@ _POLY_SHAPE_TEST_HARNESSES = [
                    RandArg((7, 2), _f32),  # upd
                    StaticArg(lax.ScatterDimensionNumbers((0,), (1,), (1,)))],
                   poly_axes=[0, None, 0]),
-
-    _make_harness("slice", "entire_axis",
-                  lambda x: lax.slice(x, start_indices=(0, 1), limit_indices=(x.shape[0], 3)),
-                  [RandArg((7, 3), _f32)],
-                  poly_axes=[0]),
-
     _make_harness("select", "0",
                   # x.shape = (b, 3)
                   lambda x: lax.select(x > 5., x, x),
                   [RandArg((7, 3), _f32)],
                   poly_axes=[0]),
-
     _make_harness("select", "1",
                   # x.shape = (b, 3); y.shape = (3,)
                   jax.vmap(lambda x, y: lax.select(x > 5., x, y), in_axes=[0, None]),
                   [RandArg((7, 3), _f32), RandArg((3,), _f32)],
                   poly_axes=[0, None]),
-
+    _make_harness("slice", "entire_axis",
+                  lambda x: lax.slice(x, start_indices=(0, 1), limit_indices=(x.shape[0], 3)),
+                  [RandArg((7, 3), _f32)],
+                  poly_axes=[0]),
     _make_harness("squeeze", "axis=1_2",
                   jnp.squeeze,
                   [RandArg((4, 1, 1), _f32), StaticArg((1, 2))],
                   poly_axes=[0]),
-
     _make_harness("tile", "0",
                   lambda x: jnp.tile(x, (1, 2)),
                   [RandArg((4, 3), _f32)],
                   poly_axes=[0]),
-
     _make_harness("tile", "1",
                   # The repetitions are polys
                   lambda x: jnp.tile(x, (1, x.shape[0])),
                   [RandArg((4, 2), _f32)],
                   poly_axes=[0]),
 ]
-
-
-for enable_xla in [False, True]:
-  _POLY_SHAPE_TEST_HARNESSES.extend([
-      # Reduce the poly dimension
-      _make_harness("argmax", f"0_enable_xla={enable_xla}",
-                    lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
-                    [RandArg((3, 4, 5), _f32)],
-                    poly_axes=[0],
-                    enable_xla=enable_xla),
-
-      # Reduce the non-poly dimension
-      _make_harness("argmax", f"1_enable_xla={enable_xla}",
-                    lambda op: lax.argmax(op, axis=1, index_dtype=np.int32),
-                    [RandArg((3, 4, 5), _f32)],
-                    poly_axes=[0],
-                    enable_xla=enable_xla),
-
-      _make_harness("dynamic_slice", f"idx=tuple_int_enable_xla={enable_xla}",
-                    # x:shape: (b, 4)
-                    lambda x: lax.dynamic_slice(x, (0, 1), (x.shape[0], 2)),
-                    [RandArg((3, 4), _f32)],
-                    poly_axes=[0],
-                    enable_xla=enable_xla),
-
-      _make_harness("dynamic_slice", f"idx=tuple_arg_enable_xla={enable_xla}",
-                    # x:shape: (b, 4)
-                    lambda x, i0: lax.dynamic_slice(x, (i0, np.int32(1)), (x.shape[0], 2)),
-                    [RandArg((3, 4), _f32), np.array(-2, dtype=np.int32)],
-                    poly_axes=[0, None],
-                    enable_xla=enable_xla),
-
-      _make_harness("dynamic_slice", f"idx=array_enable_xla={enable_xla}",
-                    # x:shape: (b, 4)
-                    lambda x, idx: lax.dynamic_slice(x, idx, (x.shape[0], 2)),
-                    [RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
-                    poly_axes=[0, None],
-                    enable_xla=enable_xla),
-
-      _make_harness("dynamic_update_slice", f"idx=tuple_int_enable_xla={enable_xla}",
-                    # x:shape: (b, 4)
-                    lambda x: lax.dynamic_update_slice(x, x, (0, 0)),
-                    [RandArg((3, 4), _f32)],
-                    poly_axes=[0],
-                    enable_xla=enable_xla),
-
-      _make_harness("dynamic_update_slice", f"idx=tuple_arg_enable_xla={enable_xla}",
-                    # x:shape: (b, 4)
-                    lambda x, i0: lax.dynamic_update_slice(x, x, (i0, np.int32(0))),
-                    [RandArg((3, 4), _f32), np.array(-2, dtype=np.int32)],
-                    poly_axes=[0, None],
-                    enable_xla=enable_xla),
-
-      _make_harness("dynamic_update_slice", f"idx=array_enable_xla={enable_xla}",
-                    # x:shape: (b, 4)
-                    lambda x, idx: lax.dynamic_update_slice(x, x, idx),
-                    [RandArg((3, 4), _f32), np.array([-2, -1], dtype=np.int32)],
-                    poly_axes=[0, None],
-                    enable_xla=enable_xla),
-
-      _make_harness("jnp_take", f"enable_xla={enable_xla}",
-                    lambda a, i: jnp.take(a, i, axis=1),
-                    [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
-                    poly_axes=[0, None], enable_xla=enable_xla),
-
-      # operand is non-poly, index is poly
-      _make_harness("jnp_getitem", f"op=static_idx=poly_enable_xla={enable_xla}",
-                    lambda a, i: a[i],
-                    [RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
-                    poly_axes=[None, 0], enable_xla=enable_xla),
-
-      # operand is poly, index is integer
-      _make_harness("jnp_getitem", f"op=poly_idx=const_enable_xla={enable_xla}",
-                    lambda a: a[1],
-                    [RandArg((3, 4), _f32)],
-                    poly_axes=[0], enable_xla=enable_xla),
-
-      # operand is poly, index is dim poly
-      _make_harness("jnp_getitem", f"op=poly_idx=dim_enable_xla={enable_xla}",
-                    lambda a: a[jax.core.dimension_as_value(a.shape[0] - 2)],
-                    [RandArg((3, 4), _f32)],
-                    poly_axes=[0], enable_xla=enable_xla),
-
-      # Both the operand and the index are poly
-      _make_harness("jnp_getitem", f"op=poly_idx=poly_enable_xla={enable_xla}",
-                    lambda a, i: a[i],
-                    [RandArg((3, 4), _f32), np.array([1, 2, 0], np.int32)],
-                    poly_axes=[0, 0], enable_xla=enable_xla),
-
- ])
-
-for reduce_op in [jnp.all, jnp.any, jnp.max, jnp.min, jnp.prod, jnp.sum]:
-  _POLY_SHAPE_TEST_HARNESSES.append(
-      _make_harness("reduce", reduce_op.__name__,
-                    lambda x: reduce_op(x, axis=-1, keepdims=True),
-                    [RandArg((3, 5), _f32)],
-                    poly_axes=[0])
-  )
-
 
 ### We add to the test harnesses some that are obtained from the
 ### primitive harnesses by applying vmap to the function and then asserting

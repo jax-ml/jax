@@ -598,11 +598,12 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     # Call get_compiler_ir in a function context
     x = np.array([2., 3., 4.], dtype=np.float32)
 
-    # TODO(b/193754660)
-    # def fun_tf_outer(x):
-    #   x_const = tf.constant(0, shape=x.shape, dtype=x.dtype)
-    #   _ = tf.function(tf.math.sin, jit_compile=True).experimental_get_compiler_ir(x_const)()
 
+    def fun_tf_outer(x):
+      x_const = tf.constant(0, shape=x.shape, dtype=x.dtype)
+      _ = tf.function(tf.math.sin, jit_compile=True).experimental_get_compiler_ir(x_const)()
+
+    # TODO(b/193754660)
     # with self.assertRaisesRegex(
     #     TypeError, "An op outside of the function building code is being passed"):
     #   tf.function(fun_tf_outer)(x)
@@ -612,13 +613,13 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     #   tf.function(fun_tf_outer, jit_compile=True)(x)
 
     # Call get_concrete_function in a graph context
-    def fun_tf_outer(x):
+    def fun_tf_outer_2(x):
       _ = tf.function(tf.math.sin, jit_compile=True).get_concrete_function(tf.TensorSpec(x.shape, x.dtype))
       return x
 
     # Outside of a function context, this works.
-    _ = tf.function(fun_tf_outer)(x)
-    _ = tf.function(fun_tf_outer, jit_compile=True)(x)
+    _ = tf.function(fun_tf_outer_2)(x)
+    _ = tf.function(fun_tf_outer_2, jit_compile=True)(x)
 
   def test_module_documentation(self):
     def cos_tf(x):
@@ -693,17 +694,18 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x), f_jax_rt(x))
 
   def test_saved_model_simple(self):
+    x = np.array([0.7, 0.8], dtype=np.float32)
     def f_jax(x):
       return jnp.sin(x)
-    x = np.array([0.7, 0.8], dtype=np.float32)
+
     f_tf = jax2tf.convert(f_jax)
-    restored_tf, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec(x.shape, x.dtype)])
+    restored_tf, _ = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
     restored_jax = jax2tf.call_tf(restored_tf)
     self.assertAllClose(f_jax(x), restored_jax(x))
 
   def test_saved_model_variables(self):
-    x = np.array([0.7, 0.8], dtype=np.float32)
     param = np.array([1., 2.], dtype=np.float32)
+    x = np.array([0.7, 0.8], dtype=np.float32)
     def f_jax(param, x):
       return jnp.sin(x) + jnp.cos(param)
 
@@ -711,26 +713,27 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f_jax)
     _, restored_model = tf_test_util.SaveAndLoadFunction(
         lambda x: f_tf(param_v, x),
-        [tf.TensorSpec(x.shape, x.dtype)],
-        variables=(param_v,))
+        input_args=[x],
+        variables=[param_v])
     restored_jax = jax2tf.call_tf(restored_model.f)
     self.assertAllClose(f_jax(param, x), restored_jax(x))
     self.assertAllClose(f_jax(param, x), jax.jit(restored_jax)(x))
 
   def test_saved_model_shape_poly(self):
     tracing_count = 0
+    x = np.array([0.7, 0.8], dtype=np.float32)
     def f_jax(x):
       nonlocal tracing_count
       tracing_count += 1
       return jnp.sin(x)
 
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
-    x = np.array([0.7, 0.8], dtype=np.float32)
     res_jax = f_jax(x)
     self.assertEqual(1, tracing_count)
     # Will trace twice, it seems. Once to get the result signature, and once again
     # for the actual saving.
-    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, [tf.TensorSpec([None], x.dtype)])
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(
+        f_tf, input_signature=[tf.TensorSpec([None], x.dtype)])
     self.assertGreaterEqual(tracing_count, 2)
     tracing_count = 0
     f_jax_rt = jax2tf.call_tf(restored_f)
@@ -762,7 +765,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
 
     g_tf, _ = tf_test_util.SaveAndLoadFunction(
         jax2tf.convert(g, with_gradient=True, polymorphic_shapes=["b, ..."]),
-        [tf.TensorSpec([None], dtype=tf.float32)])
+        input_signature=[tf.TensorSpec([None], dtype=tf.float32)])
     g_rt = jax2tf.call_tf(g_tf)
     x = np.array([0.7], dtype=np.float32)
     self.assertAllClose(g(x), g_rt(x))
@@ -775,7 +778,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     x = np.array([0.7, 0.8], dtype=np.float32)
     f_tf, _ = tf_test_util.SaveAndLoadFunction(
         jax2tf.convert(f_jax, with_gradient=False),
-        [tf.TensorSpec(x.shape, dtype=x.dtype)])
+        input_args=[x])
     f_rt = jax2tf.call_tf(f_tf)
 
     self.assertAllClose(f_jax(x), f_rt(x))
@@ -789,8 +792,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
 
     x = np.array([0.7, 0.8], dtype=np.float32)
     f_tf, _ = tf_test_util.SaveAndLoadFunction(
-        jax2tf.convert(f_jax, with_gradient=True),
-        [tf.TensorSpec(x.shape, dtype=x.dtype)],
+        jax2tf.convert(f_jax, with_gradient=True), input_args=[x],
         save_gradients=False)
     f_rt = jax2tf.call_tf(f_tf)
 
@@ -808,8 +810,9 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     #     with tf.init_scope():
     #       added = my_constant * 2
     # The graph tensor has name: args_0:0
+    with self.assertRaisesRegex(TypeError, "An op outside of the function"):
+      _ = jax.grad(f_rt)(x)
 
-    # g = jax.grad(f_rt)(x)
 
 class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of call_tf into TF with jax2tf."
@@ -842,6 +845,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     with tf.GradientTape() as tape:
       res = f_tf_outer(xv)
     g_tf = tape.gradient(res, xv)
+    _, gf = tf_test_util.ComputeTfValueAndGrad(f_tf_outer, (x,))
     # Eager
     expected_res = np.sin(np.cos(np.sin(np.cos(np.sin(x)))))
     self.assertAllClose(expected_res, f_tf_outer(x).numpy())
@@ -875,15 +879,14 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     res = fun_tf_rt(x)
     self.assertAllClose(np.sin(x), res.numpy())
 
-    # TODO(b/193754660)
-    res = tf.function(fun_tf_rt)(x)
+    res = tf.function(fun_tf_rt, autograph=False)(x)
     self.assertAllClose(np.sin(x), res.numpy())
 
-    res = tf.function(fun_tf_rt, jit_compile=True)(x)
+    res = tf.function(fun_tf_rt, jit_compile=True, autograph=False)(x)
     self.assertAllClose(np.sin(x), res.numpy())
 
     reloaded_f, _ = tf_test_util.SaveAndLoadFunction(
-        fun_tf_rt, input_signature=[tf.TensorSpec(x.shape, x.dtype)])
+        fun_tf_rt, input_args=[x])
     res = reloaded_f(x)
     self.assertAllClose(np.sin(x), res.numpy())
 
@@ -927,7 +930,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
                                polymorphic_shapes=["b, ..."])
     with self.assertRaisesRegex(
         ValueError,
-        "call_tf cannot be applies to shape-polymorphic arguments"):
+        "call_tf cannot be applied to shape-polymorphic arguments"):
       fun_tf_rt(x)
 
 if __name__ == "__main__":

@@ -216,8 +216,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     # JAX. We check that this information is preserved through a savedmodel
     f_tf = jax2tf.convert(f_jax)
     res = f_tf(*args)
-    input_signature = list(tf.TensorSpec(a.shape, a.dtype) for a in args)
-    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, input_signature)
+    restored_f, _ = tf_test_util.SaveAndLoadFunction(f_tf, input_args=args)
     res_restored = restored_f(*args)
     self.assertAllClose(res, res_restored)
 
@@ -265,7 +264,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
     # Save and restore SavedModel
     restored_f, _ = tf_test_util.SaveAndLoadFunction(composed_fn,
-                                                  [tf.TensorSpec((2,), dtype=tf.string)])
+                                                     input_args=[x_str])
     res_tf_restored = restored_f(x_str)
     self.assertAllClose(res_tf_restored.numpy(), res_tf.numpy())
 
