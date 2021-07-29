@@ -147,7 +147,7 @@ def _make_tpu_driver_client():
 
 def tpu_client_timer_callback(timer: float):
   def _log_warning():
-    logging.warning('Did you run your code on all the hosts?')
+    warnings.warn('Did you run your code on all the hosts?')
 
   # Will log a warning after `timer` secs.
   t = threading.Timer(timer, _log_warning)
