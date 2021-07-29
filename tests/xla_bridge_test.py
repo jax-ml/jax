@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import warnings
 import time
 
 from absl.testing import absltest
@@ -65,9 +66,11 @@ class XlaBridgeTest(absltest.TestCase):
 
   @mock.patch('jax.lib.xla_client.make_tpu_client', side_effect=mock_tpu_client)
   def test_timer_tpu_warning_1vm(self, _):
-    with self.assertLogs('absl', level='WARNING') as al:
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter('always')
       xb.tpu_client_timer_callback(0.01)
-    self.assertIn('Did you run your code on all the hosts?', al.output[0])
+      msg = str(w[-1].message)
+      self.assertIn('Did you run your code on all the hosts?', msg)
 
 
 if __name__ == "__main__":
