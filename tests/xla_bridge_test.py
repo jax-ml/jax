@@ -70,6 +70,7 @@ class XlaBridgeTest(absltest.TestCase):
       warnings.simplefilter('always')
       xb.tpu_client_timer_callback(0.01)
       msg = str(w[-1].message)
+      self.assertLen(w, 1)
       self.assertIn('Did you run your code on all the hosts?', msg)
 
 
