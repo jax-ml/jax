@@ -621,6 +621,24 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     _ = tf.function(fun_tf_outer_2)(x)
     _ = tf.function(fun_tf_outer_2, jit_compile=True)(x)
 
+  def test_repro_193754660(self):
+    # Try to reproduce b/193754660. I can't.
+    # We have to have tf.function(jax2tf.convert(jax2tf.call_tf(f_tf))).
+    # The get_compiler_ir will indeed fail for f_tf. Then we try to use
+    # shape inference for f_tf.
+    # I thought to use a f_tf that uses an op without shape inference, e.g.,
+    # tfxla.gather. If we wash it through a saved_model I expect that shape
+    # inference would not work on it. Instead, shape inference works!!!
+    x = np.array([0, 1, 2, 3, 4, 5], dtype=np.int32)
+    def f_jax(x):
+      return x[1]
+    f_tf = jax2tf.convert(f_jax)
+    f_tf_rt, _ = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
+    f_jax2 = jax2tf.call_tf(f_tf_rt)
+    f_tf2 = jax2tf.convert(f_jax2)
+    res = tf.function(f_tf2, autograph=False)(x)
+    self.assertAllClose(res.numpy(), f_jax(x))
+
   def test_module_documentation(self):
     def cos_tf(x):
       return tf.math.cos(x)
