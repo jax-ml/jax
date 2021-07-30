@@ -249,9 +249,9 @@ build --announce_rc
 build --define open_source_build=true
 
 # Disable enabled-by-default TensorFlow features that we don't care about.
-build:posix --define=no_aws_support=true
-build:posix --define=no_gcp_support=true
-build:posix --define=no_hdfs_support=true
+build --define=no_aws_support=true
+build --define=no_gcp_support=true
+build --define=no_hdfs_support=true
 build --define=no_kafka_support=true
 build --define=no_ignite_support=true
 build --define=grpc_no_ares=true
