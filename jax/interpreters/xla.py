@@ -16,6 +16,7 @@
 from collections import defaultdict, deque
 import itertools as it
 import operator as op
+import re
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Type,
                     Tuple, Union, NamedTuple)
 from warnings import warn
@@ -93,6 +94,13 @@ def _make_array_shape(a):
   else:
     return (xc.Shape.array_shape(a.dtype, a.shape),)
 
+def _get_canonical_source_file(frame: source_info_util.Frame):
+  source_file = frame.file_name
+  if config.jax_hlo_source_file_canonicalization_regex:
+    source_file = re.sub(config.jax_hlo_source_file_canonicalization_regex,
+                         '', source_file)
+  return source_file
+
 tracebacks = {}
 def make_op_metadata(primitive: core.Primitive,
                      params: Dict, *,
@@ -104,7 +112,7 @@ def make_op_metadata(primitive: core.Primitive,
   return xc.OpMetadata(
         op_type=primitive.name,
         op_name=str(pp(name_stack) >> pp_eqn_compact(primitive.name, params)),
-        source_file=frame.file_name if frame else None,
+        source_file=_get_canonical_source_file(frame) if frame else None,
         source_line=frame.line_num if frame else None)
 
 ### handlers

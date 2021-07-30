@@ -86,6 +86,30 @@ class MetadataTest(jtu.JaxTestCase):
     self.assertRegex(hlo, 'op_type="sin"')
     self.assertRegex(hlo, 'op_name=".*cond/branch_1_fun/sin"')
 
+  def test_source_file_prefix_removal(self):
+    def make_hlo():
+      return jax.xla_computation(jnp.sin)(1.).get_hlo_module().to_string()
+
+    # Sanity check
+    self.assertIn("/tests/metadata_test.py", make_hlo())
+
+    with jax._src.config.hlo_source_file_canonicalization_regex(".*/tests/"):
+      hlo = make_hlo()
+      self.assertIn("metadata_test.py", hlo)
+      self.assertNotIn("tests/", hlo)
+      self.assertNotIn("/metadata_test.py", hlo)
+
+    with jax._src.config.hlo_source_file_canonicalization_regex("no_match_xxx"):
+      hlo = make_hlo()
+      self.assertIn("/tests/metadata_test.py", hlo)
+
+    with jax._src.config.hlo_source_file_canonicalization_regex(".*"):
+      hlo = make_hlo()
+      self.assertNotIn("test.py", hlo)
+
+    with jax._src.config.hlo_source_file_canonicalization_regex("test"):
+      hlo = make_hlo()
+      self.assertIn("/s/metadata_.py", hlo)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
