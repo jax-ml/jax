@@ -632,8 +632,8 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       dim_poly = _parse_dim(dim_spec)
       if not is_poly_dim(dim_poly):
         if dim_poly != dim_size:
-          msg = (f"PolyShape {repr(spec)} in axis {i} must contain a constant or '_' "
-                 f"for known dimension in argument shape {arg_shape}")
+          msg = (f"PolyShape {repr(spec)} in axis {i} must match the "
+                 f"known dimension size {dim_size} for argument shape {arg_shape}")
           raise ValueError(msg)
         return dim_size
       return dim_poly

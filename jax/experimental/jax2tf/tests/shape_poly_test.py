@@ -544,8 +544,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(2, 13)' in axis 1 must contain a constant or '_' for "
-            "known dimension in argument shape (2, 3)"
+            "PolyShape '(2, 13)' in axis 1 must match the known dimension size 3 "
+            "for argument shape (2, 3)"
         )):
       check_avals(
           args=[const((2, 3))],
@@ -1030,8 +1030,10 @@ def _make_harness(group_name: str, name: str,
                   *,
                   poly_axes: Sequence[Optional[Union[int, Sequence[int]]]],
                   check_result=True,
+                  skip_jax_run=True,
                   tol=None,
                   enable_and_diable_xla=False,
+                  expect_error=(None, None),
                   **params) -> Union[Harness, Sequence[Harness]]:
   """The `poly_axes` must correspond to the non-static arguments, and for each
   one it must specify which axes are: None, or an int (for the index of the
@@ -1057,7 +1059,8 @@ def _make_harness(group_name: str, name: str,
         _make_harness(group_name, name + ("" if enable_xla else "_noxla"),  # type: ignore
                       func, args, poly_axes=poly_axes,
                       check_result=check_result, tol=tol, enable_xla=enable_xla,
-                      enable_and_diable_xla=False,
+                      enable_and_diable_xla=False, skip_jax_run=skip_jax_run,
+                      expect_error=expect_error,
                       **params)
         for enable_xla in [True, False]
     ]
@@ -1074,8 +1077,8 @@ def _make_harness(group_name: str, name: str,
                  name,
                  func, args,
                  dtype=np.float32,
-                 poly_axes=poly_axes,
-                 check_result=check_result,
+                 poly_axes=poly_axes, check_result=check_result,
+                 skip_jax_run=skip_jax_run, expect_error=expect_error,
                  tol=tol,
                  **params)
 
@@ -1084,6 +1087,30 @@ _f32 = np.float32
 
 # List containing either harnesses, or lists of harnesses
 _POLY_SHAPE_TEST_HARNESSES = [
+    _make_harness("add", "",
+                  jnp.add,
+                  [RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
+                  poly_axes=[0, 1]),
+    _make_harness("add_transpose", "",
+                  jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=0) + x)),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+    [
+        _make_harness("average",
+                      f"axis={axis}_weights=None",
+                      lambda x, axis: jnp.average(x, axis=axis, returned=False, weights=None),
+                      [RandArg((7, 8, 4), _f32), StaticArg(axis)],
+                      poly_axes=[0])
+        for axis in [None, 0, 1]
+    ],
+    [
+        _make_harness("average",
+                      f"axis={axis}_weights=Some",
+                      lambda x, weights, axis: jnp.average(x, axis=axis, returned=False, weights=weights),
+                      [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), _f32), StaticArg(axis)],
+                      poly_axes=[0, 0])
+        for axis in [None, 0, 1]
+    ],
     # Reduce the poly dimension
     _make_harness("argmax", "0",
                   lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),
@@ -1096,10 +1123,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[0],
                   enable_and_diable_xla=True),
-    _make_harness("add_transpose", "",
-                  jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=0) + x)),
+    _make_harness("broadcast_to", "",
+                  lambda x: jnp.broadcast_to(x, [x.shape[0], x.shape[0], 4]),
                   [RandArg((3, 4), _f32)],
-                   poly_axes=[0]),
+                  poly_axes=[0]),
     _make_harness("clamp", "",
                   lax.clamp,
                   [RandArg((3, 4, 5), _f32), RandArg((3, 4, 5), _f32),
@@ -1210,66 +1237,59 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                           [0, 2]),
                   [RandArg((3, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[1, 0]),
-    _make_harness("iota", "",
-                  lambda x: x + lax.iota(_f32, x.shape[0]),
-                  [RandArg((3,), _f32)],
-                  poly_axes=[0]),
-    _make_harness("jnp_add", "",
-                  jnp.add,
-                  [RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
-                  poly_axes=[0, 1]),
-    [
-        _make_harness("jnp_average",
-                      f"axis={axis}_weights=None",
-                      lambda x, axis: jnp.average(x, axis=axis, returned=False, weights=None),
-                      [RandArg((7, 8, 4), _f32), StaticArg(axis)],
-                      poly_axes=[0])
-        for axis in [None, 0, 1]
-    ],
-    [
-        _make_harness("jnp_average",
-                      f"axis={axis}_weights=Some",
-                      lambda x, weights, axis: jnp.average(x, axis=axis, returned=False, weights=weights),
-                      [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), _f32), StaticArg(axis)],
-                      poly_axes=[0, 0])
-        for axis in [None, 0, 1]
-    ],
-    _make_harness("jnp_broadcast_to", "",
-                  lambda x: jnp.broadcast_to(x, [x.shape[0], x.shape[0], 4]),
-                  [RandArg((3, 4), _f32)],
-                  poly_axes=[0]),
+    _make_harness("einsum", "multiple_contractions_error",
+                  lambda x, y, z: jnp.einsum("ab,bc,cd->ad", x, y, z),
+                  [RandArg((3, 2), _f32), RandArg((2, 3), _f32), RandArg((3, 4), _f32),],
+                  poly_axes=[0, None, None],
+                  expect_error=(ValueError,
+                                "Shape polymorphism is not yet supported for einsum with more than one contraction")),
+    _make_harness("einsum", "incompatible_contractions_error",
+                  lambda x, y: jnp.einsum("ab,cb->ac", x, y),
+                  [RandArg((2, 3), _f32), RandArg((2, 3), _f32)],
+                  poly_axes=[1, (0, 1)],
+                  expect_error=(core.InconclusiveDimensionOperation,
+                                "Dimension polynomial comparison 'b1' == 'b0' is inconclusive")),
+
     # operand is non-poly, index is poly
-    _make_harness("jnp_getitem", "op=static_idx=poly",
+    _make_harness("getitem", "op=static_idx=poly",
                   lambda a, i: a[i],
                   [RandArg((3, 4), _f32), np.array([2, 2], np.int32)],
                   poly_axes=[None, 0], enable_and_diable_xla=True),
     # operand is poly, index is integer
-    _make_harness("jnp_getitem", "op=poly_idx=const",
+    _make_harness("getitem", "op=poly_idx=const",
                   lambda a: a[1],
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0], enable_and_diable_xla=True),
     # operand is poly, index is dim poly
-    _make_harness("jnp_getitem", "op=poly_idx=dim",
+    _make_harness("getitem", "op=poly_idx=dim",
                   lambda a: a[jax.core.dimension_as_value(a.shape[0] - 2)],
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0], enable_and_diable_xla=True),
     # Both the operand and the index are poly
-    _make_harness("jnp_getitem", "op=poly_idx=poly",
+    _make_harness("getitem", "op=poly_idx=poly",
                   lambda a, i: a[i],
                   [RandArg((3, 4), _f32), np.array([1, 2, 0], np.int32)],
                   poly_axes=[0, 0], enable_and_diable_xla=True),
-    _make_harness("jnp_matmul", "0",
+    _make_harness("getitem", "op=poly_idx=slice",
+                  lambda a: a[1],
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0], enable_and_diable_xla=True),
+    _make_harness("iota", "",
+                  lambda x: x + lax.iota(_f32, x.shape[0]),
+                  [RandArg((3,), _f32)],
+                  poly_axes=[0]),
+    _make_harness("matmul", "0",
                   jnp.matmul,
                   [RandArg((7, 8, 4), _f32), RandArg((7, 4, 5), _f32)],
                   poly_axes=[0, 0],
                   tol=1e-5),
-    _make_harness("jnp_matmul", "1",
+    _make_harness("matmul", "1",
                   jnp.matmul,
                   [RandArg((7, 8, 4), _f32), RandArg((4, 5), _f32)],
                   poly_axes=[0, None],
                   tol=1e-5),
     [
-        _make_harness("jnp_mean",
+        _make_harness("mean",
                       f"axis={axis}_keepdims={keepdims}_where=None",
                       lambda x, axis, keepdims: jnp.mean(x, axis=axis, keepdims=keepdims, where=None),
                       [RandArg((7, 8, 4), _f32), StaticArg(axis), StaticArg(keepdims)],
@@ -1278,7 +1298,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
         for axis in [None, (0,), (0, 1), (1,)]
     ],
     [
-        _make_harness("jnp_mean",
+        _make_harness("mean",
                       f"axis={axis}_keepdims={keepdims}_where=Some",
                       lambda x, where, axis, keepdims: jnp.mean(x, axis=axis, keepdims=keepdims, where=where),
                       [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), np.bool_), StaticArg(axis), StaticArg(keepdims)],
@@ -1286,44 +1306,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
         for keepdims in [False, True]
         for axis in [None, (0,), (0, 1), (1,)]
     ],
-    _make_harness("jnp_ones", "",
+    _make_harness("ones", "",
                   lambda x: jnp.ones(x.shape, dtype=_f32),
                   [RandArg((3, 2, 4), _f32)],
                   poly_axes=[0]),
-    _make_harness("jnp_squeeze", "axis=None",
-                  jnp.squeeze,
-                  [RandArg((5,), _f32), StaticArg(())],
-                  poly_axes=[0]),
-    _make_harness("jnp_squeeze", "axis=1",
-                  jnp.squeeze,
-                  [RandArg((4, 1), _f32), StaticArg((1,))],
-                  poly_axes=[0]),
-    _make_harness("jnp_take", "",
-                  lambda a, i: jnp.take(a, i, axis=1),
-                  [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
-                  poly_axes=[0, None], enable_and_diable_xla=True),
-    [
-        _make_harness("jnp_var",
-                      f"axis={axis}_keepdims={keepdims}_where=None",
-                      lambda x, axis, keepdims: jnp.var(x, axis=axis, keepdims=keepdims, where=None),
-                      [RandArg((7, 8, 4), _f32), StaticArg(axis), StaticArg(keepdims)],
-                      poly_axes=[0])
-        for keepdims in [False, True]
-        for axis in [None, (0,), (0, 1), (1,)]
-    ],
-    [
-        _make_harness("jnp_var",
-                      f"axis={axis}_keepdims={keepdims}_where=Some",
-                      lambda x, where, axis, keepdims: jnp.var(x, axis=axis, keepdims=keepdims, where=where),
-                      [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), np.bool_), StaticArg(axis), StaticArg(keepdims)],
-                      poly_axes=[0, 0])
-        for keepdims in [False, True]
-        for axis in [None, (0,), (0, 1), (1,)]
-    ],
-    _make_harness("jnp_where", "",
-                  jnp.where,
-                  [RandArg((2,), np.bool_), RandArg((), _f32), RandArg((2,), _f32)],
-                  poly_axes=[0, None, 0]),
     _make_harness("pad", "",
                   lax.pad,
                   [RandArg((3, 2, 5), _f32), np.float32(5.),
@@ -1343,7 +1329,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((2,), np.uint32), RandArg((3, 8), _f32)],
                   poly_axes=[None, 0]),
     # Works when the known dimensions are known to be even or odd.
-    # See the random_uniform_error test also.
     _make_harness("random_uniform", "even_1",
                   lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
                   [RandArg((2,), np.uint32), RandArg((3, 4), _f32)],
@@ -1353,6 +1338,12 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                     dtype=_f32),
                   [RandArg((2,), np.uint32), RandArg((3, 5), _f32)],
                   poly_axes=[None, 0]),
+    _make_harness("random_uniform", "error_not_even",
+                  lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
+                  [RandArg((2,), np.uint32), RandArg((3, 5), _f32)],
+                  poly_axes=[None, 0],
+                  expect_error=(core.InconclusiveDimensionOperation,
+                                "the product of the known dimensions must be even")),
     # TODO(necula): not yet supported, but also unlikely to come up.
     # _make_harness("random_uniform", "odd",
     #               lambda key, a: jax.random.uniform(key, (2 * a.shape[0] + 1, a.shape[1]),
@@ -1382,6 +1373,15 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x: jnp.reshape(x, [2, -1]),
                   [RandArg((3, 4, 5, 6, 7), _f32)],
                   poly_axes=[(0, 2)]),
+    _make_harness("reshape", "error",
+                  lambda x: x.reshape([x.shape[0], -1, 3]),
+                  [RandArg((3, 2, 4), _f32)],
+                  poly_axes=[0],
+                  skip_jax_run=True,
+                  expect_error=(core.InconclusiveDimensionOperation,
+                                re.escape(
+                                  "Cannot divide evenly the sizes of shapes (b0, 2, 4) and (b0, -1, 3)"))),
+
     _make_harness("scatter_add", "",
                   partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True),
                   [RandArg((7, 4), _f32),
@@ -1403,10 +1403,32 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x: lax.slice(x, start_indices=(0, 1), limit_indices=(x.shape[0], 3)),
                   [RandArg((7, 3), _f32)],
                   poly_axes=[0]),
+    _make_harness("squeeze", "axis=None",
+                  jnp.squeeze,
+                  [RandArg((5,), _f32), StaticArg(())],
+                  poly_axes=[0]),
+    _make_harness("squeeze", "axis=1",
+                  jnp.squeeze,
+                  [RandArg((4, 1), _f32), StaticArg((1,))],
+                  poly_axes=[0]),
     _make_harness("squeeze", "axis=1_2",
                   jnp.squeeze,
                   [RandArg((4, 1, 1), _f32), StaticArg((1, 2))],
                   poly_axes=[0]),
+
+    _make_harness("squeeze", "error",
+                  jnp.squeeze,
+                  [RandArg((3, 33), _f32), StaticArg(-1)],
+                  poly_axes=[(0, 1)],
+                  skip_jax_run=True,
+                  expect_error=(ValueError,
+                                re.escape(
+                                  "cannot select an axis to squeeze out which has size not equal to one, got shape=(b0, b1) and dimensions=(1,)"))
+                  ),
+    _make_harness("take", "",
+                  lambda a, i: jnp.take(a, i, axis=1),
+                  [RandArg((3, 4, 5), _f32), np.array([1, 2], np.int32)],
+                  poly_axes=[0, None], enable_and_diable_xla=True),
     _make_harness("tile", "0",
                   lambda x: jnp.tile(x, (1, 2)),
                   [RandArg((4, 3), _f32)],
@@ -1416,6 +1438,28 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x: jnp.tile(x, (1, x.shape[0])),
                   [RandArg((4, 2), _f32)],
                   poly_axes=[0]),
+    [
+        _make_harness("var",
+                      f"axis={axis}_keepdims={keepdims}_where=None",
+                      lambda x, axis, keepdims: jnp.var(x, axis=axis, keepdims=keepdims, where=None),
+                      [RandArg((7, 8, 4), _f32), StaticArg(axis), StaticArg(keepdims)],
+                      poly_axes=[0])
+        for keepdims in [False, True]
+        for axis in [None, (0,), (0, 1), (1,)]
+    ],
+    [
+        _make_harness("var",
+                      f"axis={axis}_keepdims={keepdims}_where=Some",
+                      lambda x, where, axis, keepdims: jnp.var(x, axis=axis, keepdims=keepdims, where=where),
+                      [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), np.bool_), StaticArg(axis), StaticArg(keepdims)],
+                      poly_axes=[0, 0])
+        for keepdims in [False, True]
+        for axis in [None, (0,), (0, 1), (1,)]
+    ],
+    _make_harness("where", "",
+                  jnp.where,
+                  [RandArg((2,), np.bool_), RandArg((), _f32), RandArg((2,), _f32)],
+                  poly_axes=[0, None, 0]),
 ]
 
 ### We add to the test harnesses some that are obtained from the
@@ -1541,7 +1585,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="uniform_odd_poly_axes=[None, 0]"
+      #one_containing="reshape_error_poly_axes"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())
@@ -1573,18 +1617,32 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes.append(arg_polymorphic_shapes)
         input_signature.append(arg_tensorspec)
 
-    res_jax = harness.dyn_fun(*args)
-    enable_xla = harness.params.get("enable_xla", True)
-    f_tf = self.CheckShapePolymorphism(
-        harness.dyn_fun,
-        input_signature=input_signature,
-        polymorphic_shapes=polymorphic_shapes,
-        expected_output_signature=None,
-        enable_xla=enable_xla)
+    skip_jax_run = harness.params["skip_jax_run"]
+    if not skip_jax_run:
+      res_jax = harness.dyn_fun(*args)
 
-    if harness.params["check_result"]:
+    enable_xla = harness.params.get("enable_xla", True)
+    expect_error_type, expect_error_regex = harness.params["expect_error"]
+    if expect_error_type is not None:
+      with self.assertRaisesRegex(expect_error_type, expect_error_regex):
+        f_tf = self.CheckShapePolymorphism(
+            harness.dyn_fun,
+            input_signature=input_signature,
+            polymorphic_shapes=polymorphic_shapes,
+            expected_output_signature=None,
+            enable_xla=enable_xla)
+    else:
+      f_tf = self.CheckShapePolymorphism(
+          harness.dyn_fun,
+          input_signature=input_signature,
+          polymorphic_shapes=polymorphic_shapes,
+          expected_output_signature=None,
+          enable_xla=enable_xla)
+
+    if not skip_jax_run and expect_error_type is None and harness.params["check_result"]:
       tol = harness.params["tol"]
       self.assertAllClose(res_jax, f_tf(*args), atol=tol, rtol=tol)
+
 
   def test_vmap_while(self):
     def cond_func(x):  # x: f32[3]
@@ -1600,18 +1658,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=["b, ..."],
         expected_output_signature=tf.TensorSpec((None, 3), dtype=tf.float32)
     )
-
-  def test_reshape_error(self):
-
-    with self.assertRaisesRegex(
-        core.InconclusiveDimensionOperation,
-        re.escape(
-            "Cannot divide evenly the sizes of shapes (batch, 2, 4) and (batch, -1, 3)")):
-      self.CheckShapePolymorphism(
-          lambda x: x.reshape([x.shape[0], -1, 3]),
-          input_signature=[tf.TensorSpec([None, 2, 4])],
-          polymorphic_shapes=[PS("batch", ...)],
-          expected_output_signature=tf.TensorSpec([None, 1]))
 
   def test_reshape_compiled(self):
     # We compile the result of conversion for two shapes, hence we need to
@@ -1646,51 +1692,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_jax, f_tf(x))
     self.assertFalse(traced)  # We are not tracing again
 
-  def test_squeeze_error(self):
-
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape("cannot select an axis to squeeze out which has size not equal to one, got shape=(b1, b2) and dimensions=(1,)")):
-      # Trace with unknown dimension to squeeze
-      self.CheckShapePolymorphism(
-          lambda x: jnp.squeeze(x, axis=1),
-          input_signature=[tf.TensorSpec([None, None])],
-          polymorphic_shapes=[PS("b1", "b2")],
-          expected_output_signature=tf.TensorSpec([None]))
-
-  def test_einsum_multiple_contractions_error(self):
-
-    with self.assertRaisesRegex(
-        ValueError,
-        "Shape polymorphism is not yet supported for einsum with more than one contraction"):
-      self.CheckShapePolymorphism(
-          lambda x, y, z: jnp.einsum("ab,bc,cd->ad", x, y, z),
-          input_signature=[tf.TensorSpec([None, 2]),
-                           tf.TensorSpec([2, 3]), tf.TensorSpec([3, 4])],
-          polymorphic_shapes=["(a, 2)", "(2, 3)", "(3, 4)"],
-          expected_output_signature=tf.TensorSpec([None]))
-
-  def test_einsum_incompatible_contractions_error(self):
-
-    with self.assertRaisesRegex(
-        core.InconclusiveDimensionOperation,
-        "Dimension polynomial comparison 'b' == 'a' is inconclusive"):
-      self.CheckShapePolymorphism(
-          lambda x, y: jnp.einsum("ab,bc->ac", x, y),
-          input_signature=[tf.TensorSpec([2, None]),
-                           tf.TensorSpec([None, 3])],
-          polymorphic_shapes=["(2, a)", "(b, 3)"],
-          expected_output_signature=tf.TensorSpec([None]))
-
-  def test_random_uniform_error(self):
-    with self.assertRaisesRegex(
-        core.InconclusiveDimensionOperation,
-        "the product of the known dimensions must be even"):
-      self.CheckShapePolymorphism(
-          lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
-          input_signature=[tf.TensorSpec([2], tf.uint32),
-                           tf.TensorSpec([None, 3], tf.float32)],
-          polymorphic_shapes=[None, "b, ..."])
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
