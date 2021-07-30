@@ -65,13 +65,13 @@ class XlaBridgeTest(absltest.TestCase):
       xb.local_devices(backend="foo")
 
   @mock.patch('jax.lib.xla_client.make_tpu_client', side_effect=mock_tpu_client)
-  def test_timer_tpu_warning_1vm(self, _):
+  def test_timer_tpu_warning(self, _):
     with warnings.catch_warnings(record=True) as w:
       warnings.simplefilter('always')
       xb.tpu_client_timer_callback(0.01)
-      msg = str(w[-1].message)
       self.assertLen(w, 1)
-      self.assertIn('Did you run your code on all the hosts?', msg)
+      msg = str(w[-1].message)
+      self.assertIn('Did you run your code on all TPU hosts?', msg)
 
 
 if __name__ == "__main__":
