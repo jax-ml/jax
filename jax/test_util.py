@@ -423,16 +423,32 @@ def skip_if_unsupported_type(dtype):
     raise unittest.SkipTest(
       f"Type {dtype.name} not supported on {device_under_test()}")
 
+def is_device_rocm():
+  return xla_bridge.get_backend().platform_version.startswith('rocm')
+
+def is_device_cuda():
+  return xla_bridge.get_backend().platform_version.startswith('cuda')
+
+def _get_device_tags():
+  """returns a set of tags definded for the device under test"""
+  if is_device_rocm():
+    device_tags = set([device_under_test(), "rocm"])
+  elif is_device_cuda():
+    device_tags = set([device_under_test(), "cuda"])
+  else:
+    device_tags = set([device_under_test()])
+  return device_tags
+
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
-      device = device_under_test()
-      if device in disabled_devices:
+      device_tags = _get_device_tags()
+      if device_tags & set(disabled_devices):
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise unittest.SkipTest(
-          f"{test_name} not supported on {device.upper()}.")
+          f"{test_name} not supported on device with tags {device_tags}.")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
