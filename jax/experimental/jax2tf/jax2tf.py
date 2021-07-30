@@ -1716,17 +1716,22 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
 tf_impl_with_avals[lax.dot_general_p] = _dot_general
 
 
-def _broadcast_in_dim(operand, *, shape, broadcast_dimensions):
-  inshape = [1] * len(shape)
-  for orig_shape_i, broadcast_dim_i in zip(operand.shape, broadcast_dimensions):
-    if orig_shape_i != 1:
-      inshape[broadcast_dim_i] = shape[broadcast_dim_i]
-  inshape_tf = _eval_shape(inshape)
-  shape_tf = _eval_shape(shape)
-  return tf.broadcast_to(tf.reshape(operand, inshape_tf), shape_tf)
+def _broadcast_in_dim(operand, *, shape, broadcast_dimensions,
+                      _in_avals: Sequence[core.ShapedArray],
+                      _out_aval: core.ShapedArray):
+  # for i in range(len(operand.shape)):
+  #   result.shape[bcast_dims[i]] <- operand.shape[i]
+  # bcast_dims must be strictly increasing.
+  # len(bcast_dims) == len(operand.shape)
+  op_shape = _in_avals[0].shape
+  add_1s_shape = [1] * len(shape)
+  for i, broadcast_dim_i in enumerate(broadcast_dimensions):
+    add_1s_shape[broadcast_dim_i] = op_shape[i]
+  with_1s = tf.reshape(operand, _eval_shape(add_1s_shape))
+  return tf.broadcast_to(with_1s, _eval_shape(shape))
 
 
-tf_impl[lax.broadcast_in_dim_p] = _broadcast_in_dim
+tf_impl_with_avals[lax.broadcast_in_dim_p] = _broadcast_in_dim
 
 
 def _reshape(operand, *, new_sizes, dimensions):
@@ -2601,7 +2606,9 @@ def _batched_cond_while(*args: TfVal, cond_nconsts: int,
       pred_b_bcast = _broadcast_in_dim(
           pred_b,
           shape=c_aval.shape,  # a JAX shape
-          broadcast_dimensions=list(range(len(pred_b.shape))))
+          broadcast_dimensions=list(range(len(pred_b.shape))),
+          _in_avals=cond_jaxpr.out_avals,
+          _out_aval=core.ShapedArray(c_aval.shape, np.bool_))
       return tf.where(pred_b_bcast, new_c, c)
 
     selected_carry: Sequence[TfVal] = list(map(select_one_carry, new_carry, carry, body_jaxpr.out_avals))
