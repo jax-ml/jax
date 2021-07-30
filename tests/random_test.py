@@ -910,8 +910,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     # 1/2 CDF_one_maxwell((x - loc) / scale))
     #   + 1/2 (1 - CDF_one_maxwell(- (x - loc) / scale)))
     def double_sided_maxwell_cdf(x, loc, scale):
-      pos = scipy.stats.maxwell().cdf((x - loc)/ scale)
-      neg = (1 - scipy.stats.maxwell().cdf((-x + loc)/ scale))
+      pos = scipy.stats.maxwell().cdf((x - loc) / scale)
+      neg = (1 - scipy.stats.maxwell().cdf((-x + loc) / scale))
       return (pos + neg) / 2
 
     for samples in [uncompiled_samples, compiled_samples]:
@@ -939,9 +939,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       assert len(counts) == 2
 
       self.assertAllClose(
-          counts[0]/ num_samples, 0.5, rtol=1e-02, atol=1e-02)
+          counts[0] / num_samples, 0.5, rtol=1e-02, atol=1e-02)
       self.assertAllClose(
-          counts[1]/ num_samples, 0.5, rtol=1e-02, atol=1e-02)
+          counts[1] / num_samples, 0.5, rtol=1e-02, atol=1e-02)
 
   def testChoiceShapeIsNotSequenceError(self):
     key = random.PRNGKey(0)

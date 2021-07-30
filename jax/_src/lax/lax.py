@@ -1924,7 +1924,7 @@ def collapse(operand: Array, start_dimension: int,
 
 def slice_in_dim(operand: Array, start_index: Optional[int],
                  limit_index: Optional[int],
-                 stride: int = 1, axis: int = 0)-> Array:
+                 stride: int = 1, axis: int = 0) -> Array:
   """Convenience wrapper around slice applying to only one dimension."""
   start_indices = [0] * operand.ndim
   limit_indices = list(operand.shape)

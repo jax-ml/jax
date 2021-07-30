@@ -3345,8 +3345,8 @@ def meshgrid(*args, **kwargs):
 
 
 def _make_1d_grid_from_slice(s: slice, op_name: str):
-  start =core.concrete_or_error(None, s.start,
-                                f"slice start of jnp.{op_name}") or 0
+  start = core.concrete_or_error(None, s.start,
+                                 f"slice start of jnp.{op_name}") or 0
   stop = core.concrete_or_error(None, s.stop,
                                 f"slice stop of jnp.{op_name}")
   step = core.concrete_or_error(None, s.step,
@@ -3907,7 +3907,7 @@ def diag(v, k=0):
   else:
     raise ValueError("diag input must be 1d or 2d")
 
-_SCALAR_VALUE_DOC="""\
+_SCALAR_VALUE_DOC = """\
 This differs from np.diagflat for some scalar values of v,
 jax always returns a two-dimensional array, whereas numpy may
 return a scalar depending on the type of v.
@@ -3929,7 +3929,7 @@ def diagflat(v, k=0):
   res = res.reshape(adj_length,adj_length)
   return res
 
-_POLY_DOC="""\
+_POLY_DOC = """\
 This differs from np.poly when an integer array is given.
 np.poly returns a result with dtype float64 in this case.
 jax returns a result with an inexact type, but not necessarily
@@ -4032,7 +4032,7 @@ def trim_zeros(filt, trim='fb'):
   end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
   return filt[start:len(filt) - end]
 
-_LEADING_ZEROS_DOC="""\
+_LEADING_ZEROS_DOC = """\
 Setting trim_leading_zeros=True makes the output match that of numpy.
 But prevents the function from being able to be used in compiled code.
 """
