@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for call_tf."""
-
 from functools import partial
 from typing import Callable, Dict, Tuple
 import unittest
@@ -45,11 +44,13 @@ def _maybe_jit(with_jit: bool, func: Callable) -> Callable:
   else:
     return func
 
+def _named_test(**kwargs):
+  return dict(kwargs,
+              testcase_name = "_".join([f"{k}={kwargs[k]}" for k in sorted(kwargs.keys())]))
 
-parameterized_jit = parameterized.named_parameters(
-    dict(testcase_name="_jit" if with_jit else "", with_jit=with_jit)
+_parameterized_jit = parameterized.named_parameters(
+    _named_test(with_jit=with_jit)
     for with_jit in [True, False])
-
 
 class CallTfTest(tf_test_util.JaxToTfTestCase):
 
@@ -61,7 +62,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     _ = tf.add(1, 1)
     super().setUp()
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_eval_scalar_arg(self, with_jit=True):
     def f_tf(x):
       return tf.math.sin(x)
@@ -69,19 +70,19 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(f_tf))(x)
     self.assertAllClose(jnp.sin(x), res)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_eval_scalar_res(self, with_jit=True):
     x = 3.
     res = _maybe_jit(with_jit, jax2tf.call_tf(lambda x: 4.))(x)
     self.assertAllClose(4., res, check_dtypes=False)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_eval_numpy_arg(self, with_jit=True):
     x = np.ones((2, 3), dtype=np.float32)
     res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
     self.assertAllClose(jnp.sin(x), res)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_eval_numpy_res(self, with_jit=False):
     x = np.ones((2, 3))
     res = _maybe_jit(with_jit, jax2tf.call_tf(lambda _: x))(x)
@@ -96,7 +97,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x, res)
     self.assertTrue(np.shares_memory(x, res))
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_eval_devicearray_arg(self, with_jit=False):
     x = jnp.ones((2, 3), dtype=np.float32)
     res = _maybe_jit(with_jit, jax2tf.call_tf(tf.math.sin))(x)
@@ -112,7 +113,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x, res)
     self.assertTrue(np.shares_memory(x, res))
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_eval_pytree(self, with_jit=True):
 
     def fun_tf(x: Dict, y: Tuple) -> Tuple:
@@ -158,7 +159,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
                                   CallTfTest.call_tf_non_compileable):
         jax.jit(f_jax)(x)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_control_flow(self, with_jit=True):
 
     def times_5_tf(x):
@@ -199,7 +200,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, fun_jax)(x)
     self.assertAllClose(dtype(2 * x + 3), res)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_bool(self, with_jit=False):
 
     def fun_tf(x, y):
@@ -211,7 +212,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(
         np.array([True, False, False, False], dtype=np.bool_), res)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_x64_input(self, with_jit=True):
     def f_tf(x):
       return tf.math.sin(x)
@@ -221,7 +222,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res_jax = jnp.sin(x)
     self.assertAllClose(res_call_tf, res_jax)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_x64_output(self, with_jit=True):
     def f_tf(x):
       return (tf.constant(3., tf.float64), x)
@@ -234,7 +235,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res_call_tf_jit = jax.jit(jax2tf.call_tf(f_tf))(x)
     self.assertAllClose(res_call_tf_jit, res_jax)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_with_var_read(self, with_jit=True):
     if jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("Test fails on GPU")
@@ -248,7 +249,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
     self.assertAllClose(x * outer_var_array + 1., res, check_dtypes=False)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_with_var_read_x64(self, with_jit=True):
     if jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("Test fails on GPU")
@@ -278,7 +279,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
     self.assertAllClose(tf_out, jax_out, check_dtypes=False)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_with_var_write_error(self, with_jit=True):
     if with_jit:
       raise unittest.SkipTest("variable writes not yet working")
@@ -292,7 +293,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
     self.assertAllClose(x * 4. + 1, res, check_dtypes=False)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_with_tensor_capture(self, with_jit=True):
     outer_tensor = tf.constant(3., dtype=np.float32)
 
@@ -303,7 +304,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
     self.assertAllClose(x * 3. + 1., res, check_dtypes=False)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_with_tensor_capture_x64(self, with_jit=True):
     outer_tensor = tf.constant(3., dtype=np.float64)
 
@@ -314,7 +315,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
     self.assertAllClose(x * 3. * 3.14 + 1., res, check_dtypes=False)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_with_value_capture(self, with_jit=True):
     outer_val = np.array(3., dtype=np.float32)
 
@@ -325,7 +326,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
     self.assertAllClose(x * 3. + 1., res, check_dtypes=False)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_with_multiple_capture(self, with_jit=True):
     if jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("Test fails on GPU")
@@ -341,13 +342,13 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
     self.assertAllClose((x * 3. + 4. + 2.) * 3. + 5., res, check_dtypes=False)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_grad(self, with_jit=False):
     x = np.float32(3.)
     res = _maybe_jit(with_jit, jax.grad(jax2tf.call_tf(tf.math.sin)))(x)
     self.assertAllClose(np.cos(x), res)
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_grad_pytree(self, with_jit=False):
 
     def fun_tf(x: Dict, y: Tuple) -> Tuple:
@@ -460,7 +461,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(g_call_tf[0].dtype, dtypes.float0)
     self.assertAllClose(g_jax[1], g_call_tf[1])
 
-  @parameterized_jit
+  @_parameterized_jit
   def test_grad_custom(self, with_jit=False):
 
     @tf.custom_gradient
@@ -950,6 +951,56 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
         ValueError,
         "call_tf cannot be applied to shape-polymorphic arguments"):
       fun_tf_rt(x)
+
+
+  @parameterized.named_parameters(
+      _named_test(f2_function=f2_function, f2_saved_model=f2_saved_model,
+                  f4_function=f4_function, f4_saved_model=f4_saved_model)
+      for f2_function in [True, False]
+      for f2_saved_model in [True, False]
+      for f4_function in [True, False]
+      for f4_saved_model in [True, False])
+  def test_several_round_trips(self,
+                               f2_function=False, f2_saved_model=False,
+                               f4_function=False, f4_saved_model=False):
+    x = np.array(.7, dtype=np.float32)
+    # f(n)(x) = 2. * x^n
+    def f(n):
+      def fn(x):
+        acc = np.array(2., dtype=x.dtype)
+        for i in range(n):
+          acc *= x
+        return acc
+      return fn
+
+    f2_tf = lambda x: x * jax2tf.convert(f(1))(x)
+    if f2_function:
+      f2_tf = tf.function(f2_tf, autograph=False)
+    if f2_saved_model:
+      f2_tf, _ = tf_test_util.SaveAndLoadFunction(f2_tf, input_args=[x])
+
+    self.assertAllClose(f(2)(x), f2_tf(x).numpy())
+    _, (g_f2_ft,) = tf_test_util.ComputeTfValueAndGrad(f2_tf, [x])
+    self.assertAllClose(jax.grad(f(2))(x), g_f2_ft.numpy())
+
+    f3_jax = lambda x: x * jax2tf.call_tf(f2_tf)(x)
+    self.assertAllClose(f(3)(x), f3_jax(x))
+    self.assertAllClose(f(3)(x), jax.jit(f3_jax)(x))
+    self.assertAllClose(jax.grad(f(3))(x), jax.grad(f3_jax)(x))
+
+    f4_tf = lambda x: x * jax2tf.convert(f3_jax)(x)
+    self.assertAllClose(f(4)(x), f4_tf(x).numpy())
+    _, (g_f4_ft,) = tf_test_util.ComputeTfValueAndGrad(f4_tf, [x])
+    self.assertAllClose(jax.grad(f(4))(x), g_f4_ft.numpy())
+
+    if f4_function:
+      f4_tf = tf.function(f4_tf, autograph=False)
+    if f4_saved_model:
+      f4_tf, _ = tf_test_util.SaveAndLoadFunction(f4_tf, input_args=[x])
+    self.assertAllClose(f(4)(x), f4_tf(x).numpy())
+    _, (g_f4_ft,) = tf_test_util.ComputeTfValueAndGrad(f4_tf, [x])
+    self.assertAllClose(jax.grad(f(4))(x), g_f4_ft.numpy())
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -411,7 +411,8 @@ TfVal = jax2tf_internal.TfVal
 def _jax2tf_call_tf(*args: TfVal,
                     callable_flat_tf: Callable,
                     **_) -> TfVal:
-  res_tf_flat = callable_flat_tf(*args)
+  with jax2tf_internal.inside_call_tf():
+    res_tf_flat = callable_flat_tf(*args)
   return res_tf_flat
 
 jax2tf_internal.tf_impl[call_tf_p] = _jax2tf_call_tf
