@@ -490,11 +490,21 @@ log_compiles = config.define_bool_state(
           'DEBUG.'))
 
 distributed_debug = config.define_bool_state(
-    name="jax_distributed_debug",
+    name='jax_distributed_debug',
     default=False,
     help=('Enable logging useful for debugging multi-process distributed '
           'computations. Logging is performed with `absl.logging` at WARNING '
           'level.'))
+
+hlo_source_file_canonicalization_regex = config.define_string_state(
+    name='jax_hlo_source_file_canonicalization_regex',
+    default=None,
+    help=('Used to canonicalize the source_path metadata of HLO instructions '
+          'by removing the given regex. If set, re.sub() is called on each '
+          'source_file with the given regex, and all matches are removed. '
+          'This can be used to avoid spurious cache misses when using the '
+          'persistent compilation cache, which includes HLO metadata in the '
+          'cache key.'))
 
 def _update_x64_global(val):
   lib.jax_jit.global_state().enable_x64 = val
