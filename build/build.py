@@ -323,7 +323,9 @@ def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None,
       f.write("build --action_env CUDA_TOOLKIT_PATH=\"{cuda_toolkit_path}\"\n"
               .format(cuda_toolkit_path=cuda_toolkit_path))
     if cudnn_install_path:
-      tf_cuda_paths.append(cudnn_install_path)
+      # see https://github.com/tensorflow/tensorflow/issues/51040
+      if cudnn_install_path not in tf_cuda_paths:
+        tf_cuda_paths.append(cudnn_install_path)
       f.write("build --action_env CUDNN_INSTALL_PATH=\"{cudnn_install_path}\"\n"
               .format(cudnn_install_path=cudnn_install_path))
     if len(tf_cuda_paths):
