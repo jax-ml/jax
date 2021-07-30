@@ -369,7 +369,9 @@ class _DimPolynomial(dict):
         return coeff * mon
       else:
         return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
-    terms = [mul(coeff, prod([pow(env[id], deg) for id, deg in mon.items()]))
+    def pow_opt(v, p):
+      return v if p == 1 else pow(v, p)
+    terms = [mul(coeff, prod([pow_opt(env[id], deg) for id, deg in mon.items()]))
              for mon, coeff in self.items()]
     return sum(terms) if len(terms) > 1 else terms[0]
 

@@ -1127,6 +1127,21 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x: jnp.broadcast_to(x, [x.shape[0], x.shape[0], 4]),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
+    _make_harness("broadcast_in_dim", "0",
+                  lambda x: lax.broadcast_in_dim(x, [x.shape[0], 4, 5, 6],
+                                                 broadcast_dimensions=(0, 2, 3)),
+                  [RandArg((3, 1, 6), _f32)],
+                  poly_axes=[0]),
+    _make_harness("broadcast_in_dim", "poly",
+                  lambda x: lax.broadcast_in_dim(x, [x.shape[0], x.shape[0] + x.shape[0], 4],
+                                                 broadcast_dimensions=(0, 1, 2)),
+                  [RandArg((3, 1, 4), _f32)],
+                  poly_axes=[0]),
+    _make_harness("broadcast_in_dim", "poly2",
+                  lambda x: lax.broadcast_in_dim(x, [x.shape[0], 5, 6, x.shape[2], 4],
+                                                 broadcast_dimensions=(0, 2, 3)),
+                  [RandArg((3, 1, 4), _f32)],
+                  poly_axes=[(0, 2)]),
     _make_harness("clamp", "",
                   lax.clamp,
                   [RandArg((3, 4, 5), _f32), RandArg((3, 4, 5), _f32),
@@ -1585,7 +1600,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="reshape_error_poly_axes"
+      #one_containing="broadcast_in_dim_poly_axes"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())
