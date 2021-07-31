@@ -25,6 +25,12 @@ class Builder:
     self.current_loc: Optional[ir.Location] = None
     self.module = builtin.ModuleOp(loc=self.loc)
     self.ip = ir.InsertionPoint(self.module.body)
+    # Alias globals so that we can change the imports without callers caring.
+    self.ir = ir
+    self.builtin = builtin
+    self.chlo = chlo
+    self.mhlo = mhlo
+    self.std = std
 
   @property
   def loc(self) -> ir.Location:
