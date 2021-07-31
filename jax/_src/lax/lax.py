@@ -3899,10 +3899,15 @@ def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
   dimensions = tuple(np.add(1, dimensions))
   return squeeze(operand, dimensions=dimensions), 0
 
+def _squeeze_masking_rule(padded_args, logical_shapes, *, dimensions):
+  operand, = padded_args
+  return squeeze(operand, dimensions=dimensions)
+
 squeeze_p = standard_primitive(_squeeze_shape_rule, _squeeze_dtype_rule,
                                'squeeze', _squeeze_translation_rule)
 ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
+masking.masking_rules[squeeze_p] = _squeeze_masking_rule
 
 
 def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
