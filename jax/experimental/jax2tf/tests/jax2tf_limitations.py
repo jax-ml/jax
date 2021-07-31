@@ -924,6 +924,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
+  def rng_bit_generator(cls, harness: primitive_harness.Harness):
+    return []
+
+  @classmethod
   def round(cls, harness: primitive_harness.Harness):
     return [
         missing_tf_kernel(

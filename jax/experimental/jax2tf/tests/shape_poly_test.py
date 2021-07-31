@@ -1561,6 +1561,7 @@ def _add_vmap_primitive_harnesses():
 
       "tridiagonal_solve",  # batching not implemented in JAX
       "iota",  # vmap does not make sense for 0-argument functions
+      "rng_bit_generator",  # vmap not implemented
   ])
 
   batch_size = 3

@@ -2860,3 +2860,20 @@ for padding, lhs_dilation, rhs_dilation in [
           lhs_dilation=lhs_dilation,
           rhs_dilation=rhs_dilation,
           enable_xla=enable_xla)
+
+
+if config.jax_enable_x64:
+  for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,
+                    lax.RandomAlgorithm.RNG_PHILOX,
+                    lax.RandomAlgorithm.RNG_DEFAULT]:
+    for dtype in [np.uint32, np.uint64]:
+      for shape in [(), (5, 7), (100, 100)]:
+        define(
+            lax.rng_bit_generator_p,
+            f"shape={jtu.format_shape_dtype_string(shape, dtype)}_algorithm={algorithm}",
+            lambda key: lax.rng_bit_generator(key, shape, dtype=dtype,
+                                              algorithm=algorithm),
+            [RandArg((2,), np.uint64)],
+            shape=shape,
+            dtype=dtype,
+            algorithm=algorithm)
