@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Sequence
-from mlir import ir
-from mlir.dialects import builtin, chlo, mhlo, std
+from typing import Optional, Sequence, Union
+
+import numpy as np
+
+from .mlir_imports import *
 
 
 class Builder:
@@ -25,12 +27,6 @@ class Builder:
     self.current_loc: Optional[ir.Location] = None
     self.module = builtin.ModuleOp(loc=self.loc)
     self.ip = ir.InsertionPoint(self.module.body)
-    # Alias globals so that we can change the imports without callers caring.
-    self.ir = ir
-    self.builtin = builtin
-    self.chlo = chlo
-    self.mhlo = mhlo
-    self.std = std
 
   @property
   def loc(self) -> ir.Location:
@@ -45,6 +41,25 @@ class Builder:
       ftype = ir.FunctionType.get(input_types, return_types)
       func_op = builtin.FuncOp(name, ftype, loc=self.loc, ip=self.ip)
     return FunctionBuilder(self, func_op)
+
+  def convert_dtype_to_ir_type(self, dtype) -> ir.Type:
+    """Convert a dtype to an ir type."""
+    # TODO: Terrible.
+    return ir.F32Type.get(self.context)
+
+  def convert_ir_type_to_dtype(self, element_type: ir.Type):
+    """Convert an IR type to a dtype."""
+    # TODO: Terrible.
+    return np.float32
+
+  def get_shaped_type_dims_list(
+      self, t: ir.ShapedType) -> Sequence[Union[None, int]]:
+      # TODO: Ugh. Has anyone tried to use this before?
+      def get_dim(index):
+        return None if t.is_dynamic_dim(index) else t.get_dim_size(index)
+
+      return [get_dim(i) for i in range(t.rank)]
+
 
 
 class FunctionBuilder:
