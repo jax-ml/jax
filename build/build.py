@@ -126,7 +126,7 @@ bazel_packages = {
             file="bazel-4.1.0-darwin-arm64",
             sha256=
             "c372d39ab9dac96f7fdfc2dd649e88b05ee4c94ce3d6cf2313438ef0ca6d5ac1"),
-    ("Windows", "x86_64"):
+    ("Windows", "AMD64"):
         BazelPackage(
             base_uri=None,
             file="bazel-4.1.0-windows-x86_64.exe",
