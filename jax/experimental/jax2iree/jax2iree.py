@@ -14,18 +14,47 @@
 
 from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
 
+import contextlib
 import logging
+import threading
 
 import numpy as np
 
 from jax import core, tree_util
 from jax import linear_util as lu
-from jax.core import DimSize, Shape
+from jax.core import DimSize, MainTrace, Shape
 from jax._src import api
 from jax._src import util
 
-from .ir_builder import Builder
+from .ir_builder import Builder, FunctionBuilder
 from .mlir_imports import *
+from .primitives import HLO_HANDLERS, PrimitiveInvocation
+
+
+class _ThreadLocalState(threading.local):
+
+  def __init__(self):
+    self.function_builder: Optional[FunctionBuilder] = None
+
+
+_thread_local_state = _ThreadLocalState()
+
+
+def _current_function_builder() -> FunctionBuilder:
+  fb = _thread_local_state.function_builder
+  assert fb is not None, "No current function builder"
+  return fb
+
+
+@contextlib.contextmanager
+def new_function_scope(fb: FunctionBuilder):
+  # TODO: Support stack
+  assert _thread_local_state.function_builder is None
+  _thread_local_state.function_builder = fb
+  try:
+    yield
+  finally:
+    _thread_local_state.function_builder = None
 
 
 def trace_function(fun: Callable,
@@ -49,7 +78,7 @@ def trace_function(fun: Callable,
   def _create_array_val_from_type(t):
     if ir.ShapedType.isinstance(t):
       shaped_type = ir.ShapedType(t)
-      if t.has_rank:
+      if shaped_type.has_rank:
         shape = builder.get_shaped_type_dims_list(shaped_type)
         dtype = builder.convert_ir_type_to_dtype(shaped_type.element_type)
         return core.ShapedArray(shape, dtype)
@@ -59,21 +88,27 @@ def trace_function(fun: Callable,
 
     raise ValueError(f"IR type cannot be mapped to JAX type: {t}")
 
-  in_avals = [_create_array_val_from_type(t) for t in input_types]
+  in_vals = list(fb.func_op.entry_block.arguments)
+  in_avals = [_create_array_val_from_type(v.type) for v in in_vals]
 
   # Interpret the function.
   wrapped_fun = lu.wrap_init(fun)
   with core.new_base_main(IreeTrace) as main:
-    fun = _interpret_subtrace(wrapped_fun, main, in_avals)
-    out_vals = fun.call_wrapped(*in_avals)
+    with new_function_scope(fb):
+      fun = interpret_function_ir(wrapped_fun, main, in_avals)
+      out_vals = fun.call_wrapped(*in_vals)
+
+  # TODO: Flatten correctly.
+  returns = [v[0] for v in out_vals]
 
   # Remove me.
-  fb.emit_return([])
+  fb.emit_return(returns)
 
 
 @lu.transformation
-def _interpret_subtrace(main: core.MainTrace,
-                        in_avals: Sequence[core.ShapedArray], *in_vals):
+def interpret_function_ir(main: core.MainTrace,
+                          in_avals: Sequence[core.ShapedArray],
+                          *in_vals: ir.Value):
   trace = IreeTrace(main, core.cur_sublevel())
   in_tracers = tuple(
       IreeTracer(trace, val, aval) for val, aval in zip(in_vals, in_avals))
@@ -87,11 +122,12 @@ def _interpret_subtrace(main: core.MainTrace,
 
 
 class IreeTracer(core.Tracer):
-  # val: TfVal
+  # val: ir.Value
   # _aval: core.ShapedArray
   __slots__ = ["val", "_aval"]
 
-  def __init__(self, trace: "IreeTrace", val, aval: core.AbstractValue):
+  def __init__(self, trace: "IreeTrace", val: ir.Value,
+               aval: core.AbstractValue):
     self._trace = trace
     self._aval = aval
     self.val = val
@@ -100,13 +136,38 @@ class IreeTracer(core.Tracer):
   def aval(self):
     return self._aval
 
+  def full_lower(self):
+    return self
+
 
 class IreeTrace(core.Trace):
+  """A trace of an MLIR fragment."""
+  HANDLER_TABLES = [HLO_HANDLERS]
 
   def process_primitive(self, primitive: core.Primitive,
                         tracers: Sequence[IreeTracer], params) -> IreeTracer:
-    print(f"PRIMTIVE: {primitive}({tracers})")
-    return tracers[0]  # TODO: It's quitting time.
+    args_avals: Sequence[core.ShapedArray] = tuple(t.aval for t in tracers)
+    args_vals: Sequence[ir.Value] = tuple(t.val for t in tracers)
+    out_aval = primitive.abstract_eval(*args_avals, **params)
+    inv = PrimitiveInvocation(primitive, args_vals, args_avals, out_aval,
+                              params)
+    fb = _current_function_builder()
+    result = None
+    for table in self.HANDLER_TABLES:
+      handler = table.get(primitive)
+      if handler is None:
+        continue
+      with fb.b.loc, fb.ip:
+        result = handler(fb, inv)
+      if result is NotImplemented:
+        continue
+
+    if result is None:
+      with fb.b.loc, fb.ip:
+        result = inv.emit_fallback(fb)
+
+    out = IreeTracer(self, result, out_aval)
+    return out
 
 
 def _convert_shapes_to_types(builder: Builder, shapes_and_dtypes):

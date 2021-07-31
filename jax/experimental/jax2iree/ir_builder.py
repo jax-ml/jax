@@ -16,6 +16,8 @@ from typing import Optional, Sequence, Union
 
 import numpy as np
 
+from jax import core
+
 from .mlir_imports import *
 
 
@@ -27,6 +29,10 @@ class Builder:
     self.current_loc: Optional[ir.Location] = None
     self.module = builtin.ModuleOp(loc=self.loc)
     self.ip = ir.InsertionPoint(self.module.body)
+
+    self.context.allow_unregistered_dialects = True
+    mhlo.register_mhlo_dialect(self.context)
+    chlo.register_chlo_dialect(self.context)
 
   @property
   def loc(self) -> ir.Location:
@@ -42,6 +48,18 @@ class Builder:
       func_op = builtin.FuncOp(name, ftype, loc=self.loc, ip=self.ip)
     return FunctionBuilder(self, func_op)
 
+  def convert_aval_to_ir_type(self, aval: core.AbstractValue) -> ir.Type:
+    with self.loc:
+      if isinstance(aval, core.ShapedArray):
+        element_type = self.convert_dtype_to_ir_type(aval.dtype)
+        shape = aval.shape  # TODO: Handle symbols, etc
+        return ir.RankedTensorType.get(shape, element_type)
+      elif isinstance(aval, core.UnshapedArray):
+        element_type = self.convert_dtype_to_ir_type(aval.dtype)
+        return ir.UnrankedTensorType.get(element_type)
+
+      raise NotImplementedError(f"Unsupported AbstractValue conversion: {aval}")
+
   def convert_dtype_to_ir_type(self, dtype) -> ir.Type:
     """Convert a dtype to an ir type."""
     # TODO: Terrible.
@@ -52,29 +70,28 @@ class Builder:
     # TODO: Terrible.
     return np.float32
 
-  def get_shaped_type_dims_list(
-      self, t: ir.ShapedType) -> Sequence[Union[None, int]]:
-      # TODO: Ugh. Has anyone tried to use this before?
-      def get_dim(index):
-        return None if t.is_dynamic_dim(index) else t.get_dim_size(index)
+  def get_shaped_type_dims_list(self,
+                                t: ir.ShapedType) -> Sequence[Union[None, int]]:
+    # TODO: Ugh. Has anyone tried to use this before?
+    def get_dim(index):
+      return None if t.is_dynamic_dim(index) else t.get_dim_size(index)
 
-      return [get_dim(i) for i in range(t.rank)]
-
+    return [get_dim(i) for i in range(t.rank)]
 
 
 class FunctionBuilder:
   """Manages state for constructing a global function."""
 
   def __init__(self, builder: Builder, func_op: ir.Operation):
-    self.builder = builder
-    self.context = self.builder.context
+    self.b = builder
+    self.context = self.b.context
     self.func_op = func_op
     self.entry_block = self.func_op.add_entry_block()
     self.ip = ir.InsertionPoint(self.entry_block)
 
   def emit_return(self, values: Sequence[ir.Value], update_type: bool = True):
     """Emits a return op, also updating the containing function type."""
-    std.ReturnOp(values, loc=self.builder.loc, ip=self.ip)
+    std.ReturnOp(values, loc=self.b.loc, ip=self.ip)
     if update_type:
       ftype = self.func_op.type
       return_types = [v.type for v in values]
