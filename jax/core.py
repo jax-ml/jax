@@ -316,6 +316,26 @@ def traverse_jaxpr_params(f, params):
           if type(p) in (Jaxpr, ClosedJaxpr)}
 
 
+def eval_jaxpr_eqn(eqn, in_vals):
+  """Evaluates the jaxpr equation with the provided input values."""
+  call_jaxpr, params = extract_call_jaxpr(eqn.primitive, eqn.params)
+  if call_jaxpr:
+    subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
+  else:
+    subfuns = []
+  if eqn.primitive in initial_to_final_param_rules:
+    bind_params = initial_to_final_param_rules[eqn.primitive](params)
+  elif eqn.primitive.map_primitive:
+    out_axes_thunk = HashableFunction(lambda: params['out_axes'],
+                                      closure=params['out_axes'])
+    bind_params = dict(params, out_axes_thunk=out_axes_thunk)
+    del bind_params['out_axes']
+  else:
+    bind_params = params
+  with source_info_util.user_context(eqn.source_info):
+    return eqn.primitive.bind(*(subfuns + in_vals), **bind_params)
+
+
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
   def read(v):
     if type(v) is Literal:
@@ -331,23 +351,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    in_vals = map(read, eqn.invars)
-    call_jaxpr, params = extract_call_jaxpr(eqn.primitive, eqn.params)
-    if call_jaxpr:
-      subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
-    else:
-      subfuns = []
-    if eqn.primitive in initial_to_final_param_rules:
-      bind_params = initial_to_final_param_rules[eqn.primitive](params)
-    elif eqn.primitive.map_primitive:
-      out_axes_thunk = HashableFunction(lambda: params['out_axes'],
-                                        closure=params['out_axes'])
-      bind_params = dict(params, out_axes_thunk=out_axes_thunk)
-      del bind_params['out_axes']
-    else:
-      bind_params = params
-    with source_info_util.user_context(eqn.source_info):
-      ans = eqn.primitive.bind(*(subfuns + in_vals), **bind_params)
+    ans = eval_jaxpr_eqn(eqn, map(read, eqn.invars))
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
