@@ -24,11 +24,14 @@ load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
 pocketfft()
 
 # Initialize TensorFlow's external dependencies.
-load("@org_tensorflow//tensorflow:workspace3.bzl", "workspace")
-workspace()
-load("@org_tensorflow//tensorflow:workspace2.bzl", "workspace")
-workspace()
-load("@org_tensorflow//tensorflow:workspace1.bzl", "workspace")
-workspace()
-load("@org_tensorflow//tensorflow:workspace0.bzl", "workspace")
-workspace()
+load("@org_tensorflow//tensorflow:workspace3.bzl", "tf_workspace3")
+tf_workspace3()
+
+load("@org_tensorflow//tensorflow:workspace2.bzl", "tf_workspace2")
+tf_workspace2()
+
+load("@org_tensorflow//tensorflow:workspace1.bzl", "tf_workspace1")
+tf_workspace1()
+
+load("@org_tensorflow//tensorflow:workspace0.bzl", "tf_workspace0")
+tf_workspace0()
