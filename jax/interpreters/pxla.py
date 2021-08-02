@@ -53,6 +53,7 @@ from ..errors import JAXTypeError
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..lib import pmap_lib
+from ..lib import _xla_extension_version
 from ..tree_util import tree_flatten, tree_map
 from . import batching
 from . import partial_eval as pe
@@ -111,171 +112,186 @@ _UNSHARDED_INSTANCE = NoSharding()
 AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 
+# TODO(jblespiau): Remove the version check when jaxlib 0.1.70 is the minimal
+# version.
+if TYPE_CHECKING or _xla_extension_version < 29:
+  class ShardingSpec:
+    """Describes the sharding of an ndarray.
 
-class ShardingSpec:
-  """Describes the sharding of an ndarray.
-
-  Attributes:
-    sharding: specifies how the array is supposed to get partitioned into chunks.
-      Its length should match the rank of the array. See the docstring of
-      `AvalDimSharding` for the supported partitioning schemes.
-    mesh_mapping` describes an assignments of the array chunks created by `sharding`
-      to a logical device mesh. The length of the tuple is equal to the rank of the
-      mesh. Each mesh dimension can either get partitions of data varying along one
-      of the sharded dimensions, or the data can be replicated. See the docstring of
-      `MeshDimAssignment` for more information.
-  """
-  sharding: Tuple[AvalDimSharding, ...]
-  mesh_mapping: Tuple[MeshDimAssignment, ...]
-
-  def __init__(self,
-               sharding: Iterable[AvalDimSharding],
-               mesh_mapping: Iterable[MeshDimAssignment]):
-    self.sharding = tuple(sharding)
-    assert all(x is not None for x in self.sharding)
-    self.mesh_mapping = tuple(mesh_mapping)
-
-  @property
-  def mesh_shape(self):
-    sharded_axis_sizes = []
-    for sharding in self.sharding:
-      if isinstance(sharding, NoSharding):
-        continue
-      elif isinstance(sharding, Unstacked):
-        sharded_axis_sizes.append(sharding.size)
-      elif isinstance(sharding, Chunked):
-        sharded_axis_sizes.extend(sharding.chunks)
-      else:
-        assert_unreachable(sharding)
-    return tuple(sharded_axis_sizes[a.axis] if isinstance(a, ShardedAxis) else a.replicas
-                 for a in self.mesh_mapping)
-
-  def sharding_proto(self):
-    """Converts a ShardingSpec to an OpSharding proto.
-
-    See
-    https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
-    for details on the OpSharding proto.
-    Unfortunately the semantics are not very well described in the proto spec, but the code here might help:
-    https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/experimental/xla_sharding/xla_sharding.py
+    Attributes:
+      sharding: specifies how the array is supposed to get partitioned into
+        chunks. Its length should match the rank of the array. See the
+        docstring of`AvalDimSharding` for the supported partitioning schemes.
+      mesh_mapping: describes an assignments of the array chunks created by
+        `sharding` to a logical device mesh. The length of the tuple is equal
+        to the rank of the mesh. Each mesh dimension can either get partitions
+        of data varying along one of the sharded dimensions, or the data can
+        be replicated. See the docstring of `MeshDimAssignment` for more
+        information.
     """
-    mesh_shape = self.mesh_shape
-    mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+    sharding: Tuple[AvalDimSharding, ...]
+    mesh_mapping: Tuple[MeshDimAssignment, ...]
 
-    sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
-    replicated_maxes = []  # lists mesh axis identifiers to replicate over
-    for maxis, assignment in enumerate(self.mesh_mapping):
-      if isinstance(assignment, Replicated):
-        replicated_maxes.append(maxis)
-      elif isinstance(assignment, ShardedAxis):
-        sharded_axes[assignment.axis] = maxis
-      else:
-        assert_unreachable(assignment)
+    def __init__(self,
+                 sharding: Iterable[AvalDimSharding],
+                 mesh_mapping: Iterable[MeshDimAssignment]):
+      self.sharding = tuple(sharding)
+      assert all(x is not None for x in self.sharding)
+      self.mesh_mapping = tuple(mesh_mapping)
 
-    proto = xc.OpSharding()
-    if len(replicated_maxes) == len(self.mesh_mapping):
-      proto.type = xc.OpSharding.Type.REPLICATED
-      return proto
+    def __eq__(self, other):
+      return (self.sharding, self.mesh_mapping) == (other.sharding,
+                                                    other.mesh_mapping)
+
+    def __hash__(self):
+      return hash((self.sharding, self.mesh_mapping))
+else:
+  ShardingSpec: Type[pmap_lib.ShardingSpec] = pmap_lib.ShardingSpec
+
+
+def sharding_spec_mesh_shape(self):
+  sharded_axis_sizes = []
+  for sharding in self.sharding:
+    if isinstance(sharding, NoSharding):
+      continue
+    elif isinstance(sharding, Unstacked):
+      sharded_axis_sizes.append(sharding.size)
+    elif isinstance(sharding, Chunked):
+      sharded_axis_sizes.extend(sharding.chunks)
     else:
-      proto.type = xc.OpSharding.Type.OTHER
+      assert_unreachable(sharding)
+  return tuple(sharded_axis_sizes[a.axis] if isinstance(a, ShardedAxis) else a.replicas
+               for a in self.mesh_mapping)
 
-    mesh_permutation = []
-    new_mesh_shape = []
-    next_sharded_axis = 0
-    for axis, sharding in enumerate(self.sharding):
-      if isinstance(sharding, NoSharding):
-        new_mesh_shape.append(1)  # Add a dummy mesh axis we won't be sharding over
-      elif isinstance(sharding, Chunked):
-        for nchunks in sharding.chunks:
-          maxis = sharded_axes[next_sharded_axis]
-          assert mesh_shape[maxis] == nchunks
-          mesh_permutation.append(maxis)
-          next_sharded_axis += 1
-        new_mesh_shape.append(int(np.prod(sharding.chunks)))
-      elif isinstance(sharding, Unstacked):
-        raise RuntimeError("Cannot convert unstacked sharding specs to XLA OpSharding")
-      else:
-        assert_unreachable(sharding)
+def sharding_spec_sharding_proto(self):
+  """Converts a ShardingSpec to an OpSharding proto.
 
-    # Create the partial sharding proto if tensor is replicated over some mesh axes
-    if replicated_maxes:
-      new_mesh_shape.append(-1)
-      mesh_permutation.extend(replicated_maxes)
-      proto.replicate_on_last_tile_dim = True
+  See
+  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
+  for details on the OpSharding proto.
+  Unfortunately the semantics are not very well described in the proto spec, but the code here might help:
+  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/experimental/xla_sharding/xla_sharding.py
+  """
+  mesh_shape = self.mesh_shape
+  mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
 
-    proto_mesh = mesh.transpose(mesh_permutation).reshape(new_mesh_shape)
-    proto.tile_assignment_dimensions = list(proto_mesh.shape)
-    proto.tile_assignment_devices = list(proto_mesh.flat)
+  sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
+  replicated_maxes = []  # lists mesh axis identifiers to replicate over
+  for maxis, assignment in enumerate(self.mesh_mapping):
+    if isinstance(assignment, Replicated):
+      replicated_maxes.append(maxis)
+    elif isinstance(assignment, ShardedAxis):
+      sharded_axes[assignment.axis] = maxis
+    else:
+      assert_unreachable(assignment)
+
+  proto = xc.OpSharding()
+  if len(replicated_maxes) == len(self.mesh_mapping):
+    proto.type = xc.OpSharding.Type.REPLICATED
     return proto
+  else:
+    proto.type = xc.OpSharding.Type.OTHER
 
-  def indices(self, shape: Tuple[int, ...]) -> np.ndarray:
-    """Returns NumPy-style indices corresponding to a sharding spec.
+  mesh_permutation = []
+  new_mesh_shape = []
+  next_sharded_axis = 0
+  for axis, sharding in enumerate(self.sharding):
+    if isinstance(sharding, NoSharding):
+      new_mesh_shape.append(1)  # Add a dummy mesh axis we won't be sharding over
+    elif isinstance(sharding, Chunked):
+      for nchunks in sharding.chunks:
+        maxis = sharded_axes[next_sharded_axis]
+        assert mesh_shape[maxis] == nchunks
+        mesh_permutation.append(maxis)
+        next_sharded_axis += 1
+      new_mesh_shape.append(int(np.prod(sharding.chunks)))
+    elif isinstance(sharding, Unstacked):
+      raise RuntimeError("Cannot convert unstacked sharding specs to XLA OpSharding")
+    else:
+      assert_unreachable(sharding)
 
-    Args:
-      shape: The shape of the logical array being sharded.
+  # Create the partial sharding proto if tensor is replicated over some mesh axes
+  if replicated_maxes:
+    new_mesh_shape.append(-1)
+    mesh_permutation.extend(replicated_maxes)
+    proto.replicate_on_last_tile_dim = True
 
-    Returns:
-      An ndarray with the same shape as the logical mesh (as derived form
-      `mesh_mapping`). Each entry is a NumPy-style index selecting the subset of
-      the data array to be placed on a corresponding device. The indices can be
-      ints, slice objects with step=1, or tuples of those.
-    """
-    assert len(shape) == len(self.sharding), (shape, self.sharding)
+  proto_mesh = mesh.transpose(mesh_permutation).reshape(new_mesh_shape)
+  proto.tile_assignment_dimensions = list(proto_mesh.shape)
+  proto.tile_assignment_devices = list(proto_mesh.flat)
+  return proto
 
-    axis_indices: List[Sequence[Index]] = []
-    shard_indices_shape = []
-    for dim, sharding in enumerate(self.sharding):
-      axis_size = shape[dim]
-      if isinstance(sharding, NoSharding):
-        axis_indices.append([slice(None)])
-        # NOTE: We don't append unsharded dimensions to shard_indices_shape here,
-        #       because they do not appear in the mesh mapping.
-      elif isinstance(sharding, Unstacked):
-        assert axis_size == sharding.size, f'{axis_size} != {sharding.size}'
-        axis_indices.append(range(axis_size))
-        shard_indices_shape.append(axis_size)
-      elif isinstance(sharding, Chunked):
-        total_chunks = int(np.prod(sharding.chunks))
-        shard_size, ragged = divmod(axis_size, total_chunks)
-        assert not ragged, (axis_size, total_chunks, dim)
-        axis_indices.append([slice(i * shard_size, (i + 1) * shard_size)
-                             for i in range(total_chunks)])
-        shard_indices_shape.extend(sharding.chunks)
-      else:
-        assert_unreachable(sharding)
+def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
+  """Returns NumPy-style indices corresponding to a sharding spec.
 
-    # shard_indices is an ndarray representing the sharded axes of the logical array,
-    # with each dimension having size equal to the number of shards across the corresponding
-    # logical array dimension, and each element containing the multi-dimensional index that
-    # is used to extract the corresponding shard of the logical array.
-    shard_indices = np.empty([prod(shard_indices_shape)], dtype=np.object_)
-    for i, idxs in enumerate(it.product(*axis_indices)):
-      shard_indices[i] = idxs
-    shard_indices = shard_indices.reshape(shard_indices_shape)
+  Args:
+    shape: The shape of the logical array being sharded.
 
-    # Ensure that each sharded axis is used exactly once in the mesh mapping
-    num_sharded_dim = len(shard_indices_shape)
-    sharded_dim_perm = [a.axis for a in self.mesh_mapping if isinstance(a, ShardedAxis)]
-    assert (set(sharded_dim_perm) == set(range(num_sharded_dim)) and
-            len(sharded_dim_perm) == num_sharded_dim)
-    # Replicate/reorder the indices according to the mesh mapping
-    replica_sizes = tuple(a.replicas for a in self.mesh_mapping if isinstance(a, Replicated))
-    replica_dim, sharded_dim = it.count(0), iter(sharded_dim_perm)
-    perm = [next(replica_dim) if isinstance(a, Replicated) else
-            len(replica_sizes) + next(sharded_dim)
-            for a in self.mesh_mapping]
-    return (np.broadcast_to(shard_indices, replica_sizes + shard_indices.shape)
-              .transpose(perm))
+  Returns:
+    An ndarray with the same shape as the logical mesh (as derived form
+    `mesh_mapping`). Each entry is a NumPy-style index selecting the subset of
+    the data array to be placed on a corresponding device. The indices can be
+    ints, slice objects with step=1, or tuples of those.
+  """
+  assert len(shape) == len(self.sharding), (shape, self.sharding)
 
-  def __eq__(self, other):
-    return (self.sharding, self.mesh_mapping) == (other.sharding,
-                                                  other.mesh_mapping)
+  axis_indices: List[Sequence[Index]] = []
+  shard_indices_shape = []
+  for dim, sharding in enumerate(self.sharding):
+    axis_size = shape[dim]
+    if isinstance(sharding, NoSharding):
+      axis_indices.append([slice(None)])
+      # NOTE: We don't append unsharded dimensions to shard_indices_shape here,
+      #       because they do not appear in the mesh mapping.
+    elif isinstance(sharding, Unstacked):
+      assert axis_size == sharding.size, f'{axis_size} != {sharding.size}'
+      axis_indices.append(range(axis_size))
+      shard_indices_shape.append(axis_size)
+    elif isinstance(sharding, Chunked):
+      total_chunks = int(np.prod(sharding.chunks))
+      shard_size, ragged = divmod(axis_size, total_chunks)
+      assert not ragged, (axis_size, total_chunks, dim)
+      axis_indices.append([slice(i * shard_size, (i + 1) * shard_size)
+                           for i in range(total_chunks)])
+      shard_indices_shape.extend(sharding.chunks)
+    else:
+      assert_unreachable(sharding)
 
-  def __hash__(self):
-    return hash((self.sharding, self.mesh_mapping))
+  # shard_indices is an ndarray representing the sharded axes of the logical array,
+  # with each dimension having size equal to the number of shards across the corresponding
+  # logical array dimension, and each element containing the multi-dimensional index that
+  # is used to extract the corresponding shard of the logical array.
+  shard_indices = np.empty([prod(shard_indices_shape)], dtype=np.object_)
+  for i, idxs in enumerate(it.product(*axis_indices)):
+    shard_indices[i] = idxs
+  shard_indices = shard_indices.reshape(shard_indices_shape)
 
-  def __repr__(self):
-    return f'ShardingSpec({self.sharding}, {self.mesh_mapping})'
+  # Ensure that each sharded axis is used exactly once in the mesh mapping
+  num_sharded_dim = len(shard_indices_shape)
+  sharded_dim_perm = [a.axis for a in self.mesh_mapping if isinstance(a, ShardedAxis)]
+  assert (set(sharded_dim_perm) == set(range(num_sharded_dim)) and
+          len(sharded_dim_perm) == num_sharded_dim)
+  # Replicate/reorder the indices according to the mesh mapping
+  replica_sizes = tuple(a.replicas for a in self.mesh_mapping if isinstance(a, Replicated))
+  replica_dim, sharded_dim = it.count(0), iter(sharded_dim_perm)
+  perm = [next(replica_dim) if isinstance(a, Replicated) else
+          len(replica_sizes) + next(sharded_dim)
+          for a in self.mesh_mapping]
+  return (np.broadcast_to(shard_indices, replica_sizes + shard_indices.shape)
+            .transpose(perm))
+
+def sharding_spec_repr(self):
+  return f'ShardingSpec({self.sharding}, {self.mesh_mapping})'
+
+
+ShardingSpec.mesh_shape = property(sharding_spec_mesh_shape)
+ShardingSpec.sharding_proto = sharding_spec_sharding_proto
+ShardingSpec.indices = sharding_spec_indices
+# mypy raises: error: Cannot assign to a method  [assignment]
+ShardingSpec.__repr__ = sharding_spec_repr  # type: ignore
+# Do not pollute the namespace
+del sharding_spec_mesh_shape, sharding_spec_indices, sharding_spec_repr
+
 
 def spec_to_indices(shape: Tuple[int, ...],
                     spec: ShardingSpec) -> Tuple[Index, ...]:
@@ -288,7 +304,7 @@ def spec_to_indices(shape: Tuple[int, ...],
   Args:
     shape: The shape of the logical array being sharded.
     spec: Describes how the array is sharded and how the shards are assigned to
-          the logical mesh.
+      the logical mesh.
 
   Returns:
     A tuple of length equal to the size of the mesh (inferred as the product of
