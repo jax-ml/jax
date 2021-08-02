@@ -25,6 +25,7 @@ from absl.testing import parameterized
 import numpy as np
 import scipy.special as osp_special
 
+import jax
 from jax._src import api
 from jax import numpy as jnp
 from jax import lax
@@ -204,6 +205,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     args_maker = lambda: [np.array([-1000, -2]), np.array([1, 0])]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker)
+
+  def testLogSumExpOnes(self):
+    # Regression test for https://github.com/google/jax/issues/7390
+    args_maker = lambda: [np.ones(4, dtype='float32')]
+    with jax.debug_infs(True):
+      self._CheckAgainstNumpy(osp_special.logsumexp, lsp_special.logsumexp, args_maker)
+      self._CompileAndCheck(lsp_special.logsumexp, args_maker)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
     jtu.cases_from_list(

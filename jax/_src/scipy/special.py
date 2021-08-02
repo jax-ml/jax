@@ -121,7 +121,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
                                   axis=dims, keepdims=keepdims)),
                   amax)
     sign = jnp.where(jnp.isnan(out), np.nan, 1.0).astype(out.dtype)
-    sign = jnp.where(out == -np.inf, 0.0, sign)
+    sign = jnp.where(jnp.isneginf(out), 0.0, sign)
   else:
     expsub = lax.exp(lax.sub(a, amax_with_dims))
     if b is not None:
