@@ -30,14 +30,14 @@ setup(
     description='XLA library for JAX',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=['jaxlib', 'jaxlib.xla_extension-stubs'],
+    packages=['jaxlib', 'jaxlib.xla_extension'],
     python_requires='>=3.7',
     install_requires=['scipy', 'numpy>=1.18', 'absl-py', 'flatbuffers >= 1.12, < 3.0'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
     package_data={
         'jaxlib': ['*.so', '*.pyd*', 'py.typed', 'cuda/nvvm/libdevice/libdevice*'],
-        'jaxlib.xla_extension-stubs': ['*.pyi'],
+        'jaxlib.xla_extension': ['*.pyi'],
     },
     zip_safe=False,
 )
