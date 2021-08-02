@@ -10,8 +10,8 @@ program:
 >>> import jax.numpy as jnp
 >>> from jax import random
 >>> x = random.uniform(random.PRNGKey(0), (1000, 1000))
->>> # Printing the result or repr(result) or str(result) will block until the
->>> # value is ready. That's why the value is present in the output below.
+>>> # Printing the result (i.e. evaluating `repr(result)` or `str(result)`)
+>>> # will block until the value is ready.
 >>> jnp.dot(x, x) + 3.  # doctest: +SKIP
 DeviceArray([[258.01971436, 249.64862061, 257.13372803, ...,
               236.67948914, 250.68939209, 241.36853027],
