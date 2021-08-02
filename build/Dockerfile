@@ -8,15 +8,13 @@ RUN apt-get update
 RUN apt-get install libffi-dev
 RUN git clone --branch v1.2.21 https://github.com/pyenv/pyenv.git /pyenv
 ENV PYENV_ROOT /pyenv
-RUN /pyenv/bin/pyenv install 3.6.8
 RUN /pyenv/bin/pyenv install 3.7.2
 RUN /pyenv/bin/pyenv install 3.8.0
 RUN /pyenv/bin/pyenv install 3.9.0
 
-# We pin numpy to a version < 1.16 to avoid version compatibility issues.
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.6.8 && pip install numpy==1.17.3 scipy==1.5.4 setuptools wheel six auditwheel
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.17.3 scipy==1.5.4 setuptools wheel six auditwheel
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install numpy==1.17.3 scipy==1.5.4 setuptools wheel six auditwheel
+# We pin numpy to the minimum permitted version to avoid compatibility issues.
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.18.5 scipy==1.5.4 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install numpy==1.18.5 scipy==1.5.4 setuptools wheel six auditwheel
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.9.0 && pip install numpy==1.19.4 scipy==1.5.4 setuptools wheel six auditwheel
 
 # Change the CUDA version if it doesn't match the installed version.
