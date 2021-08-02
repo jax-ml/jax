@@ -254,12 +254,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           jnp.tril(result_jax), result_tf, atol=tol, err_msg=err_msg)
 
     return [
-        # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
-        Jax2TfLimitation(
-            "function not compilable",
-            dtypes=[np.complex64, np.complex128],
-            devices=("cpu", "gpu"),
-            modes="compiled"),
         # TODO: very high tolerance
         custom_numeric(
             dtypes=[np.float32, np.complex64],
@@ -812,7 +806,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
           err_msg=err_msg)
 
     return [
-        missing_tf_kernel(dtypes=[np.complex64], devices="tpu"),
         custom_numeric(
             dtypes=[np.float32, np.complex64], devices="tpu", tol=0.1),
         custom_numeric(
@@ -937,21 +930,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def scatter_add(cls, harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[np.complex64],
-            devices="tpu",
-        )
-    ]
+    return []
 
   @classmethod
   def scatter_mul(cls, harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[np.complex64],
-            devices="tpu",
-        ),
-    ]
+    return []
 
   @classmethod
   def select_and_gather_add(cls, harness):
@@ -1067,10 +1050,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             first_arr_jax[~mask_jax], first_arr_tf[~mask_tf], err_msg=err_msg)
 
     return [
-        missing_tf_kernel(
-            dtypes=[np.uint64, np.int64],
-            devices=("cpu", "gpu"),
-            modes="compiled"),
         custom_numeric(
             dtypes=[np.float16, dtypes.bfloat16, np.float32, np.float64],
             custom_assert=custom_assert,

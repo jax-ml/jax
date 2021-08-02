@@ -1,11 +1,11 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2021-07-05* (YYYY-MM-DD)
+*Last generated on: 2021-07-31* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 2667 test harnesses to test
-the implementation of 121 numeric JAX primitives.
+We use a set of 2809 test harnesses to test
+the implementation of 126 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
 The following table shows the dtypes at which primitives
@@ -46,8 +46,8 @@ be updated.
 | add | 16 | inexact, integer | bool |
 | add_any | 14 | inexact, integer | bool |
 | and | 11 | bool, integer | inexact |
-| argmax | 22 | bool, floating, integer | complex |
-| argmin | 22 | bool, floating, integer | complex |
+| argmax | 64 | bool, floating, integer | complex |
+| argmin | 64 | bool, floating, integer | complex |
 | asin | 6 | inexact | bool, integer |
 | asinh | 6 | inexact | bool, integer |
 | atan | 6 | inexact | bool, integer |
@@ -56,8 +56,8 @@ be updated.
 | bessel_i0e | 4 | floating | bool, complex, integer |
 | bessel_i1e | 4 | floating | bool, complex, integer |
 | bitcast_convert_type | 41 | all |  |
-| broadcast | 17 | all |  |
 | broadcast_in_dim | 19 | all |  |
+| cbrt | 4 | floating | bool, complex, integer |
 | ceil | 4 | floating | bool, complex, integer |
 | cholesky | 30 | inexact | bool, integer |
 | clamp | 20 | all |  |
@@ -115,9 +115,13 @@ be updated.
 | population_count | 8 | integer | bool, inexact |
 | pow | 10 | inexact | bool, integer |
 | qr | 60 | inexact | bool, integer |
+| random_categorical | 12 | floating | bool, complex, integer |
 | random_gamma | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
+| random_randint | 12 | signed | bool, inexact, unsigned |
 | random_split | 5 | uint32 | all |
+| random_uniform | 12 | floating | bool, complex, integer |
 | real | 2 | complex | bool, floating, integer |
+| reduce | 33 | all |  |
 | reduce_and | 1 | bool | inexact, integer |
 | reduce_max | 15 | all |  |
 | reduce_min | 15 | all |  |
@@ -159,6 +163,7 @@ be updated.
 | top_k | 15 | bool, floating, integer | complex |
 | transpose | 17 | all |  |
 | triangular_solve | 26 | inexact | bool, integer |
+| tridiagonal_solve | 2 | float32, float64 | bfloat16, bool, complex, float16, integer |
 | xor | 11 | bool, integer | inexact |
 | zeros_like | 15 | all |  |
 
@@ -197,8 +202,6 @@ and search for "limitation".
 |lu|unimplemented|bfloat16, float16|cpu, gpu, tpu|
 |qr|unimplemented|bfloat16, float16|cpu, gpu|
 |scatter_add|unimplemented|bool|cpu, gpu, tpu|
-|scatter_max|unimplemented|complex64|tpu|
-|scatter_min|unimplemented|complex64|tpu|
 |scatter_mul|unimplemented|bool|cpu, gpu, tpu|
 |select_and_scatter_add|works only for 2 or more inactive dimensions|all|tpu|
 |svd|complex not implemented. Works in JAX for CPU and GPU with custom kernels|complex|tpu|
