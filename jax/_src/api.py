@@ -21,6 +21,8 @@ tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
 
+# pytype: skip-file
+
 # flake8: noqa: F401
 import collections
 import functools
