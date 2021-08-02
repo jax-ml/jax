@@ -45,6 +45,6 @@ build_jax () {
 
 
 rm -fr dist
-build_jax 3.7.2 1.17.3 1.2.0
-build_jax 3.8.0 1.17.3 1.3.2
+build_jax 3.7.2 1.18.5 1.2.0
+build_jax 3.8.0 1.18.5 1.3.2
 build_jax 3.9.0 1.19.4 1.5.4
