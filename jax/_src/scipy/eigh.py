@@ -21,6 +21,32 @@ import jax.scipy as jsp
 from jax import lax
 
 
+def _fill_diagonal(X, vals):
+  return jax.ops.index_update(X, jnp.diag_indices(X.shape[0]), vals)
+
+
+def _shift_diagonal(X, val):
+  return _fill_diagonal(X, X.diagonal() + val)
+
+
+def _gershgorin(H):
+  """ Computes bounds on the smalles and largest magnitude eigenvalues
+  of H using the "Gershgorin circle theorem".
+  """
+  H_diag = jnp.diag(H)
+  diag_elements = jnp.diag_indices_from(H)
+  abs_H_diag0 = jnp.abs(H.at[diag_elements].set(0.))
+  col_sums = jnp.sum(abs_H_diag0, axis=0)
+  row_sums = jnp.sum(abs_H_diag0, axis=1)
+  row_min = jnp.min(H_diag - row_sums)
+  row_max = jnp.max(H_diag + row_sums)
+  col_min = jnp.min(H_diag - col_sums)
+  col_max = jnp.max(H_diag + col_sums)
+  min_est = jnp.max(jnp.array([row_min, col_min]))
+  max_est = jnp.min(jnp.array([row_max, col_max]))
+  return min_est, max_est
+
+
 def _similarity_transform(
     matrix_in, matrix_out, precision=lax.Precision.HIGHEST):
   """ Returns matrix_out.conj().T @ matrix_in @ matrix_out, done in
@@ -28,6 +54,62 @@ def _similarity_transform(
   """
   out = jnp.dot(matrix_out.conj().T, matrix_in, precision=precision)
   return jnp.dot(out, matrix_out, precision=precision)
+
+
+def _canonically_purify_initial_guess(H, rank):
+  lambda_min, lambda_max = _gershgorin(H)
+  N = H.shape[0]
+  mu = jnp.trace(H) / N
+  theta = rank / N
+  beta = theta / (lambda_max - mu)
+  beta_bar = (1 - theta) / (mu - lambda_min)
+  beta_2 = jnp.where(beta <= beta_bar, x=beta, y=beta_bar)
+  beta_2_bar = jnp.where(beta >= beta_bar, x=beta, y=beta_bar)
+
+  P0 = _shift_diagonal(-beta_2 * H, theta + beta_2 * mu)
+  P0_bar = _shift_diagonal(-beta_2_bar * H, theta + beta_2_bar * mu)
+  guess = 0.5 * (P0 + P0_bar)
+  perturbation = (rank - jnp.trace(guess)) / N
+  return _shift_diagonal(guess, perturbation)
+
+
+def _canonically_purify(H, rank, maxiter=200):
+  """ Computes an orthogonal projector into the eigenspace of `H`'s
+  `rank` most negative eigenpairs.
+
+  Args:
+    H: The Hermitian matrix to be purified.
+    rank: Rank of the projector to compute.
+    maxiter: Terminate iteration here even if unconverged.
+  Returns:
+    P: The orthogonal projector.
+  """
+  N = H.shape[0]
+  tol = jnp.finfo(H.dtype).eps * N / 2
+
+  def _keep_purifying(carry):
+    _, j, err = carry
+    still_going = j < maxiter
+    unconverged = err > tol
+    return jnp.logical_and(still_going, unconverged)[0]
+
+  def _purify(carry):
+    P, j, _ = carry
+    proj_2bar = -1.0 * _shift_diagonal(P, -1.)
+    proj_2bar = jnp.dot(P, proj_2bar, precision=lax.Precision.HIGHEST)
+    proj_3bar = jnp.dot(P, proj_2bar, precision=lax.Precision.HIGHEST)
+    tr_proj_2bar = jnp.abs(jnp.trace(proj_2bar))
+    tr_proj_2bar = jnp.where(tol > tr_proj_2bar, x=tol, y=tr_proj_2bar)
+    tr_proj_3bar = jnp.trace(proj_3bar)
+    coef = tr_proj_3bar / tr_proj_2bar
+    P += 2 * (proj_3bar - coef * proj_2bar)
+    return P, j + 1, err
+
+  P = _canonically_purify_initial_guess(H, rank)
+  j = jnp.zeros(1, dtype=jnp.int32)
+  err = 2.0 * tol
+  P, _, _ = lax.while_loop(_keep_purifying, _purify, (P, j, err))
+  return P
 
 
 def _projector_subspace(P, H, rank, maxiter=2):
@@ -87,23 +169,30 @@ def _projector_subspace(P, H, rank, maxiter=2):
   return V1, V2
 
 
-@jax.partial(jax.jit, static_argnums=(3, 4))
-def _split_spectrum_jittable(P, H, V0, rank, precision):
-  """ The jittable portion of `split_spectrum`. At this point the sizes of the
-  relavant matrix blocks have been concretized.
+def _split_spectrum(H, V0, precision):
+  """ The `N x N` Hermitian matrix `H` is split into two matrices `Hm`
+  `Hp`, respectively sharing its eigenspaces beneath and above
+  its `N // 2`th eigenvalue.
+
+  Returns, in addition, `Vm` and `Vp`, isometries such that
+  `Hi = Vi.conj().T @ H @ Vi`. If `V0` is not None, `V0 @ Vi` are
+  returned instead; this allows the overall isometries mapping from
+  an initial input matrix to progressively smaller blocks to be formed.
 
   Args:
-    P: Projection matrix.
-    H: Matrix to be projected.
-    V0: Accumulates the isometries into the projected subspaces.
-    rank: Rank of P.
-    precision: The matmul precision.
+    H: The Hermitian matrix to split.
+    V0: Matrix of isometries to be updated.
+    precision: TPU matmul precision.
   Returns:
-    H1, V1: Projection of H into the column space of P, and the accumulated
-            isometry performing that projection.
-    H2, V2: Projection of H into the null space of P, and the accumulated
-            isometry performing that projection.
+    Hm: A Hermitian matrix sharing the eigenvalues of `H` beneath
+      the `N // 2`th.
+    Vm: An isometry from the input space of `V0` to `Hm`.
+    Hp: A Hermitian matrix sharing the eigenvalues of `H` above
+      the `N // 2`th.
+    Vp: An isometry from the input space of `V0` to `Hp`.
   """
+  rank = H.shape[1] // 2
+  P = _canonically_purify(H, rank)
   Vm, Vp = _projector_subspace(P, H, rank)
   Hm = _similarity_transform(H, Vm, precision)
   Hp = _similarity_transform(H, Vp, precision)
@@ -113,42 +202,7 @@ def _split_spectrum_jittable(P, H, V0, rank, precision):
   return Hm, Vm, Hp, Vp
 
 
-def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
-  """ The Hermitian matrix `H` is split into two matrices `Hm`
-  `Hp`, respectively sharing its eigenspaces beneath and above
-  its `split_point`th eigenvalue.
-
-  Returns, in addition, `Vm` and `Vp`, isometries such that
-  `Hi = Vi.conj().T @ H @ Vi`. If `V0` is not None, `V0 @ Vi` are
-  returned instead; this allows the overall isometries mapping from
-  an initial input matrix to progressively smaller blocks to be formed.
-
-  Args:
-    H: The Hermitian matrix to split.
-    split_point: The eigenvalue to split along.
-    V0: Matrix of isometries to be updated.
-    precision: TPU matmul precision.
-  Returns:
-    Hm: A Hermitian matrix sharing the eigenvalues of `H` beneath
-      `split_point`.
-    Vm: An isometry from the input space of `V0` to `Hm`.
-    Hp: A Hermitian matrix sharing the eigenvalues of `H` above
-      `split_point`.
-    Vp: An isometry from the input space of `V0` to `Hp`.
-  """
-  def _fill_diagonal(X, vals):
-    return jax.ops.index_update(X, jnp.diag_indices(X.shape[0]), vals)
-
-  H_shift = _fill_diagonal(H, H.diagonal() - split_point)
-  U, _ = jsp.linalg.polar_unitary(H_shift)
-  P = -0.5 * _fill_diagonal(U, U.diagonal() - 1.)
-  rank = jnp.round(jnp.trace(P)).astype(jnp.int32)
-  rank = int(rank)
-  return _split_spectrum_jittable(P, H, V0, rank, precision)
-
-
-def _eigh_work(
-    H, V=None, precision=lax.Precision.HIGHEST, termination_size=128):
+def _eigh_work(H, V, precision, termination_size):
   """ The main work loop performing the symmetric eigendecomposition of H.
   Each step recursively computes a projector into the space of eigenvalues
   above jnp.mean(jnp.diag(H)). The result of the projections into and out of
@@ -156,9 +210,6 @@ def _eigh_work(
   This is performed recursively until the projections have size 1, and thus
   store an eigenvalue of the original input; the corresponding isometry is
   the related eigenvector. The results are then composed.
-
-  This function cannot be Jitted because the internal split_spectrum cannot
-  be.
 
   Args:
     H: The Hermitian input.
@@ -174,12 +225,9 @@ def _eigh_work(
       evecs = jnp.dot(V, evecs, precision=precision)
     return evals, evecs
 
-  split_point = jnp.median(jnp.diag(H))  # TODO: Improve this?
-  Hm, Vm, Hp, Vp = split_spectrum(H, split_point, V0=V, precision=precision)
-  Hm, Vm = _eigh_work(
-    Hm, V=Vm, precision=precision, termination_size=termination_size)
-  Hp, Vp = _eigh_work(
-    Hp, V=Vp, precision=precision, termination_size=termination_size)
+  Hm, Vm, Hp, Vp = _split_spectrum(H, V, precision)
+  Hm, Vm = _eigh_work(Hm, Vm, precision, termination_size)
+  Hp, Vp = _eigh_work(Hp, Vp, precision, termination_size)
 
   if Hm.ndim != 1 or Hp.ndim != 1:
     raise ValueError(f"One of Hm.ndim={Hm.ndim} or Hp.ndim={Hp.ndim} != 1 ",
@@ -187,6 +235,24 @@ def _eigh_work(
 
   evals = jnp.hstack((Hm, Hp))
   evecs = jnp.hstack((Vm, Vp))
+  return evals, evecs
+
+
+@jax.partial(jax.jit, static_argnums=(1, 2, 3))
+def _eigh(H, precision, symmetrize, termination_size):
+  nrows, ncols = H.shape
+  if nrows != ncols:
+    raise TypeError(f"Input H of shape {H.shape} must be square.")
+  if symmetrize:
+    H = 0.5 * (H + H.conj().T)
+
+  if ncols <= termination_size:
+    return jnp.linalg.eigh(H)
+
+  evals, evecs = _eigh_work(H, None, precision, termination_size)
+  sort_idxs = jnp.argsort(evals)
+  evals = evals[sort_idxs]
+  evecs = evecs[:, sort_idxs]
   return evals, evecs
 
 
@@ -205,33 +271,28 @@ def eigh(
       of `H` corresponding to `vals[i]`. We have `H @ vecs = vals * vecs` up
       to numerical error.
   """
-  nrows, ncols = H.shape
-  if nrows != ncols:
-    raise TypeError(f"Input H of shape {H.shape} must be square.")
-
-  if ncols <= termination_size:
-    return jnp.linalg.eigh(H)
-
-  evals, evecs = _eigh_work(H, precision=precision)
-  sort_idxs = jnp.argsort(evals)
-  evals = evals[sort_idxs]
-  evecs = evecs[:, sort_idxs]
-  return evals, evecs
+  return _eigh(H, precision, symmetrize, termination_size)
 
 
-def svd(A, precision=lax.Precision.HIGHEST):
+@jax.partial(jax.jit, static_argnums=(1, 2))
+def _svd(A, precision, termination_size):
+  Up, H = jsp.linalg.polar(A)
+  S, V = _eigh(H, precision, False, termination_size)
+  U = jnp.dot(Up, V, precision=precision)
+  return U, S, V.conj().T
+
+
+def svd(A, precision=lax.Precision.HIGHEST, termination_size=128):
   """ Computes an SVD of `A`.
 
   Args:
     A: The `m` by `n` input matrix.
     precision: TPU matmul precision.
+    termination_size: Recursion ends once the blocks reach this linear size.
   Returns:
     U: An `m` by `m` unitary matrix of `A`'s left singular vectors.
     S: A length-`min(m, n)` vector of `A`'s singular values.
     V_dag: An `n` by `n` unitary matrix of `A`'s conjugate transposed
       right singular vectors.
   """
-  Up, H = jsp.linalg.polar(A)
-  S, V = eigh(H, precision=precision)
-  U = jnp.dot(Up, V, precision=precision)
-  return U, S, V.conj().T
+  return _svd(A, precision, termination_size)
