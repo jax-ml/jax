@@ -5493,6 +5493,16 @@ GRAD_SPECIAL_VALUE_TEST_RECORDS = [
 ]
 
 class NumpyGradTests(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+    super().tearDown()
+
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix(
@@ -5502,6 +5512,7 @@ class NumpyGradTests(jtu.JaxTestCase):
         for shapes in itertools.combinations_with_replacement(nonempty_shapes, rec.nargs)
         for dtype in rec.dtypes)
       for rec in GRAD_TEST_RECORDS))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     rng = rng_factory(self.rng())
     tol = jtu.join_tolerance(tol, {np.float32: 1e-1, np.float64: 1e-3,
@@ -5567,6 +5578,7 @@ class NumpyGradTests(jtu.JaxTestCase):
       _shapes_are_broadcast_compatible,
       itertools.combinations_with_replacement(nonempty_shapes, 2))
     for dtype in (np.complex128, )))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testGradLogaddexpComplex(self, shapes, dtype):
     rng = jtu.rand_default(self.rng())
     args = tuple(rng(shape, dtype) for shape in shapes)
@@ -5583,6 +5595,7 @@ class NumpyGradTests(jtu.JaxTestCase):
       _shapes_are_broadcast_compatible,
       itertools.combinations_with_replacement(nonempty_shapes, 2))
     for dtype in (np.complex128, )))
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testGradLogaddexp2Complex(self, shapes, dtype):
     rng = jtu.rand_default(self.rng())
     args = tuple(rng(shape, dtype) for shape in shapes)
@@ -5593,6 +5606,15 @@ class NumpyGradTests(jtu.JaxTestCase):
     check_grads(jnp.logaddexp2, args, 1, ["fwd", "rev"], tol, tol)
 
 class NumpySignaturesTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+    super().tearDown()
 
   def testWrappedSignaturesMatch(self):
     """Test that jax.numpy function signatures match numpy."""
@@ -5711,6 +5733,16 @@ def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:
 
 
 class NumpyUfuncTests(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+    super().tearDown()
+
   @parameterized.named_parameters(
     {"testcase_name": f"_{name}_{','.join(arg_dtypes)}",
      "name": name, "arg_dtypes": arg_dtypes}
@@ -5743,6 +5775,16 @@ class NumpyUfuncTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False, tol=1E-2)
 
 class NumpyDocTests(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+    super().tearDown()
+
   def test_lax_numpy_docstrings(self):
     # Test that docstring wrapping & transformation didn't fail.
 
