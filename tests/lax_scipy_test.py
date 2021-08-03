@@ -59,7 +59,7 @@ sides = ["right", "left"]
 methods = ["qdwh", "svd"]
 seeds = [1, 10]
 
-linear_sizes = [16, 128, 256]
+linear_sizes = [8,] #128, 256]
 
 
 def _initialize_polar_test(shape, n_zero_svs, degeneracy, geometric_spectrum,
@@ -544,13 +544,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
     for linear_size in linear_sizes
     for seed in seeds
-    for dtype in jtu.dtypes.floating))
+    for dtype in [jnp.float32, ]))
   def test_spectral_dac_eigh(self, linear_size, seed, dtype):
-    if jtu.device_under_test != "cpu":
-      raise unittest.SkipTest("Skip eigh off CPU for now.")
-    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
-      if jtu.device_under_test() != "cpu":
-        raise unittest.SkipTest("Skip half precision off CPU.")
 
     np.random.seed(seed)
     H = np.random.randn(linear_size, linear_size)
@@ -559,8 +554,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self.assertRaises(
         NotImplementedError, jax._src.scipy.eigh.eigh, H)
       return
-    evs, V = jax._src.scipy.eigh.eigh(H)
+    evs, V = jax._src.scipy.eigh.eigh(H, termination_size=2)
     ev_exp, eV_exp = jnp.linalg.eigh(H)
+    #guess = jax._src.scipy.eigh._canonically_purify_initial_guess(H, linear_size // 2)
+    #print(jnp.linalg.eigvalsh(guess))
+    #P1 = jax._src.scipy.eigh._canonically_purify(H, linear_size // 2, maxiter=4)
+    #print(jnp.linalg.eigvalsh(P1))
+    #print(jnp.trace(P1))
     HV = jnp.dot(H, V, precision=lax.Precision.HIGHEST)
     vV = evs * V
     eps = jnp.finfo(H.dtype).eps
@@ -576,12 +576,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       'linear_size': linear_size, 'seed': seed, 'dtype': dtype}
     for linear_size in linear_sizes
     for seed in seeds
-    for dtype in jtu.dtypes.floating))
+    for dtype in [jnp.float32, ]))
   def test_spectral_dac_svd(self, linear_size, seed, dtype):
-    if jnp.dtype(dtype).name in ("bfloat16", "float16"):
-      if jtu.device_under_test() != "cpu":
-        raise unittest.SkipTest("Skip half precision off CPU.")
-
     np.random.seed(seed)
     A = np.random.randn(linear_size, linear_size).astype(dtype)
     if jnp.dtype(dtype).name in ("bfloat16", "float16"):
