@@ -238,11 +238,7 @@ def _eigh_work(H, V, precision, termination_size):
   return evals, evecs
 
 
-<<<<<<< HEAD
 @jax.partial(jax.jit, static_argnums=(1, 2, 3))
-=======
-#@jax.partial(jax.jit, static_argnums=(1, 2, 3))
->>>>>>> 417b54f9ee95f519d427bc6cb65524afe3608f49
 def _eigh(H, precision, symmetrize, termination_size):
   nrows, ncols = H.shape
   if nrows != ncols:
@@ -278,11 +274,7 @@ def eigh(
   return _eigh(H, precision, symmetrize, termination_size)
 
 
-<<<<<<< HEAD
 @jax.partial(jax.jit, static_argnums=(1, 2))
-=======
-#@jax.partial(jax.jit, static_argnums=(1, 2))
->>>>>>> 417b54f9ee95f519d427bc6cb65524afe3608f49
 def _svd(A, precision, termination_size):
   Up, H = jsp.linalg.polar(A)
   S, V = _eigh(H, precision, False, termination_size)
