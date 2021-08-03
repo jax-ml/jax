@@ -25,6 +25,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
+import jax
 from jax._src import api
 from jax import dtypes
 from jax import numpy as jnp
@@ -427,6 +428,15 @@ MIXED_ADVANCED_INDEXING_TESTS = MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS + [
 class IndexingTest(jtu.JaxTestCase):
   """Tests for Numpy indexing translation rules."""
 
+  def setUp(self):
+    super().setUp()
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+    super().tearDown()
+
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}".format(
           name, jtu.format_shape_dtype_string( shape, dtype), indexer),
@@ -801,7 +811,8 @@ class IndexingTest(jtu.JaxTestCase):
     # Issue 2671: XLA error when indexing into dimension of size 0
     x = jnp.ones((2, 0))
     # The following work, even on axis 1 of size 0
-    _ = x[0, :] + x[0, None] + x[0, 1:] + x[0, 1:3:2]
+    with jax.numpy_rank_promotion('allow'):
+      _ = x[0, :] + x[0, None] + x[0, 1:] + x[0, 1:3:2]
 
     with self.assertRaisesRegex(IndexError,
                                 "index .* is out of bounds for axis .* with size 0"):
@@ -918,6 +929,15 @@ class UpdateOps(enum.Enum):
       return default_dtypes
 
 class IndexedUpdateTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+    super().tearDown()
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
