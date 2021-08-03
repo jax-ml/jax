@@ -220,14 +220,16 @@ def zeta(x, q=None):
   # precision ~ N, M
   N = M = dtype(8) if lax.dtype(a) == jnp.float32 else dtype(16)
   assert M <= len(_BERNOULLI_COEFS)
-  k = np.arange(N, dtype=N.dtype)
+  k = jnp.expand_dims(np.arange(N, dtype=N.dtype), tuple(range(a.ndim)))
   S = jnp.sum((a_ + k) ** -s_, -1)
   I = lax.div((a + N) ** (dtype(1) - s), s - dtype(1))
   T0 = (a + N) ** -s
-  s_over_a = (s_ + np.arange(2 * M, dtype=M.dtype)) / (a_ + N)
+  m = jnp.expand_dims(np.arange(2 * M, dtype=M.dtype), tuple(range(s.ndim)))
+  s_over_a = (s_ + m) / (a_ + N)
   T1 = jnp.cumprod(s_over_a, -1)[..., ::2]
   T1 = jnp.clip(T1, a_max=jnp.finfo(dtype).max)
-  coefs = np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype)
+  coefs = np.expand_dims(np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype),
+                         tuple(range(a.ndim)))
   T1 = T1 / coefs
   T = T0 * (dtype(0.5) + T1.sum(-1))
   return S + I + T
