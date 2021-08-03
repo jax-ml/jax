@@ -177,10 +177,10 @@ def multigammaln(a, d):
   constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d_),
                              lax.sub(d_, _constant_like(a, 1))),
                      lax.log(_constant_like(a, np.pi)))
+  b = lax.div(jnp.arange(d, dtype=d_.dtype), _constant_like(a, 2))
   res = jnp.sum(gammaln(jnp.expand_dims(a, axis=-1) -
-                        lax.div(jnp.arange(d, dtype=d_.dtype),
-                                _constant_like(a, 2))),
-               axis=-1)
+                        jnp.expand_dims(b, axis=tuple(range(a.ndim)))),
+                axis=-1)
   return res + constant
 
 

@@ -259,6 +259,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for shape in all_shapes
       for dtype in float_dtypes
       for d in [1, 2, 5]))
+  @jax.numpy_rank_promotion('raise')
   def testMultigammaln(self, shape, dtype, d):
     def scipy_fun(a):
       return osp_special.multigammaln(a, d)
