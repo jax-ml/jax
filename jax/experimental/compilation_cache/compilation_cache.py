@@ -27,7 +27,7 @@ def initialize_cache(path, max_cache_size_bytes=32 * 2**30):
        max_cache_sixe defaults to 32GiB.
     """
     global _cache
-    assert _cache == None, f"The cache path has already been initialized to {_cache}"
+    assert _cache == None, f"The cache path has already been initialized to {_cache._path}"
     _cache = FileSystemCache(path, max_cache_size_bytes)
     logging.warning(f"Initialized persistent compilation cache at {path}")
 

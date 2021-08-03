@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import os
+from jax.experimental.compilation_cache.cache_interface import CacheInterface
 import tempfile
 from typing import Optional
 import warnings
 
-class FileSystemCache:
+class FileSystemCache(CacheInterface):
 
   def __init__(self, path: str, max_cache_size_bytes=32 * 2**30):
     """Sets up a cache at 'path'. Cached values may already be present."""
@@ -63,7 +64,6 @@ class FileSystemCache:
     if new_file_size >= self._max_cache_size_bytes:
       return False
 
-    #TODO(colemanliyah): Refactor this section so the whole directory doesn't need to be checked
     while new_file_size + self._get_cache_directory_size() > self._max_cache_size_bytes:
       last_time = float('inf')
       file_to_delete = None
