@@ -854,20 +854,6 @@ class JaxTestLoader(absltest.TestLoader):
     return names
 
 
-def disable_implicit_rank_promotion(test_method):
-  """A decorator for test methods to raise error on implicit rank promotion."""
-  @functools.wraps(test_method)
-  def test_method_wrapper(self, *args, **kwargs):
-    try:
-      prev_flag = config.jax_numpy_rank_promotion
-      FLAGS.jax_numpy_rank_promotion = "raise"
-      return test_method(self, *args, **kwargs)
-    finally:
-      FLAGS.jax_numpy_rank_promotion = prev_flag
-
-  return test_method_wrapper
-
-
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
 
