@@ -1163,6 +1163,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda x: lax_control_flow.cummax(x, axis=1, reverse=False),
                   [RandArg((3, 4, 5), _f32)],
                   poly_axes=[0]),
+    _make_harness("delta", "0",
+                  lambda x: lax._delta(_f32, x.shape, axes=(0, 1)),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
     _make_harness("dot_general", "",
                   lambda lhs, rhs: lax.dot_general(lhs, rhs,
                                                    dimension_numbers=(((2,), (1,)), ((0,), (0,)))),
@@ -1264,7 +1268,14 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   poly_axes=[1, (0, 1)],
                   expect_error=(core.InconclusiveDimensionOperation,
                                 "Dimension polynomial comparison 'b1' == 'b0' is inconclusive")),
-
+    _make_harness("eye", "N=poly_M=None",
+                  lambda x: jnp.eye(x.shape[0]),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+    _make_harness("eye", "N=poly_M=poly",
+                  lambda x: jnp.eye(x.shape[0], M=x.shape[0] + 2),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
     # operand is non-poly, index is poly
     _make_harness("getitem", "op=static_idx=poly",
                   lambda a, i: a[i],
@@ -1430,7 +1441,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   jnp.squeeze,
                   [RandArg((4, 1, 1), _f32), StaticArg((1, 2))],
                   poly_axes=[0]),
-
     _make_harness("squeeze", "error",
                   jnp.squeeze,
                   [RandArg((3, 33), _f32), StaticArg(-1)],
@@ -1452,6 +1462,14 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   # The repetitions are polys
                   lambda x: jnp.tile(x, (1, x.shape[0])),
                   [RandArg((4, 2), _f32)],
+                  poly_axes=[0]),
+    _make_harness("tri", "N=poly_M=None",
+                  lambda x: jnp.tri(x.shape[0]),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+    _make_harness("tri", "N=poly_M=poly",
+                  lambda x: jnp.tri(x.shape[0], M=x.shape[0] + 2),
+                  [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
     [
         _make_harness("var",
@@ -1600,7 +1618,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="broadcast_in_dim_poly_axes"
+      #one_containing="delta_0_poly_axes=[0]"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())

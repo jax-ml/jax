@@ -1415,29 +1415,42 @@ def _canonicalize_dimension(dim: DimSize) -> DimSize:
   else:
     return operator.index(dim)
 
-def canonicalize_shape(shape: Shape) -> Shape:
+def canonicalize_shape(shape: Shape, context: str="") -> Shape:
   """Canonicalizes and checks for errors in a user-provided shape value.
 
   Args:
     shape: a Python value that represents a shape.
 
   Returns:
-    A tuple of integers.
+    A tuple of canonical dimension values.
   """
   try:
     return tuple(map(_canonicalize_dimension, shape))
   except TypeError:
     pass
-  raise _invalid_shape_error(shape)
+  raise _invalid_shape_error(shape, context)
 
-def _invalid_shape_error(shape: Shape):
+def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
+  """Canonicalizes and checks for errors in a user-provided shape dimension value.
+
+  Args:
+    f: a Python value that represents a dimension.
+
+  Returns:
+    A canonical dimension value.
+  """
+  return canonicalize_shape((d,), context)[0]
+
+def _invalid_shape_error(shape: Shape, context: str=""):
   msg = ("Shapes must be 1D sequences of concrete values of integer type, "
-         "got {}.")
+         f"got {shape}.")
+  if context:
+    msg += f" {context}."
   if any(isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
          and not isinstance(get_aval(x), ConcreteArray) for x in shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
-  return TypeError(msg.format(shape))
+  return TypeError(msg)
 
 # ------------------- Named shapes -------------------
 

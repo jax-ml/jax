@@ -1640,16 +1640,14 @@ def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
 
 def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
-  N, M = tuple(map(int, shape))
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
-  bool_eye = eq(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
-                broadcasted_iota(np.int32, (N, M), 1))
+  bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
+                broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False)
 
 def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
-  shape = tuple(map(int, shape))
   axes = tuple(map(int, axes))
   dtype = dtypes.canonicalize_dtype(dtype)
   base_shape = tuple(np.take(shape, axes))  # type: ignore[arg-type]
@@ -1662,11 +1660,10 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
 
 def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
-  N, M = tuple(map(int, shape))
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
-  bool_tri = ge(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
-                broadcasted_iota(np.int32, (N, M), 1))
+  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
+                broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
 
 def stop_gradient(x):
