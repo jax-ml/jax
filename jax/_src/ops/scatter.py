@@ -64,7 +64,7 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
   y = jnp.asarray(y)
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
-  treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx)
+  treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx, x.shape)
   return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
                        indices_are_sorted, unique_indices, normalize_indices)
 

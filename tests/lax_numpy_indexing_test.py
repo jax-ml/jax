@@ -833,6 +833,25 @@ class IndexingTest(jtu.JaxTestCase):
     expected =  np.array([-1])[np.array([False])]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testBooleanIndexingShapeMismatch(self):
+    # Regression test for https://github.com/google/jax/issues/7329
+    x = jnp.arange(4)
+    idx = jnp.array([True, False])
+    with self.assertRaisesRegex(IndexError, "boolean index did not match shape.*"):
+      x[idx]
+
+  def testNontrivialBooleanIndexing(self):
+    # Test nontrivial corner case in boolean indexing shape validation
+    rng = jtu.rand_default(self.rng())
+    index = (rng((2, 3), np.bool_), rng((6,), np.bool_))
+
+    args_maker = lambda: [rng((2, 3, 6), np.int32)]
+    np_fun = lambda x: np.asarray(x)[index]
+    jnp_fun = lambda x: jnp.asarray(x)[index]
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testFloatIndexingError(self):
     BAD_INDEX_TYPE_ERROR = "Indexer must have integer or boolean type, got indexer with type"
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
