@@ -3552,6 +3552,23 @@ def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision,
                          precision_config=_precision_config(precision),
                          preferred_element_type=preferred_element_type)
 
+def _dot_general_cpu_translation_rule(c, lhs, rhs, *, dimension_numbers, precision,
+                                  preferred_element_type: Optional[DType]):
+  if preferred_element_type is not None:
+    preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
+
+  # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
+  if c.get_shape(lhs).numpy_dtype() == np.float16:
+    lhs = xops.ConvertElementType(lhs, xla_client.dtype_to_etype(np.float32))
+    rhs = xops.ConvertElementType(rhs, xla_client.dtype_to_etype(np.float32))
+    preferred_element_type = (preferred_element_type or
+                              xla_client.dtype_to_etype(np.float16))
+
+  return xops.DotGeneral(lhs, rhs,
+                         xc.make_dot_dimension_numbers(dimension_numbers),
+                         precision_config=_precision_config(precision),
+                         preferred_element_type=preferred_element_type)
+
 def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
                               precision,
                               preferred_element_type: Optional[DType]):
@@ -3572,6 +3589,9 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
+xla.backend_specific_translations["cpu"][dot_general_p] = \
+  _dot_general_cpu_translation_rule
+
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
   _check_shapelike('broadcast_in_dim', 'shape', shape)
