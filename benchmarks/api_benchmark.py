@@ -208,6 +208,17 @@ def pmap_trivial_2_devices(state):
 
 @google_benchmark.register
 @required_devices(8)
+def pmap_trivial_dispatch_8_devices(state):
+  f = jax.pmap(swap)
+  a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
+           jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
+
+  while state:
+    a, b = f(a, b)
+
+
+@google_benchmark.register
+@required_devices(8)
 def pmap_trivial_8_devices(state):
   f = jax.pmap(swap)
   a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
@@ -229,6 +240,17 @@ def pmap_simple_2_devices(state):
     c, d = f(a, b)
     c.block_until_ready()
     d.block_until_ready()
+
+
+@google_benchmark.register
+@required_devices(8)
+def pmap_simple_dispatch_8_devices(state):
+  f = jax.pmap(lambda a, b: (a + b, a - b))
+  a, b = f(jnp.array([1, 2, 3, 4, 5, 6, 7, 8]),
+           jnp.array([2, 3, 4, 5, 6, 7, 8, 9]))
+
+  while state:
+    a, b = f(a, b)
 
 
 @google_benchmark.register
