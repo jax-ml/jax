@@ -2400,7 +2400,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     raise ValueError(f"len(shards) = {len(shards)} must equal "
                      f"len(devices) = {len(devices)}.")
 
-  def _device_put_sharded(*xs) -> pxla.ShardedDeviceArray:
+  def _device_put_sharded(*xs):
     avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs]
     if not all(a1 == a2 for a1, a2 in zip(avals[:-1], avals[1:])):
       a1, a2 = next((a1, a2) for a1, a2 in zip(avals[:-1], avals[1:])
@@ -2409,7 +2409,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
     buffers = [buf for x, d in zip(xs, devices) for buf in xla.device_put(x, d)]
-    return pxla.ShardedDeviceArray(stacked_aval, buffers)
+    return pxla.make_sharded_device_array(stacked_aval, None, buffers)
 
   return tree_multimap(_device_put_sharded, *shards)
 
@@ -2446,13 +2446,13 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
   if not isinstance(devices, Sequence) or not devices:
     raise ValueError("`devices` argument to `device_put_replicated must be "
                      "a non-empty sequence.")
-  def _device_put_replicated(x) -> pxla.ShardedDeviceArray:
+  def _device_put_replicated(x):
     aval = core.unmapped_aval(len(devices), 0,
                               core.raise_to_shaped(core.get_aval(x)))
     assert isinstance(aval, core.ShapedArray) and aval._num_buffers == 1
     buf, = xla.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
-    return pxla.ShardedDeviceArray(aval, [buf, *rest_bufs])
+    return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
   return tree_map(_device_put_replicated, x)
 
 
