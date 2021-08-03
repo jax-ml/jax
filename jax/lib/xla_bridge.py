@@ -148,9 +148,10 @@ def _make_tpu_driver_client():
 def tpu_client_timer_callback(timer_secs: float):
   def _log_warning():
     warnings.warn(
-      (f'TPU backend initialization is taking more than {timer_secs} seconds. '
+      f'TPU backend initialization is taking more than {timer_secs} seconds. '
       'Did you run your code on all TPU hosts? '
-      'See https://jax.readthedocs.io/en/latest/multi_process.html for more information.'))
+      'See https://jax.readthedocs.io/en/latest/multi_process.html '
+      'for more information.')
 
   # Will log a warning after `timer_secs`.
   t = threading.Timer(timer_secs, _log_warning)
@@ -189,8 +190,8 @@ register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
 register_backend_factory('gpu', xla_client.make_gpu_client,
                          priority=200)
-register_backend_factory('tpu', partial(tpu_client_timer_callback, timer=60.0),
-                         priority=300)
+register_backend_factory(
+  'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
 
 _default_backend = None
 _backends = None
