@@ -18,6 +18,7 @@ Subpackages
     jax.ops
     jax.random
     jax.tree_util
+    jax.flatten_util
     jax.dlpack
     jax.profiler
 
