@@ -383,7 +383,8 @@ class MaskingTest(jtu.JaxTestCase):
 
     expected = grad(lambda W: rnn_reference(W, xs[:4], y))(W)
 
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol={np.float64: 1e-14, np.float32: 1e-5})
 
   def test_ragged_batched_rnn(self):
     n = 3

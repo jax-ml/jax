@@ -1440,7 +1440,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.linearize(lambda c, as_:                scan(f, c, as_), c, as_)[1](c, as_)
     expected = api.linearize(lambda c, as_: scan_reference(f, c, as_), c, as_)[1](c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False,
-                        rtol={np.float64: 1e-14})
+                        rtol={np.float64: 1e-14, np.float32: 1e-4})
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
