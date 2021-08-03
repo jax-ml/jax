@@ -187,7 +187,7 @@ single-core worker.
 # Type checking
 
 We use `mypy` to check the type hints. To check types locally the same way
-as Travis checks them:
+as the CI checks them:
 
 ```
 pip install mypy
@@ -266,7 +266,7 @@ desired formats, and which the `jupytext --sync` command recognizes when invoked
 
 ### Notebooks within the sphinx build
 
-Some of the notebooks are built automatically as part of the Travis pre-submit checks and
+Some of the notebooks are built automatically as part of the pre-submit checks and
 as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
 The build will fail if cells raise errors. If the errors are intentional, you can either catch them,
 or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/google/jax/pull/2402/files)).
