@@ -517,9 +517,11 @@ class PmapTest(jtu.JaxTestCase):
     y = f(x)
     self.assertIsInstance(y, jnp.ndarray)
     self.assertIsInstance(y, pxla.ShardedDeviceArray)
+    self.assertIsInstance(y, jax.interpreters.xla.DeviceArray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
     z = f(y)
     self.assertIsInstance(z, pxla.ShardedDeviceArray)
+    self.assertIsInstance(z, jax.interpreters.xla.DeviceArray)
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can pass in a regular DeviceArray
@@ -532,7 +534,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can handle device movement on dispatch
-    y.device_buffers = y.device_buffers[::-1]
+    y = pxla.ShardedDeviceArray(y.aval, y.sharding_spec, y.device_buffers[::-1])
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
