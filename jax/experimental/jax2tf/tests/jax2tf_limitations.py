@@ -405,7 +405,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices="gpu",
             modes=("eager", "graph", "compiled"),
             enabled=(harness.params["preferred_element_type"] is not None),
-            skip_comparison=True)
+            skip_comparison=True),
+        # JAX performs float16 matmuls in float32 on CPU, so the JAX result
+        # may be more precise.
+        custom_numeric(dtypes=[np.float16], devices=["cpu"], tol=1e-2,
+                       modes=("eager", "graph", "compiled")),
     ]
 
   @classmethod
