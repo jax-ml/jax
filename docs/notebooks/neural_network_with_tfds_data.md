@@ -44,7 +44,7 @@ _Forked from_ `neural_network_and_data_loading.ipynb`
 
 Let's combine everything we showed in the [quickstart notebook](https://colab.research.google.com/github/google/jax/blob/main/notebooks/quickstart.ipynb) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use `tensorflow/datasets` data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library :P).
 
-Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for builidng our model.
+Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for building our model.
 
 ```{code-cell} ipython3
 :id: OksHydJDtbbI

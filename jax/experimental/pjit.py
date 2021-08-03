@@ -56,9 +56,9 @@ def pjit(fun: Callable,
   version of ``fun`` would not fit in a single device's memory, or to speed up
   ``fun`` by running each operation in parallel across multiple devices.
 
-  The partitioning over devices happens automatically based on
-  propagation of input partitioning specified in ``in_axis_resources`` and
-  output partitioning specified in ``out_axis_resources``. The resources
+  The partitioning over devices happens automatically based on the
+  propagation of the input partitioning specified in ``in_axis_resources`` and
+  the output partitioning specified in ``out_axis_resources``. The resources
   specified in those two arguments must refer to mesh axes, as defined by
   the :py:func:`jax.experimental.maps.mesh` context manager. Note that the mesh
   definition at ``pjit`` application time is ignored, and the returned function
@@ -84,7 +84,7 @@ def pjit(fun: Callable,
     mesh axis size, and outputs will be similarly sized according to the local
     mesh. ``fun`` will still be executed across *all* devices in the mesh,
     including those from other processes, and will be given a global view of the
-    data spread accross multiple processes as a single array. However, outside
+    data spread across multiple processes as a single array. However, outside
     of ``pjit`` every process only "sees" its local piece of the input and output,
     corresponding to its local sub-mesh.
 
@@ -140,7 +140,7 @@ def pjit(fun: Callable,
 
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation and
-    automatic partitioned by the mesh available at each call site.
+    automaticly partitioned by the mesh available at each call site.
 
   For example, a convolution operator can be automatically partitioned over
   an arbitrary set of devices by a single ```pjit`` application:

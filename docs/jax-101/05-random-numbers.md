@@ -140,7 +140,7 @@ The output of this code can only satisfy requirement #1 if we assume a specific 
 
 This doesn't seem to be a major issue in NumPy, as it is already enforced by Python, but it becomes an issue in JAX. 
 
-Making this code reproducible in JAX would require to enforce this specific order of execution. This would violate requirement #2, as JAX should be able to parallelize `bar` and `baz` when jitting as these functions don't actually depend on each other.
+Making this code reproducible in JAX would require enforcing this specific order of execution. This would violate requirement #2, as JAX should be able to parallelize `bar` and `baz` when jitting as these functions don't actually depend on each other.
 
 To avoid this issue, JAX does not use a global state. Instead, random functions explicitly consume the state, which is referred to as a `key` .
 

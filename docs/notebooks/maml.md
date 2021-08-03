@@ -31,10 +31,10 @@ Pedagogical tutorial for implementing Model-Agnostic Meta-Learning with JAX's aw
 In this notebook we'll go through:
 
 - how to take gradients, gradients of gradients.
-- how to fit a sinusoid function with a neural network (and do auto-batching with vmap)
-- how to implement MAML and check its numerics
+- how to fit a sinusoid function with a neural network (and do auto-batching with vmap).
+- how to implement MAML and check its numerics.
 - how to implement MAML for sinusoid task (single-task objective, batching task instances).
-- extending MAML to handle batching at the task-level
+- extending MAML to handle batching at the task-level.
 
 ```{code-cell} ipython3
 :id: zKVdo3FtgyhE
@@ -287,7 +287,7 @@ plt.legend()
 
 ## Batching Meta-Gradient Across Tasks
 
-Kind of does the job but not that great. Let's reduce the variance of gradients in outer loop by averaging across a batch of tasks (not just one task at a time). 
+Kind of does the job but not that great. Let's reduce the variance of the gradients in the outer loop by averaging across a batch of tasks (not just one task at a time). 
 
 vmap is awesome it enables nice handling of batching at two levels: inner-level "intra-task" batching, and outer level batching across tasks.
 

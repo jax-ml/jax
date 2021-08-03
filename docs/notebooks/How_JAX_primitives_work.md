@@ -49,7 +49,7 @@ one can define a new primitive that encapsulates the behavior of the function.
 Consider that we want to add to JAX support for a multiply-add function with three arguments, defined mathematically
 as "multiply_add(x, y, z) = x * y + z". 
 This function operates on 3 identically-shaped tensors of floating point 
-values and performs the opertions pointwise.
+values and performs the operations pointwise.
 
 +++ {"id": "HIJYIHNTD1yI"}
 
@@ -347,7 +347,7 @@ with expectNotImplementedError():
 
 JAX compilation works by compiling each primitive into a graph of XLA operations.
 
-This is biggest hurdle to adding new functionality to JAX, because the 
+This is the biggest hurdle to adding new functionality to JAX, because the 
 set of XLA operations is limited, and JAX already has pre-defined primitives
 for most of them. However, XLA includes a `CustomCall` operation that can be used to encapsulate arbitrary functionality defined using C++.
 
@@ -530,7 +530,7 @@ for the differentiation point, and abstract values for the tangents.
 Observe also that JAX uses the special abstract tangent value `Zero` for
 the tangent corresponding to the 3rd argument of `ma`. This reflects the 
 fact that we do not differentiate w.r.t. the 2nd argument to `square_add_prim`,
-which flow to 3rd argument to `multiply_add_prim`.
+which flows to the 3rd argument to `multiply_add_prim`.
 
 Observe also that during the abstract evaluation of the tangent we pass the 
 value 0.0 as the tangent for the 3rd argument. This is due to the use
@@ -630,7 +630,7 @@ def multiply_add_transpose(ct, x, y, z):
   w.r.t. tangents in multiply_add_value_and_jvp:
        output_tangent(xt, yt, zt) = multiply_add_prim(xt, y, multiply_add_prim(x, yt, zt))
   
-  Always one of the first two multiplicative arguments are constants.
+  Always one of the first two multiplicative arguments is a constant.
 
   Args:
       ct: the cotangent of the output of the primitive.
@@ -679,7 +679,7 @@ last use of `multiply_add_prim`: `multiply_add_prim(xt, y, ...)` where `y` is th
 #### JIT of reverse differentiation 
 
 Notice that the abstract evaluation of the `multiply_add_value_and_jvp` is using only
-abstract values, while in the absensce of JIT we used `ConcreteArray`.
+abstract values, while in the absence of JIT we used `ConcreteArray`.
 
 ```{code-cell} ipython3
 :id: FZ-JGbWZPq2-

@@ -274,7 +274,7 @@ assert (y == x.T).all()  # The first dimension was removed from x and then re-in
 
 +++ {"id": "8E7ISmwju0x1"}
 
-While this might seem like a handful at first, if you've seen code that uses `jnp.einsum` you are already familiar with this approach. The `einsum` function interprets an expression such as `nk,km->nm` assigning names (each letter is considered a separate name) to positional axes, performing necessary broadcasts and reductions, and finally putting back the results in positional axes, according to the order given by the right hand side of the `->` separator. While `einsum` never lets you interact with named axes directly, they do appear naturally in its implementation. `xmap` is a _generalized einsum_ because named axes are now first-class and you get to implement the function that can manipulate them.
+While this might seem like a handful at first, if you've seen code that uses `jnp.einsum` you are already familiar with this approach. The `einsum` function interprets an expression such as `nk,km->nm` assigning names (each letter is considered a separate name) to positional axes, performing necessary broadcasts and reductions, and finally putting back the results in positional axes, according to the order given by the right-hand side of the `->` separator. While `einsum` never lets you interact with named axes directly, they do appear naturally in its implementation. `xmap` is a _generalized einsum_ because named axes are now first-class and you get to implement the function that can manipulate them.
 
 Continuing this analogy, `xmap(my_func, ...)` from the above example is equivalent to `jnp.einsum('bx->xb')`. But of course not every `xmap`ped function will have an equivalent `einsum`.
 
@@ -375,7 +375,7 @@ No shape errors can occur when operating over named axes, because `xmap` enforce
 
 > While the rule for broadcasting named axes might seem like an arbitrary extension of the NumPy model, it is actually consistent with it.
 >
-> Broadcasting first looks for pairs of dimensions it considers as equivalent in its both operands. For all matched pairs, it asserts that both sizes are equal or one of them is 1. All unpaired dimensions are carried over to the result.
+> Broadcasting first looks for pairs of dimensions it considers as equivalent in both operands. For all matched pairs, it asserts that both sizes are equal or one of them is 1. All unpaired dimensions are carried over to the result.
 >
 > Now, in the positional world the way NumPy broadcasting chooses to form the pairs is by right-aligning the shapes. But our axes are named, so there is a straightforward way of finding equivalent axes: just check their names for equality!
 
@@ -420,7 +420,7 @@ positional_broadcast_and_reduce(jnp.arange(2, dtype=np.float32),
 
 Similarly to how we have extended reductions with support for named axes, we've also made it possible to contract over named axes using `jnp.einsum`.
 
-Operands and results still use a convention of one letter per positional axes, but now it is also possible to mention named axes in curly braces. For example `n{b,k}` implies that a value will have a single positional dimension `n` and named dimensions `b` and `k` (their order doesn't matter). Following the usual einsum semantics, any named axes that appears in inputs, but do not appear in an output will be contracted (summed after all multiplications are performed).
+Operands and results still use a convention of one letter per positional axis, but now it is also possible to mention named axes in curly braces. For example, `n{b,k}` implies that a value will have a single positional dimension `n` and named dimensions `b` and `k` (their order doesn't matter). Following the usual einsum semantics, any named axes that appear in inputs, but do not appear in an output will be contracted (summed after all multiplications are performed).
 
 It is acceptable to omit a named dimension from _all arguments and the result_ in which case it will be treated according to the usual broadcasting semantics. However, it is not acceptable to mention a named axis in one argument that has it in its named shape and skip it in another argument that also has it in its named shape. Of course, skipping it in the arguments that don't have it is required.
 
@@ -466,7 +466,7 @@ xmap(lambda x: lax.pshuffle(x, 'i', list(reversed(range(8)))),
 
 +++ {"id": "ZHoCsWkCEnKt"}
 
-## Parallelism suport
+## Parallelism support
 
 While the new programming paradigm can be nice at times, the killer feature of `xmap` is its ability to parallelize code over supercomputer-scale hardware meshes!
 
@@ -474,7 +474,7 @@ While the new programming paradigm can be nice at times, the killer feature of `
 
 In all the previous examples, we haven't said a word about parallelism and for a good reason. By default `xmap` doesn't perform any parallelization and vectorizes the computation in the same way `vmap` does (i.e. it still executes on a single device). To partition the computation over multiple accelerators we have to introduce one more concept: _resource axes_.
 
-The basic idea is that logical axes (the ones that appear in named shapes) assume that we have abundant hadware and memory, but before the program is to be executed, they have to be placed somewhere. The default (`vmap`-like) evaluation style pays a high memory cost on the deafult JAX device. By mapping logical axes to (one or more) resource axes through the `axis_resources` argument, we can control how `xmap` evaluates the computation.
+The basic idea is that logical axes (the ones that appear in named shapes) assume that we have abundant hardware and memory, but before the program is to be executed, they have to be placed somewhere. The default (`vmap`-like) evaluation style pays a high memory cost on the default JAX device. By mapping logical axes to (one or more) resource axes through the `axis_resources` argument, we can control how `xmap` evaluates the computation.
 
 ```{code-cell}
 :id: NnggOzOD8rl1
@@ -500,7 +500,7 @@ Both `local_matmul` and `distr_matmul` implement matrix multiplication, but `dis
 
 Well, it depends, but one good choice is... a hardware mesh!
 
-For our purposes a mesh is an nd-array of devices with named axes. But, beacuse NumPy doesn't support named axes (that's our extension!), the meshes are represented by a pair of an nd-array of JAX device objects (as obtained from `jax.devices()` or `jax.local_devices()`) and a tuple of resource axis names of length matching the rank of the array.
+For our purposes a mesh is an nd-array of devices with named axes. But, because NumPy doesn't support named axes (that's our extension!), the meshes are represented by a pair of an nd-array of JAX device objects (as obtained from `jax.devices()` or `jax.local_devices()`) and a tuple of resource axis names of length matching the rank of the array.
 
 +++ {"id": "x3EXj1TMwZtS"}
 
@@ -556,11 +556,11 @@ Anyway, the best part of it is that specifying `axis_resources` **never changes 
 
 ### Is my data replicated? Or partitioned? Where is it?
 
-Named axes also give us a neat way of reasoning about partitioning and replication. A value is partitioned over a mesh axis if an only if it has a named axis that has been mapped to that mesh axis in its shape. Otherwise, it will be replicated over all slices along that axis.
+Named axes also give us a neat way of reasoning about partitioning and replication. A value is partitioned over a mesh axis if and only if it has a named axis that has been mapped to that mesh axis in its shape. Otherwise, it will be replicated over all slices along that axis.
 
 For example, assume that we're in an `xmap` that had `axis_resources={'a': 'x', 'b': 'y'}` specified (i.e. we are running the computation over a 2D mesh with `x` and `y` axes with sizes 2 and 3 respectively). Then:
 * An array of type `f32[(5, 5), {}]` is completely replicated over the whole mesh. All devices store a local copy of the value.
-* An array of type `f32[(6,), {'a': 8}]` is partitioned over mesh axis `x`, beacuse it has `'a'` in its named shape, and `'a'` is mapped to `x`. It is replicated over mesh axis `y`. To put it differently, all devices in a slice of the mesh with the same `x` coordinate will store a local copy of a chunk of this array. But, mesh slices with different `x` coordinates will store different chunks of the data.
+* An array of type `f32[(6,), {'a': 8}]` is partitioned over mesh axis `x`, because it has `'a'` in its named shape, and `'a'` is mapped to `x`. It is replicated over mesh axis `y`. To put it differently, all devices in a slice of the mesh with the same `x` coordinate will store a local copy of a chunk of this array. But, mesh slices with different `x` coordinates will store different chunks of the data.
 * An array of type `f32[(), {'a': 8, 'c': 7}]` is partitioned just like in the previous case: split over the `x` mesh axis and replicated over the `y` axis. Named dimensions with no resources specified are no different than positional dimensions when considering partitioning, so `'c'` has no influence on it.
 * An array of type `f32[(), {'a': 8, 'b': 12}]` is completely partitioned over the whole mesh. Every device holds a distinct chunk of the data.
 

@@ -160,6 +160,6 @@ fix the issues you can push new commits to your branch.
 Once your PR has been reviewed, a JAX maintainer will mark it as `Pull Ready`. This
 will trigger a larger set of tests, including tests on GPU and TPU backends that are
 not available via standard GitHub CI. Detailed results of these tests are not publicly
-viweable, but the JAX mantainer assigned to your PR will communicate with you regarding
+viewable, but the JAX maintainer assigned to your PR will communicate with you regarding
 any failures these might uncover; it's not uncommon, for example, that numerical tests
 need different tolerances on TPU than on CPU.

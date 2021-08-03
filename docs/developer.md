@@ -85,7 +85,7 @@ You can either install Python using its
 [Windows installer](https://www.python.org/downloads/), or if you prefer, you
 can use [Anaconda](https://docs.anaconda.com/anaconda/install/windows/)
 or [Miniconda](https://docs.conda.io/en/latest/miniconda.html#windows-installers)
-to setup a Python environment.
+to set up a Python environment.
 
 Some targets of Bazel use bash utilities to do scripting, so [MSYS2](https://www.msys2.org)
 is needed. See [Installing Bazel on Windows](https://docs.bazel.build/versions/master/install-windows.html#installing-compilers-and-language-runtimes)
@@ -174,7 +174,7 @@ python tests/lax_numpy_test.py --test_targets="testPad"
 
 The Colab notebooks are tested for errors as part of the documentation build.
 
-Note that to run the full pmap tests on a (multi-core) CPU only machine, you
+Note that to run the full pmap tests on a (multi-core) CPU-only machine, you
 can run:
 
 ```
@@ -278,7 +278,7 @@ See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/main/docs
 
 ## Documentation building on readthedocs.io
 
-JAX's auto-generated documentations is at <https://jax.readthedocs.io/>.
+JAX's auto-generated documentation is at <https://jax.readthedocs.io/>.
 
 The documentation building is controlled for the entire project by the
 [readthedocs JAX settings](https://readthedocs.org/dashboard/jax). The current settings

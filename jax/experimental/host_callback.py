@@ -303,7 +303,7 @@ Using :func:`call` to call a TensorFlow function, with reverse-mode autodiff sup
 Another possible use for host computation is to invoke a library written for
 another framework, such as TensorFlow.
 In this case it becomes interesting to support JAX autodiff for host callbacks
-by defering to the autodiff mechanism in TensorFlow,
+by deferring to the autodiff mechanism in TensorFlow,
 using the :func:`jax.custom_vjp` mechanism.
 
 This is relatively easy to do, once one understands both the JAX custom VJP
@@ -363,7 +363,7 @@ error during the processing of the callback (whether raised by the user-code
 itself or due to a mismatch of the returned value and the expected return_shape)
 we send the device a "fake" result of shape ``int8[12345]``.
 This will make the device
-computation abort because the received data is different than then one that
+computation abort because the received data is different than the one that
 it expects. On CPU the runtime will crash with a distinctive error message:
 
 ```
@@ -416,25 +416,20 @@ for the C++ outfeed `receiver backend
 <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_.
 
   * ``TF_CPP_MIN_LOG_LEVEL=0``: will turn on INFO logging, needed for all below.
-  * ``TF_CPP_MIN_VLOG_LEVEL=3``: will turn make all VLOG logging up to level 3
-    behave like INFO logs. This may be too much, but you will see which
-    modules are logging relevant info, and then you can select which modules
-    to log from:
-  * `TF_CPP_VMODULE=<module_name>=3`` (the module name can be either C++ or
+  * ``TF_CPP_MIN_VLOG_LEVEL=3``: will make all VLOG logging up to level 3 behave
+    like INFO logs. This may be too much, but you will see which modules are
+    logging relevant info, and then you can select which modules to log from.
+  * ``TF_CPP_VMODULE=<module_name>=3`` (the module name can be either C++ or
     Python, without the extension).
 
 You should also use the ``--verbosity=2`` flag so that you see the logs
 from Python.
 
 For example, you can try to enable logging in the ``host_callback`` module:
-```
-TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=host_callback=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_tap_jit_simple
-```
+``TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=host_callback=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_tap_jit_simple``
 
 If you want to enable logging in lower-level implementation modules try:
-```
-TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed_receiver_py=3,outfeed_thunk=3,infeed_thunk=3,cpu_transfer_manager=3,cpu_runtime=3,xfeed_manager=3,pjrt_client=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_tap_jit_simple
-```
+``TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed_receiver_py=3,outfeed_thunk=3,infeed_thunk=3,cpu_transfer_manager=3,cpu_runtime=3,xfeed_manager=3,pjrt_client=3 python tests/host_callback_test.py --verbosity=2 HostCallbackIdTapTest.test_tap_jit_simple``
 
 (For bazel tests use --test_arg=--vmodule=...
 
@@ -1829,7 +1824,7 @@ def barrier_wait(logging_name: Optional[str] = None):
   """Blocks the calling thread until all current outfeed is processed.
 
   Waits until all callbacks from computations already running on all devices
-  has been received and processed by the Python callbacks. Raises
+  have been received and processed by the Python callbacks. Raises
   CallbackException if there were exceptions while processing the callbacks.
 
   This works by enqueueing a special tap computation to all devices to which
