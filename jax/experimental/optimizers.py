@@ -478,22 +478,24 @@ def sm3(step_size, momentum=0.9):
     return x[tuple(idx)]
 
   def init(x0):
+    x_shape = x0.shape
+    x0 = jnp.atleast_1d(x0)
     vs = [jnp.zeros(sz, dtype=x0.dtype) for sz in x0.shape]
-    return x0, jnp.zeros_like(x0), vs
+    return x0, jnp.zeros_like(x0), vs, x_shape
 
   def update(i, g, state):
-    x, m, vs = state
+    x, m, vs, x_shape = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
     accum = functools.reduce(jnp.minimum, vs) + jnp.square(g)
     accum_inv_sqrt = jnp.where(accum > 0, 1. / jnp.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
     vs = [accum.max(splice(range(x.ndim), j, [])) for j in range(x.ndim)]
-    return x, m, vs
+    return x, m, vs, x_shape
 
   def get_params(state):
-    x, _, _ = state
-    return x
+    x, _, _, x_shape = state
+    return x.reshape(x_shape)
 
   return init, update, get_params
 

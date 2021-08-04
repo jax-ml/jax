@@ -138,7 +138,14 @@ class OptimizerTests(jtu.JaxTestCase):
     x0 = (jnp.ones(2), jnp.ones((2, 2)))
     self._CheckOptimizer(optimizers.adagrad, loss, x0, num_iters, step_size)
 
-  def testSM3(self):
+  def testSM3Scalar(self):
+    def loss(x): return x**2
+    x0 = jnp.array(1.)
+    num_iters = 100
+    step_size = 0.1
+    self._CheckOptimizer(optimizers.sm3, loss, x0, num_iters, step_size)
+
+  def testSM3Vector(self):
     def loss(xs):
       x1, x2 = xs
       return jnp.sum(x1 ** 2) + jnp.sum(x2 ** 2)
