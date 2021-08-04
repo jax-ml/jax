@@ -39,6 +39,7 @@ Just-in-time compilation (:code:`jit`)
     device_put_sharded
     default_backend
     named_call
+    invertible
 
 .. _jax-grad:
 
@@ -94,6 +95,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: device_put_sharded
 .. autofunction:: default_backend
 .. autofunction:: named_call
+.. autofunction:: invertible
 
 .. autofunction:: grad
 .. autofunction:: value_and_grad
