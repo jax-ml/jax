@@ -6601,7 +6601,7 @@ def rng_bit_generator(key,
   (what is required to be an integer type) using the platform specific
   default algorithm or the one specified.
 
-  It provides direct acces to the RngBitGenerator primitive exposed by XLA
+  It provides direct access to the RngBitGenerator primitive exposed by XLA
   (https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator) for low
   level API access.
 
@@ -7016,7 +7016,7 @@ def _abstractify(x):
 
 
 def _check_user_dtype_supported(dtype, fun_name=None):
-  # Avoid using `dtype in [...]` becuase of numpy dtype equality overloading.
+  # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
   if isinstance(dtype, type) and dtype in {bool, int, float, complex}:
     return
   np_dtype = np.dtype(dtype)

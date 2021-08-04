@@ -1059,6 +1059,6 @@ The set of limitations is an over-approximation, in the sense that if XLA
 or TensorFlow improves and support more cases, no test will fail. Instead,
 periodically, we check for unnecessary limitations. We do this by uncommenting
 two assertions (in `tests/jax_primitives_coverage_test.py` and in
-`tests/tf_test_util.py`) and runing all the tests. With these assertions enabled
+`tests/tf_test_util.py`) and running all the tests. With these assertions enabled
 the tests will fail and point out unnecessary limitations. We remove limitations
 until the tests pass. Then we re-generate the documentation.

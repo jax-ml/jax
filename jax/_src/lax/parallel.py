@@ -974,7 +974,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
       concatenated.
     tiled: when ``False``, the chunks will be stacked into a fresh positional
       axis at index ``axis`` in the output. When ``True``, ``axis`` has to
-      refer to an exising positional dimension and the chunks will be
+      refer to an existing positional dimension and the chunks will be
       concatenated into that dimension.
 
   Returns:
