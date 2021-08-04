@@ -34,6 +34,7 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import lax
 from jax._src.lax import parallel
+from jax._src import api as src_api
 from jax import random
 from jax.core import ShapedArray
 from jax import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
@@ -104,7 +105,13 @@ ignore_slow_all_to_all_warning = partial(
 ignore_xmap_warning = partial(
   jtu.ignore_warning, message=".*is an experimental.*")
 
-class PmapTest(jtu.JaxTestCase):
+
+class PythonPmapTest(jtu.JaxTestCase):
+
+  @property
+  def pmap(self):
+    return src_api._python_pmap
+
   def _getMeshShape(self, device_mesh_shape):
     device_count = xla_bridge.device_count()
     if any(size == -1 for size in device_mesh_shape):
@@ -121,7 +128,7 @@ class PmapTest(jtu.JaxTestCase):
         return device_mesh_shape
 
   def testBasic(self):
-    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+    f = self.pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -131,7 +138,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testMean(self):
-    f = pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -141,7 +148,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testGather(self):
-    f = pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
+    f = self.pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -150,7 +157,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testGatherTiled(self):
-    f = pmap(lambda x: lax.all_gather(x, 'i', tiled=True), axis_name='i')
+    f = self.pmap(lambda x: lax.all_gather(x, 'i', tiled=True), axis_name='i')
 
     device_count = xla_bridge.device_count()
     shape = (device_count, 4)
@@ -160,7 +167,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReduceScatter(self):
-    f = pmap(lambda x: lax.psum_scatter(x, 'i'), axis_name='i')
+    f = self.pmap(lambda x: lax.psum_scatter(x, 'i'), axis_name='i')
 
     device_count = xla_bridge.device_count()
     shape = (device_count, device_count)
@@ -171,7 +178,7 @@ class PmapTest(jtu.JaxTestCase):
       self.assertAllClose(actual, expected[i])
 
   def testReduceScatterTiled(self):
-    f = pmap(lambda x: lax.psum_scatter(x, 'i', tiled=True), axis_name='i')
+    f = self.pmap(lambda x: lax.psum_scatter(x, 'i', tiled=True), axis_name='i')
 
     device_count = xla_bridge.device_count()
     shape = (device_count, 4 * device_count)
@@ -191,7 +198,7 @@ class PmapTest(jtu.JaxTestCase):
                          [i for i in range(jax.device_count()) if i % 2 != 0]]
     f = lambda x: lax.psum_scatter(
         x, 'i', axis_index_groups=axis_index_groups, tiled=True)
-    f = pmap(f, axis_name='i')
+    f = self.pmap(f, axis_name='i')
 
     shape = (replicas, 4 * replicas)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -215,7 +222,7 @@ class PmapTest(jtu.JaxTestCase):
       return lax.ppermute(x, axis_name, [(i, (i + 1) % n) for i in range(n)])
 
     tree_f = lambda f: partial(tree_util.tree_map, f)
-    jax_f = lambda p: pmap(lambda x: p(x, 'i'), 'i')
+    jax_f = lambda p: self.pmap(lambda x: p(x, 'i'), 'i')
     np_f = lambda p: tree_f(lambda x: np.broadcast_to(p(x, 0), x.shape))
     np_transpose = tree_f(np.transpose)
     np_rotate = tree_f(lambda x: np.concatenate([x[-1:], x[:-1]]))
@@ -241,7 +248,7 @@ class PmapTest(jtu.JaxTestCase):
          'c': np.arange(4 * n * n, 5 * n * n, dtype=np.float32).reshape([n, n]),
          'd': np.arange(6 * n * n, 7 * n * n, dtype=np.int32).reshape([n, n])}
     tree_f = lambda f: partial(tree_util.tree_map, f)
-    jax_f = lambda p: pmap(lambda x: p(x, 'i'), 'i')
+    jax_f = lambda p: self.pmap(lambda x: p(x, 'i'), 'i')
     np_f = lambda p: tree_f(lambda x: np.broadcast_to(p(x, 0), x.shape))
     assert_allclose = partial(tree_util.tree_multimap,
                               partial(self.assertAllClose, check_dtypes=False))
@@ -251,7 +258,7 @@ class PmapTest(jtu.JaxTestCase):
     assert_allclose(jax_f(lax.pmean)(x), np_f(np.mean)(x))
 
   def testComplexPsum(self):
-    f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
+    f = self.pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 
     shape = (xla_bridge.device_count(), 4 * 2)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape).view(np.complex64)
@@ -270,7 +277,7 @@ class PmapTest(jtu.JaxTestCase):
     shape = (xla_bridge.device_count(),) * 3
     x = np.arange(np.prod(shape)).reshape(shape)
 
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x):
       return lax.all_to_all(x, 'i', split_axis, concat_axis)
     y = f(x)
@@ -292,8 +299,8 @@ class PmapTest(jtu.JaxTestCase):
     shape = (4, 4, 4)
     x = np.arange(np.prod(shape)).reshape(shape)
 
-    @partial(pmap, axis_name='i')
-    @partial(pmap, axis_name='j')
+    @partial(self.pmap, axis_name='i')
+    @partial(self.pmap, axis_name='j')
     def f(x):
       return lax.all_to_all(x, ('i', 'j'), split_axis, concat_axis)
 
@@ -310,7 +317,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testNestedBasic(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
-    f = pmap(pmap(f, 'i'), 'j')
+    f = self.pmap(self.pmap(f, 'i'), 'j')
 
     def sum_and_broadcast(x, axis):
       return np.repeat(np.sum(x, axis, keepdims=True), x.shape[axis], axis)
@@ -324,7 +331,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testMismatchedAxisSizes(self):
     n = xla_bridge.device_count()
-    f = pmap(lambda x, y: x + y)
+    f = self.pmap(lambda x, y: x + y)
     self.assertRaisesRegex(
         ValueError,
         "pmap got inconsistent sizes for array axes to be mapped",
@@ -338,7 +345,7 @@ class PmapTest(jtu.JaxTestCase):
     mesh_shape = self._getMeshShape(device_mesh_shape)
 
     f = lambda x: x
-    f = pmap(pmap(f, 'i'), 'j')
+    f = self.pmap(self.pmap(f, 'i'), 'j')
 
     shape = mesh_shape + (4,)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -349,8 +356,8 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPartiallyMapped(self):
-    f = pmap(lambda x, y: x, in_axes=(None, 0))
-    g = pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
+    f = self.pmap(lambda x, y: x, in_axes=(None, 0))
+    g = self.pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
 
     mesh_shape = (xla_bridge.device_count(),)
     shape = mesh_shape + (4,)
@@ -389,8 +396,8 @@ class PmapTest(jtu.JaxTestCase):
   def testPartiallyMappedNested(self, device_mesh_shape):
     mesh_shape = self._getMeshShape(device_mesh_shape)
 
-    f = pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
-    f = pmap(f, axis_name='j', in_axes=(None, 0))
+    f = self.pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
+    f = self.pmap(f, axis_name='j', in_axes=(None, 0))
 
     x = 3.
     y = np.arange(prod(mesh_shape), dtype=np.float32).reshape(mesh_shape)
@@ -400,7 +407,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testJvpAndPartialEval(self):
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x):
       return jnp.sin(x)
 
@@ -418,7 +425,7 @@ class PmapTest(jtu.JaxTestCase):
     make_jaxpr(splitjvp)(x)  # doesn't crash
 
   def testGradBasic(self):
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x):
       return jnp.sin(x)
 
@@ -430,7 +437,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testGradOfPsum(self):
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x):
       return lax.psum(x, axis_name='i')
 
@@ -439,7 +446,7 @@ class PmapTest(jtu.JaxTestCase):
     jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
 
   def testGradOfJvp(self):
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x):
       return jnp.sin(x)
 
@@ -459,7 +466,7 @@ class PmapTest(jtu.JaxTestCase):
   def testTwoArgsGrad(self):
     def f(x, y):
       return lax.psum(5. * jnp.cos(x) * jnp.sin(y), 'i')
-    f = pmap(f, 'i')
+    f = self.pmap(f, 'i')
 
     def g(x, y):
       tot = jnp.sum(5. * jnp.cos(x) * jnp.sin(y))
@@ -479,11 +486,11 @@ class PmapTest(jtu.JaxTestCase):
   def testNestedWithClosure(self, device_mesh_shape):
     mesh_shape = self._getMeshShape(device_mesh_shape)
 
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def test_fun(x):
       y = jnp.sum(jnp.sin(x))
 
-      @partial(pmap, axis_name='j')
+      @partial(self.pmap, axis_name='j')
       def g(z):
         return 3. * jnp.exp(jnp.sin(x).sum() * jnp.cos(y) * jnp.tan(z))
 
@@ -508,7 +515,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
-    f = pmap(f, axis_name='i')
+    f = self.pmap(f, axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -554,13 +561,13 @@ class PmapTest(jtu.JaxTestCase):
       raise SkipTest("not enough devices")
 
     x = np.arange(prod(in_shape)).reshape(in_shape)
-    sharded_x = pmap(lambda x: x)(x)
+    sharded_x = self.pmap(lambda x: x)(x)
     self.assertAllClose(sharded_x.reshape(out_shape), x.reshape(out_shape),
                         check_dtypes=False)
 
   def testPsumMultiple(self):
     f = lambda x: lax.psum(x, ('i', 'j'))
-    f = pmap(pmap(f, 'i'), 'j')
+    f = self.pmap(self.pmap(f, 'i'), 'j')
 
     def sum_and_broadcast(x, axis):
       return np.repeat(np.sum(x, axis, keepdims=True), x.shape[axis], axis)
@@ -584,7 +591,7 @@ class PmapTest(jtu.JaxTestCase):
     axis_index_groups = np.arange(replicas).reshape(
       2, replicas // 2).tolist()
     f = lambda x: x - lax.psum(2., 'i', axis_index_groups=axis_index_groups)
-    f = pmap(f, 'i')
+    f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -601,7 +608,7 @@ class PmapTest(jtu.JaxTestCase):
     axis_index_groups = np.arange(replicas).reshape(
       2, replicas // 2).tolist()
     f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
-    f = pmap(f, 'i')
+    f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -626,7 +633,7 @@ class PmapTest(jtu.JaxTestCase):
     axis_index_groups = axis_index_groups.tolist()
 
     f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
-    f = pmap(f, 'i')
+    f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -651,7 +658,7 @@ class PmapTest(jtu.JaxTestCase):
     axis_index_groups = indexes.reshape(2, replicas // 2).tolist()
 
     f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
-    f = pmap(f, 'i')
+    f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -666,7 +673,7 @@ class PmapTest(jtu.JaxTestCase):
 
   @ignore_slow_all_to_all_warning()
   def testGradOfGather(self):
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x):
       return lax.all_gather(x, axis_name='i')
 
@@ -681,9 +688,9 @@ class PmapTest(jtu.JaxTestCase):
     axis_index_groups = np.arange(replicas // 2).reshape(
         2, replicas // 4).tolist()
     f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
-    f1 = pmap(pmap(f, 'i'), 'j')
-    f2 = pmap(lambda x: pmap(f, 'i')(x) + 1., 'j')  # "imperfectly nested" case
-    f3 = pmap(pmap(f, 'j'), 'i')
+    f1 = self.pmap(self.pmap(f, 'i'), 'j')
+    f2 = self.pmap(lambda x: self.pmap(f, 'i')(x) + 1., 'j')  # "imperfectly nested" case
+    f3 = self.pmap(self.pmap(f, 'j'), 'i')
 
     shape = (2, replicas // 2, 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -733,7 +740,7 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
     f = lambda x: lax.ppermute(x, perm=rotation, axis_name='i')
-    f = pmap(f, 'i')
+    f = self.pmap(f, 'i')
 
     x = jnp.arange(4 * device_count).reshape((device_count, 4))
     ans = f(x)
@@ -746,7 +753,7 @@ class PmapTest(jtu.JaxTestCase):
     shift_right = [(i, (i + 1)) for i in range(device_count - 1)]
     f = lambda x: lax.ppermute(x, perm=shift_right, axis_name='i')
     y = np.pi + np.arange(device_count, dtype=np.float32)
-    g = lambda x: jnp.sum(y * pmap(f, 'i')(x))
+    g = lambda x: jnp.sum(y * self.pmap(f, 'i')(x))
 
     x = np.arange(device_count, dtype=np.float32)
     ans = grad(g)(x)
@@ -758,7 +765,7 @@ class PmapTest(jtu.JaxTestCase):
     shift_right = [(i, (i + 1) % device_count) for i in range(device_count)]
     f = lambda x: lax.ppermute(x, perm=shift_right, axis_name='i')
     y = np.pi + np.arange(device_count, dtype=np.float32)
-    g = lambda x: jnp.sum(y * pmap(f, 'i')(x))
+    g = lambda x: jnp.sum(y * self.pmap(f, 'i')(x))
 
     x = np.arange(device_count, dtype=np.float32)
 
@@ -774,7 +781,7 @@ class PmapTest(jtu.JaxTestCase):
     shift_right = [(i - 1) % device_count for i in range(device_count)]
     f = lambda x: lax.pshuffle(x, perm=shift_right, axis_name='i')
     expected = np.roll(values, 1)
-    ans = np.asarray(pmap(f, "i")(values))
+    ans = np.asarray(self.pmap(f, "i")(values))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPShuffleWithBadPerm(self):
@@ -782,7 +789,7 @@ class PmapTest(jtu.JaxTestCase):
     bad_perm = list(range(device_count))
     bad_perm[0] = 1
     f = lambda x: lax.pshuffle(x, perm=bad_perm, axis_name='i')
-    g = lambda: pmap(f, "i")(np.arange(device_count))
+    g = lambda: self.pmap(f, "i")(np.arange(device_count))
     self.assertRaisesRegex(
       ValueError,
       "`perm` does not represent a permutation: \\[1.*\\]", g)
@@ -791,7 +798,7 @@ class PmapTest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/1703
     num_devices = xla_bridge.device_count()
     perm = [num_devices - 1] + list(range(num_devices - 1))
-    f = pmap(lambda x: lax.ppermute(x, "i", zip(perm, range(num_devices))), "i")
+    f = self.pmap(lambda x: lax.ppermute(x, "i", zip(perm, range(num_devices))), "i")
     result = f(jnp.arange(num_devices, dtype=jnp.float32))
     expected = jnp.asarray(perm, dtype=jnp.float32)
     self.assertAllClose(result, expected)
@@ -817,7 +824,7 @@ class PmapTest(jtu.JaxTestCase):
       center = board[1:-1]
       return lax.bitwise_xor(left, lax.bitwise_or(center, right))
 
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def step(board_slice):
       left, right = board_slice[:1], board_slice[-1:]
       right, left = send_left(left, 'i'), send_right(right, 'i')
@@ -866,7 +873,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertEqual(ans, expected)
 
   def testReduceMax(self):
-    f = pmap(lambda x: x - lax.pmax(x, 'i'), axis_name='i')
+    f = self.pmap(lambda x: x - lax.pmax(x, 'i'), axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -876,7 +883,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReduceMin(self):
-    f = pmap(lambda x: x - lax.pmin(x, 'i'), axis_name='i')
+    f = self.pmap(lambda x: x - lax.pmin(x, 'i'), axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -888,21 +895,21 @@ class PmapTest(jtu.JaxTestCase):
   def testDeviceCountError(self):
     device_count = xla_bridge.device_count()
 
-    f = pmap(lambda x: x)
+    f = self.pmap(lambda x: x)
     x = jnp.arange(device_count + 1)
     self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
-    f = pmap(lambda x: x)
+    f = self.pmap(lambda x: x)
     x = np.ones((device_count + 1, 10))
     self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
-    f = pmap(lambda x: pmap(lambda x: x)(x))
+    f = self.pmap(lambda x: self.pmap(lambda x: x)(x))
     x = np.ones((device_count, 2, 10))
     self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
   def testPmapConstant(self):
     device_count = xla_bridge.device_count()
-    f = pmap(lambda x: 3)
+    f = self.pmap(lambda x: 3)
     x = jnp.arange(device_count)
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       ans = f(x)
@@ -910,7 +917,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.repeat(3, device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    f = pmap(lambda x: (x, 3))
+    f = self.pmap(lambda x: (x, 3))
     x = np.arange(device_count)
     with jtu.assert_num_jit_and_pmap_compilations(1):
       _, ans = f(x)
@@ -922,7 +929,7 @@ class PmapTest(jtu.JaxTestCase):
 
     devices = xla_bridge.devices()[:-1]
     shuffle(devices)
-    f = pmap(lambda x: 3, devices=devices)
+    f = self.pmap(lambda x: 3, devices=devices)
     x = jnp.arange(len(devices))
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       ans = f(x)
@@ -935,7 +942,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testPmapConstantError(self):
     device_count = xla_bridge.device_count()
-    f = pmap(lambda x: 3)
+    f = self.pmap(lambda x: 3)
     x = jnp.arange(device_count + 1)
     self.assertRaisesRegex(
         ValueError,
@@ -954,7 +961,7 @@ class PmapTest(jtu.JaxTestCase):
     if xla_bridge.device_count() == 1:
       raise SkipTest("this test requires multiple devices")
 
-    f = pmap(pmap(lambda x: 3))
+    f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, xla_bridge.device_count() // 2, 3)
     x = jnp.arange(prod(shape)).reshape(shape)
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
@@ -964,11 +971,11 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     # Test that 'ans' was properly replicated across devices.
-    expected_sharded = pmap(pmap(lambda x: x))(expected)
+    expected_sharded = self.pmap(self.pmap(lambda x: x))(expected)
     self.assertEqual([b.device() for b in ans.device_buffers],
                      [b.device() for b in expected_sharded.device_buffers])
 
-    f = pmap(pmap(lambda x: (x, 3)))
+    f = self.pmap(self.pmap(lambda x: (x, 3)))
     x_sharded, ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
     self.assertEqual([b.device() for b in ans.device_buffers],
@@ -982,7 +989,7 @@ class PmapTest(jtu.JaxTestCase):
 
     devices = xla_bridge.devices()[:-2]
     shuffle(devices)
-    f = pmap(pmap(lambda x: 3), devices=devices)
+    f = self.pmap(self.pmap(lambda x: 3), devices=devices)
     shape = (2, len(devices) // 2, 3)
     x = jnp.arange(prod(shape)).reshape(shape)
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
@@ -992,12 +999,12 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     # Test that 'ans' was properly replicated across devices.
-    expected_sharded = pmap(pmap(lambda x: x), devices=devices)(expected)
+    expected_sharded = self.pmap(self.pmap(lambda x: x), devices=devices)(expected)
     self.assertEqual([b.device() for b in ans.device_buffers],
                      [b.device() for b in expected_sharded.device_buffers])
 
   def testNestedPmapConstantError(self):
-    f = pmap(pmap(lambda x: 3))
+    f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, xla_bridge.device_count() // 2 + 1, 3)
     x = jnp.arange(prod(shape)).reshape(shape)
     self.assertRaisesRegex(
@@ -1019,7 +1026,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testCollectiveConstant(self):
     device_count = xla_bridge.device_count()
-    f = pmap(lambda x: lax.psum(1, 'i'), 'i')
+    f = self.pmap(lambda x: lax.psum(1, 'i'), 'i')
     x = jnp.arange(device_count)
     ans = f(x)
     expected = np.repeat(device_count, device_count)
@@ -1028,9 +1035,9 @@ class PmapTest(jtu.JaxTestCase):
   def testCollectiveConstantNested(self):
     device_count = xla_bridge.device_count()
 
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x):
-      @partial(pmap, axis_name='j')
+      @partial(self.pmap, axis_name='j')
       def g(y):
         a = lax.psum(1, 'i')
         b = lax.psum(1, 'j')
@@ -1052,7 +1059,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testAxisIndex(self):
     device_count = xla_bridge.device_count()
-    f = pmap(lambda x: x + lax.axis_index('i'), 'i')
+    f = self.pmap(lambda x: x + lax.axis_index('i'), 'i')
     x = jnp.ones(device_count)
     ans = f(x)
     expected = 1 + np.arange(device_count)
@@ -1062,7 +1069,7 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     if device_count < 4:
       raise SkipTest("test requires at least four devices")
-    f = lambda axis: pmap(pmap(lambda x: x + lax.axis_index(axis), 'j'), 'i')
+    f = lambda axis: self.pmap(self.pmap(lambda x: x + lax.axis_index(axis), 'j'), 'i')
     x = jnp.ones((2, 2))
     expected_j = np.broadcast_to(1 + np.arange(2), (2, 2))
     self.assertAllClose(f('j')(x), expected_j, check_dtypes=False)
@@ -1072,14 +1079,14 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     if device_count < 4:
       raise SkipTest("test requires at least four devices")
-    f = lambda axes: pmap(pmap(lambda x: x + lax.axis_index(axes), 'j'), 'i')
+    f = lambda axes: self.pmap(self.pmap(lambda x: x + lax.axis_index(axes), 'j'), 'i')
     x = jnp.ones((2, 2))
     expected = 1 + np.arange(4).reshape((2, 2))
     self.assertAllClose(f(('i', 'j'))(x), expected, check_dtypes=False)
     self.assertAllClose(f(('j', 'i'))(x), expected.T, check_dtypes=False)
 
   def testAxisIndexInInitialStyle(self):
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x):
       def body(carry, i):
         return carry + i + lax.axis_index('i'), None
@@ -1092,7 +1099,7 @@ class PmapTest(jtu.JaxTestCase):
   def testVmapOfPmap(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
-    f1 = pmap(f0, axis_name='i')
+    f1 = self.pmap(f0, axis_name='i')
     ax = np.random.randn(2, device_count, 50, 60)
     bx = vmap(f1)(ax)
     self.assertAllClose(ax, bx, check_dtypes=False)
@@ -1101,7 +1108,7 @@ class PmapTest(jtu.JaxTestCase):
     N_DEVICES = xla_bridge.device_count()
     keys = random.split(random.PRNGKey(1), 13)  # [13, 2]
 
-    @pmap
+    @self.pmap
     def g(key):
       _ = random.normal(key, ())
       return 0.
@@ -1127,7 +1134,7 @@ class PmapTest(jtu.JaxTestCase):
       return jax.vmap(func, in_axes=(0, None))(qs, pts)
 
     def func(q, pts):
-      q_from_pmap = jax.pmap(lambda x, y: y, in_axes=(0, None))(pts, q)
+      q_from_pmap = self.pmap(lambda x, y: y, in_axes=(0, None))(pts, q)
       return q, q_from_pmap
 
     pts = jnp.ones(device_count)
@@ -1140,7 +1147,7 @@ class PmapTest(jtu.JaxTestCase):
   def testVmapOfPmapNonLeadingAxis(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
-    f1 = pmap(f0, axis_name='i')
+    f1 = self.pmap(f0, axis_name='i')
     ax = np.random.randn(device_count, 2, 50, 60)
     bx = vmap(f1, in_axes=2, out_axes=2)(ax)
     self.assertAllClose(ax, bx, check_dtypes=False)
@@ -1148,7 +1155,7 @@ class PmapTest(jtu.JaxTestCase):
   def testVmapOfPmapTuple(self):
     device_count = xla_bridge.device_count()
     f0 = lambda *x: x
-    f1 = pmap(f0, axis_name='i')
+    f1 = self.pmap(f0, axis_name='i')
 
     ax = np.random.randn(device_count, 2, 50, 60)
     ay = np.random.randn(device_count, 30, 2)
@@ -1171,7 +1178,7 @@ class PmapTest(jtu.JaxTestCase):
     shape = (device_count, 3, device_count, 5)
     x = np.arange(prod(shape)).reshape(shape)
 
-    ans = pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
+    ans = self.pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1182,7 +1189,7 @@ class PmapTest(jtu.JaxTestCase):
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     w = np.arange(device_count, dtype=np.float32)
 
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def f(x, w):
       g = lambda x: jnp.sum(lax.pswapaxes(x, 'i', 1) * w)
       return grad(g)(x)
@@ -1211,7 +1218,7 @@ class PmapTest(jtu.JaxTestCase):
     axis_index_groups = axis_index_groups.reshape((device_count // 2, 2)).T
     axis_index_groups = axis_index_groups.tolist()
 
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def fn(x):
       return lax.all_to_all(x, 'i', 0, 0, axis_index_groups=axis_index_groups)
 
@@ -1233,7 +1240,7 @@ class PmapTest(jtu.JaxTestCase):
     axis_index_groups = axis_index_groups.reshape((2, device_count // 2))
     axis_index_groups = axis_index_groups.tolist()
 
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def fn(x, w):
       g = lambda x: jnp.sum(lax.all_to_all(x, 'i', 0, 1, axis_index_groups=axis_index_groups) * w)
       return grad(g)(x)
@@ -1258,7 +1265,7 @@ class PmapTest(jtu.JaxTestCase):
         mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
     arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
 
-    r = pmap(lambda x: x + 1)(arr)
+    r = self.pmap(lambda x: x + 1)(arr)
     self.assertAllClose(r, arr + 1)
     self.assertEqual(len(r.device_buffers), 6)
 
@@ -1368,7 +1375,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testShardedDeviceArrayBlockUntilReady(self):
     x = np.arange(xla_bridge.device_count())
-    x = pmap(lambda x: x)(x)
+    x = self.pmap(lambda x: x)(x)
     x.block_until_ready()  # doesn't crash
 
   @ignore_jit_of_pmap_warning()
@@ -1379,10 +1386,10 @@ class PmapTest(jtu.JaxTestCase):
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.sum(x, 0)
 
-    ans = jit(pmap(f, 'i'))(x)
+    ans = jit(self.pmap(f, 'i'))(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = pmap(jit(f), 'i')(x)
+    ans = self.pmap(jit(f), 'i')(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testCompositionWithJitTwice(self):
@@ -1392,7 +1399,7 @@ class PmapTest(jtu.JaxTestCase):
 
       @jit
       def g(z):
-        return pmap(lambda x: x * y)(z)
+        return self.pmap(lambda x: x * y)(z)
 
       return g(x)
 
@@ -1404,7 +1411,7 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
 
     def multi_step_pmap(state, count):
-      @partial(pmap, axis_name='x')
+      @partial(self.pmap, axis_name='x')
       @jit
       def exchange_and_multi_step(state):
         return state
@@ -1419,7 +1426,7 @@ class PmapTest(jtu.JaxTestCase):
 
   def testShardedDeviceArrayGetItem(self):
     f = lambda x: 2 * x
-    f = pmap(f, axis_name='i')
+    f = self.pmap(f, axis_name='i')
 
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -1441,7 +1448,7 @@ class PmapTest(jtu.JaxTestCase):
 
     def pmvm(a, b):
       a = a.reshape((nrep, -1, a.shape[1]))
-      func = pmap(lambda z: jnp.dot(z, b))
+      func = self.pmap(lambda z: jnp.dot(z, b))
       return func(a).reshape(b.shape)
 
     n = nrep * 2
@@ -1458,7 +1465,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testManyArgs(self):
-    @pmap
+    @self.pmap
     def f(args_list):
       return sum(args_list)
 
@@ -1476,7 +1483,7 @@ class PmapTest(jtu.JaxTestCase):
     def distributed_matrix_vector(x, y):
       """Matrix vector multiply. First batch it and then row by row"""
       fv = lambda z: lax.map(lambda j: vv(j, y), z)
-      res = pmap(fv)(x.reshape((jax.device_count(), -1) + tuple(x.shape[1:])))
+      res = self.pmap(fv)(x.reshape((jax.device_count(), -1) + tuple(x.shape[1:])))
       res = res.reshape(res.shape[0] * res.shape[1], *res.shape[2:])
       return res
 
@@ -1498,7 +1505,7 @@ class PmapTest(jtu.JaxTestCase):
       return random.bernoulli(key, p=0.5)
 
     keys = random.split(random.PRNGKey(0), n)
-    jax.pmap(jax.remat(f), axis_name='i')(keys)
+    self.pmap(jax.remat(f), axis_name='i')(keys)
 
   def testPmapMapVmapCombinations(self):
     # https://github.com/google/jax/issues/2822
@@ -1513,7 +1520,7 @@ class PmapTest(jtu.JaxTestCase):
         # split leading axis in two
         new_x = x.reshape((jax.device_count(), -1, *x.shape[1:]))
         # apply map
-        new_res = pmap(fv)(new_x)
+        new_res = self.pmap(fv)(new_x)
         # reshape back out
         res = new_res.reshape(x.shape[0], *new_res.shape[2:])
       else:
@@ -1539,7 +1546,7 @@ class PmapTest(jtu.JaxTestCase):
       return jax.lax.psum(x, axis_name='batch')
 
     with self.assertRaisesRegex(NameError, "unbound axis name: batch"):
-      jax.pmap(test)(a)
+      self.pmap(test)(a)
 
   def testPsumOnBooleanDtype(self):
     # https://github.com/google/jax/issues/3123
@@ -1547,25 +1554,25 @@ class PmapTest(jtu.JaxTestCase):
     if n > 1:
       x = jnp.array([True, False])
 
-      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      out = self.pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
       self.assertEqual(list(out), [1, 1])
 
-      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      out = self.pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
       self.assertEqual(list(out), [1/2, 1/2])
     else:
       x = jnp.array([True])
 
-      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      out = self.pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
       self.assertEqual(list(out), [1])
 
-      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      out = self.pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
       self.assertEqual(list(out), [1])
 
   def testPsumWithNoAxisDoesntLeakFunctions(self):
     x = jnp.ones((1, 1024), dtype=np.float32)
     f = lambda _: x
     w = weakref.ref(f)
-    g = pmap(f)
+    g = self.pmap(f)
     g(np.ones((1,), dtype=np.float32)).block_until_ready()
     del f, g
     gc.collect()
@@ -1583,7 +1590,7 @@ class PmapTest(jtu.JaxTestCase):
 
     with warnings.catch_warnings(record=True) as w:
       warnings.simplefilter("always")
-      jit(pmap(foo))(jnp.arange(device_count))
+      jit(self.pmap(foo))(jnp.arange(device_count))
 
       self.assertGreaterEqual(len(w), 1)
       self.assertIn("The jitted function foo includes a pmap",
@@ -1608,9 +1615,9 @@ class PmapTest(jtu.JaxTestCase):
       return jax.grad(inner)(meta_params, params)
 
     params = (jnp.array([2.0]), jnp.array([3.0]))
-    jax.pmap(outer, axis_name='i')(params)  # doesn't crash
+    self.pmap(outer, axis_name='i')(params)  # doesn't crash
 
-    f = jax.pmap(outer, axis_name='i')
+    f = self.pmap(outer, axis_name='i')
     jtu.check_grads(f, (params,), 2, ["fwd", "rev"], 1e-3, 1e-3)
 
   @ignore_jit_of_pmap_warning()
@@ -1625,7 +1632,7 @@ class PmapTest(jtu.JaxTestCase):
 
     @jit
     def multi_step_pmap(state, count=2):
-      @partial(pmap, axis_name='x')
+      @partial(self.pmap, axis_name='x')
       def pmapped_multi_step(state):
         return multi_step(state, count)
 
@@ -1642,8 +1649,8 @@ class PmapTest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/4223
     def fn(indices):
       return jnp.equal(indices, jnp.arange(3)).astype(jnp.float32)
-    mapped_fn = jax.pmap(fn, axis_name='i', backend='cpu')
-    mapped_fn = jax.pmap(mapped_fn, axis_name='j', backend='cpu')
+    mapped_fn = self.pmap(fn, axis_name='i', backend='cpu')
+    mapped_fn = self.pmap(mapped_fn, axis_name='j', backend='cpu')
     indices = np.array([[[2], [1]], [[0], [0]]])
     mapped_fn(indices)  # doesn't crash
 
@@ -1656,7 +1663,7 @@ class PmapTest(jtu.JaxTestCase):
 
     x = jnp.arange(num_devices * 3).reshape(num_devices, 3)
     y = jnp.arange(num_devices * 5).reshape(num_devices, 5)
-    z = pmap(f, axis_name='i', out_axes=None)(x, y)
+    z = self.pmap(f, axis_name='i', out_axes=None)(x, y)
     self.assertAllClose(z, jnp.dot(x.T, y))
 
   @parameterized.named_parameters(
@@ -1683,7 +1690,7 @@ class PmapTest(jtu.JaxTestCase):
 
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
-    ans = pmap(lambda x: collective(x, 'i'), in_axes=axis, out_axes=None,
+    ans = self.pmap(lambda x: collective(x, 'i'), in_axes=axis, out_axes=None,
                axis_name='i')(x)
     expected = bulk_op(x, axis=axis)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -1696,7 +1703,7 @@ class PmapTest(jtu.JaxTestCase):
   )
   def testPmapDtype(self, dtype):
     # Regression test for https://github.com/google/jax/issues/6022
-    @partial(pmap, axis_name='i')
+    @partial(self.pmap, axis_name='i')
     def func(_):
       return jax.lax.psum(dtype(0), axis_name='i')
     unused_arg = jnp.arange(xla_bridge.device_count())
@@ -1713,6 +1720,15 @@ class PmapTest(jtu.JaxTestCase):
       return y
 
     cond_of_pmap(jnp.zeros((xla_bridge.device_count(), 2)))
+
+
+if config.FLAGS.experimental_cpp_pmap:
+
+  class CppPmapTest(PythonPmapTest):
+
+    @property
+    def pmap(self):
+      return src_api._cpp_pmap
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):
