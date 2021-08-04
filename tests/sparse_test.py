@@ -1117,6 +1117,21 @@ class SparseObjectTest(jtu.JaxTestCase):
 
     self.assertAllClose(M @ x, Msp @ x, rtol=MATMUL_TOL)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}({})".format(
+        input_type.__name__,
+        jtu.format_shape_dtype_string(shape, dtype)),
+       "input_type": input_type, "shape": shape, "dtype": dtype}
+      for input_type in [scipy.sparse.coo_matrix, scipy.sparse.csr_matrix, scipy.sparse.csc_matrix]
+      for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_bcoo_from_scipy_sparse(self, input_type, shape, dtype):
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+    M_sparse = input_type(M)
+    M_bcoo = sparse.BCOO.from_scipy_sparse(M_sparse)
+    self.assertArraysEqual(M, M_bcoo.todense())
+
   def test_bcoo_methods(self):
     M = jnp.arange(12).reshape(3, 4)
     Msp = sparse.BCOO.fromdense(M)
