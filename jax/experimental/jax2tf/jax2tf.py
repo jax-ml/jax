@@ -36,7 +36,6 @@ from jax._src.lax import fft as lax_fft
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
 import jax._src.random
-from jax.api_util import flatten_fun
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import ad
@@ -254,6 +253,19 @@ def convert(fun: Callable,
       raise ValueError("convert must be used outside all JAX transformations." +
                        f"Trace state: {core.thread_local_state.trace_state.trace_stack}")
 
+    # We support kwargs by wrapping the function to take only positional arguments.
+    # This is in part because jax.vjp does not support kwargs.
+    nr_positional_args = len(args)
+    kw_names = kwargs.keys()
+    args = tuple(args) + tuple(kwargs[kw] for kw in kw_names)
+
+    def fun_no_kwargs(*args_and_kwargs):
+      assert len(args_and_kwargs) == nr_positional_args + len(kw_names)
+      args = args_and_kwargs[:nr_positional_args]
+      kwargs = {kw: args_and_kwargs[nr_positional_args + i]
+                for i, kw in enumerate(kw_names)}
+      return fun(*args, **kwargs)
+
     def check_arg(a):
       if not _is_tfval(a):
         msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
@@ -261,9 +273,8 @@ def convert(fun: Callable,
         raise TypeError(msg)
 
     tree_util.tree_map(check_arg, args)
-    tree_util.tree_map(check_arg, list(kwargs.values()))
 
-    args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+    args_flat, in_tree = tree_util.tree_flatten((args, {}))
     # May need to cast the arguments to have the type assumed by JAX
     args_and_dtypes_flat = tuple(map(_tfval_to_tensor_jax_dtype, args_flat))
     args_flat, arg_dtypes_flat = util.unzip2(args_and_dtypes_flat)
@@ -277,19 +288,16 @@ def convert(fun: Callable,
     elif isinstance(polymorphic_shapes, (PolyShape, str)):
       polymorphic_shapes_ = (polymorphic_shapes,) * len(args)  # type: ignore
     else:
-      if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
+      if not isinstance(polymorphic_shapes, Sequence) or len(polymorphic_shapes) != len(args) - len(kw_names):
         msg = ("polymorphic_shapes must be a sequence with the same length as the positional argument list "
                f"({len(args)}). Got polymorphic_shapes={repr(polymorphic_shapes)}.")
         raise TypeError(msg)
-      polymorphic_shapes_ = tuple(polymorphic_shapes)
+      polymorphic_shapes_ = tuple(polymorphic_shapes) + (None,) * len(kw_names)
 
     # Expand the polymorphic_shapes to match the argument pytree
     polymorphic_shapes_flat = tuple(api_util.flatten_axes("jax2tf.convert polymorphic_shapes",
                                                           in_tree.children()[0],
                                                           polymorphic_shapes_))
-    # Add kwargs shapes.
-    polymorphic_shapes_flat = polymorphic_shapes_flat + tuple(
-      (None,) * (len(args_flat) - len(polymorphic_shapes_flat)))
 
     # Construct the abstract values for the flat arguments, possibly based on
     # the input shapes and the polymorphic_shapes if given. May create new shape
@@ -300,9 +308,9 @@ def convert(fun: Callable,
 
     # This function may take pytrees of TfVals. We can only set
     # tf.custom_gradient on functions that take a flat argument list.
-    f = lu.wrap_init(fun)
+    f = lu.wrap_init(fun_no_kwargs)
     # out_tree_thunk() will be the output tree, after running _interpret_fun.
-    flat_fun, out_tree_thunk = flatten_fun(f, in_tree)
+    flat_fun, out_tree_thunk = api_util.flatten_fun(f, in_tree)
     # out_tree_thunk will be ready after _interpret_fun below.
 
     # Prepare the grad_fn for tf.custom_gradient.
@@ -332,8 +340,9 @@ def convert(fun: Callable,
         # pullback may contain captured tracers from the conversion of the
         # main function. Those tracers will confuse the conversion of the
         # pullback. So, we construct the vjp anew and we convert it separately.
-        args_jax, _ = tree_util.tree_unflatten(in_tree, args_flat_jax)
-        _, pullback_jax = jax.vjp(fun, *args_jax)
+        args_jax, kwargs_jax = tree_util.tree_unflatten(in_tree, args_flat_jax)
+        assert not kwargs_jax
+        _, pullback_jax = jax.vjp(fun_no_kwargs, *args_jax)
 
         def fix_out_ct(out_ct_jax, out_ct_aval: core.ShapedArray):
           # If the primal function has outputs of integer or bool types, and if we are
@@ -365,13 +374,13 @@ def convert(fun: Callable,
         return in_cts_fixed_flat_jax
 
       # TODO: enable higher-order gradients
-      # TODO: I think that this does not work with kwargs
       with tf.name_scope("jax2tf_vjp"):
         in_cts_flat = convert(
             fun_vjp_jax,
             with_gradient=False,
             polymorphic_shapes=vjp_polymorphic_shapes)(args_flat, out_cts_flat)
-        in_cts, _ = tree_util.tree_unflatten(in_tree, in_cts_flat)
+        in_cts, kwin_cts = tree_util.tree_unflatten(in_tree, in_cts_flat)
+        assert not kwin_cts
       return in_cts
 
     try:
