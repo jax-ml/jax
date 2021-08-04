@@ -81,6 +81,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "@org_tensorflow//tensorflow/stream_executor/cuda:cusparse_lib",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cusolver_lib",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
