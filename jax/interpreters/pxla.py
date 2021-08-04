@@ -114,7 +114,7 @@ MeshDimAssignment = Union[ShardedAxis, Replicated]
 
 # TODO(jblespiau): Remove the version check when jaxlib 0.1.70 is the minimal
 # version.
-if TYPE_CHECKING or _xla_extension_version < 29:
+if TYPE_CHECKING or _xla_extension_version < 30:
   class ShardingSpec:
     """Describes the sharding of an ndarray.
 
