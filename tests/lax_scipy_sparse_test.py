@@ -64,6 +64,16 @@ def rand_sym_pos_def(rng, shape, dtype):
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
+    super().tearDown()
+
   def _fetch_preconditioner(self, preconditioner, A, rng=None):
     """
     Returns one of various preconditioning matrices depending on the identifier
