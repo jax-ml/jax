@@ -1412,6 +1412,15 @@ class BCOO(JAXSparse):
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32, n_dense=0, n_batch=0):
     return cls(bcoo_fromdense(mat, nse=nse, index_dtype=index_dtype, n_dense=n_dense, n_batch=n_batch), shape=mat.shape)
 
+  @classmethod
+  def from_scipy_sparse(cls, mat, *, index_dtype=None, n_dense=0, n_batch=0):
+    if n_dense != 0 or n_batch != 0:
+      raise NotImplementedError("BCOO.fromscipy with nonzero n_dense/n_batch")
+    mat = mat.tocoo()
+    data = jnp.asarray(mat.data)
+    indices = jnp.vstack([mat.row, mat.col]).astype(index_dtype)
+    return cls((data, indices), shape=mat.shape)
+
   @api.jit
   def todense(self):
     return bcoo_todense(self.data, self.indices, shape=self.shape)
