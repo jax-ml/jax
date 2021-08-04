@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
-import collections
 from functools import partial
 import contextlib
 import os
 import re
 import string
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import jax
 from jax._src import ad_util
@@ -83,11 +82,6 @@ TfVal = Any
 DType = Any
 PrecisionType = int  # Enum xla_data.PrecisionConfig.Precision
 
-# A dimension environment maps dimension variables to TF expressions that
-# compute the value of the dimension. These expressions refer to the TF
-# function arguments.
-_ShapeEnv = Dict[str, TfVal]
-
 def _is_tfval(v: TfVal) -> bool:
   if isinstance(v, (tf.Tensor, tf.Variable)):
     return True
@@ -147,7 +141,7 @@ class _ThreadLocalState(threading.local):
     self.inside_call_tf = False
 
     # Maps dimension variables to TF expressions
-    self.shape_env: _ShapeEnv = {}
+    self.shape_env: shape_poly.ShapeEnv = {}
 
     # Whether to actually include XLA op metadata in the generated TF ops
     self.include_xla_op_metadata = True
@@ -595,12 +589,11 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
     return tf.convert_to_tensor(val, dtype=conversion_dtype), jax_dtype
 
-
 def _args_to_avals_and_env(
     args: Sequence[TfVal],
     arg_jax_dtypes: Sequence[DType],
     polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]]) -> \
-  Tuple[Sequence[core.ShapedArray], _ShapeEnv]:
+  Tuple[Sequence[core.ShapedArray], shape_poly.ShapeEnv]:
   """Computes canonicalized args, abstract values and a dimension environment for arguments.
 
   Args:
@@ -608,13 +601,9 @@ def _args_to_avals_and_env(
     arg_dtypes: the inferred JAX dtypes for the args.
     polymorphic_shapes: the polymorphic specifications for the arguments.
   Returns: a tuple of: a sequence of abstract values corresponding to the
-    arguments, and a dimension environment.
+    arguments, and a dimension variable environment.
   """
-  shapeenv: _ShapeEnv = {}
-
-  # Map shape variables to the set of integers they correspond to in the
-  # actual arguments
-  shape_var_map: Dict[str, Set[int]] = collections.defaultdict(set)
+  dim_equations: List[shape_poly.DimEquation] = []
 
   def input_aval(arg: TfVal,
                  arg_jax_dtype: DType,
@@ -622,7 +611,7 @@ def _args_to_avals_and_env(
     """The abstract value for an input."""
     arg_shape = np.shape(arg)
     aval_shape = shape_poly.parse_spec(polymorphic_shape, arg_shape)
-
+    arg_tf_shape = tf.shape(arg)
     for i, d in enumerate(aval_shape):
       dim_size = arg_shape[i]
       if isinstance(dim_size, tf.compat.v1.Dimension):
@@ -630,32 +619,15 @@ def _args_to_avals_and_env(
       if not shape_poly.is_poly_dim(d):
         assert d == dim_size
       else:
-        d_var = d.to_var()  # type: ignore
-        if d_var is not None:
-          if d_var not in shapeenv:
-            # Even if the shape of `arg` is known, we still use `tf.shape` for
-            # safety, because the promise is that we will convert the function
-            # to work for any value of the dimension.
-            shapeenv[d_var] = tf.shape(arg)[i]  # type: ignore[index]
-          if dim_size is not None:
-            shape_var_map[d_var].add(int(dim_size))
+        dim_equations.append(shape_poly.DimEquation(
+            poly=d, tf_expr=arg_tf_shape[i]))  # type: ignore
+
 
     return core.ShapedArray(aval_shape, arg_jax_dtype)
 
   avals = tuple(map(input_aval, args, arg_jax_dtypes, polymorphic_shapes))  # type: ignore
-  arg_shapes = tuple(np.shape(a) for a in args)
 
-  for dim_var, dim_var_values in shape_var_map.items():
-    if len(dim_var_values) != 1:
-      msg = (f"PolyShape {tuple(polymorphic_shapes)} has dimension variable '{dim_var}' "
-             f"corresponding to multiple values {set(sorted(dim_var_values))}, for "
-             f"argument shapes {arg_shapes}")
-      raise ValueError(msg)
-    elif list(dim_var_values)[0] <= 0:
-      msg = (f"PolyShape {tuple(polymorphic_shapes)} has dimension variable '{dim_var}' "
-             f"corresponding to 0, for argument shapes {arg_shapes}")
-      raise ValueError(msg)
-
+  shapeenv = shape_poly.solve_dim_equations(dim_equations)
   return avals, shapeenv
 
 

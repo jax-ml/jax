@@ -85,6 +85,25 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((dim_poly,), shape_poly.parse_spec(dim_spec, (2,)))
     self.assertEqual((dim_poly,), shape_poly.parse_spec(str(dim_poly), (2,)))
 
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dim_spec={dim_spec}",
+           dim_spec=dim_spec, dim_poly=dim_poly)
+      for dim_spec, dim_poly in [
+          ("2*a*b", 2 * a * b),
+          ("-2 * a^2 * b + b^2", -2 * a * a * b + b * b),
+          ("-2 * a^2 * b + -1 *b^2*a", -2 * a * a * b - a * b * b),
+          ("3 * a * b * a + -2", 3 * a * b * a - 2),
+          ("a + 1", a + 1),
+          ("a + -1", a - 1),
+  ])
+  def test_parse_poly_spec_shapeenv(self,
+                                dim_spec="3 * a * b * a + -2",
+                                dim_poly=3 * a * b * a - 2):
+    # For internal usage only (the polymorphic_shapes of VJP) we need to
+    # parse polynomials.
+    self.assertEqual((dim_poly,), shape_poly.parse_spec(dim_spec, (2,)))
+    self.assertEqual((dim_poly,), shape_poly.parse_spec(str(dim_poly), (2,)))
+
   def test_dim_vars(self):
     a, b, a1 = shape_poly.parse_spec("a, b, a", (2, 3, 2))
     self.assertEqual(True, a == a)
@@ -368,7 +387,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         expected_output_signature=tf.TensorSpec([None, None]))
 
   def test_forgot_polymorphic_shapes_error(self):
-    msg_re = "PolyShape None in axis .* must contain a dimension variable for unknown dimension in argument shape .*. Perhaps you forgot to add the polymorphic_shapes"
+    msg_re = "polymorphic shape None in axis .* must contain a dimension variable for unknown dimension in argument shape .*. Perhaps you forgot to add the polymorphic_shapes"
     with self.assertRaisesRegex(ValueError, msg_re):
       self.CheckShapePolymorphism(
           jnp.sin,
@@ -390,222 +409,246 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_arg_avals(self):
     """Test conversion of actual arguments to abstract values."""
 
-    def check_avals(*, args: Sequence[jax2tf.jax2tf.TfVal],
+    def check_avals(*, arg_shapes: Sequence[Sequence[Optional[int]]],
                     polymorphic_shapes: Sequence[Optional[Union[str, PS]]],
-                    expected_avals: Sequence[core.ShapedArray]):
-      arg_dtypes = tuple(map(lambda a: jax2tf.jax2tf._to_jax_dtype(jax2tf.dtype_of_val(a)), args))
-      avals, shape_env = jax2tf.jax2tf._args_to_avals_and_env(
-          args, arg_dtypes, polymorphic_shapes)  # The function under test
-      self.assertEqual(expected_avals, avals)
-      # TODO: Check the shape_env
+                    expected_avals: Optional[Sequence[core.ShapedArray]] = None,
+                    expected_shapeenv: Optional[Dict[str, int]] = None,
+                    eager_mode: bool = False):
+      # Use eager mode only for when all arg_shapes are known, in order to
+      # check expected_shapeenv.
+      arg_dtypes = (_f32,) * len(arg_shapes)
+      def f_tf(*tf_args):
+        avals, shape_env = jax2tf.jax2tf._args_to_avals_and_env(
+            tf_args, arg_dtypes, polymorphic_shapes)  # The function under test
+        if expected_avals is not None:
+          self.assertEqual(expected_avals, avals)
+        return shape_env
+      if eager_mode:
+        # If we want to check the shape_env then all arg_shapes must be known
+        assert all(all(d is not None for d in a_s)
+                   for a_s in arg_shapes)
+        shape_env = f_tf(*[tf.ones(a_s, dtype=_f32) for a_s in arg_shapes])
+        if expected_shapeenv is not None:
+          for v, val in expected_shapeenv.items():
+            self.assertEqual(val, shape_env.get(v))
+      else:
+        f_tf = tf.function(autograph=False)(f_tf)
+        f_tf.get_concrete_function(*[tf.TensorSpec(a_s, _f32)
+                                   for a_s in arg_shapes])
+        assert not expected_shapeenv, "Should use eaager_mode=True"
 
     def shaped_array(shape_spec: str, actual_shape: core.Shape):
       return core.ShapedArray(
           shape_poly.parse_spec(shape_spec, actual_shape), np.float32)
 
-    def const(shape):
-      return np.ones(shape, dtype=np.float32)
-
-    def tf_const(shape):
-      return tf.convert_to_tensor(np.ones(shape, dtype=np.float32))
-
-    def tf_var(shape, *, initializer_shape=None):
-      initializer_shape = initializer_shape or shape
-      self.assertEmpty([d for d in initializer_shape if d is None])
-      return tf.Variable(
-          np.ones(initializer_shape, np.float32), dtype=tf.float32, shape=shape)
-
     # Known shapes for the arguments
     check_avals(
-        args=[const((2, 3))],
+        arg_shapes=[(2, 3)],
         polymorphic_shapes=[None],
         expected_avals=(shaped_array("2, 3", [2, 3]),))
 
     check_avals(
-        args=[tf_const((2, 3))],
-        polymorphic_shapes=[None],
-        expected_avals=(shaped_array("2, 3,", [2, 3]),))
-
-    check_avals(
-        args=[tf_var((2, 3))],
-        polymorphic_shapes=[None],
-        expected_avals=(shaped_array("(2, 3)", [2, 3]),))
-
-    check_avals(
-        args=[const((2, 3))],
+        arg_shapes=[(2, 3)],
         polymorphic_shapes=["(2, 3)"],
         expected_avals=(shaped_array("2, 3", [2, 3]),))
 
     check_avals(
-        args=[tf_const((2, 3))],
+        arg_shapes=[(2, 3)],
         polymorphic_shapes=["(_, 3)"],
         expected_avals=(shaped_array("2, 3", [2, 3]),))
 
     check_avals(
-        args=[tf_const((2, 3))],
+        arg_shapes=[(2, 3)],
         polymorphic_shapes=[PS("_", 3)],
         expected_avals=(shaped_array("2, 3", [2, 3]),))
 
     check_avals(
-        args=[tf_const((2, 3))],
+        arg_shapes=[(2, 3)],
         polymorphic_shapes=["..."],
         expected_avals=(shaped_array("2, 3", [2, 3]),))
 
     check_avals(
-        args=[tf_const((2, 3))],
+        arg_shapes=[(2, 3)],
         polymorphic_shapes=[PS(...)],
         expected_avals=(shaped_array("2, 3", [2, 3]),))
 
     # Partially known shapes for the arguments
     check_avals(
-        args=[tf_var([None, 3], initializer_shape=(2, 3))],
+        arg_shapes=[(None, 3)],
         polymorphic_shapes=[PS("b", ...)],
         expected_avals=(shaped_array("(b, 3)", (2, 3)),))
 
     check_avals(
-        args=[tf_var([None, None], initializer_shape=(2, 3))],
+        arg_shapes=[(None, None)],
         polymorphic_shapes=["h, h"],
         expected_avals=(shaped_array("(h, h)", (2, 2)),))
 
     check_avals(
-        args=[tf_var([2, None], initializer_shape=(2, 3))],
-        polymorphic_shapes=[("h, h")],
+        arg_shapes=[(2, None)],
+        polymorphic_shapes=["h, h"],
         expected_avals=(shaped_array("(h, h)", (2, 2)),))
 
     check_avals(
-        args=[tf_var([None, 3, 4], initializer_shape=(2, 3, 4))],
+        arg_shapes=[(None, 3, 4)],
         polymorphic_shapes=["(c, b, a)"],
         expected_avals=(shaped_array("(c, b, a)", (2, 3, 4)),),
     )
 
-    # Check when the shapes are TensorSpec
+    # Check cases when the specifications are polynomials
     check_avals(
-        args=[tf_var(tf.TensorShape([2, 3]), initializer_shape=(2, 3))],
-        polymorphic_shapes=[PS("b", ...)],
-        expected_avals=(shaped_array("(b, 3)", (2, 3)),))
+        arg_shapes=[(2, 3)],
+        polymorphic_shapes=[PS("a + 1", "b + 2")],
+        eager_mode=True,
+        expected_shapeenv=dict(a=1, b=1))
 
-    # Some errors
+    check_avals(
+        arg_shapes=[(7, 5)],
+        polymorphic_shapes=[PS("2 * a + b", "b + 2")],
+        eager_mode=True,
+        expected_shapeenv=dict(a=2, b=3))
+
+    check_avals(
+        arg_shapes=[(7, 11, 4)],
+        polymorphic_shapes=[PS("2 * a + b", "b * b + 2", "b + 1")],
+        eager_mode=True,
+        expected_shapeenv=dict(a=2, b=3))
+
+    check_avals(
+        arg_shapes=[(7, 11, 19, 7)],
+        polymorphic_shapes=[PS("2 * a + b", "b * b + 2", "b + c * c", "2 * c + -1")],
+        eager_mode=True,
+        expected_shapeenv=dict(a=2, b=3, c=4))
+
+    with self.assertRaisesRegex(ValueError,
+                                "Cannot solve for values of dimension variables {'b'}"):
+      check_avals(
+          arg_shapes=[(4, 36, 3)],
+          polymorphic_shapes=[PS("b * b", "b * d * d", "d")])
+
+    with self.assertRaisesRegex(ValueError,
+                                "Dimension variable b must have integer value >= 1"):
+      check_avals(
+          arg_shapes=[(5, 36)],
+          polymorphic_shapes=[PS("3 * b", ...)],
+          eager_mode=True)
+
+    with self.assertRaisesRegex(ValueError,
+                                "Dimension variable b must have integer value >= 1"):
+      check_avals(
+          arg_shapes=[(10, 3)],
+          polymorphic_shapes=[PS("3 * b + 10", ...)],
+          eager_mode=True)
+
+    with self.assertRaisesRegex(ValueError,
+                                "Dimension variable b must have integer value >= 1"):
+      check_avals(
+          arg_shapes=[(7, 3)],
+          polymorphic_shapes=[PS("3 * b + 10", ...)],
+          eager_mode=True)
+
+
     for invalid_syntax in [")(", "2a", "a@", "a - 2", "'a'", "('a', ...)"]:
       with self.assertRaisesRegex(ValueError,
                                   re.escape("has invalid syntax")):
         check_avals(
-            args=[const((2,))], polymorphic_shapes=[invalid_syntax],
-            expected_avals=None)
+            arg_shapes=[(2,)], polymorphic_shapes=[invalid_syntax])
 
     for invalid_syntax in [5.0, ["a list"], ("a tuple",), re.compile(".")]:
       with self.assertRaisesRegex(ValueError,
-                                  re.escape("Invalid PolyShape element")):
+                                  re.escape("Invalid polymorphic shape element")):
         check_avals(
-            args=[const((2,))], polymorphic_shapes=[PS([invalid_syntax])],
-            expected_avals=None)
+            arg_shapes=[(2,)], polymorphic_shapes=[PS([invalid_syntax])])
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape("PolyShape '..., 3' can contain Ellipsis only at the end.")):
+        re.escape("polymorphic shape '..., 3' can contain Ellipsis only at the end.")):
       check_avals(
-          args=[const((2, 3))],
-          polymorphic_shapes=["..., 3"],
-          expected_avals=None)
+          arg_shapes=[(2, 3)],
+          polymorphic_shapes=["..., 3"])
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '2, 3, 4, ...' of rank 3 must match the rank 2 of argument shape (2, 3).")
+            "polymorphic shape '2, 3, 4, ...' of rank 3 must match the rank 2 of argument shape (2, 3).")
     ):
       check_avals(
-          args=[const((2, 3))],
-          polymorphic_shapes=["2, 3, 4, ..."],
-          expected_avals=None)
+          arg_shapes=[(2, 3)],
+          polymorphic_shapes=["2, 3, 4, ..."])
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape (Ellipsis, 3) can contain Ellipsis only at the end.")):
+            "polymorphic shape (Ellipsis, 3) can contain Ellipsis only at the end.")):
       check_avals(
-          args=[const((2, 3))],
-          polymorphic_shapes=[PS(..., 3)],
-          expected_avals=None)
+          arg_shapes=[(2, 3)],
+          polymorphic_shapes=[PS(..., 3)])
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape None in axis 1 must contain a dimension variable for unknown dimension in argument shape (2, None)"
+            "polymorphic shape None in axis 1 must contain a dimension variable for unknown dimension in argument shape (2, None)"
         )):
       check_avals(
-          args=[tf_var([2, None], initializer_shape=(2, 3))],
-          polymorphic_shapes=[None],
-          expected_avals=None)
+          arg_shapes=[(2, None)],
+          polymorphic_shapes=[None])
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape("PolyShape '()' of rank 0 must match the rank 2 of argument shape (2, 3)")):
+        re.escape("polymorphic shape '()' of rank 0 must match the rank 2 of argument shape (2, 3)")):
       check_avals(
-          args=[const((2, 3))], polymorphic_shapes=["()"], expected_avals=None)
+          arg_shapes=[(2, 3)], polymorphic_shapes=["()"])
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(_, _)' in axis 1 must contain a dimension variable "
+            "polymorphic shape '(_, _)' in axis 1 must contain a dimension variable "
             "for unknown dimension in argument shape (2, None)"
         )):
       check_avals(
-          args=[tf_var([2, None], initializer_shape=(2, 3))],
-          polymorphic_shapes=["(_, _)"],
-          expected_avals=None)
+          arg_shapes=[(2, None)],
+          polymorphic_shapes=["(_, _)"])
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(2, 13)' in axis 1 must match the known dimension size 3 "
+            "polymorphic shape '(2, 13)' in axis 1 must match the known dimension size 3 "
             "for argument shape (2, 3)"
         )):
       check_avals(
-          args=[const((2, 3))],
-          polymorphic_shapes=["(2, 13)"],
-          expected_avals=None)
+          arg_shapes=[(2, 3)],
+          polymorphic_shapes=["(2, 13)"])
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape '(2, 3)' in axis 1 must contain a dimension variable for "
+            "polymorphic shape '(2, 3)' in axis 1 must contain a dimension variable for "
             "unknown dimension in argument shape (2, None)"
         )):
       check_avals(
-          args=[tf_var([2, None], initializer_shape=(2, 3))],
-          polymorphic_shapes=["(2, 3)"],
-          expected_avals=None)
+          arg_shapes=[(2, None)],
+          polymorphic_shapes=["(2, 3)"])
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape ('(a, a)',) has dimension variable 'a' corresponding to multiple values {2, 3}, for argument shapes (TensorShape([2, 3]),)"
+            "Found inconsistency when solving a == 3. Partial solution: a = 2."
         )):
       check_avals(
-          args=[tf_var([2, 3], initializer_shape=(2, 3))],
+          arg_shapes=[(2, 3)],
           polymorphic_shapes=["(a, a)"],
-          expected_avals=None)
+          eager_mode=True)
 
     # Same error across multiple arguments
     with self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "PolyShape ('a, ...', 'a') has dimension variable 'a' corresponding to multiple values {2, 5}"
+            "Found inconsistency when solving a == 5. Partial solution: a = 2."
         )):
       check_avals(
-          args=[tf_var([2, 3], initializer_shape=(2, 3)),
-                tf_var([5], initializer_shape=[5])],
+          arg_shapes=[(2, 3), (5,)],
           polymorphic_shapes=["a, ...", "a"],
-          expected_avals=None)
+          eager_mode=True)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        re.escape(
-            "PolyShape ('(a,)',) has dimension variable 'a' corresponding to 0, for argument shapes (TensorShape([0]),)"
-        )):
-      check_avals(
-          args=[tf_var([0], initializer_shape=(0))],
-          polymorphic_shapes=["(a,)"],
-          expected_avals=None)
 
   def test_pytree(self):
     """Arguments and polymorphic_shapes are pytrees."""
@@ -910,12 +953,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # eagerly.
     # Raises: ValueError: PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)
     with self.assertRaisesRegex(ValueError,
-                                re.escape("PolyShape ('b',) has dimension variable 'b' corresponding to 0, for argument shapes (TensorShape([0]),)")):
+                                re.escape("Dimension variable b must have integer value >= 1. Found value 0 when solving b == 0")):
       jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0)
 
     # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
     f_tf = tf.function(
-    jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
+        jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
     self.assertEqual(1, f_tf(x0))
 
     # Unsoundness: not checking that the actual dimensions denoted by the same
@@ -930,7 +973,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # function is executed eagerly.
     # Raises: ValueError: PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)
     with self.assertRaisesRegex(ValueError,
-                                re.escape("PolyShape ('b, b',) has dimension variable 'b' corresponding to multiple values {4, 5}, for argument shapes (TensorShape([4, 5]),)")):
+                                re.escape("Found inconsistency when solving b == 5. Partial solution: b = 4.")):
       jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
 
     # However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
