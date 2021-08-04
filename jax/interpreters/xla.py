@@ -53,7 +53,7 @@ xops = xc._xla.ops
 # Types
 Backend = Any  # xc.LocalBackend (why does mypy not like this?)
 Device = Any  # xc.Device
-PyLocalBuffer = Any
+Buffer = Any
 
 XlaOp = Any  # xla_extension.XlaOp
 XlaShape = Any # xla_client.Shape
@@ -1086,8 +1086,8 @@ _CppDeviceArray: DeviceArrayProtocol = xc.Buffer
 def make_device_array(
     aval: core.ShapedArray,
     device: Optional[Device],
-    device_buffer: PyLocalBuffer,
-) -> Union[PyLocalBuffer, "_DeviceArray"]:
+    device_buffer: Buffer,
+) -> Union[Buffer, "_DeviceArray"]:
   """Returns a DeviceArray implementation based on arguments.
 
   This is to be used only within JAX. It will return either a PythonDeviceArray
@@ -1137,7 +1137,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
   _HAS_DYNAMIC_ATTRIBUTES = True
 
   def __init__(self, aval: core.ShapedArray, device: Optional[Device],
-               device_buffer: PyLocalBuffer):
+               device_buffer: Buffer):
     """Initializer.
 
     Args:

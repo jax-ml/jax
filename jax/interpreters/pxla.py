@@ -319,10 +319,9 @@ def spec_to_indices(shape: Tuple[int, ...],
 
 def identity(x): return x
 
-# TODO(skye): expose PyLocalBuffers in xla_client
 def shard_args(devices: Sequence[xb.xla_client.Device],
                indices: Sequence[Sequence[Index]],
-               args) -> Sequence[Sequence[xb.xla_client._xla.PyLocalBuffer]]:
+               args) -> Sequence[Sequence[xb.xla_client.Buffer]]:
   """Shard each argument data array along its leading axis.
 
   Args:
@@ -418,11 +417,10 @@ def _shard_abstract_array(size, axis: int, x):
   return x.update(shape=tuple_delete(x.shape, axis))
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
-# TODO(skye): expose PyLocalBuffers in xla_client
 def aval_to_result_handler(sharding_spec: Optional[ShardingSpec],
                            indices: Optional[Tuple[Index]],
                            aval: core.AbstractValue) -> Callable[
-                               [List[xb.xla_client._xla.PyLocalBuffer]], Any]:
+                               [List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
   Args:
@@ -433,7 +431,7 @@ def aval_to_result_handler(sharding_spec: Optional[ShardingSpec],
     aval: the output AbstractValue.
 
   Returns:
-    A function for handling the PyLocalBuffers that will eventually be produced
+    A function for handling the Buffers that will eventually be produced
     for this output. The function will return an object suitable for returning
     to the user, e.g. a ShardedDeviceArray.
   """
@@ -443,7 +441,7 @@ def aval_to_result_handler(sharding_spec: Optional[ShardingSpec],
     raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
                     ) from err
 
-PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client._xla.PyLocalBuffer]], Any]]
+PxlaResultHandler = Callable[..., Callable[[List[xb.xla_client.Buffer]], Any]]
 pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 def array_result_handler(sharding_spec, indices, aval: ShapedArray):
@@ -484,12 +482,12 @@ class ShardedDeviceArray(xla.DeviceArray):  # type: ignore
       "_one_replica_buffer_indices", "_npy_value"
   ]
 
-  # TODO(skye): expose PyLocalBuffers in xla_client
+
   def __init__(
       self,
       aval: ShapedArray,
       sharding_spec,  # TODO(skye): add type annotation back, see below
-      device_buffers: Optional[List[xb.xla_client._xla.PyLocalBuffer]] = None,
+      device_buffers: Optional[List[xb.xla_client.Buffer]] = None,
       indices: Optional[Tuple[Index, ...]] = None):
     xla.DeviceArray.__init__(self)
 
@@ -1712,7 +1710,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> List[xb.xla_client._xla.PyLocalBuffer]:
+def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> List[xb.xla_client.Buffer]:
   """Call device_put on a sequence of devices and return a flat sequence of buffers."""
   if replicate:
     return list(it.chain.from_iterable(xla.device_put(x, device) for device in devices))
