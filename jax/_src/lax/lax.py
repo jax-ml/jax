@@ -2650,7 +2650,8 @@ def _cbrt_tpu(y):
   z = pow(abs_y, _const(y, -1/3))
   # Newton-Raphson step: https://csclub.uwaterloo.ca/~pbarfuss/qbrt.pdf
   z1 = z + _const(y, 1/3) * (z - (z * z) * (z * (z * abs_y)))
-  return select(eq(y, _zeros(y)), y, z1 * (z1 * y))
+  return select(eq(abs_y, _zeros(abs_y)) | eq(abs_y, full_like(abs_y, np.inf)),
+                y, z1 * (z1 * y))
 
 xla.backend_specific_translations['tpu'][cbrt_p] = xla.lower_fun(
   _cbrt_tpu, multiple_results=False)
