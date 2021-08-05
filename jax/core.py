@@ -1062,7 +1062,7 @@ class ShapedArray(UnshapedArray):
   array_abstraction_level = 1
 
   def __init__(self, shape, dtype, weak_type=False, named_shape={}):
-    super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
+    super().__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
     self.named_shape = dict(named_shape)
 
@@ -1141,8 +1141,8 @@ class ConcreteArray(ShapedArray):
   array_abstraction_level = 0
 
   def __init__(self, val, weak_type=False):
-    super(ConcreteArray, self).__init__(np.shape(val), np.result_type(val),
-                                        weak_type=weak_type)
+    super().__init__(np.shape(val), np.result_type(val),
+                     weak_type=weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
     assert self.dtype != np.dtype('O'), val
