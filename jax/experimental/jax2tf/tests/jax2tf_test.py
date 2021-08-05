@@ -745,6 +745,14 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
                                                    jnp.bfloat16))
 
+  def test_weak_types(self):
+    mul = jax.jit(jnp.multiply)
+    # The value `2` here should be weakly typed, and should not lead to
+    # promotion.
+    tf_fn = jax2tf.convert(lambda x: mul(x, 2.))
+    self.assertAllClose(tf_fn(tf.constant(1.375, tf.bfloat16)).numpy(),
+                        jnp.bfloat16(2.750))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       dict(testcase_name=f"function={with_function}",
            with_function=with_function)
