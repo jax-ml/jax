@@ -745,14 +745,42 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
                                                    jnp.bfloat16))
 
-  def test_kwargs(self):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      dict(testcase_name=f"function={with_function}",
+           with_function=with_function)
+      for with_function in [False, True]))
+  def test_kwargs(self, with_function=True):
     # Re: https://github.com/google/jax/issues/6791
     def f_jax(*, x):
       return jnp.sum(x)
     f_tf = jax2tf.convert(f_jax)
+    if with_function:
+      f_tf = tf.function(f_tf)
     self.assertAllClose(
       f_tf(x=np.zeros(3, dtype=np.float32)),  # Call with kwargs.
       np.zeros((), dtype=np.float32))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      dict(testcase_name=f"function={with_function}",
+           with_function=with_function)
+      for with_function in [False, True]))
+  def test_grad_kwargs(self, with_function=False):
+    # Re: https://github.com/google/jax/issues/6791
+    x = (np.zeros(3, dtype=np.float32),
+         np.zeros(4, dtype=np.float32))
+    def f_jax(*, x=(1., 2.)):
+      return jnp.sum(x[0]) + 2. * jnp.sum(x[1])
+    f_tf = jax2tf.convert(f_jax)
+    if with_function:
+      f_tf = tf.function(f_tf)
+    xv = tf.nest.map_structure(tf.Variable, x)
+    with tf.GradientTape() as tape:
+      res = f_tf(x=xv)
+    grad_tf = tape.gradient(res, xv)
+    self.assertAllClose((np.full_like(x[0], fill_value=1.),
+                         np.full_like(x[1], fill_value=2.)),
+                        (grad_tf[0].numpy(), grad_tf[1].numpy()))
+
 
   def test_enable_xla(self):
     # Tests that enable_xla flag is properly scoped to a conversion.

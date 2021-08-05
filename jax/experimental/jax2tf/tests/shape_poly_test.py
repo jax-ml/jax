@@ -375,6 +375,18 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           input_signature=[tf.TensorSpec([1, None])],
           polymorphic_shapes=None)
 
+  def test_kwargs(self):
+    """Test shape polymorphism for a function with kwargs."""
+
+    x = np.ones(3, dtype=np.float32)
+    y = np.ones(1, dtype=np.float32)
+    def f_jax(x, *, y):
+      return x + jnp.sin(y)
+
+    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["b, ..."])
+    f_tf(x, y=y)
+
+
   def test_arg_avals(self):
     """Test conversion of actual arguments to abstract values."""
 
