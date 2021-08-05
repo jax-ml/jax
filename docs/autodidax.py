@@ -1254,6 +1254,7 @@ def make_jaxpr_v1(f, *avals_in):
   return jaxpr, consts, out_tree()
 
 # + tags=["hide-input"]
+from typing import DefaultDict
 from collections import defaultdict
 import string
 
@@ -1288,7 +1289,7 @@ def pp(s: Any) -> PPrint:
 def vcat(ps: List[PPrint]) -> PPrint:
   return sum(ps, pp(''))
 
-def pp_jaxpr(jaxpr: Jaxpr):
+def pp_jaxpr(jaxpr: Jaxpr) -> PPrint:
   namegen = (''.join(s) for r in it.count(1)
              for s in it.permutations(string.ascii_lowercase, r))
   names = defaultdict(lambda: next(namegen))
@@ -1299,15 +1300,19 @@ def pp_jaxpr(jaxpr: Jaxpr):
   return (pp(f'{{ lambda {in_binders} .') +
           ((pp('let ') >> eqns) + pp(f'in ( {outs} ) }}')).indent(2))
 
-def var_str(names: Dict[Var, str], v: Var) -> str:
+def var_str(names: DefaultDict[Var, str], v: Var) -> str:
   return f'{names[v]}:{v.aval.str_short()}'
 
-def pp_eqn(names: Dict[Var, str], eqn: JaxprEqn) -> PPrint:
-  lhs = pp(' '.join(var_str(names, v) for v in eqn.out_binders))
-  rhs = (pp(eqn.primitive.name) >> pp_params(eqn.params) >>
-         pp(' '.join(names[x] if isinstance(x, Var) else str(x.val)
-                     for x in eqn.inputs)))
-  return lhs >> pp(' = ') >> rhs
+def pp_eqn(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
+  rule = pp_rules.get(eqn.primitive)
+  if rule:
+    return rule(names, eqn)
+  else:
+    lhs = pp(' '.join(var_str(names, v) for v in eqn.out_binders))
+    rhs = (pp(eqn.primitive.name) >> pp_params(eqn.params) >>
+           pp(' '.join(names[x] if isinstance(x, Var) else str(x.val)
+                       for x in eqn.inputs)))
+    return lhs >> pp(' = ') >> rhs
 
 def pp_params(params: Dict[str, Any]) -> PPrint:
   items = sorted(params.items())
@@ -1317,6 +1322,7 @@ def pp_params(params: Dict[str, Any]) -> PPrint:
     return pp(' ')
 
 Jaxpr.__repr__ = lambda self: str(pp_jaxpr(self))
+pp_rules: Dict[Primitive, Callable[..., PPrint]] = {}
 # -
 
 jaxpr, consts, _ = make_jaxpr_v1(lambda x: 2. * x, raise_to_shaped(get_aval(3.)))
@@ -1548,7 +1554,7 @@ input_handlers = {ty: default_input_handler for ty in
                   [bool, int, float, np.ndarray, np.float64, np.float32]}
 
 def handle_result(aval: ShapedArray, buf):
-  del aval  # Unused for now.
+  del aval  # Unused for now
   return buf.to_py()
 
 xla_translations = {}
@@ -1637,7 +1643,7 @@ print(jit(deriv(deriv(f)))(3.))
 
 # +
 def xla_call_jvp_rule(primals, tangents, *, jaxpr, num_consts):
-  del num_consts  # Unused.
+  del num_consts  # Unused
   new_jaxpr, new_consts = jvp_jaxpr(jaxpr)
   outs = bind(xla_call_p, *new_consts, *primals, *tangents, jaxpr=new_jaxpr,
               num_consts=len(new_consts))
@@ -1659,7 +1665,7 @@ def jvp_jaxpr(jaxpr: Jaxpr) -> Tuple[Jaxpr, List[Any]]:
 
 # +
 def xla_call_vmap_rule(axis_size, vals_in, dims_in, *, jaxpr, num_consts):
-  del num_consts  # Unused.
+  del num_consts  # Unused
   new_jaxpr, new_consts = vmap_jaxpr(jaxpr, axis_size, tuple(dims_in))
   outs = bind(xla_call_p, *new_consts, *vals_in, jaxpr=new_jaxpr,
               num_consts=len(new_consts))
@@ -1686,7 +1692,7 @@ def unmapped_aval(axis_size: int, batch_dim: BatchAxis, aval: ShapedArray
 
 # +
 def xla_call_abstract_eval_rule(*in_types, jaxpr, num_consts):
-  del num_consts  # Unused.
+  del num_consts  # Unused
   jaxpr_type = typecheck_jaxpr(jaxpr)
   if not all(t1 == t2 for t1, t2 in zip(jaxpr_type.in_types, in_types)):
     raise TypeError
@@ -1775,6 +1781,17 @@ x, xdot = 3., 1.
 y, ydot = jvp(f, (x,), (xdot,))
 print(y)
 print(ydot)
+
+# + tags=["hide-input"]
+def pprint_xla_call(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
+  lhs = pp(' '.join(var_str(names, v) for v in eqn.out_binders))
+  params_without_jaxpr = {k:v for k, v in eqn.params.items() if k != 'jaxpr'}
+  rhs = (pp(eqn.primitive.name) >> pp_params(params_without_jaxpr) >>
+         pp(' '.join(names[x] if isinstance(x, Var) else str(x.val)
+                     for x in eqn.inputs)))
+  return vcat([lhs >> pp(' = ') >> rhs,
+               pp_jaxpr(eqn.params['jaxpr']).indent(2)])
+pp_rules[xla_call_p] = pprint_xla_call
 # -
 
 # ## Part 4: `linearize` and `vjp` (and `grad`!)
@@ -1939,11 +1956,11 @@ def vspace(aval: ShapedArray) -> ShapedArray:
 # operations out of Python first before sorting out what can be evaluated now
 # and what must be delayed, we want only to form a jaxpr for those operations
 # that _must_ be delayed due to a dependence on unknown inputs. In the context
-# of automatic differentiation, this is the feature that ultimately enables us to
-# handle functions like `grad(lambda x: x**2 if x > 0 else 0.)`. Python control
-# flow works because partial evaluation keeps the primal computation in Python.
-# As a consequence, our `Trace` and `Tracer` subclasses must on the fly sort out
-# what can be evaluated and what must be staged out into a jaxpr.
+# of automatic differentiation, this is the feature that ultimately enables us
+# to handle functions like `grad(lambda x: x**2 if x > 0 else 0.)`. Python
+# control flow works because partial evaluation keeps the primal computation in
+# Python. As a consequence, our `Trace` and `Tracer` subclasses must on the fly
+# sort out what can be evaluated and what must be staged out into a jaxpr.
 #
 # First, we start with a `PartialVal` class, which represents a value that can
 # be either known or unknown:
@@ -1985,8 +2002,9 @@ def partial_eval_flat(f: Callable, pvals_in: List[PartialVal]
 # do so, it builds a bipartite directed acyclic graph (DAG) between
 # `PartialEvalTracer` nodes, representing staged-out values, and `JaxprRecipe`
 # nodes, representing formulas for how to compute some values from others. One
-# kind of recipe is a `JaxprEqnRecipe`, corresponding to a `JaxprEqn`'s primitive
-# application, but we also have recipe types for constants and lambda binders:
+# kind of recipe is a `JaxprEqnRecipe`, corresponding to a `JaxprEqn`'s
+# primitive application, but we also have recipe types for constants and lambda
+# binders:
 
 # +
 from weakref import ref, ReferenceType
@@ -2086,11 +2104,12 @@ partial_eval_rules = {}
 # +
 def tracers_to_jaxpr(tracers_in: List[PartialEvalTracer],
                      tracers_out: List[PartialEvalTracer]):
-  tracer_to_var = {id(t): Var(raise_to_shaped(t.aval)) for t in tracers_in}
-  constvar_to_val = {}
-  constid_to_var = {}
-  processed_eqns = set()
-  eqns = []
+  tracer_to_var: Dict[int, Var] = {id(t): Var(raise_to_shaped(t.aval))
+                                   for t in tracers_in}
+  constvar_to_val: Dict[int, Any] = {}
+  constid_to_var: Dict[int, Var] = {}
+  processed_eqns: Set[int] = set()
+  eqns: List[JaxprEqn] = []
   for t in toposort(tracers_out, tracer_parents):
     if isinstance(t.recipe, LambdaBindingRecipe):
       assert id(t) in set(map(id, tracers_in))
@@ -2185,7 +2204,7 @@ print(sin_lin(1.), cos(3.))
 
 # +
 def xla_call_partial_eval(trace, tracers, *, jaxpr, num_consts):
-  del num_consts  # Unused.
+  del num_consts  # Unused
   in_unknowns = [not t.pval.is_known for t in tracers]
   jaxpr1, jaxpr2, out_unknowns, num_res = partial_eval_jaxpr(jaxpr, in_unknowns)
   known_tracers, unknown_tracers = partition_list(in_unknowns, tracers)
@@ -2208,8 +2227,8 @@ def partial_eval_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool],
   env: Dict[Var, bool] = {}
   residuals: Set[Var] = set()
 
-  def read(v: Atom) -> bool:
-    return type(v) is Var and env[v]
+  def read(x: Atom) -> bool:
+    return type(x) is Var and env[x]
 
   def write(unk: bool, v: Var) -> None:
     env[v] = unk
@@ -2241,6 +2260,7 @@ def partial_eval_jaxpr(jaxpr: Jaxpr, in_unknowns: List[bool],
     out_unknowns = map(op.or_, out_unknowns, instantiate)
 
   residuals, num_res = list(residuals), len(residuals)
+  assert all(type(v) is Var for v in residuals), residuals
 
   ins1, ins2 = partition_list(in_unknowns, jaxpr.in_binders)
   outs1, outs2 = partition_list(out_unknowns, jaxpr.outs)
@@ -2272,16 +2292,16 @@ def typecheck_partial_eval_jaxpr(jaxpr, unks_in, unks_out, jaxpr1, jaxpr2):
 partial_eval_jaxpr_rules = {}
 
 def xla_call_peval_eqn(unks_in: List[bool], eqn: JaxprEqn,
-                       ) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[Atom]]:
+                       ) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[Var]]:
   jaxpr = eqn.params['jaxpr']
   jaxpr1, jaxpr2, unks_out, num_res = partial_eval_jaxpr(jaxpr, unks_in)
   ins1, ins2 = partition_list(unks_in, eqn.inputs)
-  outs1, outs2 = partition_list(unks_out, eqn.out_binders)
-  residuals, _ = split_list(jaxpr2.in_binders, num_res)
+  out_binders1, out_binders2 = partition_list(unks_out, eqn.out_binders)
+  residuals = [Var(v.aval) for v in jaxpr2.in_binders[:num_res]]
   eqn1 = JaxprEqn(xla_call_p, ins1, dict(jaxpr=jaxpr1, num_consts=0),
-                  outs1 + residuals)
+                  out_binders1 + residuals)
   eqn2 = JaxprEqn(xla_call_p, residuals + ins2,
-                  dict(jaxpr=jaxpr2, num_consts=0), outs2)
+                  dict(jaxpr=jaxpr2, num_consts=0), out_binders2)
   return eqn1, eqn2, unks_out, residuals
 partial_eval_jaxpr_rules[xla_call_p] = xla_call_peval_eqn
 # -
@@ -2442,7 +2462,7 @@ def add_transpose_rule(cts, x, y):
 transpose_rules[add_p] = add_transpose_rule
 
 def xla_call_transpose_rule(cts, *invals, jaxpr, num_consts):
-  del num_consts  # Unused.
+  del num_consts  # Unused
   undef_primals = [type(x) is UndefPrimal for x in invals]
   transposed_jaxpr, new_consts = transpose_jaxpr(jaxpr, tuple(undef_primals))
   residuals, _ = partition_list(undef_primals, invals)
@@ -2701,7 +2721,7 @@ def cond_abstract_eval(pred_type, *in_types, true_jaxpr, false_jaxpr):
 abstract_eval_rules[cond_p] = cond_abstract_eval
 
 def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr):
-  del in_avals  # Unused.
+  del in_avals  # Unused
   pred, *in_vals = in_vals
   flat_vals, in_tree = tree_flatten(in_vals)
   operand = xops.Tuple(c, flat_vals)
@@ -2791,8 +2811,6 @@ def _join_jaxpr_res(jaxpr1: Jaxpr, jaxpr2: Jaxpr, n1: int, n2: int
   new_jaxpr1 = Jaxpr(jaxpr1.in_binders, jaxpr1.eqns, outs1 + res1 + zeros_like2)
   new_jaxpr2 = Jaxpr(jaxpr2.in_binders, jaxpr2.eqns, outs2 + zeros_like1 + res2)
   return new_jaxpr1, new_jaxpr2
-
-
 # -
 
 _, f_lin = linearize(lambda x: cond(True, lambda: x, lambda: 0.), 1.)
@@ -2815,7 +2833,8 @@ def cond_peval_eqn(unks_in: List[bool], eqn: JaxprEqn,
   eqn2 = JaxprEqn(cond_p, [eqn.inputs[0], *residuals, *ins2],
                   dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2),
                   outs2)
-  return eqn1, eqn2, unks_out, [eqn.inputs[0], *residuals]
+  res = [eqn.inputs[0], *residuals] if type(eqn.inputs[0]) is Var else residuals
+  return eqn1, eqn2, unks_out, res
 partial_eval_jaxpr_rules[cond_p] = cond_peval_eqn
 
 _, f_lin = linearize(jit(lambda x: cond(True, lambda: x, lambda: 0.)), 1.)
@@ -2839,3 +2858,16 @@ transpose_rules[cond_p] = cond_transpose_rule
 
 out = grad(lambda x: cond(True, lambda: x * x, lambda: 0.))(1.)
 print(out)
+
+# + tags=["hide-input"]
+def pprint_cond(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
+  true_jaxpr, false_jaxpr = eqn.params['true_jaxpr'], eqn.params['false_jaxpr']
+  new_params = {k:v for k, v in eqn.params.items() if not k.endswith('jaxpr')}
+  lhs = pp(' '.join(var_str(names, v) for v in eqn.out_binders))
+  rhs = (pp(eqn.primitive.name) >> pp_params(new_params) >>
+         pp(' '.join(names[x] if isinstance(x, Var) else str(x.val)
+                     for x in eqn.inputs)))
+  return vcat([lhs >> pp(' = ') >> rhs,
+               pp_jaxpr(true_jaxpr).indent(2),
+               pp_jaxpr(false_jaxpr).indent(2)])
+pp_rules[cond_p] = pprint_cond
