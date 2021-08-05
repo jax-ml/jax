@@ -65,8 +65,8 @@ Equations are printed as follows::
   Eqn  ::= let Var+ = Primitive [ Param* ] Expr+
 
 where:
-  * ``Var+`` are one or more intermediate variables to be defined as the
-    output of a primitive invocation (some primitives can return multiple values)
+  * ``Var+`` are one or more intermediate variables to be defined as the output
+    of a primitive invocation (some primitives can return multiple values).
   * ``Expr+`` are one or more atomic expressions, each either a variable or a
     literal constant. A special variable ``unitvar`` or literal ``unit``,
     printed as ``*``, represents a value that is not needed
@@ -235,7 +235,7 @@ The cond primitive has a number of parameters:
     parameters are used linearly in the conditional.
 
 The above instance of the cond primitive takes two operands.  The first
-one (``c``) is the branch index, then ``b`` is the operand (``arg``) to
+one (``d``) is the branch index, then ``b`` is the operand (``arg``) to
 be passed to whichever jaxpr in ``branches`` is selected by the branch
 index.
 
@@ -267,7 +267,7 @@ Another example, using :py:func:`lax.cond`:
 In this case, the boolean predicate is converted to an integer index
 (0 or 1), and ``branches`` are jaxprs that correspond to the false and
 true branch functionals, in that order. Again, each functional takes
-one input variable, corresponding to ``xtrue`` and ``xfalse``
+one input variable, corresponding to ``xfalse`` and ``xtrue``
 respectively.
 
 The following example shows a more complicated situation when the input
@@ -341,7 +341,7 @@ For example, here is an example fori loop
                      cond_nconsts=0 ] c a 0 b d
   in (e,) }
 
-The while primitive takes 5 arguments: ``c a 0 b e``, as follows:
+The while primitive takes 5 arguments: ``c a 0 b d``, as follows:
 
   * 0 constants for ``cond_jaxpr`` (since ``cond_nconsts`` is 0)
   * 2 constants for ``body_jaxpr`` (``c``, and ``a``)
@@ -406,8 +406,8 @@ XLA_call
 ^^^^^^^^
 
 The call primitive arises from JIT compilation, and it encapsulates
-a sub-jaxpr along with parameters the specify the backend and the device the
-computation should run. For example
+a sub-jaxpr along with parameters that specify the backend and the device on
+which the computation should run. For example
 
 >>> from jax import jit
 >>>
@@ -480,10 +480,10 @@ captured using the ``xla_pmap`` primitive. Consider this example
                     out_axes=(0,) ] b a
   in (c,) }
 
-The ``xla_pmap`` primitive specifies the name of the axis (parameter ``rows``)
-and the body of the function to be mapped as the ``call_jaxpr`` parameter.
-value of this parameter is a Jaxpr with 3 input variables:
+The ``xla_pmap`` primitive specifies the name of the axis (parameter
+``axis_name``) and the body of the function to be mapped as the ``call_jaxpr``
+parameter. The value of this parameter is a Jaxpr with 2 input variables.
 
 The parameter ``in_axes`` specifies which of the input variables should be
 mapped and which should be broadcast. In our example, the value of ``extra``
-is broadcast, the other input values are mapped.
+is broadcast and the value of ``arr`` is mapped.

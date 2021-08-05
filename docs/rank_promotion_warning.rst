@@ -3,8 +3,8 @@ Rank promotion warning
 
 `NumPy broadcasting rules
 <https://docs.scipy.org/doc/numpy/user/basics.broadcasting.html#general-broadcasting-rules>`_
-allow automatic promotion of arguments from one rank (number of array axes) to
-another. This behavior can be convenient when intended but can also lead to
+allow the automatic promotion of arguments from one rank (number of array axes)
+to another. This behavior can be convenient when intended but can also lead to
 surprising bugs where a silent rank promotion masks an underlying shape error.
 
 Here's an example of rank promotion:

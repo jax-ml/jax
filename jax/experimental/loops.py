@@ -58,7 +58,7 @@ special `loops.scope` object and use `for` loops over special
 
 Loops constructed with `range` must have literal constant bounds. If you need
 loops with dynamic bounds, you can use the more general `while_range` iterator.
-However, in that case that `grad` transformation is not supported::
+However, in that case the `grad` transformation is not supported::
 
     s.idx = start
     for _ in s.while_range(lambda: s.idx < end):
@@ -93,7 +93,7 @@ Restrictions:
   * Once the loop starts all updates to loop state must be with new values of the
     same abstract values as the values on loop start.
   * For a `while` loop, the conditional function is not allowed to modify the
-    scope state. This is a checked error. Also, for `while` loops the `grad`
+    scope state. This is a checked error. Also, for `while` loops, the `grad`
     transformation does not work. An alternative that allows `grad` is a bounded
     loop (`range`).
 

@@ -12,8 +12,8 @@ While JAX tries to follow the NumPy API as closely as possible, sometimes JAX
 cannot follow NumPy exactly.
 
 * Notably, since JAX arrays are immutable, NumPy APIs that mutate arrays
-  in-place cannot be implemented in JAX. However, often JAX is able to provide a
-  alternative API that is purely functional. For example, instead of in-place
+  in-place cannot be implemented in JAX. However, often JAX is able to provide
+  an alternative API that is purely functional. For example, instead of in-place
   array updates (:code:`x[i] = y`), JAX provides an alternative pure indexed
   update function :func:`jax.ops.index_update`.
 

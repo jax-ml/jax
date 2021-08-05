@@ -50,7 +50,7 @@ plt.scatter(*sample_batch(10**4).T, alpha=0.1)
 
 ## Compute score matching objective
 
-The method we apply here was originally proposed by [Hyvarinen et al. (2005)](http://jmlr.org/papers/volume6/hyvarinen05a/old.pdf). The idea behind score matching is to __learn scores:__ the gradients of $\log p(x)$ w.r.t. $x$. When trained this model can "improve" a sample $x$ by changing it in the direction of highest log-probability. However, training such model can get tricky. When predicting a continuous variable, ML folks usually minimize squared error:
+The method we apply here was originally proposed by [Hyvarinen et al. (2005)](http://jmlr.org/papers/volume6/hyvarinen05a/old.pdf). The idea behind score matching is to __learn scores:__ the gradients of $\log p(x)$ w.r.t. $x$. When trained this model can "improve" a sample $x$ by changing it in the direction of highest log-probability. However, training such a model can get tricky. When predicting a continuous variable, ML folks usually minimize squared error:
 
 $$ L_{mse} = E_{x \sim p(x)} \left\lVert model(x) - \nabla_x \log p(x) \right\lVert_2^2 $$
 
@@ -58,7 +58,7 @@ One can't minimize this explicitly because the real $\nabla_x \log p(x)$ is usua
 
 $$ L_{matching} = E_{x \sim p(x)} \space tr( \space \mathbf{J}_x [\space model(x)  \space]) + \frac12 \left\Vert model(x) \right\lVert_2^2 $$
 
-Here $tr( \space \mathbf{J}_x [\space model(x)  \space])$ is a trace of Jacobian of $model(x)$ w.r.t. $x$. Now all it takes is to minimize the second objective with backpropagation... that is, if you can compute Jacobians. Thankfully, we have __jax__!
+Here $tr( \space \mathbf{J}_x [\space model(x)  \space])$ is the trace of the Jacobian of $model(x)$ w.r.t. $x$. Now all it takes is to minimize the second objective with backpropagation... that is, if you can compute Jacobians. Thankfully, we have __jax__!
 
 ```{code-cell} ipython3
 :id: 98wjxKcNG6TI

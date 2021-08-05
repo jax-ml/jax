@@ -132,7 +132,7 @@ class custom_jvp(Generic[ReturnValue]):
       jvp: a Python callable representing the custom JVP rule. When there are no
         ``nondiff_argnums``, the ``jvp`` function should accept two arguments,
         where the first is a tuple of primal inputs and the second is a tuple of
-        tangent inputs. The lengths of both tuples is equal to the number of
+        tangent inputs. The lengths of both tuples are equal to the number of
         parameters of the ``custom_jvp`` function. The ``jvp`` function should
         produce as output a pair where the first element is the primal output
         and the second element is the tangent output. Elements of the input and

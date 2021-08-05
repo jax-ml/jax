@@ -213,7 +213,7 @@ def sgd(step_size):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -233,7 +233,7 @@ def momentum(step_size: Schedule, mass: float):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     mass: positive scalar representing the momentum coefficient.
 
   Returns:
@@ -260,7 +260,7 @@ def nesterov(step_size: Schedule, mass: float):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     mass: positive scalar representing the momentum coefficient.
 
   Returns:
@@ -290,7 +290,7 @@ def adagrad(step_size, momentum=0.9):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     momentum: optional, a positive scalar value for momentum
 
   Returns:
@@ -324,7 +324,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
       gamma: Decay parameter.
       eps: Epsilon parameter.
 
@@ -355,7 +355,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     gamma: Decay parameter.
     eps: Epsilon parameter.
     momentum: Momentum parameter.
@@ -386,7 +386,7 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     b1: optional, a positive scalar value for beta_1, the exponential decay rate
       for the first moment estimates (default 0.9).
     b2: optional, a positive scalar value for beta_2, the exponential decay rate
@@ -422,7 +422,7 @@ def adamax(step_size, b1=0.9, b2=0.999, eps=1e-8):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     b1: optional, a positive scalar value for beta_1, the exponential decay rate
       for the first moment estimates (default 0.9).
     b2: optional, a positive scalar value for beta_2, the exponential decay rate
@@ -460,7 +460,7 @@ def sm3(step_size, momentum=0.9):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     momentum: optional, a positive scalar value for momentum
 
   Returns:

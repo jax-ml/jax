@@ -738,7 +738,7 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
          has_aux: bool = False, holomorphic: bool = False,
          allow_int: bool = False,
          reduce_axes: Sequence[AxisName] = ()) -> Callable:
-  """Creates a function which evaluates the gradient of ``fun``.
+  """Creates a function that evaluates the gradient of ``fun``.
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
@@ -809,7 +809,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
                    allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
 ) -> Callable[..., Tuple[Any, Any]]:
-  """Create a function which evaluates both ``fun`` and the gradient of ``fun``.
+  """Create a function that evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
@@ -1875,7 +1875,7 @@ def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
       array, scalar, or standard Python container of arrays or scalars.
     primals: The primal values at which the Jacobian of ``fun`` should be
       evaluated. Should be either a tuple or a list of arguments,
-      and its length should  equal to the number of positional parameters of
+      and its length should be equal to the number of positional parameters of
       ``fun``.
     tangents: The tangent vector for which the Jacobian-vector product should be
       evaluated. Should be either a tuple or a list of tangents, with the same

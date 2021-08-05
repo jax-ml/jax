@@ -72,7 +72,7 @@ def minimize(
 
   Args:
     fun: the objective function to be minimized, ``fun(x, *args) -> float``,
-      where ``x`` is an 1-D array with shape ``(n,)`` and ``args`` is a tuple
+      where ``x`` is a 1-D array with shape ``(n,)`` and ``args`` is a tuple
       of the fixed parameters needed to completely specify the function.
       ``fun`` must support differentiation.
     x0: initial guess. Array of real elements of size ``(n,)``, where ``n`` is

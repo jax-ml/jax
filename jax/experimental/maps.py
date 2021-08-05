@@ -210,7 +210,7 @@ def serial_loop(name: ResourceAxisName, length: int):
 
 @contextlib.contextmanager
 def mesh(devices: np.ndarray, axis_names: Sequence[ResourceAxisName]):
-  """Declare the hardware resources available in scope of this manager.
+  """Declare the hardware resources available in the scope of this manager.
 
   In particular, all ``axis_names`` become valid resource names inside the
   managed block and can be used e.g. in the ``axis_resources`` argument of
@@ -391,9 +391,9 @@ def xmap(fun: Callable,
     While it is possible to assign multiple axis names to a single resource axis,
     care has to be taken to ensure that none of those named axes co-occur in a
     ``named_shape`` of any value in the named program. At the moment this is
-    **completely unchecked** and will result in **undefined behavior**. Final
-    release of :py:func:`xmap` will enforce this invariant, but it is work
-    in progress.
+    **completely unchecked** and will result in **undefined behavior**. The
+    final release of :py:func:`xmap` will enforce this invariant, but it is a
+    work in progress.
 
     Note that you do not have to worry about any of this for as long as no
     resource axis is repeated in ``axis_resources.values()``.
@@ -401,7 +401,7 @@ def xmap(fun: Callable,
   Note that any assignment of ``axis_resources`` doesn't ever change the
   results of the computation, but only how it is carried out (e.g. how many
   devices are used).  This makes it easy to try out various ways of
-  partitioning a single program in many distributed scenarions (both small- and
+  partitioning a single program in many distributed scenarios (both small- and
   large-scale), to maximize the performance.  As such, :py:func:`xmap` can be
   seen as a way to seamlessly interpolate between :py:func:`vmap` and
   :py:func:`pmap`-style execution.
@@ -489,7 +489,7 @@ def xmap(fun: Callable,
          out_axes={})  # Loss is reduced over all axes, including batch!
 
   .. note::
-    When using ``axis_resources`` along with a mesh that is controled by
+    When using ``axis_resources`` along with a mesh that is controlled by
     multiple JAX hosts, keep in mind that in any given process :py:func:`xmap`
     only expects the data slice that corresponds to its local devices to be
     specified. This is in line with the current multi-host :py:func:`pmap`

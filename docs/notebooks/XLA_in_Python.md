@@ -26,7 +26,7 @@ XLA is the compiler that JAX uses, and the compiler that TF uses for TPUs and wi
 
 XLA computations are built as computation graphs in HLO IR, which is then lowered to LLO that is device specific (CPU, GPU, TPU, etc.).  
 
-As end users we interact with the computational primitives offered to us by the HLO spec.
+As end users, we interact with the computational primitives offered to us by the HLO spec.
 
 **Caution:  This is a pedagogical notebook covering some low level XLA details, the APIs herein are neither public nor stable!**
 

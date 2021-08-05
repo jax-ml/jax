@@ -486,7 +486,7 @@ class JVPTrace(Trace):
 jvp_rules = {}
 # -
 
-# Notice both `lift` and `sublift` package a value into a `JVPTracer` with the
+# Notice both `pure` and `lift` package a value into a `JVPTracer` with the
 # minimal amount of context, which is a zero tangent value.
 #
 # Let's add some JVP rules for primitives:
@@ -919,7 +919,7 @@ jacfwd(f, np.arange(3.))
 # control flow, any transformation could be implemented by first tracing to a
 # jaxpr and then interpreting the jaxpr.)
 
-# ### Jaxpr data strutures
+# ### Jaxpr data structures
 #
 # The jaxpr term syntax is roughly:
 #
@@ -1930,7 +1930,7 @@ def vspace(aval: ShapedArray) -> ShapedArray:
 #       g:float64[] = neg e
 #   in ( g ) }
 # ```
-# This second jaxpr is represents the linear computation that we want from
+# This second jaxpr represents the linear computation that we want from
 # `linearize`.
 #
 # However, unlike in this jaxpr example, we want the computation on known values
@@ -1939,7 +1939,7 @@ def vspace(aval: ShapedArray) -> ShapedArray:
 # operations out of Python first before sorting out what can be evaluated now
 # and what must be delayed, we want only to form a jaxpr for those operations
 # that _must_ be delayed due to a dependence on unknown inputs. In the context
-# of automatic differentiation, this is the feature ultimately enables us to
+# of automatic differentiation, this is the feature that ultimately enables us to
 # handle functions like `grad(lambda x: x**2 if x > 0 else 0.)`. Python control
 # flow works because partial evaluation keeps the primal computation in Python.
 # As a consequence, our `Trace` and `Tracer` subclasses must on the fly sort out
@@ -2036,9 +2036,10 @@ class PartialEvalTracer(Tracer):
 # (evaluating it in Python) and avoid forming tracers corresponding to the
 # output. If instead any input is unknown then we instead stage out into a
 # `JaxprEqnRecipe` representing the primitive application. To build the tracers
-# representing unknown outputs, we need avals, which get from the abstract eval
-# rules. (Notice that tracers reference `JaxprEqnRecipe`s, and `JaxprEqnRecipe`s
-# reference tracers; we avoid circular garbage by using weakrefs.)
+# representing unknown outputs, we need avals, which we get from the abstract
+# eval rules. (Notice that tracers reference `JaxprEqnRecipe`s, and
+# `JaxprEqnRecipe`s reference tracers; we avoid circular garbage by using
+# weakrefs.)
 #
 # That `process_primitive` logic applies to most primitives, but `xla_call_p`
 # requires recursive treatment. So we special-case its rule in a
@@ -2376,7 +2377,7 @@ register_pytree_node(UndefPrimal,
 # -
 
 # We use `UndefPrimal` instances to indicate which arguments with respect to
-# with we want to transpose. These arise because in general, being explicit
+# which we want to transpose. These arise because in general, being explicit
 # about closed-over values, we want to transpose functions of type
 # `a -> b -o c` to functions of type `a -> c -o b`. Even more generally, the
 # inputs with respect to which the function is linear could be scattered through
