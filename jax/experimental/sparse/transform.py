@@ -59,7 +59,7 @@ from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
-from jax.util import safe_map, split_list
+from jax.util import safe_map, safe_zip, split_list
 from jax._src.util import canonicalize_axis
 from jax.experimental import sparse
 from jax.experimental.sparse import BCOO
@@ -422,3 +422,35 @@ def _xla_call_sparse(spenv, *argspecs, call_jaxpr, donated_invars, **params):
   return arrays_to_argspecs(spenv, tree_unflatten(out_tree, out_flat))
 
 sparse_rules[xla.xla_call_p] = _xla_call_sparse
+
+def _scan_sparse(spenv, *argspecs, jaxpr, num_consts, num_carry, **params):
+  const_argspecs, carry_argspecs, xs_argspecs = split_list(
+    argspecs, [num_consts, num_carry])
+  if xs_argspecs:
+    # TODO(jakevdp): we don't want to pass xs_argspecs, we want to pass one row
+    # of xs argspecs. How to do this?
+    raise NotImplementedError("sparse rule for scan with x values.")
+  sp_jaxpr, _ = _sparsify_jaxpr(spenv, jaxpr, *const_argspecs, *carry_argspecs, *xs_argspecs)
+
+  consts, _ = tree_flatten(argspecs_to_arrays(spenv, const_argspecs))
+  carry, carry_tree = tree_flatten(argspecs_to_arrays(spenv, carry_argspecs))
+  xs, xs_tree = tree_flatten(argspecs_to_arrays(spenv, xs_argspecs))
+
+  # params['linear'] has one entry per arg; expand it to match the sparsified args.
+  const_linear, carry_linear, xs_linear = split_list(
+    params.pop('linear'), [num_consts, num_carry])
+  def _map_params(argspecs, params):
+    for argspec, param in safe_zip(argspecs, params):
+        yield from [param, param] if argspec.is_sparse() else [param]
+  sp_linear = tuple([
+    *_map_params(const_argspecs, const_linear),
+    *_map_params(carry_argspecs, carry_linear),
+    *_map_params(xs_argspecs, xs_linear)])
+
+  out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr, linear=sp_linear,
+                        num_consts=len(consts), num_carry=len(carry), **params)
+  carry_out = tree_unflatten(carry_tree, out[:len(carry)])
+  xs_out = tree_unflatten(xs_tree, out[len(carry):])
+  return arrays_to_argspecs(spenv, carry_out + xs_out)
+
+sparse_rules[lax.scan_p] = _scan_sparse
