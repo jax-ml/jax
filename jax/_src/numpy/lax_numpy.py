@@ -4260,7 +4260,7 @@ def tensordot(a, b, axes=2, *, precision=None):
 
 
 @_wraps(np.einsum, lax_description=_PRECISION_DOC, skip_params=['out'])
-def einsum(*operands, out=None, optimize='greedy', precision=None,
+def einsum(*operands, out=None, optimize='optimal', precision=None,
            _use_xeinsum=False):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
@@ -4269,7 +4269,7 @@ def einsum(*operands, out=None, optimize='greedy', precision=None,
       len(operands[1:]) == 2):
     return lax.xeinsum(*operands)
 
-  optimize = 'greedy' if optimize is True else optimize
+  optimize = 'optimal' if optimize is True else optimize
   # using einsum_call=True here is an internal api for opt_einsum
 
   # Allow handling of shape polymorphism
