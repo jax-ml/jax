@@ -1302,12 +1302,10 @@ def _reduction_jaxpr(computation, aval):
 def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   avals = tree_util.tree_unflatten(aval_tree, flat_avals)
   flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
-  pvals = safe_map(pe.PartialVal.unknown, flat_in_avals)
   comp = lu.wrap_init(computation)
   flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr(flat_comp, tuple(pvals),
-                                       instantiate=False)
-  return jaxpr, consts, out_tree()
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
+  return jaxpr, tuple(consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable, xs: Array) -> Optional[Callable]:
   if len(xs) != 1:
