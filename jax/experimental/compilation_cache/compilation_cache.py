@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import hashlib
+import re
+
 import jax
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
 from jax.lib import xla_client
@@ -68,7 +70,17 @@ def get_cache_key(xla_computation, compile_options) -> str:
 
     """
     hash_obj = hashlib.sha256()
-    hash_obj.update(xla_computation.as_serialized_hlo_module_proto())
+    # The HLO op_name metadata sometimes includes Python function pointers,
+    # which cause spurious cache misses. Scrub anything that looks like a
+    # function pointer. Example op_name metadata:
+    #  op_name="jit(s)/custom_jvp_call_jaxpr
+    #   [ jvp_jaxpr_thunk=<function _memoize.<locals>.memoized at 0x7f3fa30f0940>\n
+    #     num_consts=0 ]"
+    # TODO(skye): in theory this could cause us to scrub meaningful binary proto
+    # data. Do something more robust.
+    serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
+    scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
+    hash_obj.update(scrubbed_hlo)
     if logging.vlog_is_on(1):
         logging.vlog(1, f"get_cache_key hash after serializing computation: {hash_obj.digest().hex()}")
     _hash_compile_options(hash_obj, compile_options)
