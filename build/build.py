@@ -212,7 +212,7 @@ def check_bazel_version(bazel_path):
     version_output = shell([bazel_path, "--version"])
   except subprocess.CalledProcessError:
     return False
-  match = re.search("Build label: *([0-9\\.]+)[^0-9\\.]", version_output)
+  match = re.search(r"bazel *([0-9\\.]+)", version_output)
   if match is None:
     return False
   actual_ints = [int(x) for x in match.group(1).split(".")]
