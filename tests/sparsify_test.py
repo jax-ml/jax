@@ -254,5 +254,20 @@ class SparsifyTest(jtu.JaxTestCase):
     out_sparse = sparsify(jit(func))(Msp)
     self.assertArraysEqual(out_dense, out_sparse.todense())
 
+  def testSparseForiLoop(self):
+    def func(M, x):
+      body_fun = lambda i, val: (M @ val) / M.shape[1]
+      return lax.fori_loop(0, 2, body_fun, x)
+
+    x = jnp.arange(5.0)
+    M = jnp.arange(25).reshape(5, 5)
+    M_bcoo = BCOO.fromdense(M)
+
+    result_dense = func(M, x)
+    result_sparse = sparsify(func)(M_bcoo, x)
+
+    self.assertArraysAllClose(result_dense, result_sparse)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
