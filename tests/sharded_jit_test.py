@@ -42,7 +42,7 @@ config.parse_flags_with_absl()
 class ShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
-    super(ShardedJitTest, self).setUp()
+    super().setUp()
     if jtu.device_under_test() not in ["tpu", "gpu"]:
       raise SkipTest
     if jtu.device_under_test() == "gpu":
@@ -279,7 +279,7 @@ class ShardedJitTest(jtu.JaxTestCase):
 class ShardedJitErrorsTest(jtu.JaxTestCase):
 
   def setUp(self):
-    super(ShardedJitErrorsTest, self).setUp()
+    super().setUp()
     if jtu.device_under_test() not in ["tpu", "gpu"]:
       raise SkipTest
 
@@ -329,7 +329,7 @@ class ShardedJitTestNoTpu(jtu.JaxTestCase):
 class PmapOfShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
-    super(PmapOfShardedJitTest, self).setUp()
+    super().setUp()
     if jtu.device_under_test() not in ["tpu", "gpu"]:
       raise SkipTest
     if jtu.device_under_test() == "gpu":

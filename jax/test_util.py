@@ -879,7 +879,7 @@ class JaxTestCase(parameterized.TestCase):
   #   assert core.reset_trace_state()
 
   def setUp(self):
-    super(JaxTestCase, self).setUp()
+    super().setUp()
     config.update('jax_enable_checks', True)
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.

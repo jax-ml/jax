@@ -62,7 +62,7 @@ class AbstractSparseArray(core.ShapedArray):
 
   def __init__(self, shape, dtype, index_dtype, nnz, weak_type=False,
                named_shape={}):
-    super(AbstractSparseArray, self).__init__(shape, dtype)
+    super().__init__(shape, dtype)
     self.index_dtype = index_dtype
     self.nnz = nnz
     self.data_aval = core.ShapedArray((nnz,), dtype, weak_type, named_shape)
