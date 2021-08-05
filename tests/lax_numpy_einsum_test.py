@@ -30,16 +30,8 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class EinsumTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
-    config.update("jax_numpy_rank_promotion", "raise")
-
-  def tearDown(self):
-    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
-    super().tearDown()
 
   def _check(self, s, *ops):
     a = np.einsum(s, *ops)

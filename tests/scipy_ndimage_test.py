@@ -57,16 +57,8 @@ def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
   return result
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class NdimageTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
-    config.update("jax_numpy_rank_promotion", "raise")
-
-  def tearDown(self):
-    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
-    super().tearDown()
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_coordinates={}_order={}_mode={}_cval={}_impl={}_round={}".format(
