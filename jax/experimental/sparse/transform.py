@@ -60,6 +60,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax.util import safe_map, safe_zip, split_list
+from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.util import canonicalize_axis
 from jax.experimental import sparse
 from jax.experimental.sparse import BCOO
@@ -423,6 +424,12 @@ def _xla_call_sparse(spenv, *argspecs, call_jaxpr, donated_invars, **params):
 
 sparse_rules[xla.xla_call_p] = _xla_call_sparse
 
+
+def _duplicate_for_sparse_argspecs(argspecs, params):
+  for argspec, param in safe_zip(argspecs, params):
+      yield from [param, param] if argspec.is_sparse() else [param]
+
+
 def _scan_sparse(spenv, *argspecs, jaxpr, num_consts, num_carry, **params):
   const_argspecs, carry_argspecs, xs_argspecs = split_list(
     argspecs, [num_consts, num_carry])
@@ -439,13 +446,10 @@ def _scan_sparse(spenv, *argspecs, jaxpr, num_consts, num_carry, **params):
   # params['linear'] has one entry per arg; expand it to match the sparsified args.
   const_linear, carry_linear, xs_linear = split_list(
     params.pop('linear'), [num_consts, num_carry])
-  def _map_params(argspecs, params):
-    for argspec, param in safe_zip(argspecs, params):
-        yield from [param, param] if argspec.is_sparse() else [param]
   sp_linear = tuple([
-    *_map_params(const_argspecs, const_linear),
-    *_map_params(carry_argspecs, carry_linear),
-    *_map_params(xs_argspecs, xs_linear)])
+    *_duplicate_for_sparse_argspecs(const_argspecs, const_linear),
+    *_duplicate_for_sparse_argspecs(carry_argspecs, carry_linear),
+    *_duplicate_for_sparse_argspecs(xs_argspecs, xs_linear)])
 
   out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr, linear=sp_linear,
                         num_consts=len(consts), num_carry=len(carry), **params)
@@ -454,3 +458,17 @@ def _scan_sparse(spenv, *argspecs, jaxpr, num_consts, num_carry, **params):
   return arrays_to_argspecs(spenv, carry_out + xs_out)
 
 sparse_rules[lax.scan_p] = _scan_sparse
+
+def _cond_sparse(spenv, pred, *operands, branches, linear, **params):
+  sp_branches, treedefs = zip(*(_sparsify_jaxpr(spenv, jaxpr, *operands)
+                                for jaxpr in branches))
+  _check_tree_and_avals("sparsified true_fun and false_fun output",
+                        treedefs[0], sp_branches[0].out_avals,
+                        treedefs[1], sp_branches[1].out_avals)
+  sp_linear = tuple(_duplicate_for_sparse_argspecs(operands, linear))
+  args, _ = tree_flatten(argspecs_to_arrays(spenv, (pred, *operands)))
+  out_flat = lax.cond_p.bind(*args, branches=sp_branches, linear=sp_linear, **params)
+  out = tree_unflatten(treedefs[0], out_flat)
+  return arrays_to_argspecs(spenv, out)
+
+sparse_rules[lax.cond_p] = _cond_sparse
