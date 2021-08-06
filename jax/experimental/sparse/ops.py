@@ -549,6 +549,18 @@ def _coo_matmat_jvp_rule(primals_in, tangents_in, **params):
   return primals_out, tangents_out
 ad.primitive_jvps[coo_matmat_p] = _coo_matmat_jvp_rule
 
+def _coo_matmat_transpose(ct, data, row, col, B, *, shape, transpose):
+  assert not ad.is_undefined_primal(row)
+  assert not ad.is_undefined_primal(col)
+    
+  if ad.is_undefined_primal(B):
+    B_ct = coo_matmat(data, row, col, ct, shape=shape, transpose=not transpose)
+    return data, row, col, B_ct
+  else:
+    data_ct = jnp.sum(ct[row]*B[col], axis=1)
+    return data_ct, row, col, B
+
+ad.primitive_transposes[coo_matmat_p] = _coo_matmat_transpose
 
 #----------------------------------------------------------------------
 # BCOO primitives: batched extension of COO.
