@@ -47,15 +47,19 @@ class HandlePool {
     Handle(Handle&& other) {
       pool_ = other.pool_;
       handle_ = other.handle_;
+      stream_ = other.stream_;
       other.pool_ = nullptr;
       other.handle_ = nullptr;
+      other.stream_ = nullptr;
     }
     Handle& operator=(Handle const&) = delete;
     Handle& operator=(Handle&& other) {
       pool_ = other.pool_;
       handle_ = other.handle_;
+      stream_ = other.stream_;
       other.pool_ = nullptr;
       other.handle_ = nullptr;
+      other.stream_ = nullptr;
       return *this;
     }
 
