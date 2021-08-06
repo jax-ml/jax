@@ -62,17 +62,20 @@ class Builder:
 
   def convert_dtype_to_ir_type(self, dtype) -> ir.Type:
     """Convert a dtype to an ir type."""
-    # TODO: Terrible.
+    # TODO: Actually switch on types, produce errors, etc.
     return ir.F32Type.get(self.context)
 
   def convert_ir_type_to_dtype(self, element_type: ir.Type):
     """Convert an IR type to a dtype."""
-    # TODO: Terrible.
+    # TODO: Actually switch on types, produce errors, etc.
     return np.float32
 
   def get_shaped_type_dims_list(self,
                                 t: ir.ShapedType) -> Sequence[Union[None, int]]:
-    # TODO: Ugh. Has anyone tried to use this before?
+    # TODO: Ugh. Has anyone tried to use this before? Add a simple .shape
+    # property.
+    if not t.has_rank:
+      raise ValueError(f"Cannot get dims from unranked type")
     def get_dim(index):
       return None if t.is_dynamic_dim(index) else t.get_dim_size(index)
 
@@ -89,14 +92,14 @@ class FunctionBuilder:
     self.entry_block = self.func_op.add_entry_block()
     self.ip = ir.InsertionPoint(self.entry_block)
 
-  def emit_return(self, values: Sequence[ir.Value], update_type: bool = True):
+  def emit_return(self, values: Sequence[ir.Value]):
     """Emits a return op, also updating the containing function type."""
     std.ReturnOp(values, loc=self.b.loc, ip=self.ip)
-    if update_type:
-      ftype = self.func_op.type
-      return_types = [v.type for v in values]
-      with self.context:
-        ftype_attr = ir.TypeAttr.get(
-            ir.FunctionType.get(ftype.inputs, return_types))
-        # TODO: Provide a FuncOp.type setter upstream.
-        self.func_op.attributes["type"] = ftype_attr
+    # Update function type to match.
+    ftype = self.func_op.type
+    return_types = [v.type for v in values]
+    with self.context:
+      ftype_attr = ir.TypeAttr.get(
+          ir.FunctionType.get(ftype.inputs, return_types))
+      # TODO: Provide a FuncOp.type setter upstream.
+      self.func_op.attributes["type"] = ftype_attr
