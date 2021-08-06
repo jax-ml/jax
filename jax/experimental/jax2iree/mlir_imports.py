@@ -18,14 +18,16 @@ Different environments locate these in different ways, and indirecting through
 this module provides one place to replace them.
 """
 
-from mlir import ir
-from mlir.dialects import builtin, chlo, mhlo, std
+from iree.compiler import ir
+from iree.compiler.dialects import builtin, chlo, mhlo, std
+from iree.compiler.dialects import iree_public
 
 __all__ = [
   "ir",
   # Dialects.
   "builtin",
   "chlo",
+  "iree_public",
   "mhlo",
   "std",
 ]

@@ -12,5 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .jax2iree import trace_function
+from .jax2iree import trace_flat_function
 from .ir_builder import Builder

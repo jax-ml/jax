@@ -15,16 +15,11 @@
 from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
 
 import contextlib
-import logging
 import threading
 
-import numpy as np
-
-from jax import core, tree_util
+from jax import core
 from jax import linear_util as lu
-from jax.core import DimSize, MainTrace, Shape
 from jax._src import api
-from jax._src import util
 
 from .ir_builder import Builder, FunctionBuilder
 from .mlir_imports import *
@@ -57,12 +52,12 @@ def new_function_scope(fb: FunctionBuilder):
     _thread_local_state.function_builder = None
 
 
-def trace_function(fun: Callable,
-                   *,
-                   builder: Builder,
-                   shapes_and_dtypes,
-                   exported_name: Optional[str] = None):
-  # TODO: shapes_and_dtypes is hoaky. Formalize.
+def trace_flat_function(
+    fun: Callable,
+    *,
+    builder: Builder,
+    in_avals: Sequence[core.AbstractValue],
+    exported_name: Optional[str] = None) -> Sequence[core.AbstractValue]:
   api._check_callable(fun)
   if exported_name is None:
     exported_name = getattr(fun, "__name__", "unknown")
@@ -71,25 +66,9 @@ def trace_function(fun: Callable,
         "convert must be used outside all JAX transformations." +
         f"Trace state: {core.thread_local_state.trace_state.trace_stack}")
 
-  input_types = _convert_shapes_to_types(builder, shapes_and_dtypes)
+  input_types = _convert_avals_to_ir_types(builder, in_avals)
   fb = builder.create_function(exported_name, input_types, [])
-
-  # Create a list of arrays for tracing.
-  def _create_array_val_from_type(t):
-    if ir.ShapedType.isinstance(t):
-      shaped_type = ir.ShapedType(t)
-      if shaped_type.has_rank:
-        shape = builder.get_shaped_type_dims_list(shaped_type)
-        dtype = builder.convert_ir_type_to_dtype(shaped_type.element_type)
-        return core.ShapedArray(shape, dtype)
-      else:
-        dtype = builder.convert_ir_type_to_dtype(shaped_type.element_type)
-        return core.UnshapedArray(dtype)
-
-    raise ValueError(f"IR type cannot be mapped to JAX type: {t}")
-
   in_vals = list(fb.func_op.entry_block.arguments)
-  in_avals = [_create_array_val_from_type(v.type) for v in in_vals]
 
   # Interpret the function.
   wrapped_fun = lu.wrap_init(fun)
@@ -98,11 +77,13 @@ def trace_function(fun: Callable,
       fun = interpret_function_ir(wrapped_fun, main, in_avals)
       out_vals = fun.call_wrapped(*in_vals)
 
-  # TODO: Flatten correctly.
-  returns = [v[0] for v in out_vals]
+  # Peel out the IR value.
+  returns = [ir_value for ir_value, _ in out_vals]
+  out_avals = [aval for _, aval in out_vals]
 
   # Remove me.
   fb.emit_return(returns)
+  return out_avals
 
 
 @lu.transformation
@@ -122,8 +103,8 @@ def interpret_function_ir(main: core.MainTrace,
 
 
 class IreeTracer(core.Tracer):
-  # val: ir.Value
-  # _aval: core.ShapedArray
+  val: ir.Value
+  _aval: core.AbstractValue
   __slots__ = ["val", "_aval"]
 
   def __init__(self, trace: "IreeTrace", val: ir.Value,
@@ -170,15 +151,18 @@ class IreeTrace(core.Trace):
     return out
 
 
-def _convert_shapes_to_types(builder: Builder, shapes_and_dtypes):
-  # TODO: Flatten, etc. And burn with fire.
+def _convert_avals_to_ir_types(builder: Builder,
+                               avals: Sequence[core.AbstractValue]):
+
+  def convert(aval: core.AbstractValue):
+    # TODO: Better way to do this?
+    if isinstance(aval, core.ShapedArray):
+      element_type = builder.convert_dtype_to_ir_type(aval.dtype)
+      # TODO: Handle symbolic shape dims?
+      return ir.RankedTensorType.get(aval.shape, element_type)
+    elif isinstance(aval, core.UnshapedArray):
+      element_type = builder.convert_dtype_to_ir_type(aval.dtype)
+      return ir.UnrankedTensorType.get(element_type)
+
   with builder.loc:
-    types = []
-    for dtype, shape in shapes_and_dtypes:
-      element_type = builder.convert_dtype_to_ir_type(dtype)
-      if shape is None:
-        t = ir.UnrankedTensorType.get(element_type)
-      else:
-        t = ir.RankedTensorType.get(shape, element_type)
-      types.append(t)
-    return types
+    return [convert(aval) for aval in avals]
