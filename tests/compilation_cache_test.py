@@ -117,24 +117,27 @@ class CompilationCacheTest(jtu.JaxTestCase):
     computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
     compile_options = jax.lib.xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
-    self.assertEqual(cc.get_cache_key(computation, compile_options),
-                     cc.get_cache_key(computation, compile_options))
+    backend = jax.lib.xla_bridge.get_backend()
+    self.assertEqual(cc.get_cache_key(computation, compile_options, backend),
+                     cc.get_cache_key(computation, compile_options, backend))
 
   def test_different_hash_key(self):
     computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
     compile_options_not_filled = jax.lib.xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
     compile_options_filled = self.filled_compile_options()
-    self.assertNotEqual(cc.get_cache_key(computation, compile_options_not_filled),
-                        cc.get_cache_key(computation, compile_options_filled))
+    backend = jax.lib.xla_bridge.get_backend()
+    self.assertNotEqual(cc.get_cache_key(computation, compile_options_not_filled, backend),
+                        cc.get_cache_key(computation, compile_options_filled, backend))
 
   def test_different_computations(self):
     computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
     computation2 = jax.xla_computation(lambda x, y: x * y)(2, 2)
     compile_options = jax.lib.xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
-    self.assertNotEqual(cc.get_cache_key(computation1, compile_options),
-                        cc.get_cache_key(computation2, compile_options))
+    backend = jax.lib.xla_bridge.get_backend()
+    self.assertNotEqual(cc.get_cache_key(computation1, compile_options, backend),
+                        cc.get_cache_key(computation2, compile_options, backend))
 
   def test_get_no_executable(self):
       with tempfile.TemporaryDirectory() as tmpdir:
@@ -142,7 +145,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
           computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
           compile_options = jax.lib.xla_bridge.get_compile_options(
                                num_replicas=1, num_partitions=1)
-          self.assertEqual(cc.get_executable(computation, compile_options), None)
+          backend = jax.lib.xla_bridge.get_backend()
+          self.assertEqual(cc.get_executable(computation, compile_options, backend), None)
 
   def test_diff_executables(self):
       with tempfile.TemporaryDirectory() as tmpdir:
@@ -154,10 +158,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
           backend = jax.lib.xla_bridge.get_backend()
           executable1 = backend.compile(computation1, compile_options)
           executable2 = backend.compile(computation2, compile_options)
-          cc.put_executable(computation1, compile_options, executable1)
-          cc.put_executable(computation2, compile_options, executable2)
-          self.assertNotEqual(cc.get_executable(computation1, compile_options),
-                              cc.get_executable(computation2, compile_options))
+          cc.put_executable(computation1, compile_options, executable1, backend)
+          cc.put_executable(computation2, compile_options, executable2, backend)
+          self.assertNotEqual(cc.get_executable(computation1, compile_options, backend),
+                              cc.get_executable(computation2, compile_options, backend))
 
   def test_put_executable(self):
       with tempfile.TemporaryDirectory() as tmpdir:
@@ -167,8 +171,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
                                num_replicas=1, num_partitions=1)
           backend = jax.lib.xla_bridge.get_backend()
           executable = backend.compile(computation, compile_options)
-          cc.put_executable(computation, compile_options, executable)
-          deserialized_executable = cc.get_executable(computation, compile_options)
+          cc.put_executable(computation, compile_options, executable, backend)
+          deserialized_executable = cc.get_executable(computation, compile_options, backend)
           inputs_to_executable = (np.array(1, dtype=np.int32), np.array(2, dtype=np.int32))
           expected = jax.lib.xla_client.execute_with_python_values(executable, inputs_to_executable, backend)
           actual = jax.lib.xla_client.execute_with_python_values(deserialized_executable, inputs_to_executable, backend)
