@@ -957,7 +957,6 @@ tf_not_yet_impl = [
     "pdot",
     "all_gather",
     "lu_pivots_to_permutation",
-    "rng_bit_generator",
     "xla_pmap",
 ]
 
@@ -2263,6 +2262,28 @@ tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
     partial(jax._src.random._gamma_impl, use_vmap=True),
     multiple_results=False, extra_name_stack="random_gamma")
+
+
+def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm):
+  if not _thread_local_state.enable_xla:
+    raise _xla_disabled_error("rng_bit_generator")
+
+  shape_tf = _eval_shape(shape)
+  # JAX uses XLA algorithm enums; tfxla uses tf.random.Algorithm
+  if algorithm == lax.RandomAlgorithm.RNG_THREE_FRY:
+    algorithm_tf = tf.random.Algorithm.THREEFRY
+  elif algorithm == lax.RandomAlgorithm.RNG_PHILOX:
+    algorithm_tf = tf.random.Algorithm.PHILOX
+  elif algorithm == lax.RandomAlgorithm.RNG_DEFAULT:
+    algorithm_tf = tf.random.Algorithm.AUTO_SELECT
+  else:
+    assert False
+  out = tfxla.rng_bit_generator(algorithm_tf.value, key, shape_tf,
+                                dtype=_to_tf_dtype(dtype))
+  return out
+
+
+tf_impl[lax.rng_bit_generator_p] = _rng_bit_generator
 
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
