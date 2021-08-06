@@ -25,7 +25,8 @@ import jax
 from jax._src import ad_util
 from jax import api_util, config
 from jax._src import api
-from jax import core, custom_derivatives, dtypes
+from jax import core, custom_derivatives
+from jax._src import dtypes
 from jax import linear_util as lu
 from jax import random, tree_util
 from jax import numpy as jnp
@@ -768,8 +769,9 @@ class TensorFlowTrace(core.Trace):
                               core.abstract_unit)
     else:
       tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val)
-      return TensorFlowTracer(self, val,
-                              core.ShapedArray(tf_val.shape, jax_dtype))
+      return TensorFlowTracer(
+        self, val, core.ShapedArray(tf_val.shape, jax_dtype,
+                                    weak_type=dtypes.is_weakly_typed(val)))
 
   def lift(self, val: core.Tracer) -> TensorFlowTracer:
     # This would be called when we need to raise a tracer from a lower-level
