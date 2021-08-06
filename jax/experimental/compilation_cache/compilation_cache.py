@@ -33,14 +33,13 @@ def initialize_cache(path, max_cache_size_bytes=32 * 2**30):
     _cache = FileSystemCache(path, max_cache_size_bytes)
     logging.warning(f"Initialized persistent compilation cache at {path}")
 
-def get_executable(xla_computation, compile_options) -> Optional[xla_client.Executable]:
+def get_executable(xla_computation, compile_options, backend) -> Optional[xla_client.Executable]:
     """Returns the cached executable if present, or None otherwise."""
     assert _cache is not None, "initialize_cache must be called before you can call get_executable()"
-    cache_key = get_cache_key(xla_computation, compile_options)
+    cache_key = get_cache_key(xla_computation, compile_options, backend)
     xla_executable_serialized = _cache.get(cache_key)
     if not xla_executable_serialized:
         return None
-    backend = jax.lib.xla_bridge.get_backend()
     # TODO(skye): xla_computation.get_hlo_module() is the unoptimized HLO but it should
      #be optimized
     xla_executable_deserialized = backend.deserialize_executable(
@@ -49,15 +48,15 @@ def get_executable(xla_computation, compile_options) -> Optional[xla_client.Exec
                                   compile_options)
     return xla_executable_deserialized
 
-def put_executable(xla_computation, compile_options, executable: xla_client.Executable):
+def put_executable(xla_computation, compile_options, executable: xla_client.Executable,
+                   backend):
     """Adds 'executable' to the cache, possibly evicting older entries."""
     assert _cache is not None, "initialize_cache must be called before you can call put_executable()"
-    cache_key = get_cache_key(xla_computation, compile_options)
-    backend = jax.lib.xla_bridge.get_backend()
+    cache_key = get_cache_key(xla_computation, compile_options, backend)
     serialized_executable = backend.serialize_executable(executable)
     _cache.put(cache_key, serialized_executable)
 
-def get_cache_key(xla_computation, compile_options) -> str:
+def get_cache_key(xla_computation, compile_options, backend) -> str:
     """Creates a hashed string to use as a key to the compilation cache.
 
        get_cache_key takes in the xla_computation and compile_options of a program and hashes
@@ -89,7 +88,7 @@ def get_cache_key(xla_computation, compile_options) -> str:
     hash_obj.update(bytes(jax.lib.version))
     if logging.vlog_is_on(1):
         logging.vlog(1, f"get_cache_key hash after serializing jax_lib version: {hash_obj.digest().hex()}")
-    _hash_platform(hash_obj, jax.lib.xla_bridge.get_backend())
+    _hash_platform(hash_obj, backend)
     if logging.vlog_is_on(1):
         logging.vlog(1, f"get_cache_key hash after serializing the backend: {hash_obj.digest().hex()}")
     return hash_obj.digest().hex()
