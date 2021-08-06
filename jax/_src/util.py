@@ -17,7 +17,7 @@ import functools
 import itertools as it
 import operator
 import types
-from typing import Any, Callable
+from typing import Any, Callable, List, Tuple
 
 from absl import logging
 import numpy as np
@@ -73,6 +73,13 @@ def split_list(args, ns):
     args = args[n:]
   lists.append(args)
   return lists
+
+def partition_list(bs: List[bool], l: List[Any]) -> Tuple[List[Any], List[Any]]:
+  assert len(bs) == len(l)
+  lists = lst1, lst2 = [], []  # type: ignore
+  for b, x in zip(bs, l):
+    lists[b].append(x)
+  return lst1, lst2
 
 def split_dict(dct, names):
   dct = dict(dct)

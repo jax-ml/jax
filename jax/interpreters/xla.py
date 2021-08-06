@@ -37,7 +37,8 @@ from ..core import (ConcreteArray, ShapedArray, AbstractToken,
 from ..errors import UnexpectedTracerError
 from jax._src.pprint_util import pp
 from .._src.util import (partial, partialmethod, cache, prod, unzip2,
-                    extend_name_stack, wrap_name, safe_zip, safe_map)
+                         extend_name_stack, wrap_name, safe_zip, safe_map,
+                         partition_list)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
@@ -988,6 +989,22 @@ def _xla_call_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
+def _xla_call_partial_eval_custom_params_updater(
+    unks_in: List[bool], num_res: int, params1: dict, params2: dict
+  ) -> Tuple[dict, dict]:
+  # pruned inputs to jaxpr1 according to unks_in, so prune donated_invars1
+  donated_invars1, _ = partition_list(unks_in, params1['donated_invars'])
+  new_params1 = dict(params1, donated_invars=tuple(donated_invars1))
+  # added num_res new inputs to jaxpr2, so extend donated_invars2
+  donated_invars2 = [*([False] * num_res), *params2['donated_invars']]
+  new_params2 = dict(params2, donated_invars=tuple(donated_invars2))
+  return new_params1, new_params2
+pe.partial_eval_jaxpr_custom_rules[xla_call_p] = \
+    partial(pe.partial_eval_jaxpr_custom_call_rule,
+            _xla_call_partial_eval_custom_params_updater)
+pe.dce_rules[xla_call_p] = pe.dce_jaxpr_call_rule
+
+
 ### translation tables
 
 translations: Dict[core.Primitive, Callable] = {}
@@ -1483,8 +1500,9 @@ def _remat_using_while(
 
 def _remat_translation_rule(c, axis_env, in_nodes,
                             name_stack, backend, name, call_jaxpr,
-                            prevent_cse, differentiated, concrete, device=None):
-  del device, concrete  # Unused.
+                            prevent_cse, differentiated, concrete,
+                            saveable_policy, device=None):
+  del device, concrete, saveable_policy  # Unused.
   if differentiated and prevent_cse:
     if backend == "gpu":
       return _remat_using_while(

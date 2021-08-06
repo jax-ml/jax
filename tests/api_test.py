@@ -2980,8 +2980,14 @@ class APITest(jtu.JaxTestCase):
 
 class RematTest(jtu.JaxTestCase):
 
-  def test_remat_basic(self):
-    @api.remat
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_basic(self, remat):
+    @remat
     def g(x):
       return lax.sin(lax.sin(x)), 3.
 
@@ -3015,7 +3021,13 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(len(sin_calls), 1)
     self.assertEqual(len(cos_calls), 2)
 
-  def test_remat_freevars(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_freevars(self, remat):
     def f1(x):
       y = 2 * jnp.sin(x)
       z = jnp.cos(x) * jnp.sin(y)
@@ -3023,7 +3035,7 @@ class RematTest(jtu.JaxTestCase):
 
     def f2(x):
       y = 2 * jnp.sin(x)
-      z = api.remat(lambda x: jnp.cos(x) * jnp.sin(y))(x)
+      z = remat(lambda x: jnp.cos(x) * jnp.sin(y))(x)
       return z
 
     ans, f_lin = api.linearize(f2, 2.)
@@ -3054,8 +3066,14 @@ class RematTest(jtu.JaxTestCase):
     expected = np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_remat_jit(self):
-    @api.remat
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_jit(self, remat):
+    @remat
     def g(x):
       return lax.sin(lax.sin(x))
 
@@ -3075,8 +3093,14 @@ class RematTest(jtu.JaxTestCase):
     expected = np.cos(np.sin(2.)) * np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_remat_vmap(self):
-    @api.remat
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_vmap(self, remat):
+    @remat
     def g(x):
       return lax.sin(lax.sin(x))
 
@@ -3094,10 +3118,16 @@ class RematTest(jtu.JaxTestCase):
     expected = np.diag(np.cos(np.sin(x)) * np.cos(x))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_remat_higher_order_autodiff(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_higher_order_autodiff(self, remat):
     def f(x):
       return lax.cos(lax.sin(x))
-    g = api.remat(f)
+    g = remat(f)
 
     ans = api.grad(api.grad(g))(3.)
     expected = api.grad(api.grad(f))(3.)
@@ -3130,14 +3160,20 @@ class RematTest(jtu.JaxTestCase):
     scan_eqn, = jaxpr.jaxpr.eqns
     self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
 
-  def test_remat_no_redundant_flops(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_no_redundant_flops(self, remat):
     # see https://github.com/google/jax/pull/1749#issuecomment-558267584
 
     @api.jit
     def g(x):
       return f(2., x)
 
-    @api.remat
+    @remat
     def f(x, y):
       return jnp.sin(x) * y
 
@@ -3152,14 +3188,20 @@ class RematTest(jtu.JaxTestCase):
     num_calls = len(called)
     self.assertLessEqual(num_calls, 1)
 
-  def test_remat_binomial_checkpointing(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_binomial_checkpointing(self, remat):
     def binom_checkpoint(funs):
       if len(funs) == 1:
         return funs[0]
       else:
         f1 = binom_checkpoint(funs[:len(funs)//2])
         f2 = binom_checkpoint(funs[len(funs)//2:])
-        return api.remat(lambda x: f1(f2(x)))
+        return remat(lambda x: f1(f2(x)))
 
     f1 = binom_checkpoint([jnp.sin, jnp.sin, jnp.sin, jnp.sin])
     f2 = lambda x: jnp.sin(jnp.sin(jnp.sin(jnp.sin(x))))
@@ -3194,12 +3236,18 @@ class RematTest(jtu.JaxTestCase):
 
     api.grad(func)(5.0)  # doesn't crash
 
-  def test_remat_jit2(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_jit2(self, remat):
     @api.jit
     def f(x):
       y = 2 * x
 
-      @api.remat
+      @remat
       def g():
         return y
 
@@ -3234,7 +3282,13 @@ class RematTest(jtu.JaxTestCase):
     u0 = jnp.ones_like(target)
     loss(u0, target, 10)  # doesn't crash
 
-  def test_remat_jit3(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_jit3(self, remat):
     # https://github.com/google/jax/issues/2180
     def f(w, x):
       a = jnp.dot(x, w)
@@ -3244,7 +3298,7 @@ class RematTest(jtu.JaxTestCase):
 
     w = jnp.ones([1, 1])
     x = jnp.ones([1, 1, 1])
-    f = api.remat(f)
+    f = remat(f)
     api.grad(f)(w, x)  # doesn't crash
 
     @api.jit
@@ -3258,7 +3312,7 @@ class RematTest(jtu.JaxTestCase):
 
     w = 1.
     x = 1.
-    f = api.remat(f)
+    f = remat(f)
     api.grad(f)(w, x)  # doesn't crash
 
   def test_remat_scan2(self):
@@ -3275,6 +3329,7 @@ class RematTest(jtu.JaxTestCase):
 
   def test_remat_jit_static_argnum_omnistaging(self):
     # https://github.com/google/jax/issues/2833
+    # NOTE(mattjj): after #3370, this test doesn't actually call remat...
     def named_call(f):
       def named_f(*args):
         f_ = lu.wrap_init(lambda: (f(*args),))
@@ -3290,7 +3345,13 @@ class RematTest(jtu.JaxTestCase):
 
     api.jit(named_call(f), static_argnums=0)(True, 1)  # no crash
 
-  def test_remat_eval_counter(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_remat_eval_counter(self, remat):
     # https://github.com/google/jax/issues/2737
     add_one_p = Primitive('add_one')
     add_one = add_one_p.bind
@@ -3318,8 +3379,8 @@ class RematTest(jtu.JaxTestCase):
 
     v = np.zeros((1,))
 
-    f = jax.remat(add_one)
-    g = jax.remat(lambda x: add_one(f(x)))
+    f = remat(add_one)
+    g = remat(lambda x: add_one(f(x)))
 
     # 2 calls needed to evaluate g
     with assertEvals(2):
@@ -3335,7 +3396,7 @@ class RematTest(jtu.JaxTestCase):
           *args, name='foo')[0]
 
     f = call(add_one)
-    g = jax.remat(lambda x: add_one(f(x)))
+    g = remat(lambda x: add_one(f(x)))
 
     # 2 calls needed to evaluate g
     with assertEvals(2):
@@ -3344,7 +3405,13 @@ class RematTest(jtu.JaxTestCase):
     with assertEvals(2):
       vjp(v)
 
-  def test_escaped_tracer_remat(self):
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_escaped_tracer_remat(self, remat):
     # b/169779185
     def f():
       seq = [jnp.zeros([])]
@@ -3352,14 +3419,20 @@ class RematTest(jtu.JaxTestCase):
         seq[0] += 1  # this is line 7 btw
         return seq[0]
 
-      api.remat(g)()
-      api.remat(g)()
+      remat(g)()
+      remat(g)()
 
     with self.assertRaisesRegex(UnexpectedTracerError, "global state"):
       api.jit(f)()
 
-  def test_no_cse_widget_on_primals(self):
-    @api.remat
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, saveable_policy=lambda *_, **__: False))
+      ])
+  def test_no_cse_widget_on_primals(self, remat):
+    @remat
     def g(x):
       return lax.sin(lax.sin(x)), 3.
 
@@ -3392,6 +3465,112 @@ class RematTest(jtu.JaxTestCase):
     self.assertNotIn('while', c.as_hlo_text())
     self.assertNotIn('conditional', c.as_hlo_text())
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{policy_name}", "policy": policy,
+       "in_jaxpr2": in_jaxpr2, "not_in_jaxpr2": not_in_jaxpr2}
+      for policy_name, policy, in_jaxpr2, not_in_jaxpr2 in [
+          ('save_anything', lambda *_, **__: True, [], [' sin ', ' cos ']),
+          ('save_nothing',  lambda *_, **__: False, [' sin ', ' cos '], []),
+          ('save_sin',  lambda p, *_, **__: str(p) == 'sin', [' cos '], [' sin ']),
+      ])
+  def test_remat_custom_policy(self, policy, in_jaxpr2, not_in_jaxpr2):
+    for square in [lambda x: x * x, api.jit(lambda x: x * x)]:
+      f = api.remat(lambda x: jnp.sin(square(jnp.sin(x))),
+                    saveable_policy=policy)
+      y, f_lin = api.linearize(f, 1.)
+      ydot = f_lin(2.)
+      jaxpr_text = str(f_lin.func.args[0])
+      for substr in in_jaxpr2:
+        self.assertIn(substr, jaxpr_text)
+      for substr in not_in_jaxpr2:
+        self.assertNotIn(substr, jaxpr_text)
+      y_expected, ydot_expected = api.jvp(lambda x: jnp.sin(square(jnp.sin(x))),
+                                          [1.], [2.])
+      self.assertAllClose(y, y_expected)
+      self.assertAllClose(ydot, ydot_expected)
+      jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
+
+  def test_remat_custom_policy_save_cos(self):
+    save_cos = lambda prim, *_, **__: str(prim) == 'cos'
+    f = api.remat(lambda x: jnp.sin(jnp.sin(x)),  # different function
+                  saveable_policy=save_cos)
+    _, f_lin = api.linearize(f, 1.)
+    jaxpr_text = str(f_lin.func.args[0])
+    self.assertNotIn(' sin ', jaxpr_text)
+    self.assertNotIn(' cos ', jaxpr_text)
+    jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
+
+  def test_remat_checkpoint_dots(self):
+    checkpoint_dots = lambda prim, *_, **__: str(prim) == 'dot_general'
+
+    @partial(api.remat, saveable_policy=checkpoint_dots)
+    def f(x):
+      x = jnp.dot(x, x)
+      x = jnp.sin(x)
+      x = jnp.dot(x, x)
+      x = jnp.sin(x)
+      x = jnp.dot(x, x)
+      x = jnp.sin(x)
+      return x
+
+    _, f_lin = api.linearize(f, jnp.ones((2, 2)))
+    jaxpr_text = str(f_lin.func.args[0])
+    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' dot_'), 6)
+    jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
+
+  def test_remat_checkpoint_dots_inside_scan(self):
+    checkpoint_dots = lambda prim, *_, **__: str(prim) == 'dot_general'
+
+    x = jnp.ones((5,))
+
+    def f(W):
+      @partial(api.remat, saveable_policy=checkpoint_dots)
+      def f(x):
+        x = jnp.sin(jnp.dot(x, W))
+        x = jnp.sin(jnp.dot(x, W))
+        x = jnp.sin(jnp.dot(x, W))
+        return x
+
+      def body(x, _): return f(x), None
+      return lax.scan(body, x, None, length=2)[0]
+
+    _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
+    jaxpr_text = str(f_vjp.args[0].func.args[1])
+
+    # Two sine calls in the backward pass because while we don't save sines
+    # within the (rematted) body function, we can save the scan carry, which
+    # effectively saves one sine. Three cosines for the Jacoian coefficients.
+    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' cos '), 3)
+    # Six calls to dot_general in the backward pass because we save the primal
+    # matmuls and only compure the backward pass ones (two for each primal one).
+    self.assertEqual(jaxpr_text.count(' dot_'), 6)
+
+    jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
+                    modes=['fwd', 'rev'])
+
+  def test_remat_custom_jvp_policy(self):
+    save_sin = lambda prim, *_, **__: str(prim) == 'sin'
+
+    @api.custom_jvp
+    def sin(x):
+      return jnp.sin(x)
+    def sin_jvp(primals, tangents):
+      x, = primals
+      g, = tangents
+      return sin(x), jnp.cos(x) * g
+    sin.defjvp(sin_jvp)
+
+    @partial(api.remat, saveable_policy=save_sin)
+    def f(x):
+      return sin(sin(x))
+
+    jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
+
+    def g(x):
+      return lax.scan(lambda x, _: (f(x), None), x, None, length=2)[0]
+    jtu.check_grads(g, (3.,), order=2, modes=['fwd', 'rev'])
 
 class JaxprTest(jtu.JaxTestCase):
 
