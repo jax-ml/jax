@@ -268,6 +268,35 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertArraysAllClose(result_dense, result_sparse)
 
+  def testSparseCondSimple(self):
+    def func(x):
+      return lax.cond(False, lambda x: x, lambda x: 2 * x, x)
+
+    x = jnp.arange(5.0)
+    result_dense = func(x)
+
+    x_bcoo = BCOO.fromdense(x)
+    result_sparse = sparsify(func)(x_bcoo)
+
+    self.assertArraysAllClose(result_dense, result_sparse.todense())
+
+  def testSparseCondMismatchError(self):
+    @sparsify
+    def func(x, y):
+      return lax.cond(False, lambda x: x[0], lambda x: x[1], (x, y))
+
+    x = jnp.arange(5.0)
+    y = jnp.arange(5.0)
+
+    x_bcoo = BCOO.fromdense(x)
+    y_bcoo = BCOO.fromdense(y)
+
+    func(x, y)  # No error
+    func(x_bcoo, y_bcoo)  # No error
+
+    with self.assertRaisesRegex(TypeError, "sparsified true_fun and false_fun output.*"):
+      func(x_bcoo, y)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
