@@ -18,11 +18,12 @@ For usage instructions, read the jax2tf.convert docstring, and the
 
 """
 import collections
+import dataclasses
 import itertools
 import functools
 import operator as op
 import re
-from typing import Any, Dict, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 
 import jax
@@ -37,7 +38,7 @@ import tensorflow as tf  # type: ignore[import]
 
 DimSize = core.DimSize
 Shape = core.Shape
-
+TfVal = Any
 
 class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
@@ -123,6 +124,20 @@ class _DimMon(dict):
       elif diff > 0: d[key] = diff
     return _DimMon(d)
 
+  def evaluate(self, env: Dict[str, Any]) -> Any:
+    prod = lambda xs: functools.reduce(op.mul, xs) if xs else 1
+    def pow_opt(v, p):
+      return v if p == 1 else pow(v, p)
+    return prod([pow_opt(env[id], deg) for id, deg in self.items()])
+
+
+def _multiply(coeff, v: TfVal) -> TfVal:
+  try:
+    coeff = int(coeff)
+  except:
+    return coeff * v
+  else:
+    return 0 if coeff == 0 else v if coeff == 1 else coeff * v
 
 class _DimPolynomial(dict):
   """Polynomial with integer coefficients for polymorphic shapes.
@@ -361,18 +376,9 @@ class _DimPolynomial(dict):
     return lb, ub
 
   def evaluate(self, env: Dict[str, Any]) -> Any:
-    prod = lambda xs: functools.reduce(op.mul, xs) if xs else 1
-    def mul(coeff, mon):
-      try:
-        coeff = int(coeff)
-      except:
-        return coeff * mon
-      else:
-        return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
     def pow_opt(v, p):
       return v if p == 1 else pow(v, p)
-    terms = [mul(coeff, prod([pow_opt(env[id], deg) for id, deg in mon.items()]))
-             for mon, coeff in self.items()]
+    terms = [_multiply(coeff, mon.evaluate(env)) for mon, coeff in self.items()]
     return sum(terms) if len(terms) > 1 else terms[0]
 
   @property
@@ -519,7 +525,7 @@ class PolyShape(tuple):
   def __new__(cls, *dim_specs):
     for i, ds in enumerate(dim_specs):
       if not isinstance(ds, (int, str)) and ds != ...:
-        msg = (f"Invalid PolyShape element: {repr(ds)}; must be a string "
+        msg = (f"Invalid polymorphic shape element: {repr(ds)}; must be a string "
                "representing a dimension variable, or an integer, or ...")
         raise ValueError(msg)
     return tuple.__new__(PolyShape, dim_specs)
@@ -545,7 +551,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
     spec_ = spec.strip()
     if spec_[0] == "(":
       if spec_[-1] != ")":
-        raise ValueError(f"PolyShape '{spec}' has invalid syntax")
+        raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax")
       spec_ = spec_[1:-1]
       spec_ = spec_.strip()
     spec_ = spec_.rstrip(",")
@@ -554,7 +560,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
     else:
       spec_tuple = spec_.split(",")  # type: ignore
   else:
-    raise ValueError(f"PolyShape {repr(spec)} must be either None, a string, or PolyShape.")
+    raise ValueError(f"polymorphic shape {repr(spec)} must be either None, a string, or PolyShape.")
 
   # Process ...
   spec_tuple = tuple(map(lambda s: ... if isinstance(s, str) and s.strip() == "..." else s,
@@ -562,13 +568,13 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
   ds_ellipses = tuple(ds for ds in spec_tuple if ds == ...)
   if ds_ellipses:
     if len(ds_ellipses) > 1 or spec_tuple[-1] != ...:
-      raise ValueError(f"PolyShape {repr(spec)} can contain Ellipsis only at the end.")
+      raise ValueError(f"polymorphic shape {repr(spec)} can contain Ellipsis only at the end.")
     spec_tuple = spec_tuple[0:-1]
     if len(arg_shape) >= len(spec_tuple):
       spec_tuple = spec_tuple + ("_",) * (len(arg_shape) - len(spec_tuple))
 
   if len(arg_shape) != len(spec_tuple):
-    raise ValueError(f"PolyShape {repr(spec)} of rank {len(spec_tuple)} must match the rank {len(arg_shape)} of argument shape {arg_shape}.")
+    raise ValueError(f"polymorphic shape {repr(spec)} of rank {len(spec_tuple)} must match the rank {len(arg_shape)} of argument shape {arg_shape}.")
 
   # The actual parsing.
   # We actually parse not just dimension variables, but polynomials.
@@ -580,24 +586,24 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       return dim_spec  #
     dim_spec = dim_spec.strip()
     if not dim_spec:
-      raise ValueError(f"PolyShape {repr(spec)} has invalid syntax (empty dimension {dim_spec}')")
+      raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (empty dimension {dim_spec}')")
     # Terms are separated by "+"
     terms = dim_spec.split("+")
     if not terms:
-      raise ValueError(f"PolyShape {repr(spec)} has invalid syntax (empty dimension {dim_spec}')")
+      raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (empty dimension {dim_spec}')")
     def _parse_term(term_spec: str) -> DimSize:
       term_spec = term_spec.strip()
       # Factors are separated by "*"
       factors = term_spec.split("*")
       if not factors:
-        raise ValueError(f"PolyShape {repr(spec)} has invalid syntax (unexpected term '{term_spec}')")
+        raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (unexpected term '{term_spec}')")
       def _parse_factor(factor_spec: str) -> DimSize:
         factor_spec = factor_spec.strip()
         if re.match(r"^-?\d+$", factor_spec):
           return int(factor_spec)
         m = re.match(r"^([a-zA-Z]\w*)(\^(\d+))?$", factor_spec)
         if not m:
-          raise ValueError(f"PolyShape {repr(spec)} has invalid syntax (unexpected term '{factor_spec}')")
+          raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (unexpected term '{factor_spec}')")
         var = _DimPolynomial.from_var(m.group(1))
         if m.group(3) is None:
           return var
@@ -605,7 +611,6 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
 
       return functools.reduce(op.mul, map(_parse_factor, factors))
     return functools.reduce(op.add, map(_parse_term, terms))
-
 
   def _process_dim(i: int, dim_spec: Union[str, int]):
     if isinstance(dim_spec, str):
@@ -615,7 +620,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       dim_size = dim_size.value
     if dim_size is None:
       def need_dim_var_msg():
-        msg = (f"PolyShape {repr(spec)} in axis {i} must contain a dimension variable "
+        msg = (f"polymorphic shape {repr(spec)} in axis {i} must contain a dimension variable "
                f"for unknown dimension in argument shape {arg_shape}")
         if spec is None:
           msg += ". Perhaps you forgot to add the polymorphic_shapes= parameter to jax2tf.convert?"
@@ -634,7 +639,7 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
       dim_poly = _parse_dim(dim_spec)
       if not is_poly_dim(dim_poly):
         if dim_poly != dim_size:
-          msg = (f"PolyShape {repr(spec)} in axis {i} must match the "
+          msg = (f"polymorphic shape {repr(spec)} in axis {i} must match the "
                  f"known dimension size {dim_size} for argument shape {arg_shape}")
           raise ValueError(msg)
         return dim_size
@@ -643,7 +648,110 @@ def parse_spec(spec: Optional[Union[str, PolyShape]],
   dims = tuple([_process_dim(i, ds) for i, ds in enumerate(spec_tuple)])
   return dims
 
+@dataclasses.dataclass
+class DimEquation:
+  # Represents poly == tf_expr
+  poly: _DimPolynomial
+  tf_expr: TfVal
 
-def eval_shape(shape: Sequence[DimSize], shape_env: Dict[str, Any]) -> Sequence[Any]:
+# A dimension environment maps dimension variables to TF expressions that
+# compute the value of the dimension. These expressions refer to the TF
+# function arguments.
+ShapeEnv = Dict[str, TfVal]
+
+def eval_shape(shape: Sequence[DimSize], shape_env: Dict[str, TfVal]) -> Sequence[TfVal]:
   return tuple(d.evaluate(shape_env) if type(d) is _DimPolynomial else d   # type: ignore
                for d in shape)
+
+def solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
+  # Returns a shape environment if it can solve all dimension variables.
+  # Raises an exception if it cannot.
+  shapeenv: ShapeEnv = {}
+
+  def _shapeenv_to_str() -> str:
+    if shapeenv:
+      return (" Partial solution: " +
+              ", ".join([f"{var} = {val}" for var, val in shapeenv.items()]) + ".")
+    else:
+      return ""
+
+  def process_one_eqn(eqn: DimEquation) -> bool:
+    # Try to rewrite the equation as "var * factor_var = tf_expr" (a linear
+    # uni-variate equation. Return False if this rewrite fails.
+    # Otherwise, add the variable to shapeenv and return True.
+
+    # The invariant is: var * factor_var + rest_eqn_poly = tf_expr
+    var, factor_var = None, None
+    tf_expr = eqn.tf_expr
+
+    for mon, factor in eqn.poly.items():
+      # Perhaps we can already evaluate this monomial (all vars solved)
+      try:
+        mon_value = mon.evaluate(shapeenv)
+        tf_expr = tf.math.subtract(tf_expr, _multiply(factor, mon_value))
+        continue
+      except KeyError:
+        # There are some indeterminate variables. We handle only the case of
+        # linear remaining indeterminates.
+        v = mon.to_var()
+        if v is not None and var is None:
+          var = v
+          factor_var = factor
+          continue
+      return False
+
+    if var is not None:
+      try:
+        var_value = tf.math.floordiv(tf_expr, factor_var) if factor_var != 1 else tf_expr
+        # Check that the division is even. Works only in eager mode.
+        if tf.math.floormod(tf_expr, factor_var).numpy() != 0:
+          msg = (f"Dimension variable {var} must have integer value >= 1. "  # type: ignore
+                 f"Found value {int(tf_expr.numpy()) / factor_var} when solving "
+                 f"{eqn.poly} == {eqn.tf_expr}.{_shapeenv_to_str()}")
+          raise ValueError(msg)
+        if var_value.numpy() <= 0:
+          msg = (f"Dimension variable {var} must have integer value >= 1. "
+                 f"Found value {int(var_value.numpy())} when solving "
+                 f"{eqn.poly} == {eqn.tf_expr}.{_shapeenv_to_str()}")
+          raise ValueError(msg)
+      except AttributeError:
+        # TODO(necula): check even in graph mode, by embedding the checks in
+        # the graph.
+        pass
+      shapeenv[var] = var_value
+      return True
+    else:
+      # All variables are resolved for this equation
+      try:
+        if tf_expr.numpy() != 0:
+          err_msg = (
+              "Found inconsistency when solving "
+              f"{eqn.poly} == {eqn.tf_expr}.{_shapeenv_to_str()}")
+          raise ValueError(err_msg)
+      except AttributeError:
+        # TODO(necula): check that the equation is satisfied even in graph
+        # mode.
+        pass
+      return True
+
+  while True:
+    nr_eqns = len(eqns)
+    eqns = [eqn for eqn in eqns if not process_one_eqn(eqn)]
+    if not eqns:
+      return shapeenv  # SUCCESS
+    elif len(eqns) >= nr_eqns:
+      break
+
+  # We have some equations that we cannot solve further
+  unsolved_vars: Set[str] = set()
+  unsolved_polys: List[_DimPolynomial] = []
+  for eqn in eqns:
+    unsolved_vars = unsolved_vars.union(eqn.poly.get_vars())
+    unsolved_polys.append(eqn.poly)
+  unsolved_vars = unsolved_vars.difference(shapeenv.keys())
+  eqns_str = "\n  ".join([str(eqn.poly) for eqn in eqns])
+  err_msg = (
+      f"Cannot solve for values of dimension variables {unsolved_vars} from "
+      f"the remaining dimension polynomials\n  {eqns_str}.{_shapeenv_to_str()} "
+      "Dimension variables can be solved only from linear polynomials.")
+  raise ValueError(err_msg)
