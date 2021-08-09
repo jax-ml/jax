@@ -33,7 +33,11 @@ def load_and_run(binary):
   compiled = jax2iree.Builder.load_compiled_binary(binary)
 
   # TODO: If we emitted reflection metadata, we would get better automatic
-  # type conversion.
+  # type conversion. Also, since IREE can natively represent pytrees, we
+  # could/should map those as-is (which would be better, especially for
+  # offline users who want to invoke the function later and would like a
+  # structured API in their language vs a flat list of args). But that
+  # requires a bit more work to leverage.
   # TODO: Without metadata, we aren't recognizing
   # jaxlib.xla_extension.DeviceArray as an array.
   return compiled.fabs(np.asarray([[0.5, -0.5, 3.5, 2.0]]),
