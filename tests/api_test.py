@@ -2124,6 +2124,18 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(ans1, np.cos(2.), check_dtypes=False)
     self.assertAllClose(ans2, np.cos(3.), check_dtypes=False)
 
+  def test_grad_does_not_unflatten_tree_with_none(self):
+    # https://github.com/google/jax/issues/7546
+    class CustomNode(list):
+      pass
+
+    def unflatten(unused_aux_data, children):
+      self.assertIsNotNone(children[0])
+      return CustomNode(children)
+
+    tree_util.register_pytree_node(CustomNode, lambda x: (x, None), unflatten)
+    grad(lambda x: x[0])(CustomNode([0.]))
+
   def test_trivial_computations(self):
     x = jnp.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
