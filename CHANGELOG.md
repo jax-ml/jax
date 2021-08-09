@@ -19,7 +19,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     need to use a dimension size in array computation, e.g., `jnp.mean`.
     ({jax-issue}`#7317`)
   
-## jaxlib 0.1.70 (unreleased)
+## jaxlib 0.1.70 (Aug 9, 2021)
 * Breaking changes:
   * Support for Python 3.6 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
