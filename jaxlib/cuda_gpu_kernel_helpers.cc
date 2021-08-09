@@ -23,15 +23,13 @@ limitations under the License.
 
 namespace jax {
 namespace {
-std::string ErrorToString(cudaError_t error) {
-  return cudaGetErrorString(error);
-}
+std::string ErrorString(cudaError_t error) { return cudaGetErrorString(error); }
 
-std::string ErrorToString(cusparseStatus_t status) {
+std::string ErrorString(cusparseStatus_t status) {
   return cusparseGetErrorString(status);
 }
 
-std::string ErrorToString(cusolverStatus_t status) {
+std::string ErrorString(cusolverStatus_t status) {
   switch (status) {
     case CUSOLVER_STATUS_SUCCESS:
       return "cuSolver success.";
@@ -62,7 +60,7 @@ std::string ErrorToString(cusolverStatus_t status) {
   }
 }
 
-std::string ErrorToString(cublasStatus_t status) {
+std::string ErrorString(cublasStatus_t status) {
   switch (status) {
     case CUBLAS_STATUS_SUCCESS:
       return "cuBlas success";
@@ -90,47 +88,53 @@ std::string ErrorToString(cublasStatus_t status) {
 }
 
 template <typename T>
-void ThrowError(T status, const char* file, std::int64_t line,
-                const char* expr) {
-  throw std::runtime_error(absl::StrFormat("%s:%d: operation %s failed: %s",
-                                           file, line, expr,
-                                           ErrorToString(status)));
+std::string ErrorString(T status, const char* file, std::int64_t line,
+                        const char* expr) {
+  return absl::StrFormat("%s:%d: operation %s failed: %s", file, line, expr,
+                         ErrorString(status));
 }
 }  // namespace
 
-void ThrowIfError(cudaError_t error, const char* file, std::int64_t line,
-                  const char* expr) {
-  if (error != cudaSuccess) ThrowError(error, file, line, expr);
+absl::Status AsStatus(cudaError_t error, const char* file, std::int64_t line,
+                      const char* expr) {
+  if (error != cudaSuccess)
+    return absl::InternalError(ErrorString(error, file, line, expr));
+  return absl::OkStatus();
 }
 
-void ThrowIfError(cusolverStatus_t status, const char* file, std::int64_t line,
-                  const char* expr) {
-  if (status != CUSOLVER_STATUS_SUCCESS) ThrowError(status, file, line, expr);
+absl::Status AsStatus(cusolverStatus_t status, const char* file,
+                      std::int64_t line, const char* expr) {
+  if (status != CUSOLVER_STATUS_SUCCESS)
+    return absl::InternalError(ErrorString(status, file, line, expr));
+  return absl::OkStatus();
 }
 
-void ThrowIfError(cusparseStatus_t status, const char* file, std::int64_t line,
-                  const char* expr) {
-  if (status != CUSPARSE_STATUS_SUCCESS) ThrowError(status, file, line, expr);
+absl::Status AsStatus(cusparseStatus_t status, const char* file,
+                      std::int64_t line, const char* expr) {
+  if (status != CUSPARSE_STATUS_SUCCESS)
+    return absl::InternalError(ErrorString(status, file, line, expr));
+  return absl::OkStatus();
 }
 
-void ThrowIfError(cublasStatus_t status, const char* file, std::int64_t line,
-                  const char* expr) {
-  if (status != CUBLAS_STATUS_SUCCESS) ThrowError(status, file, line, expr);
+absl::Status AsStatus(cublasStatus_t status, const char* file,
+                      std::int64_t line, const char* expr) {
+  if (status != CUBLAS_STATUS_SUCCESS)
+    return absl::InternalError(ErrorString(status, file, line, expr));
+  return absl::OkStatus();
 }
 
-std::unique_ptr<void* []> MakeBatchPointers(cudaStream_t stream, void* buffer,
-                                           void* dev_ptrs, int batch,
-                                           int batch_elem_size) {
+absl::StatusOr<std::unique_ptr<void* []>> MakeBatchPointers(
+    cudaStream_t stream, void* buffer, void* dev_ptrs, int batch,
+    int batch_elem_size) {
   char* ptr = static_cast<char*>(buffer);
   auto host_ptrs = absl::make_unique<void*[]>(batch);
   for (int i = 0; i < batch; ++i) {
     host_ptrs[i] = ptr;
     ptr += batch_elem_size;
   }
-  JAX_THROW_IF_ERROR(cudaMemcpyAsync(dev_ptrs, host_ptrs.get(),
-                                     sizeof(void*) * batch,
-                                     cudaMemcpyHostToDevice, stream));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      cudaMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
+                      cudaMemcpyHostToDevice, stream)));
   return host_ptrs;
 }
 }  // namespace jax
-

@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
+#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 namespace {
@@ -73,13 +74,16 @@ std::string BuildCudaLuPivotsToPermutationDescriptor(
       batch_size, pivot_size, permutation_size});
 }
 
-void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
-                               const char* opaque, std::size_t opaque_len) {
+absl::Status CudaLuPivotsToPermutation_(cudaStream_t stream, void** buffers,
+                                        const char* opaque,
+                                        std::size_t opaque_len) {
   const std::int32_t* pivots =
       reinterpret_cast<const std::int32_t*>(buffers[0]);
   std::int32_t* permutation_out = reinterpret_cast<std::int32_t*>(buffers[1]);
-  const auto& descriptor =
-      *UnpackDescriptor<LuPivotsToPermutationDescriptor>(opaque, opaque_len);
+  auto s =
+      UnpackDescriptor<LuPivotsToPermutationDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const auto& descriptor = **s;
 
   const int block_dim = 128;
   const std::int64_t grid_dim = std::min<std::int64_t>(
@@ -89,7 +93,18 @@ void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
                                 /*dynamic_shared_mem_bytes=*/0, stream>>>(
       pivots, permutation_out, descriptor.batch_size, descriptor.pivot_size,
       descriptor.permutation_size);
-  JAX_THROW_IF_ERROR(cudaGetLastError());
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaGetLastError()));
+  return absl::OkStatus();
+}
+
+void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
+                               const char* opaque, size_t opaque_len,
+                               XlaCustomCallStatus* status) {
+  auto s = CudaLuPivotsToPermutation_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
 }  // namespace jax

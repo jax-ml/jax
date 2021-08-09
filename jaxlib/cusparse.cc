@@ -34,6 +34,7 @@ limitations under the License.
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
+#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
 
 // Some functionality defined here is only available in CUSPARSE 11.3 or newer.
 #define JAX_CUSPARSE_11030 (CUSPARSE_VERSION >= 11300)
@@ -148,19 +149,19 @@ CudaConst CudaOne(cudaDataType type) {
 using SparseHandlePool = HandlePool<cusparseHandle_t, cudaStream_t>;
 
 template <>
-/*static*/ SparseHandlePool::Handle SparseHandlePool::Borrow(
+/*static*/ absl::StatusOr<SparseHandlePool::Handle> SparseHandlePool::Borrow(
     cudaStream_t stream) {
   SparseHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
   cusparseHandle_t handle;
   if (pool->handles_[stream].empty()) {
-    JAX_THROW_IF_ERROR(cusparseCreate(&handle));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreate(&handle)));
   } else {
     handle = pool->handles_[stream].back();
     pool->handles_[stream].pop_back();
   }
   if (stream) {
-    JAX_THROW_IF_ERROR(cusparseSetStream(handle, stream));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSetStream(handle, stream)));
   }
   return Handle(pool, handle, stream);
 }
@@ -246,7 +247,9 @@ DenseVecDescriptor BuildDenseVecDescriptor(const py::dtype& data_dtype,
 std::pair<size_t, py::bytes> BuildCsrToDenseDescriptor(
     const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   SparseMatDescriptor d =
       BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
 
@@ -258,47 +261,60 @@ std::pair<size_t, py::bytes> BuildCsrToDenseDescriptor(
   int val = 0;
   void* empty = &val;
 
-  JAX_THROW_IF_ERROR(cusparseCreateCsr(&mat_a, d.rows, d.cols, d.nnz, empty,
-                                       empty, empty, d.index_type, d.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, d.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_b, d.rows, d.cols,
-                                         /*ld=*/d.cols, empty, d.value_type,
-                                         CUSPARSE_ORDER_ROW));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseCreateCsr(
+      &mat_a, d.rows, d.cols, d.nnz, empty, empty, empty, d.index_type,
+      d.index_type, CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_b, d.rows, d.cols,
+      /*ld=*/d.cols, empty, d.value_type, CUSPARSE_ORDER_ROW)));
   size_t buffer_size;
-  JAX_THROW_IF_ERROR(cusparseSparseToDense_bufferSize(
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSparseToDense_bufferSize(
       handle.get(), mat_a, mat_b, CUSPARSE_SPARSETODENSE_ALG_DEFAULT,
-      &buffer_size));
+      &buffer_size)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_b));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
 
   return {buffer_size, PackDescriptor(d)};
 }
 
-void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len) {
-  const SparseMatDescriptor& d =
-      *UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  auto handle = SparseHandlePool::Borrow(stream);
+absl::Status CsrToDense_(cudaStream_t stream, void** buffers,
+                         const char* opaque, size_t opaque_len) {
+  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const SparseMatDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
   cusparseSpMatDescr_t mat_a = 0;
   cusparseDnMatDescr_t mat_b = 0;
-  JAX_THROW_IF_ERROR(cusparseCreateCsr(&mat_a, d.rows, d.cols, d.nnz,
-                                       /*csrRowOffsets=*/buffers[2],
-                                       /*csrColInd=*/buffers[1],
-                                       /*csrValues=*/buffers[0], d.index_type,
-                                       d.index_type, CUSPARSE_INDEX_BASE_ZERO,
-                                       d.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_b, d.rows, d.cols,
-                                         /*ld=*/d.cols, buffers[3],
-                                         d.value_type, CUSPARSE_ORDER_ROW));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      cusparseCreateCsr(&mat_a, d.rows, d.cols, d.nnz,
+                        /*csrRowOffsets=*/buffers[2],
+                        /*csrColInd=*/buffers[1],
+                        /*csrValues=*/buffers[0], d.index_type, d.index_type,
+                        CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_b, d.rows, d.cols,
+      /*ld=*/d.cols, buffers[3], d.value_type, CUSPARSE_ORDER_ROW)));
 
-  JAX_THROW_IF_ERROR(cusparseSparseToDense(handle.get(), mat_a, mat_b,
-                                           CUSPARSE_SPARSETODENSE_ALG_DEFAULT,
-                                           buffers[4]));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      cusparseSparseToDense(handle.get(), mat_a, mat_b,
+                            CUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_b));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  return absl::OkStatus();
+}
+
+void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
+                size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CsrToDense_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
 // CsrFromDense: Convert dense matrix to CSR matrix
@@ -307,7 +323,9 @@ void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
 std::pair<size_t, py::bytes> BuildCsrFromDenseDescriptor(
     const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   SparseMatDescriptor d =
       BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
 
@@ -317,48 +335,61 @@ std::pair<size_t, py::bytes> BuildCsrFromDenseDescriptor(
   // bufferSize does not reference these pointers, but does error on NULL.
   int val = 0;
   void* empty = &val;
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_a, d.rows, d.cols,
-                                         /*ld=*/d.cols, empty, d.value_type,
-                                         CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseCreateCsr(&mat_b, d.rows, d.cols, d.nnz, empty,
-                                       empty, empty, d.index_type, d.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, d.value_type));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_a, d.rows, d.cols,
+      /*ld=*/d.cols, empty, d.value_type, CUSPARSE_ORDER_ROW)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseCreateCsr(
+      &mat_b, d.rows, d.cols, d.nnz, empty, empty, empty, d.index_type,
+      d.index_type, CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
   size_t buffer_size;
-  JAX_THROW_IF_ERROR(cusparseDenseToSparse_bufferSize(
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_bufferSize(
       handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      &buffer_size));
+      &buffer_size)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_b));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_b)));
 
   return {buffer_size, PackDescriptor(d)};
 }
 
-void CsrFromDense(cudaStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len) {
-  const SparseMatDescriptor& d =
-      *UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  auto handle = SparseHandlePool::Borrow(stream);
+absl::Status CsrFromDense_(cudaStream_t stream, void** buffers,
+                           const char* opaque, size_t opaque_len) {
+  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const SparseMatDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
   cusparseDnMatDescr_t mat_a = 0;
   cusparseSpMatDescr_t mat_b = 0;
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_a, d.rows, d.cols,
-                                         /*ld=*/d.cols, buffers[0],
-                                         d.value_type, CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseCreateCsr(&mat_b, d.rows, d.cols, d.nnz,
-                                       /*csrRowOffsets=*/buffers[3],
-                                       /*csrColInd=*/buffers[2],
-                                       /*csrValues=*/buffers[1], d.index_type,
-                                       d.index_type, CUSPARSE_INDEX_BASE_ZERO,
-                                       d.value_type));
-  JAX_THROW_IF_ERROR(cusparseDenseToSparse_analysis(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_a, d.rows, d.cols,
+      /*ld=*/d.cols, buffers[0], d.value_type, CUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      cusparseCreateCsr(&mat_b, d.rows, d.cols, d.nnz,
+                        /*csrRowOffsets=*/buffers[3],
+                        /*csrColInd=*/buffers[2],
+                        /*csrValues=*/buffers[1], d.index_type, d.index_type,
+                        CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_analysis(
       handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4]));
-  JAX_THROW_IF_ERROR(cusparseDenseToSparse_convert(
+      buffers[4])));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_convert(
       handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4]));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_b));
+      buffers[4])));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_b)));
+  return absl::OkStatus();
+}
+
+void CsrFromDense(cudaStream_t stream, void** buffers, const char* opaque,
+                  size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CsrFromDense_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
 // CsrMatvec: Product of CSR matrix and dense vector.
@@ -374,7 +405,9 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
     const py::dtype& data_dtype, const py::dtype& x_dtype,
     const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz, bool transpose) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   SparseMatDescriptor A =
       BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
   DenseVecDescriptor x =
@@ -391,30 +424,35 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
   // bufferSize does not reference these pointers, but does error on NULL.
   int val = 0;
   void* empty = &val;
-  JAX_THROW_IF_ERROR(cusparseCreateCsr(&mat_a, A.rows, A.cols, A.nnz, empty,
-                                       empty, empty, A.index_type, A.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, A.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnVec(&vec_x, x.size, empty, x.type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnVec(&vec_y, y.size, empty, y.type));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseCreateCsr(
+      &mat_a, A.rows, A.cols, A.nnz, empty, empty, empty, A.index_type,
+      A.index_type, CUSPARSE_INDEX_BASE_ZERO, A.value_type)));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnVec(&vec_x, x.size, empty, x.type)));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnVec(&vec_y, y.size, empty, y.type)));
   size_t buffer_size;
   CudaConst alpha = CudaOne(y.type);
   CudaConst beta = CudaZero(y.type);
-  JAX_THROW_IF_ERROR(cusparseSpMV_bufferSize(
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSpMV_bufferSize(
       handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y.type,
-      CUSPARSE_MV_ALG_DEFAULT, &buffer_size));
+      CUSPARSE_MV_ALG_DEFAULT, &buffer_size)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnVec(vec_x));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnVec(vec_y));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_y)));
 
   return {buffer_size, PackDescriptor(CsrMatvecDescriptor{A, x, y, op})};
 }
 
-void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len) {
-  const CsrMatvecDescriptor& d =
-      *UnpackDescriptor<CsrMatvecDescriptor>(opaque, opaque_len);
-  auto handle = SparseHandlePool::Borrow(stream);
+absl::Status CsrMatvec_(cudaStream_t stream, void** buffers, const char* opaque,
+                        size_t opaque_len) {
+  auto s = UnpackDescriptor<CsrMatvecDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const CsrMatvecDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
   void* csr_values = buffers[0];
   void* csr_col_ind = buffers[1];
@@ -434,20 +472,32 @@ void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
   cusparseDnVecDescr_t vec_x = 0;
   cusparseDnVecDescr_t vec_y = 0;
 
-  JAX_THROW_IF_ERROR(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
       cusparseCreateCsr(&mat_a, d.A.rows, d.A.cols, d.A.nnz, csr_row_offsets,
                         csr_col_ind, csr_values, d.A.index_type, d.A.index_type,
-                        CUSPARSE_INDEX_BASE_ZERO, d.A.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type));
+                        CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type)));
 
-  JAX_THROW_IF_ERROR(cusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x,
-                                  &beta, vec_y, d.y.type,
-                                  CUSPARSE_MV_ALG_DEFAULT, buf));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      cusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
+                   d.y.type, CUSPARSE_MV_ALG_DEFAULT, buf)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnVec(vec_x));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnVec(vec_y));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_y)));
+  return absl::OkStatus();
+}
+
+void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
+               size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CsrMatvec_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
 // CsrMatmat: Product of CSR matrix and dense matrix.
@@ -463,7 +513,9 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
     const py::dtype& data_dtype, const py::dtype& b_dtype,
     const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
     int cols, int BCcols, int nnz, bool transpose) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   SparseMatDescriptor A =
       BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
   DenseMatDescriptor B =
@@ -480,32 +532,37 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
   // bufferSize does not reference these pointers, but does error on NULL.
   int val = 0;
   void* empty = &val;
-  JAX_THROW_IF_ERROR(cusparseCreateCsr(&mat_a, A.rows, A.cols, A.nnz, empty,
-                                       empty, empty, A.index_type, A.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, A.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_b, B.rows, B.cols, /*ld=*/B.cols,
-                                         empty, B.type, CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_c, C.rows, C.cols, /*ld=*/C.cols,
-                                         empty, C.type, CUSPARSE_ORDER_ROW));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseCreateCsr(
+      &mat_a, A.rows, A.cols, A.nnz, empty, empty, empty, A.index_type,
+      A.index_type, CUSPARSE_INDEX_BASE_ZERO, A.value_type)));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnMat(&mat_b, B.rows, B.cols, /*ld=*/B.cols,
+                                        empty, B.type, CUSPARSE_ORDER_ROW)));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnMat(&mat_c, C.rows, C.cols, /*ld=*/C.cols,
+                                        empty, C.type, CUSPARSE_ORDER_ROW)));
   size_t buffer_size;
   CudaConst alpha = CudaOne(C.type);
   CudaConst beta = CudaZero(C.type);
-  JAX_THROW_IF_ERROR(cusparseSpMM_bufferSize(
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSpMM_bufferSize(
       handle.get(), op_A, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mat_a,
-      mat_b, &beta, mat_c, C.type, CUSPARSE_SPMM_ALG_DEFAULT, &buffer_size));
+      mat_b, &beta, mat_c, C.type, CUSPARSE_SPMM_ALG_DEFAULT, &buffer_size)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_b));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_c));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
 
   return {buffer_size, PackDescriptor(CsrMatmatDescriptor{A, B, C, op_A})};
 }
 
-void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len) {
-  const CsrMatmatDescriptor& d =
-      *UnpackDescriptor<CsrMatmatDescriptor>(opaque, opaque_len);
-  auto handle = SparseHandlePool::Borrow(stream);
+absl::Status CsrMatmat_(cudaStream_t stream, void** buffers, const char* opaque,
+                        size_t opaque_len) {
+  auto s = UnpackDescriptor<CsrMatmatDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const CsrMatmatDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
   void* csr_values = buffers[0];
   void* csr_col_ind = buffers[1];
@@ -525,23 +582,33 @@ void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
   cusparseDnMatDescr_t mat_b = 0;
   cusparseDnMatDescr_t mat_c = 0;
 
-  JAX_THROW_IF_ERROR(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
       cusparseCreateCsr(&mat_a, d.A.rows, d.A.cols, d.A.nnz, csr_row_offsets,
                         csr_col_ind, csr_values, d.A.index_type, d.A.index_type,
-                        CUSPARSE_INDEX_BASE_ZERO, d.A.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_b, d.B.rows, d.B.cols,
-                                         /*ld=*/d.B.cols, Bbuf, d.B.type,
-                                         CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_c, d.C.rows, d.C.cols,
-                                         /*ld=*/d.C.cols, Cbuf, d.C.type,
-                                         CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseSpMM(
+                        CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_b, d.B.rows, d.B.cols,
+      /*ld=*/d.B.cols, Bbuf, d.B.type, CUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_c, d.C.rows, d.C.cols,
+      /*ld=*/d.C.cols, Cbuf, d.C.type, CUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSpMM(
       handle.get(), d.op_A, /*opB=*/CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-      mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_ALG_DEFAULT, buf));
+      mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_ALG_DEFAULT, buf)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_b));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_c));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
+  return absl::OkStatus();
+}
+
+void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
+               size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CsrMatmat_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
 // CooToDense: Convert COO matrix to dense matrix
@@ -550,7 +617,9 @@ void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
 std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
     const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   SparseMatDescriptor d =
       BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
 
@@ -561,46 +630,60 @@ std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
   int val = 0;
   void* empty = &val;
 
-  JAX_THROW_IF_ERROR(cusparseCreateCoo(&mat_a, d.rows, d.cols, d.nnz, empty,
-                                       empty, empty, d.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, d.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_b, d.rows, d.cols,
-                                         /*ld=*/d.cols, empty, d.value_type,
-                                         CUSPARSE_ORDER_ROW));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+      cusparseCreateCoo(&mat_a, d.rows, d.cols, d.nnz, empty, empty, empty,
+                        d.index_type, CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_b, d.rows, d.cols,
+      /*ld=*/d.cols, empty, d.value_type, CUSPARSE_ORDER_ROW)));
   size_t buffer_size;
-  JAX_THROW_IF_ERROR(cusparseSparseToDense_bufferSize(
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSparseToDense_bufferSize(
       handle.get(), mat_a, mat_b, CUSPARSE_SPARSETODENSE_ALG_DEFAULT,
-      &buffer_size));
+      &buffer_size)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_b));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
 
   return {buffer_size, PackDescriptor(d)};
 }
 
-void CooToDense(cudaStream_t stream, void** buffers, const char* opaque,
-                size_t opaque_len) {
-  const SparseMatDescriptor& d =
-      *UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  auto handle = SparseHandlePool::Borrow(stream);
+absl::Status CooToDense_(cudaStream_t stream, void** buffers,
+                         const char* opaque, size_t opaque_len) {
+  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const SparseMatDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
   cusparseSpMatDescr_t mat_a = 0;
   cusparseDnMatDescr_t mat_b = 0;
-  JAX_THROW_IF_ERROR(cusparseCreateCoo(&mat_a, d.rows, d.cols, d.nnz,
-                                       /*cooRowInd=*/buffers[1],
-                                       /*cooColInd=*/buffers[2],
-                                       /*cooValues=*/buffers[0], d.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, d.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_b, d.rows, d.cols,
-                                         /*ld=*/d.cols, buffers[3],
-                                         d.value_type, CUSPARSE_ORDER_ROW));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateCoo(&mat_a, d.rows, d.cols, d.nnz,
+                                      /*cooRowInd=*/buffers[1],
+                                      /*cooColInd=*/buffers[2],
+                                      /*cooValues=*/buffers[0], d.index_type,
+                                      CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_b, d.rows, d.cols,
+      /*ld=*/d.cols, buffers[3], d.value_type, CUSPARSE_ORDER_ROW)));
 
-  JAX_THROW_IF_ERROR(cusparseSparseToDense(handle.get(), mat_a, mat_b,
-                                           CUSPARSE_SPARSETODENSE_ALG_DEFAULT,
-                                           buffers[4]));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      cusparseSparseToDense(handle.get(), mat_a, mat_b,
+                            CUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_b));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  return absl::OkStatus();
+}
+
+void CooToDense(cudaStream_t stream, void** buffers, const char* opaque,
+                size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CooToDense_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
 // CooFromDense: Convert dense matrix to COO matrix
@@ -609,7 +692,9 @@ void CooToDense(cudaStream_t stream, void** buffers, const char* opaque,
 std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
     const py::dtype& data_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   SparseMatDescriptor d =
       BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
 
@@ -619,47 +704,61 @@ std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
   // bufferSize does not reference these pointers, but does error on NULL.
   int val = 0;
   void* empty = &val;
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_a, d.rows, d.cols,
-                                         /*ld=*/d.cols, empty, d.value_type,
-                                         CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseCreateCoo(&mat_b, d.rows, d.cols, d.nnz, empty,
-                                       empty, empty, d.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, d.value_type));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_a, d.rows, d.cols,
+      /*ld=*/d.cols, empty, d.value_type, CUSPARSE_ORDER_ROW)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+      cusparseCreateCoo(&mat_b, d.rows, d.cols, d.nnz, empty, empty, empty,
+                        d.index_type, CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
   size_t buffer_size;
-  JAX_THROW_IF_ERROR(cusparseDenseToSparse_bufferSize(
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_bufferSize(
       handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      &buffer_size));
+      &buffer_size)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_b));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_b)));
 
   return {buffer_size, PackDescriptor(d)};
 }
 
-void CooFromDense(cudaStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len) {
-  const SparseMatDescriptor& d =
-      *UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
-  auto handle = SparseHandlePool::Borrow(stream);
+absl::Status CooFromDense_(cudaStream_t stream, void** buffers,
+                           const char* opaque, size_t opaque_len) {
+  auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const SparseMatDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
   cusparseDnMatDescr_t mat_a = 0;
   cusparseSpMatDescr_t mat_b = 0;
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_a, d.rows, d.cols,
-                                         /*ld=*/d.cols, buffers[0],
-                                         d.value_type, CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseCreateCoo(&mat_b, d.rows, d.cols, d.nnz,
-                                       /*cooRowInd=*/buffers[2],
-                                       /*cooColInd=*/buffers[3],
-                                       /*cooValues=*/buffers[1], d.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, d.value_type));
-  JAX_THROW_IF_ERROR(cusparseDenseToSparse_analysis(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_a, d.rows, d.cols,
+      /*ld=*/d.cols, buffers[0], d.value_type, CUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateCoo(&mat_b, d.rows, d.cols, d.nnz,
+                                      /*cooRowInd=*/buffers[2],
+                                      /*cooColInd=*/buffers[3],
+                                      /*cooValues=*/buffers[1], d.index_type,
+                                      CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_analysis(
       handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4]));
-  JAX_THROW_IF_ERROR(cusparseDenseToSparse_convert(
+      buffers[4])));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_convert(
       handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
-      buffers[4]));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_b));
+      buffers[4])));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_b)));
+  return absl::OkStatus();
+}
+
+void CooFromDense(cudaStream_t stream, void** buffers, const char* opaque,
+                  size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CooFromDense_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
 // CooMatvec: Product of COO matrix and dense vector.
@@ -675,7 +774,9 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
     const py::dtype& data_dtype, const py::dtype& x_dtype,
     const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
     int cols, int nnz, bool transpose) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   SparseMatDescriptor A =
       BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
   DenseVecDescriptor x =
@@ -692,30 +793,35 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
   // bufferSize does not reference these pointers, but does error on NULL.
   int val = 0;
   void* empty = &val;
-  JAX_THROW_IF_ERROR(cusparseCreateCoo(&mat_a, A.rows, A.cols, A.nnz, empty,
-                                       empty, empty, A.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, A.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnVec(&vec_x, x.size, empty, x.type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnVec(&vec_y, y.size, empty, y.type));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+      cusparseCreateCoo(&mat_a, A.rows, A.cols, A.nnz, empty, empty, empty,
+                        A.index_type, CUSPARSE_INDEX_BASE_ZERO, A.value_type)));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnVec(&vec_x, x.size, empty, x.type)));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnVec(&vec_y, y.size, empty, y.type)));
   size_t buffer_size;
   CudaConst alpha = CudaOne(y.type);
   CudaConst beta = CudaZero(y.type);
-  JAX_THROW_IF_ERROR(cusparseSpMV_bufferSize(
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSpMV_bufferSize(
       handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y.type,
-      CUSPARSE_MV_ALG_DEFAULT, &buffer_size));
+      CUSPARSE_MV_ALG_DEFAULT, &buffer_size)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnVec(vec_x));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnVec(vec_y));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_y)));
 
   return {buffer_size, PackDescriptor(CooMatvecDescriptor{A, x, y, op})};
 }
 
-void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len) {
-  const CooMatvecDescriptor& d =
-      *UnpackDescriptor<CooMatvecDescriptor>(opaque, opaque_len);
-  auto handle = SparseHandlePool::Borrow(stream);
+absl::Status CooMatvec_(cudaStream_t stream, void** buffers, const char* opaque,
+                        size_t opaque_len) {
+  auto s = UnpackDescriptor<CooMatvecDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const CooMatvecDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
   void* coo_values = buffers[0];
   void* coo_row_ind = buffers[1];
@@ -735,19 +841,31 @@ void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
   cusparseDnVecDescr_t vec_x = 0;
   cusparseDnVecDescr_t vec_y = 0;
 
-  JAX_THROW_IF_ERROR(cusparseCreateCoo(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateCoo(
       &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
-      d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type));
+      d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type)));
 
-  JAX_THROW_IF_ERROR(cusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x,
-                                  &beta, vec_y, d.y.type,
-                                  CUSPARSE_MV_ALG_DEFAULT, buf));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      cusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
+                   d.y.type, CUSPARSE_MV_ALG_DEFAULT, buf)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnVec(vec_x));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnVec(vec_y));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_y)));
+  return absl::OkStatus();
+}
+
+void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
+               size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CooMatvec_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
 // CooMatmat: Product of COO matrix and dense matrix.
@@ -763,7 +881,9 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
     const py::dtype& data_dtype, const py::dtype& b_dtype,
     const py::dtype& compute_dtype, const py::dtype& index_dtype, int rows,
     int cols, int BCcols, int nnz, bool transpose) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   SparseMatDescriptor A =
       BuildSparseMatDescriptor(data_dtype, index_dtype, rows, cols, nnz);
   DenseMatDescriptor B =
@@ -780,32 +900,37 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   // bufferSize does not reference these pointers, but does error on NULL.
   int val = 0;
   void* empty = &val;
-  JAX_THROW_IF_ERROR(cusparseCreateCoo(&mat_a, A.rows, A.cols, A.nnz, empty,
-                                       empty, empty, A.index_type,
-                                       CUSPARSE_INDEX_BASE_ZERO, A.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_b, B.rows, B.cols, /*ld=*/B.cols,
-                                         empty, B.type, CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_c, C.rows, C.cols, /*ld=*/C.cols,
-                                         empty, C.type, CUSPARSE_ORDER_ROW));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(
+      cusparseCreateCoo(&mat_a, A.rows, A.cols, A.nnz, empty, empty, empty,
+                        A.index_type, CUSPARSE_INDEX_BASE_ZERO, A.value_type)));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnMat(&mat_b, B.rows, B.cols, /*ld=*/B.cols,
+                                        empty, B.type, CUSPARSE_ORDER_ROW)));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(cusparseCreateDnMat(&mat_c, C.rows, C.cols, /*ld=*/C.cols,
+                                        empty, C.type, CUSPARSE_ORDER_ROW)));
   size_t buffer_size;
   CudaConst alpha = CudaOne(C.type);
   CudaConst beta = CudaZero(C.type);
-  JAX_THROW_IF_ERROR(cusparseSpMM_bufferSize(
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSpMM_bufferSize(
       handle.get(), op_A, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mat_a,
-      mat_b, &beta, mat_c, C.type, CUSPARSE_SPMM_ALG_DEFAULT, &buffer_size));
+      mat_b, &beta, mat_c, C.type, CUSPARSE_SPMM_ALG_DEFAULT, &buffer_size)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_b));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_c));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
 
   return {buffer_size, PackDescriptor(CooMatmatDescriptor{A, B, C, op_A})};
 }
 
-void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
-               size_t opaque_len) {
-  const CooMatmatDescriptor& d =
-      *UnpackDescriptor<CooMatmatDescriptor>(opaque, opaque_len);
-  auto handle = SparseHandlePool::Borrow(stream);
+absl::Status CooMatmat_(cudaStream_t stream, void** buffers, const char* opaque,
+                        size_t opaque_len) {
+  auto s = UnpackDescriptor<CooMatmatDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const CooMatmatDescriptor& d = **s;
+  auto h = SparseHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
   void* coo_values = buffers[0];
   void* coo_row_ind = buffers[1];
@@ -825,22 +950,32 @@ void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
   cusparseDnMatDescr_t mat_b = 0;
   cusparseDnMatDescr_t mat_c = 0;
 
-  JAX_THROW_IF_ERROR(cusparseCreateCoo(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateCoo(
       &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
-      d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_b, d.B.rows, d.B.cols,
-                                         /*ld=*/d.B.cols, Bbuf, d.B.type,
-                                         CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseCreateDnMat(&mat_c, d.C.rows, d.C.cols,
-                                         /*ld=*/d.C.cols, Cbuf, d.C.type,
-                                         CUSPARSE_ORDER_ROW));
-  JAX_THROW_IF_ERROR(cusparseSpMM(
+      d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_b, d.B.rows, d.B.cols,
+      /*ld=*/d.B.cols, Bbuf, d.B.type, CUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      &mat_c, d.C.rows, d.C.cols,
+      /*ld=*/d.C.cols, Cbuf, d.C.type, CUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSpMM(
       handle.get(), d.op_A, /*opB=*/CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-      mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_ALG_DEFAULT, buf));
+      mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_ALG_DEFAULT, buf)));
 
-  JAX_THROW_IF_ERROR(cusparseDestroySpMat(mat_a));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_b));
-  JAX_THROW_IF_ERROR(cusparseDestroyDnMat(mat_c));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
+  return absl::OkStatus();
+}
+
+void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
+               size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CooMatmat_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 #endif  // if JAX_CUSPARSE_11030
 
@@ -853,12 +988,15 @@ py::bytes BuildGtsv2Descriptor(int m, int n, int ldb) {
 }
 
 template <typename T, typename F>
-void gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
-           const char* opaque, std::size_t opaque_len) {
-  auto handle = SparseHandlePool::Borrow();
+absl::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
+                   const char* opaque, std::size_t opaque_len) {
+  auto h = SparseHandlePool::Borrow();
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
 
-  const Gtsv2Descriptor& descriptor =
-      *UnpackDescriptor<Gtsv2Descriptor>(opaque, opaque_len);
+  auto s = UnpackDescriptor<Gtsv2Descriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const Gtsv2Descriptor& descriptor = **s;
   int m = descriptor.m;
   int n = descriptor.n;
   int ldb = descriptor.ldb;
@@ -878,31 +1016,42 @@ void gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
   // TODO(b/182906199): Update the comment here once copy insertion is WAI.
   if (X != B) {
     size_t B_bytes = ldb * n * sizeof(T);
-    JAX_THROW_IF_ERROR(
-        cudaMemcpyAsync(X, B, B_bytes, cudaMemcpyDeviceToDevice, stream));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+        cudaMemcpyAsync(X, B, B_bytes, cudaMemcpyDeviceToDevice, stream)));
   }
 
-  JAX_THROW_IF_ERROR(
-      computeGtsv2(handle.get(), m, n, dl, d, du, /*B=*/X, ldb, buffer));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      computeGtsv2(handle.get(), m, n, dl, d, du, /*B=*/X, ldb, buffer)));
+  return absl::OkStatus();
 }
 
 void gtsv2_f32(cudaStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len) {
-  gtsv2<float>(cusparseSgtsv2, stream, buffers, opaque, opaque_len);
+               std::size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = gtsv2<float>(cusparseSgtsv2, stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
-
 
 void gtsv2_f64(cudaStream_t stream, void** buffers, const char* opaque,
-               std::size_t opaque_len) {
-  gtsv2<double>(cusparseDgtsv2, stream, buffers, opaque, opaque_len);
+               std::size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = gtsv2<double>(cusparseDgtsv2, stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
+  }
 }
 
-template<typename F>
+template <typename F>
 size_t Gtsv2BufferSize(F f, int m, int n, int ldb) {
-  auto handle = SparseHandlePool::Borrow();
+  auto h = SparseHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
   size_t size;
-  JAX_THROW_IF_ERROR(f(handle.get(), m, n, /*dl=*/nullptr, /*d=*/nullptr,
-                       /*du=*/nullptr, /*B=*/nullptr, ldb, &size));
+  JAX_THROW_IF_ERROR(
+      JAX_AS_STATUS(f(handle.get(), m, n, /*dl=*/nullptr, /*d=*/nullptr,
+                      /*du=*/nullptr, /*B=*/nullptr, ldb, &size)));
   return size;
 }
 

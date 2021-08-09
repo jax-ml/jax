@@ -59,6 +59,8 @@ def csr_todense(c, data, indices, indptr, *, shape):
           _Shape.array_shape(np.dtype(np.int8), (buffer_size,), (0,)),
       )),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -86,6 +88,8 @@ def csr_fromdense(c, mat, *, nnz, index_dtype):
           _Shape.array_shape(np.dtype(np.int8), (buffer_size,), (0,)),
       )),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
 
   return tuple(_ops.GetTupleElement(out, i) for i in range(3))
@@ -122,6 +126,8 @@ def csr_matvec(c, data, indices, indptr, x, *, shape, transpose=False, compute_d
           _Shape.array_shape(compute_dtype, (out_size,), (0,)),
           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -158,6 +164,8 @@ def csr_matmat(c, data, indices, indptr, B, *, shape, transpose=False, compute_d
           _Shape.array_shape(compute_dtype, (out_size, Ccols), (1, 0)),
           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -187,6 +195,8 @@ def coo_todense(c, data, row, col, *, shape):
           _Shape.array_shape(np.dtype(np.int8), (buffer_size,), (0,)),
       )),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -214,6 +224,8 @@ def coo_fromdense(c, mat, *, nnz, index_dtype):
           _Shape.array_shape(np.dtype(np.int8), (buffer_size,), (0,)),
       )),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
 
   return tuple(_ops.GetTupleElement(out, i) for i in range(3))
@@ -249,6 +261,8 @@ def coo_matvec(c, data, row, col, x, *, shape, transpose=False, compute_dtype=No
           _Shape.array_shape(compute_dtype, (out_size,), (0,)),
           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -285,6 +299,8 @@ def coo_matmat(c, data, row, col, B, *, shape, transpose=False, compute_dtype=No
           _Shape.array_shape(compute_dtype, (out_size, Ccols), (1, 0)),
           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -306,5 +322,7 @@ def gtsv2(c, dl, d, du, B, *, m, n, ldb, t):
           (_Shape.array_shape(np.dtype(t), (ldb, n), (1, 0)),
            _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=cusparse_kernels.build_gtsv2_descriptor(m, n, ldb),
-      has_side_effect=False)
+      has_side_effect=False,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return _ops.GetTupleElement(out, 0)

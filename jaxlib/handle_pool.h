@@ -20,6 +20,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 
 namespace jax {
@@ -77,7 +78,7 @@ class HandlePool {
 
   // Borrows a handle from the pool. If 'stream' is non-null, sets the stream
   // associated with the handle.
-  static Handle Borrow(StreamType stream = nullptr);
+  static absl::StatusOr<Handle> Borrow(StreamType stream = nullptr);
 
  private:
   static HandlePool<HandleType, StreamType>* Instance();

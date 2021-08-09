@@ -19,18 +19,28 @@ limitations under the License.
 #include <memory>
 
 #include "rocm/include/hip/hip_runtime_api.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+
+#define JAX_RETURN_IF_ERROR(expr) \
+  {                               \
+    auto s___ = (expr);           \
+    if (!s___.ok()) return s___;  \
+  }
 
 namespace jax {
 
-void ThrowIfError(hipError_t error);
+absl::Status AsStatus(hipError_t error);
 
 // Builds an array of pointers to each array in a batch, in device memory.
 // Caution: the return value must be kept alive (e.g., via a stream
 // synchronization) until the copy enqueued by MakeBatchPointers on `stream`
 // completes.
-std::unique_ptr<void*[]> MakeBatchPointers(hipStream_t stream, void* buffer,
-                                           void* dev_ptrs, int batch,
-                                           int batch_elem_size);
+absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(hipStream_t stream,
+                                                           void* buffer,
+                                                           void* dev_ptrs,
+                                                           int batch,
+                                                           int batch_elem_size);
 
 }  // namespace jax
 
