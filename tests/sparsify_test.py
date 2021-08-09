@@ -19,7 +19,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax import config, jit, lax, partial
+from jax import config, core, jit, lax, partial
 import jax.numpy as jnp
 import jax.test_util as jtu
 from jax.experimental.sparse import BCOO, sparsify
@@ -67,6 +67,12 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(args[0], args_out[0])
     self.assertBcooIdentical(args[1], args_out[1])
     self.assertBcooIdentical(args[2], args_out[2])
+
+  def testUnitHandling(self):
+    x = BCOO.fromdense(jnp.arange(5))
+    f = jit(lambda x, y: x)
+    result = sparsify(jit(f))(x, core.unit)
+    self.assertBcooIdentical(result, x)
 
   def testSparsify(self):
     M_dense = jnp.arange(24).reshape(4, 6)
