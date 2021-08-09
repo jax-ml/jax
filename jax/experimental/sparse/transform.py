@@ -68,7 +68,6 @@ from jax.experimental.sparse import BCOO
 sparse_rules : Dict[core.Primitive, Callable] = {}
 
 Array = Any
-AnyArray = Union[Array, BCOO]
 
 
 class SparseEnv:
@@ -91,7 +90,7 @@ class SparseEnv:
 
 class ArgSpec(NamedTuple):
   shape: Tuple[int, ...]
-  data_ref: int
+  data_ref: Optional[int]
   indices_ref: Optional[int]
 
   @property
@@ -101,7 +100,11 @@ class ArgSpec(NamedTuple):
   def is_sparse(self):
     return self.indices_ref is not None
 
+  def is_unit(self):
+    return self.data_ref is None
+
   def data(self, spenv: SparseEnv):
+    assert self.data_ref is not None
     return spenv.get(self.data_ref)
 
   def indices(self, spenv: SparseEnv):
@@ -111,12 +114,14 @@ class ArgSpec(NamedTuple):
 
 def arrays_to_argspecs(
     spenv: SparseEnv,
-    args: Sequence[AnyArray]
+    args: Sequence[Array]
     ) -> Sequence[ArgSpec]:
   argspecs: List[ArgSpec] = []
   for arg in args:
     if isinstance(arg, BCOO):
       argspecs.append(ArgSpec(arg.shape, spenv.push(arg.data), spenv.push(arg.indices)))  # type: ignore
+    elif core.get_aval(arg) is core.abstract_unit:
+      argspecs.append(ArgSpec((), None, None))
     else:
       argspecs.append(ArgSpec(np.shape(arg), spenv.push(arg), None))  # type: ignore
   return argspecs
@@ -125,23 +130,24 @@ def arrays_to_argspecs(
 def argspecs_to_arrays(
     spenv: SparseEnv,
     argspecs: Sequence[ArgSpec],
-    ) -> Sequence[AnyArray]:
-  args = []
+    ) -> Sequence[Array]:
+  args: List[Array] = []
   for argspec in argspecs:
     if argspec.is_sparse():
       assert argspec.indices_ref is not None
       args.append(BCOO((argspec.data(spenv), argspec.indices(spenv)), shape=argspec.shape))
+    elif argspec.is_unit():
+      args.append(core.unit)
     else:
       args.append(argspec.data(spenv))
-    assert args[-1].shape == argspec.shape
   return tuple(args)
 
 
 def argspecs_to_avals(
     spenv: SparseEnv,
     argspecs: Sequence[ArgSpec],
-    ) -> Sequence[core.ShapedArray]:
-  return [core.ShapedArray(a.shape, a.data(spenv).dtype) for a in argspecs]
+    ) -> Sequence[core.AbstractValue]:
+  return [core.abstract_unit if a.is_unit() else core.ShapedArray(a.shape, a.data(spenv).dtype) for a in argspecs]
 
 
 def eval_sparse(
