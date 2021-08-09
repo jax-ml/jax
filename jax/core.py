@@ -715,14 +715,23 @@ class TraceState:
     return new
 
 
+def _update_thread_local_jit_state(dynamic):
+  # Copies the MainTrace instance, removing any .debug_info or .jaxpr_stack
+  # fields that should not be kept alive as part of a cache key.
+  # TODO(mattjj): split debug_info and jaxpr_stack out of MainTrace.
+  # TODO(mattjj): add a test that verifies that JIT-ted functions are not kept
+  # alive by the JIT cache, particularly for nested JIT-ted functions.
+  copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
+  jax_config.update_thread_local_jit_state(dynamic_trace_state=copy)
+
+
 # The global state of the tracer is accessed by a thread-local object.
 # This allows concurrent tracing in separate threads; passing traced objects
 # between threads is forbidden.
 class ThreadLocalState(threading.local):
   def __init__(self):
     self.trace_state = TraceState()
-    jax_config.update_thread_local_jit_state(
-        dynamic_trace_state=self.trace_state.trace_stack.dynamic)
+    _update_thread_local_jit_state(self.trace_state.trace_stack.dynamic)
 thread_local_state = ThreadLocalState()
 
 def trace_state_clean() -> bool:
@@ -765,7 +774,7 @@ def new_main(trace_type: Type[Trace],
   stack.push(main)
   if dynamic:
     prev_dynamic, stack.dynamic = stack.dynamic, main
-    jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
+    _update_thread_local_jit_state(stack.dynamic)
 
   try:
     yield main
@@ -773,7 +782,7 @@ def new_main(trace_type: Type[Trace],
     stack.pop()
     if dynamic:
       stack.dynamic = prev_dynamic
-      jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
+      _update_thread_local_jit_state(stack.dynamic)
 
   if config.jax_check_tracer_leaks:
     t = ref(main)
@@ -790,13 +799,13 @@ def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
   main = MainTrace(0, trace_type)
   prev_dynamic, stack.dynamic = stack.dynamic, main
   prev_base, stack.stack[0] = stack.stack[0], main
-  jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
+  _update_thread_local_jit_state(stack.dynamic)
   try:
     yield main
   finally:
     stack.dynamic = prev_dynamic
     stack.stack[0] = prev_base
-    jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
+    _update_thread_local_jit_state(stack.dynamic)
 
   if config.jax_check_tracer_leaks:
     t = ref(main)
