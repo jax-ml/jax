@@ -14,11 +14,22 @@
 
 from typing import Optional, Sequence, Union
 
+import io
+from iree.runtime.system_api import load_vm_module
+
 import numpy as np
 
 from jax import core
 
-from .mlir_imports import *
+from .iree_imports import *
+
+# TODO: This is hoaky and needs to go in a real runtime layer.
+_cached_global_config: Optional[iree_runtime.system_api.Config] = None
+def _get_global_config() -> iree_runtime.system_api.Config:
+  global _cached_global_config
+  if not _cached_global_config:
+    _cached_global_config = iree_runtime.system_api.Config("dylib")
+  return _cached_global_config
 
 
 class Builder:
@@ -27,12 +38,44 @@ class Builder:
   def __init__(self, context: Optional[ir.Context] = None):
     self.context = context if context else ir.Context()
     self.current_loc: Optional[ir.Location] = None
-    self.module = builtin.ModuleOp(loc=self.loc)
-    self.ip = ir.InsertionPoint(self.module.body)
+    self.input_module = ir.Module.create(loc=self.loc)
+    self.module_op = self.input_module.operation.opview
+    self.ip = ir.InsertionPoint(self.module_op.body)
 
+    # Dialect registration.
     self.context.allow_unregistered_dialects = True
     mhlo.register_mhlo_dialect(self.context)
     chlo.register_chlo_dialect(self.context)
+
+    # Compiler API.
+    self.compiler_options = compiler_driver.CompilerOptions()
+    self.compiler_options.set_input_dialect_mhlo()
+    self.compiler_options.add_target_backend("cpu")
+
+  def compile_module_to_binary(self) -> memoryview:
+    """Compiles an input MLIR module to a binary blob."""
+    # TODO: Wire in diagnostics/error handling (just dumps to stderr as is).
+    with self.context:
+      pm = passmanager.PassManager()
+      compiler_driver.build_iree_vm_pass_pipeline(self.compiler_options, pm)
+      pm.run(self.input_module)
+      bytecode_io = io.BytesIO()
+      compiler_driver.translate_module_to_vm_bytecode(self.compiler_options,
+        self.input_module, bytecode_io)
+      return bytecode_io.getbuffer()
+
+  @staticmethod
+  def load_compiled_binary(blob: memoryview):
+    """Loads a compiled binary into the runtime.
+
+    This should be part of a dedicated runtime layer but is here for demo
+    purposes.
+    """
+    # TODO: This API in IREE needs substantial ergonomic work for loading
+    # a module from a memory image.
+    config = _get_global_config()
+    vm_module = iree_runtime.binding.VmModule.from_flatbuffer(blob)
+    return load_vm_module(vm_module, config)
 
   @property
   def loc(self) -> ir.Location:
@@ -76,6 +119,7 @@ class Builder:
     # property.
     if not t.has_rank:
       raise ValueError(f"Cannot get dims from unranked type")
+
     def get_dim(index):
       return None if t.is_dynamic_dim(index) else t.get_dim_size(index)
 

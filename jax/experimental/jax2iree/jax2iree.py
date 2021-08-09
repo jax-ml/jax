@@ -22,7 +22,7 @@ from jax import linear_util as lu
 from jax._src import api
 
 from .ir_builder import Builder, FunctionBuilder
-from .mlir_imports import *
+from .iree_imports import *
 from .primitives import HLO_HANDLERS, PrimitiveInvocation
 
 

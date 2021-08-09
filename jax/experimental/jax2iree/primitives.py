@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, Sequence, Union
 from jax._src.lax import lax
 
 from .ir_builder import FunctionBuilder
-from .mlir_imports import *
+from .iree_imports import *
 
 
 class PrimitiveInvocation:
