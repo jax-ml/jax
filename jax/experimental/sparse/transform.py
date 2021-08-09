@@ -209,7 +209,7 @@ def sparsify_raw(f):
   def wrapped(spenv: SparseEnv, *argspecs: ArgSpec, **params: Any) -> Tuple[Sequence[ArgSpec], bool]:
     in_avals = argspecs_to_avals(spenv, argspecs)
     in_avals_flat, in_tree = tree_flatten(in_avals)
-    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, params), in_tree)
     jaxpr, out_avals_flat, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
     result = eval_sparse(jaxpr, consts, argspecs, spenv)
     if len(out_avals_flat) != len(result):
