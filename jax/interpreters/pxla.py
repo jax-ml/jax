@@ -616,6 +616,9 @@ def _sda_copy_to_host_async(self):
 
 
 def _sda_delete(self):
+  if self.device_buffers is None:
+    return
+
   for buf in self.device_buffers:
     buf.delete()
   self.device_buffers = None
@@ -656,6 +659,7 @@ def _sda__getitem__(self, idx):
     # device and use XLA's Gather to index into the resulting array.
     return xla.DeviceArray.__getitem__(self, idx)
   else:
+    self._check_if_deleted()
     buf = self.device_buffers[buf_idx]
     aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
     return xla.make_device_array(aval, None, buf)

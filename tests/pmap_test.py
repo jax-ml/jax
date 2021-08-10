@@ -2256,6 +2256,15 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     x = jax.device_put_replicated(1, jax.devices())
     self.assertStartsWith(repr(x), 'ShardedDeviceArray')
 
+  def test_delete_is_idempotent(self):
+    x = jax.device_put_replicated(1, jax.devices())
+    x.delete()
+    x.delete()
+
+    with self.assertRaisesRegex(ValueError,
+                                'ShardedDeviceArray has been deleted.'):
+      _ = x[0]
+
 
 class SpecToIndicesTest(jtu.JaxTestCase):
 
