@@ -135,6 +135,6 @@ absl::StatusOr<std::unique_ptr<void* []>> MakeBatchPointers(
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
       cudaMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
                       cudaMemcpyHostToDevice, stream)));
-  return host_ptrs;
+  return std::move(host_ptrs);
 }
 }  // namespace jax
