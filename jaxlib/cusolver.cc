@@ -34,7 +34,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
-#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 namespace {

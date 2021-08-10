@@ -30,7 +30,7 @@ limitations under the License.
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "jaxlib/rocm_gpu_kernel_helpers.h"
-#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_runtime_api.h"
 #include "rocm/include/rocblas.h"

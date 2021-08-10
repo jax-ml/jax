@@ -34,7 +34,7 @@ limitations under the License.
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
-#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 // Some functionality defined here is only available in CUSPARSE 11.3 or newer.
 #define JAX_CUSPARSE_11030 (CUSPARSE_VERSION >= 11300)
