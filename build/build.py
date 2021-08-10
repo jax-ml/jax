@@ -220,7 +220,7 @@ def check_bazel_version(bazel_path):
   return actual_ints >= [2, 0, 0]
 
 
-def write_bazelrc(python_bin_path=None, remote_build=None, 
+def write_bazelrc(python_bin_path=None, remote_build=None,
                   cuda_toolkit_path=None, cudnn_install_path=None,
                   cuda_version=None, cudnn_version=None, rocm_toolkit_path=None,
                   cpu=None):
