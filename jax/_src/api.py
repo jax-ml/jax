@@ -852,6 +852,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   _check_callable(fun)
   argnums = core.concrete_or_error(_ensure_index, argnums)
+  reduce_axes = _ensure_str_tuple(reduce_axes)
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   @api_boundary
@@ -2121,6 +2122,7 @@ def vjp(  # type: ignore
   -0.2524413
   """
   _check_callable(fun)
+  reduce_axes = _ensure_str_tuple(reduce_axes)
   return _vjp(
       lu.wrap_init(fun), *primals, has_aux=has_aux, reduce_axes=reduce_axes)
 
@@ -2198,6 +2200,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   >>> f_transpose(1.0)
   (DeviceArray(0.5, dtype=float32), DeviceArray(-0.5, dtype=float32))
   """
+  reduce_axes = _ensure_str_tuple(reduce_axes)
   primals_flat, in_tree = tree_flatten(primals)
   flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   in_avals = map(shaped_abstractify, primals_flat)
