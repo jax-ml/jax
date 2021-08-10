@@ -126,7 +126,7 @@ bazel_packages = {
             file="bazel-4.1.0-darwin-arm64",
             sha256=
             "c372d39ab9dac96f7fdfc2dd649e88b05ee4c94ce3d6cf2313438ef0ca6d5ac1"),
-    ("Windows", "x86_64"):
+    ("Windows", "AMD64"):
         BazelPackage(
             base_uri=None,
             file="bazel-4.1.0-windows-x86_64.exe",
@@ -249,9 +249,9 @@ build --announce_rc
 build --define open_source_build=true
 
 # Disable enabled-by-default TensorFlow features that we don't care about.
-build:posix --define=no_aws_support=true
-build:posix --define=no_gcp_support=true
-build:posix --define=no_hdfs_support=true
+build --define=no_aws_support=true
+build --define=no_gcp_support=true
+build --define=no_hdfs_support=true
 build --define=no_kafka_support=true
 build --define=no_ignite_support=true
 build --define=grpc_no_ares=true
@@ -323,7 +323,9 @@ def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None,
       f.write("build --action_env CUDA_TOOLKIT_PATH=\"{cuda_toolkit_path}\"\n"
               .format(cuda_toolkit_path=cuda_toolkit_path))
     if cudnn_install_path:
-      tf_cuda_paths.append(cudnn_install_path)
+      # see https://github.com/tensorflow/tensorflow/issues/51040
+      if cudnn_install_path not in tf_cuda_paths:
+        tf_cuda_paths.append(cudnn_install_path)
       f.write("build --action_env CUDNN_INSTALL_PATH=\"{cudnn_install_path}\"\n"
               .format(cudnn_install_path=cudnn_install_path))
     if len(tf_cuda_paths):
