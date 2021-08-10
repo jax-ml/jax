@@ -50,7 +50,7 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertEqual(len(argspecs), len(args))
     self.assertEqual(spenv.size(), 5)
     self.assertEqual(argspecs,
-        [ArgSpec(X.shape, 0, None), ArgSpec(X.shape, 1, 2), ArgSpec(X.shape, 3, 4)])
+        (ArgSpec(X.shape, 0, None), ArgSpec(X.shape, 1, 2), ArgSpec(X.shape, 3, 4)))
 
     args_out = argspecs_to_arrays(spenv, argspecs)
     self.assertEqual(len(args_out), len(args))
@@ -73,6 +73,14 @@ class SparsifyTest(jtu.JaxTestCase):
     f = jit(lambda x, y: x)
     result = sparsify(jit(f))(x, core.unit)
     self.assertBcooIdentical(result, x)
+
+  def testPytreeInput(self):
+    f = sparsify(lambda x: x)
+    args = (jnp.arange(4), BCOO.fromdense(jnp.arange(4)))
+    out = f(args)
+    self.assertLen(out, 2)
+    self.assertArraysEqual(args[0], out[0])
+    self.assertBcooIdentical(args[1], out[1])
 
   def testSparsify(self):
     M_dense = jnp.arange(24).reshape(4, 6)
