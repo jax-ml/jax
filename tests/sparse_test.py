@@ -202,7 +202,6 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(op(M) @ v, matvec(*args), rtol=MATMUL_TOL)
     self.assertAllClose(op(M) @ v, jit(matvec)(*args), rtol=MATMUL_TOL)
 
-  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_T={}".format(jtu.format_shape_dtype_string(shape, dtype), transpose),
        "shape": shape, "dtype": dtype, "transpose": transpose}
@@ -228,6 +227,23 @@ class cuSparseTest(jtu.JaxTestCase):
 
     y, dy = jvp(lambda x: sparse.coo_matmat(x, M.row, M.col, B, shape=shape, transpose=transpose).sum(), (M.data, ), (jnp.ones_like(M.data), ))
     self.assertAllClose((op(M) @ B).sum(), y, rtol=MATMUL_TOL)
+
+  def test_coo_matmat_layout(self):
+    # Regression test for https://github.com/google/jax/issues/7533
+    d = jnp.array([1.0, 2.0, 3.0, 4.0])
+    i = jnp.array([0, 0, 1, 2])
+    j = jnp.array([0, 2, 0, 0])
+    shape = (3, 3)
+
+    x = jnp.arange(9).reshape(3, 3).astype(d.dtype)
+
+    def f(x):
+      return sparse.coo_matmat(d, i, j, x.T, shape=shape)
+
+    result = f(x)
+    result_jit = jit(f)(x)
+
+    self.assertAllClose(result, result_jit)
 
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
   def test_gpu_translation_rule(self):

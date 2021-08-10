@@ -137,8 +137,9 @@ def csr_matmat(c, data, indices, indptr, B, *, shape, transpose=False, compute_d
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(indices).element_type())
   B_dtype = np.dtype(c.get_shape(B).element_type())
+  B_shape = c.get_shape(B).dimensions()
   rows, cols = shape
-  _, Ccols = c.get_shape(B).dimensions()
+  _, Ccols = B_shape
   nnz, = c.get_shape(data).dimensions()
 
   if compute_dtype is None:
@@ -154,11 +155,10 @@ def csr_matmat(c, data, indices, indptr, B, *, shape, transpose=False, compute_d
       b"cusparse_csr_matmat",
       operands=(data, indices, indptr, B),
       operand_shapes_with_layout=(
-          # All are 1D, so no layout necessary
           c.get_shape(data),
           c.get_shape(indices),
           c.get_shape(indptr),
-          c.get_shape(B),
+          _Shape.array_shape(B_dtype, B_shape, (1, 0)),
       ),
       shape_with_layout=_Shape.tuple_shape((
           _Shape.array_shape(compute_dtype, (out_size, Ccols), (1, 0)),
@@ -272,8 +272,9 @@ def coo_matmat(c, data, row, col, B, *, shape, transpose=False, compute_dtype=No
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(row).element_type())
   B_dtype = np.dtype(c.get_shape(B).element_type())
+  B_shape = c.get_shape(B).dimensions()
   rows, cols = shape
-  _, Ccols = c.get_shape(B).dimensions()
+  _, Ccols = B_shape
   nnz, = c.get_shape(data).dimensions()
 
   if compute_dtype is None:
@@ -289,11 +290,10 @@ def coo_matmat(c, data, row, col, B, *, shape, transpose=False, compute_dtype=No
       b"cusparse_coo_matmat",
       operands=(data, row, col, B),
       operand_shapes_with_layout=(
-          # All are 1D, so no layout necessary
           c.get_shape(data),
           c.get_shape(row),
           c.get_shape(col),
-          c.get_shape(B),
+          _Shape.array_shape(B_dtype, B_shape, (1, 0)),
       ),
       shape_with_layout=_Shape.tuple_shape((
           _Shape.array_shape(compute_dtype, (out_size, Ccols), (1, 0)),
