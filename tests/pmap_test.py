@@ -541,7 +541,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can handle device movement on dispatch
-    y = pxla.ShardedDeviceArray(y.aval, y.sharding_spec, y.device_buffers[::-1])
+    y = pxla.make_sharded_device_array(y.aval, y.sharding_spec,
+                                       y.device_buffers[::-1])
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
@@ -1263,7 +1264,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     sharding_spec = pxla.ShardingSpec(
         sharding=map(pxla.Chunked, ([2], [2])),
         mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
-    arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
+    arr = pxla.make_sharded_device_array(aval, sharding_spec, bufs)
 
     r = self.pmap(lambda x: x + 1)(arr)
     self.assertAllClose(r, arr + 1)
