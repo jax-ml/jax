@@ -27,6 +27,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import textwrap
 import urllib
 
 # pylint: disable=g-import-not-at-top
@@ -219,105 +220,20 @@ def check_bazel_version(bazel_path):
   return actual_ints >= [2, 0, 0]
 
 
-BAZELRC_TEMPLATE = """
-# Flag to enable remote config
-common --experimental_repo_remote_exec
-
-build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
-build --action_env=PYENV_ROOT
-build --python_path="{python_bin_path}"
-build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
-build --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"
-build --repo_env TF_NEED_ROCM="{tf_need_rocm}"
-build --action_env TF_ROCM_AMDGPU_TARGETS="{rocm_amdgpu_targets}"
-build:posix --copt=-Wno-sign-compare
-build -c opt
-build:avx_posix --copt=-mavx
-build:avx_posix --host_copt=-mavx
-build:avx_windows --copt=/arch=AVX
-build:native_arch_posix --copt=-march=native
-build:native_arch_posix --host_copt=-march=native
-build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
-
-# Sets the default Apple platform to macOS.
-build --apple_platform_type=macos
-build --macos_minimum_os=10.9
-
-# Make Bazel print out all options from rc files.
-build --announce_rc
-
-build --define open_source_build=true
-
-# Disable enabled-by-default TensorFlow features that we don't care about.
-build:posix --define=no_aws_support=true
-build:posix --define=no_gcp_support=true
-build:posix --define=no_hdfs_support=true
-build --define=no_kafka_support=true
-build --define=no_ignite_support=true
-build --define=grpc_no_ares=true
-
-build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
-build:cuda --@local_config_cuda//:enable_cuda
-
-build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
-build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
-build:nonccl --define=no_nccl_support=true
-
-build --spawn_strategy=standalone
-build --strategy=Genrule=standalone
-
-build --enable_platform_specific_config
-
-# Tensorflow uses M_* math constants that only get defined by MSVC headers if
-# _USE_MATH_DEFINES is defined.
-build:windows --copt=/D_USE_MATH_DEFINES
-build:windows --host_copt=/D_USE_MATH_DEFINES
-
-# Make sure to include as little of windows.h as possible
-build:windows --copt=-DWIN32_LEAN_AND_MEAN
-build:windows --host_copt=-DWIN32_LEAN_AND_MEAN
-build:windows --copt=-DNOGDI
-build:windows --host_copt=-DNOGDI
-
-# https://devblogs.microsoft.com/cppblog/announcing-full-support-for-a-c-c-conformant-preprocessor-in-msvc/
-# otherwise, there will be some compiling error due to preprocessing.
-build:windows --copt=/Zc:preprocessor
-
-build:posix --cxxopt=-std=c++14
-build:posix --host_cxxopt=-std=c++14
-
-build:windows --cxxopt=/std:c++14
-build:windows --host_cxxopt=/std:c++14
-
-build:linux --config=posix
-build:macos --config=posix
-
-# Generate PDB files, to generate useful PDBs, in opt compilation_mode
-# --copt /Z7 is needed.
-build:windows --linkopt=/DEBUG
-build:windows --host_linkopt=/DEBUG
-build:windows --linkopt=/OPT:REF
-build:windows --host_linkopt=/OPT:REF
-build:windows --linkopt=/OPT:ICF
-build:windows --host_linkopt=/OPT:ICF
-build:windows --experimental_strict_action_env=true
-
-# Suppress all warning messages.
-build:short_logs --output_filter=DONT_MATCH_ANYTHING
-
-# Workaround for gcc 10+ warnings related to upb.
-# See https://github.com/tensorflow/tensorflow/issues/39467
-build:linux --copt=-Wno-stringop-truncation
-"""
-
-
-
-def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None,
+def write_bazelrc(python_bin_path=None, remote_build=None, 
+                  cuda_toolkit_path=None, cudnn_install_path=None,
                   cuda_version=None, cudnn_version=None, rocm_toolkit_path=None,
-                  cpu=None, **kwargs):
-  with open("../.bazelrc", "w") as f:
-    f.write(BAZELRC_TEMPLATE.format(**kwargs))
-    tf_cuda_paths = []
+                  cpu=None):
+  tf_cuda_paths = []
+
+  with open("../.jax_configure.bazelrc", "w") as f:
+    if not remote_build and python_bin_path:
+      f.write(textwrap.dedent("""\
+        build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
+        build --action_env=PYENV_ROOT
+        build --python_path="{python_bin_path}"
+        """).format(python_bin_path=python_bin_path))
+
     if cuda_toolkit_path:
       tf_cuda_paths.append(cuda_toolkit_path)
       f.write("build --action_env CUDA_TOOLKIT_PATH=\"{cuda_toolkit_path}\"\n"
@@ -435,6 +351,11 @@ def main():
       default=True,
       help_str="Should we build with NCCL enabled? Has non effect for non-CUDA "
                "builds.")
+  add_boolean_argument(
+      parser,
+      "remote_build",
+      default=False,
+      help_str="Should we build with RBE.")
   parser.add_argument(
       "--cuda_path",
       default=None,
@@ -551,22 +472,18 @@ def main():
 
   write_bazelrc(
       python_bin_path=python_bin_path,
-      tf_need_cuda=1 if args.enable_cuda else 0,
-      tf_need_rocm=1 if args.enable_rocm else 0,
+      remote_build=args.remote_build,
       cuda_toolkit_path=cuda_toolkit_path,
       cudnn_install_path=cudnn_install_path,
-      cuda_compute_capabilities=args.cuda_compute_capabilities,
       cuda_version=args.cuda_version,
       cudnn_version=args.cudnn_version,
       rocm_toolkit_path=rocm_toolkit_path,
-      rocm_amdgpu_targets=args.rocm_amdgpu_targets,
       cpu=args.target_cpu,
   )
 
-
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
+
   config_args = args.bazel_options
-  config_args += ["--config=short_logs"]
   if args.target_cpu_features == "release":
     if wheel_cpu == "x86_64":
       config_args += ["--config=avx_windows" if is_windows()
@@ -581,15 +498,14 @@ def main():
     config_args += ["--config=mkl_open_source_only"]
   if args.enable_cuda:
     config_args += ["--config=cuda"]
-    config_args += ["--define=xla_python_enable_gpu=true"]
     if not args.enable_nccl:
       config_args += ["--config=nonccl"]
   if args.enable_tpu:
-    config_args += ["--define=with_tpu_support=true"]
+    config_args += ["--config=tpu"]
   if args.enable_rocm:
     config_args += ["--config=rocm"]
     config_args += ["--config=nonccl"]
-    config_args += ["--define=xla_python_enable_gpu=true"]
+
   command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] + config_args +
     [":build_wheel", "--",
