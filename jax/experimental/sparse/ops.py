@@ -36,6 +36,7 @@ from typing import Any, Sequence, Tuple
 
 from jax import api
 from jax import core
+from jax import dtypes
 from jax import jit
 from jax import lax
 from jax import tree_util
@@ -1387,9 +1388,13 @@ class COO(JAXSparse):
     return (self.data, self.row, self.col), {"shape": self.shape}
 
 
-def _is_dummy(*args):
+def _is_placeholder(*args):
   return all(type(arg) is object for arg in args) or all(arg is None for arg in args)
 
+def _asarray_or_float0(arg):
+  if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
+    return arg
+  return jnp.asarray(arg)
 
 @tree_util.register_pytree_node_class
 class BCOO(JAXSparse):
@@ -1408,7 +1413,9 @@ class BCOO(JAXSparse):
     return tuple(self.shape[self.indices.ndim - 2:][:self.indices.shape[-2]])
 
   def __init__(self, args, *, shape):
-    self.data, self.indices = args
+    # JAX transforms will sometimes instantiate pytrees with null values, so we
+    # must catch that in the initialization of inputs.
+    self.data, self.indices = args if _is_placeholder(*args) else map(_asarray_or_float0, args)
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -1462,8 +1469,8 @@ class BCOO(JAXSparse):
 
   def tree_flatten(self):
     children = (self.data, self.indices)
-    # pytree sometimes creates dummy objects & we need to handle that.
-    sparse_shape = self.shape if _is_dummy(*children) else self._sparse_shape
+    # pytree sometimes creates placeholder objects & we need to handle that.
+    sparse_shape = self.shape if _is_placeholder(*children) else self._sparse_shape
     # We serialize the sparse shape only to support batching.
     return children, {"sparse_shape": sparse_shape}
 
@@ -1471,8 +1478,8 @@ class BCOO(JAXSparse):
   def tree_unflatten(cls, aux_data, children):
     data, indices = children
     sparse_shape = aux_data["sparse_shape"]
-    # pytree sometimes creates dummy objects & we need to handle that.
-    if _is_dummy(data, indices):
+    # pytree sometimes creates placeholder objects & we need to handle that.
+    if _is_placeholder(data, indices):
       shape = sparse_shape
     else:
       if np.ndim(indices) < 2 or len(sparse_shape) != np.shape(indices)[-2]:
