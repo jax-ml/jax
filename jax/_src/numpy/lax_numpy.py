@@ -408,6 +408,7 @@ def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
     fn = lambda x: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x))
   else:
     fn = lambda x: lax_fn(*_promote_args(numpy_fn.__name__, x))
+  fn = jit(fn, inline=True)
   if lax_doc:
     doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
     return _wraps(numpy_fn, lax_description=doc)(fn)
@@ -419,6 +420,7 @@ def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False)
     fn = lambda x1, x2: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x1, x2))
   else:
     fn = lambda x1, x2: lax_fn(*_promote_args(numpy_fn.__name__, x1, x2))
+  fn = jit(fn, inline=True)
   if lax_doc:
     doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
     return _wraps(numpy_fn, lax_description=doc)(fn)
@@ -429,7 +431,7 @@ def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn, lax_doc=False):
   def fn(x1, x2):
     x1, x2 = _promote_args(numpy_fn.__name__, x1, x2)
     return lax_fn(x1, x2) if x1.dtype != bool_ else bool_lax_fn(x1, x2)
-  return _wraps(numpy_fn)(fn)
+  fn = jit(fn, inline=True)
   if lax_doc:
     doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
     return _wraps(numpy_fn, lax_description=doc)(fn)

@@ -14,6 +14,15 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Support for NumPy 1.17 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
     Please upgrade to a supported NumPy version.
+  * The `jit` decorator has been added around the implementation of a number of
+    operators on JAX arrays. This speeds up dispatch times for common
+    operators such as `+`.
+
+    This change should largely be transparent to most users. However, there is
+    one known behavioral change, which is that large integer constants may now
+    produce an error when passed directly to a JAX operator
+    (e.g., `x + 2**40`). The workaround is to cast the constant to an
+    explicit type (e.g., `np.float64(2**40)`).
 * New features:
   * Improved the support for shape polymorphism in jax2tf for operations that
     need to use a dimension size in array computation, e.g., `jnp.mean`.

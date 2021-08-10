@@ -2657,9 +2657,10 @@ class APITest(jtu.JaxTestCase):
     expected = jnp.arange(1) + 1
     self.assertAllClose(ans, expected)
 
-  def test_large_python_int_to_float(self):
-    # https://github.com/google/jax/pull/6165
-    jnp.multiply(2 ** 100, 3.)  # doesn't crash
+  def test_large_python_ints(self):
+    with self.assertRaises(OverflowError):
+      jnp.multiply(2 ** 100, 3.)
+
     out = lax.convert_element_type(2 ** 100, jnp.float32)  # doesn't crash
     self.assertArraysEqual(out, np.float32(2 ** 100))
 
@@ -5424,7 +5425,7 @@ class InvertibleADTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message="Values that an @invertible function closes")
   def test_invertible_basic(self):
     def f(x):
-      return (jnp.exp(x) * 4) * x
+      return lax.mul(lax.mul(lax.exp(x), 4.), x)
 
     finv = jax.invertible(f)
     x = jnp.ones((5,))
@@ -5508,7 +5509,7 @@ class InvertibleADTest(jtu.JaxTestCase):
     # Check that we don't have to differentiate with respect to inputs
     # of the invertible function.
     def f(x, y):
-      return (jnp.exp(x) * 4) * x, y + 4
+      return lax.mul(lax.mul(lax.exp(x), 4.), x), lax.add(y, 4.)
 
     finv = jax.invertible(f)
     o = np.ones((5,))
@@ -5518,7 +5519,7 @@ class InvertibleADTest(jtu.JaxTestCase):
 
   def test_invertible_pytree(self):
     def f(x, y):
-      return jnp.exp(x[0]) * x[1] + y
+      return lax.add(lax.mul(lax.exp(x[0]), x[1]), y)
 
     finv = jax.invertible(f)
     o = np.ones((5,))

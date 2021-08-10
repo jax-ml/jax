@@ -997,10 +997,10 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         10.00
         transforms: ['jvp', 'transpose'] what: x * 2
         15.00
-        transforms: ['jvp', 'transpose'] what: x * 2
-        3.00
         transforms: ['jvp', 'transpose', 'jvp', 'transpose'] what: x * 2
-        2.00""", testing_stream.output)
+        2.00
+        transforms: ['jvp', 'transpose'] what: x * 2
+        3.00""", testing_stream.output)
 
   def test_tap_grad_pytree(self):
     def func(x):
