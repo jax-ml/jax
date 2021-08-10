@@ -13,29 +13,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "rocm/include/rocblas.h"
+
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
-
+#include "rocm/include/hip/hip_runtime.h"
+#include "rocm/include/hip/hip_runtime_api.h"
+#include "rocm/include/rocsolver.h"
 #include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "include/pybind11/numpy.h"
-#include "include/pybind11/pybind11.h"
-#include "include/pybind11/stl.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "jaxlib/rocm_gpu_kernel_helpers.h"
+#include "include/pybind11/numpy.h"
+#include "include/pybind11/pybind11.h"
+#include "include/pybind11/stl.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
-#include "rocm/include/hip/hip_runtime.h"
-#include "rocm/include/hip/hip_runtime_api.h"
-#include "rocm/include/rocblas.h"
-#include "rocm/include/rocsolver.h"
-
 
 namespace jax {
 
@@ -280,8 +279,8 @@ void Trsm(hipStream_t stream, void** buffers, const char* opaque,
           size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Trsm_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
-                                  s.error_message().length());
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
   }
 }
 
@@ -399,8 +398,8 @@ void Potrf(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Potrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
-                                  s.error_message().length());
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
   }
 }
 
@@ -519,8 +518,8 @@ void Getrf(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Getrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
-                                  s.error_message().length());
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
   }
 }
 
@@ -649,8 +648,8 @@ void Geqrf(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Geqrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
-                                  s.error_message().length());
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
   }
 }
 
@@ -746,8 +745,8 @@ void Orgqr(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Orgqr_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
-                                  s.error_message().length());
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
   }
 }
 
@@ -942,8 +941,8 @@ void Gesvd(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Gesvd_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
-                                  s.error_message().length());
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
   }
 }
 

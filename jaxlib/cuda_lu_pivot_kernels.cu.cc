@@ -102,8 +102,8 @@ void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
                                XlaCustomCallStatus* status) {
   auto s = CudaLuPivotsToPermutation_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
-                                  s.error_message().length());
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
   }
 }
 

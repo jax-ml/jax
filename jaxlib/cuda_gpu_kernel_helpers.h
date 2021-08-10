@@ -27,10 +27,10 @@ limitations under the License.
 
 #define JAX_AS_STATUS(expr) jax::AsStatus(expr, __FILE__, __LINE__, #expr)
 
-#define JAX_THROW_IF_ERROR(expr)                                    \
-  {                                                                 \
-    auto s___ = (expr);                                             \
-    if (!s___.ok()) throw std::runtime_error(s___.error_message()); \
+#define JAX_THROW_IF_ERROR(expr)                                           \
+  {                                                                        \
+    auto s___ = (expr);                                                    \
+    if (!s___.ok()) throw std::runtime_error(std::string(s___.message())); \
   }
 
 #define JAX_RETURN_IF_ERROR(expr) \
