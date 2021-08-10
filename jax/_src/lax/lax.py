@@ -1947,7 +1947,7 @@ def slice_in_dim(operand: Array, start_index: Optional[int],
 def index_in_dim(operand: Array, index: int, axis: int = 0,
                  keepdims: bool = True) -> Array:
   """Convenience wrapper around slice to perform int indexing."""
-  index, axis = int(index), int(axis)
+  index, axis = _canonicalize_dimension(index), int(axis)
   axis_size = operand.shape[axis]
   wrapped_index = index + axis_size if index < 0 else index
   if not 0 <= wrapped_index < axis_size:
@@ -1968,7 +1968,7 @@ def dynamic_slice_in_dim(operand: Array, start_index: Array,
 
   axis = int(axis)
   start_indices[axis] = start_index
-  slice_sizes[axis] = int(slice_size)
+  slice_sizes[axis] = _canonicalize_dimension(slice_size)
   return dynamic_slice(operand, start_indices, slice_sizes)
 
 

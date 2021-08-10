@@ -482,10 +482,6 @@ def _einsum_contract_path(*operands, **kwargs):
 
   contract_fake_ops, contractions = opt_einsum.contract_path(*fake_ops,
                                                              **kwargs)
-  if len(contractions) > 1:
-    msg = ("Shape polymorphism is not yet supported for einsum with more than "
-           f"one contraction {contractions}")
-    raise ValueError(msg)
   contract_operands = []
   for operand in contract_fake_ops:
     idx = tuple(i for i, fake_op in enumerate(fake_ops) if operand is fake_op)
