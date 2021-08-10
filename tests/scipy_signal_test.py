@@ -35,6 +35,7 @@ threedim_shapes = [(2, 2, 2), (3, 3, 2), (4, 4, 2), (5, 5, 2)]
 default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 

@@ -59,6 +59,7 @@ from ..lib import jax_jit
 from ..lib import version
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
+from ..lib import pmap_lib
 # Unused imports to be exported
 from ..lib.xla_bridge import (device_count, local_device_count, devices,
                               local_devices, process_index, process_count,
@@ -105,6 +106,11 @@ flags.DEFINE_bool(
     "A temporary flag enabling the C++ jax.jit fast path."
     "Set this to `False` only if it crashes otherwise and report "
     "the error to the jax-team.")
+flags.DEFINE_bool(
+    "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", False),
+    "A temporary flag enabling the C++ jax.pmap fast path. Until the default "
+    "is switched to True, the feature is not supported and possibly broken "
+    "(e.g. it may use unreleased code from jaxlib.")
 
 
 def _nan_check_posthook(fun, args, kwargs, output):
@@ -732,7 +738,7 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
          has_aux: bool = False, holomorphic: bool = False,
          allow_int: bool = False,
          reduce_axes: Sequence[AxisName] = ()) -> Callable:
-  """Creates a function which evaluates the gradient of ``fun``.
+  """Creates a function that evaluates the gradient of ``fun``.
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
@@ -803,7 +809,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False,
                    allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
 ) -> Callable[..., Tuple[Any, Any]]:
-  """Create a function which evaluates both ``fun`` and the gradient of ``fun``.
+  """Create a function that evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
@@ -1550,25 +1556,38 @@ def pmap(
   >>> print(f2(jnp.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
-  # axis_size is an optional integer representing the global axis size.  The
-  # aggregate size (across all processes) size of the mapped axis must match the
-  # given value.
+  if FLAGS.experimental_cpp_pmap:
+    func = _cpp_pmap
+  else:
+    func = _python_pmap
 
-  _check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
-  static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
-  donate_tuple = rebase_donate_argnums(_ensure_index_tuple(donate_argnums),
-                                       static_broadcasted_tuple)
+  return func(
+      fun,
+      axis_name,
+      in_axes=in_axes,
+      out_axes=out_axes,
+      static_broadcasted_argnums=static_broadcasted_argnums,
+      devices=devices,
+      backend=backend,
+      axis_size=axis_size,
+      donate_argnums=donate_argnums,
+      global_arg_shapes=global_arg_shapes)
 
-  if not all(type(l) is int for l in tree_leaves(in_axes)):
-    raise TypeError("pmap in_axes must be an int, None, or (nested) container "
-                    f"with those types as leaves, but got {in_axes}.")
-  if not all(type(l) is int for l in tree_leaves(out_axes)):
-    raise TypeError("pmap out_axes must be an int, None, or (nested) container "
-                    f"with those types as leaves, but got {out_axes}.")
 
-  @wraps(fun)
-  @api_boundary
+def _get_f_mapped(
+    *,
+    fun: F,
+    axis_name: Optional[AxisName],
+    in_axes=0,
+    out_axes=0,
+    static_broadcasted_tuple: Tuple[int],
+    devices: Optional[Sequence[xc.Device]],
+    backend: Optional[str],
+    axis_size: Optional[int],
+    donate_tuple: Tuple[int],
+    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]],
+):
+
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     if static_broadcasted_tuple:
@@ -1637,7 +1656,156 @@ def pmap(
         out_axes_thunk=out_axes_thunk,
         name=flat_fun.__name__, donated_invars=tuple(donated_invars),
         global_arg_shapes=tuple(global_arg_shapes_flat))
-    return tree_unflatten(out_tree(), out)
+    return out_tree, out
+
+  return f_pmapped
+
+
+def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
+                      donate_argnums, in_axes, out_axes):
+  # axis_size is an optional integer representing the global axis size.  The
+  # aggregate size (across all processes) size of the mapped axis must match the
+  # given value.
+  _check_callable(fun)
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
+  static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
+  donate_tuple = rebase_donate_argnums(
+      _ensure_index_tuple(donate_argnums), static_broadcasted_tuple)
+
+  if not all(type(l) is int for l in tree_leaves(in_axes)):
+    raise TypeError("pmap in_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {in_axes}.")
+  if not all(type(l) is int for l in tree_leaves(out_axes)):
+    raise TypeError("pmap out_axes must be an int, None, or (nested) container "
+                    f"with those types as leaves, but got {out_axes}.")
+
+  return axis_name, static_broadcasted_tuple, donate_tuple
+
+
+def _python_pmap(
+    fun: F,
+    axis_name: Optional[AxisName] = None,
+    *,
+    in_axes=0,
+    out_axes=0,
+    static_broadcasted_argnums: Union[int, Iterable[int]] = (),
+    devices: Optional[Sequence[xc.Device]] = None,
+    backend: Optional[str] = None,
+    axis_size: Optional[int] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
+    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
+) -> F:
+  """The Python only implementation."""
+  axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
+      fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
+      out_axes)
+
+  @wraps(fun)
+  @api_boundary
+  def f_pmapped(*args, **kwargs):
+    f_pmapped_ = _get_f_mapped(
+        fun=fun,
+        axis_name=axis_name,
+        in_axes=in_axes,
+        out_axes=out_axes,
+        static_broadcasted_tuple=static_broadcasted_tuple,
+        devices=devices,
+        backend=backend,
+        axis_size=axis_size,
+        global_arg_shapes=global_arg_shapes,
+        donate_tuple=donate_tuple)
+
+    out_tree, out_flat = f_pmapped_(*args, **kwargs)
+    return tree_unflatten(out_tree(), out_flat)
+
+  return f_pmapped
+
+
+class _PmapFastpathData(NamedTuple):
+  version: int  # For forward and backward compatibility
+  xla_executable: xla.XlaExecutable
+  in_handler: Any
+  out_handler: Any
+  out_pytree_def: Any
+  # Data needed to build the ShardedDeviceArray from C++.
+  out_sharding_specs: Sequence[pxla.ShardingSpec]
+  out_indices: Sequence[pxla.Index]
+  out_avals: Sequence[Any]
+
+
+def _cpp_pmap(
+    fun: F,
+    axis_name: Optional[AxisName] = None,
+    *,
+    in_axes=0,
+    out_axes=0,
+    static_broadcasted_argnums: Union[int, Iterable[int]] = (),
+    devices: Optional[Sequence[xc.Device]] = None,
+    backend: Optional[str] = None,
+    axis_size: Optional[int] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
+    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
+) -> F:
+  axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
+      fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
+      out_axes)
+
+  def cache_miss(*args, **kwargs):
+    f_pmapped_ = _get_f_mapped(
+        fun=fun,
+        axis_name=axis_name,
+        in_axes=in_axes,
+        out_axes=out_axes,
+        static_broadcasted_tuple=static_broadcasted_tuple,
+        devices=devices,
+        backend=backend,
+        axis_size=axis_size,
+        global_arg_shapes=global_arg_shapes,
+        donate_tuple=donate_tuple)
+
+    out_tree, out_flat = f_pmapped_(*args, **kwargs)
+    out_pytree_def = out_tree()
+    out = tree_unflatten(out_pytree_def, out_flat)
+
+    ### Decide whether we can support the C++ fast path
+    execute: Optional[functools.partial] = None
+    execute = pxla.parallel_callable.most_recent_entry()
+    use_fastpath = (
+        execute is not None and
+        # We don't support JAX extension backends.
+        execute[0].func is pxla.execute_replicated and
+        # No tracers in the outputs. Checking for ShardedDeviceArray should be
+        # sufficient, but we use the more general `DeviceArray`.
+        all(isinstance(x, xla.DeviceArray) for x in out_flat))
+    ### If we can use the fastpath, we return required info to the caller.
+    if use_fastpath:
+      xla_executable, backend_, in_handler, out_handler = execute[0].args
+      fastpath_data = _PmapFastpathData(
+          version=1,
+          xla_executable=xla_executable,
+          in_handler=in_handler,
+          out_handler=out_handler,
+          out_pytree_def=out_pytree_def,
+          out_sharding_specs=out_handler.out_specs,
+          out_indices=out_handler.out_indices,
+          out_avals=out_handler.unmapped_local_out_avals,
+      )
+
+    else:
+      fastpath_data = None
+
+    return out, fastpath_data
+
+  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss, static_broadcasted_tuple)
+
+  # TODO(jblespiau): make cpp callable follow descriptor protocol for bound
+  # methods
+  @wraps(fun)
+  @api_boundary
+  def f_pmapped(*args, **kwargs):
+    return cpp_mapped_f(*args, **kwargs)
+
+  f_pmapped._cpp_mapped_f = cpp_mapped_f
 
   return f_pmapped
 
@@ -1707,7 +1875,7 @@ def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
       array, scalar, or standard Python container of arrays or scalars.
     primals: The primal values at which the Jacobian of ``fun`` should be
       evaluated. Should be either a tuple or a list of arguments,
-      and its length should  equal to the number of positional parameters of
+      and its length should be equal to the number of positional parameters of
       ``fun``.
     tangents: The tangent vector for which the Jacobian-vector product should be
       evaluated. Should be either a tuple or a list of tangents, with the same
@@ -2232,7 +2400,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
     raise ValueError(f"len(shards) = {len(shards)} must equal "
                      f"len(devices) = {len(devices)}.")
 
-  def _device_put_sharded(*xs) -> pxla.ShardedDeviceArray:
+  def _device_put_sharded(*xs):
     avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs]
     if not all(a1 == a2 for a1, a2 in zip(avals[:-1], avals[1:])):
       a1, a2 = next((a1, a2) for a1, a2 in zip(avals[:-1], avals[1:])
@@ -2241,7 +2409,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
     buffers = [buf for x, d in zip(xs, devices) for buf in xla.device_put(x, d)]
-    return pxla.ShardedDeviceArray(stacked_aval, buffers)
+    return pxla.make_sharded_device_array(stacked_aval, None, buffers)
 
   return tree_multimap(_device_put_sharded, *shards)
 
@@ -2278,13 +2446,13 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
   if not isinstance(devices, Sequence) or not devices:
     raise ValueError("`devices` argument to `device_put_replicated must be "
                      "a non-empty sequence.")
-  def _device_put_replicated(x) -> pxla.ShardedDeviceArray:
+  def _device_put_replicated(x):
     aval = core.unmapped_aval(len(devices), 0,
                               core.raise_to_shaped(core.get_aval(x)))
     assert isinstance(aval, core.ShapedArray) and aval._num_buffers == 1
     buf, = xla.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
-    return pxla.ShardedDeviceArray(aval, [buf, *rest_bufs])
+    return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
   return tree_map(_device_put_replicated, x)
 
 

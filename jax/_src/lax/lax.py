@@ -1302,12 +1302,10 @@ def _reduction_jaxpr(computation, aval):
 def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   avals = tree_util.tree_unflatten(aval_tree, flat_avals)
   flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
-  pvals = safe_map(pe.PartialVal.unknown, flat_in_avals)
   comp = lu.wrap_init(computation)
   flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr(flat_comp, tuple(pvals),
-                                       instantiate=False)
-  return jaxpr, consts, out_tree()
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
+  return jaxpr, tuple(consts), out_tree()
 
 def _get_monoid_reducer(monoid_op: Callable, xs: Array) -> Optional[Callable]:
   if len(xs) != 1:
@@ -1569,7 +1567,7 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
 
 def sort_key_val(keys: Array, values: Array, dimension: int = -1,
                  is_stable: bool = True) -> Tuple[Array, Array]:
-  """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
+  """Sorts ``keys`` along ``dimension`` and applies the same permutation to ``values``."""
   dimension = canonicalize_axis(dimension, len(keys.shape))
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
@@ -1949,7 +1947,7 @@ def slice_in_dim(operand: Array, start_index: Optional[int],
 def index_in_dim(operand: Array, index: int, axis: int = 0,
                  keepdims: bool = True) -> Array:
   """Convenience wrapper around slice to perform int indexing."""
-  index, axis = int(index), int(axis)
+  index, axis = _canonicalize_dimension(index), int(axis)
   axis_size = operand.shape[axis]
   wrapped_index = index + axis_size if index < 0 else index
   if not 0 <= wrapped_index < axis_size:
@@ -1970,7 +1968,7 @@ def dynamic_slice_in_dim(operand: Array, start_index: Array,
 
   axis = int(axis)
   start_indices[axis] = start_index
-  slice_sizes[axis] = int(slice_size)
+  slice_sizes[axis] = _canonicalize_dimension(slice_size)
   return dynamic_slice(operand, start_indices, slice_sizes)
 
 
@@ -2650,7 +2648,8 @@ def _cbrt_tpu(y):
   z = pow(abs_y, _const(y, -1/3))
   # Newton-Raphson step: https://csclub.uwaterloo.ca/~pbarfuss/qbrt.pdf
   z1 = z + _const(y, 1/3) * (z - (z * z) * (z * (z * abs_y)))
-  return select(eq(y, _zeros(y)), y, z1 * (z1 * y))
+  return select(eq(abs_y, _zeros(abs_y)) | eq(abs_y, full_like(abs_y, np.inf)),
+                y, z1 * (z1 * y))
 
 xla.backend_specific_translations['tpu'][cbrt_p] = xla.lower_fun(
   _cbrt_tpu, multiple_results=False)
@@ -6601,7 +6600,7 @@ def rng_bit_generator(key,
   (what is required to be an integer type) using the platform specific
   default algorithm or the one specified.
 
-  It provides direct acces to the RngBitGenerator primitive exposed by XLA
+  It provides direct access to the RngBitGenerator primitive exposed by XLA
   (https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator) for low
   level API access.
 
@@ -7016,7 +7015,7 @@ def _abstractify(x):
 
 
 def _check_user_dtype_supported(dtype, fun_name=None):
-  # Avoid using `dtype in [...]` becuase of numpy dtype equality overloading.
+  # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
   if isinstance(dtype, type) and dtype in {bool, int, float, complex}:
     return
   np_dtype = np.dtype(dtype)

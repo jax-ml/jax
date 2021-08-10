@@ -44,16 +44,8 @@ complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
 uint_dtypes = jtu.dtypes.all_unsigned
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    self._jax_numpy_rank_promotion = config.jax_numpy_rank_promotion
-    config.update("jax_numpy_rank_promotion", "raise")
-    super().setUp()
-
-  def tearDown(self):
-    super().tearDown()
-    config.update("jax_numpy_rank_promotion", self._jax_numpy_rank_promotion)
 
   def _CheckCollisions(self, samples, nbits):
     fail_prob = 0.01  # conservative bound on statistical fail prob by Chebyshev

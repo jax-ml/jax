@@ -14,12 +14,21 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Support for NumPy 1.17 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
     Please upgrade to a supported NumPy version.
+  * The `jit` decorator has been added around the implementation of a number of
+    operators on JAX arrays. This speeds up dispatch times for common
+    operators such as `+`.
+
+    This change should largely be transparent to most users. However, there is
+    one known behavioral change, which is that large integer constants may now
+    produce an error when passed directly to a JAX operator
+    (e.g., `x + 2**40`). The workaround is to cast the constant to an
+    explicit type (e.g., `np.float64(2**40)`).
 * New features:
   * Improved the support for shape polymorphism in jax2tf for operations that
     need to use a dimension size in array computation, e.g., `jnp.mean`.
     ({jax-issue}`#7317`)
   
-## jaxlib 0.1.70 (unreleased)
+## jaxlib 0.1.70 (Aug 9, 2021)
 * Breaking changes:
   * Support for Python 3.6 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
@@ -50,7 +59,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 
 * Bug fixes:
   * Tightened the checks for lax.argmin and lax.argmax to ensure they are
-    not used with invalid `axis` value, or with an empty reduction dimension.
+    not used with an invalid `axis` value, or with an empty reduction dimension.
     ({jax-issue}`#7196`)
 
 
@@ -333,7 +342,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Bug fixes:
   * `jax.numpy.arccosh` now returns the same branch as `numpy.arccosh` for
     complex inputs ({jax-issue}`#5156`)
-  * `host_callback.id_tap` now works for `jax.pmap` also. There is a
+  * `host_callback.id_tap` now works for `jax.pmap` also. There is an
     optional parameter for `id_tap` and `id_print` to request that the
     device from which the value is tapped be passed as a keyword argument
     to the tap function ({jax-issue}`#5182`).
@@ -359,7 +368,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features:
   * Add `jax.device_put_replicated`
   * Add multi-host support to `jax.experimental.sharded_jit`
-  * Add support for differentiating eigenvaleus computed by `jax.numpy.linalg.eig`
+  * Add support for differentiating eigenvalues computed by `jax.numpy.linalg.eig`
   * Add support for building on Windows platforms
   * Add support for general in_axes and out_axes in `jax.pmap`
   * Add complex support for `jax.numpy.linalg.slogdet`
@@ -504,7 +513,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.1.73...jax-v0.1.74).
 * New Features:
   * BFGS (#3101)
-  * TPU suppot for half-precision arithmetic (#3878)
+  * TPU support for half-precision arithmetic (#3878)
 * Bug Fixes:
   * Prevent some accidental dtype warnings (#3874)
   * Fix a multi-threading bug in custom derivatives (#3845, #3869)

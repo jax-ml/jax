@@ -11,25 +11,47 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Tests for interoperability between JAX and pickling libraries."""
+
+import pickle
+import unittest
 
 from absl.testing import absltest
 
-from jax import test_util as jtu
-import jax.numpy as jnp
+try:
+  import cloudpickle
+except ImportError:
+  cloudpickle = None
 
+import jax
 from jax.config import config
+from jax import test_util as jtu
+
 config.parse_flags_with_absl()
 
 
-class TestUtilTest(jtu.JaxTestCase):
+class CloudpickleTest(jtu.JaxTestCase):
 
-  @jtu.disable_implicit_rank_promotion
-  def testDisableImplicitRankPromotion(self):
-    x = jnp.zeros([2])
-    y = jnp.zeros([2])
+  @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
+  @unittest.skipIf(jax.lib._xla_extension_version < 31,
+                   "Requires jaxlib 0.1.71")
+  def testPickleOfJittedFunctions(self):
 
-    with self.assertRaises(ValueError):
-      x[None, :] + y
+    @jax.jit
+    def f(x, y):
+      return x * y
+
+    @jax.jit
+    def g(z):
+      return f(z, z + 77)  # noqa: F821
+
+    expected = g(32)
+    s = cloudpickle.dumps(g)
+    del f, g
+
+    g_unpickled = pickle.loads(s)
+    actual = g_unpickled(32)
+    self.assertEqual(expected, actual)
 
 
 if __name__ == "__main__":

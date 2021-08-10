@@ -440,31 +440,32 @@ class Trace:
 
 def escaped_tracer_error(tracer, detail=None):
   num_frames = FLAGS.jax_tracer_error_num_traceback_frames
-  msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
-         "through global state from a previously traced function.\n"
-         "The functions being transformed should not save traced values to "
-         "global state.")
-  if detail:
-    msg += " Detail: {}.".format(detail)
-  try:
-    line_info = tracer._line_info
-  except AttributeError:
-    pass
-  else:
-    msg += ('\nThe tracer that caused this error was created on line '
-            f'{source_info_util.summarize(line_info)}. The tracer has'
-            f' shape {tracer.shape} and dtype {tracer.dtype}.\n')
-    if num_frames > 0:
-      msg += (f'When the tracer was created, the final {num_frames} stack '
-              'frames (most recent last) excluding JAX-internal frames were:\n'
-              f'{source_info_util.summarize(line_info, num_frames=num_frames)}')
+  msg = ('Encountered an unexpected tracer. A function transformed by JAX '
+         'had a side effect, allowing for a reference to an intermediate value '
+         f'with shape {tracer.shape} and dtype {tracer.dtype} to escape.\n'
+         'JAX transformations require that functions explicitly return their '
+         'outputs, and disallow saving intermediate values to global state.')
   dbg = getattr(tracer._trace.main, 'debug_info', None)
   if dbg is not None:
-    msg += ('\nThe function being traced when the tracer leaked was '
+    msg += ('\nThe function being traced when the value leaked was '
             f'{dbg.func_src_info} traced for {dbg.traced_for}.')
+  line_info = getattr(tracer, '_line_info', None)
+  if line_info is not None:
+    divider = '\n' + '-'*30 + '\n'
+    msg += divider
+    msg += ('The leaked intermediate value was created on line '
+            f'{source_info_util.summarize(line_info)}. ')
+    msg += divider
+    if num_frames > 0:
+      msg += (f'When the value was created, the final {num_frames} stack '
+              'frames (most recent last) excluding JAX-internal frames were:')
+      msg += divider + source_info_util.summarize(
+          line_info, num_frames=num_frames) + divider
   msg += ('\nTo catch the leak earlier, try setting the environment variable '
           'JAX_CHECK_TRACER_LEAKS or using the `jax.checking_leaks` context '
           'manager.')
+  if detail:
+    msg += f'Detail: {detail}'
   return UnexpectedTracerError(msg)
 
 class Tracer:
@@ -715,14 +716,23 @@ class TraceState:
     return new
 
 
+def _update_thread_local_jit_state(dynamic):
+  # Copies the MainTrace instance, removing any .debug_info or .jaxpr_stack
+  # fields that should not be kept alive as part of a cache key.
+  # TODO(mattjj): split debug_info and jaxpr_stack out of MainTrace.
+  # TODO(mattjj): add a test that verifies that JIT-ted functions are not kept
+  # alive by the JIT cache, particularly for nested JIT-ted functions.
+  copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
+  jax_config.update_thread_local_jit_state(dynamic_trace_state=copy)
+
+
 # The global state of the tracer is accessed by a thread-local object.
 # This allows concurrent tracing in separate threads; passing traced objects
 # between threads is forbidden.
 class ThreadLocalState(threading.local):
   def __init__(self):
     self.trace_state = TraceState()
-    jax_config.update_thread_local_jit_state(
-        dynamic_trace_state=self.trace_state.trace_stack.dynamic)
+    _update_thread_local_jit_state(self.trace_state.trace_stack.dynamic)
 thread_local_state = ThreadLocalState()
 
 def trace_state_clean() -> bool:
@@ -765,7 +775,7 @@ def new_main(trace_type: Type[Trace],
   stack.push(main)
   if dynamic:
     prev_dynamic, stack.dynamic = stack.dynamic, main
-    jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
+    _update_thread_local_jit_state(stack.dynamic)
 
   try:
     yield main
@@ -773,7 +783,7 @@ def new_main(trace_type: Type[Trace],
     stack.pop()
     if dynamic:
       stack.dynamic = prev_dynamic
-      jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
+      _update_thread_local_jit_state(stack.dynamic)
 
   if config.jax_check_tracer_leaks:
     t = ref(main)
@@ -790,13 +800,13 @@ def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
   main = MainTrace(0, trace_type)
   prev_dynamic, stack.dynamic = stack.dynamic, main
   prev_base, stack.stack[0] = stack.stack[0], main
-  jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
+  _update_thread_local_jit_state(stack.dynamic)
   try:
     yield main
   finally:
     stack.dynamic = prev_dynamic
     stack.stack[0] = prev_base
-    jax_config.update_thread_local_jit_state(dynamic_trace_state=stack.dynamic)
+    _update_thread_local_jit_state(stack.dynamic)
 
   if config.jax_check_tracer_leaks:
     t = ref(main)
@@ -1062,7 +1072,7 @@ class ShapedArray(UnshapedArray):
   array_abstraction_level = 1
 
   def __init__(self, shape, dtype, weak_type=False, named_shape={}):
-    super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
+    super().__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
     self.named_shape = dict(named_shape)
 
@@ -1141,8 +1151,8 @@ class ConcreteArray(ShapedArray):
   array_abstraction_level = 0
 
   def __init__(self, val, weak_type=False):
-    super(ConcreteArray, self).__init__(np.shape(val), np.result_type(val),
-                                        weak_type=weak_type)
+    super().__init__(np.shape(val), np.result_type(val),
+                     weak_type=weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
     assert self.dtype != np.dtype('O'), val

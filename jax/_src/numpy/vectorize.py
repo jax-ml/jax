@@ -208,8 +208,8 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   Returns:
     Vectorized version of the given function.
 
-  Here a few examples of how one could write vectorized linear algebra routines
-  using :func:`vectorize`:
+  Here are a few examples of how one could write vectorized linear algebra
+  routines using :func:`vectorize`:
 
   >>> from functools import partial
 

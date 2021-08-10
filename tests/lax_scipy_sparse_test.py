@@ -63,7 +63,9 @@ def rand_sym_pos_def(rng, shape, dtype):
   return matrix @ matrix.T.conj()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxBackedScipyTests(jtu.JaxTestCase):
+
   def _fetch_preconditioner(self, preconditioner, A, rng=None):
     """
     Returns one of various preconditioning matrices depending on the identifier

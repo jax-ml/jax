@@ -408,6 +408,7 @@ def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
     fn = lambda x: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x))
   else:
     fn = lambda x: lax_fn(*_promote_args(numpy_fn.__name__, x))
+  fn = jit(fn, inline=True)
   if lax_doc:
     doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
     return _wraps(numpy_fn, lax_description=doc)(fn)
@@ -419,6 +420,7 @@ def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False)
     fn = lambda x1, x2: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x1, x2))
   else:
     fn = lambda x1, x2: lax_fn(*_promote_args(numpy_fn.__name__, x1, x2))
+  fn = jit(fn, inline=True)
   if lax_doc:
     doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
     return _wraps(numpy_fn, lax_description=doc)(fn)
@@ -429,7 +431,7 @@ def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn, lax_doc=False):
   def fn(x1, x2):
     x1, x2 = _promote_args(numpy_fn.__name__, x1, x2)
     return lax_fn(x1, x2) if x1.dtype != bool_ else bool_lax_fn(x1, x2)
-  return _wraps(numpy_fn)(fn)
+  fn = jit(fn, inline=True)
   if lax_doc:
     doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
     return _wraps(numpy_fn, lax_description=doc)(fn)
@@ -1624,7 +1626,7 @@ def union1d(ar1, ar2, *, size=None):
 
 
 @_wraps(np.setxor1d, lax_description="""
-In the JAX version, the input arrays are explicilty flattened regardless
+In the JAX version, the input arrays are explicitly flattened regardless
 of assume_unique value.
 """)
 def setxor1d(ar1, ar2, assume_unique=False):
@@ -4260,7 +4262,7 @@ def tensordot(a, b, axes=2, *, precision=None):
 
 
 @_wraps(np.einsum, lax_description=_PRECISION_DOC, skip_params=['out'])
-def einsum(*operands, out=None, optimize='greedy', precision=None,
+def einsum(*operands, out=None, optimize='optimal', precision=None,
            _use_xeinsum=False):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
@@ -4269,7 +4271,7 @@ def einsum(*operands, out=None, optimize='greedy', precision=None,
       len(operands[1:]) == 2):
     return lax.xeinsum(*operands)
 
-  optimize = 'greedy' if optimize is True else optimize
+  optimize = 'optimal' if optimize is True else optimize
   # using einsum_call=True here is an internal api for opt_einsum
 
   # Allow handling of shape polymorphism
@@ -5735,7 +5737,7 @@ def digitize(x, bins, right=False):
 
 _PIECEWISE_DOC = """\
 Unlike `np.piecewise`, :py:func:`jax.numpy.piecewise` requires functions in
-`funclist` to be traceable by JAX, as it is implemeted via :func:`jax.lax.switch`.
+`funclist` to be traceable by JAX, as it is implemented via :func:`jax.lax.switch`.
 See the :func:`jax.lax.switch` documentation for more information.
 """
 

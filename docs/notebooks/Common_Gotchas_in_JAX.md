@@ -461,7 +461,7 @@ key
 
 JAX's random functions produce pseudorandom numbers from the PRNG state, but __do not__ change the state!  
 
-Reusing the same state will cause __sadness__ and __monotony__, depriving the enduser of __lifegiving chaos__:
+Reusing the same state will cause __sadness__ and __monotony__, depriving the end user of __lifegiving chaos__:
 
 ```{code-cell} ipython3
 :id: 7zUdQMynoE5e

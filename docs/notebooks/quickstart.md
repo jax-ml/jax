@@ -127,7 +127,7 @@ x = np.random.normal(size=(size, size)).astype(np.float32)
 
 +++ {"id": "iOzp0P_GoJhb"}
 
-JAX is much more than just a GPU-backed NumPy. It also comes with a few program transformations that are useful when writing numerical code. For now, there's three main ones:
+JAX is much more than just a GPU-backed NumPy. It also comes with a few program transformations that are useful when writing numerical code. For now, there are three main ones:
 
  - {func}`~jax.jit`, for speeding up your code
  - {func}`~jax.grad`, for taking derivatives

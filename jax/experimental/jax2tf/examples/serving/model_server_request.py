@@ -46,7 +46,7 @@ flags.DEFINE_string(
     "prediction_service_addr",
     "localhost:8500",
     "Stubby endpoint for the prediction service. If you serve your model "
-    "locally using TensorFlow model server, then you can use \"locahost:8500\""
+    "locally using TensorFlow model server, then you can use \"localhost:8500\""
     "for the gRPC server and \"localhost:8501\" for the HTTP REST server.")
 
 flags.DEFINE_integer("serving_batch_size", 1,

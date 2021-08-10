@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
-import collections
 from functools import partial
 import contextlib
 import os
 import re
 import string
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import jax
 from jax._src import ad_util
 from jax import api_util, config
 from jax._src import api
-from jax import core, custom_derivatives, dtypes
+from jax import core, custom_derivatives
+from jax._src import dtypes
 from jax import linear_util as lu
 from jax import random, tree_util
 from jax import numpy as jnp
@@ -36,7 +36,6 @@ from jax._src.lax import fft as lax_fft
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
 import jax._src.random
-from jax.api_util import flatten_fun
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import ad
@@ -82,11 +81,6 @@ def _sanitize_scope_name(name):
 TfVal = Any
 DType = Any
 PrecisionType = int  # Enum xla_data.PrecisionConfig.Precision
-
-# A dimension environment maps dimension variables to TF expressions that
-# compute the value of the dimension. These expressions refer to the TF
-# function arguments.
-_ShapeEnv = Dict[str, TfVal]
 
 def _is_tfval(v: TfVal) -> bool:
   if isinstance(v, (tf.Tensor, tf.Variable)):
@@ -147,7 +141,7 @@ class _ThreadLocalState(threading.local):
     self.inside_call_tf = False
 
     # Maps dimension variables to TF expressions
-    self.shape_env: _ShapeEnv = {}
+    self.shape_env: shape_poly.ShapeEnv = {}
 
     # Whether to actually include XLA op metadata in the generated TF ops
     self.include_xla_op_metadata = True
@@ -254,6 +248,19 @@ def convert(fun: Callable,
       raise ValueError("convert must be used outside all JAX transformations." +
                        f"Trace state: {core.thread_local_state.trace_state.trace_stack}")
 
+    # We support kwargs by wrapping the function to take only positional arguments.
+    # This is in part because jax.vjp does not support kwargs.
+    nr_positional_args = len(args)
+    kw_names = kwargs.keys()
+    args = tuple(args) + tuple(kwargs[kw] for kw in kw_names)
+
+    def fun_no_kwargs(*args_and_kwargs):
+      assert len(args_and_kwargs) == nr_positional_args + len(kw_names)
+      args = args_and_kwargs[:nr_positional_args]
+      kwargs = {kw: args_and_kwargs[nr_positional_args + i]
+                for i, kw in enumerate(kw_names)}
+      return fun(*args, **kwargs)
+
     def check_arg(a):
       if not _is_tfval(a):
         msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
@@ -261,9 +268,8 @@ def convert(fun: Callable,
         raise TypeError(msg)
 
     tree_util.tree_map(check_arg, args)
-    tree_util.tree_map(check_arg, list(kwargs.values()))
 
-    args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+    args_flat, in_tree = tree_util.tree_flatten((args, {}))
     # May need to cast the arguments to have the type assumed by JAX
     args_and_dtypes_flat = tuple(map(_tfval_to_tensor_jax_dtype, args_flat))
     args_flat, arg_dtypes_flat = util.unzip2(args_and_dtypes_flat)
@@ -277,19 +283,16 @@ def convert(fun: Callable,
     elif isinstance(polymorphic_shapes, (PolyShape, str)):
       polymorphic_shapes_ = (polymorphic_shapes,) * len(args)  # type: ignore
     else:
-      if not isinstance(polymorphic_shapes, Sequence) or len(args) != len(polymorphic_shapes):
+      if not isinstance(polymorphic_shapes, Sequence) or len(polymorphic_shapes) != len(args) - len(kw_names):
         msg = ("polymorphic_shapes must be a sequence with the same length as the positional argument list "
                f"({len(args)}). Got polymorphic_shapes={repr(polymorphic_shapes)}.")
         raise TypeError(msg)
-      polymorphic_shapes_ = tuple(polymorphic_shapes)
+      polymorphic_shapes_ = tuple(polymorphic_shapes) + (None,) * len(kw_names)
 
     # Expand the polymorphic_shapes to match the argument pytree
     polymorphic_shapes_flat = tuple(api_util.flatten_axes("jax2tf.convert polymorphic_shapes",
                                                           in_tree.children()[0],
                                                           polymorphic_shapes_))
-    # Add kwargs shapes.
-    polymorphic_shapes_flat = polymorphic_shapes_flat + tuple(
-      (None,) * (len(args_flat) - len(polymorphic_shapes_flat)))
 
     # Construct the abstract values for the flat arguments, possibly based on
     # the input shapes and the polymorphic_shapes if given. May create new shape
@@ -300,9 +303,9 @@ def convert(fun: Callable,
 
     # This function may take pytrees of TfVals. We can only set
     # tf.custom_gradient on functions that take a flat argument list.
-    f = lu.wrap_init(fun)
+    f = lu.wrap_init(fun_no_kwargs)
     # out_tree_thunk() will be the output tree, after running _interpret_fun.
-    flat_fun, out_tree_thunk = flatten_fun(f, in_tree)
+    flat_fun, out_tree_thunk = api_util.flatten_fun(f, in_tree)
     # out_tree_thunk will be ready after _interpret_fun below.
 
     # Prepare the grad_fn for tf.custom_gradient.
@@ -332,8 +335,9 @@ def convert(fun: Callable,
         # pullback may contain captured tracers from the conversion of the
         # main function. Those tracers will confuse the conversion of the
         # pullback. So, we construct the vjp anew and we convert it separately.
-        args_jax, _ = tree_util.tree_unflatten(in_tree, args_flat_jax)
-        _, pullback_jax = jax.vjp(fun, *args_jax)
+        args_jax, kwargs_jax = tree_util.tree_unflatten(in_tree, args_flat_jax)
+        assert not kwargs_jax
+        _, pullback_jax = jax.vjp(fun_no_kwargs, *args_jax)
 
         def fix_out_ct(out_ct_jax, out_ct_aval: core.ShapedArray):
           # If the primal function has outputs of integer or bool types, and if we are
@@ -365,13 +369,13 @@ def convert(fun: Callable,
         return in_cts_fixed_flat_jax
 
       # TODO: enable higher-order gradients
-      # TODO: I think that this does not work with kwargs
       with tf.name_scope("jax2tf_vjp"):
         in_cts_flat = convert(
             fun_vjp_jax,
             with_gradient=False,
             polymorphic_shapes=vjp_polymorphic_shapes)(args_flat, out_cts_flat)
-        in_cts, _ = tree_util.tree_unflatten(in_tree, in_cts_flat)
+        in_cts, kwin_cts = tree_util.tree_unflatten(in_tree, in_cts_flat)
+        assert not kwin_cts
       return in_cts
 
     try:
@@ -585,12 +589,11 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
     return tf.convert_to_tensor(val, dtype=conversion_dtype), jax_dtype
 
-
 def _args_to_avals_and_env(
     args: Sequence[TfVal],
     arg_jax_dtypes: Sequence[DType],
     polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]]) -> \
-  Tuple[Sequence[core.ShapedArray], _ShapeEnv]:
+  Tuple[Sequence[core.ShapedArray], shape_poly.ShapeEnv]:
   """Computes canonicalized args, abstract values and a dimension environment for arguments.
 
   Args:
@@ -598,13 +601,9 @@ def _args_to_avals_and_env(
     arg_dtypes: the inferred JAX dtypes for the args.
     polymorphic_shapes: the polymorphic specifications for the arguments.
   Returns: a tuple of: a sequence of abstract values corresponding to the
-    arguments, and a dimension environment.
+    arguments, and a dimension variable environment.
   """
-  shapeenv: _ShapeEnv = {}
-
-  # Map shape variables to the set of integers they correspond to in the
-  # actual arguments
-  shape_var_map: Dict[str, Set[int]] = collections.defaultdict(set)
+  dim_equations: List[shape_poly.DimEquation] = []
 
   def input_aval(arg: TfVal,
                  arg_jax_dtype: DType,
@@ -612,7 +611,7 @@ def _args_to_avals_and_env(
     """The abstract value for an input."""
     arg_shape = np.shape(arg)
     aval_shape = shape_poly.parse_spec(polymorphic_shape, arg_shape)
-
+    arg_tf_shape = tf.shape(arg)
     for i, d in enumerate(aval_shape):
       dim_size = arg_shape[i]
       if isinstance(dim_size, tf.compat.v1.Dimension):
@@ -620,32 +619,15 @@ def _args_to_avals_and_env(
       if not shape_poly.is_poly_dim(d):
         assert d == dim_size
       else:
-        d_var = d.to_var()  # type: ignore
-        if d_var is not None:
-          if d_var not in shapeenv:
-            # Even if the shape of `arg` is known, we still use `tf.shape` for
-            # safety, because the promise is that we will convert the function
-            # to work for any value of the dimension.
-            shapeenv[d_var] = tf.shape(arg)[i]  # type: ignore[index]
-          if dim_size is not None:
-            shape_var_map[d_var].add(int(dim_size))
+        dim_equations.append(shape_poly.DimEquation(
+            poly=d, tf_expr=arg_tf_shape[i]))  # type: ignore
+
 
     return core.ShapedArray(aval_shape, arg_jax_dtype)
 
   avals = tuple(map(input_aval, args, arg_jax_dtypes, polymorphic_shapes))  # type: ignore
-  arg_shapes = tuple(np.shape(a) for a in args)
 
-  for dim_var, dim_var_values in shape_var_map.items():
-    if len(dim_var_values) != 1:
-      msg = (f"PolyShape {tuple(polymorphic_shapes)} has dimension variable '{dim_var}' "
-             f"corresponding to multiple values {set(sorted(dim_var_values))}, for "
-             f"argument shapes {arg_shapes}")
-      raise ValueError(msg)
-    elif list(dim_var_values)[0] <= 0:
-      msg = (f"PolyShape {tuple(polymorphic_shapes)} has dimension variable '{dim_var}' "
-             f"corresponding to 0, for argument shapes {arg_shapes}")
-      raise ValueError(msg)
-
+  shapeenv = shape_poly.solve_dim_equations(dim_equations)
   return avals, shapeenv
 
 
@@ -759,8 +741,9 @@ class TensorFlowTrace(core.Trace):
                               core.abstract_unit)
     else:
       tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val)
-      return TensorFlowTracer(self, val,
-                              core.ShapedArray(tf_val.shape, jax_dtype))
+      return TensorFlowTracer(
+        self, val, core.ShapedArray(tf_val.shape, jax_dtype,
+                                    weak_type=dtypes.is_weakly_typed(val)))
 
   def lift(self, val: core.Tracer) -> TensorFlowTracer:
     # This would be called when we need to raise a tracer from a lower-level
@@ -946,7 +929,6 @@ tf_not_yet_impl = [
     "pdot",
     "all_gather",
     "lu_pivots_to_permutation",
-    "rng_bit_generator",
     "xla_pmap",
 ]
 
@@ -1277,7 +1259,7 @@ def _not(x):
   """Computes bitwise not with support for booleans.
 
   Numpy and JAX support bitwise not for booleans by applying a logical not!
-  This means that applying bitwise_not yields an unexected result:
+  This means that applying bitwise_not yields an unexpected result:
     jnp.bitwise_not(jnp.array([True, False]))
     >> DeviceArray([False,  True], dtype=bool)
 
@@ -2252,6 +2234,28 @@ tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
     partial(jax._src.random._gamma_impl, use_vmap=True),
     multiple_results=False, extra_name_stack="random_gamma")
+
+
+def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm):
+  if not _thread_local_state.enable_xla:
+    raise _xla_disabled_error("rng_bit_generator")
+
+  shape_tf = _eval_shape(shape)
+  # JAX uses XLA algorithm enums; tfxla uses tf.random.Algorithm
+  if algorithm == lax.RandomAlgorithm.RNG_THREE_FRY:
+    algorithm_tf = tf.random.Algorithm.THREEFRY
+  elif algorithm == lax.RandomAlgorithm.RNG_PHILOX:
+    algorithm_tf = tf.random.Algorithm.PHILOX
+  elif algorithm == lax.RandomAlgorithm.RNG_DEFAULT:
+    algorithm_tf = tf.random.Algorithm.AUTO_SELECT
+  else:
+    assert False
+  out = tfxla.rng_bit_generator(algorithm_tf.value, key, shape_tf,
+                                dtype=_to_tf_dtype(dtype))
+  return out
+
+
+tf_impl[lax.rng_bit_generator_p] = _rng_bit_generator
 
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):

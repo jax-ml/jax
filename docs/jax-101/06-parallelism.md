@@ -228,7 +228,7 @@ If this example is too confusing, you can find the same example, but without par
 ```{code-cell}
 :id: cI8xQqzRrc-4
 
-from typing import NamedTuple
+from typing import NamedTuple, Tuple
 import functools
 
 class Params(NamedTuple):
@@ -258,7 +258,7 @@ LEARNING_RATE = 0.005
 # to later tell `jax.lax.pmean` which axis to reduce over. Here, we call it
 # 'num_devices', but could have used anything, so long as `pmean` used the same.
 @functools.partial(jax.pmap, axis_name='num_devices')
-def update(params: Params, xs: jnp.ndarray, ys: jnp.ndarray) -> Params:
+def update(params: Params, xs: jnp.ndarray, ys: jnp.ndarray) -> Tuple[Params, jnp.ndarray]:
   """Performs one SGD update step on params using the given data."""
 
   # Compute the gradients on the given minibatch (individually on each device).

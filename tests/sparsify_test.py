@@ -19,7 +19,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax import config, jit, lax, partial
+from jax import config, core, jit, lax, partial
 import jax.numpy as jnp
 import jax.test_util as jtu
 from jax.experimental.sparse import BCOO, sparsify
@@ -50,7 +50,7 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertEqual(len(argspecs), len(args))
     self.assertEqual(spenv.size(), 5)
     self.assertEqual(argspecs,
-        [ArgSpec(X.shape, 0, None), ArgSpec(X.shape, 1, 2), ArgSpec(X.shape, 3, 4)])
+        (ArgSpec(X.shape, 0, None), ArgSpec(X.shape, 1, 2), ArgSpec(X.shape, 3, 4)))
 
     args_out = argspecs_to_arrays(spenv, argspecs)
     self.assertEqual(len(args_out), len(args))
@@ -67,6 +67,20 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(args[0], args_out[0])
     self.assertBcooIdentical(args[1], args_out[1])
     self.assertBcooIdentical(args[2], args_out[2])
+
+  def testUnitHandling(self):
+    x = BCOO.fromdense(jnp.arange(5))
+    f = jit(lambda x, y: x)
+    result = sparsify(jit(f))(x, core.unit)
+    self.assertBcooIdentical(result, x)
+
+  def testPytreeInput(self):
+    f = sparsify(lambda x: x)
+    args = (jnp.arange(4), BCOO.fromdense(jnp.arange(4)))
+    out = f(args)
+    self.assertLen(out, 2)
+    self.assertArraysEqual(args[0], out[0])
+    self.assertBcooIdentical(args[1], out[1])
 
   def testSparsify(self):
     M_dense = jnp.arange(24).reshape(4, 6)
@@ -253,6 +267,50 @@ class SparsifyTest(jtu.JaxTestCase):
     out_dense = func(M)
     out_sparse = sparsify(jit(func))(Msp)
     self.assertArraysEqual(out_dense, out_sparse.todense())
+
+  def testSparseForiLoop(self):
+    def func(M, x):
+      body_fun = lambda i, val: (M @ val) / M.shape[1]
+      return lax.fori_loop(0, 2, body_fun, x)
+
+    x = jnp.arange(5.0)
+    M = jnp.arange(25).reshape(5, 5)
+    M_bcoo = BCOO.fromdense(M)
+
+    result_dense = func(M, x)
+    result_sparse = sparsify(func)(M_bcoo, x)
+
+    self.assertArraysAllClose(result_dense, result_sparse)
+
+  def testSparseCondSimple(self):
+    def func(x):
+      return lax.cond(False, lambda x: x, lambda x: 2 * x, x)
+
+    x = jnp.arange(5.0)
+    result_dense = func(x)
+
+    x_bcoo = BCOO.fromdense(x)
+    result_sparse = sparsify(func)(x_bcoo)
+
+    self.assertArraysAllClose(result_dense, result_sparse.todense())
+
+  def testSparseCondMismatchError(self):
+    @sparsify
+    def func(x, y):
+      return lax.cond(False, lambda x: x[0], lambda x: x[1], (x, y))
+
+    x = jnp.arange(5.0)
+    y = jnp.arange(5.0)
+
+    x_bcoo = BCOO.fromdense(x)
+    y_bcoo = BCOO.fromdense(y)
+
+    func(x, y)  # No error
+    func(x_bcoo, y_bcoo)  # No error
+
+    with self.assertRaisesRegex(TypeError, "sparsified true_fun and false_fun output.*"):
+      func(x_bcoo, y)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

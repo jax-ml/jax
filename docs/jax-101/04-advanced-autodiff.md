@@ -186,7 +186,7 @@ $$
 
 This update is not the gradient of any loss function.
 
-However it can be **written** as the gradient of the pseudo loss function
+However, it can be **written** as the gradient of the pseudo loss function
 
 $$
 L(\theta) = [r_t + v_{\theta}(s_t) - v_{\theta}(s_{t-1})]^2

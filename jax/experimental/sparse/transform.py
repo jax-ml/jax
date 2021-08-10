@@ -58,8 +58,9 @@ from jax import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-from jax.tree_util import tree_flatten, tree_unflatten
-from jax.util import safe_map, split_list
+from jax.tree_util import tree_flatten, tree_map, tree_unflatten
+from jax.util import safe_map, safe_zip, split_list
+from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.util import canonicalize_axis
 from jax.experimental import sparse
 from jax.experimental.sparse import BCOO
@@ -67,7 +68,6 @@ from jax.experimental.sparse import BCOO
 sparse_rules : Dict[core.Primitive, Callable] = {}
 
 Array = Any
-AnyArray = Union[Array, BCOO]
 
 
 class SparseEnv:
@@ -90,7 +90,7 @@ class SparseEnv:
 
 class ArgSpec(NamedTuple):
   shape: Tuple[int, ...]
-  data_ref: int
+  data_ref: Optional[int]
   indices_ref: Optional[int]
 
   @property
@@ -100,47 +100,63 @@ class ArgSpec(NamedTuple):
   def is_sparse(self):
     return self.indices_ref is not None
 
+  def is_unit(self):
+    return self.data_ref is None
+
   def data(self, spenv: SparseEnv):
+    assert self.data_ref is not None
     return spenv.get(self.data_ref)
 
   def indices(self, spenv: SparseEnv):
     assert self.indices_ref is not None
     return spenv.get(self.indices_ref)
 
+_is_bcoo = lambda arg: isinstance(arg, BCOO)
+_is_argspec = lambda arg: isinstance(arg, ArgSpec)
+
 
 def arrays_to_argspecs(
     spenv: SparseEnv,
-    args: Sequence[AnyArray]
-    ) -> Sequence[ArgSpec]:
-  argspecs: List[ArgSpec] = []
-  for arg in args:
+    args: Any
+    ) -> Any:
+  """Convert a pytree of (sparse) arrays to an equivalent pytree of argspecs."""
+  def array_to_argspec(arg):
     if isinstance(arg, BCOO):
-      argspecs.append(ArgSpec(arg.shape, spenv.push(arg.data), spenv.push(arg.indices)))  # type: ignore
+      return ArgSpec(arg.shape, spenv.push(arg.data), spenv.push(arg.indices))
+    elif core.get_aval(arg) is core.abstract_unit:
+      return ArgSpec((), None, None)
     else:
-      argspecs.append(ArgSpec(np.shape(arg), spenv.push(arg), None))  # type: ignore
-  return argspecs
+      return ArgSpec(np.shape(arg), spenv.push(arg), None)
+  return tree_map(array_to_argspec, args, is_leaf=_is_bcoo)
 
 
 def argspecs_to_arrays(
     spenv: SparseEnv,
-    argspecs: Sequence[ArgSpec],
-    ) -> Sequence[AnyArray]:
-  args = []
-  for argspec in argspecs:
+    argspecs: Any,
+    ) -> Any:
+  """Convert a pytree of argspecs to an equivalent pytree of (sparse) arrays."""
+  def argspec_to_array(argspec):
     if argspec.is_sparse():
       assert argspec.indices_ref is not None
-      args.append(BCOO((argspec.data(spenv), argspec.indices(spenv)), shape=argspec.shape))
+      return BCOO((argspec.data(spenv), argspec.indices(spenv)), shape=argspec.shape)
+    elif argspec.is_unit():
+      return core.unit
     else:
-      args.append(argspec.data(spenv))
-    assert args[-1].shape == argspec.shape
-  return tuple(args)
+      return argspec.data(spenv)
+  return tree_map(argspec_to_array, argspecs, is_leaf=_is_argspec)
 
 
 def argspecs_to_avals(
     spenv: SparseEnv,
-    argspecs: Sequence[ArgSpec],
-    ) -> Sequence[core.ShapedArray]:
-  return [core.ShapedArray(a.shape, a.data(spenv).dtype) for a in argspecs]
+    argspecs: Any,
+    ) -> Any:
+  """Convert a pytree of argspecs to an equivalent pytree of abstract values."""
+  def argspec_to_aval(argspec):
+    if argspec.is_unit():
+      return core.abstract_unit
+    else:
+      return core.ShapedArray(argspec.shape, argspec.data(spenv).dtype)
+  return tree_map(argspec_to_aval, argspecs, is_leaf=_is_argspec)
 
 
 def eval_sparse(
@@ -200,11 +216,11 @@ def eval_sparse(
 
 def sparsify_raw(f):
   def wrapped(spenv: SparseEnv, *argspecs: ArgSpec, **params: Any) -> Tuple[Sequence[ArgSpec], bool]:
-    in_avals = argspecs_to_avals(spenv, argspecs)
-    in_avals_flat, in_tree = tree_flatten(in_avals)
-    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+    argspecs_flat, in_tree = tree_flatten(argspecs, is_leaf=_is_argspec)
+    in_avals_flat = argspecs_to_avals(spenv, argspecs_flat)
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, params), in_tree)
     jaxpr, out_avals_flat, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
-    result = eval_sparse(jaxpr, consts, argspecs, spenv)
+    result = eval_sparse(jaxpr, consts, argspecs_flat, spenv)
     if len(out_avals_flat) != len(result):
       raise Exception("Internal: eval_sparse does not return expected number of arguments. "
                       "Got {result} for avals {out_avals_flat}")
@@ -422,3 +438,52 @@ def _xla_call_sparse(spenv, *argspecs, call_jaxpr, donated_invars, **params):
   return arrays_to_argspecs(spenv, tree_unflatten(out_tree, out_flat))
 
 sparse_rules[xla.xla_call_p] = _xla_call_sparse
+
+
+def _duplicate_for_sparse_argspecs(argspecs, params):
+  for argspec, param in safe_zip(argspecs, params):
+      yield from [param, param] if argspec.is_sparse() else [param]
+
+
+def _scan_sparse(spenv, *argspecs, jaxpr, num_consts, num_carry, **params):
+  const_argspecs, carry_argspecs, xs_argspecs = split_list(
+    argspecs, [num_consts, num_carry])
+  if xs_argspecs:
+    # TODO(jakevdp): we don't want to pass xs_argspecs, we want to pass one row
+    # of xs argspecs. How to do this?
+    raise NotImplementedError("sparse rule for scan with x values.")
+  sp_jaxpr, _ = _sparsify_jaxpr(spenv, jaxpr, *const_argspecs, *carry_argspecs, *xs_argspecs)
+
+  consts, _ = tree_flatten(argspecs_to_arrays(spenv, const_argspecs))
+  carry, carry_tree = tree_flatten(argspecs_to_arrays(spenv, carry_argspecs))
+  xs, xs_tree = tree_flatten(argspecs_to_arrays(spenv, xs_argspecs))
+
+  # params['linear'] has one entry per arg; expand it to match the sparsified args.
+  const_linear, carry_linear, xs_linear = split_list(
+    params.pop('linear'), [num_consts, num_carry])
+  sp_linear = tuple([
+    *_duplicate_for_sparse_argspecs(const_argspecs, const_linear),
+    *_duplicate_for_sparse_argspecs(carry_argspecs, carry_linear),
+    *_duplicate_for_sparse_argspecs(xs_argspecs, xs_linear)])
+
+  out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr, linear=sp_linear,
+                        num_consts=len(consts), num_carry=len(carry), **params)
+  carry_out = tree_unflatten(carry_tree, out[:len(carry)])
+  xs_out = tree_unflatten(xs_tree, out[len(carry):])
+  return arrays_to_argspecs(spenv, carry_out + xs_out)
+
+sparse_rules[lax.scan_p] = _scan_sparse
+
+def _cond_sparse(spenv, pred, *operands, branches, linear, **params):
+  sp_branches, treedefs = zip(*(_sparsify_jaxpr(spenv, jaxpr, *operands)
+                                for jaxpr in branches))
+  _check_tree_and_avals("sparsified true_fun and false_fun output",
+                        treedefs[0], sp_branches[0].out_avals,
+                        treedefs[1], sp_branches[1].out_avals)
+  sp_linear = tuple(_duplicate_for_sparse_argspecs(operands, linear))
+  args, _ = tree_flatten(argspecs_to_arrays(spenv, (pred, *operands)))
+  out_flat = lax.cond_p.bind(*args, branches=sp_branches, linear=sp_linear, **params)
+  out = tree_unflatten(treedefs[0], out_flat)
+  return arrays_to_argspecs(spenv, out)
+
+sparse_rules[lax.cond_p] = _cond_sparse

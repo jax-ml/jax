@@ -228,7 +228,7 @@ def wrap_init(f, params={}) -> WrappedFun:
 class _CacheLocalContext(threading.local):
 
   def __init__(self):
-    super(_CacheLocalContext, self).__init__()
+    super().__init__()
     self.most_recent_entry = None
 
 

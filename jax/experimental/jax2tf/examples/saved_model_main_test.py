@@ -30,6 +30,7 @@ FLAGS = flags.FLAGS
 class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):
+    super().setUp()
     FLAGS.model_path = os.path.join(absltest.get_default_test_tmpdir(),
                                     "saved_models")
     FLAGS.num_epochs = 1

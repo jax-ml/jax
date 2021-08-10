@@ -61,7 +61,7 @@ all_shapes = nonempty_array_shapes + empty_array_shapes
 
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
-    super(DLPackTest, self).setUp()
+    super().setUp()
     if jtu.device_under_test() == "tpu":
       self.skipTest("DLPack not supported on TPU")
 
@@ -194,7 +194,7 @@ class DLPackTest(jtu.JaxTestCase):
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
   def setUp(self):
-    super(CudaArrayInterfaceTest, self).setUp()
+    super().setUp()
     if jtu.device_under_test() != "gpu":
       self.skipTest("__cuda_array_interface__ is only supported on GPU")
 

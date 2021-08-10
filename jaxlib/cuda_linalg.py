@@ -58,4 +58,6 @@ def lu_pivots_to_permutation(c, pivots, *, permutation_size):
       operands=(pivots,),
       shape_with_layout=permutations_shape_with_layout,
       operand_shapes_with_layout=(pivots_shape_with_layout,),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)

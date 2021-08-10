@@ -67,14 +67,16 @@ _on_exit = False
 def compile_or_get_cached(backend, computation, compile_options):
     # Avoid import cycle between jax and jax.experimental
     from jax.experimental.compilation_cache import compilation_cache as cc
-    if cc.is_initialized():
-        cached_executable = cc.get_executable(computation, compile_options)
+    # Persistent compilation cache only implemented on TPU.
+    # TODO(skye): add warning when initializing cache on unsupported default platform
+    if cc.is_initialized() and backend.platform == 'tpu':
+        cached_executable = cc.get_executable(computation, compile_options, backend)
         if cached_executable is not None:
             logging.info('Persistent compilation cache hit')
             return cached_executable
         else:
             compiled = backend_compile(backend, computation, compile_options)
-            cc.put_executable(computation, compile_options, compiled)
+            cc.put_executable(computation, compile_options, compiled, backend)
             return compiled
     return backend_compile(backend, computation, compile_options)
 

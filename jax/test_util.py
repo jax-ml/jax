@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from contextlib import contextmanager
+import inspect
 import functools
 import re
 import os
@@ -870,22 +871,18 @@ class JaxTestLoader(absltest.TestLoader):
     return names
 
 
-def disable_implicit_rank_promotion(test_method):
-  """A decorator for test methods to raise error on implicit rank promotion."""
-  @functools.wraps(test_method)
-  def test_method_wrapper(self, *args, **kwargs):
-    try:
-      prev_flag = config.jax_numpy_rank_promotion
-      FLAGS.jax_numpy_rank_promotion = "raise"
-      return test_method(self, *args, **kwargs)
-    finally:
-      FLAGS.jax_numpy_rank_promotion = prev_flag
-
-  return test_method_wrapper
+def with_config(**kwds):
+  """Test case decorator for subclasses of JaxTestCase"""
+  def decorator(cls):
+    assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
+    cls._default_config = {**JaxTestCase._default_config, **kwds}
+    return cls
+  return decorator
 
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
+  _default_config = {'jax_enable_checks': True}
 
   # TODO(mattjj): this obscures the error messages from failures, figure out how
   # to re-enable it
@@ -893,12 +890,21 @@ class JaxTestCase(parameterized.TestCase):
   #   assert core.reset_trace_state()
 
   def setUp(self):
-    super(JaxTestCase, self).setUp()
-    config.update('jax_enable_checks', True)
+    super().setUp()
+    self._original_config = {}
+    for key, value in self._default_config.items():
+      self._original_config[key] = getattr(config, key)
+      config.update(key, value)
+
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
+
+  def tearDown(self):
+    for key, value in self._original_config.items():
+      config.update(key, value)
+    super().tearDown()
 
   def rng(self):
     return self._rng

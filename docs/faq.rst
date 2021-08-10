@@ -60,10 +60,10 @@ If your ``jit`` decorated function takes tens of seconds (or more!) to run the
 first time you call it, but executes quickly when called again, JAX is taking a
 long time to trace or compile your code.
 
-This is usually a symptom of calling your function generating a large amount of
+This is usually a sign that calling your function generates a large amount of
 code in JAX's internal representation, typically because it makes heavy use of
-Python control flow such as ``for`` loop. For a handful of loop iterations
-Python is OK, but if you need _many_ loop iterations, you should rewrite your
+Python control flow such as ``for`` loops. For a handful of loop iterations,
+Python is OK, but if you need *many* loop iterations, you should rewrite your
 code to make use of JAX's
 `structured control flow primitives <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#Structured-control-flow-primitives>`_
 (such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
@@ -206,7 +206,7 @@ running full applications, which inevitably include some amount of both data
 transfer and compilation. Also, we were careful to pick large enough arrays
 (1000x1000) and an intensive enough computation (the ``@`` operator is
 performing matrix-matrix multiplication) to amortize the increased overhead of
-JAX/accelerators vs NumPy/CPU. For example, if switch this example to use
+JAX/accelerators vs NumPy/CPU. For example, if we switch this example to use
 10x10 input instead, JAX/GPU runs 10x slower than NumPy/CPU (100 µs vs 10 µs).
 
 .. _To JIT or not to JIT: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
@@ -322,7 +322,7 @@ are not careful you may obtain a ``NaN`` for reverse differentiation::
   jax.grad(my_log)(0.)  ==> NaN
 
 A short explanation is that during ``grad`` computation the adjoint corresponding
-to the undefined ``jnp.log(x)`` is a ``NaN`` and when it gets accumulated to the
+to the undefined ``jnp.log(x)`` is a ``NaN`` and it gets accumulated to the
 adjoint of the ``jnp.where``. The correct way to write such functions is to ensure
 that there is a ``jnp.where`` *inside* the partially-defined function, to ensure
 that the adjoint is always finite::

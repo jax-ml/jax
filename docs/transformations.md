@@ -18,7 +18,8 @@ kernelspec:
 ```
 
 At its core, JAX is an extensible system for transforming numerical functions.
-This section will discuss four that are of primary interest: {func}`grad`, {func}`jit`, {func}`vmap`, and {func}`pmap`.
+This section will discuss four transformations that are of primary interest:
+{func}`grad`, {func}`jit`, {func}`vmap`, and {func}`pmap`.
 
 ## Automatic differentiation with `grad`
 

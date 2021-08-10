@@ -97,7 +97,9 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
           _Shape.array_shape(dtype, a_shape.dimensions(), layout),
           _Shape.array_shape(dtype, b_shape.dimensions(), layout),
       ),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return _ops.GetTupleElement(out, 0)
 
 
@@ -131,7 +133,9 @@ def potrf(c, a, lower):
       operand_shapes_with_layout=(_Shape.array_shape(
           dtype, batch_dims + (n, n),
           (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return _ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1)
 
 
@@ -175,7 +179,9 @@ def getrf(c, a):
       operand_shapes_with_layout=(_Shape.array_shape(
           dtype, batch_dims + (m, n),
           (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1),
           _ops.GetTupleElement(out, 2))
 
@@ -213,7 +219,9 @@ def geqrf(c, a):
       operand_shapes_with_layout=(_Shape.array_shape(
           dtype, batch_dims + (m, n),
           (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1),
           _ops.GetTupleElement(out, 2))
 
@@ -257,7 +265,9 @@ def orgqr(c, a, tau):
               dtype, batch_dims + (k,),
               tuple(range(num_bd, -1, -1))),
           ),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1))
 
 
@@ -302,7 +312,9 @@ def syevd(c, a, lower=False):
       operand_shapes_with_layout=(
           _Shape.array_shape(dtype, dims, layout),
       ),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1),
           _ops.GetTupleElement(out, 2))
 
@@ -342,7 +354,9 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
         operand_shapes_with_layout=(
             _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
         ),
-        opaque=opaque)
+        opaque=opaque,
+        api_version=xla_client.ops.CustomCallApiVersion
+        .API_VERSION_STATUS_RETURNING)
     s = _ops.GetTupleElement(out, 1)
     u = _ops.GetTupleElement(out, 2)
     v = _ops.GetTupleElement(out, 3)
@@ -371,7 +385,9 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
         operand_shapes_with_layout=(
             _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
         ),
-        opaque=opaque)
+        opaque=opaque,
+        api_version=xla_client.ops.CustomCallApiVersion
+        .API_VERSION_STATUS_RETURNING)
     s = _ops.GetTupleElement(out, 1)
     vt = _ops.GetTupleElement(out, 2)
     u = _ops.GetTupleElement(out, 3)
@@ -398,7 +414,9 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
         operand_shapes_with_layout=(
             _Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
         ),
-        opaque=opaque)
+        opaque=opaque,
+        api_version=xla_client.ops.CustomCallApiVersion
+        .API_VERSION_STATUS_RETURNING)
     s = _ops.GetTupleElement(out, 1)
     u = _ops.GetTupleElement(out, 2)
     vt = _ops.GetTupleElement(out, 3)

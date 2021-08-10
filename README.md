@@ -109,7 +109,8 @@ or the [examples](https://github.com/google/jax/tree/main/examples).
 ## Transformations
 
 At its core, JAX is an extensible system for transforming numerical functions.
-Here are four of primary interest: `grad`, `jit`, `vmap`, and `pmap`.
+Here are four transformations of primary interest: `grad`, `jit`, `vmap`, and
+`pmap`.
 
 ### Automatic differentiation with `grad`
 

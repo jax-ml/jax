@@ -59,6 +59,8 @@ def csr_todense(c, data, indices, indptr, *, shape):
           _Shape.array_shape(np.dtype(np.int8), (buffer_size,), (0,)),
       )),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -86,6 +88,8 @@ def csr_fromdense(c, mat, *, nnz, index_dtype):
           _Shape.array_shape(np.dtype(np.int8), (buffer_size,), (0,)),
       )),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
 
   return tuple(_ops.GetTupleElement(out, i) for i in range(3))
@@ -122,6 +126,8 @@ def csr_matvec(c, data, indices, indptr, x, *, shape, transpose=False, compute_d
           _Shape.array_shape(compute_dtype, (out_size,), (0,)),
           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -131,8 +137,9 @@ def csr_matmat(c, data, indices, indptr, B, *, shape, transpose=False, compute_d
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(indices).element_type())
   B_dtype = np.dtype(c.get_shape(B).element_type())
+  B_shape = c.get_shape(B).dimensions()
   rows, cols = shape
-  _, Ccols = c.get_shape(B).dimensions()
+  _, Ccols = B_shape
   nnz, = c.get_shape(data).dimensions()
 
   if compute_dtype is None:
@@ -148,16 +155,17 @@ def csr_matmat(c, data, indices, indptr, B, *, shape, transpose=False, compute_d
       b"cusparse_csr_matmat",
       operands=(data, indices, indptr, B),
       operand_shapes_with_layout=(
-          # All are 1D, so no layout necessary
           c.get_shape(data),
           c.get_shape(indices),
           c.get_shape(indptr),
-          c.get_shape(B),
+          _Shape.array_shape(B_dtype, B_shape, (1, 0)),
       ),
       shape_with_layout=_Shape.tuple_shape((
           _Shape.array_shape(compute_dtype, (out_size, Ccols), (1, 0)),
           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -187,6 +195,8 @@ def coo_todense(c, data, row, col, *, shape):
           _Shape.array_shape(np.dtype(np.int8), (buffer_size,), (0,)),
       )),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -214,6 +224,8 @@ def coo_fromdense(c, mat, *, nnz, index_dtype):
           _Shape.array_shape(np.dtype(np.int8), (buffer_size,), (0,)),
       )),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
 
   return tuple(_ops.GetTupleElement(out, i) for i in range(3))
@@ -249,6 +261,8 @@ def coo_matvec(c, data, row, col, x, *, shape, transpose=False, compute_dtype=No
           _Shape.array_shape(compute_dtype, (out_size,), (0,)),
           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -258,8 +272,9 @@ def coo_matmat(c, data, row, col, B, *, shape, transpose=False, compute_dtype=No
   dtype = np.dtype(c.get_shape(data).element_type())
   index_dtype = np.dtype(c.get_shape(row).element_type())
   B_dtype = np.dtype(c.get_shape(B).element_type())
+  B_shape = c.get_shape(B).dimensions()
   rows, cols = shape
-  _, Ccols = c.get_shape(B).dimensions()
+  _, Ccols = B_shape
   nnz, = c.get_shape(data).dimensions()
 
   if compute_dtype is None:
@@ -275,16 +290,17 @@ def coo_matmat(c, data, row, col, B, *, shape, transpose=False, compute_dtype=No
       b"cusparse_coo_matmat",
       operands=(data, row, col, B),
       operand_shapes_with_layout=(
-          # All are 1D, so no layout necessary
           c.get_shape(data),
           c.get_shape(row),
           c.get_shape(col),
-          c.get_shape(B),
+          _Shape.array_shape(B_dtype, B_shape, (1, 0)),
       ),
       shape_with_layout=_Shape.tuple_shape((
           _Shape.array_shape(compute_dtype, (out_size, Ccols), (1, 0)),
           _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING,
   )
   return _ops.GetTupleElement(out, 0)
 
@@ -306,5 +322,7 @@ def gtsv2(c, dl, d, du, B, *, m, n, ldb, t):
           (_Shape.array_shape(np.dtype(t), (ldb, n), (1, 0)),
            _Shape.array_shape(np.dtype(np.uint8), (buffer_size,), (0,)))),
       opaque=cusparse_kernels.build_gtsv2_descriptor(m, n, ldb),
-      has_side_effect=False)
+      has_side_effect=False,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return _ops.GetTupleElement(out, 0)
