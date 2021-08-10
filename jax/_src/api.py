@@ -865,7 +865,8 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args)
-    tree_map(partial(_check_input_dtype_grad, holomorphic, allow_int), dyn_args)
+    for leaf in tree_leaves(dyn_args):
+      _check_input_dtype_grad(holomorphic, allow_int, leaf)
     if not has_aux:
       ans, vjp_py = _vjp(f_partial, *dyn_args, reduce_axes=reduce_axes)
     else:
