@@ -1013,6 +1013,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.float32, np.complex64],
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled")),
+        custom_numeric(
+            tol=1e-2,
+            dtypes=[np.float16],
+            devices=("tpu"),
+            modes=("eager", "graph", "compiled")),
         # TODO: this is very low tolerance for f64
         custom_numeric(
             tol=1e-4,
