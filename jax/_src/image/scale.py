@@ -253,7 +253,8 @@ def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   # since all of the current resize methods (kernels) are interpolating, so the
   # output = input under an identity warp.
   spatial_dims = tuple(np.nonzero(np.not_equal(image.shape, shape))[0])
-  scale = [float(shape[d]) / image.shape[d] for d in spatial_dims]
+  scale = [1.0 if shape[d] == 0 else float(shape[d]) / image.shape[d]
+           for d in spatial_dims]
   return _scale_and_translate(image, shape, spatial_dims,
                               scale, [0.] * len(spatial_dims), kernel,
                               antialias, precision)
