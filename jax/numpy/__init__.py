@@ -50,7 +50,7 @@ from jax._src.numpy.lax_numpy import (
     nanmedian, nanpercentile, nanquantile,
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,
     negative, newaxis, nextafter, nonzero, not_equal, number,
-    object_, ogrid, ones, ones_like, operator_name, outer, packbits, pad, percentile,
+    object_, ogrid, ones, ones_like, outer, packbits, pad, percentile,
     pi, piecewise, poly, polyadd, polyder, polyint, polymul, polysub, polyval, positive, power,
     prod, product, promote_types, ptp, quantile,
     r_, rad2deg, radians, ravel, ravel_multi_index, real, reciprocal, remainder, repeat, reshape,

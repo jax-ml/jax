@@ -455,9 +455,8 @@ pxla_result_handlers[ConcreteArray] = array_result_handler
 
 ### lazy device-memory persistence and result handling
 
-# TODO(jblespiau): Clean all occurrences of the SDA constructor before
-# switching this to True.
-_USE_EXPERIMENTAL_CPP_SDA = False
+# TODO(jblespiau): Remove when jaxlib 0.1.71 is the minimal version.
+_USE_CPP_SDA = _xla_extension_version >= 33
 
 
 def make_sharded_device_array(
@@ -489,7 +488,7 @@ def make_sharded_device_array(
   if indices is None:
     indices = spec_to_indices(aval.shape, sharding_spec)
 
-  if (_USE_EXPERIMENTAL_CPP_SDA and
+  if (_USE_CPP_SDA and
       (not device_buffers or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
     return pmap_lib.ShardedDeviceArray(aval, sharding_spec, device_buffers,
@@ -498,7 +497,7 @@ def make_sharded_device_array(
   return _ShardedDeviceArray(aval, sharding_spec, device_buffers, indices)
 
 
-if _USE_EXPERIMENTAL_CPP_SDA:
+if _USE_CPP_SDA:
   ShardedDeviceArrayBase = pmap_lib.ShardedDeviceArrayBase  # type: ignore
   # We want the C++ SDA to extend the DeviceArrayBase. We want this both to
   # benefit from its methods, and to have isinstance(x, DeviceArray) return true
@@ -548,7 +547,7 @@ class _ShardedDeviceArray(base_class):  # type: ignore
     # We don't use `super`, following pybind11 guidelines:
     # https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python
     xla.DeviceArray.__init__(self)
-    if _USE_EXPERIMENTAL_CPP_SDA:
+    if _USE_CPP_SDA:
       ShardedDeviceArrayBase.__init__(self)  # type: ignore
 
     # TODO(skye): this is temporary staging while we switch users over to
@@ -680,7 +679,7 @@ del (_sda_one_replica_buffer_indices, _sda_copy_to_host_async, _sda_delete,
 
 
 ShardedDeviceArray: Type[object]
-if _USE_EXPERIMENTAL_CPP_SDA:
+if _USE_CPP_SDA:
   ShardedDeviceArray = pmap_lib.ShardedDeviceArrayBase
 else:
   ShardedDeviceArray = _ShardedDeviceArray
