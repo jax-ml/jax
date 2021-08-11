@@ -18,6 +18,7 @@ from jax._src.lax.lax import (
   ConvGeneralDilatedDimensionNumbers as ConvGeneralDilatedDimensionNumbers,
   DotDimensionNumbers as DotDimensionNumbers,
   GatherDimensionNumbers as GatherDimensionNumbers,
+  GatherScatterMode as GatherScatterMode,
   Precision as Precision,
   RandomAlgorithm as RandomAlgorithm,
   RoundingMethod as RoundingMethod,

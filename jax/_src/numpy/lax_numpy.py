@@ -5645,23 +5645,32 @@ def unique(ar, return_index=False, return_inverse=False,
 
 ### Indexing
 
-def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False):
+def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
+                    mode=None, fill_value=None):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
   arr = asarray(arr)
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx, arr.shape)
   return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
-                 unique_indices)
+                 unique_indices, mode, fill_value)
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(1, 2))
 def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
-            unique_indices):
+            unique_indices, mode, fill_value):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
   y = arr
+
+  if fill_value is not None:
+    core.concrete_or_error(None, fill_value,
+                           "fill_value argument to indexed get()")
+    if np.ndim(fill_value) != 0:
+      raise ValueError("fill_value argument to indexed get() must be a scalar")
+    if isinstance(fill_value, np.ndarray):
+      fill_value = fill_value.item()
 
   # Avoid calling gather if the slice shape is empty, both as a fast path and to
   # handle cases like zeros(0)[array([], int32)].
@@ -5673,7 +5682,8 @@ def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
     y = lax.gather(
       y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
       unique_indices=unique_indices or indexer.unique_indices,
-      indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted)
+      indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted,
+      mode=mode, fill_value=fill_value)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:
@@ -6717,7 +6727,8 @@ class _IndexUpdateRef:
   def __repr__(self):
     return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
 
-  def get(self, indices_are_sorted=False, unique_indices=False):
+  def get(self, indices_are_sorted=False, unique_indices=False,
+          mode=None, fill_value=None):
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -6729,9 +6740,11 @@ class _IndexUpdateRef:
     """
     return _rewriting_take(self.array, self.index,
                            indices_are_sorted=indices_are_sorted,
-                           unique_indices=unique_indices)
+                           unique_indices=unique_indices, mode=mode,
+                           fill_value=fill_value)
 
-  def set(self, values, indices_are_sorted=False, unique_indices=False):
+  def set(self, values, indices_are_sorted=False, unique_indices=False,
+          mode=None):
     """Pure equivalent of ``x[idx] = y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -6741,9 +6754,10 @@ class _IndexUpdateRef:
     """
     return scatter._scatter_update(self.array, self.index, values, lax.scatter,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices)
+                                   unique_indices=unique_indices, mode=mode)
 
-  def add(self, values, indices_are_sorted=False, unique_indices=False):
+  def add(self, values, indices_are_sorted=False, unique_indices=False,
+          mode=None):
     """Pure equivalent of ``x[idx] += y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -6754,9 +6768,10 @@ class _IndexUpdateRef:
     return scatter._scatter_update(self.array, self.index, values,
                                    lax.scatter_add,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices)
+                                   unique_indices=unique_indices, mode=mode)
 
-  def multiply(self, values, indices_are_sorted=False, unique_indices=False):
+  def multiply(self, values, indices_are_sorted=False, unique_indices=False,
+               mode=None):
     """Pure equivalent of ``x[idx] *= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -6767,10 +6782,12 @@ class _IndexUpdateRef:
     return scatter._scatter_update(self.array, self.index, values,
                                    lax.scatter_mul,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices)
+                                   unique_indices=unique_indices,
+                                   mode=mode)
   mul = multiply
 
-  def divide(self, values, indices_are_sorted=False, unique_indices=False):
+  def divide(self, values, indices_are_sorted=False, unique_indices=False,
+             mode=None):
     """Pure equivalent of ``x[idx] /= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -6783,9 +6800,10 @@ class _IndexUpdateRef:
       scatter._scatter_update(ones_like(self.array), self.index, values,
                               lax.scatter_mul,
                               indices_are_sorted=indices_are_sorted,
-                              unique_indices=unique_indices))
+                              unique_indices=unique_indices, mode=mode))
 
-  def power(self, values, indices_are_sorted=False, unique_indices=False):
+  def power(self, values, indices_are_sorted=False, unique_indices=False,
+            mode=None):
     """Pure equivalent of ``x[idx] **= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -6798,9 +6816,10 @@ class _IndexUpdateRef:
       scatter._scatter_update(ones_like(self.array), self.index, values,
                               lax.scatter_mul,
                               indices_are_sorted=indices_are_sorted,
-                              unique_indices=unique_indices))
+                              unique_indices=unique_indices, mode=mode))
 
-  def min(self, values, indices_are_sorted=False, unique_indices=False):
+  def min(self, values, indices_are_sorted=False, unique_indices=False,
+          mode=None):
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -6812,9 +6831,10 @@ class _IndexUpdateRef:
     return scatter._scatter_update(self.array, self.index, values,
                                    lax.scatter_min,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices)
+                                   unique_indices=unique_indices, mode=mode)
 
-  def max(self, values, indices_are_sorted=False, unique_indices=False):
+  def max(self, values, indices_are_sorted=False, unique_indices=False,
+          mode=None):
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -6826,7 +6846,7 @@ class _IndexUpdateRef:
     return scatter._scatter_update(self.array, self.index, values,
                                    lax.scatter_max,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices)
+                                   unique_indices=unique_indices, mode=mode)
 
 
 def _set_shaped_array_attributes(shaped_array):

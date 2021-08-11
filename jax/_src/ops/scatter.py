@@ -38,7 +38,7 @@ Numeric = Union[Array, Scalar]
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
-                    unique_indices, normalize_indices=True):
+                    unique_indices, mode=None, normalize_indices=True):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -66,14 +66,16 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx, x.shape)
   return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                       indices_are_sorted, unique_indices, normalize_indices)
+                       indices_are_sorted, unique_indices, mode,
+                       normalize_indices)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
 def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                  indices_are_sorted, unique_indices, normalize_indices):
+                  indices_are_sorted, unique_indices, mode,
+                  normalize_indices):
   dtype = lax.dtype(x)
 
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
@@ -104,7 +106,8 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   out = scatter_op(
     x, indexer.gather_indices, y, dnums,
     indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
-    unique_indices=indexer.unique_indices or unique_indices)
+    unique_indices=indexer.unique_indices or unique_indices,
+    mode=mode)
   return lax.convert_element_type(out, dtype)
 
 
