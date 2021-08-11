@@ -7,7 +7,6 @@ jobs:
     if: ${{ contains(github.event.client_payload.review.state, 'approved') }}          
     runs-on: ubuntu-latest
     steps:
-    - name: Add label
       - uses: actions/github-script@v4
         with:
           script: |
