@@ -1,24 +1,19 @@
-name: Add label on approval
-on:
-  repository_dispatch:
-    # From: pull_request_review
-    types: [created, edited, submitted]
+name: "Pull Request Labeler on approval"
+on: pull_request
 
 jobs:
   review-approval:
     # Check the pull request review.
-    if: >-
-      ${{ github.actor == 'tfdocsbot' &&
-          contains(github.event.client_payload.review.state, 'approved') }}
+    if: ${{ contains(github.event.client_payload.review.state, 'approved') }}          
     runs-on: ubuntu-latest
     steps:
     - name: Add label
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        ISSUE_URL: ${{ github.event.client_payload.pull_request.issue_url }}
-      run: |
-        curl -X POST \
-          -H "Accept: application/vnd.github.v3+json" \
-          -H "Authorization: token $GITHUB_TOKEN" \
-          "${ISSUE_URL}/labels" \
-          --data '{"labels":["kokoro:run"]}'
+      - uses: actions/github-script@v4
+        with:
+          script: |
+            github.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['kokoro:run']
+            })
