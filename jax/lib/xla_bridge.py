@@ -51,9 +51,8 @@ flags.DEFINE_string(
     'jax_xla_backend is an alias for jax_platform_name. If both are '
     'provided, --jax_xla_backend takes priority. Prefer --jax_platform_name.')
 flags.DEFINE_string(
-    'jax_backend_target', 'local',
-    'Either "local" or "rpc:address" to connect to a remote service target. '
-    'The default is "local".')
+    'jax_backend_target', '',
+    'Either "local" or "rpc:address" to connect to a remote service target.')
 flags.DEFINE_string(
     'jax_platform_name',
     os.getenv('JAX_PLATFORM_NAME', '').lower(),
