@@ -2321,11 +2321,12 @@ Because the size of the output of ``nonzero`` is data-dependent, the function is
 typically compatible with JIT. The JAX version adds the optional `size` argument which
 specifies the size of the output arrays: it must be specified statically for ``jnp.nonzero``
 to be traced. If specified, the first `size` nonzero elements will be returned; if there
-are fewer nonzero elements than `size` indicates, the index arrays will be zero-padded.
+are fewer nonzero elements than `size` indicates, the result will be padded with ``fill_value``,
+which defaults to zero.
 """
 
 @_wraps(np.nonzero, lax_description=_NONZERO_DOC)
-def nonzero(a, *, size=None):
+def nonzero(a, *, size=None, fill_value=None):
   a = atleast_1d(a)
   mask = a != 0
   if size is None:
@@ -2337,7 +2338,13 @@ def nonzero(a, *, size=None):
     return tuple(zeros(size, int) for dim in a.shape)
   flat_indices = cumsum(bincount(cumsum(mask), length=size))
   strides = np.cumprod(a.shape[::-1])[::-1] // a.shape
-  return tuple((flat_indices // stride) % size for stride, size in zip(strides, a.shape))
+  out = tuple((flat_indices // stride) % size for stride, size in zip(strides, a.shape))
+  if size is not None and fill_value is not None:
+    if ndim(fill_value) != 0:
+      raise ValueError(f"fill_value must be a scalar; got {fill_value}")
+    fill_mask = arange(size) >= mask.sum()
+    out = tuple(where(fill_mask, fill_value, entry) for entry in out)
+  return out
 
 @_wraps(np.flatnonzero, lax_description=_NONZERO_DOC)
 def flatnonzero(a, *, size=None):
