@@ -135,6 +135,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     assert len(side) == 3
     assert f2(2, 5, 3, True, True) == 253
     assert len(side) == 3
+    assert 1 == 2
 
   def test_static_args_equality(self):
     class A():
