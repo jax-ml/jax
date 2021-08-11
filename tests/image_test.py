@@ -179,6 +179,29 @@ class ImageTest(jtu.JaxTestCase):
     jtu.check_grads(jax_fn, args_maker(), order=2, rtol=1e-2, eps=1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+       {"testcase_name": "_shape={}_target={}_method={}_antialias={}".format(
+          jtu.format_shape_dtype_string(image_shape, dtype),
+          jtu.format_shape_dtype_string(target_shape, dtype), method,
+          antialias),
+        "dtype": dtype, "image_shape": image_shape,
+        "target_shape": target_shape,
+        "method": method, "antialias": antialias}
+       for dtype in [np.float32]
+       for image_shape, target_shape in [
+         ([1], [0]),
+         ([5, 5], [5, 0]),
+         ([5, 5], [0, 1]),
+         ([5, 5], [0, 0])
+       ]
+       for method in ["nearest", "linear", "lanczos3", "lanczos5", "cubic"]
+       for antialias in [False, True]))
+  def testResizeEmpty(self, dtype, image_shape, target_shape, method, antialias):
+    # Regression test for https://github.com/google/jax/issues/7586
+    image = np.ones(image_shape, dtype)
+    out = jax.image.resize(image, shape=target_shape, method=method, antialias=antialias)
+    self.assertArraysEqual(out, jnp.zeros(target_shape, dtype))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_target={}_method={}".format(
          jtu.format_shape_dtype_string(image_shape, dtype),
          jtu.format_shape_dtype_string(target_shape, dtype), method),
