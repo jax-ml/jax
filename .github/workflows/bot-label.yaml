@@ -1,7 +1,7 @@
 name: Add label on approval
 on:
   repository_dispatch:
-    # From: issue_comment, pull_request_review
+    # From: pull_request_review
     types: [created, edited, submitted]
 
 jobs:
