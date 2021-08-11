@@ -455,7 +455,7 @@ pxla_result_handlers[ConcreteArray] = array_result_handler
 ### lazy device-memory persistence and result handling
 
 # TODO(jblespiau): Remove when jaxlib 0.1.71 is the minimal version.
-_USE_CPP_SDA = _xla_extension_version >= 33
+_USE_CPP_SDA = False
 
 
 def make_sharded_device_array(
