@@ -855,11 +855,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(index_take, (src,), 2, ["fwd", "rev"], eps=1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), idxs, dnums,
-          slice_sizes),
-       "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
-       "slice_sizes": slice_sizes, "rng_idx_factory": rng_idx_factory}
+      {"testcase_name":
+         f"_shape={jtu.format_shape_dtype_string(shape, dtype)}"
+         f"_idxs={jtu.format_shape_dtype_string(idxs.shape, idxs.dtype)}"
+         f"_dnums={dnums}_slice_sizes={slice_sizes}_mode={mode}"
+         f"_iteration={iteration}",
+       "shape": shape, "dtype": dtype, "idxs_shape": idxs.shape,
+       "idxs_dtype": idxs.dtype, "dnums": dnums, "slice_sizes": slice_sizes,
+       "max_idx": max_idx, "mode": mode}
       for dtype in grad_float_dtypes
       for shape, idxs, dnums, slice_sizes, max_idx in [
           ((5,), np.array([[0], [2]]), lax.GatherDimensionNumbers(
@@ -872,42 +875,64 @@ class LaxAutodiffTest(jtu.JaxTestCase):
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
             (1, 3), 3),
       ]
-      for rng_idx_factory in [partial(jtu.rand_int, high=max_idx)]))
-  def testGatherGrad(self, shape, dtype, idxs, dnums, slice_sizes, rng_idx_factory):
+      for mode in ["clip", "fill", "promise_in_bounds"]
+      for iteration in range(5)))
+  def testGatherGrad(self, shape, dtype, idxs_shape, idxs_dtype, dnums,
+                     slice_sizes, mode, max_idx):
     rng = jtu.rand_default(self.rng())
-    rng_idx = rng_idx_factory(self.rng())
-    idxs = rng_idx(idxs.shape, idxs.dtype)
+    if mode == "promise_in_bounds":
+      rng_idx = jtu.rand_int(self.rng(), high=max_idx)
+    else:
+      # Only test out-of-bounds indices if using a mode that guarantees correct
+      # gradients for out-of-bounds indices.
+      rng_idx = jtu.rand_int(self.rng(), low=-max_idx, high=2 * max_idx)
+    idxs = rng_idx(idxs_shape, idxs_dtype)
+    # Use an arbitrary finite fill_value, since NaNs won't work in a numerical
+    # gradient test.
     gather = lambda x: lax.gather(x, idxs, dimension_numbers=dnums,
-                                  slice_sizes=slice_sizes)
+                                  slice_sizes=slice_sizes, mode=mode,
+                                  fill_value=-1)
     x = rng(shape, dtype)
     check_grads(gather, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
-          jtu.format_shape_dtype_string(arg_shape, dtype),
-          idxs, update_shape, dnums),
-       "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
-       "update_shape": update_shape, "dnums": dnums, "rng_idx_factory": rng_idx_factory}
+      {"testcase_name":
+         f"_shape={jtu.format_shape_dtype_string(arg_shape, dtype)}"
+         f"_idxs={jtu.format_shape_dtype_string(idxs.shape, idxs.dtype)}"
+         f"_update={update_shape}_dnums={dnums}_mode={mode}"
+         f"_iteration={iteration}",
+       "arg_shape": arg_shape, "dtype": dtype, "idxs_shape": idxs.shape,
+       "idxs_dtype": idxs.dtype, "update_shape": update_shape, "dnums": dnums,
+       "max_idx": max_idx, "mode": mode}
       for dtype in grad_float_dtypes
       for arg_shape, idxs, update_shape, dnums, max_idx in [
-          ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
-            update_window_dims=(), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,)), 4),
-          ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
-            update_window_dims=(1,), inserted_window_dims=(),
-            scatter_dims_to_operand_dims=(0,)), 9),
-          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
-            update_window_dims=(1,), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,)), 3),
+          ((5,), np.array([[0], [2]]), (2,),
+           lax.ScatterDimensionNumbers(update_window_dims=(),
+                                       inserted_window_dims=(0,),
+                                       scatter_dims_to_operand_dims=(0,)), 4),
+          ((10,), np.array([[0], [0], [0]]), (3, 2),
+           lax.ScatterDimensionNumbers(update_window_dims=(1,),
+                                       inserted_window_dims=(),
+                                       scatter_dims_to_operand_dims=(0,)), 9),
+          ((10, 5,), np.array([[0], [2], [1]]), (3, 3),
+           lax.ScatterDimensionNumbers(update_window_dims=(1,),
+                                       inserted_window_dims=(0,),
+                                       scatter_dims_to_operand_dims=(0,)), 3),
       ]
-      for rng_idx_factory in [partial(jtu.rand_int, high=max_idx)]))
-  def testScatterAddGrad(self, arg_shape, dtype, idxs, update_shape, dnums,
-                         rng_idx_factory):
+      for mode in ["clip", "fill", "promise_in_bounds"]
+      for iteration in range(5)))
+  def testScatterAddGrad(self, arg_shape, dtype, idxs_shape, idxs_dtype,
+                         update_shape, dnums, max_idx, mode):
     rng = jtu.rand_default(self.rng())
-    rng_idx = rng_idx_factory(self.rng())
-    idxs = rng_idx(idxs.shape, idxs.dtype)
-    scatter_add = lambda x, y: lax.scatter_add(x, idxs, y,
-                                               dimension_numbers=dnums)
+    if mode == "promise_in_bounds":
+      rng_idx = jtu.rand_int(self.rng(), high=max_idx)
+    else:
+      # Only test out-of-bounds indices if using a mode that guarantees correct
+      # gradients for out-of-bounds indices.
+      rng_idx = jtu.rand_int(self.rng(), low=-max_idx, high=2 * max_idx)
+    idxs = rng_idx(idxs_shape, idxs_dtype)
+    scatter_add = lambda x, y: lax.scatter_add(
+      x, idxs, y, dimension_numbers=dnums, mode=mode)
     x = rng(arg_shape, dtype)
     y = rng(update_shape, dtype)
     check_grads(scatter_add, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
