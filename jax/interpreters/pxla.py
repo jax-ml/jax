@@ -36,7 +36,6 @@ import operator as op
 import threading
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
                     Type, Union, Iterable, NamedTuple, TYPE_CHECKING)
-import warnings
 from absl import logging
 import numpy as np
 
@@ -538,32 +537,16 @@ class _ShardedDeviceArray(base_class):  # type: ignore
       "_one_replica_buffer_indices", "_npy_value"
   ]
 
-  def __init__(
-      self,
-      aval: ShapedArray,
-      sharding_spec,  # TODO(skye): add type annotation back, see below
-      device_buffers: Optional[List[xb.xla_client.Buffer]] = None,
-      indices: Optional[Tuple[Index, ...]] = None):
+  def __init__(self,
+               aval: ShapedArray,
+               sharding_spec: ShardingSpec,
+               device_buffers: List[xb.xla_client.Buffer],
+               indices: Optional[Tuple[Index, ...]] = None):
     # We don't use `super`, following pybind11 guidelines:
     # https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python
     xla.DeviceArray.__init__(self)
     if _USE_CPP_SDA:
       ShardedDeviceArrayBase.__init__(self)  # type: ignore
-
-    # TODO(skye): this is temporary staging while we switch users over to
-    # providing sharding_spec. It assumes that any pre-existing callers are
-    # creating pmap-style ShardedDeviceArrays over the first dimension.
-    if device_buffers is None:
-      warnings.warn(
-          "The constructor of ShardedDeviceArray has changed and expects a "
-          "ShardingSpec object as the second argument. For a no-op fix, "
-          "replace SDA(aval, buffers) with SDA(aval, None, Buffers).")
-      device_buffers = sharding_spec
-      sharding_spec = None
-    if sharding_spec is None:
-      sharded_aval = aval.update(shape=aval.shape[1:])
-      sharding_spec = _pmap_sharding_spec(aval.shape[0], aval.shape[0],
-                                          1, None, sharded_aval, 0)
 
     # TODO(skye): assert invariants. Keep performance in mind though.
     if indices is None:
