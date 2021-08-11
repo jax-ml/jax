@@ -619,7 +619,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
   compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
                                *unsafe_map(arg_spec, args))
   try:
-    return compiled_fun(*args)
+    out = compiled_fun(*args)
   except FloatingPointError:
     assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
     print("Invalid value encountered in the output of a jit function. "
@@ -630,11 +630,13 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
     # but which config.jax_debug_nans is meant to opt into, we'll be re-executing
     # any linear_util.py-style side effects, i.e. re-populating Stores created
     # by any transformation_with_aux's applied to fun. Since this is
-    # intentional here, to avoid "Store occupied" errors we reset the stores to
-    # be empty.
-    for store in fun.stores: store and store.reset()
+    # intentional here, to avoid "Store occupied" errors we clone the WrappedFun
+    # with empty stores.
+    stores = [lu.Store() for _ in fun.stores]
+    clone = lu.WrappedFun(fun.f, fun.transforms, stores, fun.params)
     with core.new_sublevel():
-      return fun.call_wrapped(*args)  # probably won't return
+      _ = clone.call_wrapped(*args)  # probably won't return
+  return out
 
 def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
   """Expands a given shape tree into a flat list of indices to arrays.

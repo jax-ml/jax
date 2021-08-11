@@ -201,5 +201,18 @@ class DebugInfsTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(FloatingPointError, msg):
         f(1)
 
+  def testDebugNansDoesntCorruptCaches(self):
+    # https://github.com/google/jax/issues/6614
+    @jax.jit
+    def f(x):
+      return jnp.divide(x, x)
+
+    for _ in range(2):
+      try:
+       with jax.debug_nans(True):
+         jax.grad(f)(0.)
+      except FloatingPointError:
+        pass
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
