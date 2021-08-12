@@ -1,5 +1,5 @@
 name: "Pull Request Labeler on approval"
-on: pull_request_review
+on: pull_request_target
 
 jobs:
   review-approval:
