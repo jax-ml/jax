@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/github-script@v4
         env:
-          GITHUB_TOKEN = ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           script: |
             const { GITHUB_TOKEN } = process.env
