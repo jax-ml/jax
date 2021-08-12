@@ -13,7 +13,6 @@
 | [**Neural net libraries**](#neural-network-libraries)
 | [**Change logs**](https://jax.readthedocs.io/en/latest/changelog.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
-| [**Code search**](https://cs.opensource.google/jax/jax)
 
 
 **News:** [JAX tops largest-scale MLPerf Training 0.7 benchmarks!](https://cloud.google.com/blog/products/ai-machine-learning/google-breaks-ai-performance-records-in-mlperf-with-worlds-fastest-training-supercomputer)
