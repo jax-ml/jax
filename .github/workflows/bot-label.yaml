@@ -16,8 +16,6 @@ jobs:
         with:
           script: |
             const { GITHUB_TOKEN } = process.env
-
-            const github = require("@actions/github");
             const octokit = new github.GitHub(${GITHUB_TOKEN});
 
             octokit.issues.update({
