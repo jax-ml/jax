@@ -11,6 +11,7 @@ jobs:
     steps:
       - uses: actions/github-script@v4
         with:
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
           script: |
             github.issues.addLabels({
               issue_number: context.issue.number,
