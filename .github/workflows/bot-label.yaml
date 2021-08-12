@@ -19,7 +19,7 @@ jobs:
       #         labels: ['build']
       #       })
       - name: Simple Issue Labeler
-        uses: andymckay/labeler@1.0.3
+        uses: andymckay/labeler@master
         with:
           add-labels: "build"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
