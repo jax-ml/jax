@@ -1,10 +1,10 @@
 name: "Pull Request Labeler on approval"
-on: pull_request_target
+on: issue_comment
 
 jobs:
   review-approval:
     # Check the pull request review.
-    if: ${{ contains(github.event.client_payload.review.state, 'approved') }}          
+    # if: ${{ contains(github.event.client_payload.review.state, 'approved') }}          
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v4
@@ -14,5 +14,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: ['kokoro:run']
+              labels: ['build']
             })
