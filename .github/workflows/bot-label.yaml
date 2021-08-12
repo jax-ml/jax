@@ -1,10 +1,12 @@
 name: "Pull Request Labeler on approval"
-on: issue_comment
+on:
+  pull_request:
+    types: [ labeled ]
 
 jobs:
   review-approval:
     # Check the pull request review.
-    # if: ${{ contains(github.event.client_payload.review.state, 'approved') }}          
+    if: ${{ github.event.label.name == 'pull ready' }}          
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v4
