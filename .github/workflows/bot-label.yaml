@@ -8,8 +8,6 @@ jobs:
     # Check the pull request review.
     if: ${{ github.event.label.name == 'pull ready' }}          
     runs-on: ubuntu-latest
-    permissions:
-      issues: write
     steps:
       # - uses: actions/github-script@v4
       #   with:
@@ -20,8 +18,8 @@ jobs:
       #         repo: context.repo.repo,
       #         labels: ['build']
       #       })
-      - name: Label PRs
-      uses: andymckay/labeler@5c59dabdfd4dd5bd9c6e6d255b01b9d764af4414
+      - name: Simple Issue Labeler
+        uses: andymckay/labeler@1.0.3
         with:
           add-labels: "build"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
