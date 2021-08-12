@@ -14,6 +14,7 @@
 
 import hashlib
 import re
+import warnings
 
 import jax
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
@@ -30,6 +31,11 @@ def initialize_cache(path, max_cache_size_bytes=32 * 2**30):
     """
     global _cache
     assert _cache == None, f"The cache path has already been initialized to {_cache._path}"
+    if jax.default_backend() != "tpu":
+        warnings.warn(
+            "Persistent compilation cache is only implemented for TPU; "
+            f"current backend is {jax.default_backend()}. Persistent caching "
+            "will be disabled.")
     _cache = FileSystemCache(path, max_cache_size_bytes)
     logging.warning(f"Initialized persistent compilation cache at {path}")
 

@@ -29,6 +29,7 @@ import random
 import tempfile
 import unittest
 from unittest import SkipTest
+import warnings
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -243,6 +244,14 @@ class CompilationCacheTest(jtu.JaxTestCase):
           files_in_directory = len(os.listdir(tmpdir))
           self.assertEqual(files_in_directory, 2)
 
+  def test_cpu_computation(self):
+      with tempfile.TemporaryDirectory() as tmpdir:
+          cc.initialize_cache(tmpdir)
+          jit(lambda x: x * x)(1)
+          self.assertEqual(len(os.listdir(tmpdir)), 1)
+          jit(lambda x: x * x, backend='cpu')(1)
+          self.assertEqual(len(os.listdir(tmpdir)), 1)
+
   def create_new_debug_options(self, debug_options_obj):
     debug_options_obj.xla_cpu_enable_fast_math = False
     debug_options_obj.xla_cpu_fast_math_honor_infs = False
@@ -274,6 +283,20 @@ class CompilationCacheTest(jtu.JaxTestCase):
     hash_obj = hashlib.sha256()
     hash_function(hash_obj, hash_function_input)
     return hash_obj.digest().hex()
+
+
+class CompilationCacheTestNonTpu(jtu.JaxTestCase):
+
+  @jtu.skip_on_devices("tpu")
+  def test_non_tpu_backend(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        cc.initialize_cache(tmpdir)
+        self.assertLen(w, 1)
+        self.assertIn(
+            "Persistent compilation cache is only implemented for TPU",
+            str(w[0].message))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
