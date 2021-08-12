@@ -940,13 +940,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_size={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), size),
-       "shape": shape, "dtype": dtype, "size": size}
+      {"testcase_name": "_shape={}_size={}_fill_value={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), size, fill_value),
+       "shape": shape, "dtype": dtype, "size": size, "fill_value": fill_value}
       for shape in nonempty_array_shapes
       for dtype in all_dtypes
+      for fill_value in [None, -1]
       for size in [1, 5, 10]))
-  def testNonzeroSize(self, shape, dtype, size):
+  def testNonzeroSize(self, shape, dtype, size, fill_value):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     @jtu.ignore_warning(category=DeprecationWarning, message="Calling nonzero on 0d arrays.*")
@@ -955,9 +956,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       if size <= len(result[0]):
         return tuple(arg[:size] for arg in result)
       else:
-        return tuple(np.concatenate([arg, np.zeros(size - len(arg), arg.dtype)])
+        return tuple(np.concatenate([arg, np.full(size - len(arg), fill_value or 0, arg.dtype)])
                      for arg in result)
-    jnp_fun = lambda x: jnp.nonzero(x, size=size)
+    jnp_fun = lambda x: jnp.nonzero(x, size=size, fill_value=fill_value)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
