@@ -8,14 +8,20 @@ jobs:
     # Check the pull request review.
     if: ${{ github.event.label.name == 'pull ready' }}          
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
-      - uses: actions/github-script@v4
+      # - uses: actions/github-script@v4
+      #   with:
+      #     script: |
+      #       github.issues.addLabels({
+      #         issue_number: context.issue.number,
+      #         owner: context.repo.owner,
+      #         repo: context.repo.repo,
+      #         labels: ['build']
+      #       })
+      - name: Label PRs
+      uses: andymckay/labeler@5c59dabdfd4dd5bd9c6e6d255b01b9d764af4414
         with:
-          repo-token: "${{ secrets.GITHUB_TOKEN }}"
-          script: |
-            github.issues.addLabels({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: ['build']
-            })
+          add-labels: "build"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
