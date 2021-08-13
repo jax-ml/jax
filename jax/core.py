@@ -209,12 +209,13 @@ class DropVar(Var):
 dropvar = DropVar()
 
 class Literal:
-  __slots__ = ["val", "hash"]
+  __slots__ = ["val", "hash", "aval"]
 
   val: Any
   hash: Optional[int]
 
-  def __init__(self, val):
+  def __init__(self, val, aval):
+    self.aval = raise_to_shaped(aval)
     self.val = val
     try:
       self.hash = hash(val)
@@ -224,10 +225,6 @@ class Literal:
           self.hash = hash((val.item(), val.dtype))
         except (TypeError, AttributeError, ValueError):
           self.hash = None
-
-  @property
-  def aval(self):
-    return raise_to_shaped(get_aval(self.val))
 
   def __hash__(self):
     assert False
@@ -1006,7 +1003,7 @@ class UnshapedArray(AbstractValue):
   array_abstraction_level = 2
 
   def __init__(self, dtype, weak_type=False):
-    self.dtype = np.dtype(dtypes.canonicalize_dtype(dtype))
+    self.dtype = dtypes.make_array_dtype(dtype)
     self.weak_type = weak_type
 
   def update(self, dtype=None, weak_type=None):

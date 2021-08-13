@@ -56,7 +56,8 @@ class JaxJitTest(parameterized.TestCase):
       output_buffer = device_put_function(value, device=device)
 
       self.assertFalse(output_buffer.aval.weak_type)
-      self.assertEqual(output_buffer.aval, jax.core.ShapedArray((), dtype))
+      self.assertEqual(output_buffer.aval, jax.core.ShapedArray((),
+        dtypes.canonicalize_dtype(dtype)))
       self.assertEqual(output_buffer.dtype, dtypes.canonicalize_dtype(dtype))
 
   @parameterized.parameters([jax.device_put, _cpp_device_put])
@@ -68,7 +69,8 @@ class JaxJitTest(parameterized.TestCase):
       output_buffer = device_put_function(value, device=device)
 
       self.assertFalse(output_buffer.aval.weak_type)
-      self.assertEqual(output_buffer.aval, jax.core.ShapedArray((3, 4), dtype))
+      self.assertEqual(output_buffer.aval, jax.core.ShapedArray((3, 4),
+        dtypes.canonicalize_dtype(dtype)))
       self.assertEqual(output_buffer.dtype, dtypes.canonicalize_dtype(dtype))
       np.testing.assert_array_equal(output_buffer, np.zeros((3, 4),
                                                             dtype=dtype))

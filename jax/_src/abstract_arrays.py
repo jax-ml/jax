@@ -48,8 +48,12 @@ array_types = {np.ndarray, np.bool_,
                np.complex64, np.complex128,
                np.longlong, np.intc}
 
+def make_concrete_array(val, weak_type=False):
+  dtype = dtypes.canonicalize_dtype(np.result_type(val))
+  return ConcreteArray(val.astype(dtype), weak_type=weak_type)
+
 for t in array_types:
-  core.pytype_aval_mappings[t] = ConcreteArray
+  core.pytype_aval_mappings[t] = make_concrete_array
   ad_util.jaxval_zeros_likers[t] = zeros_like_array
 
 core.literalable_types.update(array_types)

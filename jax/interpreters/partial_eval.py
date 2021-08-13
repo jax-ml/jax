@@ -106,7 +106,8 @@ class JaxprTrace(Trace):
     return JaxprTracer(self, PartialVal.known(val), unit)
 
   def new_instantiated_literal(self, val) -> 'JaxprTracer':
-    return JaxprTracer(self, PartialVal.unknown(get_aval(val)), Literal(val))
+    aval = get_aval(val)
+    return JaxprTracer(self, PartialVal.unknown(aval), Literal(val, aval))
 
   def new_instantiated_const(self, val) -> 'JaxprTracer':
     return JaxprTracer(self, PartialVal.unknown(get_aval(val)), ConstVar(val))
@@ -981,7 +982,7 @@ def _inline_literals(jaxpr, constvals):
   def lit(var: core.Var) -> Optional[Any]:
     val = consts.get(var)
     if type(val) in core.literalable_types and not np.shape(val):
-      return Literal(val)
+      return Literal(val, var.aval)
     else:
       return None
 

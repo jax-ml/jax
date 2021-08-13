@@ -63,15 +63,20 @@ _dtype_to_32bit_dtype = {
 @util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  try:
-    dtype = np.dtype(dtype)
-  except TypeError as e:
-    raise TypeError(f'dtype {dtype!r} not understood') from e
-
+  dtype = make_array_dtype(dtype)
   if config.x64_enabled:
     return dtype
   else:
     return _dtype_to_32bit_dtype.get(dtype, dtype)
+
+
+@util.memoize
+def make_array_dtype(dtype):
+  """Convert from a potentially non-array dtype to an array dtype."""
+  try:
+    return np.dtype(dtype)
+  except TypeError as e:
+    raise TypeError(f'dtype {dtype!r} not understood') from e
 
 
 # Default dtypes corresponding to Python scalars.

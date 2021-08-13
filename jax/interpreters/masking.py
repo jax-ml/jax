@@ -462,7 +462,7 @@ class MaskTracer(Tracer):
 
   @property
   def dtype(self):
-    return dtypes.dtype(self.val)
+    return dtypes.canonicalize_dtype(dtypes.dtype(self.val))
 
   def is_pure(self):
     return all(type(poly) is not Poly or poly.is_constant

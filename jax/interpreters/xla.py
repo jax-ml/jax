@@ -448,15 +448,16 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
 
   def read(v):
     if type(v) is Literal:
-      return xb.constant_general(c, canonicalize_dtype(v.val))
+      # We need to ensure the dtype of the literal matches its aval's dtype
+      # or we will not form a correct XLA op.
+      val = (np.asarray(v.val, v.aval.dtype) if isinstance(v.aval,
+          core.UnshapedArray) else v.val)
+      return xb.constant_general(c, val, canonicalize_types=False)
     else:
       return env[v]
 
   def aval(v):
-    if type(v) is Literal:
-      return abstractify(v.val)
-    else:
-      return v.aval
+    return v.aval
 
   def write(v, node):
     assert node is not None

@@ -20,6 +20,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax._src import api
+from jax import jit
 from jax import lax
 from jax import partial
 from jax import random
@@ -154,6 +155,15 @@ class X64ContextTests(jtu.JaxTestCase):
 
     z = api.jit(lambda x: x.astype(jnp.int32))(x)
     self.assertEqual(z.dtype, jnp.int32)
+
+  def test_jit_with_x64_contextmanager(self):
+    @jit
+    def f(a):
+      with enable_x64():
+        return 1 + a
+    out = f(1)
+    self.assertEqual(out.dtype, jnp.int64)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -17,6 +17,7 @@ from jax._src.dtypes import (
     _jax_types,  # TODO(phawkins): fix users and remove?
     bfloat16,
     canonicalize_dtype,
+    make_array_dtype,
     finfo,  # TODO(phawkins): switch callers to jnp.finfo?
     float0,
     iinfo,  # TODO(phawkins): switch callers to jnp.iinfo?
