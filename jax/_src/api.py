@@ -1729,6 +1729,10 @@ class _PmapFastpathData(NamedTuple):
   in_handler: Any
   out_handler: Any
   out_pytree_def: Any
+  # Data needed to handle the inputs.
+  input_sharding_specs: Sequence[pxla.ShardingSpec]
+  input_devices: Sequence[xc.Device]
+  input_indices: Sequence[pxla.Index]
   # Data needed to build the ShardedDeviceArray from C++.
   out_sharding_specs: Sequence[pxla.ShardingSpec]
   out_indices: Sequence[pxla.Index]
@@ -1751,6 +1755,7 @@ def _cpp_pmap(
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
       out_axes)
+  del static_broadcasted_argnums, donate_argnums
 
   def cache_miss(*args, **kwargs):
     f_pmapped_ = _get_f_mapped(
@@ -1788,6 +1793,9 @@ def _cpp_pmap(
           in_handler=in_handler,
           out_handler=out_handler,
           out_pytree_def=out_pytree_def,
+          input_sharding_specs=in_handler.sharding_specs,
+          input_devices=in_handler.local_devices,
+          input_indices=in_handler.input_indices,
           out_sharding_specs=out_handler.out_specs,
           out_indices=out_handler.out_indices,
           out_avals=out_handler.unmapped_local_out_avals,
@@ -1798,7 +1806,8 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
-  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss, static_broadcasted_tuple)
+  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss, static_broadcasted_tuple,
+                               pxla._shard_arg)
 
   # TODO(jblespiau): make cpp callable follow descriptor protocol for bound
   # methods

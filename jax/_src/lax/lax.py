@@ -2102,11 +2102,12 @@ def zeros_like_array(x):
 
 for t in itertools.chain(
     dtypes.python_scalar_dtypes.keys(), array_types,
-    [xla._CppDeviceArray, xla._DeviceArray, pxla.ShardedDeviceArray]):
+    [xla._CppDeviceArray, xla._DeviceArray, pxla.ShardedDeviceArray, pxla.pmap_lib.ShardedDeviceArray]):
   ad_util.jaxval_adders[t] = add
 ad_util.jaxval_zeros_likers[xla._DeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[xla._CppDeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[pxla.ShardedDeviceArray] = zeros_like_array
+ad_util.jaxval_zeros_likers[pxla.pmap_lib.ShardedDeviceArray] = zeros_like_array
 
 
 ### primitives

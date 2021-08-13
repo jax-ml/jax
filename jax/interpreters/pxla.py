@@ -318,6 +318,32 @@ def spec_to_indices(shape: Tuple[int, ...],
 
 def identity(x): return x
 
+def _shard_arg(arg, devices, arg_indices):
+  """Returns a list of size len(devices) containing per-device buffers.
+
+  For the C++ pmap path, we fallback to Python (this function) to shard
+  arguments that are not supported by the C++ `ShardArg`.
+
+  Arrgs:
+    arg: The Python argument.
+    devices: The list of devices to shard over.
+    arg_indices: A list of `len(devices)` indices to use to shard the argument.
+  """
+  if isinstance(arg, ShardedDeviceArray) and arg_indices == arg.indices:
+    # The shard_arg_handlers allow an extensible set of types to be sharded, but
+    # inline handling for ShardedDeviceArray as a special case for performance
+    # NOTE: we compare indices instead of sharding_spec because
+    # pmap_benchmark.pmap_shard_args_benchmark indicates this is faster.
+    return [
+        buf if buf.device() == d else buf.copy_to_device(d)
+        for d, buf in zip(devices, arg.device_buffers)
+    ]
+  else:
+    arg = xla.canonicalize_dtype(arg)
+    return shard_arg_handlers[type(arg)](arg, devices, arg_indices)
+
+
+
 def shard_args(devices: Sequence[xb.xla_client.Device],
                indices: Sequence[Sequence[Index]],
                args) -> Sequence[Sequence[xb.xla_client.Buffer]]:
@@ -335,22 +361,7 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
     A list of length matching args, containing lists of per-device buffers
     for each argument.
   """
-
-  def shard_arg(a, arg):
-    # The shard_arg_handlers allow an extensible set of types to be sharded, but
-    # inline handling for ShardedDeviceArray as a special case for performance
-    # NOTE: we compare indices instead of sharding_spec because
-    # pmap_benchmark.pmap_shard_args_benchmark indicates this is faster.
-    if isinstance(arg, ShardedDeviceArray) and indices[a] == arg.indices:
-      return [
-          buf if buf.device() == d else buf.copy_to_device(d)
-          for d, buf in zip(devices, arg.device_buffers)
-      ]
-    else:
-      arg = xla.canonicalize_dtype(arg)
-      return shard_arg_handlers[type(arg)](arg, devices, indices[a])
-
-  return [shard_arg(a, arg) for a, arg in enumerate(args)]
+  return [_shard_arg(arg, devices, indices[a]) for a, arg in enumerate(args)]
 
 
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
@@ -455,7 +466,7 @@ pxla_result_handlers[ConcreteArray] = array_result_handler
 ### lazy device-memory persistence and result handling
 
 # TODO(jblespiau): Remove when jaxlib 0.1.71 is the minimal version.
-_USE_CPP_SDA = _xla_extension_version >= 33
+_USE_CPP_SDA = _xla_extension_version >= 34
 
 
 def make_sharded_device_array(
@@ -491,7 +502,7 @@ def make_sharded_device_array(
       (not device_buffers or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
     return pmap_lib.ShardedDeviceArray(aval, sharding_spec, device_buffers,
-                                       indices)
+                                       indices, aval.weak_type)
 
   return _ShardedDeviceArray(aval, sharding_spec, device_buffers, indices)
 
@@ -502,12 +513,12 @@ if _USE_CPP_SDA:
   # benefit from its methods, and to have isinstance(x, DeviceArray) return true
   ShardedDeviceArrayBase.__bases__ = ((xla.DeviceArray,) +  # type: ignore
                                       ShardedDeviceArrayBase.__bases__)
-  base_class = pmap_lib.ShardedDeviceArrayBase  # type: ignore
+  _SDA_BASE_CLASS = pmap_lib.ShardedDeviceArrayBase  # type: ignore
 else:
-  base_class: Type[xla.DeviceArray] = xla.DeviceArray  # type: ignore
+  _SDA_BASE_CLASS: Type[xla.DeviceArray] = xla.DeviceArray  # type: ignore
 
 
-class _ShardedDeviceArray(base_class):  # type: ignore
+class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
   """A ShardedDeviceArray is an ndarray sharded across devices.
 
   The purpose of a ShardedDeviceArray is to reduce the number of transfers when
@@ -542,11 +553,7 @@ class _ShardedDeviceArray(base_class):  # type: ignore
                sharding_spec: ShardingSpec,
                device_buffers: List[xb.xla_client.Buffer],
                indices: Optional[Tuple[Index, ...]] = None):
-    # We don't use `super`, following pybind11 guidelines:
-    # https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python
-    xla.DeviceArray.__init__(self)
-    if _USE_CPP_SDA:
-      ShardedDeviceArrayBase.__init__(self)  # type: ignore
+    super().__init__()
 
     # TODO(skye): assert invariants. Keep performance in mind though.
     if indices is None:
@@ -577,6 +584,14 @@ class _ShardedDeviceArray(base_class):  # type: ignore
   def ndim(self):
     return len(self.aval.shape)
 
+  def delete(self):
+    if self.device_buffers is None:
+      return
+    for buf in self.device_buffers:
+      buf.delete()
+    self.device_buffers = None
+    self._npy_value = None
+
 
 def _sda_one_replica_buffer_indices(self):
   """Indices of buffers containing one complete copy of the array data."""
@@ -595,16 +610,6 @@ def _sda_one_replica_buffer_indices(self):
 def _sda_copy_to_host_async(self):
   for buffer_index in self.one_replica_buffer_indices:
     self.device_buffers[buffer_index].copy_to_host_async()
-
-
-def _sda_delete(self):
-  if self.device_buffers is None:
-    return
-
-  for buf in self.device_buffers:
-    buf.delete()
-  self.device_buffers = None
-  self._npy_value = None
 
 
 def _sda_check_if_deleted(self):
@@ -651,13 +656,12 @@ for sda in [_ShardedDeviceArray, pmap_lib.ShardedDeviceArray]:
   setattr(sda, "one_replica_buffer_indices",
           property(_sda_one_replica_buffer_indices))
   setattr(sda, "copy_to_host_async", _sda_copy_to_host_async)
-  setattr(sda, "delete", _sda_delete)
   setattr(sda, "_check_if_deleted", _sda_check_if_deleted)
   setattr(sda, "block_until_ready", _sda_block_until_ready)
   setattr(sda, "_value", property(_sda_value))
   setattr(sda, "__getitem__", _sda__getitem__)
 
-del (_sda_one_replica_buffer_indices, _sda_copy_to_host_async, _sda_delete,
+del (_sda_one_replica_buffer_indices, _sda_copy_to_host_async,
      _sda_check_if_deleted, _sda_block_until_ready, _sda_value, _sda__getitem__)
 
 
@@ -1004,7 +1008,8 @@ def parallel_callable(fun: lu.WrappedFun,
     return WeakRefList([execute_fun, None])
 
   compiled = xla.compile_or_get_cached(backend, built, compile_options)
-  handle_args = partial(shard_args, compiled.local_devices(), input_indices)
+  handle_args = InputsHandler(compiled.local_devices(), input_sharding_specs,
+                              input_indices)
   execute_fun = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
   fingerprint = getattr(compiled, "fingerprint", None)
   return WeakRefList([execute_fun, fingerprint])
@@ -1134,6 +1139,19 @@ def _safe_div(x, y):
   result, ragged = divmod(x, y)
   assert not ragged, f"{x} % {y} != 0"
   return result
+
+
+class InputsHandler:
+  __slots__ = ("handler", "local_devices", "sharding_specs", "input_indices")
+
+  def __init__(self, local_devices, sharding_specs, input_indices):
+    self.handler = partial(shard_args, local_devices, input_indices)
+    self.local_devices = local_devices
+    self.sharding_specs = sharding_specs
+    self.input_indices = input_indices
+
+  def __call__(self, input_buffers):
+    return self.handler(input_buffers)
 
 
 class ResultsHandler:
@@ -1671,7 +1689,8 @@ def compile_and_wrap_mesh_hlo(computation: xc.XlaComputation, backend,
                                       input_indices, local_input_specs,
                                       handle_outs)
   compiled = xla.compile_or_get_cached(backend, computation, compile_options)
-  handle_args = partial(shard_args, compiled.local_devices(), input_indices)
+  handle_args = InputsHandler(compiled.local_devices(), local_input_specs,
+                              input_indices)
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
 
 _forbidden_primitives = {
