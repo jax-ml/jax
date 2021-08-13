@@ -193,53 +193,68 @@ register_backend_factory(
   'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
 
 _default_backend = None
-_backends = None
-_backends_errors = None
+_backends = {}
 _backend_lock = threading.Lock()
 
 
 def backends():
   global _backends
-  global _backends_errors
   global _default_backend
 
   with _backend_lock:
-    if _backends is not None:
+    all_backends_initialized = len(_backends) == len(_backend_factories)
+    if all_backends_initialized:
       return _backends
 
     default_priority = -1000
-    _backends = {}
-    _backends_errors = {}
-    for name, (factory, priority) in _backend_factories.items():
-      logging.vlog(1, "Initializing backend '%s'" % name)
+    for platform, (factory, priority) in _backend_factories.items():
       try:
-        backend = factory()
-        if backend is not None:
-          if backend.device_count() > 0:
-            _backends[name] = backend
-          util.distributed_debug_log(("Initialized backend", backend.platform),
-                                     ("process_index", backend.process_index()),
-                                     ("device_count", backend.device_count()),
-                                     ("local_devices", backend.local_devices()))
-          logging.vlog(1, "Backend '%s' initialized" % name)
-          if priority > default_priority:
-            _default_backend = backend
-            default_priority = priority
+        backend = _get_backend(platform)
+        if priority > default_priority:
+          _default_backend = backend
+          default_priority = priority
       except Exception as err:
-        if name in ('cpu', 'interpreter'):
+        if platform in ('cpu', 'interpreter'):
           # We always expect the CPU and interpreter backends to initialize
           # successfully.
           raise
         else:
           # If the backend isn't built into the binary, or if it has no devices,
           # we expect a RuntimeError.
-          logging.info("Unable to initialize backend '%s': %s" % (name, err))
-          _backends_errors[name] = str(err)
+          logging.info("Unable to initialize backend '%s': %s" % (platform, err))
           continue
     if _default_backend.platform == "cpu" and FLAGS.jax_platform_name != 'cpu':
       logging.warning('No GPU/TPU found, falling back to CPU. '
                       '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
     return _backends
+
+
+def _get_backend(platform):
+  global _backends
+  assert _backend_lock.locked()
+
+  if platform in _backends:
+    return _backends[platform]
+
+  factory, unused_priority = _backend_factories.get(platform, (None, None))
+  if factory is None:
+    raise RuntimeError(f"Unknown backend '{platform}'")
+
+  logging.vlog(1, "Initializing backend '%s'" % platform)
+  backend = factory()
+  # TODO(skye): consider raising more descriptive errors directly from backend
+  # factories instead of returning None.
+  if backend is None:
+    raise RuntimeError(f"Could not initialize backend '{platform}'")
+  if backend.device_count() == 0:
+    raise RuntimeError(f"Backend '{platform}' provides no devices.")
+  _backends[platform] = backend
+  util.distributed_debug_log(("Initialized backend", backend.platform),
+                             ("process_index", backend.process_index()),
+                             ("device_count", backend.device_count()),
+                             ("local_devices", backend.local_devices()))
+  logging.vlog(1, "Backend '%s' initialized" % platform)
+  return backend
 
 
 @lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
@@ -249,18 +264,13 @@ def get_backend(platform=None):
   if not isinstance(platform, (type(None), str)):
     return platform
 
-  bs = backends()
   platform = (platform or FLAGS.jax_xla_backend or FLAGS.jax_platform_name
               or None)
   if platform is not None:
-    backend = bs.get(platform, None)
-    if backend is None:
-      if platform in _backends_errors:
-        raise RuntimeError(f"Requested backend {platform}, but it failed "
-                           f"to initialize: {_backends_errors[platform]}")
-      raise RuntimeError(f"Unknown backend {platform}")
-    return backend
+    with _backend_lock:
+      return _get_backend(platform)
   else:
+    backends()
     return _default_backend
 
 

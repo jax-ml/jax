@@ -58,7 +58,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertNotEmpty(xb.local_devices())
     with self.assertRaisesRegex(ValueError, "Unknown process_index 100"):
       xb.local_devices(100)
-    with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
+    with self.assertRaisesRegex(RuntimeError, "Unknown backend 'foo'"):
       xb.local_devices(backend="foo")
 
   def test_timer_tpu_warning(self):
@@ -118,8 +118,7 @@ class GetBackendTest(jtu.JaxTestCase):
     self._reset_backend_state()
 
   def _reset_backend_state(self):
-    xb._backends = None
-    xb._backends_errors = None
+    xb._backends = {}
     xb._default_backend = None
     xb.get_backend.cache_clear()
 
@@ -139,11 +138,10 @@ class GetBackendTest(jtu.JaxTestCase):
     backend = xb.get_backend("platform_B")
     self.assertEqual(backend.platform, "platform_B")
     # All backends initialized.
-    # TODO: only initialize the requested backend
-    self.assertEqual(len(xb._backends), len(xb._backend_factories))
+    self.assertLen(xb._backends, 1)
 
   def test_unknown_backend_error(self):
-    with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
+    with self.assertRaisesRegex(RuntimeError, "Unknown backend 'foo'"):
       xb.get_backend("foo")
 
   def test_backend_init_error(self):
@@ -159,27 +157,19 @@ class GetBackendTest(jtu.JaxTestCase):
       xb.get_backend("error")
 
   def test_no_devices(self):
-    self._register_factory("no_devices", -10, device_count=0)
+    self._register_factory("no_devices", 10, device_count=0)
     default_backend = xb.get_backend()
     self.assertEqual(default_backend.platform, "cpu")
-    with self.assertRaisesRegex(RuntimeError, "Unknown backend no_devices"):
+    with self.assertRaisesRegex(RuntimeError,
+                                "Backend 'no_devices' provides no devices."):
       xb.get_backend("no_devices")
-
-    self._reset_backend_state()
-
-    # TODO: this doesn't seem like desirable behavior, do something more
-    # consistent
-    self._register_factory("no_devices2", 10, device_count=0)
-    default_backend = xb.get_backend()
-    self.assertEqual(default_backend.platform, "no_devices2")
-    with self.assertRaisesRegex(RuntimeError, "Unknown backend no_devices2"):
-      xb.get_backend("no_devices2")
 
   def test_factory_returns_none(self):
     xb.register_backend_factory("none", lambda: None, priority=10)
     default_backend = xb.get_backend()
     self.assertEqual(default_backend.platform, "cpu")
-    with self.assertRaisesRegex(RuntimeError, "Unknown backend none"):
+    with self.assertRaisesRegex(RuntimeError,
+                                "Could not initialize backend 'none'"):
       xb.get_backend("none")
 
   def cpu_fallback_warning(self):
