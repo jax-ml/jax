@@ -8,8 +8,13 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.19 (unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.2.18...main).
+## jax 0.2.20 (unreleased)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.19...main).
+
+## jax 0.2.19 (Aug 12, 2021)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.18...jax-v0.2.19).
 * Breaking changes:
   * Support for NumPy 1.17 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
@@ -27,7 +32,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Improved the support for shape polymorphism in jax2tf for operations that
     need to use a dimension size in array computation, e.g., `jnp.mean`.
     ({jax-issue}`#7317`)
-  
+* Bug fixes:
+  * Some leaked trace errors from the previous release ({jax-issue}`#7613`)
+
 ## jaxlib 0.1.70 (Aug 9, 2021)
 * Breaking changes:
   * Support for Python 3.6 has been dropped, per the
