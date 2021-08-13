@@ -41,7 +41,7 @@ def get_entries(gcs_uri, whl_filter=".whl"):
   ls_output = subprocess.check_output(["gsutil", "ls", gcs_uri])
   for line in ls_output.decode("utf-8").split("\n"):
     # Skip incorrectly formatted wheel filenames and other gsutil output
-    if not whl_filter in line: continue
+    if whl_filter not in line: continue
     # Example lines:
     #  gs://jax-releases/cuda101/jaxlib-0.1.52+cuda101-cp38-none-manylinux2010_x86_64.whl
     #  gs://cloud-tpu-tpuvm-artifacts/wheels/libtpu-nightly/libtpu_nightly-0.1.dev20210615-py3-none-any.whl
@@ -66,7 +66,9 @@ def write_release_index(filename, entries):
   print("Done.")
 
 jaxlib_cuda_entries = get_entries("gs://jax-releases/cuda*", whl_filter="+cuda")
+jaxlib_nocuda_entries = get_entries("gs://jax-releases/nocuda")
 libtpu_entries = get_entries("gs://cloud-tpu-tpuvm-artifacts/wheels/libtpu-nightly/")
 
-write_release_index(JAXLIB_INDEX_FILENAME, jaxlib_cuda_entries)
+write_release_index(JAXLIB_INDEX_FILENAME,
+                    jaxlib_cuda_entries + jaxlib_nocuda_entries)
 write_release_index(LIBTPU_INDEX_FILENAME, libtpu_entries)
