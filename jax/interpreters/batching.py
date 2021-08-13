@@ -66,7 +66,7 @@ def _match_axes(axis_size, axis_name, in_dims, out_dims_thunk, out_dim_dests,
   out_dims = out_dims_thunk()
   for od, od_dest in zip(out_dims, out_dim_dests):
     if od is not None and not isinstance(od_dest, int):
-      if not isinstance(axis_name, core._TempAxisName):
+      if not isinstance(axis_name, core._TempAxisName) and axis_name is not None:
         msg = f"vmap has mapped output (axis_name={axis_name}) but out_axes is {od_dest}"
       else:
         msg = f"vmap has mapped output but out_axes is {od_dest}"

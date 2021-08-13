@@ -2949,6 +2949,20 @@ class APITest(jtu.JaxTestCase):
     with jax.checking_leaks():
       _ = jax.grad(loss)(A, x)  # doesn't crash
 
+  def test_vmap_caching(self):
+    # https://github.com/google/jax/issues/7621
+
+    f = lambda x: jnp.square(x).mean()
+    jf = jax.jit(f)
+    x = jax.random.uniform(jax.random.PRNGKey(0), shape=(8, 4))
+
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      jax.hessian(jf)(x).block_until_ready()
+      jax.hessian(jf)(x).block_until_ready()
+      jax.hessian(jf)(x).block_until_ready()
+
+    self.assertEqual(count[0], 2)
+
 
 class RematTest(jtu.JaxTestCase):
 
