@@ -34,12 +34,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - name-prefix: "with many tests"
+          - name-prefix: "with 3.8"
             python-version: 3.8
             os: ubuntu-latest
             enable-x64: 0
             package-overrides: "none"
-            num_generated_cases: 25
+            num_generated_cases: 10
             use-latest-jaxlib: false
           - name-prefix: "with numpy-dispatch"
             python-version: 3.9
