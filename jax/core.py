@@ -1190,7 +1190,7 @@ class ConcreteArray(ShapedArray):
       raise TypeError(self, other)
 
   def str_short(self) -> str:
-    return str(self.val)
+    return f'{self.val}, dtype={self.dtype.name}'
 
   _bool = _nonzero = partialmethod(_forward_to_value, bool)
   _int             = partialmethod(_forward_to_value, int)
