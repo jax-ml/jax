@@ -45,6 +45,162 @@ complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
 uint_dtypes = jtu.dtypes.all_unsigned
 
+
+@jtu.with_config(jax_numpy_rank_promotion="raise")
+class PrngTest(jtu.JaxTestCase):
+
+  def testThreefry2x32(self):
+    # We test the hash by comparing to known values provided in the test code of
+    # the original reference implementation of Threefry. For the values, see
+    # https://github.com/DEShawResearch/Random123-Boost/blob/65e3d874b67aa7b3e02d5ad8306462f52d2079c0/libs/random/test/test_threefry.cpp#L30-L32
+    def result_to_hex(result):
+      return tuple([hex(x.copy()).rstrip("L") for x in result])
+
+    expected = ("0x6b200159", "0x99ba4efe")
+    result = prng.threefry_2x32(np.uint32([0, 0]), np.uint32([0, 0]))
+
+    self.assertEqual(expected, result_to_hex(result))
+
+    expected = ("0x1cb996fc", "0xbb002be7")
+    result = prng.threefry_2x32(np.uint32([-1, -1]), np.uint32([-1, -1]))
+    self.assertEqual(expected, result_to_hex(result))
+
+    expected = ("0xc4923a9c", "0x483df7a0")
+    result = prng.threefry_2x32(
+        np.uint32([0x13198a2e, 0x03707344]),
+        np.uint32([0x243f6a88, 0x85a308d3]))
+    self.assertEqual(expected, result_to_hex(result))
+
+  def testThreefry2x32Large(self):
+    n = 10000000
+    result = prng.threefry_2x32(
+      (np.uint32(0x13198a2e), np.uint32(0x03707344)),
+      jnp.concatenate([
+        jnp.full((n,), 0x243f6a88, jnp.uint32),
+        jnp.full((n,), 0x85a308d3, jnp.uint32)
+      ]))
+    np.testing.assert_equal(result[:n], np.full((n,), 0xc4923a9c, dtype=np.uint32))
+    np.testing.assert_equal(result[n:], np.full((n,), 0x483df7a0, dtype=np.uint32))
+
+  def testThreefry2x32Empty(self):
+    # Regression test for an op-by-op crash for empty arrays in CUDA mode.
+    with api.disable_jit():
+      result = prng.threefry_2x32(
+        (np.uint32(0x13198a2e), np.uint32(0x03707344)),
+        jnp.ones((10, 0,), jnp.uint32))
+    np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
+
+  def testNoOpByOpUnderHash(self):
+    def fail(*args, **kwargs): assert False
+    apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
+    try:
+      _ = prng.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
+    finally:
+      xla.apply_primitive = apply_primitive
+
+  def testRngRandomBits(self):
+    # Test specific outputs to ensure consistent random values between JAX versions.
+    key = random.PRNGKey(1701)
+
+    bits8 = jax._src.random._random_bits(key, 8, (3,))
+    expected8 = np.array([216, 115,  43], dtype=np.uint8)
+    self.assertArraysEqual(bits8, expected8)
+
+    bits16 = jax._src.random._random_bits(key, 16, (3,))
+    expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
+    self.assertArraysEqual(bits16, expected16)
+
+    bits32 = jax._src.random._random_bits(key, 32, (3,))
+    expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
+    self.assertArraysEqual(bits32, expected32)
+
+    with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
+      bits64 = jax._src.random._random_bits(key, 64, (3,))
+    if config.x64_enabled:
+      expected64 = np.array([3982329540505020460, 16822122385914693683,
+                             7882654074788531506], dtype=np.uint64)
+    else:
+      expected64 = np.array([676898860, 3164047411, 4010691890], dtype=np.uint32)
+    self.assertArraysEqual(bits64, expected64)
+
+  def testRngRandomBitsViewProperty(self):
+    # TODO: add 64-bit if it ever supports this property.
+    # TODO: will this property hold across endian-ness?
+    N = 10
+    key = random.PRNGKey(1701)
+    nbits = [8, 16, 32]
+    rand_bits = [jax._src.random._random_bits(key, n, (N * 64 // n,))
+                 for n in nbits]
+    rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
+    assert np.all(rand_bits_32 == rand_bits_32[0])
+
+  def testPRNGValues(self):
+    # Test to ensure consistent random values between JAX versions
+    k = random.PRNGKey(0)
+
+    if config.x64_enabled:
+        self.assertAllClose(
+            random.randint(k, (3, 3), 0, 8),
+            np.array([[7, 2, 6],
+                       [2, 1, 0],
+                       [6, 7, 7]], dtype='int64'))
+    else:
+        self.assertAllClose(
+            random.randint(k, (3, 3), 0, 8),
+            np.array([[2, 1, 3],
+                       [6, 1, 5],
+                       [6, 3, 4]], dtype='int32'))
+
+    self.assertAllClose(
+        random.split(k, 4).keys,
+        np.array([[2285895361, 1501764800],
+                   [1518642379, 4090693311],
+                   [ 433833334, 4221794875],
+                   [ 839183663, 3740430601]], dtype='uint32'))
+
+    self.assertAllClose(
+        random.fold_in(k, 4).keys,
+        np.array([2285895361,  433833334], dtype='uint32'))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "seed={seed}_type={type}_jit={jit}".format(**dct), **dct} for dct in [
+      {"seed": 0, "type": int, "jit": True, "key": [0, 0]},
+      {"seed": 0, "type": int, "jit": False, "key": [0, 0]},
+      {"seed": 1, "type": np.int32, "jit": True, "key": [0, 1]},
+      {"seed": 1, "type": np.int32, "jit": False, "key": [0, 1]},
+      {"seed": 2, "type": np.uint32, "jit": True, "key": [0, 2]},
+      {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
+      {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
+      {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
+      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+      {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
+      {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
+      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+    ]
+  ))
+  def test_prng_seeds_and_keys(self, seed, type, jit, key):
+    if (jit and type is int and not config.x64_enabled and
+        (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
+      self.skipTest("Expected failure: integer out of range for jit.")
+    seed = type(seed)
+    if jit:
+      actual = api.jit(random.PRNGKey)(seed).keys
+    else:
+      actual = random.PRNGKey(seed).keys
+    expected = jnp.array(key, dtype=jnp.uint32)
+    self.assertArraysEqual(actual, expected)
+
+
 @jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomTest(jtu.JaxTestCase):
 
@@ -88,6 +244,9 @@ class LaxRandomTest(jtu.JaxTestCase):
             'Expected vs. actual frequencies:\n'
             f'{expected_freq}\n{actual_freq}')
 
+  def seed_prng(self, seed):
+    return random.PRNGKey(seed)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in jtu.dtypes.floating))
@@ -98,88 +257,11 @@ class LaxRandomTest(jtu.JaxTestCase):
         lambda: lax.bitcast_convert_type(np.array(1., dtype), bits_dtype))()
     self.assertEqual(numpy_bits, xla_bits)
 
-  def testThreefry2x32(self):
-    # We test the hash by comparing to known values provided in the test code of
-    # the original reference implementation of Threefry. For the values, see
-    # https://github.com/DEShawResearch/Random123-Boost/blob/65e3d874b67aa7b3e02d5ad8306462f52d2079c0/libs/random/test/test_threefry.cpp#L30-L32
-    def result_to_hex(result):
-      return tuple([hex(x.copy()).rstrip("L") for x in result])
-
-    expected = ("0x6b200159", "0x99ba4efe")
-    result = prng.threefry_2x32(np.uint32([0, 0]), np.uint32([0, 0]))
-
-    self.assertEqual(expected, result_to_hex(result))
-
-    expected = ("0x1cb996fc", "0xbb002be7")
-    result = prng.threefry_2x32(np.uint32([-1, -1]), np.uint32([-1, -1]))
-    self.assertEqual(expected, result_to_hex(result))
-
-    expected = ("0xc4923a9c", "0x483df7a0")
-    result = prng.threefry_2x32(
-        np.uint32([0x13198a2e, 0x03707344]),
-        np.uint32([0x243f6a88, 0x85a308d3]))
-    self.assertEqual(expected, result_to_hex(result))
-
-  def testThreefry2x32Large(self):
-    n = 10000000
-    result = prng.threefry_2x32(
-      (np.uint32(0x13198a2e), np.uint32(0x03707344)),
-      jnp.concatenate([
-        jnp.full((n,), 0x243f6a88, jnp.uint32),
-        jnp.full((n,), 0x85a308d3, jnp.uint32)
-      ]))
-    np.testing.assert_equal(result[:n], np.full((n,), 0xc4923a9c, dtype=np.uint32))
-    np.testing.assert_equal(result[n:], np.full((n,), 0x483df7a0, dtype=np.uint32))
-
-  def testThreefry2x32Empty(self):
-    # Regression test for an op-by-op crash for empty arrays in CUDA mode.
-    with api.disable_jit():
-      result = prng.threefry_2x32(
-        (np.uint32(0x13198a2e), np.uint32(0x03707344)),
-        jnp.ones((10, 0,), jnp.uint32))
-    np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
-
-  def testRngRandomBitsViewProperty(self):
-    # TODO: add 64-bit if it ever supports this property.
-    # TODO: will this property hold across endian-ness?
-    N = 10
-    key = random.PRNGKey(1701)
-    nbits = [8, 16, 32]
-    rand_bits = [jax._src.random._random_bits(key, n, (N * 64 // n,))
-                 for n in nbits]
-    rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
-    assert np.all(rand_bits_32 == rand_bits_32[0])
-
-  def testRngRandomBits(self):
-    # Test specific outputs to ensure consistent random values between JAX versions.
-    key = random.PRNGKey(1701)
-
-    bits8 = jax._src.random._random_bits(key, 8, (3,))
-    expected8 = np.array([216, 115,  43], dtype=np.uint8)
-    self.assertArraysEqual(bits8, expected8)
-
-    bits16 = jax._src.random._random_bits(key, 16, (3,))
-    expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
-    self.assertArraysEqual(bits16, expected16)
-
-    bits32 = jax._src.random._random_bits(key, 32, (3,))
-    expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
-    self.assertArraysEqual(bits32, expected32)
-
-    with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
-      bits64 = jax._src.random._random_bits(key, 64, (3,))
-    if config.x64_enabled:
-      expected64 = np.array([3982329540505020460, 16822122385914693683,
-                             7882654074788531506], dtype=np.uint64)
-    else:
-      expected64 = np.array([676898860, 3164047411, 4010691890], dtype=np.uint32)
-    self.assertArraysEqual(bits64, expected64)
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testRngUniform(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -197,7 +279,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     lo = 5
     hi = 10
 
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.randint(key, (10000,), lo, hi, dtype)
     crand = api.jit(rand)
 
@@ -212,7 +294,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testNormal(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -225,15 +307,15 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testNormalBfloat16(self):
     # Passing bfloat16 as dtype string.
     # https://github.com/google/jax/issues/6813
-    res_bfloat16_str = random.normal(random.PRNGKey(0), dtype='bfloat16')
-    res_bfloat16 = random.normal(random.PRNGKey(0), dtype=jnp.bfloat16)
+    res_bfloat16_str = random.normal(self.seed_prng(0), dtype='bfloat16')
+    res_bfloat16 = random.normal(self.seed_prng(0), dtype=jnp.bfloat16)
     self.assertAllClose(res_bfloat16, res_bfloat16_str)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in complex_dtypes))
   def testNormalComplex(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -249,7 +331,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testTruncatedNormal(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -267,7 +349,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in jtu.dtypes.floating + jtu.dtypes.integer))
   def testShuffle(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     x = np.arange(100).astype(dtype)
     rand = lambda key: random.shuffle(key, x)
     crand = api.jit(rand)
@@ -293,7 +375,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for array_input in [False, 'jnp', 'np']))
   def testChoice(self, dtype, shape, replace, weighted, array_input):
     N = 100
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     x = (N if not array_input else
          jnp.arange(N, dtype=dtype) if array_input == 'jnp' else
          np.arange(N, dtype=dtype))
@@ -317,7 +399,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dtype in jtu.dtypes.floating + jtu.dtypes.integer
       for shape in [100, (10, 10), (10, 5, 2), 0, 1, (0, 5), (1, 5)]))
   def testPermutationArray(self, dtype, shape):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     x = jnp.arange(np.prod(shape)).reshape(shape).astype(dtype)
     rand = lambda key: random.permutation(key, x)
     crand = api.jit(rand)
@@ -333,7 +415,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       x, jnp.arange(np.prod(shape)).reshape(shape).astype(dtype))
 
   def testPermutationInteger(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     x = 100
     rand = lambda key: random.permutation(key, x)
     crand = api.jit(rand)
@@ -347,7 +429,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertAllClose(np.sort(perm1), np.arange(100), check_dtypes=False)
 
   def testPermutationErrors(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     with self.assertRaises(TypeError):
       random.permutation(key, 10.)
     with self.assertRaises(core.ConcretizationTypeError):
@@ -359,7 +441,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for p in [0.1, 0.5, 0.9]
       for dtype in jtu.dtypes.floating))
   def testBernoulli(self, p, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     p = np.array(p, dtype=dtype)
     rand = lambda key, p: random.bernoulli(key, p, (10000,))
     crand = api.jit(rand)
@@ -382,7 +464,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     for sample_shape in [(10000,), (5000, 2)]
     for dtype in jtu.dtypes.floating))
   def testCategorical(self, p, axis, dtype, sample_shape):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     p = np.array(p, dtype=dtype)
     logits = np.log(p) - 42 # test unnormalized
     out_shape = tuple(np.delete(logits.shape, axis))
@@ -409,7 +491,7 @@ class LaxRandomTest(jtu.JaxTestCase):
         self._CheckChiSquared(samples, pmf=pmf)
 
   def testBernoulliShape(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     with jax.numpy_rank_promotion('allow'):
       x = random.bernoulli(key, np.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
@@ -423,7 +505,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testBeta(self, a, b, dtype):
     if not config.x64_enabled:
       raise SkipTest("skip test except on X64")
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -437,7 +519,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testCauchy(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -456,7 +538,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dtype in jtu.dtypes.floating))
   @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -473,7 +555,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testExponential(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.exponential(key, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -489,7 +571,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for a in [0.1, 1., 10.]
       for dtype in jtu.dtypes.floating))
   def testGamma(self, a, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -500,7 +582,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
 
   def testGammaShape(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     x = random.gamma(key, np.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
 
@@ -508,7 +590,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_a={}".format(alpha), "alpha": alpha}
       for alpha in [1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4]))
   def testGammaGrad(self, alpha):
-    rng = random.PRNGKey(0)
+    rng = self.seed_prng(0)
     alphas = np.full((100,), alpha)
     z = random.gamma(rng, alphas)
     actual_grad = api.grad(lambda x: random.gamma(rng, x).sum())(alphas)
@@ -525,7 +607,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testGammaGradType(self):
     # Regression test for https://github.com/google/jax/issues/2130
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     a = jnp.array(1., dtype=jnp.float32)
     b = jnp.array(3., dtype=jnp.float32)
     f = lambda x, y: random.gamma(key=key, a=x, dtype=jnp.float32) / y
@@ -538,7 +620,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for lam in [0.5, 3, 9, 11, 50, 500]
       for dtype in [np.int16, np.int32, np.int64]))
   def testPoisson(self, lam, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -553,19 +635,19 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
 
   def testPoissonBatched(self):
-    key = random.PRNGKey(1)
+    key = self.seed_prng(1)
     lam = jnp.concatenate([2 * jnp.ones(10000), 20 * jnp.ones(10000)])
     samples = random.poisson(key, lam, shape=(20000,))
     self._CheckChiSquared(samples[:10000], scipy.stats.poisson(2.0).pmf)
     self._CheckChiSquared(samples[10000:], scipy.stats.poisson(20.0).pmf)
 
   def testPoissonShape(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     x = random.poisson(key, np.array([2.0, 20.0]), shape=(3, 2))
     assert x.shape == (3, 2)
 
   def testPoissonZeros(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     lam = jnp.concatenate([jnp.zeros(10), 20 * jnp.ones(10)])
     samples = random.poisson(key, lam, shape=(2, 20))
     self.assertArraysEqual(samples[:, :10], jnp.zeros_like(samples[:, :10]))
@@ -574,7 +656,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in jtu.dtypes.floating))
   def testGumbel(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.gumbel(key, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -588,7 +670,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testLaplace(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.laplace(key, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -602,7 +684,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testLogistic(self, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key: random.logistic(key, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -618,7 +700,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for b in [0.1, 1., 10.]
       for dtype in jtu.dtypes.floating))
   def testPareto(self, b, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key, b: random.pareto(key, b, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -629,7 +711,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.pareto(b).cdf)
 
   def testParetoShape(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     with jax.numpy_rank_promotion('allow'):
       x = random.pareto(key, np.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
@@ -641,7 +723,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dtype in jtu.dtypes.floating))
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
     crand = api.jit(rand)
 
@@ -664,7 +746,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     cov_factor = r.randn(dim, dim)
     cov = np.dot(cov_factor, cov_factor.T) + dim * np.eye(dim)
 
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     rand = partial(random.multivariate_normal, mean=mean, cov=cov,
                    shape=(10000,), method=method)
     crand = api.jit(rand)
@@ -697,7 +779,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testMultivariateNormalShapes(self, dim, mean_batch_size, cov_batch_size,
                                    shape):
     r = np.random.RandomState(0)
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     eff_batch_size = mean_batch_size \
       if len(mean_batch_size) > len(cov_batch_size) else cov_batch_size
     mean = r.randn(*(mean_batch_size + (dim,)))
@@ -720,7 +802,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     out_np = np.random.RandomState(0).multivariate_normal(mean, cov, N)
 
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     with jax.numpy_rank_promotion('allow'):
       out_jnp = random.multivariate_normal(key, mean=mean, cov=cov, shape=(N,))
 
@@ -735,19 +817,19 @@ class LaxRandomTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def testIssue222(self):
-    x = random.randint(random.PRNGKey(10003), (), 0, 0)
+    x = random.randint(self.seed_prng(10003), (), 0, 0)
     assert x == 0
 
   def testFoldIn(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     keys = [random.fold_in(key, i).keys for i in range(10)]
-    assert np.unique(np.ravel(keys)).shape == (20,)
+    assert np.unique(keys, axis=0).shape[0] == 10
 
   def testFoldInBig(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     seeds = [2 ** 32 - 2, 2 ** 32 - 1]
     keys = [random.fold_in(key, seed).keys for seed in seeds]
-    assert np.unique(np.ravel(keys)).shape == (4,)
+    assert np.unique(keys, axis=0).shape[0] == 2
 
   def testStaticShapeErrors(self):
     if config.jax_disable_jit:
@@ -755,7 +837,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     @api.jit
     def feature_map(n, d, sigma=1.0, seed=123):
-      key = random.PRNGKey(seed)
+      key = self.seed_prng(seed)
       W = random.normal(key, (d, n)) / sigma
       w = random.normal(key, (d, )) / sigma
       b = 2 * jnp.pi * random.uniform(key, (d, ))
@@ -767,7 +849,7 @@ class LaxRandomTest(jtu.JaxTestCase):
                            lambda: feature_map(5, 3))
 
   def testIssue756(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     w = random.normal(key, ())
     if config.x64_enabled:
       self.assertEqual(np.result_type(w), np.float64)
@@ -776,54 +858,18 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testIssue1789(self):
     def f(x):
-      return random.gamma(random.PRNGKey(0), x)
+      return random.gamma(self.seed_prng(0), x)
 
     grad(lambda x: jnp.sum(vmap(f)(x)))(jnp.ones(2))
 
-  def testNoOpByOpUnderHash(self):
-    def fail(*args, **kwargs): assert False
-    apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
-    try:
-      _ = prng.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
-    finally:
-      xla.apply_primitive = apply_primitive
-
-  def testPRNGValues(self):
-    # Test to ensure consistent random values between JAX versions
-    k = random.PRNGKey(0)
-
-    if config.x64_enabled:
-        self.assertAllClose(
-            random.randint(k, (3, 3), 0, 8),
-            np.array([[7, 2, 6],
-                       [2, 1, 0],
-                       [6, 7, 7]], dtype='int64'))
-    else:
-        self.assertAllClose(
-            random.randint(k, (3, 3), 0, 8),
-            np.array([[2, 1, 3],
-                       [6, 1, 5],
-                       [6, 3, 4]], dtype='int32'))
-
-    self.assertAllClose(
-        random.split(k, 4).keys,
-        np.array([[2285895361, 1501764800],
-                   [1518642379, 4090693311],
-                   [ 433833334, 4221794875],
-                   [ 839183663, 3740430601]], dtype='uint32'))
-
-    self.assertAllClose(
-        random.fold_in(k, 4).keys,
-        np.array([2285895361,  433833334], dtype='uint32'))
-
   def testDtypeErrorMessage(self):
     with self.assertRaisesRegex(ValueError, r"dtype argument to.*"):
-      random.normal(random.PRNGKey(0), (), dtype=jnp.int32)
+      random.normal(self.seed_prng(0), (), dtype=jnp.int32)
 
   def testRandomBroadcast(self):
     """Issue 4033"""
     # test for broadcast issue in https://github.com/google/jax/issues/4033
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     shape = (10, 2)
     with jax.numpy_rank_promotion('allow'):
       x1 = random.uniform(key, shape, minval=jnp.zeros(2), maxval=jnp.ones(2))
@@ -833,7 +879,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testMaxwellSample(self):
     num_samples = 10**5
-    rng = random.PRNGKey(0)
+    rng = self.seed_prng(0)
 
     rand = lambda x: random.maxwell(x, (num_samples, ))
     crand = api.jit(rand)
@@ -856,7 +902,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       ('test2', 2.0, 3.0))
   def testWeibullSample(self, concentration, scale):
     num_samples = 10**5
-    rng = random.PRNGKey(0)
+    rng = self.seed_prng(0)
 
     rand = lambda x: random.weibull_min(x, scale, concentration, (num_samples,))
     crand = api.jit(rand)
@@ -880,7 +926,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       ('test2', 2.0, 3.0))
   def testDoublesidedMaxwellSample(self, loc, scale):
     num_samples = 10**5
-    rng = random.PRNGKey(0)
+    rng = self.seed_prng(0)
 
     rand = lambda key: random.double_sided_maxwell(
         rng, loc, scale, (num_samples,))
@@ -917,7 +963,7 @@ class LaxRandomTest(jtu.JaxTestCase):
           samples, lambda x: double_sided_maxwell_cdf(x, loc, scale))
 
   def testRadamacher(self):
-    rng = random.PRNGKey(0)
+    rng = self.seed_prng(0)
     num_samples = 10**5
 
     rand = lambda x: random.rademacher(x, (num_samples,))
@@ -937,7 +983,7 @@ class LaxRandomTest(jtu.JaxTestCase):
           counts[1] / num_samples, 0.5, rtol=1e-02, atol=1e-02)
 
   def testChoiceShapeIsNotSequenceError(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
     with self.assertRaises(TypeError):
       random.choice(key, 5, 2, replace=False)
     with self.assertRaises(TypeError):
@@ -945,47 +991,9 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def test_eval_shape_big_random_array(self):
     def f(x):
-      return random.normal(random.PRNGKey(x), (int(1e12),))
+      return random.normal(self.seed_prng(x), (int(1e12),))
     with jax.enable_checks(False):  # check_jaxpr will materialize array
       api.eval_shape(f, 0)  # doesn't error
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "seed={seed}_type={type}_jit={jit}".format(**dct), **dct} for dct in [
-      {"seed": 0, "type": int, "jit": True, "key": [0, 0]},
-      {"seed": 0, "type": int, "jit": False, "key": [0, 0]},
-      {"seed": 1, "type": np.int32, "jit": True, "key": [0, 1]},
-      {"seed": 1, "type": np.int32, "jit": False, "key": [0, 1]},
-      {"seed": 2, "type": np.uint32, "jit": True, "key": [0, 2]},
-      {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
-      {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
-      {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
-      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
-      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
-      {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
-      {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
-      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
-      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
-      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
-      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
-      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
-    ]
-  ))
-  def test_prng_seeds_and_keys(self, seed, type, jit, key):
-    if (jit and type is int and not config.x64_enabled and
-        (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
-      self.skipTest("Expected failure: integer out of range for jit.")
-    seed = type(seed)
-    if jit:
-      actual = api.jit(random.PRNGKey)(seed).keys
-    else:
-      actual = random.PRNGKey(seed).keys
-    expected = jnp.array(key, dtype=jnp.uint32)
-    self.assertArraysEqual(actual, expected)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_seed={seed}_type={type}", "seed": seed, "type": type}
@@ -998,18 +1006,18 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.skipTest("Expected failure: Python int too large.")
     type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
     args_maker = lambda: [type(seed)]
-    make_prng = lambda seed: random.PRNGKey(seed).keys
+    make_prng = lambda seed: self.seed_prng(seed).keys
     self._CompileAndCheck(make_prng, args_maker)
 
   def test_prng_errors(self):
     seed = np.iinfo(np.int64).max + 1
     with self.assertRaises(OverflowError):
-      random.PRNGKey(seed)
+      self.seed_prng(seed)
     with self.assertRaises(OverflowError):
-      api.jit(random.PRNGKey)(seed)
+      api.jit(self.seed_prng)(seed)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
-    key = random.PRNGKey(1).keys.block_until_ready()
+    key = self.seed_prng(1).keys.block_until_ready()
     with jtu.count_device_put() as count:
       api.jit(random.split)(key)
     self.assertEqual(count[0], 1)  # 1 for the argument device_put
@@ -1020,7 +1028,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def test_randint_bounds(self, dtype):
     min = np.iinfo(dtype).min
     max = np.iinfo(dtype).max
-    key = random.PRNGKey(1701)
+    key = self.seed_prng(1701)
     shape = (10,)
     if np.iinfo(dtype).bits < np.iinfo(dtypes.canonicalize_dtype(int)).bits:
       expected = random.randint(key, shape, min, max, dtype)
@@ -1029,7 +1037,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertRaises(OverflowError, random.randint, key, shape, min - 12345, max + 12345, dtype)
 
   def test_randint_out_of_range(self):
-    key = random.PRNGKey(0)
+    key = self.seed_prng(0)
 
     r = random.randint(key, (10,), 255, 256, np.uint8)
     self.assertAllClose(r, jnp.full_like(r, 255))
