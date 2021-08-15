@@ -24,6 +24,7 @@ from jax import core
 from jax import numpy as jnp
 from jax import tree_util
 from jax._src.api import jit, vmap
+from jax.config import config
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
@@ -114,27 +115,43 @@ class PRNGKeyArray:
     keys, = keys
     return cls(impl, keys)
 
-  # TODO(frostig): Modify or remove after deprecation window. The
-  # change to consider is to return the leading shape, up to the
-  # individual key dimensions, i.e.:
-  #   base_ndim = len(self.impl.key_shape)
-  #   return self.keys.shape[:-base_ndim]
-  @property
-  def shape(self):
-    warnings.warn(
-        'deprecated `shape` attribute of PRNG key arrays. In a future version '
-        'of JAX this attribute will be removed or its value may change.')
-    return self.keys.shape
-
-  # TODO(frostig): remove after deprecation window
   @property
   def dtype(self):
-    warnings.warn('deprecated `dtype` attribute of PRNG key arrays')
-    return np.uint32
+    # TODO(frostig): remove after deprecation window
+    if config.jax_enable_custom_prng:
+      raise AttributeError("'PRNGKeyArray' has no attribute 'dtype'")
+    else:
+      warnings.warn(
+          'deprecated `dtype` attribute of PRNG key arrays', FutureWarning)
+      return np.uint32
+
+  def shape(self):
+    # TODO(frostig): simplify once we always enable_custom_prng
+    if config.jax_enable_custom_prng:
+      return self._shape
+    else:
+      warnings.warn(
+          'deprecated `shape` attribute of PRNG key arrays. In a future version '
+          'of JAX this attribute will be removed or its value may change.',
+          FutureWarning)
+      return self.keys.shape
+
+  @property
+  def _shape(self):
+    base_ndim = len(self.impl.key_shape)
+    return self.keys.shape[:-base_ndim]
+
+  def _is_scalar(self):
+    base_ndim = len(self.impl.key_shape)
+    return self.keys.ndim == base_ndim
+
+  def __len__(self):
+    if self._is_scalar():
+      raise TypeError('len() of unsized object')
+    return len(self.keys)
 
   def __iter__(self) -> Iterator['PRNGKeyArray']:
-    base_ndim = len(self.impl.key_shape)
-    if self.keys.ndim == base_ndim:
+    if self._is_scalar():
       raise TypeError('iteration over a 0-d single PRNG key')
     return (PRNGKeyArray(self.impl, k) for k in iter(self.keys))
 
@@ -153,18 +170,17 @@ class PRNGKeyArray:
           f'but {len(idx)} were indexed')
     return PRNGKeyArray(self.impl, self.keys[idx])
 
-  def fold_in(self, data: int) -> 'PRNGKeyArray':
+  def _fold_in(self, data: int) -> 'PRNGKeyArray':
     return PRNGKeyArray(self.impl, self.impl.fold_in(self.keys, data))
 
-  def random_bits(self, bit_width, shape) -> jnp.ndarray:
+  def _random_bits(self, bit_width, shape) -> jnp.ndarray:
     return self.impl.random_bits(self.keys, bit_width, shape)
 
-  def split(self, num: int) -> 'PRNGKeyArray':
+  def _split(self, num: int) -> 'PRNGKeyArray':
     return PRNGKeyArray(self.impl, self.impl.split(self.keys, num))
 
   def __repr__(self):
-    base_ndim = len(self.impl.key_shape)
-    arr_shape = self.keys.shape[:-base_ndim]
+    arr_shape = self._shape
     pp_keys = pp('shape = ') >> pp(arr_shape)
     pp_impl = pp('impl = ') >> self.impl.pprint()
     return str(pp('PRNGKeyArray:') + (pp_keys + pp_impl).indent(2))

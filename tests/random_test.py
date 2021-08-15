@@ -14,7 +14,7 @@
 
 
 from functools import partial
-from unittest import SkipTest
+from unittest import SkipTest, skipIf
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -44,6 +44,11 @@ float_dtypes = jtu.dtypes.all_floating
 complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
 uint_dtypes = jtu.dtypes.all_unsigned
+
+
+def _prng_key_as_array(key):
+  # TODO(frostig): remove once we upgrade to always enable_custom_prng
+  return key.keys if config.jax_enable_custom_prng else key
 
 
 @jtu.with_config(jax_numpy_rank_promotion="raise")
@@ -152,14 +157,14 @@ class PrngTest(jtu.JaxTestCase):
                        [6, 3, 4]], dtype='int32'))
 
     self.assertAllClose(
-        random.split(k, 4).keys,
+        _prng_key_as_array(random.split(k, 4)),
         np.array([[2285895361, 1501764800],
                    [1518642379, 4090693311],
                    [ 433833334, 4221794875],
                    [ 839183663, 3740430601]], dtype='uint32'))
 
     self.assertAllClose(
-        random.fold_in(k, 4).keys,
+        _prng_key_as_array(random.fold_in(k, 4)),
         np.array([2285895361,  433833334], dtype='uint32'))
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -194,9 +199,9 @@ class PrngTest(jtu.JaxTestCase):
       self.skipTest("Expected failure: integer out of range for jit.")
     seed = type(seed)
     if jit:
-      actual = api.jit(random.PRNGKey)(seed).keys
+      actual = _prng_key_as_array(api.jit(random.PRNGKey)(seed))
     else:
-      actual = random.PRNGKey(seed).keys
+      actual = _prng_key_as_array(random.PRNGKey(seed))
     expected = jnp.array(key, dtype=jnp.uint32)
     self.assertArraysEqual(actual, expected)
 
@@ -822,13 +827,13 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testFoldIn(self):
     key = self.seed_prng(0)
-    keys = [random.fold_in(key, i).keys for i in range(10)]
+    keys = [_prng_key_as_array(random.fold_in(key, i)) for i in range(10)]
     assert np.unique(keys, axis=0).shape[0] == 10
 
   def testFoldInBig(self):
     key = self.seed_prng(0)
     seeds = [2 ** 32 - 2, 2 ** 32 - 1]
-    keys = [random.fold_in(key, seed).keys for seed in seeds]
+    keys = [_prng_key_as_array(random.fold_in(key, seed)) for seed in seeds]
     assert np.unique(keys, axis=0).shape[0] == 2
 
   def testStaticShapeErrors(self):
@@ -1006,7 +1011,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.skipTest("Expected failure: Python int too large.")
     type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
     args_maker = lambda: [type(seed)]
-    make_prng = lambda seed: self.seed_prng(seed).keys
+    make_prng = lambda seed: _prng_key_as_array(self.seed_prng(seed))
     self._CompileAndCheck(make_prng, args_maker)
 
   def test_prng_errors(self):
@@ -1017,7 +1022,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       api.jit(self.seed_prng)(seed)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
-    key = self.seed_prng(1).keys.block_until_ready()
+    key = _prng_key_as_array(self.seed_prng(1)).block_until_ready()
     with jtu.count_device_put() as count:
       api.jit(random.split)(key)
     self.assertEqual(count[0], 1)  # 1 for the argument device_put
@@ -1083,6 +1088,8 @@ double_threefry_prng_impl = prng.PRNGImpl(
     random_bits=_double_threefry_random_bits,
     fold_in=_double_threefry_fold_in)
 
+@skipIf(not config.jax_enable_custom_prng,
+        'custom PRNG tests require config.jax_enable_custom_prng')
 @jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomWithCustomPRNGTest(LaxRandomTest):
   def seed_prng(self, seed):
@@ -1092,6 +1099,7 @@ def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
 
 for test_prefix in [
+    'testBeta',
     'testDirichlet',
     'testGamma',
     'testGammaGrad',

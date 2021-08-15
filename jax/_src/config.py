@@ -503,6 +503,15 @@ distributed_debug = config.define_bool_state(
           'computations. Logging is performed with `absl.logging` at WARNING '
           'level.'))
 
+enable_custom_prng = config.define_bool_state(
+    name='jax_enable_custom_prng',
+    default=False,
+    help=('Enables an internal upgrade that allows one to define custom '
+          'pseudo-random number generator implementations. This will '
+          'be enabled by default in future versions of JAX, at which point '
+          'disabling it will be considered deprecated. In a version '
+          'after that the flag will be removed altogether.'))
+
 hlo_source_file_canonicalization_regex = config.define_string_state(
     name='jax_hlo_source_file_canonicalization_regex',
     default=None,

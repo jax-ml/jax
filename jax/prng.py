@@ -15,8 +15,9 @@
 # flake8: noqa: F401
 
 from jax._src.prng import (
-  threefry2x32_p,
-  threefry_2x32,
   PRNGImpl,
   seed_with_impl,
+  threefry2x32_p,
+  threefry_2x32,
+  threefry_prng_impl,
 )
