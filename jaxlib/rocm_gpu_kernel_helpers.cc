@@ -42,6 +42,6 @@ absl::StatusOr<std::unique_ptr<void* []>> MakeBatchPointers(
   JAX_RETURN_IF_ERROR(
       AsStatus(hipMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
                               hipMemcpyHostToDevice, stream)));
-  return host_ptrs;
+  return std::move(host_ptrs);
 }
 }  // namespace jax
