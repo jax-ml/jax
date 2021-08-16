@@ -18,7 +18,7 @@ repos:
   hooks:
   - id: mypy
     files: jax/
-    additional_dependencies: [types-requests==0.1.11]
+    additional_dependencies: [types-requests==0.1.11, jaxlib==0.1.70]
 
 - repo: https://github.com/mwouts/jupytext
   rev: v1.10.0
