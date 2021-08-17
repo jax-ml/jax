@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from docutils import nodes
+from docutils import nodes, utils
+
+from sphinx.util.nodes import split_explicit_title
 
 def jax_issue_role(name, rawtext, text, lineno, inliner, options={}, content=[]):
   """Generate links to jax issues or PRs in sphinx.
@@ -32,5 +34,15 @@ def jax_issue_role(name, rawtext, text, lineno, inliner, options={}, content=[])
   node = nodes.reference(rawtext, '#' + text, refuri=url, **options)
   return [node], []
 
+def doi_role(typ, rawtext, text, lineno, inliner, options={}, content=[]):
+  text = utils.unescape(text)
+  has_explicit_title, title, part = split_explicit_title(text)
+  full_url = 'https://doi.org/' + part
+  if not has_explicit_title:
+    title = 'DOI:' + part
+  pnode = nodes.reference(title, title, internal=False, refuri=full_url)
+  return [pnode], []
+
 def setup(app):
   app.add_role('jax-issue', jax_issue_role)
+  app.add_role('doi', doi_role)

@@ -1,6 +1,17 @@
 jax.scipy package
 =================
 
+jax.scipy.fft
+-------------
+
+.. automodule:: jax.scipy.fft
+
+.. autosummary::
+  :toctree: _autosummary
+
+   dct
+   dctn
+
 jax.scipy.linalg
 ----------------
 
