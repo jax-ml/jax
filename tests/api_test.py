@@ -5351,6 +5351,21 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(g_c, 42. * c, check_dtypes=False)
     self.assertAllClose(g_x, 17. * x, check_dtypes=False)
 
+  def test_float0_cotangents_automatically_handled(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return x
+
+    def f_fwd(x, y):
+      return x, None
+
+    def f_bwd(_, zbar):
+      return (0., 1)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    jax.jit(lambda x: jax.vjp(f, 0., x)[1](1.))(1)  # doesn't crash
+
 
 class CustomTransposeTest(jtu.JaxTestCase):
 
