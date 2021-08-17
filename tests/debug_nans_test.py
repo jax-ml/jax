@@ -96,20 +96,27 @@ class DebugNaNsTest(jtu.JaxTestCase):
         f(1)
 
   def testPmap(self):
-    f = jax.pmap(lambda x: 0. / x)
+    pmap_funcs = [api._python_pmap]
+    if jax.lib._xla_extension_version >= 36:
+      pmap_funcs.append(api._cpp_pmap)
 
-    with self.assertRaisesRegex(
-        FloatingPointError,
-        r"invalid value \(nan\) encountered in parallel computation"):
-      ans = f(jnp.array([0.]))
-      ans.block_until_ready()
+    for pmap in pmap_funcs:
+      f = pmap(lambda x: 0. / x)
+      # For the Cpp pmap, the first execution always goes through Python.
+      f(jnp.array([1.]))
 
-    if jax.device_count() >= 2:
       with self.assertRaisesRegex(
           FloatingPointError,
           r"invalid value \(nan\) encountered in parallel computation"):
-        ans = f(jnp.array([1., 0.]))
+        ans = f(jnp.array([0.]))
         ans.block_until_ready()
+
+      if jax.device_count() >= 2:
+        with self.assertRaisesRegex(
+            FloatingPointError,
+            r"invalid value \(nan\) encountered in parallel computation"):
+          ans = f(jnp.array([1., 0.]))
+          ans.block_until_ready()
 
   def testPmapNoNaN(self):
     ans = jax.pmap(lambda x: 0. / x)(jnp.array([1.]))

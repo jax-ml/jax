@@ -114,17 +114,22 @@ flags.DEFINE_bool(
 
 
 def _nan_check_posthook(fun, args, kwargs, output):
-  """Hook function called by the C++ jit to perform NaN checking."""
+  """Hook function called by the C++ jit/pmap to perform NaN checking."""
+  leaves = tree_leaves(output)
+
+  buffers = []
+  for da_or_sda in leaves:
+    if hasattr(da_or_sda, "device_buffer"):
+      buffers.append(da_or_sda.device_buffer)
+    elif hasattr(da_or_sda, "device_buffers"):
+      buffers.extend(da_or_sda.device_buffers)
+
   try:
-    xla.check_special(xla.xla_call_p, [
-        da.device_buffer
-        for da in tree_leaves(output)
-        if hasattr(da, "device_buffer")
-    ])
+    xla.check_special(xla.xla_call_p, buffers)
   except FloatingPointError:
     # compiled_fun can only raise in this case
     assert config.jax_debug_nans or config.jax_debug_infs
-    print("Invalid nan value encountered in the output of a C++-jit "
+    print("Invalid nan value encountered in the output of a C++-jit/pmap "
           "function. Calling the de-optimized version.")
     fun._cache_miss(*args, **kwargs)[0]  # probably won't return
 
@@ -1777,8 +1782,9 @@ def _cpp_pmap(
     execute = pxla.parallel_callable.most_recent_entry()
     use_fastpath = (
         execute is not None and
-        # We don't support JAX extension backends.
-        execute[0].func is pxla.execute_replicated and
+        # We don't support JAX extension backends. In particular, some
+        # extentions do not return a partial with a `func` attribute.
+        getattr(execute[0], "func", None) is pxla.execute_replicated and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(isinstance(x, xla.DeviceArray) for x in out_flat))
