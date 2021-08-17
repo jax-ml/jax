@@ -150,7 +150,7 @@ def unpair_pval(pval):
 
 def replace_float0s(primal, tangent):
   if dtype(tangent) is float0:
-    return core.zeros_like_float0(tangent, dtype(primal))
+    return zeros_like_jaxval(primal)
   else:
     return tangent
 
