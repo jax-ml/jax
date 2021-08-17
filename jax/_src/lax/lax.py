@@ -2235,7 +2235,7 @@ def _broadcasting_shape_rule(name, *avals):
   if not shapes:
     return ()
   if len({len(shape) for shape in shapes}) != 1:
-    msg = '{} got arrays of different rank: {}.'
+    msg = '{}: arrays must have same number of dimensions, got {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
   result_shape = _try_broadcast_shapes(shapes)
   if result_shape is None:
@@ -3719,8 +3719,8 @@ def _concatenate_shape_rule(*operands, **kwargs):
     op = next(op for op in operands if not isinstance(op, UnshapedArray))
     raise TypeError(msg.format(type(op)))
   if len({operand.ndim for operand in operands}) != 1:
-    msg = "Cannot concatenate arrays with different ranks, got {}."
-    raise TypeError(msg.format(", ".join(str(o.ndim) for o in operands)))
+    msg = "Cannot concatenate arrays with different numbers of dimensions: got {}."
+    raise TypeError(msg.format(", ".join(str(o.shape) for o in operands)))
   if not 0 <= dimension < operands[0].ndim:
     msg = "concatenate dimension out of bounds: dimension {} for shapes {}."
     raise TypeError(msg.format(dimension, ", ".join([str(o.shape) for o in operands])))
