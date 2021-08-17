@@ -148,6 +148,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker,
                           rtol={np.float32: 2e-3, np.float64: 1e-4})
 
+  def testBetaLogPdfZero(self):
+    # Regression test for https://github.com/google/jax/issues/7645
+    a = b = 1.
+    x = np.array([0., 1.])
+    self.assertAllClose(
+      osp_stats.beta.pdf(x, a, b), lsp_stats.beta.pdf(x, a, b), atol=1E-6)
+
   @genNamedParametersNArgs(3)
   def testCauchyLogPdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
