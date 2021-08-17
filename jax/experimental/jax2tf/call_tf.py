@@ -382,7 +382,7 @@ def _code_generator_and_avals(
 
   result_avals = tuple(map(canonical_res_aval, result_shapes))  # type: ignore
 
-  def code_gen(builder: xla.XlaShape, args_op: Sequence[xla.XlaOp]) -> xla.XlaOp:
+  def code_gen(builder: xla.XlaComputationBuilder, args_op: Sequence[xla.XlaOp]) -> xla.XlaOp:
     captured_ops = [xops.ConstantLiteral(builder, np.asarray(inp))
                     for inp in captured_inputs]
 

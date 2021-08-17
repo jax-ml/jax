@@ -494,12 +494,11 @@ def _use_outfeed(platform: str) -> bool:
 
 xops = xla_client._xla.ops
 
-# TODO(necula): fix mypy errors if I define the type aliases below
-XlaOp = Any  # xla_extension.XlaOp
-XlaShape = Any  # xla_client.Shape
-XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
-XlaDevice = Any  # xla_client.Device
-XlaLocalClient = Any  # xla_extension.LocalClient
+XlaOp = xla_client.XlaOp
+XlaShape = xla_client.Shape
+XlaComputationBuilder = xla_client.XlaBuilder
+XlaDevice = xla_client.Device
+XlaLocalClient = xla_client.Client
 DType = Any
 
 T = TypeVar('T')

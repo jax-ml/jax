@@ -1810,8 +1810,9 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
-  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss, static_broadcasted_tuple,
-                               pxla._shard_arg)
+  # TODO(slebedev): Remove the ignore once jaxlib>=0.1.71.
+  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,  # type: ignore[call-arg]
+                               static_broadcasted_tuple, pxla._shard_arg)
 
   # TODO(jblespiau): make cpp callable follow descriptor protocol for bound
   # methods

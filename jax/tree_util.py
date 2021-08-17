@@ -38,6 +38,7 @@ for examples.
 # flake8: noqa: F401
 from jax._src.tree_util import (
   Partial,
+  PyTreeDef,
   all_leaves,
   build_tree,
   register_pytree_node,
