@@ -2519,8 +2519,6 @@ def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
       xla_update_computation,
       proto,
       indices_are_sorted=indices_are_sorted)
-  # TODO: implement shape analysis for XlaScatter
-  out.set_shape(_aval_to_tf_shape(_out_aval))
   return out
 
 
