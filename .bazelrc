@@ -46,7 +46,7 @@ build:native_arch_posix --host_copt=-march=native
 build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
 build:cuda --repo_env TF_NEED_CUDA=1
-build:cuda --action_env=TF_CUDA_COMPUTE_CAPABILITIES="3.5,5.2,6.0,6.1,7.0"
+build:cuda --action_env TF_CUDA_COMPUTE_CAPABILITIES="3.5,5.2,6.0,6.1,7.0"
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 build:cuda --define=xla_python_enable_gpu=true
@@ -55,7 +55,7 @@ build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm --define=xla_python_enable_gpu=true
 build:rocm --repo_env TF_NEED_ROCM=1
-build:rocm --action_env=TF_ROCM_AMDGPU_TARGETS="gfx803,gfx900,gfx906,gfx1010"
+build:rocm --action_env TF_ROCM_AMDGPU_TARGETS="gfx900,gfx906,gfx908"
 
 build:nonccl --define=no_nccl_support=true
 
