@@ -214,6 +214,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(osp_special.logsumexp, lsp_special.logsumexp, args_maker)
       self._CompileAndCheck(lsp_special.logsumexp, args_maker)
 
+  def testLogSumExpNans(self):
+    # Regression test for https://github.com/google/jax/issues/7634
+    with jax.debug_nans(True):
+      with jax.disable_jit():
+        result = lsp_special.logsumexp(1.0)
+    self.assertEqual(result, 1.0)
+
   @parameterized.named_parameters(itertools.chain.from_iterable(
     jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix(
