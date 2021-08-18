@@ -793,8 +793,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_enable_xla(self):
     # Tests that enable_xla flag is properly scoped to a conversion.
     def fun(x):
-      # Can be converted only if enable_xla is on, due to negative padding.
-      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
+      # lax.reduce is unlikely to ever be convertible with enable_xla=False
+      return lax.reduce(x, np.float32(0), lambda v, acc: v + acc, dimensions=(0, 1))
 
     tf_fun_with_xla = jax2tf.convert(fun, enable_xla=True)
     tf_fun_without_xla = jax2tf.convert(fun, enable_xla=False)
@@ -802,19 +802,15 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
     self.assertAllClose(fun(x), tf_fun_with_xla(x))
     with self.assertRaisesRegex(NotImplementedError,
-                                "Call to pad cannot be converted with enable_xla=False"):
+                                "Call to reduce cannot be converted with enable_xla=False"):
       tf_fun_without_xla(x)
 
-    # Now in reverse order
-    def fun2(x):
-      # Can be converted only if enable_xla is on, due to negative padding.
-      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
-
-    tf_fun2_without_xla = jax2tf.convert(fun2, enable_xla=False)
-    tf_fun2_with_xla = jax2tf.convert(fun2, enable_xla=True)
+    # Now in reverse order (we had bugs with the management of enable_xla global)
+    tf_fun2_without_xla = jax2tf.convert(lambda x: fun(x), enable_xla=False)
+    tf_fun2_with_xla = jax2tf.convert(lambda x: fun(x), enable_xla=True)
 
     with self.assertRaisesRegex(NotImplementedError,
-                                "Call to pad cannot be converted with enable_xla=False"):
+                                "Call to reduce cannot be converted with enable_xla=False"):
       tf_fun2_without_xla(x)
     self.assertAllClose(fun(x), tf_fun2_with_xla(x))
 

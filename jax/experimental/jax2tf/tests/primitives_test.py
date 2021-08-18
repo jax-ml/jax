@@ -100,7 +100,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses, include_jax_unimpl=False,
-      #one_containing="random_uniform_shape=float32[5,4]"
+      #one_containing="pad_inshape=uint8[2,3]_pads=[(0, 0, 0), (-1, -1, 0)]_enable_xla=False"
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
@@ -255,16 +255,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     with tf.compat.v1.Session() as sess:
       tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
       self.assertAllClose(expected, tf1_res)
-
-  def test_disable_xla(self):
-
-    def fun(x):
-      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
-
-    with self.assertRaisesRegex(
-        NotImplementedError, "Call to pad cannot be converted with enable_xla=False."):
-      self.ConvertAndCompare(
-          fun, np.ones((2, 3), dtype=np.float32), enable_xla=False)
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
