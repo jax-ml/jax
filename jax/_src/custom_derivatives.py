@@ -553,8 +553,10 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
            "number of arguments to the primal function, but got VJP output "
            "structure {} for primal input structure {}.")
     raise TypeError(msg.format(in_tree2, in_tree)) from None
-  yield [zeros_like_aval(aval.at_least_vspace()) if ct is zero else ct
-         for aval, ct in zip(in_avals, cts_in_flat)]
+  # Ignore any None cotangents, and any corresponding to inputs for which the
+  # type doesn't equal the tangent type (i.e. float0s)
+  yield [zeros_like_aval(a.at_least_vspace()) if ct is zero or a != a.at_least_vspace()
+         else ct for a, ct in zip(in_avals, cts_in_flat)]
 
 
 class CustomVJPCallPrimitive(core.CallPrimitive):
