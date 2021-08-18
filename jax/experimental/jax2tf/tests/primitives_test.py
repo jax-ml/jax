@@ -61,7 +61,6 @@ from absl.testing import parameterized
 
 import jax
 from jax import dtypes
-from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
