@@ -2076,9 +2076,3 @@ def pp_kv_pairs(kv_pairs):
     return pp('[ ') >> vcat([pp_kv_pair(k, v) for k, v in kv_pairs]) >> pp(' ]')
   else:
     return pp('')
-
-# Casting float0 array to a float-valued zero array.
-def zeros_like_float0(array, dtype=None):
-  if not dtype:
-    dtype = np.float
-  return np.zeros(array.shape, dtype)

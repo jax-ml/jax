@@ -242,6 +242,7 @@ def _flatten_jvp(in_tree, *args):
     msg = ("Custom JVP rule must produce primal and tangent outputs with equal "
            "container (pytree) structures, but got {} and {} respectively.")
     raise TypeError(msg.format(out_tree, out_tree2))
+  # TODO(mattjj): compare primals' tangent types to tangent objects' types
   primal_avals_out = [
       raise_to_shaped(core.get_aval(x), weak_type=False).strip_named_shape()
       for x in primals_out]
@@ -555,7 +556,8 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
     raise TypeError(msg.format(in_tree2, in_tree)) from None
   # Ignore any None cotangents, and any corresponding to inputs for which the
   # type doesn't equal the tangent type (i.e. float0s)
-  yield [zeros_like_aval(a.at_least_vspace()) if ct is zero or a != a.at_least_vspace()
+  # TODO(mattjj): change this to check if tangent type represents 0dim vspace
+  yield [Zero(a.at_least_vspace()) if ct is zero or a != a.at_least_vspace()
          else ct for a, ct in zip(in_avals, cts_in_flat)]
 
 
