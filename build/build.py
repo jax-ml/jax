@@ -229,6 +229,7 @@ def write_bazelrc(python_bin_path=None, remote_build=None,
   with open("../.jax_configure.bazelrc", "w") as f:
     if not remote_build and python_bin_path:
       f.write(textwrap.dedent("""\
+        build --strategy=Genrule=standalone
         build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
         build --action_env=PYENV_ROOT
         build --python_path="{python_bin_path}"
