@@ -160,9 +160,9 @@ types. The promotion rules used by JAX for floating-point types are similar to
 those used by PyTorch.
 
 Note that operators like `+` will dispatch based on the Python type of the two
-values being added. This means that, for example, `np.int16(1) + 1` will
-promote using NumPy rules, whereas `jnp.int16(1) + 1` will promote using JAX rules.
+values being added. This means that, for example, ``np.int16(1) + 1`` will
+promote using NumPy rules, whereas ``jnp.int16(1) + 1`` will promote using JAX rules.
 This can lead to potentially confusing non-associative promotion semantics when
 the two types of promotion are combined;
-for example with `np.int16(1) + 1 + jnp.int16(1)`.
+for example with ``np.int16(1) + 1 + jnp.int16(1)``.
 
