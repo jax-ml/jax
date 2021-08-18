@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2021 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,10 +13,8 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from . import linalg
-from . import ndimage
-from . import signal
-from . import sparse
-from . import special
-from . import stats
-from . import fft
+
+from jax._src.scipy.fft import (
+  dct,
+  dctn
+)
