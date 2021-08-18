@@ -219,7 +219,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     with jax.debug_nans(True):
       with jax.disable_jit():
         result = lsp_special.logsumexp(1.0)
-    self.assertEqual(result, 1.0)
+        self.assertEqual(result, 1.0)
+
+        result = lsp_special.logsumexp(1.0, b=1.0)
+        self.assertEqual(result, 1.0)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
     jtu.cases_from_list(
