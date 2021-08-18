@@ -19,7 +19,8 @@ import jax
 from ..config import config
 from .. import core
 from ..core import raise_to_shaped, Trace, Tracer
-from jax._src.ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
+from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
+                              zeros_like_p, Zero)
 from .. import linear_util as lu
 from .._src.util import (unzip2, partial, safe_map, safe_zip, wrap_name, split_list,
                          canonicalize_axis, moveaxis, as_hashable_function, curry)
@@ -275,8 +276,25 @@ def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests, main
 def _match_axes_and_sum(axis_size, out_dims_thunk, out_dim_dests, *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = yield in_vals, {}
-  yield map(partial(matchaxis, axis_size, sum_match=True),
+  yield map(partial(_matchaxis_symbolic_zeros, axis_size, sum_match=True),
             out_dims_thunk(), out_dim_dests, out_vals)
+
+def _matchaxis_symbolic_zeros(sz, src, dst, x, sum_match=False):
+  # Just like `matchaxis`, but handles symbolic zeros using ad_util.py
+  if isinstance(x, Zero):
+    if src == dst:
+      return x
+    elif type(src) == type(dst) == int:
+      aval = core.mapped_aval(sz, src, x.aval)
+      return Zero(core.unmapped_aval(sz, dst, aval))
+    elif src is not_mapped and dst is not not_mapped:
+      return Zero(core.unmapped_aval(sz, dst, x.aval))
+    elif dst is not_mapped and sum_match:
+      return Zero(core.mapped_aval(sz, src, x.aval))
+    else:
+      raise ValueError((x, src, dst))
+  else:
+    return matchaxis(sz, src, dst, x, sum_match=sum_match)
 
 ### API
 
@@ -437,9 +455,8 @@ def matchaxis(sz, src, dst, x, sum_match=False):
   elif type(src) == type(dst) == int:
     return moveaxis(x, src, dst)
   elif src is not_mapped and dst is not not_mapped:
-    return broadcast(
-      x, sz, canonicalize_axis(dst, np.ndim(x) + 1))
-  elif dst is None and sum_match:
+    return broadcast(x, sz, canonicalize_axis(dst, np.ndim(x) + 1))
+  elif dst is not_mapped and sum_match:
     return x.sum(src)
   else:
     raise ValueError((src, dst))
