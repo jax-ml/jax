@@ -734,7 +734,7 @@ class NamedNNTest(XMapTestCase):
     shape = (80, 50, 7)
     fan_in, fan_out = jax._src.nn.initializers._compute_fans(
         NamedShape(*shape), 0, 1)
-    key = jax.random.PRNGKey(0)
+    key = jax.random.PRNGKey(1)
     base_scaling = partial(jax.nn.initializers.variance_scaling, 100, fan, distr)
     ref_sampler = lambda: base_scaling(in_axis=0, out_axis=1)(key, shape)
     if map_in and map_out:
