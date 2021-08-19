@@ -1614,6 +1614,7 @@ def interp(x, xp, fp, left=None, right=None, period=None):
 In the JAX version, the `assume_unique` argument is not referenced.
 """)
 def in1d(ar1, ar2, assume_unique=False, invert=False):
+  _check_arraylike("in1d", ar1, ar2)
   ar1 = ravel(ar1)
   ar2 = ravel(ar2)
   # Note: an algorithm based on searchsorted has better scaling, but in practice
@@ -1634,8 +1635,10 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
 In the JAX version, the `assume_unique` argument is not referenced.
 """)
 def setdiff1d(ar1, ar2, assume_unique=False):
-  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in setdiff1d()")
-  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in setdiff1d()")
+  _check_arraylike("setdiff1d", ar1, ar2)
+
+  ar1 = core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
+  ar2 = core.concrete_or_error(None, ar2, "The error arose in setdiff1d()")
 
   ar1 = unique(ar1)
   ar2 = unique(ar2)
@@ -1654,9 +1657,7 @@ the minimum value of the union."""
 
 @_wraps(np.union1d, lax_description=_UNION1D_DOC)
 def union1d(ar1, ar2, *, size=None):
-  # TODO(jakevdp): call _check_arraylike on inputs
-  ar1 = asarray(ar1)
-  ar2 = asarray(ar2)
+  _check_arraylike("union1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
     ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
@@ -1670,8 +1671,9 @@ In the JAX version, the input arrays are explicitly flattened regardless
 of assume_unique value.
 """)
 def setxor1d(ar1, ar2, assume_unique=False):
-  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in setxor1d()")
-  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in setxor1d()")
+  _check_arraylike("setxor1d", ar1, ar2)
+  ar1 = core.concrete_or_error(None, ar1, "The error arose in setxor1d()")
+  ar2 = core.concrete_or_error(None, ar2, "The error arose in setxor1d()")
 
   ar1 = ravel(ar1)
   ar2 = ravel(ar2)
@@ -1710,8 +1712,9 @@ def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
 
 @_wraps(np.intersect1d)
 def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
-  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in intersect1d()")
-  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in intersect1d()")
+  _check_arraylike("intersect1d", ar1, ar2)
+  ar1 = core.concrete_or_error(None, ar1, "The error arose in intersect1d()")
+  ar2 = core.concrete_or_error(None, ar2, "The error arose in intersect1d()")
 
   if not assume_unique:
     if return_indices:
@@ -4941,7 +4944,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
   """
   Find the unique elements of an array, ignoring shape.
   """
-  if ar.size == 0 and size is not None and size > 0:
+  if np.size(ar) == 0 and size is not None and size > 0:
     raise ValueError("jnp.unique(): Cannot pass nonzero size for zero-sized array.")
 
   aux, mask, perm = _unique1d_sorted_mask(ar, return_index or return_inverse)
@@ -5029,12 +5032,12 @@ The `size` cannot currently be used with the `axis` argument."""
 @_wraps(np.unique, skip_params=['axis'], lax_description=_UNIQUE_DOC)
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis: Optional[int] = None, *, size=None):
+  _check_arraylike("unique", ar)
+
   # TODO(jakevdp): call _check_arraylike on input.
   if axis is not None and size is not None:
     # TODO(jakevdp): implement size & axis together.
     raise NotImplementedError("jnp.unique `size` and `axis` arguments cannot be used together.")
-
-  ar = asarray(ar)
 
   if size is None:
     ar = core.concrete_or_error(None, ar, "The error arose for the first argument of jnp.unique()")
