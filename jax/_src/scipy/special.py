@@ -139,7 +139,9 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
     return (out, sign)
   if b is not None:
     if not np.issubdtype(out.dtype, np.complexfloating):
-      out = jnp.where(sign < 0, np.nan, out)
+      # Use jnp.array(nan) to avoid false positives in debug_nans
+      # (see https://github.com/google/jax/issues/7634)
+      out = jnp.where(sign < 0, jnp.array(np.nan, dtype=out.dtype), out)
   return out
 
 
