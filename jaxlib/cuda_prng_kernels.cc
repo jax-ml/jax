@@ -15,11 +15,35 @@ limitations under the License.
 
 #include "jaxlib/cuda_prng_kernels.h"
 
+#include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "include/pybind11/pybind11.h"
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 namespace {
+
+std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n) {
+  return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
+}
+
+absl::Status CudaThreeFry2x32_(cudaStream_t stream, void** buffers,
+                               const char* opaque, std::size_t opaque_len) {
+  auto s = UnpackDescriptor<ThreeFry2x32Descriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  LaunchThreeFry2x32Kernel(stream, buffers, **s);
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaGetLastError()));
+  return absl::OkStatus();
+}
+
+void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
+                      size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = CudaThreeFry2x32_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    absl::string_view message = s.message();
+    XlaCustomCallStatusSetFailure(status, message.data(), message.length());
+  }
+}
 
 pybind11::dict Registrations() {
   pybind11::dict dict;
@@ -30,9 +54,9 @@ pybind11::dict Registrations() {
 PYBIND11_MODULE(cuda_prng_kernels, m) {
   m.def("registrations", &Registrations);
   m.def("cuda_threefry2x32_descriptor", [](std::int64_t n) {
-      std::string result = BuildCudaThreeFry2x32Descriptor(n);
-      return pybind11::bytes(result);
-    });
+    std::string result = BuildCudaThreeFry2x32Descriptor(n);
+    return pybind11::bytes(result);
+  });
 }
 
 }  // namespace
