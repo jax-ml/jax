@@ -150,8 +150,8 @@ CudaConst CudaOne(cudaDataType type) {
 using SparseHandlePool = HandlePool<cusparseHandle_t, cudaStream_t>;
 
 template <>
-/*static*/ absl::StatusOr<SparseHandlePool::Handle> SparseHandlePool::Borrow(
-    cudaStream_t stream) {
+/*static*/ tensorflow::StatusOr<SparseHandlePool::Handle>
+SparseHandlePool::Borrow(cudaStream_t stream) {
   SparseHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
   cusparseHandle_t handle;
@@ -279,8 +279,8 @@ std::pair<size_t, py::bytes> BuildCsrToDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-absl::Status CsrToDense_(cudaStream_t stream, void** buffers,
-                         const char* opaque, size_t opaque_len) {
+tensorflow::Status CsrToDense_(cudaStream_t stream, void** buffers,
+                               const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const SparseMatDescriptor& d = **s;
@@ -306,15 +306,15 @@ absl::Status CsrToDense_(cudaStream_t stream, void** buffers,
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
                 size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrToDense_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -353,8 +353,8 @@ std::pair<size_t, py::bytes> BuildCsrFromDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-absl::Status CsrFromDense_(cudaStream_t stream, void** buffers,
-                           const char* opaque, size_t opaque_len) {
+tensorflow::Status CsrFromDense_(cudaStream_t stream, void** buffers,
+                                 const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const SparseMatDescriptor& d = **s;
@@ -381,15 +381,15 @@ absl::Status CsrFromDense_(cudaStream_t stream, void** buffers,
       buffers[4])));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_b)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CsrFromDense(cudaStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrFromDense_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -446,8 +446,8 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
   return {buffer_size, PackDescriptor(CsrMatvecDescriptor{A, x, y, op})};
 }
 
-absl::Status CsrMatvec_(cudaStream_t stream, void** buffers, const char* opaque,
-                        size_t opaque_len) {
+tensorflow::Status CsrMatvec_(cudaStream_t stream, void** buffers,
+                              const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<CsrMatvecDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const CsrMatvecDescriptor& d = **s;
@@ -489,15 +489,15 @@ absl::Status CsrMatvec_(cudaStream_t stream, void** buffers, const char* opaque,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_y)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrMatvec_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -556,8 +556,8 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
   return {buffer_size, PackDescriptor(CsrMatmatDescriptor{A, B, C, op_A})};
 }
 
-absl::Status CsrMatmat_(cudaStream_t stream, void** buffers, const char* opaque,
-                        size_t opaque_len) {
+tensorflow::Status CsrMatmat_(cudaStream_t stream, void** buffers,
+                              const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<CsrMatmatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const CsrMatmatDescriptor& d = **s;
@@ -600,15 +600,15 @@ absl::Status CsrMatmat_(cudaStream_t stream, void** buffers, const char* opaque,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrMatmat_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -648,8 +648,8 @@ std::pair<size_t, py::bytes> BuildCooToDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-absl::Status CooToDense_(cudaStream_t stream, void** buffers,
-                         const char* opaque, size_t opaque_len) {
+tensorflow::Status CooToDense_(cudaStream_t stream, void** buffers,
+                               const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const SparseMatDescriptor& d = **s;
@@ -675,15 +675,15 @@ absl::Status CooToDense_(cudaStream_t stream, void** buffers,
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CooToDense(cudaStream_t stream, void** buffers, const char* opaque,
                 size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooToDense_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -722,8 +722,8 @@ std::pair<size_t, py::bytes> BuildCooFromDenseDescriptor(
   return {buffer_size, PackDescriptor(d)};
 }
 
-absl::Status CooFromDense_(cudaStream_t stream, void** buffers,
-                           const char* opaque, size_t opaque_len) {
+tensorflow::Status CooFromDense_(cudaStream_t stream, void** buffers,
+                                 const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const SparseMatDescriptor& d = **s;
@@ -750,15 +750,15 @@ absl::Status CooFromDense_(cudaStream_t stream, void** buffers,
       buffers[4])));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_b)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CooFromDense(cudaStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooFromDense_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -815,8 +815,8 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
   return {buffer_size, PackDescriptor(CooMatvecDescriptor{A, x, y, op})};
 }
 
-absl::Status CooMatvec_(cudaStream_t stream, void** buffers, const char* opaque,
-                        size_t opaque_len) {
+tensorflow::Status CooMatvec_(cudaStream_t stream, void** buffers,
+                              const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<CooMatvecDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const CooMatvecDescriptor& d = **s;
@@ -857,15 +857,15 @@ absl::Status CooMatvec_(cudaStream_t stream, void** buffers, const char* opaque,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_y)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooMatvec_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -924,8 +924,8 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   return {buffer_size, PackDescriptor(CooMatmatDescriptor{A, B, C, op_A})};
 }
 
-absl::Status CooMatmat_(cudaStream_t stream, void** buffers, const char* opaque,
-                        size_t opaque_len) {
+tensorflow::Status CooMatmat_(cudaStream_t stream, void** buffers,
+                              const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<CooMatmatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const CooMatmatDescriptor& d = **s;
@@ -967,15 +967,15 @@ absl::Status CooMatmat_(cudaStream_t stream, void** buffers, const char* opaque,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooMatmat_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 #endif  // if JAX_CUSPARSE_11030
@@ -989,8 +989,8 @@ py::bytes BuildGtsv2Descriptor(int m, int n, int ldb) {
 }
 
 template <typename T, typename F>
-absl::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
-                   const char* opaque, std::size_t opaque_len) {
+tensorflow::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
+                         const char* opaque, std::size_t opaque_len) {
   auto h = SparseHandlePool::Borrow();
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
@@ -1023,15 +1023,15 @@ absl::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
       computeGtsv2(handle.get(), m, n, dl, d, du, /*B=*/X, ldb, buffer)));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void gtsv2_f32(cudaStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = gtsv2<float>(cusparseSgtsv2, stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -1039,8 +1039,8 @@ void gtsv2_f64(cudaStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = gtsv2<double>(cusparseDgtsv2, stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 

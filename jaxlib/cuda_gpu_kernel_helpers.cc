@@ -95,35 +95,35 @@ std::string ErrorString(T status, const char* file, std::int64_t line,
 }
 }  // namespace
 
-absl::Status AsStatus(cudaError_t error, const char* file, std::int64_t line,
-                      const char* expr) {
+tensorflow::Status AsStatus(cudaError_t error, const char* file,
+                            std::int64_t line, const char* expr) {
   if (error != cudaSuccess)
-    return absl::InternalError(ErrorString(error, file, line, expr));
-  return absl::OkStatus();
+    return tensorflow::errors::Internal(ErrorString(error, file, line, expr));
+  return tensorflow::Status::OK();
 }
 
-absl::Status AsStatus(cusolverStatus_t status, const char* file,
-                      std::int64_t line, const char* expr) {
+tensorflow::Status AsStatus(cusolverStatus_t status, const char* file,
+                            std::int64_t line, const char* expr) {
   if (status != CUSOLVER_STATUS_SUCCESS)
-    return absl::InternalError(ErrorString(status, file, line, expr));
-  return absl::OkStatus();
+    return tensorflow::errors::Internal(ErrorString(status, file, line, expr));
+  return tensorflow::Status::OK();
 }
 
-absl::Status AsStatus(cusparseStatus_t status, const char* file,
-                      std::int64_t line, const char* expr) {
+tensorflow::Status AsStatus(cusparseStatus_t status, const char* file,
+                            std::int64_t line, const char* expr) {
   if (status != CUSPARSE_STATUS_SUCCESS)
-    return absl::InternalError(ErrorString(status, file, line, expr));
-  return absl::OkStatus();
+    return tensorflow::errors::Internal(ErrorString(status, file, line, expr));
+  return tensorflow::Status::OK();
 }
 
-absl::Status AsStatus(cublasStatus_t status, const char* file,
-                      std::int64_t line, const char* expr) {
+tensorflow::Status AsStatus(cublasStatus_t status, const char* file,
+                            std::int64_t line, const char* expr) {
   if (status != CUBLAS_STATUS_SUCCESS)
-    return absl::InternalError(ErrorString(status, file, line, expr));
-  return absl::OkStatus();
+    return tensorflow::errors::Internal(ErrorString(status, file, line, expr));
+  return tensorflow::Status::OK();
 }
 
-absl::StatusOr<std::unique_ptr<void* []>> MakeBatchPointers(
+tensorflow::StatusOr<std::unique_ptr<void* []>> MakeBatchPointers(
     cudaStream_t stream, void* buffer, void* dev_ptrs, int batch,
     int batch_elem_size) {
   char* ptr = static_cast<char*>(buffer);

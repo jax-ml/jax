@@ -20,8 +20,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
-#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "tensorflow/core/platform/statusor.h"
 
 namespace jax {
 namespace {
@@ -78,7 +78,7 @@ class HandlePool {
 
   // Borrows a handle from the pool. If 'stream' is non-null, sets the stream
   // associated with the handle.
-  static absl::StatusOr<Handle> Borrow(StreamType stream = nullptr);
+  static tensorflow::StatusOr<Handle> Borrow(StreamType stream = nullptr);
 
  private:
   static HandlePool<HandleType, StreamType>* Instance();

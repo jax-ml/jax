@@ -74,9 +74,10 @@ std::string BuildCudaLuPivotsToPermutationDescriptor(
       batch_size, pivot_size, permutation_size});
 }
 
-absl::Status CudaLuPivotsToPermutation_(cudaStream_t stream, void** buffers,
-                                        const char* opaque,
-                                        std::size_t opaque_len) {
+tensorflow::Status CudaLuPivotsToPermutation_(cudaStream_t stream,
+                                              void** buffers,
+                                              const char* opaque,
+                                              std::size_t opaque_len) {
   const std::int32_t* pivots =
       reinterpret_cast<const std::int32_t*>(buffers[0]);
   std::int32_t* permutation_out = reinterpret_cast<std::int32_t*>(buffers[1]);
@@ -94,7 +95,7 @@ absl::Status CudaLuPivotsToPermutation_(cudaStream_t stream, void** buffers,
       pivots, permutation_out, descriptor.batch_size, descriptor.pivot_size,
       descriptor.permutation_size);
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaGetLastError()));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
@@ -102,8 +103,8 @@ void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
                                XlaCustomCallStatus* status) {
   auto s = CudaLuPivotsToPermutation_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 

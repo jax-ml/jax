@@ -18,19 +18,21 @@ limitations under the License.
 
 #include <memory>
 
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
 #include "third_party/gpus/cuda/include/cusparse.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/status.h"
+#include "tensorflow/core/platform/statusor.h"
 
 #define JAX_AS_STATUS(expr) jax::AsStatus(expr, __FILE__, __LINE__, #expr)
 
-#define JAX_THROW_IF_ERROR(expr)                                           \
-  {                                                                        \
-    auto s___ = (expr);                                                    \
-    if (!s___.ok()) throw std::runtime_error(std::string(s___.message())); \
+#define JAX_THROW_IF_ERROR(expr)                                   \
+  {                                                                \
+    auto s___ = (expr);                                            \
+    if (!s___.ok())                                                \
+      throw std::runtime_error(std::string(s___.error_message())); \
   }
 
 #define JAX_RETURN_IF_ERROR(expr) \
@@ -42,24 +44,22 @@ limitations under the License.
 namespace jax {
 
 // Used via JAX_AS_STATUS(expr) macro.
-absl::Status AsStatus(cudaError_t error, const char* file, std::int64_t line,
-                      const char* expr);
-absl::Status AsStatus(cusolverStatus_t status, const char* file,
-                      std::int64_t line, const char* expr);
-absl::Status AsStatus(cusparseStatus_t status, const char* file,
-                      std::int64_t line, const char* expr);
-absl::Status AsStatus(cublasStatus_t status, const char* file,
-                      std::int64_t line, const char* expr);
+tensorflow::Status AsStatus(cudaError_t error, const char* file,
+                            std::int64_t line, const char* expr);
+tensorflow::Status AsStatus(cusolverStatus_t status, const char* file,
+                            std::int64_t line, const char* expr);
+tensorflow::Status AsStatus(cusparseStatus_t status, const char* file,
+                            std::int64_t line, const char* expr);
+tensorflow::Status AsStatus(cublasStatus_t status, const char* file,
+                            std::int64_t line, const char* expr);
 
 // Builds an array of pointers to each array in a batch, in device memory.
 // Caution: the return value must be kept alive (e.g., via a stream
 // synchronization) until the copy enqueued by MakeBatchPointers on `stream`
 // completes.
-absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(cudaStream_t stream,
-                                                           void* buffer,
-                                                           void* dev_ptrs,
-                                                           int batch,
-                                                           int batch_elem_size);
+tensorflow::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(
+    cudaStream_t stream, void* buffer, void* dev_ptrs, int batch,
+    int batch_elem_size);
 
 }  // namespace jax
 

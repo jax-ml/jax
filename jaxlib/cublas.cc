@@ -42,7 +42,7 @@ namespace py = pybind11;
 using BlasHandlePool = HandlePool<cublasHandle_t, cudaStream_t>;
 
 template <>
-/*static*/ absl::StatusOr<BlasHandlePool::Handle> BlasHandlePool::Borrow(
+/*static*/ tensorflow::StatusOr<BlasHandlePool::Handle> BlasHandlePool::Borrow(
     cudaStream_t stream) {
   BlasHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
@@ -124,8 +124,8 @@ std::pair<size_t, py::bytes> BuildTrsmBatchedDescriptor(
   return {size, PackDescriptor(desc)};
 }
 
-absl::Status TrsmBatched_(cudaStream_t stream, void** buffers,
-                          const char* opaque, size_t opaque_len) {
+tensorflow::Status TrsmBatched_(cudaStream_t stream, void** buffers,
+                                const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<TrsmBatchedDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const TrsmBatchedDescriptor& d = **s;
@@ -202,15 +202,15 @@ absl::Status TrsmBatched_(cudaStream_t stream, void** buffers,
       break;
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
                  size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = TrsmBatched_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -229,8 +229,8 @@ std::pair<size_t, py::bytes> BuildGetrfBatchedDescriptor(const py::dtype& dtype,
   return {size, PackDescriptor(GetrfBatchedDescriptor{type, b, n})};
 }
 
-absl::Status GetrfBatched_(cudaStream_t stream, void** buffers,
-                           const char* opaque, size_t opaque_len) {
+tensorflow::Status GetrfBatched_(cudaStream_t stream, void** buffers,
+                                 const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GetrfBatchedDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const GetrfBatchedDescriptor& d = **s;
@@ -282,15 +282,15 @@ absl::Status GetrfBatched_(cudaStream_t stream, void** buffers,
       break;
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void GetrfBatched(cudaStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = GetrfBatched_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 

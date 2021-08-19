@@ -108,8 +108,9 @@ std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n) {
   return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
 }
 
-absl::Status CudaThreeFry2x32_(cudaStream_t stream, void** buffers,
-                               const char* opaque, std::size_t opaque_len) {
+tensorflow::Status CudaThreeFry2x32_(cudaStream_t stream, void** buffers,
+                                     const char* opaque,
+                                     std::size_t opaque_len) {
   std::array<const std::uint32_t*, 2> keys;
   keys[0] = reinterpret_cast<const std::uint32_t*>(buffers[0]);
   keys[1] = reinterpret_cast<const std::uint32_t*>(buffers[1]);
@@ -129,15 +130,15 @@ absl::Status CudaThreeFry2x32_(cudaStream_t stream, void** buffers,
                        stream>>>(keys[0], keys[1], data[0], data[1], out[0],
                                  out[1], descriptor.n);
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaGetLastError()));
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
                       size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CudaThreeFry2x32_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 

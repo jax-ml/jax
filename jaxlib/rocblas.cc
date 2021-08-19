@@ -38,12 +38,12 @@ limitations under the License.
 
 namespace jax {
 
-absl::Status AsStatus(rocblas_status status) {
+tensorflow::Status AsStatus(rocblas_status status) {
   switch (status) {
     case rocblas_status_success:
-      return absl::OkStatus();
+      return tensorflow::Status::OK();
     default:
-      return absl::InternalError(rocblas_status_to_string(status));
+      return tensorflow::errors::Internal(rocblas_status_to_string(status));
   }
 }
 
@@ -54,8 +54,8 @@ namespace py = pybind11;
 using rocBlasHandlePool = HandlePool<rocblas_handle, hipStream_t>;
 
 template <>
-/*static*/ absl::StatusOr<rocBlasHandlePool::Handle> rocBlasHandlePool::Borrow(
-    hipStream_t stream) {
+/*static*/ tensorflow::StatusOr<rocBlasHandlePool::Handle>
+rocBlasHandlePool::Borrow(hipStream_t stream) {
   rocBlasHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
   rocblas_handle handle;
@@ -149,8 +149,8 @@ std::pair<size_t, py::bytes> BuildTrsmDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(desc)};
 }
 
-absl::Status Trsm_(hipStream_t stream, void** buffers, const char* opaque,
-                   size_t opaque_len) {
+tensorflow::Status Trsm_(hipStream_t stream, void** buffers, const char* opaque,
+                         size_t opaque_len) {
   auto s = UnpackDescriptor<TrsmDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const TrsmDescriptor& d = **s;
@@ -272,15 +272,15 @@ absl::Status Trsm_(hipStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Trsm(hipStream_t stream, void** buffers, const char* opaque,
           size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Trsm_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -306,8 +306,8 @@ std::pair<int, py::bytes> BuildPotrfDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(PotrfDescriptor{type, uplo, b, n})};
 }
 
-absl::Status Potrf_(hipStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Potrf_(hipStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<PotrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const PotrfDescriptor& d = **s;
@@ -391,15 +391,15 @@ absl::Status Potrf_(hipStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Potrf(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Potrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -419,8 +419,8 @@ std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GetrfDescriptor{type, b, m, n})};
 }
 
-absl::Status Getrf_(hipStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Getrf_(hipStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GetrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const GetrfDescriptor& d = **s;
@@ -511,15 +511,15 @@ absl::Status Getrf_(hipStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Getrf(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Getrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -538,8 +538,8 @@ std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GeqrfDescriptor{type, b, m, n})};
 }
 
-absl::Status Geqrf_(hipStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Geqrf_(hipStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GeqrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const GeqrfDescriptor& d = **s;
@@ -641,15 +641,15 @@ absl::Status Geqrf_(hipStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Geqrf(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Geqrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -666,8 +666,8 @@ std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(OrgqrDescriptor{type, b, m, n, k})};
 }
 
-absl::Status Orgqr_(hipStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Orgqr_(hipStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<OrgqrDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const OrgqrDescriptor& d = **s;
@@ -738,15 +738,15 @@ absl::Status Orgqr_(hipStream_t stream, void** buffers, const char* opaque,
       break;
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Orgqr(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Orgqr_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -786,8 +786,8 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GesvdDescriptor{type, b, m, n, jobu, jobvt})};
 }
 
-absl::Status Gesvd_(hipStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Gesvd_(hipStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GesvdDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const GesvdDescriptor& d = **s;
@@ -934,15 +934,15 @@ absl::Status Gesvd_(hipStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Gesvd(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Gesvd_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 

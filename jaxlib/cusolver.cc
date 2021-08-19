@@ -43,8 +43,8 @@ namespace py = pybind11;
 using SolverHandlePool = HandlePool<cusolverDnHandle_t, cudaStream_t>;
 
 template <>
-/*static*/ absl::StatusOr<SolverHandlePool::Handle> SolverHandlePool::Borrow(
-    cudaStream_t stream) {
+/*static*/ tensorflow::StatusOr<SolverHandlePool::Handle>
+SolverHandlePool::Borrow(cudaStream_t stream) {
   SolverHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
   cusolverDnHandle_t handle;
@@ -156,8 +156,8 @@ std::pair<int, py::bytes> BuildPotrfDescriptor(const py::dtype& dtype,
           PackDescriptor(PotrfDescriptor{type, uplo, b, n, lwork})};
 }
 
-absl::Status Potrf_(cudaStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Potrf_(cudaStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<PotrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const PotrfDescriptor& d = **s;
@@ -238,15 +238,15 @@ absl::Status Potrf_(cudaStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Potrf(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Potrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -294,8 +294,8 @@ std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GetrfDescriptor{type, b, m, n})};
 }
 
-absl::Status Getrf_(cudaStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Getrf_(cudaStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GetrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const GetrfDescriptor& d = **s;
@@ -363,15 +363,15 @@ absl::Status Getrf_(cudaStream_t stream, void** buffers, const char* opaque,
       break;
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Getrf(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Getrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -419,8 +419,8 @@ std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(GeqrfDescriptor{type, b, m, n, lwork})};
 }
 
-absl::Status Geqrf_(cudaStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Geqrf_(cudaStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GeqrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const GeqrfDescriptor& d = **s;
@@ -491,15 +491,15 @@ absl::Status Geqrf_(cudaStream_t stream, void** buffers, const char* opaque,
       break;
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Geqrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -551,8 +551,8 @@ std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
   return {lwork, PackDescriptor(OrgqrDescriptor{type, b, m, n, k, lwork})};
 }
 
-absl::Status Orgqr_(cudaStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Orgqr_(cudaStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<OrgqrDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const OrgqrDescriptor& d = **s;
@@ -623,15 +623,15 @@ absl::Status Orgqr_(cudaStream_t stream, void** buffers, const char* opaque,
       break;
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Orgqr(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Orgqr_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -680,8 +680,8 @@ std::pair<int, py::bytes> BuildSyevdDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(SyevdDescriptor{type, uplo, b, n, lwork})};
 }
 
-absl::Status Syevd_(cudaStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Syevd_(cudaStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SyevdDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const SyevdDescriptor& d = **s;
@@ -750,15 +750,15 @@ absl::Status Syevd_(cudaStream_t stream, void** buffers, const char* opaque,
       break;
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Syevd(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Syevd_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -837,8 +837,8 @@ std::pair<int, py::bytes> BuildSyevjDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(SyevjDescriptor{type, uplo, batch, n, lwork})};
 }
 
-absl::Status Syevj_(cudaStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Syevj_(cudaStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SyevjDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const SyevjDescriptor& d = **s;
@@ -932,15 +932,15 @@ absl::Status Syevj_(cudaStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Syevj(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Syevj_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -994,8 +994,8 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
           PackDescriptor(GesvdDescriptor{type, b, m, n, lwork, jobu, jobvt})};
 }
 
-absl::Status Gesvd_(cudaStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len) {
+tensorflow::Status Gesvd_(cudaStream_t stream, void** buffers,
+                          const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GesvdDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const GesvdDescriptor& d = **s;
@@ -1082,15 +1082,15 @@ absl::Status Gesvd_(cudaStream_t stream, void** buffers, const char* opaque,
       break;
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Gesvd_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 
@@ -1185,8 +1185,8 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
           PackDescriptor(GesvdjDescriptor{type, batch, m, n, lwork, jobz})};
 }
 
-absl::Status Gesvdj_(cudaStream_t stream, void** buffers, const char* opaque,
-                     size_t opaque_len) {
+tensorflow::Status Gesvdj_(cudaStream_t stream, void** buffers,
+                           const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GesvdjDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const GesvdjDescriptor& d = **s;
@@ -1292,15 +1292,15 @@ absl::Status Gesvdj_(cudaStream_t stream, void** buffers, const char* opaque,
       }
     }
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
 void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
             size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Gesvdj_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
+    XlaCustomCallStatusSetFailure(status, s.error_message().c_str(),
+                                  s.error_message().length());
   }
 }
 

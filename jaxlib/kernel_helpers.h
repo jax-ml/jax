@@ -21,7 +21,8 @@ limitations under the License.
 #include <string>
 
 #include "absl/base/casts.h"
-#include "absl/status/statusor.h"
+#include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/statusor.h"
 
 namespace jax {
 
@@ -37,10 +38,11 @@ std::string PackDescriptorAsString(const T& descriptor) {
 
 // Unpacks a descriptor object from a byte string.
 template <typename T>
-absl::StatusOr<const T*> UnpackDescriptor(const char* opaque,
-                                          std::size_t opaque_len) {
+tensorflow::StatusOr<const T*> UnpackDescriptor(const char* opaque,
+                                                std::size_t opaque_len) {
   if (opaque_len != sizeof(T)) {
-    return absl::InternalError("Invalid size for operation descriptor.");
+    return tensorflow::errors::Internal(
+        "Invalid size for operation descriptor.");
   }
   return absl::bit_cast<const T*>(opaque);
 }

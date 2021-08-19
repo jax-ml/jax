@@ -22,15 +22,15 @@ limitations under the License.
 
 namespace jax {
 
-absl::Status AsStatus(hipError_t error) {
+tensorflow::Status AsStatus(hipError_t error) {
   if (error != hipSuccess) {
-    return absl::InternalError(
+    return tensorflow::errors::Internal(
         absl::StrCat("ROCm operation failed: ", hipGetErrorString(error)));
   }
-  return absl::OkStatus();
+  return tensorflow::Status::OK();
 }
 
-absl::StatusOr<std::unique_ptr<void* []>> MakeBatchPointers(
+tensorflow::StatusOr<std::unique_ptr<void* []>> MakeBatchPointers(
     hipStream_t stream, void* buffer, void* dev_ptrs, int batch,
     int batch_elem_size) {
   char* ptr = static_cast<char*>(buffer);

@@ -53,8 +53,9 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        "@org_tensorflow//tensorflow/core/platform:errors",
+        "@org_tensorflow//tensorflow/core/platform:statusor",
         "@com_google_absl//absl/base",
-        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -67,8 +68,8 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        "@org_tensorflow//tensorflow/core/platform:statusor",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
     ],
 )
@@ -82,11 +83,12 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        "@org_tensorflow//tensorflow/core/platform:errors",
+        "@org_tensorflow//tensorflow/core/platform:status",
+        "@org_tensorflow//tensorflow/core/platform:statusor",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cusolver_lib",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cusparse_lib",
         "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cublas_headers",
@@ -103,10 +105,11 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        "@org_tensorflow//tensorflow/core/platform:errors",
+        "@org_tensorflow//tensorflow/core/platform:status",
+        "@org_tensorflow//tensorflow/core/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@local_config_rocm//rocm:rocm_headers",
     ],
@@ -250,7 +253,6 @@ cuda_library(
         ":cuda_gpu_kernel_helpers",
         ":kernel_helpers",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
-        "@com_google_absl//absl/status",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -281,7 +283,6 @@ cuda_library(
         ":cuda_gpu_kernel_helpers",
         ":kernel_helpers",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
-        "@com_google_absl//absl/status",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
