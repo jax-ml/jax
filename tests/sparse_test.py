@@ -313,7 +313,7 @@ class cuSparseTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(bshape, dtype)),
        "shape": shape, "dtype": dtype, "bshape": bshape}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
-      for bshape in [shape[-1:] + s for s in [(), (4,)]]
+      for bshape in [shape[-1:] + s for s in [(), (2,)]]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))  # TODO: other types
 
   def test_coo_matmul_ad(self, shape, dtype, bshape):
@@ -329,7 +329,7 @@ class cuSparseTest(jtu.JaxTestCase):
 
     # Forward-mode with respect to the vector
     f_dense = lambda x: M @ x
-    f_sparse = lambda x: sparse.COO(data, row, col, shape=M.shape) @ x
+    f_sparse = lambda x: sparse.COO((data, row, col), shape=M.shape) @ x
     v_sparse, t_sparse = api.jvp(f_sparse, [x], [xdot])
     v_dense, t_dense = api.jvp(f_dense, [x], [xdot])
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
@@ -344,7 +344,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
     # Forward-mode with respect to nonzero elements of the matrix
-    f_sparse = lambda data: sparse.coo_matvec(data, row, col, x, shape=M.shape)
+    f_sparse = lambda data: sparse.COO((data, row, col), shape=M.shape) @ x
     f_dense = lambda data: sparse.coo_todense(data, row, col, shape=M.shape) @ x
     data = rng((len(data),), data.dtype)
     data_dot = rng((len(data),), data.dtype)
