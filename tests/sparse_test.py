@@ -313,10 +313,10 @@ class cuSparseTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(bshape, dtype)),
        "shape": shape, "dtype": dtype, "bshape": bshape}
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
-      for bshape in [shape[-1:] + s for s in [()]]  # TODO: matmul autodiff
+      for bshape in [shape[-1:] + s for s in [(), (4,)]]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))  # TODO: other types
 
-  def test_coo_matvec_ad(self, shape, dtype, bshape):
+  def test_coo_matmul_ad(self, shape, dtype, bshape):
     tol = {np.float32: 1E-6, np.float64: 1E-13, np.complex64: 1E-6, np.complex128: 1E-13}
 
     rng = rand_sparse(self.rng(), post=jnp.array)
@@ -329,7 +329,7 @@ class cuSparseTest(jtu.JaxTestCase):
 
     # Forward-mode with respect to the vector
     f_dense = lambda x: M @ x
-    f_sparse = lambda x: sparse.coo_matvec(data, row, col, x, shape=M.shape)
+    f_sparse = lambda x: sparse.COO(data, row, col, shape=M.shape) @ x
     v_sparse, t_sparse = api.jvp(f_sparse, [x], [xdot])
     v_dense, t_dense = api.jvp(f_dense, [x], [xdot])
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
