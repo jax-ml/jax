@@ -371,7 +371,7 @@ if cuda_prng:
       _threefry2x32_gpu_translation_rule
 
 
-@jit
+@partial(jit, inline=True)
 def threefry_2x32(keypair, count):
   """Apply the Threefry 2x32 hash.
 
@@ -408,7 +408,7 @@ def threefry_2x32(keypair, count):
 def threefry_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
   return _threefry_split(key, int(num))  # type: ignore
 
-@partial(jit, static_argnums=(1,))
+@partial(jit, static_argnums=(1,), inline=True)
 def _threefry_split(key, num) -> jnp.ndarray:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
@@ -417,12 +417,12 @@ def _threefry_split(key, num) -> jnp.ndarray:
 def threefry_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
   return _threefry_fold_in(key, jnp.uint32(data))
 
-@jit
+@partial(jit, inline=True)
 def _threefry_fold_in(key, data):
   return threefry_2x32(key, threefry_seed(data))
 
 
-@partial(jit, static_argnums=(1, 2))
+@partial(jit, static_argnums=(1, 2), inline=True)
 def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_threefry_prng_key(key):
