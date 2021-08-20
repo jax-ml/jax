@@ -2978,16 +2978,14 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(count[0], 2)
 
 
-test_remat_variants = parameterized.named_parameters(
-    {"testcase_name": f"{suffix}", "remat": remat}
-     for suffix, remat in [
-         ('', api.remat),
-         ('_policy', partial(api.remat, policy=lambda *_, **__: False))
-    ])
-
 class RematTest(jtu.JaxTestCase):
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_basic(self, remat):
     @remat
     def g(x):
@@ -3023,7 +3021,12 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(len(sin_calls), 1)
     self.assertEqual(len(cos_calls), 2)
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_freevars(self, remat):
     def f1(x):
       y = 2 * jnp.sin(x)
@@ -3063,7 +3066,12 @@ class RematTest(jtu.JaxTestCase):
     expected = np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_jit(self, remat):
     @remat
     def g(x):
@@ -3085,7 +3093,12 @@ class RematTest(jtu.JaxTestCase):
     expected = np.cos(np.sin(2.)) * np.cos(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_vmap(self, remat):
     @remat
     def g(x):
@@ -3105,7 +3118,12 @@ class RematTest(jtu.JaxTestCase):
     expected = np.diag(np.cos(np.sin(x)) * np.cos(x))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_higher_order_autodiff(self, remat):
     def f(x):
       return lax.cos(lax.sin(x))
@@ -3142,7 +3160,12 @@ class RematTest(jtu.JaxTestCase):
     scan_eqn, = jaxpr.jaxpr.eqns
     self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_no_redundant_flops(self, remat):
     # see https://github.com/google/jax/pull/1749#issuecomment-558267584
 
@@ -3165,7 +3188,12 @@ class RematTest(jtu.JaxTestCase):
     num_calls = len(called)
     self.assertLessEqual(num_calls, 1)
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_binomial_checkpointing(self, remat):
     def binom_checkpoint(funs):
       if len(funs) == 1:
@@ -3208,7 +3236,12 @@ class RematTest(jtu.JaxTestCase):
 
     api.grad(func)(5.0)  # doesn't crash
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_jit2(self, remat):
     @api.jit
     def f(x):
@@ -3249,7 +3282,12 @@ class RematTest(jtu.JaxTestCase):
     u0 = jnp.ones_like(target)
     loss(u0, target, 10)  # doesn't crash
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_jit3(self, remat):
     # https://github.com/google/jax/issues/2180
     def f(w, x):
@@ -3307,7 +3345,12 @@ class RematTest(jtu.JaxTestCase):
 
     api.jit(named_call(f), static_argnums=0)(True, 1)  # no crash
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_remat_eval_counter(self, remat):
     # https://github.com/google/jax/issues/2737
     add_one_p = Primitive('add_one')
@@ -3362,7 +3405,12 @@ class RematTest(jtu.JaxTestCase):
     with assertEvals(2):
       vjp(v)
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_escaped_tracer_remat(self, remat):
     # b/169779185
     def f():
@@ -3377,7 +3425,12 @@ class RematTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(UnexpectedTracerError, "global state"):
       api.jit(f)()
 
-  @test_remat_variants
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False))
+      ])
   def test_no_cse_widget_on_primals(self, remat):
     @remat
     def g(x):
