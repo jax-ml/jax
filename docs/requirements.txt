@@ -1,6 +1,6 @@
 # sphinx <4 required by myst-nb v0.12.0 (Feb 2021)
 # sphinx >=3 required by sphinx-autodoc-typehints v1.11.1 (Oct 2020)
-sphinx >=3, <4
+sphinx >=3, <5
 sphinx_rtd_theme
 sphinx-autodoc-typehints==1.11.1
 jupyter-sphinx>=0.3.2
