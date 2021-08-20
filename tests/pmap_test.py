@@ -1116,7 +1116,9 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @vmap
     def s(keys):
-      keys = jnp.broadcast_to(keys, (N_DEVICES,) + keys.shape)
+      keys = tree_util.tree_map(
+          lambda x: jnp.broadcast_to(x, (N_DEVICES,) + x.shape),
+          keys)
       return g(keys)
 
     ans = s(keys)  # doesn't crash

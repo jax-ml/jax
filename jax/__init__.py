@@ -38,7 +38,7 @@ from . import config as _config_module
 del _config_module
 
 from ._src.config import (
-  config, enable_checks, check_tracer_leaks, checking_leaks,
+  config, enable_checks, check_tracer_leaks, checking_leaks, enable_custom_prng,
   debug_nans, debug_infs, log_compiles, default_matmul_precision,
   numpy_rank_promotion
 )
