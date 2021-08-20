@@ -383,9 +383,9 @@ def custom_jvp_jaxpr_custom_partial_eval_rule(
     eqn: core.JaxprEqn
   ) -> Tuple[core.JaxprEqn, core.JaxprEqn, List[bool], List[bool], List[core.Var]]:
   # It doesn't make sense to unzip (i.e. break up) a custom_jvp function into
-  # constituient parts, so we always perform full remat. An alternative would be
-  # to allow the policy function to decide whether hte value of a
-  # custom_jvp-decorated function's applicaiton should be saved or not.
+  # constituent parts, so we always perform full remat. An alternative would be
+  # to allow the policy function to decide whether the value of a
+  # custom_jvp-decorated function's application should be saved or not.
   if any(unks_in): raise NotImplementedError  # TODO(mattjj): linear fn
   unks_out = [False] * len(eqn.outvars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)

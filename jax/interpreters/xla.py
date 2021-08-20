@@ -1000,7 +1000,7 @@ def _xla_call_partial_eval_custom_params_updater(
   new_params2 = dict(params2, donated_invars=tuple(donated_invars2))
   return new_params1, new_params2
 pe.partial_eval_jaxpr_custom_rules[xla_call_p] = \
-    partial(pe.partial_eval_jaxpr_custom_call_rule,
+    partial(pe.call_partial_eval_custom_rule,
             _xla_call_partial_eval_custom_params_updater)
 pe.dce_rules[xla_call_p] = pe.dce_jaxpr_call_rule
 
@@ -1501,8 +1501,8 @@ def _remat_using_while(
 def _remat_translation_rule(c, axis_env, in_nodes,
                             name_stack, backend, name, call_jaxpr,
                             prevent_cse, differentiated, concrete,
-                            saveable_policy, device=None):
-  del device, concrete, saveable_policy  # Unused.
+                            policy, device=None):
+  del device, concrete, policy  # Unused.
   if differentiated and prevent_cse:
     if backend == "gpu":
       return _remat_using_while(

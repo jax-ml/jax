@@ -2639,7 +2639,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
 
 def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
-               saveable_policy: Optional[Callable[..., bool]] = None,
+               policy: Optional[Callable[..., bool]] = None,
                ) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
@@ -2686,11 +2686,11 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
       ``pmap``, CSE can defeat the purpose of this decorator. But in some
       settings, like when used inside a ``scan``, this CSE prevention mechanism
       is unnecessary, in which case ``prevent_cse`` can be set to False.
-    saveable_policy: Optional, callable which takes as input a type-level
-      specification of a first-order primitive application and returns a boolean
-      indicating whether the corresponding output value(s) can be saved as a
-      residual (or, if not, instead must be recomputed in the (co)tangent
-      computation). Experimental.
+    policy: Optional, callable which takes as input a type-level specification
+      of a first-order primitive application and returns a boolean indicating
+      whether the corresponding output value(s) can be saved as a residual (or,
+      if not, instead must be recomputed in the (co)tangent computation).
+      Experimental.
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -2743,7 +2743,7 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
     out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
                              concrete=concrete, prevent_cse=prevent_cse,
                              differentiated=False,
-                             saveable_policy=saveable_policy)
+                             policy=policy)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint

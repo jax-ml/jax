@@ -779,10 +779,10 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
   in_unknowns = ([False] * len(consts) +
                  [not t.is_known() for t in it.chain(env_tracers, tracers)])
-  if params['saveable_policy']:
+  if params['policy']:
     # unzip into jaxpr1 and jaxpr2
     jaxpr1_, jaxpr2_, out_unknowns, out_inst, _ = _partial_eval_jaxpr_custom(
-        jaxpr, in_unknowns, params['saveable_policy'])
+        jaxpr, in_unknowns, params['policy'])
     jaxpr1, in_used1 = dce_jaxpr(jaxpr1_, [True] * len(jaxpr1_.outvars))
     _, used_outs2 = partition_list(out_inst, out_unknowns)
     jaxpr2, in_used2 = dce_jaxpr(jaxpr2_, used_outs2)
@@ -935,6 +935,16 @@ def _partial_eval_jaxpr_custom(
 
   return jaxpr1, jaxpr2, out_unknowns, out_inst, len(residuals)
 
+# A primitive rule for policy-driven partial evaluation returns a 5-tuple
+# with the components representing, respectively:
+#  * the JaxprEqn for the 'known' side (or None if there is no known component),
+#  * the JaxprEqn for the 'unknown' side (or None),
+#  * a list of booleans indicating which of the original outputs are unknown,
+#  * a list of booleans indicating which of the original outputs are
+#    instantiated (i.e. available) in the 'unknown' side,
+#  * a list of Var instances representing residuals to be added (i.e. to be
+#    plumbed as outputs of the 'known' side jaxpr and added as input binders to
+#    the 'unknown' jaxpr).
 PartialEvalCustomResult = Tuple[Optional[JaxprEqn], Optional[JaxprEqn],
                                 List[bool], List[bool], List[Var]]
 PartialEvalCustomRule = Callable[
@@ -950,7 +960,7 @@ def partial_eval_jaxpr_custom_rule_not_implemented(
 
 ParamsUpdater = Callable[[List[bool], int, dict, dict], Tuple[dict, dict]]
 
-def partial_eval_jaxpr_custom_call_rule(
+def call_partial_eval_custom_rule(
     params_updater: ParamsUpdater, saveable: Callable[..., bool],
     unks_in: List[bool], inst_in: List[bool], eqn: JaxprEqn
   ) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[bool], List[Var]]:
@@ -973,9 +983,9 @@ def partial_eval_jaxpr_custom_call_rule(
               if type(x) is Var and not inst]
   return eqn1, eqn2, unks_out, inst_out, new_inst + residuals
 partial_eval_jaxpr_custom_rules[core.call_p] = \
-    partial(partial_eval_jaxpr_custom_call_rule, lambda _, __, x, y: (x, y))
+    partial(call_partial_eval_custom_rule, lambda _, __, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[remat_call_p] = \
-    partial(partial_eval_jaxpr_custom_call_rule,
+    partial(call_partial_eval_custom_rule,
             lambda _, __, p1, p2: (p1, dict(p2, differentiated=True)))
 
 
