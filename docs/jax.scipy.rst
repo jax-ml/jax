@@ -99,7 +99,10 @@ jax.scipy.special
    erf
    erfc
    erfinv
+   exp1
+   expi
    expit
+   expn
    gammainc
    gammaincc
    gammaln

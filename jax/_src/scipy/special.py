@@ -1089,3 +1089,376 @@ def sph_harm(m: jnp.ndarray,
       'be statically specified to use `sph_harm` within JAX transformations.')
 
   return _sph_harm(m, n, theta, phi, n_max)
+
+
+# exponential integrals
+# these algorithms are ported over from the files ei.c and expn.c in the Cephes mathematical library.
+# https://fossies.org/dox/cephes-math-28/ei_8c_source.html
+# https://fossies.org/dox/cephes-math-28/expn_8c_source.html
+
+
+def _expint1(x):
+  # 0 < x <= 2
+  A = [
+    -5.350447357812542947283e0,
+    2.185049168816613393830e2,
+    -4.176572384826693777058e3,
+    5.541176756393557601232e4,
+    -3.313381331178144034309e5,
+    1.592627163384945414220e6,
+  ]
+  B = [
+    1.0,
+    -5.250547959112862969197e1,
+    1.259616186786790571525e3,
+    -1.756549581973534652631e4,
+    1.493062117002725991967e5,
+    -7.294949239640527645655e5,
+    1.592627163384945429726e6,
+  ]
+  A, B = [jnp.array(U, dtype=x.dtype) for U in [A, B]]
+  f = jnp.polyval(A, x) / jnp.polyval(B, x)
+  return x * f + jnp.euler_gamma + jnp.log(x)
+
+
+def _eval_expint_k(A, B, x):
+  # helper function for all subsequent intervals
+  A, B = [jnp.array(U, dtype=x.dtype) for U in [A, B]]
+  one = _constant_like(x, 1.0)
+  w = one / x
+  f = jnp.polyval(A, w) / jnp.polyval(B, w)
+  f = w * f + one
+  return jnp.exp(x) * w * f
+
+
+def _expint2(x):
+  # 2 <= x < 4
+  A = [
+    1.981808503259689673238e-2,
+    -1.271645625984917501326e0,
+    -2.088160335681228318920e0,
+    2.755544509187936721172e0,
+    -4.409507048701600257171e-1,
+    4.665623805935891391017e-2,
+    -1.545042679673485262580e-3,
+    7.059980605299617478514e-5,
+  ]
+  B = [
+    1.0,
+    1.476498670914921440652e0,
+    5.629177174822436244827e-1,
+    1.699017897879307263248e-1,
+    2.291647179034212017463e-2,
+    4.450150439728752875043e-3,
+    1.727439612206521482874e-4,
+    3.953167195549672482304e-5,
+  ]
+  return _eval_expint_k(A, B, x)
+
+
+def _expint3(x):
+  # 4 <= x <= 8
+  A = [
+    -1.373215375871208729803e0,
+    -7.084559133740838761406e-1,
+    1.580806855547941010501e0,
+    -2.601500427425622944234e-1,
+    2.994674694113713763365e-2,
+    -1.038086040188744005513e-3,
+    4.371064420753005429514e-5,
+    2.141783679522602903795e-6,
+  ]
+  B = [
+    1.0,
+    8.585231423622028380768e-1,
+    4.483285822873995129957e-1,
+    7.687932158124475434091e-2,
+    2.449868241021887685904e-2,
+    8.832165941927796567926e-4,
+    4.590952299511353531215e-4,
+    -4.729848351866523044863e-6,
+    2.665195537390710170105e-6,
+  ]
+  return _eval_expint_k(A, B, x)
+
+
+def _expint4(x):
+  # 8 <= x <= 16
+  A = [
+    -2.106934601691916512584e0,
+    1.732733869664688041885e0,
+    -2.423619178935841904839e-1,
+    2.322724180937565842585e-2,
+    2.372880440493179832059e-4,
+    -8.343219561192552752335e-5,
+    1.363408795605250394881e-5,
+    -3.655412321999253963714e-7,
+    1.464941733975961318456e-8,
+    6.176407863710360207074e-10,
+  ]
+  B = [
+    1.0,
+    -2.298062239901678075778e-1,
+    1.105077041474037862347e-1,
+    -1.566542966630792353556e-2,
+    2.761106850817352773874e-3,
+    -2.089148012284048449115e-4,
+    1.708528938807675304186e-5,
+    -4.459311796356686423199e-7,
+    1.394634930353847498145e-8,
+    6.150865933977338354138e-10,
+  ]
+  return _eval_expint_k(A, B, x)
+
+
+def _expint5(x):
+  # 16 <= x <= 32
+  A = [
+    -2.458119367674020323359e-1,
+    -1.483382253322077687183e-1,
+    7.248291795735551591813e-2,
+    -1.348315687380940523823e-2,
+    1.342775069788636972294e-3,
+    -7.942465637159712264564e-5,
+    2.644179518984235952241e-6,
+    -4.239473659313765177195e-8,
+  ]
+  B = [
+    1.0,
+    -1.044225908443871106315e-1,
+    -2.676453128101402655055e-1,
+    9.695000254621984627876e-2,
+    -1.601745692712991078208e-2,
+    1.496414899205908021882e-3,
+    -8.462452563778485013756e-5,
+    2.728938403476726394024e-6,
+    -4.239462431819542051337e-8,
+  ]
+  return _eval_expint_k(A, B, x)
+
+
+def _expint6(x):
+  # 32 <= x <= 64
+  A = [
+    1.212561118105456670844e-1,
+    -5.823133179043894485122e-1,
+    2.348887314557016779211e-1,
+    -3.040034318113248237280e-2,
+    1.510082146865190661777e-3,
+    -2.523137095499571377122e-5,
+  ]
+  B = [
+    1.0,
+    -1.002252150365854016662e0,
+    2.928709694872224144953e-1,
+    -3.337004338674007801307e-2,
+    1.560544881127388842819e-3,
+    -2.523137093603234562648e-5,
+  ]
+  return _eval_expint_k(A, B, x)
+
+
+def _expint7(x):
+  # x > 64
+  A = [
+    -7.657847078286127362028e-1,
+    6.886192415566705051750e-1,
+    -2.132598113545206124553e-1,
+    3.346107552384193813594e-2,
+    -3.076541477344756050249e-3,
+    1.747119316454907477380e-4,
+    -6.103711682274170530369e-6,
+    1.218032765428652199087e-7,
+    -1.086076102793290233007e-9,
+  ]
+  B = [
+    1.0,
+    -1.888802868662308731041e0,
+    1.066691687211408896850e0,
+    -2.751915982306380647738e-1,
+    3.930852688233823569726e-2,
+    -3.414684558602365085394e-3,
+    1.866844370703555398195e-4,
+    -6.345146083130515357861e-6,
+    1.239754287483206878024e-7,
+    -1.086076102793126632978e-9,
+  ]
+  return _eval_expint_k(A, B, x)
+
+
+def _expi_pos(x):
+  # x > 0
+  _c = _constant_like
+  conds = [(_c(x, 0) < x) & (x <= _c(x, 2))] + [
+    (_c(x, 2 ** i) < x) & (x <= _c(x, 2 ** (i + 1))) for i in range(1, 6)
+  ]
+  return jnp.piecewise(
+    x,
+    conds,
+    [_expint1, _expint2, _expint3, _expint4, _expint5, _expint6, _expint7],
+  )
+
+
+@_wraps(osp_special.expi)
+@api.custom_jvp
+@jit
+def expi(x):
+  (x,) = _promote_args_inexact("expi", x)
+  ret = jnp.piecewise(x, [x < 0], [lambda x: -exp1(-x), _expi_pos])
+  return ret
+
+
+@expi.defjvp
+@jit
+def expi_jvp(primals, tangents):
+  (x,) = primals
+  (x_dot,) = tangents
+  return expi(x), jnp.exp(x) / x * x_dot
+
+
+def _expn1(n, x):
+  # exponential integral En
+  _c = _constant_like
+  x = jnp.array(x)
+  MACHEP = jnp.finfo(x.dtype).eps
+
+  zero = _c(x, 0.0)
+  one = _c(x, 1.0)
+  psi = -jnp.euler_gamma - jnp.log(x)
+  psi = lax.fori_loop(_c(n, 1), n, lambda i, psi: psi + one / i, psi)
+  n1 = jnp.where(n == _c(n, 1), one + one, n)
+  init = dict(
+    x=x,
+    z=-x,
+    xk=zero,
+    yk=one,
+    pk=one - n,
+    ans=jnp.where(n == _c(n, 1), zero, one / (one - n1)),
+    t=jnp.inf,
+  )
+
+  def body(d):
+    d["xk"] += one
+    d["yk"] *= d["z"] / d["xk"]
+    d["pk"] += one
+    d["ans"] += jnp.where(d["pk"] != zero, d["yk"] / d["pk"], zero)
+    d["t"] = jnp.where(d["ans"] != zero, abs(d["yk"] / d["ans"]), one)
+    return d
+
+  def cond(d):
+    return (d["x"] > _c(d["x"], 0.0)) & (d["t"] > MACHEP)
+
+  d = lax.while_loop(cond, body, init)
+  t = n
+  r = n - _c(n, 1)
+  return d["z"] ** r * psi / jnp.exp(gammaln(t)) - d["ans"]
+
+
+def _expn2(n, x):
+  # x > 1.
+  _c = _constant_like
+  BIG = _c(x, 1.44115188075855872e17)
+  MACHEP = jnp.finfo(BIG.dtype).eps  # ?
+  zero = _c(x, 0.0)
+  one = _c(x, 1.0)
+
+  init = dict(
+    k=_c(n, 1),
+    pkm2=one,
+    qkm2=x,
+    pkm1=one,
+    qkm1=x + n,
+    ans=one / (x + n),
+    t=_c(x, jnp.inf),
+    r=zero,
+    x=x,
+  )
+
+  def body(d):
+    x = d["x"]
+    d["k"] += _c(d["k"], 1)
+    k = d["k"]
+    odd = k % _c(k, 2) == _c(k, 1)
+    yk = jnp.where(odd, one, x)
+    xk = jnp.where(odd, n + (k - _c(k, 1)) / _c(k, 2), k / _c(k, 2))
+    pk = d["pkm1"] * yk + d["pkm2"] * xk
+    qk = d["qkm1"] * yk + d["qkm2"] * xk
+    nz = qk != zero
+    d["r"] = r = jnp.where(nz, pk / qk, d["r"])
+    d["t"] = jnp.where(nz, abs((d["ans"] - r) / r), one)
+    d["ans"] = jnp.where(nz, r, d["ans"])
+    d["pkm2"] = d["pkm1"]
+    d["pkm1"] = pk
+    d["qkm2"] = d["qkm1"]
+    d["qkm1"] = qk
+    is_big = abs(pk) > BIG
+    for s in "pq":
+      for i in "12":
+        key = s + "km" + i
+        d[key] = jnp.where(is_big, d[key] / BIG, d[key])
+    return d
+
+  def cond(d):
+    return (d["x"] > _c(d["k"], 0)) & (d["t"] > MACHEP)
+
+  d = lax.while_loop(cond, body, init)
+  return d["ans"] * jnp.exp(-x)
+
+
+def _expn3(n, x):
+  # n >= 5000
+  _c = _constant_like
+  one = _c(x, 1.0)
+  xk = x + n
+  yk = one / (xk * xk)
+  t = n
+  ans = yk * t * (_c(x, 6) * x * x - _c(x, 8) * t * x + t * t)
+  ans = yk * (ans + t * (t - _c(x, 2) * x))
+  ans = yk * (ans + t)
+  return (ans + one) * jnp.exp(-x) / xk
+
+
+@_wraps(osp_special.expn)
+@partial(api.custom_jvp, nondiff_argnums=(0,))
+@jnp.vectorize
+@jit
+def expn(n, x):
+  n, x = _promote_args_inexact("expn", n, x)
+  _c = _constant_like
+  zero = _c(x, 0)
+  one = _c(x, 1)
+  conds = [
+    (n < _c(n, 0)) | (x < zero),
+    (x == zero) & (n < _c(n, 2)),
+    (x == zero) & (n >= _c(n, 2)),
+    (n == _c(n, 0)) & (x >= zero),
+    (n >= _c(n, 5000)),
+    (x > one),
+  ]
+  n1 = jnp.where(n == _c(n, 1), n + n, n)
+  vals = [
+    jnp.nan,
+    jnp.inf,
+    one / n1,  # prevent div by zero
+    jnp.exp(-x) / x,
+    partial(_expn3, n),
+    partial(_expn2, n),
+    partial(_expn1, n),
+  ]
+  ret = jnp.piecewise(x, conds, vals)
+  return ret
+
+
+@expn.defjvp
+@jit
+def expn_jvp(n, primals, tangents):
+  (x,), (x_dot,) = primals, tangents
+  return expn(n, x), lax.mul(
+    lax.neg(x_dot), expn(lax.sub(n, _constant_like(n, 1)), x)
+  )
+
+
+@_wraps(osp_special.exp1)
+def exp1(x):
+  (x,) = _promote_args_inexact("exp1", x)
+  return expn(1, x)
