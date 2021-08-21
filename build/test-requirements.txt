@@ -1,5 +1,5 @@
 flake8
-flatbuffers==1.12
+flatbuffers==2.0
 pillow>=8.3.1
 pytest-benchmark
 pytest-xdist
