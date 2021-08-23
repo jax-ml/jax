@@ -1777,16 +1777,16 @@ three-argument form does not have a data-dependent shape and can be JIT-compiled
 successfully. Alternatively, you can specify the optional ``size`` keyword:
 if specified, the first ``size`` True elements will be returned; if there
 are fewer True elements than ``size`` indicates, the index arrays will be
-padded with zeros.
+padded with ``fill_value`` (default is 0.)
 """
 
 @_wraps(np.where, update_doc=False, lax_description=_WHERE_DOC)
-def where(condition, x=None, y=None, *, size=None):
+def where(condition, x=None, y=None, *, size=None, fill_value=None):
   if x is None and y is None:
-    return nonzero(asarray(condition), size=size)
+    return nonzero(asarray(condition), size=size, fill_value=fill_value)
   else:
-    if size is not None:
-      raise ValueError("size argument cannot be used in three-term where function.")
+    if size is not None or fill_value is not None:
+      raise ValueError("size and fill_value arguments cannot be used in three-term where function.")
     return _where(condition, x, y)
 
 
