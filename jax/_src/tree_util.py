@@ -278,7 +278,7 @@ class Partial(functools.partial):
   >>> import jax.numpy as jnp
   >>> add_one = Partial(jnp.add, 1)
   >>> add_one(2)
-  DeviceArray(3, dtype=int32)
+  DeviceArray(3, dtype=int32, weak_type=True)
 
   Pytree compatibility means that the resulting partial function can be passed
   as an argument within transformed JAX functions, which is not possible with a
@@ -290,13 +290,13 @@ class Partial(functools.partial):
   ...   return f(*args)
   ...
   >>> call_func(add_one, 2)
-  DeviceArray(3, dtype=int32)
+  DeviceArray(3, dtype=int32, weak_type=True)
 
   Passing zero arguments to ``Partial`` effectively wraps the original function,
   making it a valid argument in JAX transformed functions:
 
   >>> call_func(Partial(jnp.add), 1, 2)
-  DeviceArray(3, dtype=int32)
+  DeviceArray(3, dtype=int32, weak_type=True)
 
   Had we passed ``jnp.add`` to ``call_func`` directly, it would have resulted in a
   ``TypeError``.

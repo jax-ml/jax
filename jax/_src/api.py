@@ -1249,7 +1249,7 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
   broadcast across the mapped axis:
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(jnp.arange(2.), 4.))
-  (DeviceArray([4., 5.], dtype=float32), DeviceArray([8., 8.], dtype=float32))
+  (DeviceArray([4., 5.], dtype=float32), DeviceArray([8., 8.], dtype=float32, weak_type=True))
 
   If the ``out_axes`` is specified for a mapped result, the result is transposed
   accordingly.
@@ -1999,7 +1999,7 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   >>> def f(x): return 3. * jnp.sin(x) + jnp.cos(x / 2.)
   ...
   >>> jax.jvp(f, (2.,), (3.,))
-  (DeviceArray(3.26819, dtype=float32), DeviceArray(-5.00753, dtype=float32))
+  (DeviceArray(3.26819, dtype=float32, weak_type=True), DeviceArray(-5.00753, dtype=float32, weak_type=True))
   >>> y, f_jvp = jax.linearize(f, 2.)
   >>> print(y)
   3.2681944
