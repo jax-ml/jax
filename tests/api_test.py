@@ -507,6 +507,20 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_omnistaging(self):
     # See https://github.com/google/jax/issues/5206
+
+    # TODO(frostig): remove once we always enable_custom_prng
+    def _prng_key_as_array(key):
+      return key.keys if config.jax_enable_custom_prng else key
+
+    # TODO(frostig): remove once we always enable_custom_prng
+    def _array_as_prng_key(arr):
+      arr = np.array(arr, dtype=np.uint32)
+      if config.jax_enable_custom_prng:
+        return jax._src.prng.PRNGKeyArray(
+            jax._src.prng.threefry_prng_impl, arr)
+      else:
+        return arr
+
     key_list = [None]
 
     def init():
@@ -514,10 +528,10 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       key_list[0] = key
       return jax.random.normal(subkey, ())
 
-    key_list[0] = np.array([2384771982, 3928867769], dtype=np.uint32)
+    key_list[0] = _array_as_prng_key([2384771982, 3928867769])
     init()
     self.jit(init)()
-    self.assertIsInstance(key_list[0], core.Tracer)
+    self.assertIsInstance(_prng_key_as_array(key_list[0]), core.Tracer)
 
   def test_jit_wrapped_attributes(self):
     def f(x: int) -> int:

@@ -28,17 +28,20 @@ from jax import ops
 from jax import random
 from jax import core
 from jax._src.util import prod
+from jax import dtypes
 
-def zeros(key, shape, dtype=jnp.float32): return jnp.zeros(shape, dtype)
-def ones(key, shape, dtype=jnp.float32): return jnp.ones(shape, dtype)
+def zeros(key, shape, dtype=jnp.float_): return jnp.zeros(shape, dtypes.canonicalize_dtype(dtype))
+def ones(key, shape, dtype=jnp.float_): return jnp.ones(shape, dtypes.canonicalize_dtype(dtype))
 
-def uniform(scale=1e-2, dtype=jnp.float32):
+def uniform(scale=1e-2, dtype=jnp.float_):
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     return random.uniform(key, shape, dtype) * scale
   return init
 
-def normal(stddev=1e-2, dtype=jnp.float32):
+def normal(stddev=1e-2, dtype=jnp.float_):
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     return random.normal(key, shape, dtype) * stddev
   return init
 
@@ -71,7 +74,7 @@ def _complex_truncated_normal(key, upper, shape, dtype):
   theta = 2 * jnp.pi * random.uniform(key_theta, shape, dtype)
   return r * jnp.exp(1j * theta)
 
-def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=jnp.float32):
+def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=jnp.float_):
   """
   Initializer capable of adapting its scale to the shape of the weights tensor.
 
@@ -102,6 +105,7 @@ def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=j
   """
 
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     shape = core.as_named_shape(shape)
     fan_in, fan_out = _compute_fans(shape, in_axis, out_axis)
     if mode == "fan_in": denominator = fan_in
@@ -140,7 +144,7 @@ lecun_normal = partial(variance_scaling, 1.0, "fan_in", "truncated_normal")
 kaiming_uniform = he_uniform = partial(variance_scaling, 2.0, "fan_in", "uniform")
 kaiming_normal = he_normal = partial(variance_scaling, 2.0, "fan_in", "truncated_normal")
 
-def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
+def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float_):
   """
   Construct an initializer for uniformly distributed orthogonal matrices.
 
@@ -148,6 +152,7 @@ def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
   depending on which side is smaller.
   """
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
     n_rows, n_cols = prod(shape) // shape[column_axis], shape[column_axis]
@@ -163,13 +168,14 @@ def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
   return init
 
 
-def delta_orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
+def delta_orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float_):
   """
   Construct an initializer for delta orthogonal kernels; see arXiv:1806.05393.
 
   The shape must be 3D, 4D or 5D.
   """
   def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) not in [3, 4, 5]:
       raise ValueError("Delta orthogonal initializer requires a 3D, 4D or 5D "
                        "shape.")

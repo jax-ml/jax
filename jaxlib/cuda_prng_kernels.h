@@ -20,14 +20,15 @@ limitations under the License.
 #include <string>
 
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 
-std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n);
+struct ThreeFry2x32Descriptor {
+  std::int64_t n;
+};
 
-void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
-                      std::size_t opaque_len, XlaCustomCallStatus* status);
+void LaunchThreeFry2x32Kernel(cudaStream_t stream, void** buffers,
+                              ThreeFry2x32Descriptor descriptor);
 
 }  // namespace jax
 
