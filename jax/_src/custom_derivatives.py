@@ -914,13 +914,13 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   ...   return transposed
 
   >>> div_add(9., 3.)
-  DeviceArray(12., dtype=float32)
+  DeviceArray(12., dtype=float32, weak_type=True)
 
   >>> transpose(partial(div_add, denom=3.), 1.)(18.)  # custom
-  DeviceArray(24., dtype=float32)
+  DeviceArray(24., dtype=float32, weak_type=True)
 
   >>> transpose(lambda x: x + x / 3., 1.)(18.)  # reference
-  DeviceArray(24., dtype=float32)
+  DeviceArray(24., dtype=float32, weak_type=True)
 
   The above definition of ``f`` illustrates the purpose of a residual
   argument: division is linear in one of its inputs (the dividend

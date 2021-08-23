@@ -358,5 +358,21 @@ class TestPromotionTables(jtu.JaxTestCase):
     assert x.dtype == y.dtype
     assert dtypes.is_weakly_typed(y) == dtypes.is_weakly_typed(x)
 
+  @parameterized.named_parameters(
+    {"testcase_name": "_dtype={}_weak_type={}".format(dtype, weak_type),
+     "dtype": dtype, "weak_type": weak_type}
+    for dtype in all_dtypes
+    for weak_type in [True, False]
+  )
+  def testDeviceArrayRepr(self, dtype, weak_type):
+    val = lax._convert_element_type(0, dtype, weak_type=weak_type)
+    rep = repr(val)
+    self.assertStartsWith(rep, 'DeviceArray(')
+    if weak_type:
+      self.assertEndsWith(rep, f"dtype={val.dtype.name}, weak_type=True)")
+    else:
+      self.assertEndsWith(rep, f"dtype={val.dtype.name})")
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

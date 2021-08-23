@@ -423,7 +423,7 @@ class TracerIntegerConversionError(JAXTypeError):
       ...   return L[i]
 
       >>> func(0)
-      DeviceArray(1, dtype=int32)
+      DeviceArray(1, dtype=int32, weak_type=True)
 
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
@@ -463,12 +463,12 @@ class UnexpectedTracerError(JAXTypeError):
       >>> outs = []
       >>> @jit                   # 1
       ... def side_effecting(x):
-      ...   y = x+1              # 3
+      ...   y = x + 1            # 3
       ...   outs.append(y)       # 4
 
       >>> x = 1
       >>> side_effecting(x)      # 2
-      >>> outs[0]+1              # 5  # doctest: +IGNORE_EXCEPTION_DETAIL
+      >>> outs[0] + 1            # 5  # doctest: +IGNORE_EXCEPTION_DETAIL
       Traceback (most recent call last):
           ...
       UnexpectedTracerError: Encountered an unexpected tracer.
@@ -520,8 +520,8 @@ class UnexpectedTracerError(JAXTypeError):
       >>> x = 1
       >>> y = not_side_effecting(x)
       >>> outs.append(y)
-      >>> outs[0]+1  # all good! no longer a leaked value.
-      DeviceArray(3, dtype=int32)
+      >>> outs[0] + 1  # all good! no longer a leaked value.
+      DeviceArray(3, dtype=int32, weak_type=True)
 
   Leak checker
     As discussed in point 2 and 3 above, JAX shows a reconstructed stack trace
