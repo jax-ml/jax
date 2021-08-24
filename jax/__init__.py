@@ -119,6 +119,7 @@ from . import lax
 from . import nn
 from . import profiler
 from . import random
+from . import tree_util
 from . import util
 
 def _init():
