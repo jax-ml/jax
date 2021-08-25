@@ -21,6 +21,7 @@ Subpackages
     jax.flatten_util
     jax.dlpack
     jax.profiler
+    jax.debugging
 
 .. _jax-jit:
 
