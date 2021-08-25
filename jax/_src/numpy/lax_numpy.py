@@ -1037,6 +1037,11 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
   if weights is not None and weights.shape != (N,):
     raise ValueError("should have one weight for each sample.")
 
+  if range is not None and (
+      len(range) != D or _any(r is not None and len(r) != 2 for r in range)):
+    raise ValueError(f"For sample.shape={(N, D)}, range must be a sequence "
+                     f"of {D} pairs or Nones; got range={range}")
+
   try:
     num_bins = len(bins)
     if num_bins != D:
@@ -1051,7 +1056,8 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
   dedges = D*[None]
 
   for i in builtins.range(D):
-    bin_edges = histogram_bin_edges(sample[:, i], bins[i], range, weights)
+    range_i = None if range is None else range[i]
+    bin_edges = histogram_bin_edges(sample[:, i], bins[i], range_i, weights)
     bin_idx = searchsorted(bin_edges, sample[:, i], side='right')
     bin_idx = where(sample[:, i] == bin_edges[-1], bin_idx - 1, bin_idx)
     bin_idx_by_dim[i] = bin_idx
