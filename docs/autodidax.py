@@ -97,7 +97,7 @@ def cos(x): return bind1(cos_p, x)
 def reduce_sum(x, axis=None): return bind1(reduce_sum_p, x, axis=axis)
 def greater(x, y): return bind1(greater_p, x, y)
 def less(x, y): return bind1(less_p, x, y)
-def transpose(x, perm): return bind1(transpose_p, perm=perm)
+def transpose(x, perm): return bind1(transpose_p, x, perm=perm)
 def broadcast(x, shape, axes): return bind1(broadcast_p, x, shape=shape, axes=axes)
 
 def bind1(prim, *args, **params):
@@ -743,7 +743,7 @@ def move_batch_axis(axis_size, src, dst, x):
   if src is not_mapped:
     target_shape = list(np.shape(x))
     target_shape.insert(dst, axis_size)
-    return broadcast(x, target_shape, [dst])
+    return broadcast(x, tuple(target_shape), [dst])
   elif src == dst:
     return x
   else:
@@ -841,6 +841,26 @@ def reduce_sum_batching_rule(axis_size, vals_in, dims_in, *, axis):
   out_bdim = x_bdim - (new_axis < x_bdim)
   return [reduce_sum(x, new_axis)], [out_bdim]
 vmap_rules[reduce_sum_p] = reduce_sum_batching_rule
+
+def broadcast_batching_rule(axis_size, vals_in, dims_in, *, shape, axes):
+  operand, = vals_in 
+  bdim, = dims_in
+  if bdim is not_mapped:
+    return [broadcast(operand, shape, axes)], [not_mapped]
+  new_operand = moveaxis(operand, bdim, 0)
+  new_shape = (axis_size,) + shape
+  new_axes = tuple(np.add(1, axes))
+  return [broadcast(new_operand, new_shape, new_axes)], [0]
+vmap_rules[broadcast_p] = broadcast_batching_rule
+
+def transpose_batching_rule(axis_size, vals_in, dims_in, *, perm):
+  operand, = vals_in 
+  bdim, = dims_in
+  if bdim is not_mapped:
+    return [transpose(operand, perm)], [not_mapped]
+  perm = (bdim,) + tuple(i if i < bdim else i+1 for i in perm)
+  return [transpose(operand, perm)], [0]
+vmap_rules[transpose_p] = transpose_batching_rule
 # -
 
 # Finally, we add a transformation API to kick off the trace:
@@ -1231,6 +1251,11 @@ def broadcast_abstract_eval(x: ShapedArray, *, shape: Sequence[int],
                             axes: Sequence[int]) -> List[ShapedArray]:
   return [ShapedArray(tuple(shape), x.dtype)]
 abstract_eval_rules[broadcast_p] = broadcast_abstract_eval
+
+def transpose_abstract_eval(x: ShapedArray, *, perm: Sequence[int]) -> List[ShapedArray]:
+  permuted_shape = tuple(x.shape[i] for i in perm)
+  return [ShapedArray(permuted_shape, x.dtype)]
+abstract_eval_rules[transpose_p] = transpose_abstract_eval
 # -
 
 # To check our implementation of jaxprs, we can add a `make_jaxpr`
@@ -2461,6 +2486,12 @@ def add_transpose_rule(cts, x, y):
   return [z_bar, z_bar]
 transpose_rules[add_p] = add_transpose_rule
 
+def reduce_sum_transpose_rule(cts, val, *, axis):
+  ct, = cts
+  assert type(val) is UndefPrimal
+  return [broadcast(ct, val.aval.shape, (axis,))]
+transpose_rules[reduce_sum_p] = reduce_sum_transpose_rule
+
 def xla_call_transpose_rule(cts, *invals, jaxpr, num_consts):
   del num_consts  # Unused
   undef_primals = [type(x) is UndefPrimal for x in invals]
@@ -2871,3 +2902,930 @@ def pprint_cond(names: DefaultDict[Var, str], eqn: JaxprEqn) -> PPrint:
                pp_jaxpr(true_jaxpr).indent(2),
                pp_jaxpr(false_jaxpr).indent(2)])
 pp_rules[cond_p] = pprint_cond
+
+# -
+
+# ### Adding a "batched" `cond` primitive: explicit batching information
+
+# We'll first add a simple data structure that keeps track of batching
+# information
+
+# +
+class BatchDims(NamedTuple):
+  axis_size: int
+  dims: Tuple[BatchAxis]
+
+  def update(self, new_dims):
+    return BatchDims(self.axis_size, new_dims)
+
+class BatchInfo(NamedTuple):
+  batch_dims: Tuple[BatchDims] = ()
+
+  def add_dims(self, axis_size, dims):
+    return BatchInfo(self.batch_dims + (BatchDims(axis_size, dims),))
+  
+# -
+
+# We define a new `cond` that passes in an empty `batch_dims` parameter
+# into the `cond_p` primitive. `bind_cond` passes these into the `cond`
+# interpreter rules.
+
+# +
+def cond(pred, true_fn, false_fn, *operands):
+  avals_in = [raise_to_shaped(get_aval(x)) for x in operands]
+  true_jaxpr, true_consts, out_tree = make_jaxpr(true_fn, *avals_in)
+  false_jaxpr, false_consts, out_tree_ = make_jaxpr(false_fn, *avals_in)
+  if out_tree != out_tree_: raise TypeError
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  if typecheck_jaxpr(true_jaxpr) != typecheck_jaxpr(false_jaxpr):
+    raise TypeError
+  outs = bind_cond(pred, *true_consts, *false_consts, *operands,
+                   true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                   batch_info=BatchInfo())
+  return tree_unflatten(out_tree, outs)
+cond_p = Primitive('cond')
+
+def bind_cond(pred, *args, true_jaxpr, false_jaxpr, batch_info):
+  assert len(args) == len(true_jaxpr.in_binders) == len(false_jaxpr.in_binders)
+  for batch_dim in batch_info.batch_dims:
+    assert len(batch_dim.dims) == len(args) + 1
+  return bind(cond_p, pred, *args, true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+              batch_info=batch_info)
+# -
+
+# The new `cond_impl` rule will use these batch dimensions when they're passed
+# in, calling `vmap_flat` to batch the execution of the true and false branches.
+
+# +
+def _cond_batch_jaxprs(batch_dims, true_jaxpr, false_jaxpr):
+  axis_size, dims_in = batch_dims.axis_size, batch_dims.dims[1:]
+  dims_in = [not_mapped if dim is None else dim for dim in dims_in]
+  true_jaxpr, true_consts = vmap_jaxpr(true_jaxpr, axis_size, tuple(dims_in))
+  false_jaxpr, false_consts = vmap_jaxpr(false_jaxpr, axis_size, tuple(dims_in))
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  assert typecheck_jaxpr(true_jaxpr) == typecheck_jaxpr(false_jaxpr)
+  return true_jaxpr, false_jaxpr, tuple(true_consts + false_consts)
+
+def batched_cond_impl(pred, *operands, true_jaxpr, false_jaxpr, batch_info):
+  consts = ()
+  for batch_dim in batch_info.batch_dims:
+    new_batch_dim = batch_dim.update((None,) * len(consts) + batch_dim.dims)
+    true_jaxpr, false_jaxpr, new_consts = _cond_batch_jaxprs(new_batch_dim, true_jaxpr,
+        false_jaxpr)
+    consts += new_consts
+  if pred:
+    return eval_jaxpr(true_jaxpr, consts + operands)
+  else:
+    return eval_jaxpr(false_jaxpr, consts + operands)
+impl_rules[cond_p] = batched_cond_impl
+
+# -
+
+# Let's test that it works!
+
+# +
+print(cond(False, lambda: 1., lambda: 2.))
+# -
+
+# -
+
+# The `vmap` rule for `cond_p` will not actually do any batching but construct
+# a `BatchDims` object to pass as part of `batch_dims`.
+
+# +
+
+def cond_vmap_rule(axis_size, vals_in, dims_in, *, true_jaxpr, false_jaxpr,
+  batch_info: BatchInfo):
+  dims_in = tuple(None if dim is not_mapped else dim for dim in dims_in)
+  new_batch_info = batch_info.add_dims(axis_size, dims_in)
+  assert len(dims_in) == len(vals_in)
+  out = bind_cond(*vals_in, true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+      batch_info=new_batch_info)
+  return out, (0,) * len(out)
+vmap_rules[cond_p] = cond_vmap_rule
+
+# -
+# Let's see if this `vmap` rule accomplishes what we'd like.
+
+# +
+print(vmap(lambda x: cond(False, lambda x: x + 2., lambda x: x +
+  3., x), (0,))(np.arange(4.)))
+
+print(vmap(vmap(lambda x: cond(False, lambda x: x + 2., lambda x: x +
+  3., x), (0,)), (1,))(np.arange(8.).reshape((4, 2))).shape)
+# -
+
+# We modify the JVP rule to add batch dims for the tangents and the additional
+# constants
+
+# +
+def cond_jvp_rule(primals, tangents, *, true_jaxpr, false_jaxpr, batch_info):
+  pred, *primals = primals
+  _   , *tangents = tangents
+  true_jaxpr , true_consts  = jvp_jaxpr(true_jaxpr)
+  false_jaxpr, false_consts = jvp_jaxpr(false_jaxpr)
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  new_batch_info = BatchInfo()
+  num_total_consts = len(true_consts) + len(false_consts)
+  for batch_dim in batch_info.batch_dims:
+    pred_dim, *dims = batch_dim.dims
+    new_batch_info = new_batch_info.add_dims(
+      batch_dim.axis_size,
+      (pred_dim,) + (None,) * num_total_consts + tuple(dims) + tuple(dims))
+  assert typecheck_jaxpr(true_jaxpr) == typecheck_jaxpr(false_jaxpr)
+  outs = bind_cond(pred, *true_consts, *false_consts, *primals, *tangents,
+                   true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                   batch_info=new_batch_info)
+  primals_out, tangents_out = split_half(outs)
+  return primals_out, tangents_out
+jvp_rules[cond_p] = cond_jvp_rule
+
+out, out_tan = jvp(lambda x: cond(True, lambda: x * x, lambda: 0.), (1.,), (1.,))
+print(out_tan)
+
+f = lambda x: cond(False, lambda x: x * 2., lambda x: x * 3., x)
+print(vmap(lambda x: jvp(f, (x,), (1.,)), (0,))(np.arange(4.)))
+
+f = vmap(lambda x: cond(False, lambda x: x * 2., lambda x: x * 3., x), (0,))
+print(jvp(f, (np.arange(4.),), (np.ones(4),)))
+# -
+
+# Let's now define the abstract evaluation and the lowering.
+
+# +
+def cond_abstract_eval(pred_type, *in_types, true_jaxpr, false_jaxpr, batch_info):
+  if pred_type != ShapedArray((), np.dtype('bool')): raise TypeError
+  batch_true_jaxpr, batch_false_jaxpr = true_jaxpr, false_jaxpr
+  for batch_dim in batch_info.batch_dims:
+    batch_true_jaxpr, batch_false_jaxpr, _ = _cond_batch_jaxprs(
+      batch_dim, batch_true_jaxpr, batch_false_jaxpr)
+  jaxpr_type = typecheck_jaxpr(batch_true_jaxpr)
+  if jaxpr_type != typecheck_jaxpr(batch_false_jaxpr):
+    raise TypeError
+  if not all(t1 == t2 for t1, t2 in zip(jaxpr_type.in_types, in_types)):
+    raise TypeError
+  return jaxpr_type.out_types
+abstract_eval_rules[cond_p] = cond_abstract_eval
+
+def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr, batch_info):
+  del in_avals  # Unused
+  pred, *in_vals = in_vals
+  flat_vals, in_tree = tree_flatten(in_vals)
+  consts = ()
+  for batch_dim in batch_info.batch_dims:
+    true_jaxpr, false_jaxpr, batch_consts = _cond_batch_jaxprs(
+      batch_dim, true_jaxpr, false_jaxpr)
+    consts += batch_consts
+  operand = xops.Tuple(c, list(consts) + flat_vals)
+  operand_shape = c.get_shape(operand)
+
+  def make_comp(name: str, jaxpr: Jaxpr) -> xe.XlaComputation:
+    c = xb.make_computation_builder(name)
+    operand = xb.parameter(c, 0, operand_shape)
+    operands = tree_unflatten(in_tree, destructure_tuple(c, operand))
+    outs = jaxpr_subcomp(c, jaxpr, operands)
+    return c.build(xops.Tuple(c, outs))
+
+  true_comp = make_comp('true_fn', true_jaxpr)
+  false_comp = make_comp('false_fn', false_jaxpr)
+
+  int_etype = xc.dtype_to_etype(np.dtype('int32'))
+  out = xops.Conditional(xops.ConvertElementType(pred, int_etype),
+                         [false_comp, true_comp], [operand] * 2)
+  return destructure_tuple(c, out)
+xla_translations[cond_p] = cond_translation
+
+out = jit(lambda: cond(False, lambda: 1, lambda: 2))()
+print(out)
+
+out = jit(vmap(lambda x: cond(False, lambda x: x + 1, lambda x: x + 2,
+  x), (0,)))(np.arange(4))
+print(out)
+
+# -
+
+# Now for the `partial_eval` rule.
+
+# +
+def cond_partial_eval(trace, tracers, *, true_jaxpr, false_jaxpr, batch_info):
+  pred_tracer, *tracers = tracers
+  assert pred_tracer.pval.is_known
+  pred = pred_tracer.pval.const
+  in_uks = [not t.pval.is_known for t in tracers]
+
+  *jaxprs, out_uks, num_res = _cond_partial_eval(true_jaxpr, false_jaxpr, in_uks)
+  t_jaxpr1, f_jaxpr1, t_jaxpr2, f_jaxpr2 = jaxprs
+
+  known_tracers, unknown_tracers = partition_list(in_uks, tracers)
+  known_vals = [t.pval.const for t in known_tracers]
+
+  known_batch_info = BatchInfo()
+  unknown_batch_info = BatchInfo()
+  for batch_dim in batch_info.batch_dims:
+    pred_dim, *dims = batch_dim.dims
+    known_bd, unknown_bd = partition_list(in_uks, dims)
+    known_batch_info = known_batch_info.add_dims(
+      batch_dim.axis_size, (pred_dim,) + tuple(known_bd))
+    unknown_batch_info = unknown_batch_info.add_dims(batch_dim.axis_size, tuple(unknown_bd))
+    assert len(known_batch_info.batch_dims[-1].dims) == len(known_vals) + 1
+  outs1_res = bind_cond(pred, *known_vals,
+                        true_jaxpr=t_jaxpr1, false_jaxpr=f_jaxpr1,
+                        batch_info=known_batch_info)
+  outs1, res = split_list(outs1_res, len(outs1_res) - num_res)
+  pred_tracer_ = trace.instantiate_const(full_raise(trace, pred_tracer))
+  res_tracers = [trace.instantiate_const(full_raise(trace, x)) for x in res]
+  new_batch_info2 = BatchInfo()
+  for batch_dim, unknown_batch_dim in zip(
+    batch_info.batch_dims, unknown_batch_info.batch_dims):
+    pred_dim, *dims = batch_dim.dims
+    new_batch_info2 = new_batch_info2.add_dims(
+      batch_dim.axis_size, (pred_dim,) + (0,) * len(res_tracers) + unknown_batch_dim.dims)
+    assert len(new_batch_info2.batch_dims[-1].dims) == len(res_tracers) + len(unknown_tracers) + 1
+  out_avals = [v.aval for v in t_jaxpr2.outs]
+  for batch_dim in batch_info.batch_dims:
+    out_avals = [unmapped_aval(batch_dim.axis_size, 0, aval)
+        for aval in out_avals]
+  outs2 = [PartialEvalTracer(trace, PartialVal.unknown(aval), None)
+
+           for aval in out_avals]
+  eqn = JaxprEqnRecipe(cond_p, [pred_tracer_, *res_tracers, *unknown_tracers],
+                       dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2,
+                         batch_info=new_batch_info2),
+                       out_avals, map(ref, outs2))
+  for t in outs2: t.recipe = eqn
+  return merge_lists(out_uks, outs1, outs2)
+partial_eval_rules[cond_p] = cond_partial_eval
+
+
+def cond_peval_eqn(unks_in: List[bool], eqn: JaxprEqn,
+                   ) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[Atom]]:
+  pred_unk, *unks_in = unks_in
+  assert not pred_unk
+  true_jaxpr, false_jaxpr = eqn.params['true_jaxpr'], eqn.params['false_jaxpr']
+  batch_info = eqn.params['batch_info']
+  *jaxprs, unks_out, num_res = _cond_partial_eval(true_jaxpr, false_jaxpr, unks_in)
+  t_jaxpr1, f_jaxpr1, t_jaxpr2, f_jaxpr2 = jaxprs
+  ins1, ins2 = partition_list(unks_in, eqn.inputs[1:])
+  outs1, outs2 = partition_list(unks_out, eqn.out_binders)
+  residuals, _ = split_list(t_jaxpr2.in_binders, num_res)
+  new_batch_info1 = ()
+  new_batch_info2 = ()
+  for batch_dim in batch_info.batch_dims:
+    new_batch_info1 = new_batch_info1.add_dims(batch_dim.axis_size, batch_dims.dims)
+    new_batch_info2 = new_batch_info2.add_dims(batch_dim.axis_size, (0,) *
+      len(residuals) + batch_dims.dims)
+
+  eqn1 = JaxprEqn(cond_p, [eqn.inputs[0], *ins1],
+                  dict(true_jaxpr=t_jaxpr1, false_jaxpr=f_jaxpr1,
+                    batch_info=new_batch_info1),
+                  outs1 + residuals)
+  eqn2 = JaxprEqn(cond_p, [eqn.inputs[0], *residuals, *ins2],
+                  dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2,
+                    batch_info=new_batch_info2),
+                  outs2)
+  res = [eqn.inputs[0], *residuals] if type(eqn.inputs[0]) is Var else residuals
+  return eqn1, eqn2, unks_out, res
+partial_eval_jaxpr_rules[cond_p] = cond_peval_eqn
+# -
+
+# Now for the updated transpose rule.
+
+# + 
+def cond_transpose_rule(cts, pred, *invals, true_jaxpr, false_jaxpr, batch_info):
+  undef_primals = tuple([type(x) is UndefPrimal for x in invals])
+  true_jaxpr, true_consts = transpose_jaxpr(true_jaxpr, undef_primals)
+  false_jaxpr, false_consts = transpose_jaxpr(false_jaxpr, undef_primals)
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  res = [x for x in invals if type(x) is not UndefPrimal]
+  out_batch_info = BatchInfo()
+  num_consts = len(true_consts) + len(false_consts)
+  for batch_dim in batch_info.batch_dims:
+    pred_dim = batch_dim.dims[0]
+    res_batch_dims = tuple(dim for x, dim in zip(invals, batch_dim.dims[1:]) if type(x) is not
+        UndefPrimal)
+    out_batch_info = out_batch_info.add_dims(batch_dim.axis_size,
+      (pred_dim,) + (None,) * num_consts + res_batch_dims + (0,) * len(cts))
+  outs = bind_cond(pred, *true_consts, *false_consts, *res, *cts,
+                   true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                   batch_info=out_batch_info)
+  outs = iter(outs)
+  ans = [None] + [next(outs) if type(x) is UndefPrimal else None for x in invals]
+  new_ans = []
+  for i, a in enumerate(ans):
+    if a is None:
+      new_ans.append(a)
+      continue
+    dims = [batch_dim.dims[i] for batch_dim in batch_info.batch_dims]
+    perm = _make_perm(len(a.shape), dims)
+    new_ans.append(transpose(a, perm))
+  return new_ans
+transpose_rules[cond_p] = cond_transpose_rule
+
+def _make_perm(ndims, dims):
+  perm = list(range(ndims))
+  for dim in dims:
+    if dim is None:
+      continue
+    idx = perm.pop(perm.index(dim))
+    perm = [idx] + perm
+  return perm
+
+out = grad(lambda x: cond(True, lambda: reduce_sum(x * x, 0), lambda: 0.))(np.arange(4.))
+print(out)
+
+out = grad(lambda x: cond(True, lambda: x * x, lambda: 0.))(1.)
+print(out)
+
+out = grad(lambda x: reduce_sum(vmap(lambda x: cond(True, lambda x: x * 4.,
+  lambda x: x * 3.,
+  x), (0,))(x), 0))(np.arange(4.))
+print(out)
+
+@grad
+def f(x):
+  def true_fun(x):
+    c = 3. * np.ones(x.shape)
+    return reduce_sum(x * c, 0)
+  def false_fun(x):
+    c = 4. * np.ones(x.shape)
+    return reduce_sum(x * c, 0)
+  assert x.shape == (4, 3, 2)
+  out = vmap(vmap(lambda x: cond(True, true_fun, false_fun, x), (1,)), (2,))(x)
+  return reduce_sum(reduce_sum(out, 1), 0)
+
+print(f(np.arange(24.).reshape((4, 3, 2))).shape)
+# -
+
+# ### Adding a "batched" `cond` primitive: leading dimension
+
+# In this version, we keep track of whether or not the leading dimension is
+# batched. The batching rule is responsible for moving the batch dimensions
+# to the front. The transpose rule is made simpler because it doesn't need to
+# move axes back.
+
+# +
+class BatchDims(NamedTuple):
+  axis_size: int
+  dims: Tuple[bool]
+
+  def update(self, dims):
+    return BatchDims(self.axis_size, dims)
+  
+
+def _cond_batch_jaxprs(batch_dims, true_jaxpr, false_jaxpr):
+  axis_size, dims_in = batch_dims.axis_size, batch_dims.dims[1:]
+  dims_in = tuple(0 if dim else not_mapped for dim in dims_in)
+  true_jaxpr, true_consts = vmap_jaxpr(true_jaxpr, axis_size, dims_in)
+  false_jaxpr, false_consts = vmap_jaxpr(false_jaxpr, axis_size, dims_in)
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  assert typecheck_jaxpr(true_jaxpr) == typecheck_jaxpr(false_jaxpr)
+  return true_jaxpr, false_jaxpr, tuple(true_consts + false_consts)
+# -
+
+# Let's test that it works!
+
+# +
+print(cond(False, lambda: 1., lambda: 2.))
+# -
+
+# +
+
+def cond_vmap_rule(axis_size, vals_in, dims_in, *, true_jaxpr, false_jaxpr,
+  batch_info: BatchInfo):
+  vals_in = [v if dim is not_mapped else moveaxis(v, dim, 0) for v, dim in
+    zip(vals_in, dims_in)]
+  dims_in = tuple(dim is not not_mapped for dim in dims_in)
+  new_batch_info = batch_info.add_dims(axis_size, dims_in)
+  assert len(dims_in) == len(vals_in)
+  out = bind_cond(*vals_in, true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+      batch_info=new_batch_info)
+  return out, (0,) * len(out)
+vmap_rules[cond_p] = cond_vmap_rule
+
+# -
+
+# +
+xs = np.array([1., 2., 3])
+out = vmap(lambda x: cond(True, lambda: x + 1., lambda: 0.), (0,))(xs)
+print(out)
+# -
+
+# +
+def cond_jvp_rule(primals, tangents, *, true_jaxpr, false_jaxpr, batch_info):
+  pred, *primals = primals
+  _   , *tangents = tangents
+  true_jaxpr , true_consts  = jvp_jaxpr(true_jaxpr)
+  false_jaxpr, false_consts = jvp_jaxpr(false_jaxpr)
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  new_batch_info = BatchInfo()
+  num_total_consts = len(true_consts) + len(false_consts)
+  for batch_dim in batch_info.batch_dims:
+    pred_dim, *dims = batch_dim.dims
+    new_batch_info = new_batch_info.add_dims(
+      batch_dim.axis_size,
+      (pred_dim,) + (False,) * num_total_consts + tuple(dims) + tuple(dims))
+  assert typecheck_jaxpr(true_jaxpr) == typecheck_jaxpr(false_jaxpr)
+  outs = bind_cond(pred, *true_consts, *false_consts, *primals, *tangents,
+                   true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                   batch_info=new_batch_info)
+  primals_out, tangents_out = split_half(outs)
+  return primals_out, tangents_out
+jvp_rules[cond_p] = cond_jvp_rule
+
+def transpose_jvp_rule(primals, tangents, *, perm):
+  x, = primals
+  t, = tangents
+  return [transpose(x, perm)], [transpose(t, perm)]
+jvp_rules[transpose_p] = transpose_jvp_rule
+
+out, out_tan = jvp(lambda x: cond(True, lambda: x * x, lambda: 0.), (1.,), (1.,))
+print(out_tan)
+
+f = lambda x: cond(False, lambda x: x * 2., lambda x: x * 3., x)
+print(vmap(lambda x: jvp(f, (x,), (1.,)), (0,))(np.arange(4.)))
+
+f = vmap(lambda x: cond(False, lambda x: x * 2., lambda x: x * 3., x), (0,))
+print(jvp(f, (np.arange(4.),), (np.ones(4),)))
+# -
+
+# Let's now define the abstract evaluation and the lowering.
+
+# +
+def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr, batch_info):
+  del in_avals  # Unused
+  pred, *in_vals = in_vals
+  flat_vals, in_tree = tree_flatten(in_vals)
+  consts = ()
+  for batch_dim in batch_info.batch_dims:
+    true_jaxpr, false_jaxpr, batch_consts = _cond_batch_jaxprs(
+      batch_dim, true_jaxpr, false_jaxpr)
+    consts += batch_consts
+  operand = xops.Tuple(c, list(consts) + flat_vals)
+  operand_shape = c.get_shape(operand)
+
+  def make_comp(name: str, jaxpr: Jaxpr) -> xe.XlaComputation:
+    c = xb.make_computation_builder(name)
+    operand = xb.parameter(c, 0, operand_shape)
+    operands = tree_unflatten(in_tree, destructure_tuple(c, operand))
+    outs = jaxpr_subcomp(c, jaxpr, operands)
+    return c.build(xops.Tuple(c, outs))
+
+  true_comp = make_comp('true_fn', true_jaxpr)
+  false_comp = make_comp('false_fn', false_jaxpr)
+
+  int_etype = xc.dtype_to_etype(np.dtype('int32'))
+  out = xops.Conditional(xops.ConvertElementType(pred, int_etype),
+                         [false_comp, true_comp], [operand] * 2)
+  return destructure_tuple(c, out)
+xla_translations[cond_p] = cond_translation
+
+def transpose_translation(c, in_avals, in_vals, *, perm):
+  x, = in_vals
+  return [xops.Transpose(x, perm)]
+xla_translations[transpose_p] = transpose_translation
+
+out = jit(lambda: cond(False, lambda: 1, lambda: 2))()
+print(out)
+
+out = jit(vmap(lambda x: cond(False, lambda x: x + 1, lambda x: x + 2,
+  x), (0,)))(np.arange(4))
+print(out)
+
+# -
+
+# Now for the `partial_eval` rule.
+
+# +
+
+def _split_cond_batch_info(uks, num_res, batch_info) -> Tuple[BatchInfo, BatchInfo]:
+  known_batch_info = BatchInfo()
+  next_batch_info = BatchInfo()
+  for batch_dim in batch_info.batch_dims:
+    pred_dim, *dims = batch_dim.dims
+    known_bd, unknown_bd = partition_list(uks, dims)
+    known_batch_info = known_batch_info.add_dims(
+      batch_dim.axis_size, (pred_dim,) + tuple(known_bd))
+    next_batch_info = next_batch_info.add_dims(
+      batch_dim.axis_size, (pred_dim,) + (True,) * num_res + tuple(unknown_bd))
+  return known_batch_info, next_batch_info
+
+def _construct(batch_info, unknown_batch_info, num_res):
+  new_batch_info2 = BatchInfo()
+  for batch_dim, unknown_batch_dim in zip(
+    batch_info.batch_dims, unknown_batch_info.batch_dims):
+    pred_dim, *dims = batch_dim.dims
+  return new_batch_info2
+
+def cond_partial_eval(trace, tracers, *, true_jaxpr, false_jaxpr, batch_info):
+  pred_tracer, *tracers = tracers
+  assert pred_tracer.pval.is_known
+  pred = pred_tracer.pval.const
+  in_uks = [not t.pval.is_known for t in tracers]
+
+  *jaxprs, out_uks, num_res = _cond_partial_eval(true_jaxpr, false_jaxpr, in_uks)
+  t_jaxpr1, f_jaxpr1, t_jaxpr2, f_jaxpr2 = jaxprs
+
+  known_tracers, unknown_tracers = partition_list(in_uks, tracers)
+  known_vals = [t.pval.const for t in known_tracers]
+
+  known_batch_info, next_batch_info = _split_cond_batch_info(in_uks, num_res, batch_info)
+
+  outs1_res = bind_cond(pred, *known_vals,
+                        true_jaxpr=t_jaxpr1, false_jaxpr=f_jaxpr1,
+                        batch_info=known_batch_info)
+  outs1, res = split_list(outs1_res, len(outs1_res) - num_res)
+  pred_tracer_ = trace.instantiate_const(full_raise(trace, pred_tracer))
+  res_tracers = [trace.instantiate_const(full_raise(trace, x)) for x in res]
+  out_avals = [v.aval for v in t_jaxpr2.outs]
+  for batch_dim in batch_info.batch_dims:
+    out_avals = map(partial(unmapped_aval, batch_dim.axis_size, 0), out_avals)
+  outs2 = [PartialEvalTracer(trace, PartialVal.unknown(aval), None) for aval in out_avals]
+  eqn = JaxprEqnRecipe(cond_p, [pred_tracer_, *res_tracers, *unknown_tracers],
+                       dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2,
+                         batch_info=next_batch_info),
+                       out_avals, map(ref, outs2))
+  for t in outs2: t.recipe = eqn
+  return merge_lists(out_uks, outs1, outs2)
+partial_eval_rules[cond_p] = cond_partial_eval
+
+
+def cond_peval_eqn(unks_in: List[bool], eqn: JaxprEqn,
+                   ) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[Atom]]:
+  pred_unk, *unks_in = unks_in
+  assert not pred_unk
+  true_jaxpr, false_jaxpr = eqn.params['true_jaxpr'], eqn.params['false_jaxpr']
+  batch_info = eqn.params['batch_info']
+  *jaxprs, unks_out, num_res = _cond_partial_eval(true_jaxpr, false_jaxpr, unks_in)
+  t_jaxpr1, f_jaxpr1, t_jaxpr2, f_jaxpr2 = jaxprs
+  ins1, ins2 = partition_list(unks_in, eqn.inputs[1:])
+  outs1, outs2 = partition_list(unks_out, eqn.out_binders)
+  residuals, _ = split_list(t_jaxpr2.in_binders, num_res)
+  new_batch_info1 = BatchInfo()
+  new_batch_info2 = BatchInfo()
+  for batch_dim in batch_info.batch_dims:
+    new_batch_info1 = new_batch_info1.add_dims(batch_dim.axis_size, batch_dims.dims)
+    new_batch_info2 = new_batch_info2.add_dims(batch_dim.axis_size, (True,) *
+      len(residuals) + batch_dims.dims)
+
+  eqn1 = JaxprEqn(cond_p, [eqn.inputs[0], *ins1],
+                  dict(true_jaxpr=t_jaxpr1, false_jaxpr=f_jaxpr1,
+                    batch_info=new_batch_info1),
+                  outs1 + residuals)
+  eqn2 = JaxprEqn(cond_p, [eqn.inputs[0], *residuals, *ins2],
+                  dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2,
+                    batch_info=new_batch_info2),
+                  outs2)
+  res = [eqn.inputs[0], *residuals] if type(eqn.inputs[0]) is Var else residuals
+  return eqn1, eqn2, unks_out, res
+partial_eval_jaxpr_rules[cond_p] = cond_peval_eqn
+# -
+
+# Now for the updated transpose rule.
+
+# + 
+def cond_transpose_rule(cts, pred, *invals, true_jaxpr, false_jaxpr, batch_info):
+  undef_primals = tuple([type(x) is UndefPrimal for x in invals])
+  true_jaxpr, true_consts = transpose_jaxpr(true_jaxpr, undef_primals)
+  false_jaxpr, false_consts = transpose_jaxpr(false_jaxpr, undef_primals)
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  res = [x for x in invals if type(x) is not UndefPrimal]
+  out_batch_info = BatchInfo()
+  num_consts = len(true_consts) + len(false_consts)
+  for batch_dim in batch_info.batch_dims:
+    pred_dim = batch_dim.dims[0]
+    res_batch_dims = tuple(dim for x, dim in zip(invals, batch_dim.dims[1:]) if type(x) is not
+        UndefPrimal)
+    out_batch_info = out_batch_info.add_dims(batch_dim.axis_size,
+      (pred_dim,) + (False,) * num_consts + res_batch_dims + (True,) * len(cts))
+  outs = bind_cond(pred, *true_consts, *false_consts, *res, *cts,
+                   true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                   batch_info=out_batch_info)
+  outs = iter(outs)
+  ans = [None] + [next(outs) if type(x) is UndefPrimal else None for x in invals]
+  return ans
+transpose_rules[cond_p] = cond_transpose_rule
+
+def transpose_transpose(cts_in, *invals, perm):
+  ct, = cts_in
+  return [transpose(ct, perm)]
+transpose_rules[transpose_p] = transpose_transpose
+
+out = grad(lambda x: cond(True, lambda: reduce_sum(x * x, 0), lambda: 0.))(np.arange(4.))
+print(out)
+
+out = grad(lambda x: cond(True, lambda: x * x, lambda: 0.))(1.)
+print(out)
+
+out = grad(lambda x: reduce_sum(vmap(lambda x: cond(True, lambda x: x * 4.,
+  lambda x: x * 3.,
+  x), (0,))(x), 0))(np.arange(4.))
+print(out)
+
+@grad
+def f(x):
+  def true_fun(x):
+    c = 3. * np.ones(x.shape)
+    return reduce_sum(x * c, 0)
+  def false_fun(x):
+    c = 4. * np.ones(x.shape)
+    return reduce_sum(x * c, 0)
+  assert x.shape == (4, 3, 2)
+  out = vmap(vmap(lambda x: cond(True, true_fun, false_fun, x), (1,)), (2,))(x)
+  return reduce_sum(reduce_sum(out, 1), 0)
+
+print(f(np.arange(24.).reshape((4, 3, 2))).shape)
+# -
+
+# ### Adding a "batched" `cond` primitive: broadcast edition
+
+# In this version, we keep track of the axis sizes of the batch transformations
+# and make sure we broadcast *all* values to have batch dimensions. This
+# simplifies most rules at the cost of extra broadcasting.
+
+# +
+def cond(pred, true_fn, false_fn, *operands):
+  avals_in = [raise_to_shaped(get_aval(x)) for x in operands]
+  true_jaxpr, true_consts, out_tree = make_jaxpr(true_fn, *avals_in)
+  false_jaxpr, false_consts, out_tree_ = make_jaxpr(false_fn, *avals_in)
+  if out_tree != out_tree_: raise TypeError
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  if typecheck_jaxpr(true_jaxpr) != typecheck_jaxpr(false_jaxpr):
+    raise TypeError
+  outs = bind_cond(pred, *true_consts, *false_consts, *operands,
+                   true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                   batch_dims=())
+  return tree_unflatten(out_tree, outs)
+cond_p = Primitive('cond')
+
+def bind_cond(pred, *args, true_jaxpr, false_jaxpr, batch_dims):
+  assert len(args) == len(true_jaxpr.in_binders) == len(false_jaxpr.in_binders)
+  for arg in args:
+    assert np.shape(arg)[:len(batch_dims)] == batch_dims[::-1]
+  return bind(cond_p, pred, *args, true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+              batch_dims=batch_dims)
+# -
+
+# The new `cond_impl` rule will use these batch dimensions when they're passed
+# in, calling `vmap_flat` to batch the execution of the true and false branches.
+
+# +
+def _cond_batch_jaxprs(axis_size, true_jaxpr, false_jaxpr):
+  dims_in = (0,) * len(true_jaxpr.in_binders)
+  true_jaxpr, true_consts = vmap_jaxpr(true_jaxpr, axis_size, dims_in)
+  false_jaxpr, false_consts = vmap_jaxpr(false_jaxpr, axis_size, dims_in)
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  assert typecheck_jaxpr(true_jaxpr) == typecheck_jaxpr(false_jaxpr)
+  return true_jaxpr, false_jaxpr, tuple(true_consts + false_consts)
+
+def batched_cond_impl(pred, *operands, true_jaxpr, false_jaxpr, batch_dims):
+  consts = ()
+  for size in batch_dims:
+    consts = tuple(broadcast(c, (size,) + c.shape, (0,)) for c in consts)
+    true_jaxpr, false_jaxpr, new_consts = _cond_batch_jaxprs(size, true_jaxpr, false_jaxpr)
+    consts += new_consts
+  if pred:
+    return eval_jaxpr(true_jaxpr, consts + operands)
+  else:
+    return eval_jaxpr(false_jaxpr, consts + operands)
+impl_rules[cond_p] = batched_cond_impl
+
+# -
+
+# Let's test that it works!
+
+# +
+print(cond(False, lambda: 1., lambda: 2.))
+# -
+
+# -
+
+# The `vmap` rule for `cond_p` will not actually do any batching but construct
+# a `BatchDims` object to pass as part of `batch_dims`.
+
+# +
+
+def cond_vmap_rule(axis_size, vals_in, dims_in, *, true_jaxpr, false_jaxpr,
+  batch_dims: Tuple[int, ...]):
+  pred, *vals = vals_in
+  pred_dim, *val_dims = dims_in
+  if pred_dim is not not_mapped: raise NotImplementedError
+  vals = [broadcast(v, (axis_size,) + np.shape(v), (0,))
+    if dim is not_mapped else moveaxis(v, dim, 0)
+    for v, dim in zip(vals, val_dims)]
+  out = bind_cond(pred, *vals, true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+      batch_dims=batch_dims + (axis_size,))
+  return out, (0,) * len(out)
+vmap_rules[cond_p] = cond_vmap_rule
+
+# -
+# Let's see if this `vmap` rule accomplishes what we'd like.
+
+# +
+print(vmap(lambda x: cond(False, lambda x: x + 2., lambda x: x +
+  3., x), (0,))(np.arange(4.)))
+
+print(vmap(vmap(lambda x: cond(False, lambda x: x + 2., lambda x: x +
+  3., x), (0,)), (1,))(np.arange(8.).reshape((4, 2))).shape)
+# -
+
+# We modify the JVP rule to add batch dims for the tangents and the additional
+# constants
+
+# +
+def cond_jvp_rule(primals, tangents, *, true_jaxpr, false_jaxpr, batch_dims):
+  pred, *primals = primals
+  _   , *tangents = tangents
+  true_jaxpr , true_consts  = jvp_jaxpr(true_jaxpr)
+  false_jaxpr, false_consts = jvp_jaxpr(false_jaxpr)
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  consts = true_consts + false_consts
+  for size in batch_dims:
+    consts = [broadcast(c, (size,) + c.shape, (0,)) for c in consts]
+  assert typecheck_jaxpr(true_jaxpr) == typecheck_jaxpr(false_jaxpr)
+  outs = bind_cond(pred, *consts, *primals, *tangents,
+                   true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                   batch_dims=batch_dims)
+  primals_out, tangents_out = split_half(outs)
+  return primals_out, tangents_out
+jvp_rules[cond_p] = cond_jvp_rule
+
+out, out_tan = jvp(lambda x: cond(True, lambda: x * x, lambda: 0.), (1.,), (1.,))
+print(out_tan)
+
+f = lambda x: cond(False, lambda x: x * 2., lambda x: x * 3., x)
+print(vmap(lambda x: jvp(f, (x,), (1.,)), (0,))(np.arange(4.)))
+
+f = vmap(lambda x: cond(False, lambda x: x * 2., lambda x: x * 3., x), (0,))
+print(jvp(f, (np.arange(4.),), (np.ones(4),)))
+# -
+
+# Let's now define the abstract evaluation and the lowering.
+
+# +
+def cond_abstract_eval(pred_type, *in_types, true_jaxpr, false_jaxpr, batch_dims):
+  if pred_type != ShapedArray((), np.dtype('bool')): raise TypeError
+  batch_true_jaxpr, batch_false_jaxpr = true_jaxpr, false_jaxpr
+  for size in batch_dims:
+    batch_true_jaxpr, batch_false_jaxpr, _ = _cond_batch_jaxprs(
+      size, batch_true_jaxpr, batch_false_jaxpr)
+  jaxpr_type = typecheck_jaxpr(batch_true_jaxpr)
+  if jaxpr_type != typecheck_jaxpr(batch_false_jaxpr):
+    raise TypeError
+  if not all(t1 == t2 for t1, t2 in zip(jaxpr_type.in_types, in_types)):
+    raise TypeError
+  return jaxpr_type.out_types
+abstract_eval_rules[cond_p] = cond_abstract_eval
+
+def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr, batch_dims):
+  del in_avals  # Unused
+  pred, *in_vals = in_vals
+  flat_vals, in_tree = tree_flatten(in_vals)
+  consts = ()
+  for size in batch_dims:
+    true_jaxpr, false_jaxpr, batch_consts = _cond_batch_jaxprs(
+      size, true_jaxpr, false_jaxpr)
+    consts += batch_consts
+  operand = xops.Tuple(c, list(consts) + flat_vals)
+  operand_shape = c.get_shape(operand)
+
+  def make_comp(name: str, jaxpr: Jaxpr) -> xe.XlaComputation:
+    c = xb.make_computation_builder(name)
+    operand = xb.parameter(c, 0, operand_shape)
+    operands = tree_unflatten(in_tree, destructure_tuple(c, operand))
+    outs = jaxpr_subcomp(c, jaxpr, operands)
+    return c.build(xops.Tuple(c, outs))
+
+  true_comp = make_comp('true_fn', true_jaxpr)
+  false_comp = make_comp('false_fn', false_jaxpr)
+
+  int_etype = xc.dtype_to_etype(np.dtype('int32'))
+  out = xops.Conditional(xops.ConvertElementType(pred, int_etype),
+                         [false_comp, true_comp], [operand] * 2)
+  return destructure_tuple(c, out)
+xla_translations[cond_p] = cond_translation
+
+out = jit(lambda: cond(False, lambda: 1, lambda: 2))()
+print(out)
+
+out = jit(vmap(lambda x: cond(False, lambda x: x + 1, lambda x: x + 2,
+  x), (0,)))(np.arange(4))
+print(out)
+
+# -
+
+# Now for the `partial_eval` rule.
+
+# +
+def cond_partial_eval(trace, tracers, *, true_jaxpr, false_jaxpr, batch_dims):
+  pred_tracer, *tracers = tracers
+  assert pred_tracer.pval.is_known
+  pred = pred_tracer.pval.const
+  in_uks = [not t.pval.is_known for t in tracers]
+
+  *jaxprs, out_uks, num_res = _cond_partial_eval(true_jaxpr, false_jaxpr, in_uks)
+  t_jaxpr1, f_jaxpr1, t_jaxpr2, f_jaxpr2 = jaxprs
+
+  known_tracers, unknown_tracers = partition_list(in_uks, tracers)
+  known_vals = [t.pval.const for t in known_tracers]
+
+  outs1_res = bind_cond(pred, *known_vals,
+                        true_jaxpr=t_jaxpr1, false_jaxpr=f_jaxpr1,
+                        batch_dims=batch_dims)
+  outs1, res = split_list(outs1_res, len(outs1_res) - num_res)
+  pred_tracer_ = trace.instantiate_const(full_raise(trace, pred_tracer))
+  res_tracers = [trace.instantiate_const(full_raise(trace, x)) for x in res]
+  out_avals = [v.aval for v in t_jaxpr2.outs]
+  for size in batch_dims:
+    out_avals = [unmapped_aval(size, 0, aval) for aval in out_avals]
+  outs2 = [PartialEvalTracer(trace, PartialVal.unknown(aval), None)
+           for aval in out_avals]
+  eqn = JaxprEqnRecipe(cond_p, [pred_tracer_, *res_tracers, *unknown_tracers],
+                       dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2,
+                         batch_dims=batch_dims),
+                       out_avals, map(ref, outs2))
+  for t in outs2: t.recipe = eqn
+  return merge_lists(out_uks, outs1, outs2)
+partial_eval_rules[cond_p] = cond_partial_eval
+
+
+def cond_peval_eqn(unks_in: List[bool], eqn: JaxprEqn,
+                   ) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[Atom]]:
+  pred_unk, *unks_in = unks_in
+  assert not pred_unk
+  true_jaxpr, false_jaxpr = eqn.params['true_jaxpr'], eqn.params['false_jaxpr']
+  batch_dims = eqn.params['batch_dims']
+  *jaxprs, unks_out, num_res = _cond_partial_eval(true_jaxpr, false_jaxpr, unks_in)
+  t_jaxpr1, f_jaxpr1, t_jaxpr2, f_jaxpr2 = jaxprs
+  ins1, ins2 = partition_list(unks_in, eqn.inputs[1:])
+  outs1, outs2 = partition_list(unks_out, eqn.out_binders)
+  residuals, _ = split_list(t_jaxpr2.in_binders, num_res)
+
+  eqn1 = JaxprEqn(cond_p, [eqn.inputs[0], *ins1],
+                  dict(true_jaxpr=t_jaxpr1, false_jaxpr=f_jaxpr1,
+                    batch_dims=batch_dims),
+                  outs1 + residuals)
+  eqn2 = JaxprEqn(cond_p, [eqn.inputs[0], *residuals, *ins2],
+                  dict(true_jaxpr=t_jaxpr2, false_jaxpr=f_jaxpr2,
+                    batch_dims=batch_dims),
+                  outs2)
+  res = [eqn.inputs[0], *residuals] if type(eqn.inputs[0]) is Var else residuals
+  return eqn1, eqn2, unks_out, res
+partial_eval_jaxpr_rules[cond_p] = cond_peval_eqn
+# -
+
+# Now for the updated transpose rule.
+
+# + 
+def cond_transpose_rule(cts, pred, *invals, true_jaxpr, false_jaxpr, batch_dims):
+  undef_primals = tuple([type(x) is UndefPrimal for x in invals])
+  true_jaxpr, true_consts = transpose_jaxpr(true_jaxpr, undef_primals)
+  false_jaxpr, false_consts = transpose_jaxpr(false_jaxpr, undef_primals)
+  true_jaxpr, false_jaxpr = _join_jaxpr_consts(
+      true_jaxpr, false_jaxpr, len(true_consts), len(false_consts))
+  consts = true_consts + false_consts
+  for size in batch_dims:
+    consts = [broadcast(c, (size,) + c.shape, (0,)) for c in consts]
+  res = [x for x in invals if type(x) is not UndefPrimal]
+  outs = bind_cond(pred, *consts, *res, *cts,
+                   true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr,
+                   batch_dims=batch_dims)
+  outs = iter(outs)
+  ans = [None] + [next(outs) if type(x) is UndefPrimal else None for x in invals]
+  return ans
+transpose_rules[cond_p] = cond_transpose_rule
+
+out = grad(lambda x: cond(True, lambda: reduce_sum(x * x, 0), lambda: 0.))(np.arange(4.))
+print(out)
+
+out = grad(lambda x: cond(True, lambda: x * x, lambda: 0.))(1.)
+print(out)
+
+out = grad(lambda x: reduce_sum(vmap(lambda x: cond(True, lambda x: x * 4.,
+  lambda x: x * 3.,
+  x), (0,))(x), 0))(np.arange(4.))
+print(out)
+
+@grad
+def f(x):
+  def true_fun(x):
+    c = 3. * np.ones(x.shape)
+    return reduce_sum(x * c, 0)
+  def false_fun(x):
+    c = 4. * np.ones(x.shape)
+    return reduce_sum(x * c, 0)
+  assert x.shape == (4, 3, 2)
+  out = vmap(vmap(lambda x: cond(True, true_fun, false_fun, x), (1,)), (2,))(x)
+  return reduce_sum(reduce_sum(out, 1), 0)
+
+print(f(np.arange(24.).reshape((4, 3, 2))).shape)
+# -
