@@ -97,7 +97,7 @@ def cos(x): return bind1(cos_p, x)
 def reduce_sum(x, axis=None): return bind1(reduce_sum_p, x, axis=axis)
 def greater(x, y): return bind1(greater_p, x, y)
 def less(x, y): return bind1(less_p, x, y)
-def transpose(x, perm): return bind1(transpose_p, perm=perm)
+def transpose(x, perm): return bind1(transpose_p, x, perm=perm)
 def broadcast(x, shape, axes): return bind1(broadcast_p, x, shape=shape, axes=axes)
 
 def bind1(prim, *args, **params):
