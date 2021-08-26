@@ -1500,12 +1500,11 @@ def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
 
 
 class SPMDBatchTrace(batching.BatchTrace):
-  def get_primitive_batcher(self, primitive):
+  def get_axis_primitive_batcher(self, primitive, frame):
     if primitive in spmd_primitive_batchers:
       return partial(spmd_primitive_batchers[primitive],
-                     axis_name=self.axis_name,
-                     main_type=self.main.trace_type)
-    return super().get_primitive_batcher(primitive)
+          frame.size, frame.name, frame.main_trace.trace_type)
+    return super().get_axis_primitive_batcher(primitive, frame)
 
 
 spmd_primitive_batchers: Dict[core.Primitive, Callable] = {}

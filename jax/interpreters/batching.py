@@ -67,7 +67,7 @@ def _match_axes(axis_size, axis_name, in_dims, out_dims_thunk, out_dim_dests,
   out_dims = out_dims_thunk()
   for od, od_dest in zip(out_dims, out_dim_dests):
     if od is not None and not isinstance(od_dest, int):
-      if not isinstance(axis_name, core._TempAxisName) and axis_name is not None:
+      if not isinstance(axis_name, core._TempAxisName) and axis_name is not core.no_axis_name:
         msg = f"vmap has mapped output (axis_name={axis_name}) but out_axes is {od_dest}"
       else:
         msg = f"vmap has mapped output but out_axes is {od_dest}"
@@ -122,27 +122,42 @@ class BatchTrace(Trace):
   def sublift(self, val):
     return BatchTracer(self, val.val, val.batch_dim)
 
-  def get_primitive_batcher(self, primitive):
-    if primitive in initial_style_batchers:
-      return partial(initial_style_batchers[primitive],
-                    axis_name=self.axis_name,
-                    main_type=self.main.trace_type)
-    try:
+  def get_primitive_batcher(self, primitive, frame):
+    if primitive in primitive_batchers:
       return primitive_batchers[primitive]
-    except KeyError as err:
-      msg = "Batching rule for '{}' not implemented"
-      raise NotImplementedError(msg.format(primitive)) from err
+    elif primitive in axis_primitive_batchers:
+      return self.get_axis_primitive_batcher(primitive, frame)
+    msg = "Batching rule for '{}' not implemented"
+    raise NotImplementedError(msg.format(primitive))
+
+  def get_axis_primitive_batcher(self, primitive, frame):
+    return partial(axis_primitive_batchers[primitive],
+        frame.size, frame.name, frame.main_trace.trace_type)
+
+  def get_frame(self, vals, dims) -> core.AxisEnvFrame:
+    if self.axis_name is core.no_axis_name:
+      # If axis name is `no_axis_name` we can't find it via `core.axis_name` so we
+      # reconstruct it from the information we have available
+      axis_sizes = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
+      assert len(axis_sizes) == 1
+      axis_size, = axis_sizes
+      return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
+    return core.axis_frame(self.axis_name)
 
   def process_primitive(self, primitive, tracers, params):
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
-    if (primitive in collective_rules and
-          _main_trace_for_axis_names(self.main, core.used_axis_names(primitive, params))):
-      frame = core.axis_frame(self.axis_name)
-      val_out, dim_out = collective_rules[primitive](frame, vals_in, dims_in, **params)
+    is_axis_primitive = primitive in axis_primitive_batchers
+    if (is_axis_primitive and
+      _main_trace_for_axis_names(self.main, core.used_axis_names(primitive,
+        params))):
+      frame = self.get_frame(vals_in, dims_in)
+      batcher_primitive = self.get_axis_primitive_batcher(primitive, frame)
+      val_out, dim_out = batcher_primitive(vals_in, dims_in, **params)
     elif all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
     else:
-      batched_primitive = self.get_primitive_batcher(primitive)
+      frame = self.get_frame(vals_in, dims_in)
+      batched_primitive = self.get_primitive_batcher(primitive, frame)
       val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
     if primitive.multiple_results:
       return map(partial(BatchTracer, self), val_out, dim_out)
@@ -351,7 +366,6 @@ def vtile(f_flat: lu.WrappedFun,
 
 BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
 primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
-initial_style_batchers : Dict[core.Primitive, Any] = {}
 
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)
@@ -539,4 +553,4 @@ def _merge_bdims(x, y):
     return x  # arbitrary
 
 
-collective_rules: Dict[core.Primitive, Callable] = {}
+axis_primitive_batchers: Dict[core.Primitive, Callable] = {}

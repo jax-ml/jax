@@ -476,11 +476,10 @@ xla.call_translations[pjit_p] = _pjit_translation_rule
 
 
 def _pjit_batcher(insert_axis,
+                  axis_size, axis_name, main_type,
                   vals_in, dims_in,
-                  axis_name, main_type,
                   jaxpr, in_axis_resources, out_axis_resources,
                   resource_env, donated_invars, name):
-  axis_size, = {x.shape[d] for x, d in zip(vals_in, dims_in) if d is not batching.not_mapped}
   # batch_jaxpr expects all batching dimensions to be equal to 0
   vals_in = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
              else x for x, d in zip(vals_in, dims_in)]
@@ -506,7 +505,7 @@ def _pjit_batcher(insert_axis,
     name=name)
   dims_out = [0 if batched else batching.not_mapped for batched in is_mapped_out]
   return vals_out, dims_out
-batching.initial_style_batchers[pjit_p] = partial(_pjit_batcher, False)
+batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
 pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True)
 
 
@@ -611,8 +610,8 @@ def _sharding_constraint_translation_rule(c, x_node, axis_resources, resource_en
                                get_sharding_proto(c, x_node, axis_resources, mesh))
 xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
 
-def _sharding_constraint_batcher(insert_axis, vals_in, dims_in, axis_resources, resource_env,
-                                 axis_name, main_type):
+def _sharding_constraint_batcher(insert_axis, axis_size, axis_name, main_type, vals_in, dims_in,
+                                 axis_resources, resource_env):
   x, = vals_in
   d, = dims_in
   new_parts = (axis_name,) if insert_axis else ()
@@ -621,7 +620,7 @@ def _sharding_constraint_batcher(insert_axis, vals_in, dims_in, axis_resources, 
       axis_resources=axis_resources.insert_axis_partitions(d, new_parts),
       resource_env=resource_env)
   return y, d
-batching.initial_style_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, False)
+batching.axis_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, False)
 pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, True)
 
 def _resource_typing_sharding_constraint(avals, params, source_info, named_axis_resources):

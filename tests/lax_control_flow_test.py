@@ -354,6 +354,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.array([0, 2, 2, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+    ans = api.vmap(lambda _, x: fun(x), axis_name='i', in_axes=(0, None))(
+        np.array([0, 0, 0, 0]), 0)
+    expected = np.array([0, 2, 2, 4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+
   def testWhileLoopCondConstsBatched(self):
     def fun(x, y):
       return lax.while_loop(lambda x: x < y, lambda x: x + 2, x)
