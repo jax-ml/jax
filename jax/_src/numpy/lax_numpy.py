@@ -4032,21 +4032,18 @@ def poly(seq_of_zeros):
 
 @_wraps(np.polyval)
 def polyval(p, x):
-  if isinstance(p, np.poly1d):
-    p = np.asarray(p)
-  if isinstance(x, np.poly1d):
-    y = 0
-  else:
-    y = zeros_like(x)
+  _check_arraylike("polyval", p, x)
+  p, x = _promote_dtypes_inexact(p, x)
+  y = zeros_like(x)
   for i in range(len(p)):
     y = y * x + p[i]
   return y
 
+
 @_wraps(np.polyadd)
 def polyadd(a1, a2):
-  a1 = asarray(a1)
-  a2 = asarray(a2)
-
+  _check_arraylike("polyadd", a1, a2)
+  a1, a2 = _promote_dtypes(a1, a2)
   if a2.shape[0] <= a1.shape[0]:
     return a1.at[-a2.shape[0]:].add(a2)
   else:
@@ -4056,15 +4053,15 @@ def polyadd(a1, a2):
 @_wraps(np.polyint)
 def polyint(p, m=1, k=None):
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyint")
-  p = asarray(p)
+  k = 0 if k is None else k
+  _check_arraylike("polyint", p, k)
+  p, k = _promote_dtypes_inexact(p, k)
   if m < 0:
     raise ValueError("Order of integral must be positive (see polyder)")
-  if k is None:
-    k = zeros(m)
   k = atleast_1d(k)
   if len(k) == 1:
     k = full((m,), k[0])
-  if len(k) != m or k.ndim > 1:
+  if k.shape != (m,):
     raise ValueError("k must be a scalar or a rank-1 array of length 1 or m.")
   if m == 0:
     return p
@@ -4075,8 +4072,9 @@ def polyint(p, m=1, k=None):
 
 @_wraps(np.polyder)
 def polyder(p, m=1):
+  _check_arraylike("polyder", p)
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyder")
-  p = asarray(p)
+  p, = _promote_dtypes_inexact(p)
   if m < 0:
     raise ValueError("Order of derivative must be positive")
   if m == 0:
@@ -4084,16 +4082,18 @@ def polyder(p, m=1):
   coeff = (arange(len(p), m, -1)[newaxis, :] - 1 - arange(m)[:, newaxis]).prod(0)
   return p[:-m] * coeff
 
+
 @_wraps(np.trim_zeros)
 def trim_zeros(filt, trim='fb'):
   filt = core.concrete_or_error(asarray, filt,
     "Error arose in the `filt` argument of trim_zeros()")
-  nz = asarray(filt) == 0
+  nz = (filt == 0)
   if all(nz):
     return empty(0, _dtype(filt))
   start = argmin(nz) if 'f' in trim.lower() else 0
   end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
   return filt[start:len(filt) - end]
+
 
 _LEADING_ZEROS_DOC = """\
 Setting trim_leading_zeros=True makes the output match that of numpy.
@@ -4102,10 +4102,8 @@ But prevents the function from being able to be used in compiled code.
 
 @_wraps(np.polymul, lax_description=_LEADING_ZEROS_DOC)
 def polymul(a1, a2, *, trim_leading_zeros=False):
-  if isinstance(a1, np.poly1d):
-    a1 = asarray(a1)
-  if isinstance(a2, np.poly1d):
-    a2 = asarray(a2)
+  _check_arraylike("polymul", a1, a2)
+  a1, a2 = _promote_dtypes_inexact(a1, a2)
   if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
     a1, a2 = trim_zeros(a1, trim='f'), trim_zeros(a2, trim='f')
   if len(a1) == 0:
@@ -4115,9 +4113,12 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   val = convolve(a1, a2, mode='full')
   return val
 
+
 @_wraps(np.polysub)
 def polysub(a1, a2):
-  return polyadd(asarray(a1), -asarray(a2))
+  _check_arraylike("polysub", a1, a2)
+  a1, a2 = _promote_dtypes(a1, a2)
+  return polyadd(a1, -a2)
 
 
 @_wraps(np.append)
