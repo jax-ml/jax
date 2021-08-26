@@ -45,6 +45,7 @@ from ._src.config import (
 from ._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
   checkpoint,
+  checkpoint_policies,
   closure_convert,
   curry,  # TODO(phawkins): update users to avoid this.
   custom_ivjp,

@@ -18,7 +18,7 @@ from collections import namedtuple
 import contextlib
 import functools
 from typing import (Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple,
-                    List, Union, cast, Set)
+                    List, Union, cast)
 from weakref import ref
 
 import numpy as np
@@ -30,7 +30,8 @@ from jax._src.ad_util import Zero
 from ..api_util import flattened_fun_in_tree
 from .._src.tree_util import PyTreeDef, tree_unflatten, tree_leaves
 from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,
-                         split_list, partition_list, cache, as_hashable_function)
+                         split_list, partition_list, cache, OrderedSet,
+                         as_hashable_function)
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
                     dropvar, ConcreteArray, raise_to_shaped, Var, Atom,
@@ -780,19 +781,19 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   in_unknowns = ([False] * len(consts) +
                  [not t.is_known() for t in it.chain(env_tracers, tracers)])
   if params['policy']:
-    # unzip into jaxpr1 and jaxpr2
-    jaxpr1_, jaxpr2_, out_unknowns, out_inst, _ = _partial_eval_jaxpr_custom(
+    # unzip into known and jaxpr_unknown
+    jaxpr_known, jaxpr_unknown, out_unknowns, out_inst, _ = _partial_eval_jaxpr_custom(
         jaxpr, in_unknowns, params['policy'])
-    jaxpr1, in_used1 = dce_jaxpr(jaxpr1_, [True] * len(jaxpr1_.outvars))
-    _, used_outs2 = partition_list(out_inst, out_unknowns)
-    jaxpr2, in_used2 = dce_jaxpr(jaxpr2_, used_outs2)
+    jaxpr_known, in_used_known = dce_jaxpr(jaxpr_known, [True] * len(jaxpr_known.outvars))
+    _, used_outs_unknown = partition_list(out_inst, out_unknowns)
+    jaxpr_unknown, in_used_unknown = dce_jaxpr(jaxpr_unknown, used_outs_unknown)
 
     # compute known outputs and residuals (hoisted out of a remat_call)
     if concrete: raise NotImplementedError  # TODO(mattjj)
     _, in_consts_ = unzip2(t.pval for t in it.chain(env_tracers, tracers)
                            if t.pval.is_known())
-    _, in_consts = partition_list(in_used1, [*consts, *in_consts_])
-    out_consts = core.eval_jaxpr(jaxpr1, (), *in_consts)
+    _, in_consts = partition_list(in_used_known, [*consts, *in_consts_])
+    out_consts = core.eval_jaxpr(jaxpr_known, (), *in_consts)
     out_consts_ = iter(out_consts)
     # reconstruct known outs, inserting units
     outs1 = [unit if x.aval is abstract_unit else next(out_consts_)
@@ -807,10 +808,10 @@ def _remat_partial_eval(trace, _, f, tracers, params):
     const_tracers = map(trace.new_instantiated_const, consts)
     in_jaxpr_tracers = [*res_tracers, *const_tracers, *env_tracers,
                         *instantiated_tracers]
-    _, in_jaxpr_tracers = partition_list(in_used2, in_jaxpr_tracers)
+    _, in_jaxpr_tracers = partition_list(in_used_unknown, in_jaxpr_tracers)
     out_jaxpr_tracers = [JaxprTracer(trace, PartialVal.unknown(x.aval), None)
-                         for x in jaxpr2.outvars]
-    new_params = dict(params, call_jaxpr=jaxpr2, differentiated=True)
+                         for x in jaxpr_unknown.outvars]
+    new_params = dict(params, call_jaxpr=jaxpr_unknown, differentiated=True)
     recipe = new_eqn_recipe(in_jaxpr_tracers, out_jaxpr_tracers, remat_call_p,
                             new_params, source_info_util.current())
     for t in out_jaxpr_tracers: t.recipe = recipe
@@ -875,11 +876,11 @@ def _zip_knowns(known_list, unknown_list, which_unknown: Sequence[bool]):
 
 
 def _partial_eval_jaxpr_custom(
-    jaxpr: Jaxpr, in_unknowns: List[bool], saveable: Callable[..., bool],
-  ) -> Tuple[Jaxpr, Jaxpr, List[bool], List[bool], int]:
+    jaxpr: Jaxpr, in_unknowns: Sequence[bool], saveable: Callable[..., bool],
+  ) -> Tuple[Jaxpr, Jaxpr, Sequence[bool], Sequence[bool], int]:
   if jaxpr.constvars: raise NotImplementedError  # TODO
   env: Dict[Var, Tuple[bool, bool]] = {}
-  residuals: Set[Var] = set()
+  residuals: OrderedSet[Var] = OrderedSet()
 
   def read(x: Atom) -> Tuple[bool, bool]:
     if type(x) is Var:
@@ -895,7 +896,7 @@ def _partial_eval_jaxpr_custom(
       residuals.add(x)
     return x
 
-  eqns1, eqns2 = [], []
+  known_eqns, staged_eqns = [], []
   write(False, True, unitvar)
   map(write, in_unknowns, [True] * len(in_unknowns), jaxpr.invars)
   for eqn in jaxpr.eqns:
@@ -903,37 +904,37 @@ def _partial_eval_jaxpr_custom(
     rule = partial_eval_jaxpr_custom_rules.get(eqn.primitive)
     if rule:
       eqn1, eqn2, unks_out, inst_out, res = rule(saveable, unks_in, inst_in, eqn)
-      eqn1 and eqns1.append(eqn1); eqn2 and eqns2.append(eqn2)  # type: ignore
+      eqn1 and known_eqns.append(eqn1); eqn2 and staged_eqns.append(eqn2)  # type: ignore
       residuals.update(res)
       map(write, unks_out, inst_out, eqn.outvars)
     elif any(unks_in):
       inputs = map(ensure_instantiated, inst_in, eqn.invars)
-      eqns2.append(new_jaxpr_eqn(inputs, eqn.outvars, eqn.primitive,
-                                 eqn.params, eqn.source_info))
+      staged_eqns.append(new_jaxpr_eqn(inputs, eqn.outvars, eqn.primitive,
+                                       eqn.params, eqn.source_info))
       map(partial(write, True, True), eqn.outvars)
     else:
-      eqns1.append(eqn)
+      known_eqns.append(eqn)
       if saveable(eqn.primitive, *[x.aval for x in eqn.invars], **eqn.params):
         map(partial(write, False, False), eqn.outvars)
       else:
         inputs = map(ensure_instantiated, inst_in, eqn.invars)
-        eqns2.append(new_jaxpr_eqn(inputs, eqn.outvars, eqn.primitive,
-                                   eqn.params, eqn.source_info))
+        staged_eqns.append(new_jaxpr_eqn(inputs, eqn.outvars, eqn.primitive,
+                                         eqn.params, eqn.source_info))
         map(partial(write, False, True), eqn.outvars)
   out_unknowns, out_inst = unzip2(map(read, jaxpr.outvars))
   assert all(type(v) is Var for v in residuals), residuals
 
-  ins1, _ = partition_list(in_unknowns, jaxpr.invars)
-  outs1_, _ = partition_list(out_unknowns, jaxpr.outvars)
-  outs1 = [x for x in outs1_ if x.aval is not abstract_unit]
-  jaxpr1 = Jaxpr((), ins1, [*outs1, *residuals], eqns1)
-  config.jax_enable_checks and core.check_jaxpr(jaxpr1)
+  ins_known, _ = partition_list(in_unknowns, jaxpr.invars)
+  outs_known_, _ = partition_list(out_unknowns, jaxpr.outvars)
+  outs_known = [x for x in outs_known_ if x.aval is not abstract_unit]
+  jaxpr_known = Jaxpr((), ins_known, [*outs_known, *residuals], known_eqns)
+  config.jax_enable_checks and core.check_jaxpr(jaxpr_known)
 
-  _, outs2 = partition_list(out_inst, jaxpr.outvars)
-  jaxpr2 = Jaxpr((), [*residuals, *jaxpr.invars], outs2, eqns2)
-  config.jax_enable_checks and core.check_jaxpr(jaxpr2)
+  _, outs_staged = partition_list(out_inst, jaxpr.outvars)
+  jaxpr_staged = Jaxpr((), [*residuals, *jaxpr.invars], outs_staged, staged_eqns)
+  config.jax_enable_checks and core.check_jaxpr(jaxpr_staged)
 
-  return jaxpr1, jaxpr2, out_unknowns, out_inst, len(residuals)
+  return jaxpr_known, jaxpr_staged, out_unknowns, out_inst, len(residuals)
 
 # A primitive rule for policy-driven partial evaluation returns a 5-tuple
 # with the components representing, respectively:
@@ -946,14 +947,14 @@ def _partial_eval_jaxpr_custom(
 #    plumbed as outputs of the 'known' side jaxpr and added as input binders to
 #    the 'unknown' jaxpr).
 PartialEvalCustomResult = Tuple[Optional[JaxprEqn], Optional[JaxprEqn],
-                                List[bool], List[bool], List[Var]]
+                                Sequence[bool], Sequence[bool], List[Var]]
 PartialEvalCustomRule = Callable[
-    [Callable[..., bool], List[bool], List[bool], JaxprEqn],
+    [Callable[..., bool], Sequence[bool], Sequence[bool], JaxprEqn],
     PartialEvalCustomResult]
 partial_eval_jaxpr_custom_rules: Dict[Primitive, PartialEvalCustomRule] = {}
 
 def partial_eval_jaxpr_custom_rule_not_implemented(
-    saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
+    saveable: Callable[..., bool], unks_in: Sequence[bool], inst_in: Sequence[bool],
     eqn: JaxprEqn) -> PartialEvalCustomResult:
   raise NotImplementedError
 
@@ -963,25 +964,25 @@ ParamsUpdater = Callable[[List[bool], int, dict, dict], Tuple[dict, dict]]
 def call_partial_eval_custom_rule(
     params_updater: ParamsUpdater, saveable: Callable[..., bool],
     unks_in: List[bool], inst_in: List[bool], eqn: JaxprEqn
-  ) -> Tuple[JaxprEqn, JaxprEqn, List[bool], List[bool], List[Var]]:
-  jaxpr1, jaxpr2, unks_out, inst_out, num_res = _partial_eval_jaxpr_custom(
+  ) -> Tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], List[Var]]:
+  jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = _partial_eval_jaxpr_custom(
       eqn.params['call_jaxpr'], unks_in, saveable)
-  ins1, _ = partition_list(unks_in, eqn.invars)
-  out_binders1, _ = partition_list(unks_out, eqn.outvars)
-  _, out_binders2 = partition_list(inst_out, eqn.outvars)
-  newvar = core.gensym([jaxpr1, jaxpr2])
-  residuals = [newvar(v.aval) for v in jaxpr2.invars[:num_res]]
-  params1 = dict(eqn.params, call_jaxpr=jaxpr1)
-  params2 = dict(eqn.params, call_jaxpr=jaxpr2)
-  params1, params2 = params_updater(unks_in, num_res, params1, params2)
-  eqn1 = JaxprEqn(ins1, [*out_binders1, *residuals], eqn.primitive,
-                  params1, eqn.source_info)
-  eqn2 = JaxprEqn([*residuals, *eqn.invars], out_binders2, eqn.primitive,
-                  params2, eqn.source_info)
-  assert len(eqn2.invars) == len(jaxpr2.invars)
+  ins_known, _ = partition_list(unks_in, eqn.invars)
+  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
+  _, out_binders_staged = partition_list(inst_out, eqn.outvars)
+  newvar = core.gensym([jaxpr_known, jaxpr_staged])
+  residuals = [newvar(v.aval) for v in jaxpr_staged.invars[:num_res]]
+  params_known = dict(eqn.params, call_jaxpr=jaxpr_known)
+  params_staged = dict(eqn.params, call_jaxpr=jaxpr_staged)
+  params_known, params_staged = params_updater(unks_in, num_res, params_known, params_staged)
+  eqn_known = JaxprEqn(ins_known, [*out_binders_known, *residuals],
+                       eqn.primitive, params_known, eqn.source_info)
+  eqn_staged = JaxprEqn([*residuals, *eqn.invars], out_binders_staged,
+                        eqn.primitive, params_staged, eqn.source_info)
+  assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
-  return eqn1, eqn2, unks_out, inst_out, new_inst + residuals
+  return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
 partial_eval_jaxpr_custom_rules[core.call_p] = \
     partial(call_partial_eval_custom_rule, lambda _, __, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[remat_call_p] = \

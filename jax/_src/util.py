@@ -17,7 +17,8 @@ import functools
 import itertools as it
 import operator
 import types
-from typing import Any, Callable, List, Tuple
+from typing import (Any, Callable, List, Tuple, Generic, TypeVar, Set, Iterator,
+                    Sequence)
 
 from absl import logging
 import numpy as np
@@ -25,6 +26,7 @@ import numpy as np
 from jax.config import config
 
 partial = functools.partial
+Seq = Sequence
 
 
 def safe_zip(*args):
@@ -74,12 +76,12 @@ def split_list(args, ns):
   lists.append(args)
   return lists
 
-def partition_list(bs: List[bool], l: List[Any]) -> Tuple[List[Any], List[Any]]:
+def partition_list(bs: Seq[bool], l: Seq[Any]) -> Tuple[List[Any], List[Any]]:
   assert len(bs) == len(l)
-  lists = lst1, lst2 = [], []  # type: ignore
+  lists = [], []  # type: ignore
   for b, x in zip(bs, l):
     lists[b].append(x)
-  return lst1, lst2
+  return lists
 
 def split_dict(dct, names):
   dct = dict(dct)
@@ -415,3 +417,31 @@ def distributed_debug_log(*pairs):
       lines.append(f"{e}")
     lines.append("DISTRIBUTED_DEBUG_END")
     logging.warning("\n".join(lines))
+
+T = TypeVar('T')
+
+class OrderedSet(Generic[T]):
+  elts_set: Set[T]
+  elts_list: List[T]
+
+  def __init__(self):
+    self.elts_set = set()
+    self.elts_list = []
+
+  def add(self, elt: T) -> None:
+    if elt not in self.elts_set:
+      self.elts_set.add(elt)
+      self.elts_list.append(elt)
+
+  def update(self, elts: Seq[T]) -> None:
+    for e in elts:
+      self.add(e)
+
+  def __iter__(self) -> Iterator[T]:
+    return iter(self.elts_list)
+
+  def __len__(self) -> int:
+    return len(self.elts_list)
+
+  def __contains__(self, elt: T) -> bool:
+    return elt in self.elts_set

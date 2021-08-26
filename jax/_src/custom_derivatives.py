@@ -393,7 +393,7 @@ def custom_jvp_jaxpr_custom_partial_eval_rule(
   inst_out = [True] * len(eqn.outvars)
   return eqn, eqn, unks_out, inst_out, new_inst
 pe.partial_eval_jaxpr_custom_rules[custom_jvp_call_jaxpr_p] = \
-    custom_jvp_jaxpr_custom_partial_eval_rule
+    custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
 
 
 ### VJPs

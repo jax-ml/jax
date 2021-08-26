@@ -3501,9 +3501,7 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
 
   def test_remat_checkpoint_dots(self):
-    checkpoint_dots = lambda prim, *_, **__: str(prim) == 'dot_general'
-
-    @partial(api.remat, policy=checkpoint_dots)
+    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
       x = jnp.dot(x, x)
       x = jnp.sin(x)
@@ -3520,12 +3518,10 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
 
   def test_remat_checkpoint_dots_inside_scan(self):
-    checkpoint_dots = lambda prim, *_, **__: str(prim) == 'dot_general'
-
     x = jnp.ones((5,))
 
     def f(W):
-      @partial(api.remat, policy=checkpoint_dots)
+      @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
       def f(x):
         x = jnp.sin(jnp.dot(x, W))
         x = jnp.sin(jnp.dot(x, W))
