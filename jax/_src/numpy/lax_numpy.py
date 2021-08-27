@@ -2428,12 +2428,14 @@ def nanmax(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 @_wraps(np.nansum, skip_params=['out'])
 def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, keepdims=None):
+  lax._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims)
 
 @_wraps(np.nanprod, skip_params=['out'])
 def nanprod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
             out=None, keepdims=None):
+  lax._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims)
 
