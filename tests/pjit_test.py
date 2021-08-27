@@ -49,6 +49,25 @@ def tearDownModule():
 # TODO(skye): make the buffer donation utils part of JaxTestCase
 class PJitTest(jtu.BufferDonationTestCase):
 
+  @jtu.with_mesh([('x', 1)])
+  def testDeviceBufferAval(self):
+
+    @partial(pjit, in_axis_resources=None, out_axis_resources=P('x'))
+    def f(x):
+      return x
+
+    shape = (2, 2)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    actual = f(x)
+    expected = x
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertIsInstance(actual, pxla.ShardedDeviceArray)
+    self.assertLen(actual.device_buffers, 1)
+    self.assertAllClose(
+        actual.device_buffers[0].to_py(), expected, check_dtypes=False)
+    # Repro for a bug on device_buffer aval
+    _ = repr(actual.device_buffers)
+
   @jtu.with_mesh([('x', 2)])
   def testBasic1D(self):
     @partial(pjit,

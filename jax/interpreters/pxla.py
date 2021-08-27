@@ -543,6 +543,9 @@ class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
 
     self.aval = aval
     self.device_buffers = device_buffers
+    for buf in device_buffers:
+      print("yash katariya jax")
+      buf.aval = ShapedArray(buf.shape, buf.dtype, weak_type=True)
     self.sharding_spec = sharding_spec
     self.indices = indices
     self._npy_value = None
