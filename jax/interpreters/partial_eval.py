@@ -771,7 +771,7 @@ def _remat_partial_eval(trace, _, f, tracers, params):
     instantiated_tracers = map(trace.instantiate_const_abstracted, tracers)
 
   # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
-  in_pvals = [t.pval for t in instantiated_tracers]
+  in_pvals = [PartialVal.unknown(t.pval[0]) for t in instantiated_tracers]
   jaxpr, eval_out_pvals, consts, env_tracers = trace.partial_eval(
     f, in_pvals, partial(remat_call_p.bind, **params), instantiate=False)
   jaxpr = convert_constvars_jaxpr(jaxpr)

@@ -3517,6 +3517,24 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' dot_'), 6)
     jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
 
+  def test_remat_checkpoint_dots_jit(self):
+    @api.jit
+    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    def f(x):
+      x = jnp.dot(x, x)
+      x = jnp.sin(x * 1e-3)
+      x = jnp.dot(x, x)
+      x = jnp.sin(x * 1e-3)
+      x = jnp.dot(x, x)
+      x = jnp.sin(x * 1e-3)
+      return x
+
+    _, f_lin = api.linearize(f, jnp.ones((2, 2)))
+    jaxpr_text = str(f_lin.func.args[0])
+    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' dot_'), 6)
+    jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
+
   def test_remat_checkpoint_dots_inside_scan(self):
     x = jnp.ones((5,))
 
