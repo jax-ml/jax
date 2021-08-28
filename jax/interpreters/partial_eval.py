@@ -878,7 +878,7 @@ def _zip_knowns(known_list, unknown_list, which_unknown: Sequence[bool]):
 def _partial_eval_jaxpr_custom(
     jaxpr: Jaxpr, in_unknowns: Sequence[bool], saveable: Callable[..., bool],
   ) -> Tuple[Jaxpr, Jaxpr, Sequence[bool], Sequence[bool], int]:
-  if jaxpr.constvars: raise NotImplementedError  # TODO
+  if jaxpr.constvars: raise NotImplementedError  # TODO(mattjj)
   env: Dict[Var, Tuple[bool, bool]] = {}
   residuals: OrderedSet[Var] = OrderedSet()
 
@@ -985,15 +985,17 @@ def call_partial_eval_custom_rule(
   return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
 partial_eval_jaxpr_custom_rules[core.call_p] = \
     partial(call_partial_eval_custom_rule, lambda _, __, x, y: (x, y))
+partial_eval_jaxpr_custom_rules[core.named_call_p] = \
+    partial(call_partial_eval_custom_rule, lambda _, __, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[remat_call_p] = \
     partial(call_partial_eval_custom_rule,
             lambda _, __, p1, p2: (p1, dict(p2, differentiated=True)))
 
 
-# TODO unify with dce code below
+# TODO(mattjj): unify with dce code below
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
               ) -> Tuple[Jaxpr, List[bool]]:
-  if jaxpr.constvars: raise NotImplementedError  # TODO
+  if jaxpr.constvars: raise NotImplementedError  # TODO(mattjj)
   env: Dict[Var, bool] = {}
 
   def read(v: Var) -> bool:
@@ -1041,6 +1043,8 @@ def dce_jaxpr_call_rule(used_outputs: List[bool], eqn: JaxprEqn
                      eqn.primitive, new_params, eqn.source_info)
   return used_inputs, new_eqn
 dce_rules[core.call_p] = dce_jaxpr_call_rule
+dce_rules[core.named_call_p] = dce_jaxpr_call_rule
+dce_rules[remat_call_p] = dce_jaxpr_call_rule
 
 
 def _dce_jaxpr(closed_jaxpr: ClosedJaxpr, outputs: Sequence[bool], drop_outputs=False) -> ClosedJaxpr:
@@ -1051,7 +1055,7 @@ def _dce_jaxpr(closed_jaxpr: ClosedJaxpr, outputs: Sequence[bool], drop_outputs=
 def _dce_open_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False) -> Jaxpr:
   # This dead-code elimination is pretty rudimentary, and in particular doesn't
   # nontrivially DCE through scan, call, or other higher-order primitives.
-  # TODO(mattjj): better DCE
+  # TODO(mattjj): better DCE (i.e. use above dce_jaxpr)
   if drop_outputs:
     new_outvars = [var for var, output in zip(jaxpr.outvars, outputs) if output]
   else:

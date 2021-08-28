@@ -681,6 +681,9 @@ xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 xla.translations[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 
+pe.partial_eval_jaxpr_custom_rules[custom_vjp_call_jaxpr_p] = \
+    custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
+
 
 def custom_gradient(fun):
   """Convenience function for defining custom VJP rules (aka custom gradients).
@@ -706,7 +709,9 @@ def custom_gradient(fun):
   over intermediate values computed when evaluating the function to be
   differentiated. That is, use lexical closure to share work between the forward
   pass and the backward pass of reverse-mode automatic differentiation. However,
-  it cannot support Python control flow.
+  it cannot perform Python control flow which depends on the values of the
+  closed-over intermediate values or its cotangent arguments; if the function
+  includes such control flow, an error is raised.
 
   Args:
     fun: a Python callable specifying both the mathematical function to be

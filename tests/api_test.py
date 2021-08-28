@@ -3503,11 +3503,11 @@ class RematTest(jtu.JaxTestCase):
   def test_remat_checkpoint_dots(self):
     @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
-      x = jnp.dot(x, x)
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x)
-      x = jnp.dot(x, x)
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x)
-      x = jnp.dot(x, x)
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x)
       return x
 
@@ -3521,11 +3521,11 @@ class RematTest(jtu.JaxTestCase):
     @api.jit
     @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
-      x = jnp.dot(x, x)
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x * 1e-3)
-      x = jnp.dot(x, x)
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x * 1e-3)
-      x = jnp.dot(x, x)
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = jnp.sin(x * 1e-3)
       return x
 
@@ -3541,9 +3541,9 @@ class RematTest(jtu.JaxTestCase):
     def f(W):
       @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
       def f(x):
-        x = jnp.sin(jnp.dot(x, W))
-        x = jnp.sin(jnp.dot(x, W))
-        x = jnp.sin(jnp.dot(x, W))
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
+        x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
         return x
 
       def body(x, _): return f(x), None
@@ -3565,8 +3565,6 @@ class RematTest(jtu.JaxTestCase):
                     modes=['fwd', 'rev'])
 
   def test_remat_custom_jvp_policy(self):
-    save_sin = lambda prim, *_, **__: str(prim) == 'sin'
-
     @api.custom_jvp
     def sin(x):
       return jnp.sin(x)
@@ -3576,15 +3574,53 @@ class RematTest(jtu.JaxTestCase):
       return sin(x), jnp.cos(x) * g
     sin.defjvp(sin_jvp)
 
-    @partial(api.remat, policy=save_sin)
+    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
-      return sin(sin(x))
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
+      x = sin(x * 1e-3)
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
+      x = sin(x * 1e-3)
+      x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
+      x = sin(x * 1e-3)
+      return x
 
     jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
 
     def g(x):
       return lax.scan(lambda x, _: (f(x), None), x, None, length=2)[0]
     jtu.check_grads(g, (3.,), order=2, modes=['fwd', 'rev'])
+
+  def test_remat_custom_vjp_policy(self):
+    @api.custom_vjp
+    def sin(x):
+      return jnp.sin(x)
+    def sin_fwd(x):
+      return sin(x), x
+    def sin_bwd(x, y_bar):
+      return (jnp.cos(x) * y_bar,)
+    sin.defvjp(sin_fwd, sin_bwd)
+
+    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    def f(x):
+      @partial(api.named_call, name="dot")
+      def dot2(y, z):
+        return jnp.dot(x, jnp.dot(y, z, precision=lax.Precision.HIGHEST),
+                       precision=lax.Precision.HIGHEST)
+
+      x = dot2(x, x)
+      x = sin(x * 1e-3)
+      x = dot2(x, x)
+      x = sin(x * 1e-3)
+      x = dot2(x, x)
+      x = sin(x * 1e-3)
+      return x
+
+    jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+
+    def g(x):
+      return lax.scan(lambda x, _: (f(x), None), x, None, length=2)[0]
+    jtu.check_grads(g, (3.,), order=2, modes=['rev'])
+
 
 class JaxprTest(jtu.JaxTestCase):
 
