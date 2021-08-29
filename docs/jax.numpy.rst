@@ -294,6 +294,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     poly
     polyadd
     polyder
+    polyfit
     polyint
     polymul
     polysub
