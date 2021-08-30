@@ -796,7 +796,8 @@ def reshape(operand: Array, new_sizes: Shape,
   new_sizes = tuple(new_sizes)
   same_shape = core.symbolic_equal_shape(np.shape(operand), new_sizes)
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(np.ndim(operand)))
-  if np.shape(operand) and same_shape and same_dims:
+  if (np.shape(operand) and same_shape and same_dims
+      and isinstance(operand, (core.Tracer, xla.DeviceArray))):
     return operand
   else:
     return reshape_p.bind(
@@ -1231,7 +1232,8 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   operator.
   """
   permutation = tuple(permutation)
-  if permutation == tuple(range(np.ndim(operand))):
+  if (permutation == tuple(range(np.ndim(operand)))
+      and isinstance(operand, (core.Tracer, xla.DeviceArray))):
     return operand
   else:
     return transpose_p.bind(operand, permutation=permutation)
