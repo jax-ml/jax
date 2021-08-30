@@ -434,9 +434,9 @@ def getrf(c, a):
 # ?geqrf: QR decomposition
 
 cdef int lapack_sgeqrf_workspace(int m, int n):
-  cdef float work
+  cdef float work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   sgeqrf(&m, &n, NULL, &m, NULL, &work, &lwork, &info)
   return <int>(work) if info == 0 else -1
 
@@ -466,9 +466,9 @@ cdef void lapack_sgeqrf(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_sgeqrf", <void*>(lapack_sgeqrf))
 
 cdef int lapack_dgeqrf_workspace(int m, int n):
-  cdef double work
+  cdef double work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   dgeqrf(&m, &n, NULL, &m, NULL, &work, &lwork, &info)
   return <int>(work) if info == 0 else -1
 
@@ -498,9 +498,9 @@ cdef void lapack_dgeqrf(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_dgeqrf", <void*>(lapack_dgeqrf))
 
 cdef int lapack_cgeqrf_workspace(int m, int n):
-  cdef float complex work
+  cdef float complex work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   cgeqrf(&m, &n, NULL, &m, NULL, &work, &lwork, &info)
   return <int>(work.real) if info == 0 else -1
 
@@ -530,9 +530,9 @@ cdef void lapack_cgeqrf(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_cgeqrf", <void*>(lapack_cgeqrf))
 
 cdef int lapack_zgeqrf_workspace(int m, int n):
-  cdef double complex work
+  cdef double complex work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   zgeqrf(&m, &n, NULL, &m, NULL, &work, &lwork, &info)
   return <int>(work.real) if info == 0 else -1
 
@@ -628,9 +628,9 @@ def geqrf(c, a):
 # ?orgqr: product of elementary Householder reflectors:
 
 cdef int lapack_sorgqr_workspace(int m, int n, int k):
-  cdef float work
+  cdef float work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   sorgqr(&m, &n, &k, NULL, &m, NULL, &work, &lwork, &info)
   return <int>(work) if info == 0 else -1
 
@@ -661,9 +661,9 @@ cdef void lapack_sorgqr(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_sorgqr", <void*>(lapack_sorgqr))
 
 cdef int lapack_dorgqr_workspace(int m, int n, int k):
-  cdef double work
+  cdef double work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   dorgqr(&m, &n, &k, NULL, &m, NULL, &work, &lwork, &info)
   return <int>(work) if info == 0 else -1
 
@@ -694,9 +694,9 @@ cdef void lapack_dorgqr(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_dorgqr", <void*>(lapack_dorgqr))
 
 cdef int lapack_cungqr_workspace(int m, int n, int k):
-  cdef float complex work
+  cdef float complex work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   cungqr(&m, &n, &k, NULL, &m, NULL, &work, &lwork, &info)
   return <int>(work.real) if info == 0 else -1
 
@@ -727,9 +727,9 @@ cdef void lapack_cungqr(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_cungqr", <void*>(lapack_cungqr))
 
 cdef int lapack_zungqr_workspace(int m, int n, int k):
-  cdef double complex work
+  cdef double complex work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   zungqr(&m, &n, &k, NULL, &m, NULL, &work, &lwork, &info)
   return <int>(work.real) if info == 0 else -1
 
@@ -992,9 +992,9 @@ cdef char gesdd_jobz(bool_t job_opt_compute_uv,
 
 cdef int sgesdd_work_size(int m, int n, bool_t job_opt_compute_uv,
                           bool_t job_opt_full_matrices):
-  cdef float work
+  cdef float work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   cdef int ldvt = min(m, n) if job_opt_full_matrices == 0 else n
   cdef char jobz = gesdd_jobz(job_opt_compute_uv, job_opt_full_matrices)
   sgesdd(&jobz, &m, &n, NULL, &m, NULL, NULL, &m, NULL, &ldvt, &work,
@@ -1044,9 +1044,9 @@ register_cpu_custom_call_target(b"lapack_sgesdd", <void*>(lapack_sgesdd))
 
 cdef int dgesdd_work_size(int m, int n, bool_t job_opt_compute_uv,
                           bool_t job_opt_full_matrices):
-  cdef double work
+  cdef double work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   cdef int ldvt = min(m, n) if job_opt_full_matrices == 0 else n
   cdef char jobz = gesdd_jobz(job_opt_compute_uv, job_opt_full_matrices)
   dgesdd(&jobz, &m, &n, NULL, &m, NULL, NULL, &m, NULL, &ldvt, &work,
@@ -1095,9 +1095,9 @@ register_cpu_custom_call_target(b"lapack_dgesdd", <void*>(lapack_dgesdd))
 
 cdef int cgesdd_work_size(int m, int n, bool_t job_opt_compute_uv,
                           bool_t job_opt_full_matrices):
-  cdef float complex work
+  cdef float complex work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   cdef int ldvt = min(m, n) if job_opt_full_matrices == 0 else n
   cdef char jobz = gesdd_jobz(job_opt_compute_uv, job_opt_full_matrices)
   cgesdd(&jobz, &m, &n, NULL, &m, NULL, NULL, &m, NULL, &ldvt, &work,
@@ -1148,9 +1148,9 @@ register_cpu_custom_call_target(b"lapack_cgesdd", <void*>(lapack_cgesdd))
 
 cdef int zgesdd_work_size(int m, int n, bool_t job_opt_compute_uv,
                           bool_t job_opt_full_matrices):
-  cdef double complex work
+  cdef double complex work = 0
   cdef int lwork = -1
-  cdef int info
+  cdef int info = 0
   cdef int ldvt = min(m, n) if job_opt_full_matrices == 0 else n
   cdef char jobz = gesdd_jobz(job_opt_compute_uv, job_opt_full_matrices)
   zgesdd(&jobz, &m, &n, NULL, &m, NULL, NULL, &m, NULL, &ldvt, &work,

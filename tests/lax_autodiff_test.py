@@ -24,8 +24,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import api
-from jax import core
+from jax._src import api
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
@@ -37,7 +36,9 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
+compatible_shapes = [[(3,)],
+                     [(), (3, 4), (3, 1), (1, 4)],
+                     [(2, 3, 4), (2, 1, 4)]]
 
 
 GradTestSpec = collections.namedtuple(
@@ -124,6 +125,16 @@ LAX_GRAD_OPS = [
                    dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.pow, nargs=2, order=2, rng_factory=jtu.rand_positive,
                    dtypes=grad_inexact_dtypes, tol={np.float32: 3e-1}),
+    grad_test_spec(lax.sqrt, nargs=1, order=2, rng_factory=jtu.rand_positive,
+                   dtypes=grad_float_dtypes),
+    grad_test_spec(lax.sqrt, nargs=1, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_complex_dtypes),
+    grad_test_spec(lax.rsqrt, nargs=1, order=2, rng_factory=jtu.rand_positive,
+                   dtypes=grad_float_dtypes),
+    grad_test_spec(lax.rsqrt, nargs=1, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_complex_dtypes),
+    grad_test_spec(lax.cbrt, nargs=1, order=2, rng_factory=jtu.rand_default,
+                   dtypes=grad_float_dtypes, tol={np.float64: 3e-5}),
 
     grad_test_spec(lax.add, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
@@ -397,7 +408,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     result, pullback = api.vjp(dot, lhs, rhs)
     gresult = lax.zeros_like_array(result)
     s = str(api.make_jaxpr(pullback)(gresult))
-    assert "precision=HIGHEST" in s
+    assert "Precision.HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -428,7 +439,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     result, pullback = api.vjp(dot_general, lhs, rhs)
     gresult = lax.zeros_like_array(result)
     s = str(api.make_jaxpr(pullback)(gresult))
-    assert "precision=HIGHEST" in s
+    assert "Precision.HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_dtype={}_broadcast_sizes={}".format(
@@ -656,6 +667,30 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_reducedims={}"
+       .format(jtu.format_shape_dtype_string(shape, dtype), dims),
+       "shape": shape, "dtype": dtype, "dims": dims}
+      for dtype in grad_float_dtypes
+      for shape, dims in [
+          [(3, 4, 5), ()],
+          [(3, 4, 5), (0,)],
+          [(3, 4, 5), (1, 2)],
+          [(3, 4, 5), (0, 2)],
+          [(3, 4, 5), (0, 1, 2)],
+          [(3, 1), (1,)],
+          [(3, 0, 5), (1,)],
+      ]))
+  def testReducePairGrad(self, shape, dtype, dims):
+    rng = jtu.rand_default(self.rng(), scale=1)
+    tol = {np.float32: 1e-2, np.float64: 1e-4}
+    operands = (rng(shape, dtype), rng(shape, dtype))
+    init_vals = (np.array(0, dtype), np.array(1, dtype))
+    def op(xs, ys):
+      return (xs[0] + ys[0], xs[1] * ys[1])
+    reduce = lambda xs, ys: lax.reduce((xs, ys), init_vals, op, dims)
+    check_grads(reduce, operands, 2, ["fwd", "rev"], tol, tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
                          "_basedilation={}_windowdilation={}")
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims,
@@ -675,16 +710,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
             [(4, 6)],
             [(2, 1), (1, 2)],
             [(1, 1), (2, 1), (1, 2)],
-            # TODO(b/161704903): explicit paddings segfault on CPU.
-            ["VALID", "SAME"], #, [(0, 3), (1, 2)]],
+            ["VALID", "SAME", [(0, 3), (1, 2)]],
             [(1, 1)] + ([(2, 3)] if op is lax.add else []),
             [(1, 1)] + ([(1, 2)] if op is lax.add else [])),
           itertools.product(
             [(3, 2, 4, 6)],
             [(1, 1, 2, 1), (2, 1, 2, 1)],
             [(1, 2, 2, 1), (1, 1, 1, 1)],
-            # TODO(b/161704903): explicit paddings segfault on CPU.
-            ["VALID", "SAME"], # [(0, 1), (1, 0), (2, 3), (0, 2)]],
+            ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
             [(1, 1, 1, 1)] + ([(2, 1, 3, 2)] if op is lax.add else []),
             [(1, 1, 1, 1)] + ([(1, 2, 2, 1)] if op is lax.add else []))))
       for dtype in dtypes))
@@ -702,7 +735,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # depends on FLAGS for the device under test.
     # TODO(b/31565929): enable when fixed.
     if jtu.device_under_test() == "tpu" and op is not lax.add:
-      if len(shape) != 4 or dims != (1, 1, 2, 1):
+      if (len(shape) != 4 or dims != (1, 1, 2, 1)
+          or not isinstance(padding, str)):
         raise SkipTest("Only R4 SelectAndScatter implemented on TPU")
 
       # TODO(b/73062247): need variadic reduce-window for better precision.
@@ -993,7 +1027,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = np.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    with core.skipping_checks():
+    with jax.enable_checks(False):
       with self.assertRaises(TypeError):
         lax.stop_gradient(lambda x: x)
 

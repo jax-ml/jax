@@ -19,9 +19,13 @@ import operator
 import types
 from typing import Any, Callable
 
+from absl import logging
 import numpy as np
 
+from jax.config import config
+
 partial = functools.partial
+
 
 def safe_zip(*args):
   n = len(args[0])
@@ -53,18 +57,6 @@ def unzip3(xyzs):
     ys.append(y)
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
-
-def unzip4(wxyzs):
-  ws = []
-  xs = []
-  ys = []
-  zs = []
-  for w, x, y, z in wxyzs:
-    ws.append(w)
-    xs.append(x)
-    ys.append(y)
-    zs.append(z)
-  return tuple(ws), tuple(xs), tuple(ys), tuple(zs)
 
 def subvals(lst, replace):
   lst = list(lst)
@@ -181,9 +173,35 @@ def split_merge(predicate, xs):
   return lhs, rhs, merge
 
 def cache(max_size=4096):
-  return functools.lru_cache(maxsize=max_size)
+  def wrap(f):
+    @functools.lru_cache(max_size)
+    def cached(_, *args, **kwargs):
+      return f(*args, **kwargs)
 
-memoize = functools.lru_cache(maxsize=None)
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+      if config.jax_check_tracer_leaks:
+        return f(*args, **kwargs)
+      else:
+        return cached(config._trace_context(), *args, **kwargs)
+
+    wrapper.cache_clear = cached.cache_clear
+    wrapper.cache_info = cached.cache_info
+    return wrapper
+  return wrap
+
+def memoize(f):
+  @functools.lru_cache(None)
+  def memoized(_, *args, **kwargs):
+    return f(*args, **kwargs)
+
+  @functools.wraps(f)
+  def wrapper(*args, **kwargs):
+    return memoized(config._trace_context(), *args, **kwargs)
+
+  wrapper.cache_clear = memoized.cache_clear
+  wrapper.cache_info = memoized.cache_info
+  return wrapper
 
 def prod(xs):
   out = 1
@@ -191,7 +209,7 @@ def prod(xs):
     out *= x
   return out
 
-class WrapHashably(object):
+class WrapHashably:
   __slots__ = ["val"]
 
   def __init__(self, val):
@@ -203,7 +221,7 @@ class WrapHashably(object):
   def __eq__(self, other):
     return self.val is other.val
 
-class Hashable(object):
+class Hashable:
   __slots__ = ["val"]
 
   def __init__(self, val):
@@ -211,6 +229,18 @@ class Hashable(object):
 
   def __hash__(self):
     return hash(self.val)
+
+  def __eq__(self, other):
+    return self.val == other.val
+
+class WrapKwArgs:
+  __slots__ = ["val"]
+
+  def __init__(self, val):
+    self.val = val
+
+  def __hash__(self):
+    return hash(tuple((k, v) for k, v in sorted(self.val.items())))
 
   def __eq__(self, other):
     return self.val == other.val
@@ -254,10 +284,15 @@ def canonicalize_axis(axis, num_dims) -> int:
 def moveaxis(x, src, dst):
   if src == dst:
     return x
-  src = canonicalize_axis(src, x.ndim)
-  dst = canonicalize_axis(dst, x.ndim)
-  perm = [i for i in range(np.ndim(x)) if i != src]
-  perm.insert(dst, src)
+  if isinstance(src, int):
+    src = (src,)
+  if isinstance(dst, int):
+    dst = (dst,)
+  src = [canonicalize_axis(a, x.ndim) for a in src]
+  dst = [canonicalize_axis(a, x.ndim) for a in dst]
+  perm = [i for i in range(np.ndim(x)) if i not in src]
+  for d, s in sorted(zip(dst, src)):
+    perm.insert(d, s)
   return x.transpose(perm)
 
 def ceil_of_ratio(x, y):
@@ -265,17 +300,22 @@ def ceil_of_ratio(x, y):
 
 @curry
 def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
+  """
+  Like functools.wraps, but with finer-grained control over the name and docstring
+  of the resulting function.
+  """
   try:
-    fun.__name__ = namestr.format(fun=get_name(wrapped))
-    fun.__module__ = get_module(wrapped)
-    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+    name = getattr(wrapped, "__name__", "<unnamed function>")
+    doc = getattr(wrapped, "__doc__", "") or ""
+    fun.__dict__.update(getattr(wrapped, "__dict__", {}))
+    fun.__annotations__ = getattr(wrapped, "__annotations__", {})
+    fun.__name__ = namestr.format(fun=name)
+    fun.__module__ = getattr(wrapped, "__module__", "<unknown module>")
+    fun.__doc__ = docstr.format(fun=name, doc=doc, **kwargs)
+    fun.__qualname__ = getattr(wrapped, "__qualname__", fun.__name__)
     fun.__wrapped__ = wrapped
   finally:
     return fun
-
-def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
-def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
-def get_doc(fun): return getattr(fun, "__doc__", "")
 
 # NOTE: Ideally we would annotate both the argument and return type as NoReturn
 #       but it seems like pytype doesn't support that...
@@ -341,3 +381,30 @@ class HashableFunction:
 
 def as_hashable_function(closure):
   return lambda f: HashableFunction(f, closure)
+
+def maybe_named_axis(axis, if_pos, if_named):
+  try:
+    pos = operator.index(axis)
+    named = False
+  except TypeError:
+    named = True
+  return if_named(axis) if named else if_pos(pos)
+
+def distributed_debug_log(*pairs):
+  """Format and log `pairs` if config.jax_distributed_debug is enabled.
+
+  Args:
+    pairs: A sequence of label/value pairs to log. The first pair is treated as
+    a heading for subsequent pairs.
+  """
+  if config.jax_distributed_debug:
+    lines = ["\nDISTRIBUTED_DEBUG_BEGIN"]
+    try:
+      lines.append(f"{pairs[0][0]}: {pairs[0][1]}")
+      for label, value in pairs[1:]:
+        lines.append(f"  {label}: {value}")
+    except Exception as e:
+      lines.append("DISTRIBUTED_DEBUG logging failed!")
+      lines.append(f"{e}")
+    lines.append("DISTRIBUTED_DEBUG_END")
+    logging.warning("\n".join(lines))

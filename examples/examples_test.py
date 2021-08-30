@@ -21,6 +21,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
+from jax import lax
 from jax import test_util as jtu
 from jax import random
 import jax.numpy as jnp
@@ -88,7 +89,7 @@ class ExamplesTest(jtu.JaxTestCase):
     truth = rng.randn(d)
     xs = rng.randn(n, d)
     ys = jnp.dot(xs, truth)
-    kernel = lambda x, y: jnp.dot(x, y)
+    kernel = lambda x, y: jnp.dot(x, y, precision=lax.Precision.HIGH)
     predict = kernel_lsq.train(kernel, xs, ys)
     self.assertAllClose(predict(xs), ys, atol=1e-3, rtol=1e-3,
                         check_dtypes=False)

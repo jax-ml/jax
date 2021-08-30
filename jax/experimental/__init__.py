@@ -15,3 +15,4 @@
 # flake8: noqa: F401
 from ..interpreters.sharded_jit import (sharded_jit, PartitionSpec,
                                         with_sharding_constraint)
+from .x64_context import enable_x64, disable_x64

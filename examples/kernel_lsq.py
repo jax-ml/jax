@@ -19,7 +19,7 @@ import numpy.random as npr
 
 import jax.numpy as jnp
 from jax.experimental import optimizers
-from jax import grad, jit, make_jaxpr, vmap
+from jax import grad, jit, make_jaxpr, vmap, lax
 
 
 def gram(kernel, xs):
@@ -74,7 +74,7 @@ if __name__ == "__main__":
 
   # linear kernel
 
-  linear_kernel = lambda x, y: jnp.dot(x, y)
+  linear_kernel = lambda x, y: jnp.dot(x, y, precision=lax.Precision.HIGH)
   truth = npr.randn(d)
   xs = npr.randn(n, d)
   ys = jnp.dot(xs, truth)

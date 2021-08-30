@@ -20,10 +20,12 @@ generation of sequences of pseudorandom numbers.
 Basic usage
 -----------
 
+>>> seed = 1701
+>>> num_steps = 100
 >>> key = jax.random.PRNGKey(seed)
 >>> for i in range(num_steps):
 ...   key, subkey = jax.random.split(key)
-...   params = compiled_update(subkey, params, next(batches))
+...   params = compiled_update(subkey, params, next(batches))  # doctest: +SKIP
 
 PRNG Keys
 ---------
@@ -70,7 +72,7 @@ The approach is based on:
 2. "Splittable pseudorandom number generators using cryptographic hashing"
    (Claessen et al. 2013)
 
-See also https://github.com/google/jax/blob/master/design_notes/prng.md
+See also https://github.com/google/jax/blob/main/design_notes/prng.md
 for the design and its motivation.
 """
 
@@ -103,8 +105,8 @@ from jax._src.random import (
   shuffle,
   split,
   t,
-  threefry2x32_p,
   threefry_2x32,
+  threefry2x32_p,
   truncated_normal,
   uniform,
   weibull_min,

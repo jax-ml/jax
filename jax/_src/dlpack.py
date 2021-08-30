@@ -13,11 +13,15 @@
 # limitations under the License.
 
 from jax import core
-from jax import lazy
+from jax import numpy as jnp
 from jax.interpreters import xla
-import jax.lib
 from jax.lib import xla_client
 from jax.lib import xla_bridge
+
+SUPPORTED_DTYPES = set([jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+                        jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+                        jnp.float16, jnp.bfloat16, jnp.float32, jnp.float64])
+
 
 def to_dlpack(x: xla.DeviceArrayProtocol, take_ownership: bool = False):
   """Returns a DLPack tensor that encapsulates a DeviceArray `x`.
@@ -36,34 +40,26 @@ def to_dlpack(x: xla.DeviceArrayProtocol, take_ownership: bool = False):
   if not isinstance(x, xla.DeviceArray):
     raise TypeError("Argument to to_dlpack must be a DeviceArray, got {}"
                     .format(type(x)))
-  buf = xla._force(x).device_buffer
-  if jax.lib.version >= (0, 1, 57):
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(
-        buf, take_ownership=take_ownership)
-  else:
-    # Jaxlibs before 0.1.57 always take ownership.
-    if not take_ownership:
-      raise ValueError(
-          "to_dlpack with take_ownership=False requires jaxlib >= 0.1.57")
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(buf)
+  return xla_client._xla.buffer_to_dlpack_managed_tensor(
+      x.device_buffer, take_ownership=take_ownership)
 
-def from_dlpack(dlpack, backend=None):
+def from_dlpack(dlpack):
   """Returns a `DeviceArray` representation of a DLPack tensor `dlpack`.
 
   The returned `DeviceArray` shares memory with `dlpack`.
 
   Args:
     dlpack: a DLPack tensor, on either CPU or GPU.
-    backend: experimental, optional: the platform on which `dlpack` lives.
   """
-  # TODO(phawkins): ideally the user wouldn't need to provide a backend and we
-  # would be able to figure it out from the DLPack.
-  backend = backend or xla_bridge.get_backend()
-  client = getattr(backend, "client", backend)
-  buf = xla_client._xla.dlpack_managed_tensor_to_buffer(dlpack, client)
-  # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
-  # the default.
-  xla_shape = getattr(buf, "xla_shape", buf.shape)()
+  cpu_backend = xla_bridge.get_backend("cpu")
+  try:
+    gpu_backend = xla_bridge.get_backend("gpu")
+  except RuntimeError:
+    gpu_backend = None
+  buf = xla_client._xla.dlpack_managed_tensor_to_buffer(
+      dlpack, cpu_backend, gpu_backend)
+
+  xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
-  return xla.make_device_array(aval, buf.device(), lazy.array(aval.shape), buf)  # pytype: disable=attribute-error
+  return xla.make_device_array(aval, buf.device(), buf)  # pytype: disable=attribute-error

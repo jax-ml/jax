@@ -31,6 +31,7 @@ py_binary(
         "//jaxlib",
         "//jaxlib:setup.py",
         "//jaxlib:setup.cfg",
+        "//jaxlib:cpu_feature_guard.so",
         "//jaxlib:lapack.so",
         "//jaxlib:_pocketfft.so",
         "//jaxlib:pocketfft_flatbuffers_py",
@@ -39,7 +40,10 @@ py_binary(
     ]) + if_cuda([
         "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",
+        "//jaxlib:cusparse_kernels",
+        "//jaxlib:cuda_lu_pivot_kernels",
         "//jaxlib:cuda_prng_kernels",
+        "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
         "//jaxlib:rocblas_kernels",
     ]),

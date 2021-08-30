@@ -20,7 +20,7 @@ import textwrap
 
 import scipy.ndimage
 
-from jax import api
+from jax._src import api
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps

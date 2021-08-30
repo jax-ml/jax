@@ -22,7 +22,7 @@ variational evidence lower bound (ELBO)."""
 from functools import partial
 import matplotlib.pyplot as plt
 
-from jax.api import jit, grad, vmap
+from jax import jit, grad, vmap
 from jax import random
 from jax.experimental import optimizers
 import jax.numpy as jnp
@@ -86,8 +86,8 @@ if __name__ == "__main__":
     ax = fig.add_subplot(111, frameon=False)
     plt.ion()
     plt.show(block=False)
-    x_limits = [-2, 2]
-    y_limits = [-4, 2]
+    x_limits = (-2, 2)
+    y_limits = (-4, 2)
     target_dist = lambda x, _: jnp.exp(funnel_log_density(x))
     approx_dist = lambda x, params: jnp.exp(diag_gaussian_logpdf(x, *params))
 

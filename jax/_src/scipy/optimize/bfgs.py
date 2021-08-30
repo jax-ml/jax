@@ -55,6 +55,7 @@ class _BFGSResults(NamedTuple):
   f_k: jnp.ndarray
   g_k: jnp.ndarray
   H_k: jnp.ndarray
+  old_old_fval: jnp.ndarray
   status: Union[int, jnp.ndarray]
   line_search_status: Union[int, jnp.ndarray]
 
@@ -108,6 +109,7 @@ def minimize_bfgs(
       f_k=f_0,
       g_k=g_0,
       H_k=initial_H,
+      old_old_fval=f_0 + jnp.linalg.norm(g_0) / 2,
       status=0,
       line_search_status=0,
   )
@@ -124,6 +126,7 @@ def minimize_bfgs(
         state.x_k,
         p_k,
         old_fval=state.f_k,
+        old_old_fval=state.old_old_fval,
         gfk=state.g_k,
         maxiter=line_search_maxiter,
     )
@@ -153,7 +156,8 @@ def minimize_bfgs(
         x_k=x_kp1,
         f_k=f_kp1,
         g_k=g_kp1,
-        H_k=H_kp1
+        H_k=H_kp1,
+        old_old_fval=state.f_k,
     )
     return state
 

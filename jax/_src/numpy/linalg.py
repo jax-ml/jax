@@ -24,7 +24,7 @@ from jax import jit, custom_jvp
 from jax import lax
 from jax import ops
 from jax._src.lax import linalg as lax_linalg
-from jax import dtypes
+from jax._src import dtypes
 from .util import _wraps
 from . import lax_numpy as jnp
 from jax._src.util import canonicalize_axis
@@ -202,7 +202,7 @@ def _cofactor_solve(a, b):
            "a=[..., m, m] and b=[..., m, m]; got a={} and b={}")
     raise ValueError(msg.format(a_shape, b_shape))
   if a_shape[-1] == 1:
-    return a[0, 0], b
+    return a[..., 0, 0], b
   # lu contains u in the upper triangular matrix and l in the strict lower
   # triangular matrix.
   # The diagonal of l is set to ones without loss of generality.
@@ -238,11 +238,36 @@ def _cofactor_solve(a, b):
   return partial_det[..., -1], x
 
 
+def _det_2x2(a):
+  return (a[..., 0, 0] * a[..., 1, 1] -
+           a[..., 0, 1] * a[..., 1, 0])
+
+
+def _det_3x3(a):
+  return (a[..., 0, 0] * a[..., 1, 1] * a[..., 2, 2] +
+          a[..., 0, 1] * a[..., 1, 2] * a[..., 2, 0] +
+          a[..., 0, 2] * a[..., 1, 0] * a[..., 2, 1] -
+          a[..., 0, 2] * a[..., 1, 1] * a[..., 2, 0] -
+          a[..., 0, 0] * a[..., 1, 2] * a[..., 2, 1] -
+          a[..., 0, 1] * a[..., 1, 0] * a[..., 2, 2])
+
+
 @custom_jvp
 @_wraps(np.linalg.det)
+@jit
 def det(a):
-  sign, logdet = slogdet(a)
-  return sign * jnp.exp(logdet)
+  a = _promote_arg_dtypes(jnp.asarray(a))
+  a_shape = jnp.shape(a)
+  if len(a_shape) >= 2 and a_shape[-1] == 2 and a_shape[-2] == 2:
+    return _det_2x2(a)
+  elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
+    return _det_3x3(a)
+  elif len(a_shape) >= 2 and a_shape[-1] == a_shape[-2]:
+    sign, logdet = slogdet(a)
+    return sign * jnp.exp(logdet)
+  else:
+    msg = "Argument to _det() must have shape [..., n, n], got {}"
+    raise ValueError(msg.format(a_shape))
 
 
 @det.defjvp
@@ -253,7 +278,11 @@ def _det_jvp(primals, tangents):
   return y, jnp.trace(z, axis1=-1, axis2=-2)
 
 
-@_wraps(np.linalg.eig)
+@_wraps(np.linalg.eig, lax_description="""
+This differs from ``numpy.linalg.eig`` in that the return type of
+``jax.numpy.linalg.eig`` is always ``complex64`` for 32-bit input,
+and ``complex128`` for 64-bit input.
+""")
 def eig(a):
   a = _promote_arg_dtypes(jnp.asarray(a))
   return lax_linalg.eig(a, compute_left_eigenvectors=False)
@@ -300,12 +329,12 @@ def pinv(a, rcond=None):
     max_rows_cols = max(a.shape[-2:])
     rcond = 10. * max_rows_cols * jnp.finfo(a.dtype).eps
   rcond = jnp.asarray(rcond)
-  u, s, v = svd(a, full_matrices=False)
+  u, s, vh = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   cutoff = rcond[..., jnp.newaxis] * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
   s = jnp.where(s > cutoff, s, jnp.inf)
-  res = jnp.matmul(_T(v), jnp.divide(_T(u), s[..., jnp.newaxis]))
+  res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]))
   return lax.convert_element_type(res, a.dtype)
 
 

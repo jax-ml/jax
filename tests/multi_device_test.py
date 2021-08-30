@@ -120,10 +120,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     x2_uncommitted = jnp.array([2, 3])
     z1, z2, z3 = jax.jit(lambda x, y: (y, 1, x))(x_uncommitted, x2_uncommitted)
     self.assert_uncommitted_to_device(z1, devices[0])
-    if config.omnistaging_enabled:
-      self.assert_uncommitted_to_device(z2, devices[0])
-    else:
-      self.assertIs(z2, 1)
+    self.assert_uncommitted_to_device(z2, devices[0])
     self.assert_uncommitted_to_device(z3, devices[0])
 
 
@@ -163,7 +160,6 @@ class MultiDeviceTest(jtu.JaxTestCase):
     y = jax.device_put(x, device=devices[1])
     self.assert_committed_to_device(y, devices[1])
 
-    # test device_put on lazy values
     x = jax.device_put(jnp.zeros(2), device=devices[0])
     self.assert_committed_to_device(x, devices[0])
 

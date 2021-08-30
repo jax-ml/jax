@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+import warnings
 
 from absl.testing import absltest
+from jax import test_util as jtu
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client as xc
-from jax import test_util as jtu
+
+mock = absltest.mock
 
 
 class XlaBridgeTest(absltest.TestCase):
@@ -45,16 +49,39 @@ class XlaBridgeTest(absltest.TestCase):
 
   def test_parameter_replication(self):
     c = xb.make_computation_builder("test")
-    _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "", False)
+    _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "",
+                     False)
     built_c = c.Build()
     assert "parameter_replication={false}" in built_c.as_hlo_text()
 
   def test_local_devices(self):
     self.assertNotEmpty(xb.local_devices())
-    with self.assertRaisesRegex(ValueError, "Unknown host_id 100"):
+    with self.assertRaisesRegex(ValueError, "Unknown process_index 100"):
       xb.local_devices(100)
     with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
       xb.local_devices(backend="foo")
+
+  def test_timer_tpu_warning(self):
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+
+      def _mock_tpu_client():
+        time_to_wait = 5
+        start = time.time()
+        while not w:
+          if time.time() - start > time_to_wait:
+            raise ValueError(
+                "This test should not hang for more than "
+                f"{time_to_wait} seconds.")
+          time.sleep(0.1)
+
+        self.assertLen(w, 1)
+        msg = str(w[-1].message)
+        self.assertIn("Did you run your code on all TPU hosts?", msg)
+
+      with mock.patch(
+          "jax.lib.xla_client.make_tpu_client", side_effect=_mock_tpu_client):
+        xb.tpu_client_timer_callback(0.01)
 
 
 if __name__ == "__main__":

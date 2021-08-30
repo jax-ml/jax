@@ -20,6 +20,7 @@ from jax._src.util import (
   partial,
   safe_map,
   safe_zip,
+  split_dict,
   split_list,
   split_merge,
   subvals,

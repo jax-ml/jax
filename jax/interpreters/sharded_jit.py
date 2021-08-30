@@ -31,11 +31,9 @@ from ..api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,
                          HashableFunction)
-from ..config import config, flags
+from .._src.config import config
 
 xops = xc._xla.ops
-
-FLAGS = flags.FLAGS
 
 
 def _map(f, *xs):
@@ -47,19 +45,11 @@ result_to_populate = ResultToPopulate()
 
 
 def _avals_to_results_handler(nrep, npart, partitions, out_avals):
-  nouts = len(out_avals)
   handlers = [_aval_to_result_handler(npart, parts, out_aval)
               for parts, out_aval in safe_zip(partitions, out_avals)]
 
   def handler(out_bufs):
-    assert nrep * npart == len(out_bufs)
-    buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
-    for r, tuple_buf in enumerate(out_bufs):
-      for i, buf in enumerate(tuple_buf):
-        buffers[i][r] = buf
-    assert not any(buf is result_to_populate for bufs in buffers
-                  for buf in bufs)
-    return [h(bufs) for h, bufs in zip(handlers, buffers)]
+    return [h(bufs) for h, bufs in zip(handlers, out_bufs)]
 
   return handler
 
@@ -89,29 +79,18 @@ def _sharded_callable(
                           for arg, parts, lparts
                           in safe_zip(abstract_args, in_parts, local_in_parts)]
 
-  logging.vlog(2, "abstract_args: %s", abstract_args)
-  logging.vlog(2, "global_abstract_args: %s", global_abstract_args)
-  logging.vlog(2, "in_parts: %s", in_parts)
-  logging.vlog(2, "local_in_parts: %s", local_in_parts)
+  if logging.vlog_is_on(2):
+    logging.vlog(2, "abstract_args: %s", abstract_args)
+    logging.vlog(2, "global_abstract_args: %s", global_abstract_args)
+    logging.vlog(2, "in_parts: %s", in_parts)
+    logging.vlog(2, "local_in_parts: %s", local_in_parts)
 
-  if config.omnistaging_enabled:
-    jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
-        fun, global_abstract_args)
-  else:
-    in_pvals = [pe.PartialVal.unknown(aval) for aval in global_abstract_args]
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals,  # type: ignore
-                                                 instantiate=False, bottom=True)  # type: ignore
+  jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(fun, global_abstract_args)
 
-    # TODO(skye): add tests for equationless jaxpr cases
-    if not jaxpr.eqns and all(outvar.aval is core.abstract_unit
-                              for outvar in jaxpr.outvars):
-      return lambda *_: [
-          const if pv is None else core.unit for pv, const in out_pvals
-      ]
-
-  if xb.get_backend().platform != "tpu":
+  if xb.get_backend().platform not in ["tpu", "gpu"]:
     # TODO(skye): fall back to regular jit?
-    raise ValueError("sharded_jit only works on TPU!")
+    raise ValueError("sharded_jit not supported for " +
+                     xb.get_backend().platform)
 
   nparts = pxla.reconcile_num_partitions(jaxpr, nparts)
   assert nparts is not None
@@ -137,7 +116,8 @@ def _sharded_callable(
         f"sharded_jit computation requires {local_nparts} local devices, "
         f"but only {xb.local_device_count()} local devices are available.")
 
-  logging.vlog(2, "nparts: %d  local_nparts: %d", nparts, local_nparts)
+  if logging.vlog_is_on(2):
+    logging.vlog(2, "nparts: %d  local_nparts: %d", nparts, local_nparts)
 
   out_parts = out_parts_thunk()
 
@@ -145,14 +125,15 @@ def _sharded_callable(
   if local_out_parts is None:
     local_out_parts = out_parts
 
-  logging.vlog(2, "out_parts: %s", out_parts)
-  logging.vlog(2, "local_out_parts: %s", local_out_parts)
+  if logging.vlog_is_on(2):
+    logging.vlog(2, "out_parts: %s", out_parts)
+    logging.vlog(2, "local_out_parts: %s", local_out_parts)
 
   local_out_avals = [pxla.get_local_aval(out, parts, lparts)
                      for out, parts, lparts
                      in safe_zip(global_out_avals, out_parts, local_out_parts)]
 
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               f"Compiling {fun.__name__} for {nparts} devices with "
               f"args {global_abstract_args}.")
@@ -189,7 +170,6 @@ def _sharded_callable(
 
   handle_args = partial(pxla.shard_args, compiled.local_devices(),
                         input_indices)
-  assert config.omnistaging_enabled
   handle_outs = _avals_to_results_handler(nrep, local_nparts,  # type: ignore
                                           local_out_parts, local_out_avals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,
@@ -228,7 +208,7 @@ def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.execute_on_local_devices(list(input_bufs))
+  out_bufs = compiled.execute_sharded_on_local_devices(input_bufs)
   return out_handler(out_bufs)
 
 
@@ -271,10 +251,15 @@ class PartitionSpec(tuple):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
 
-def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
-                local_in_parts=None, local_out_parts=None,
-                local_num_partitions=None,
-                static_argnums: Union[int, Iterable[int]] = (),
+def sharded_jit(
+    fun: Callable,
+    in_parts,
+    out_parts,
+    num_partitions: Optional[int] = None,
+    local_in_parts=None,
+    local_out_parts=None,
+    local_num_partitions=None,
+    static_argnums: Union[int, Iterable[int]] = (),
 ):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
@@ -298,19 +283,24 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
 
   Args:
     fun: Function to be jitted.
-    in_parts: The input partitions, i.e. how each argument to ``fun`` should be
+    in_parts: Specifications for how each argument to ``fun`` should be
       partitioned or replicated. This should be a PartitionSpec indicating into
-      how many partitions each dimension should be sharded, None indicating
+      how many partitions each dimension should be sharded, ``None`` indicating
       replication, or (nested) standard Python containers thereof. For example,
       ``in_parts=PartitionSpec(2,1)`` means all arguments should be partitioned
       over two devices across the first dimension;
       ``in_parts=(PartitionSpec(2,2), PartitionSpec(4,1), None)`` means the
-      first argument should be partitioned over four devices by splitting the
-      first two dimensions in half, the second argument should be partitioned
-      over the four devices across the first dimension, and the third argument
-      is replicated across the four devices. All PartitionSpecs in a given
-      ``sharded_jit`` call must correspond to the same total number of
-      partitions, i.e. the product of all PartitionSpecs must be equal.
+      first argument should be partitioned over four devices by splitting both
+      of its dimensions in half, the second argument should be partitioned over
+      the four devices across the first dimension, and the third argument is
+      replicated across the four devices.
+
+      All PartitionSpecs in a given ``sharded_jit`` call must correspond to the
+      same total number of partitions, i.e. the product of all PartitionSpecs
+      must be equal, and the number of dimensions in the PartitionSpec
+      corresponding to an array ``a`` should equal ``a.ndim``. Arguments marked
+      as static using ``static_argnums`` (see below) do not require a
+      PartitionSpec.
     out_parts: The output partitions, i.e. how each output of ``fun`` should be
       partitioned or replicated. This follows the same convention as
      ``in_parts``.
@@ -337,9 +327,11 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None,
       function with different values for these constants will trigger
       recompilation. If the jitted function is called with fewer positional
       arguments than indicated by ``static_argnums`` then an error is raised.
-      Each of the static arguments will be broadcasted to all devices.
-      Arguments that are not arrays or containers thereof must be marked as
-      static. Defaults to ().
+      Each of the static arguments will be broadcasted to all devices, and
+      cannot be partitioned - these arguments will be removed from the *args
+      list before matching each remaining argument with its corresponding
+      PartitionSpec. Arguments that are not arrays or containers thereof must
+      be marked as static. Defaults to ``()``.
 
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
@@ -467,37 +459,3 @@ def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
     A new version of ``x`` with the specified sharding applied.
   """
   return sharding_constraint_p.bind(x, partitions=partitions)
-
-
-@config.register_omnistaging_disabler
-def omnistaging_disabler() -> None:
-  global _pvals_to_results_handler, _pval_to_result_handler
-
-  def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
-    nouts = len(out_pvals)
-    handlers = [_pval_to_result_handler(npart, parts, out_pval)
-                for parts, out_pval in safe_zip(partitions, out_pvals)]  # type: ignore
-
-    def handler(out_bufs):
-      assert nrep * npart == len(out_bufs)
-      buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
-      for r, tuple_buf in enumerate(out_bufs):
-        for i, buf in enumerate(tuple_buf):
-          buffers[i][r] = buf
-      assert not any(buf is result_to_populate for bufs in buffers
-                    for buf in bufs)
-      return [h(bufs) for h, bufs in zip(handlers, buffers)]
-
-    return handler
-
-  def _pval_to_result_handler(npart, parts, pval):
-    pv, const = pval
-    if pv is None:
-      raise NotImplementedError  # TODO(skye): handle constant outputs
-    else:
-      if pv is not core.abstract_unit:
-        spec = pxla.partitioned_sharding_spec(npart, parts, pv)
-        indices = pxla.spec_to_indices(pv.shape, spec)
-      else:
-        spec = indices = None
-      return pxla.aval_to_result_handler(spec, indices, pv)

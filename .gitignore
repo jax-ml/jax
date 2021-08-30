@@ -6,7 +6,7 @@ build/bazel*
 dist/
 .ipynb_checkpoints
 /bazel-*
-.bazelrc
+.jax_configure.bazelrc
 /tensorflow
 .DS_Store
 .mypy_cache/

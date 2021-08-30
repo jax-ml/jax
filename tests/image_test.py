@@ -27,7 +27,6 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 
 from jax.config import config
-from jax.config import flags
 
 # We use TensorFlow and PIL as reference implementations.
 try:
@@ -41,8 +40,6 @@ except ImportError:
   PIL_Image = None
 
 config.parse_flags_with_absl()
-
-FLAGS = flags.FLAGS
 
 float_dtypes = jtu.dtypes.all_floating
 inexact_dtypes = jtu.dtypes.inexact
@@ -180,6 +177,29 @@ class ImageTest(jtu.JaxTestCase):
     jax_fn = partial(image.resize, shape=target_shape, method=method,
                      antialias=antialias)
     jtu.check_grads(jax_fn, args_maker(), order=2, rtol=1e-2, eps=1.)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+       {"testcase_name": "_shape={}_target={}_method={}_antialias={}".format(
+          jtu.format_shape_dtype_string(image_shape, dtype),
+          jtu.format_shape_dtype_string(target_shape, dtype), method,
+          antialias),
+        "dtype": dtype, "image_shape": image_shape,
+        "target_shape": target_shape,
+        "method": method, "antialias": antialias}
+       for dtype in [np.float32]
+       for image_shape, target_shape in [
+         ([1], [0]),
+         ([5, 5], [5, 0]),
+         ([5, 5], [0, 1]),
+         ([5, 5], [0, 0])
+       ]
+       for method in ["nearest", "linear", "lanczos3", "lanczos5", "cubic"]
+       for antialias in [False, True]))
+  def testResizeEmpty(self, dtype, image_shape, target_shape, method, antialias):
+    # Regression test for https://github.com/google/jax/issues/7586
+    image = np.ones(image_shape, dtype)
+    out = jax.image.resize(image, shape=target_shape, method=method, antialias=antialias)
+    self.assertArraysEqual(out, jnp.zeros(target_shape, dtype))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_target={}_method={}".format(
@@ -326,6 +346,41 @@ class ImageTest(jtu.JaxTestCase):
 
     output = jax.jit(jit_fn)(x, scale_a, translation_a)
     self.assertAllClose(output, expected, atol=2e-03)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "antialias={}".format(antialias),
+       "antialias": antialias}
+      for antialias in [True, False]))
+  def testScaleAndTranslateGradFinite(self, antialias):
+    image_shape = [1, 6, 7, 1]
+    target_shape = [1, 3, 3, 1]
+
+    data = [
+        51, 38, 32, 89, 41, 21, 97, 51, 33, 87, 89, 34, 21, 97, 43, 25, 25, 92,
+        41, 11, 84, 11, 55, 111, 23, 99, 50, 83, 13, 92, 52, 43, 90, 43, 14, 89,
+        71, 32, 23, 23, 35, 93
+    ]
+
+    x = jnp.array(data, dtype=jnp.float32).reshape(image_shape)
+    scale_a = jnp.array([1.0, 0.35, 0.4, 1.0], dtype=jnp.float32)
+    translation_a = jnp.array([0.0, 0.2, 0.1, 0.0], dtype=jnp.float32)
+
+    def scale_fn(s):
+      return jnp.sum(jax.image.scale_and_translate(
+        x, target_shape, (0, 1, 2, 3), s, translation_a, "linear", antialias,
+        precision=jax.lax.Precision.HIGHEST))
+
+    scale_out = jax.grad(scale_fn)(scale_a)
+    self.assertTrue(jnp.all(jnp.isfinite(scale_out)))
+
+    def translate_fn(t):
+      return jnp.sum(jax.image.scale_and_translate(
+        x, target_shape, (0, 1, 2, 3), scale_a, t, "linear", antialias,
+        precision=jax.lax.Precision.HIGHEST))
+
+    translate_out = jax.grad(translate_fn)(translation_a)
+    self.assertTrue(jnp.all(jnp.isfinite(translate_out)))
+
 
 
 if __name__ == "__main__":

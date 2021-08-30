@@ -32,7 +32,7 @@ def setup_tpu():
 
   if not TPU_DRIVER_MODE:
     colab_tpu_addr = os.environ['COLAB_TPU_ADDR'].split(':')[0]
-    url = f'http://{colab_tpu_addr}:8475/requestversion/tpu_driver_nightly'
+    url = f'http://{colab_tpu_addr}:8475/requestversion/tpu_driver0.1-dev20210603'
     requests.post(url)
     TPU_DRIVER_MODE = 1
 

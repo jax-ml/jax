@@ -15,13 +15,16 @@
 """Shared neural network activations and other functions."""
 
 
+import operator
 import numpy as np
 from typing import Any, Optional, Tuple, Union
 
 from jax import custom_jvp
-from jax import dtypes
+from jax._src import dtypes
 from jax import lax
 from jax import core
+from jax.core import AxisName
+from .. import util
 from jax.scipy.special import expit
 from jax.scipy.special import logsumexp as _logsumexp
 import jax.numpy as jnp
@@ -38,6 +41,9 @@ def relu(x: Array) -> Array:
 
   .. math::
     \mathrm{relu}(x) = \max(x, 0)
+
+  Args:
+    x : input array
   """
   return jnp.maximum(x, 0)
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
@@ -49,6 +55,9 @@ def softplus(x: Array) -> Array:
 
   .. math::
     \mathrm{softplus}(x) = \log(1 + e^x)
+
+  Args:
+    x : input array
   """
   return jnp.logaddexp(x, 0)
 
@@ -59,6 +68,9 @@ def soft_sign(x: Array) -> Array:
 
   .. math::
     \mathrm{soft\_sign}(x) = \frac{x}{|x| + 1}
+
+  Args:
+    x : input array
   """
   return x / (jnp.abs(x) + 1)
 
@@ -69,6 +81,9 @@ def sigmoid(x: Array) -> Array:
 
   .. math::
     \mathrm{sigmoid}(x) = \frac{1}{1 + e^{-x}}
+
+  Args:
+    x : input array
   """
   return expit(x)
 
@@ -79,6 +94,9 @@ def silu(x: Array) -> Array:
 
   .. math::
     \mathrm{silu}(x) = x \cdot \mathrm{sigmoid}(x) = \frac{x}{1 + e^{-x}}
+
+  Args:
+    x : input array
   """
   return x * sigmoid(x)
 
@@ -91,6 +109,9 @@ def log_sigmoid(x: Array) -> Array:
 
   .. math::
     \mathrm{log\_sigmoid}(x) = \log(\mathrm{sigmoid}(x)) = -\log(1 + e^{-x})
+
+  Args:
+    x : input array
   """
   return -softplus(-x)
 
@@ -104,6 +125,10 @@ def elu(x: Array, alpha: Array = 1.0) -> Array:
       x, & x > 0\\
       \alpha \left(\exp(x) - 1\right), & x \le 0
     \end{cases}
+
+  Args:
+    x : input array
+    alpha : scalar or array of alpha values (default: 1.0)
   """
   safe_x = jnp.where(x > 0, 0., x)
   return jnp.where(x > 0, x, alpha * jnp.expm1(safe_x))
@@ -120,6 +145,10 @@ def leaky_relu(x: Array, negative_slope: Array = 1e-2) -> Array:
     \end{cases}
 
   where :math:`\alpha` = :code:`negative_slope`.
+
+  Args:
+    x : input array
+    negative_slope : array or scalar specifying the negative slope (default: 0.01)
   """
   return jnp.where(x >= 0, x, negative_slope * x)
 
@@ -131,9 +160,12 @@ def hard_tanh(x: Array) -> Array:
   .. math::
     \mathrm{hard\_tanh}(x) = \begin{cases}
       -1, & x < -1\\
-      x, & 0 \le x \le 1\\
+      x, & -1 \le x \le 1\\
       1, & 1 < x
     \end{cases}
+
+  Args:
+    x : input array
   """
   return jnp.where(x > 1, 1, jnp.where(x < -1, -1, x))
 
@@ -150,7 +182,12 @@ def celu(x: Array, alpha: Array = 1.0) -> Array:
 
   For more information, see
   `Continuously Differentiable Exponential Linear Units
-  <https://arxiv.org/pdf/1704.07483.pdf>`_."""
+  <https://arxiv.org/pdf/1704.07483.pdf>`_.
+
+  Args:
+    x : input array
+    alpha : array or scalar (default: 1.0)
+  """
   return jnp.where(x > 0, x, alpha * jnp.expm1(x / alpha))
 
 def selu(x: Array) -> Array:
@@ -170,6 +207,9 @@ def selu(x: Array) -> Array:
   For more information, see
   `Self-Normalizing Neural Networks
   <https://papers.nips.cc/paper/6698-self-normalizing-neural-networks.pdf>`_.
+
+  Args:
+    x : input array
   """
   alpha = 1.6732632423543772848170429916717
   scale = 1.0507009873554804934193349852946
@@ -194,6 +234,7 @@ def gelu(x: Array, approximate: bool = True) -> Array:
   <https://arxiv.org/abs/1606.08415>`_, section 2.
 
   Args:
+    x : input array
     approximate: whether to use the approximate or exact formulation.
   """
   if approximate:
@@ -204,7 +245,12 @@ def gelu(x: Array, approximate: bool = True) -> Array:
     return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
 
 def glu(x: Array, axis: int = -1) -> Array:
-  """Gated linear unit activation function."""
+  """Gated linear unit activation function.
+
+  Args:
+    x : input array
+    axis: the axis along which the split should be computed (default: -1)
+  """
   size = x.shape[axis]
   assert size % 2 == 0, "axis size must be divisible by 2"
   x1, x2 = jnp.split(x, 2, axis)
@@ -226,6 +272,7 @@ def log_softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> A
     \right)
 
   Args:
+    x : input array
     axis: the axis or axes along which the :code:`log_softmax` should be
       computed. Either an integer or a tuple of integers.
   """
@@ -242,6 +289,7 @@ def softmax(x: Array, axis: Optional[Union[int, Tuple[int, ...]]] = -1) -> Array
     \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
 
   Args:
+    x : input array
     axis: the axis or axes along which the softmax should be computed. The
       softmax output summed across these dimensions should sum to :math:`1`.
       Either an integer or a tuple of integers.
@@ -265,36 +313,52 @@ def normalize(x: Array,
     variance = jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
-def one_hot(x: Array, num_classes: int, *, dtype: Any = jnp.float64) -> Array:
+def one_hot(x: Array, num_classes: int, *,
+            dtype: Any = jnp.float64, axis: Union[int, AxisName] = -1) -> Array:
   """One-hot encodes the given indicies.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
   ``num_classes`` with the element at ``index`` set to one::
 
-  >>> jax.nn.one_hot(jnp.array([0, 1, 2]), 3)
-  DeviceArray([[1., 0., 0.],
-               [0., 1., 0.],
-               [0., 0., 1.]], dtype=float32)
+    >>> jax.nn.one_hot(jnp.array([0, 1, 2]), 3)
+    DeviceArray([[1., 0., 0.],
+                  [0., 1., 0.],
+                  [0., 0., 1.]], dtype=float32)
 
   Indicies outside the range [0, num_classes) will be encoded as zeros::
 
-  >>> jax.nn.one_hot(jnp.array([-1, 3]), 3)
-  DeviceArray([[0., 0., 0.],
-               [0., 0., 0.]], dtype=float32)
+    >>> jax.nn.one_hot(jnp.array([-1, 3]), 3)
+    DeviceArray([[0., 0., 0.],
+                 [0., 0., 0.]], dtype=float32)
 
   Args:
     x: A tensor of indices.
     num_classes: Number of classes in the one-hot dimension.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    axis: the axis or axes along which the function should be
+      computed.
   """
   num_classes = core.concrete_or_error(
       int, num_classes,
       "The error arose in jax.nn.one_hot argument `num_classes`.")
   dtype = dtypes.canonicalize_dtype(dtype)
   x = jnp.asarray(x)
-  lhs = x[..., jnp.newaxis]
-  rhs = lax.broadcast_to_rank(jnp.arange(num_classes, dtype=x.dtype), lhs.ndim)
+  try:
+    output_pos_axis = util.canonicalize_axis(axis, x.ndim + 1)
+  except TypeError:
+    axis_size = lax.psum(1, axis)
+    if num_classes != axis_size:
+      raise ValueError(f"Expected num_classes to match the size of axis {axis}, "
+                       f"but {num_classes} != {axis_size}") from None
+    axis_idx = lax.axis_index(axis)
+    return jnp.asarray(x == axis_idx, dtype=dtype)
+  axis = operator.index(axis)
+  lhs = lax.expand_dims(x, (axis,))
+  rhs_shape = [1] * x.ndim
+  rhs_shape.insert(output_pos_axis, num_classes)
+  rhs = lax.broadcast_in_dim(jnp.arange(num_classes, dtype=x.dtype),
+                             rhs_shape, (output_pos_axis,))
   return jnp.asarray(lhs == rhs, dtype=dtype)
 
 def relu6(x: Array) -> Array:
@@ -304,6 +368,9 @@ def relu6(x: Array) -> Array:
 
   .. math::
     \mathrm{relu6}(x) = \min(\max(x, 0), 6)
+
+  Args:
+    x : input array
   """
   return jnp.minimum(jnp.maximum(x, 0), 6.)
 
@@ -314,6 +381,9 @@ def hard_sigmoid(x: Array) -> Array:
 
   .. math::
     \mathrm{hard\_sigmoid}(x) = \frac{\mathrm{relu6}(x + 3)}{6}
+
+  Args:
+    x : input array
   """
   return relu6(x + 3.) / 6.
 
@@ -324,6 +394,9 @@ def hard_silu(x: Array) -> Array:
 
   .. math::
     \mathrm{hard\_silu}(x) = x \cdot \mathrm{hard\_sigmoid}(x)
+
+  Args:
+    x : input array
   """
   return x * hard_sigmoid(x)
 

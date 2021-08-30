@@ -96,7 +96,9 @@ def trsm(c,
           _Shape.array_shape(dtype, a_shape.dimensions(), layout),  # buffers[0] (a)
           _Shape.array_shape(dtype, b_shape.dimensions(), layout),  # buffers[1] (b, IN)
       ),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return _ops.GetTupleElement(out, 0)
 
 
@@ -133,7 +135,9 @@ def potrf(c, a, lower):
                              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
                              ),  # buffers[0] (a, IN)
       ),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return _ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1)
 
 
@@ -171,7 +175,9 @@ def getrf(c, a):
                              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
                              ),  # buffers[0] (a, IN)
       ),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1),
           _ops.GetTupleElement(out, 2))
 
@@ -208,7 +214,9 @@ def geqrf(c, a):
                              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
                              ),  # buffers[0] (a, IN)
       ),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   # rocsolver geqrf does not return info
   return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1), None)
 
@@ -247,7 +255,9 @@ def orgqr(c, a, tau):
           _Shape.array_shape(dtype, batch_dims + (k,),
                              tuple(range(num_bd, -1, -1))),  # buffers[1]  (tau IN)
       ),
-      opaque=opaque)
+      opaque=opaque,
+      api_version=xla_client.ops.CustomCallApiVersion
+      .API_VERSION_STATUS_RETURNING)
   return (_ops.GetTupleElement(out, 0), None)  # ROCSolver orgqr does not return info
 
 
@@ -303,7 +313,9 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
             _Shape.array_shape(dtype, batch_dims + (m, n),
                                matrix_layout),  # buffers[0] (a, IN)
         ),
-        opaque=opaque)
+        opaque=opaque,
+        api_version=xla_client.ops.CustomCallApiVersion
+        .API_VERSION_STATUS_RETURNING)
     s = _ops.GetTupleElement(out, 1)
     vt = _ops.GetTupleElement(out, 2)
     u = _ops.GetTupleElement(out, 3)
@@ -338,7 +350,9 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
             _Shape.array_shape(dtype, batch_dims + (m, n),
                                matrix_layout),  # buffers[0] (a, IN)
         ),
-        opaque=opaque)
+        opaque=opaque,
+        api_version=xla_client.ops.CustomCallApiVersion
+        .API_VERSION_STATUS_RETURNING)
     s = _ops.GetTupleElement(out, 1)
     u = _ops.GetTupleElement(out, 2)
     vt = _ops.GetTupleElement(out, 3)

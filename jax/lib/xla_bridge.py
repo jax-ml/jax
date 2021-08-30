@@ -20,48 +20,57 @@ XLA. There are also a handful of related casting utilities.
 """
 
 
-from functools import partial
+from functools import partial, lru_cache
 import os
 from typing import Callable, Dict, List, Optional, Tuple, Union
+import warnings
 
 from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
 logging._warn_preinit_stderr = 0
 
-from ..config import flags
-from jax._src import util
-from .. import dtypes
+import jax.lib
+from .._src.config import flags, bool_env
+from . import tpu_driver_client
+from . import xla_client
+from jax._src import util, traceback_util
+from jax._src import dtypes
 import numpy as np
 import threading
 
-try:
-  from . import tpu_client
-except ImportError:
-  tpu_client = None
-from . import xla_client
+traceback_util.register_exclusion(__file__)
+
 
 xops = xla_client.ops
 
 FLAGS = flags.FLAGS
 
+# TODO(phawkins): Remove jax_xla_backend.
 flags.DEFINE_string(
-    'jax_xla_backend', 'xla',
-    'Default is "xla" for the XLA service directly, '
-    'or "tpu_driver" for using high-performance access to Cloud TPU hardware.')
+    'jax_xla_backend', '',
+    'jax_xla_backend is an alias for jax_platform_name. If both are '
+    'provided, --jax_xla_backend takes priority. Prefer --jax_platform_name.')
 flags.DEFINE_string(
-    'jax_backend_target', 'local',
+    'jax_backend_target', '',
     'Either "local" or "rpc:address" to connect to a remote service target.')
 flags.DEFINE_string(
     'jax_platform_name',
-    os.getenv('JAX_PLATFORM_NAME', ''),
-    'Platform name for XLA. The default is to attempt to use a GPU if '
+    os.getenv('JAX_PLATFORM_NAME', '').lower(),
+    'Platform name for XLA. The default is to attempt to use a GPU or TPU if '
     'available, but fall back to CPU otherwise. To set the platform manually, '
-    'pass "cpu" for CPU or "gpu" for GPU.')
+    'pass "cpu" for CPU, "gpu" for GPU, etc. If intending to use CPU, '
+    'setting the platform name to "cpu" can silence warnings that appear with '
+    'the default setting.')
 flags.DEFINE_bool(
-    'jax_disable_most_optimizations', False,
+    'jax_disable_most_optimizations',
+    bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
-
+flags.DEFINE_string(
+    'jax_cpu_backend_variant',
+     os.getenv('JAX_CPU_BACKEND_VARIANT', 'tfrt'),
+    'Selects CPU backend runtime variant: "stream_executor" or "tfrt". The '
+    'default is "tfrt".')
 
 def get_compile_options(
     num_replicas: int,
@@ -110,84 +119,169 @@ def get_compile_options(
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
 
+  debug_options = compile_options.executable_build_options.debug_options
+  if jax.lib.cuda_path is not None:
+    debug_options.xla_gpu_cuda_data_dir = jax.lib.cuda_path
+
   if FLAGS.jax_disable_most_optimizations:
-    debug_options = compile_options.executable_build_options.debug_options
+
     debug_options.xla_backend_optimization_level = 0
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
   return compile_options
 
-_backends = {}
 
-def register_backend(name, factory):
-  _backends[name] = factory
+# Backends
 
-def _get_local_backend(platform=None):
-  if not platform:
-    platform = FLAGS.jax_platform_name or None
-
-  backend = xla_client.get_local_backend(platform)
-  if backend is None:
-    raise RuntimeError("No local XLA backends found.")
-
-  if backend.platform == 'cpu' and platform != 'cpu':
-    logging.warning('No GPU/TPU found, falling back to CPU. '
-                    '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
-
-  return backend
+def _make_tpu_driver_client():
+  if tpu_driver_client is None:
+    logging.info("Remote TPU is not linked into jax; skipping remote TPU.")
+    return None
+  if FLAGS.jax_backend_target is None:
+    logging.info("No --jax_backend_target was provided; skipping remote TPU.")
+    return None
+  return tpu_driver_client.TpuBackend.create(worker=FLAGS.jax_backend_target)
 
 
-register_backend('xla', _get_local_backend)
+def tpu_client_timer_callback(timer_secs: float):
+  def _log_warning():
+    warnings.warn(
+      f'TPU backend initialization is taking more than {timer_secs} seconds. '
+      'Did you run your code on all TPU hosts? '
+      'See https://jax.readthedocs.io/en/latest/multi_process.html '
+      'for more information.')
 
-# memoize the TPU driver to be consistent with xla_client behavior
-_tpu_backend = None
+  # Will log a warning after `timer_secs`.
+  t = threading.Timer(timer_secs, _log_warning)
+  t.start()
 
-def _get_tpu_driver_backend(platform):
-  del platform
-  global _tpu_backend
-  if _tpu_backend is None:
-    backend_target = FLAGS.jax_backend_target
-    if backend_target is None:
-      raise ValueError('When using TPU Driver as the backend, you must specify '
-                       '--jax_backend_target=<hostname>:8470.')
-    _tpu_backend = tpu_client.TpuBackend.create(worker=backend_target)
-  return _tpu_backend
+  try:
+    client = xla_client.make_tpu_client()
+  finally:
+    t.cancel()
+
+  return client
 
 
-if tpu_client:
-  register_backend('tpu_driver', _get_tpu_driver_backend)
+# Backends, in increasing order of preference.
+# We have no particular opinion about how "backends" relate to "devices". For
+# example, there could be multiple backends that provide the same kind of
+# device.
+_backend_factories = {}
+
+def register_backend_factory(name, factory, *, priority=0):
+  _backend_factories[name] = (factory, priority)
 
 
+register_backend_factory('interpreter', xla_client.make_interpreter_client,
+                         priority=-100)
+if FLAGS.jax_cpu_backend_variant == 'stream_executor':
+  register_backend_factory('cpu',
+                           partial(xla_client.make_cpu_client, use_tfrt=False),
+                           priority=0)
+else:
+  assert FLAGS.jax_cpu_backend_variant == 'tfrt'
+  register_backend_factory('cpu',
+                           partial(xla_client.make_cpu_client, use_tfrt=True),
+                           priority=0)
+register_backend_factory('tpu_driver', _make_tpu_driver_client,
+                         priority=100)
+register_backend_factory('gpu', xla_client.make_gpu_client,
+                         priority=200)
+register_backend_factory(
+  'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
+
+_default_backend = None
+_backends = None
+_backends_errors = None
 _backend_lock = threading.Lock()
 
-@util.memoize
-def get_backend(platform=None):
+
+def backends():
+  global _backends
+  global _backends_errors
+  global _default_backend
+
+  with _backend_lock:
+    if _backends is not None:
+      return _backends
+
+    default_priority = -1000
+    _backends = {}
+    _backends_errors = {}
+    for name, (factory, priority) in _backend_factories.items():
+      logging.vlog(1, "Initializing backend '%s'" % name)
+      try:
+        backend = factory()
+        if backend is not None:
+          if backend.device_count() > 0:
+            _backends[name] = backend
+          util.distributed_debug_log(("Initialized backend", backend.platform),
+                                     ("process_index", backend.process_index()),
+                                     ("device_count", backend.device_count()),
+                                     ("local_devices", backend.local_devices()))
+          logging.vlog(1, "Backend '%s' initialized" % name)
+          if priority > default_priority:
+            _default_backend = backend
+            default_priority = priority
+      except Exception as err:
+        if name in ('cpu', 'interpreter'):
+          # We always expect the CPU and interpreter backends to initialize
+          # successfully.
+          raise
+        else:
+          # If the backend isn't built into the binary, or if it has no devices,
+          # we expect a RuntimeError.
+          logging.info("Unable to initialize backend '%s': %s" % (name, err))
+          _backends_errors[name] = str(err)
+          continue
+    if _default_backend.platform == "cpu" and FLAGS.jax_platform_name != 'cpu':
+      logging.warning('No GPU/TPU found, falling back to CPU. '
+                      '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
+    return _backends
+
+
+def _get_backend_uncached(platform=None):
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
   if not isinstance(platform, (type(None), str)):
     return platform
 
-  with _backend_lock:
-    backend = _backends.get(FLAGS.jax_xla_backend)
+  bs = backends()
+  platform = (platform or FLAGS.jax_xla_backend or FLAGS.jax_platform_name
+              or None)
+  if platform is not None:
+    backend = bs.get(platform, None)
     if backend is None:
-      msg = 'Unknown jax_xla_backend value "{}".'
-      raise ValueError(msg.format(FLAGS.jax_xla_backend))
-    return backend(platform)
+      if platform in _backends_errors:
+        raise RuntimeError(f"Requested backend {platform}, but it failed "
+                           f"to initialize: {_backends_errors[platform]}")
+      raise RuntimeError(f"Unknown backend {platform}")
+    return backend
+  else:
+    return _default_backend
+
+
+@lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
+def get_backend(platform=None):
+  return _get_backend_uncached(platform)
 
 
 def get_device_backend(device=None):
   """Returns the Backend associated with `device`, or the default Backend."""
-  platform = device.platform if device else None
-  return get_backend(platform)
+  if device is not None:
+    return device.client
+  return get_backend()
 
 
 def device_count(backend: Optional[str] = None) -> int:
   """Returns the total number of devices.
 
   On most platforms, this is the same as :py:func:`jax.local_device_count`.
-  However, on multi-host platforms, this will return the total number of devices
-  across all hosts.
+  However, on multi-process platforms where different devices are associated
+  with different processes, this will return the total number of devices across
+  all processes.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
@@ -196,12 +290,13 @@ def device_count(backend: Optional[str] = None) -> int:
 
   Returns:
     Number of devices.
+
   """
   return int(get_backend(backend).device_count())
 
 
 def local_device_count(backend: Optional[str] = None) -> int:
-  """Returns the number of devices on this host."""
+  """Returns the number of devices addressable by this process."""
   return int(get_backend(backend).local_device_count())
 
 
@@ -210,8 +305,9 @@ def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
 
   Each device is represented by a subclass of :class:`Device` (e.g.
   :class:`CpuDevice`, :class:`GpuDevice`). The length of the returned list is
-  equal to ``device_count(backend)``. Local devices can be identified by comparing
-  :meth:`Device.host_id` to the value returned by :py:func:`jax.host_id`.
+  equal to ``device_count(backend)``. Local devices can be identified by
+  comparing :meth:`Device.process_index` to the value returned by
+  :py:func:`jax.process_index`.
 
   If ``backend`` is ``None``, returns all the devices from the default backend.
   The default backend is generally ``'gpu'`` or ``'tpu'`` if available,
@@ -228,15 +324,21 @@ def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
   return get_backend(backend).devices()
 
 
-def local_devices(host_id: Optional[int] = None,
-                  backend: Optional[str] = None) -> List[xla_client.Device]:
-  """Like :py:func:`jax.devices`, but only returns devices local to a given host.
+def default_backend() -> str:
+  """Returns the platform name of the default XLA backend."""
+  return get_backend(None).platform
 
-  If ``host_id`` is ``None``, returns devices local to this host.
+
+def local_devices(process_index: Optional[int] = None,
+                  backend: Optional[str] = None,
+                  host_id: Optional[int] = None) -> List[xla_client.Device]:
+  """Like :py:func:`jax.devices`, but only returns devices local to a given process.
+
+  If ``process_index`` is ``None``, returns devices local to this process.
 
   Args:
-    host_id: the integer ID of the host. Host IDs can be retrieved via
-      :py:func:`jax.host_ids`.
+    process_index: the integer index of the process. Process indices can be
+      retrieved via ``len(jax.process_count())``.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
       ``'tpu'``.
@@ -244,17 +346,23 @@ def local_devices(host_id: Optional[int] = None,
   Returns:
     List of Device subclasses.
   """
-  if host_id is None:
-    host_id = get_backend(backend).host_id()
-  if host_id not in host_ids():
-    raise ValueError(f"Unknown host_id {host_id}")
-  return [d for d in devices(backend) if d.host_id == host_id]
+  if host_id is not None:
+    warnings.warn(
+        "The argument to jax.local_devices has been renamed from `host_id` to "
+        "`process_index`. This alias will eventually be removed; please update "
+        "your code.")
+    process_index = host_id
+  if process_index is None:
+    process_index = get_backend(backend).process_index()
+  if not (0 <= process_index < process_count()):
+    raise ValueError(f"Unknown process_index {process_index}")
+  return [d for d in devices(backend) if d.process_index == process_index]
 
 
-def host_id(backend: Optional[str] = None) -> int:
-  """Returns the integer host ID of this host.
+def process_index(backend: Optional[str] = None) -> int:
+  """Returns the integer process index of this process.
 
-  On most platforms, this will always be 0. This will vary on multi-host
+  On most platforms, this will always be 0. This will vary on multi-process
   platforms though.
 
   Args:
@@ -263,26 +371,46 @@ def host_id(backend: Optional[str] = None) -> int:
       ``'tpu'``.
 
   Returns:
-    Integer host ID.
+    Integer process index.
   """
-  return get_backend(backend).host_id()
+  return get_backend(backend).process_index()
 
 
-def host_ids(backend: Optional[str] = None) -> List[int]:
-  """Returns a sorted list of all host IDs."""
-  return sorted({d.host_id for d in devices(backend)})
+# TODO: remove this sometime after jax 0.2.13 is released
+def host_id(backend=None):
+  warnings.warn(
+      "jax.host_id has been renamed to jax.process_index. This alias "
+      "will eventually be removed; please update your code.")
+  return process_index(backend)
 
 
-def host_count(backend: Optional[str] = None) -> int:
-  """Returns the number of hosts."""
-  return len(host_ids(backend))
+def process_count(backend: Optional[str] = None) -> int:
+  """Returns the number of JAX processes associated with the backend."""
+  return max(d.process_index for d in devices(backend)) + 1
+
+
+# TODO: remove this sometime after jax 0.2.13 is released
+def host_count(backend=None):
+  warnings.warn(
+      "jax.host_count has been renamed to jax.process_count. This alias "
+      "will eventually be removed; please update your code.")
+  return process_count(backend)
+
+
+# TODO: remove this sometime after jax 0.2.13 is released
+def host_ids(backend=None):
+  warnings.warn(
+      "jax.host_ids has been deprecated; please use range(jax.process_count()) "
+      "instead. jax.host_ids will eventually be removed; please update your "
+      "code.")
+  return list(range(process_count(backend)))
 
 
 ### utility functions
 
 @util.memoize
 def dtype_to_etype(dtype):
-  """Convert from dtype to canonical etype (reading FLAGS.jax_enable_x64)."""
+  """Convert from dtype to canonical etype (reading config.x64_enabled)."""
   return xla_client.dtype_to_etype(dtypes.canonicalize_dtype(dtype))
 
 
@@ -304,7 +432,7 @@ def normalize_to_xla_dtypes(val):
 def _numpy_array_constant(builder, value, canonicalize_types=True):
   if canonicalize_types:
     value = normalize_to_xla_dtypes(value)
-  return xops.ConstantLiteral(builder, value)
+  return [xops.ConstantLiteral(builder, value)]
 
 def parameter(builder, num, shape, name=None, replicated=None):
   if name is None:
@@ -319,6 +447,22 @@ def parameter(builder, num, shape, name=None, replicated=None):
                         replicated)
 
 
+def constant_general(builder, py_val, canonicalize_types=True):
+  """Translate a general constant `py_val` to a constant, canonicalizing its dtype.
+
+  Args:
+    py_val: a Python value to be translated to a constant.
+
+  Returns:
+    A representation of the constant as a list of xla ops.
+  """
+  for t in type(py_val).mro():
+    handler = _constant_handlers.get(t)
+    if handler: return handler(builder, py_val, canonicalize_types)
+  if hasattr(py_val, '__jax_array__'):
+    return constant(builder, py_val.__jax_array__(), canonicalize_types)
+  raise TypeError("No constant handler for type: {}".format(type(py_val)))
+
 def constant(builder, py_val, canonicalize_types=True):
   """Translate constant `py_val` to a constant, canonicalizing its dtype.
 
@@ -328,11 +472,9 @@ def constant(builder, py_val, canonicalize_types=True):
   Returns:
     A representation of the constant, either a ComputationDataHandle or None
   """
-  py_type = type(py_val)
-  if py_type in _constant_handlers:
-    return _constant_handlers[py_type](builder, py_val, canonicalize_types)
-  else:
-    raise TypeError("No constant handler for type: {}".format(py_type))
+  const = constant_general(builder, py_val, canonicalize_types=canonicalize_types)
+  assert len(const) == 1, f"Internal error: cannot create constant from object of type {type(py_val)}"
+  return const[0]
 
 # HLO instructions optionally can be annotated to say how the output should be
 # spatially partitioned (represented in XLA as OpSharding protos, see
@@ -351,7 +493,7 @@ def _sharding_to_proto(sharding: SpatialSharding):
   """Converts a SpatialSharding to an OpSharding.
 
   See
-  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
+  https://github.com/tensorflow/tensorflow/blob/main/tensorflow/compiler/xla/xla_data.proto#L601
   for details on the OpSharding proto.
   """
   proto = xla_client.OpSharding()
@@ -426,17 +568,17 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
   """
   # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
   if dtypes.result_type(val) == dtypes.float0:
-    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool))
+    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool_))
   elif np.any(np.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
     xla_val = xops.Broadcast(
-        _numpy_array_constant(c, collapsed_val, canonicalize_types),
+        _numpy_array_constant(c, collapsed_val, canonicalize_types)[0],
         np.take(val.shape, zero_stride_axes))
     permutation = np.argsort(tuple(zero_stride_axes) + tuple(other_axes))
-    return xops.Transpose(xla_val, permutation)
+    return [xops.Transpose(xla_val, permutation)]
   else:
     return _numpy_array_constant(c, val, canonicalize_types)
 register_constant_handler(np.ndarray, _ndarray_constant_handler)

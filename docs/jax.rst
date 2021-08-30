@@ -18,8 +18,11 @@ Subpackages
     jax.ops
     jax.random
     jax.tree_util
+    jax.flatten_util
     jax.dlpack
     jax.profiler
+
+.. _jax-jit:
 
 Just-in-time compilation (:code:`jit`)
 --------------------------------------
@@ -32,7 +35,13 @@ Just-in-time compilation (:code:`jit`)
     make_jaxpr
     eval_shape
     device_put
+    device_put_replicated
+    device_put_sharded
+    device_get
+    default_backend
     named_call
+
+.. _jax-grad:
 
 Automatic differentiation
 -------------------------
@@ -50,6 +59,7 @@ Automatic differentiation
     vjp
     custom_jvp
     custom_vjp
+    closure_convert
     checkpoint
 
 
@@ -69,11 +79,10 @@ Parallelization (:code:`pmap`)
     pmap
     devices
     local_devices
-    host_id
-    host_ids
+    process_index
     device_count
     local_device_count
-    host_count
+    process_count
 
 
 .. autofunction:: jit
@@ -82,6 +91,10 @@ Parallelization (:code:`pmap`)
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
 .. autofunction:: device_put
+.. autofunction:: device_put_replicated
+.. autofunction:: device_put_sharded
+.. autofunction:: device_get
+.. autofunction:: default_backend
 .. autofunction:: named_call
 
 .. autofunction:: grad
@@ -102,16 +115,18 @@ Parallelization (:code:`pmap`)
 
     .. automethod:: defvjp
 
+.. autofunction:: closure_convert
+
 .. autofunction:: checkpoint
 
 .. autofunction:: vmap
 .. autofunction:: jax.numpy.vectorize
+  :noindex:
 
 .. autofunction:: pmap
 .. autofunction:: devices
 .. autofunction:: local_devices
-.. autofunction:: host_id
-.. autofunction:: host_ids
+.. autofunction:: process_index
 .. autofunction:: device_count
 .. autofunction:: local_device_count
-.. autofunction:: host_count
+.. autofunction:: process_count

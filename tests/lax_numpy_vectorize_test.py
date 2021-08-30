@@ -25,7 +25,9 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class VectorizeTest(jtu.JaxTestCase):
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
        "left_shape": left_shape, "right_shape": right_shape, "result_shape": result_shape}
@@ -142,7 +144,7 @@ class VectorizeTest(jtu.JaxTestCase):
 
     x = jnp.arange(3)
     self.assertAllClose(x, f('foo', x))
-    self.assertAllClose(x, jax.jit(f, 0)('foo', x))
+    self.assertAllClose(x, jax.jit(f, static_argnums=0)('foo', x))
 
   def test_exclude_second(self):
 
@@ -154,7 +156,7 @@ class VectorizeTest(jtu.JaxTestCase):
 
     x = jnp.arange(3)
     self.assertAllClose(x, f(x, 'foo'))
-    self.assertAllClose(x, jax.jit(f, 1)(x, 'foo'))
+    self.assertAllClose(x, jax.jit(f, static_argnums=1)(x, 'foo'))
 
   def test_exclude_errors(self):
     with self.assertRaisesRegex(

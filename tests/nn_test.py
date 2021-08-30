@@ -109,23 +109,19 @@ class NNFunctionsTest(jtu.JaxTestCase):
        partial(nn.gelu, approximate=True),
        nn.relu, nn.softplus, nn.sigmoid)))
   def testDtypeMatchesInput(self, dtype, fn):
-    if dtype is jnp.float16 and jtu.device_under_test() == "tpu":
-      self.skipTest("float16 not supported on TPU")
     x = jnp.zeros((), dtype=dtype)
     out = fn(x)
     self.assertEqual(out.dtype, dtype)
 
-  @jtu.skip_on_devices("gpu", "tpu")
   def testEluMemory(self):
     # see https://github.com/google/jax/pull/1640
-    with core.skipping_checks():  # With checks we materialize the array
-      jax.make_jaxpr(nn.elu)(jnp.ones((10 ** 12,)))  # don't oom
+    with jax.enable_checks(False):  # With checks we materialize the array
+      jax.make_jaxpr(lambda: nn.elu(jnp.ones((10 ** 12,))))  # don't oom
 
-  @jtu.skip_on_devices("gpu", "tpu")
   def testHardTanhMemory(self):
     # see https://github.com/google/jax/pull/1640
-    with core.skipping_checks():  # With checks we materialize the array
-      jax.make_jaxpr(nn.hard_tanh)(jnp.ones((10 ** 12,)))  # don't oom
+    with jax.enable_checks(False):  # With checks we materialize the array
+      jax.make_jaxpr(lambda: nn.hard_tanh(jnp.ones((10 ** 12,))))  # don't oom
 
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
@@ -166,6 +162,19 @@ class NNFunctionsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       jax.jit(nn.one_hot)(3, 5)
 
+  def testOneHotAxis(self):
+    expected = jnp.array([[0., 1., 0.],
+                         [0., 0., 1.],
+                         [1., 0., 0.]]).T
+
+    actual = nn.one_hot(jnp.array([1, 2, 0]), 3, axis=0)
+    self.assertAllClose(actual, expected)
+
+    actual = nn.one_hot(jnp.array([1, 2, 0]), 3, axis=-2)
+    self.assertAllClose(actual, expected)
+
+  def testTanhExists(self):
+    nn.tanh  # doesn't crash
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",

@@ -36,6 +36,9 @@ below.
 
 ### How can I disable omnistaging for now?
 
+*Note: this applies to JAX versions 0.2.0 through 0.2.11; omnistaging cannot be
+disabled in JAX versions 0.2.12 and higher*
+
 It is temporarily possible to disable omnistaging by
 1. setting the shell environment variable `JAX_OMNISTAGING` to something falsey;
 2. setting the boolean flag `jax_omnistaging` to soething falsey if your code
@@ -96,7 +99,7 @@ The name "omnistaging" means staging out everything possible.
 
 ### Toy example
 
-iJAX transformations like `jit` and `pmap` stage out computations to XLA. That
+JAX transformations like `jit` and `pmap` stage out computations to XLA. That
 is, we apply them to functions comprising multiple primitive operations so that
 rather being executed one at a time from Python the operations are all part of
 one end-to-end optimized XLA computation.

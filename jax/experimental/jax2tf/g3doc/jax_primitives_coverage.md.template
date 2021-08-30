@@ -32,6 +32,11 @@ We use below the following abbreviations for sets of dtypes:
 See the comment in `primitive_harness.py` for a description
 of test harnesses and their definitions.
 
+Note that automated tests will fail if new limitations appear, but
+they won't when limitations are fixed. If you see a limitation that
+you think it does not exist anymore, please ask for this file to
+be updated.
+
 {{primitive_coverage_table}}
 
 ## Partially implemented data types for primitives

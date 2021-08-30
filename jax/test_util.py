@@ -13,11 +13,12 @@
 # limitations under the License.
 
 from contextlib import contextmanager
+import inspect
 import functools
 import re
 import os
 import textwrap
-from typing import Dict, Sequence, Union
+from typing import Dict, List, Generator, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib
@@ -28,15 +29,16 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
-from . import api
+from ._src import api
 from . import core
-from . import dtypes as _dtypes
+from ._src import dtypes as _dtypes
 from . import lax
-from .config import flags, bool_env
-from ._src.util import partial, prod
+from ._src.config import flags, bool_env, config
+from ._src.util import partial, prod, unzip2
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla
+from .experimental.maps import mesh
 
 
 FLAGS = flags.FLAGS
@@ -51,6 +53,14 @@ flags.DEFINE_integer(
   'num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', 10)),
   help='Number of generated cases to test')
+
+flags.DEFINE_integer(
+  'max_cases_sampling_retries',
+  int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', 100)),
+  'Number of times a failed test sample should be retried. '
+  'When an unseen case cannot be generated in this many trials, the '
+  'sampling process is terminated.'
+)
 
 flags.DEFINE_bool(
     'jax_skip_slow_tests',
@@ -124,13 +134,16 @@ default_gradient_tolerance = {
   np.dtype(np.complex128): 1e-5,
 }
 
-def _assert_numpy_allclose(a, b, atol=None, rtol=None):
+def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
   a = a.astype(np.float32) if a.dtype == _dtypes.bfloat16 else a
   b = b.astype(np.float32) if b.dtype == _dtypes.bfloat16 else b
   kw = {}
   if atol: kw["atol"] = atol
   if rtol: kw["rtol"] = rtol
-  np.testing.assert_allclose(a, b, **kw)
+  with np.errstate(invalid='ignore'):
+    # TODO(phawkins): surprisingly, assert_allclose sometimes reports invalid
+    # value errors. It should not do that.
+    np.testing.assert_allclose(a, b, **kw, err_msg=err_msg)
 
 def tolerance(dtype, tol=None):
   tol = {} if tol is None else tol
@@ -155,24 +168,25 @@ def join_tolerance(tol1, tol2):
     out[k] = max(v, tol1.get(k, 0))
   return out
 
-def _assert_numpy_close(a, b, atol=None, rtol=None):
+def _assert_numpy_close(a, b, atol=None, rtol=None, err_msg=''):
   assert a.shape == b.shape
   atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))
   rtol = max(tolerance(a.dtype, rtol), tolerance(b.dtype, rtol))
-  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size)
+  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
+                         err_msg=err_msg)
 
+def check_eq(xs, ys, err_msg=''):
+  assert_close = partial(_assert_numpy_allclose, err_msg=err_msg)
+  tree_all(tree_multimap(assert_close, xs, ys))
 
-def check_eq(xs, ys):
-  tree_all(tree_multimap(_assert_numpy_allclose, xs, ys))
-
-
-def check_close(xs, ys, atol=None, rtol=None):
-  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol)
+def check_close(xs, ys, atol=None, rtol=None, err_msg=''):
+  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol,
+                         err_msg=err_msg)
   tree_all(tree_multimap(assert_close, xs, ys))
 
 def _check_dtypes_match(xs, ys):
   def _assert_dtypes_match(x, y):
-    if FLAGS.jax_enable_x64:
+    if config.x64_enabled:
       assert _dtype(x) == _dtype(y)
     else:
       assert (_dtypes.canonicalize_dtype(_dtype(x)) ==
@@ -199,7 +213,10 @@ safe_sub = partial(tree_multimap,
 conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
 
 def scalar_mul(xs, a):
-  return tree_map(lambda x: np.multiply(x, a, dtype=_dtype(x)), xs)
+  def mul(x):
+    dtype = _dtype(x)
+    return np.multiply(x, np.array(a, dtype=dtype), dtype=dtype)
+  return tree_map(mul, xs)
 
 
 def rand_like(rng, x):
@@ -229,7 +246,8 @@ def _merge_tolerance(tol, default):
     out[np.dtype(k)] = v
   return out
 
-def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
+
+def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   rng = np.random.RandomState(0)
@@ -242,24 +260,29 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
   # In principle we should expect exact equality of v_out and v_out_expected,
   # but due to nondeterminism especially on GPU (e.g., due to convolution
   # autotuning) we only require "close".
-  check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
-  check_close(t_out, t_out_expected, atol=atol, rtol=rtol)
+  check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} primal' if err_msg else 'primal')
+  check_close(t_out, t_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} tangent' if err_msg else 'tangent')
 
 
-def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
+def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   _rand_like = partial(rand_like, np.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)
-  check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
+  check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
+              err_msg=f'{err_msg} primal' if err_msg else 'primal')
   tangent = tree_map(_rand_like, args)
   tangent_out = numerical_jvp(f, args, tangent, eps=eps)
   cotangent = tree_map(_rand_like, v_out)
   cotangent_out = conj(vjpfun(conj(cotangent)))
   ip = inner_prod(tangent, cotangent_out)
   ip_expected = inner_prod(tangent_out, cotangent)
-  check_close(ip, ip_expected, atol=atol, rtol=rtol)
+  check_close(ip, ip_expected, atol=atol, rtol=rtol,
+              err_msg=(f'{err_msg} cotangent projection'
+                       if err_msg else 'cotangent projection'))
 
 
 def check_grads(f, args, order,
@@ -288,21 +311,39 @@ def check_grads(f, args, order,
   _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
   _check_vjp = partial(check_vjp, atol=atol, rtol=rtol, eps=eps)
 
-  def _check_grads(f, args, order):
+  def _check_grads(f, args, order, err_msg=''):
     if "fwd" in modes:
-      _check_jvp(f, partial(api.jvp, f), args)
+      fwd_msg = f'JVP of {err_msg}' if err_msg else 'JVP'
+      _check_jvp(f, partial(api.jvp, f), args, err_msg=fwd_msg)
       if order > 1:
-        _check_grads(partial(api.jvp, f), (args, args), order - 1)
+        _check_grads(partial(api.jvp, f), (args, args), order - 1, fwd_msg)
 
     if "rev" in modes:
-      _check_vjp(f, partial(api.vjp, f), args)
+      rev_msg = f'VJP of {err_msg}' if err_msg else 'VJP'
+      _check_vjp(f, partial(api.vjp, f), args, err_msg=rev_msg)
       if order > 1:
         def f_vjp(*args):
           out_primal_py, vjp_py = api.vjp(f, *args)
           return vjp_py(out_primal_py)
-        _check_grads(f_vjp, args, order - 1)
+        _check_grads(f_vjp, args, order - 1, rev_msg)
 
   _check_grads(f, args, order)
+
+
+@contextmanager
+def count_device_put():
+  device_put = xla.device_put
+  count = [0]
+
+  def device_put_and_count(*args, **kwargs):
+    count[0] += 1
+    return device_put(*args, **kwargs)
+
+  xla.device_put = device_put_and_count
+  try:
+    yield count
+  finally:
+    xla.device_put = device_put
 
 
 @contextmanager
@@ -373,7 +414,7 @@ def supported_dtypes():
              np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128}
-  if not FLAGS.jax_enable_x64:
+  if not config.x64_enabled:
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
 
@@ -383,16 +424,32 @@ def skip_if_unsupported_type(dtype):
     raise unittest.SkipTest(
       f"Type {dtype.name} not supported on {device_under_test()}")
 
+def is_device_rocm():
+  return xla_bridge.get_backend().platform_version.startswith('rocm')
+
+def is_device_cuda():
+  return xla_bridge.get_backend().platform_version.startswith('cuda')
+
+def _get_device_tags():
+  """returns a set of tags definded for the device under test"""
+  if is_device_rocm():
+    device_tags = set([device_under_test(), "rocm"])
+  elif is_device_cuda():
+    device_tags = set([device_under_test(), "cuda"])
+  else:
+    device_tags = set([device_under_test()])
+  return device_tags
+
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
-      device = device_under_test()
-      if device in disabled_devices:
+      device_tags = _get_device_tags()
+      if device_tags & set(disabled_devices):
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise unittest.SkipTest(
-          f"{test_name} not supported on {device.upper()}.")
+          f"{test_name} not supported on device with tags {device_tags}.")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
@@ -420,7 +477,7 @@ def skip_on_flag(flag_name, skip_value):
   def skip(test_method):        # pylint: disable=missing-docstring
     @functools.wraps(test_method)
     def test_method_wrapper(self, *args, **kwargs):
-      flag_value = getattr(FLAGS, flag_name)
+      flag_value = config._read(flag_name)
       if flag_value == skip_value:
         test_name = getattr(test_method, '__name__', '[unknown test]')
         raise unittest.SkipTest(
@@ -452,6 +509,8 @@ def _dims_of_shape(shape):
     return shape
   elif isinstance(shape, ScalarShape):
     return ()
+  elif np.ndim(shape) == 0:
+    return (shape,)
   else:
     raise TypeError(type(shape))
 
@@ -466,6 +525,9 @@ def _cast_to_shape(value, shape, dtype):
     return np.asarray(value).item()
   elif type(shape) in (list, tuple):
     assert np.shape(value) == tuple(shape)
+    return value
+  elif np.ndim(shape) == 0:
+    assert np.shape(value) == (shape,)
     return value
   else:
     raise TypeError(type(shape))
@@ -628,10 +690,13 @@ def rand_some_nan(rng):
       return base_rand(shape, dtype)
 
     dims = _dims_of_shape(shape)
-    nan_flips = rng.rand(*dims) < 0.1
+    r = rng.rand(*dims)
+    nan_flips = r < 0.1
+    neg_nan_flips = r < 0.05
 
     vals = base_rand(shape, dtype)
     vals = np.where(nan_flips, np.array(np.nan, dtype=dtype), vals)
+    vals = np.where(neg_nan_flips, np.array(-np.nan, dtype=dtype), vals)
 
     return _cast_to_shape(np.asarray(vals, dtype=dtype), shape, dtype)
 
@@ -740,7 +805,11 @@ def assert_dot_precision(expected_precision, fun, *args):
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
-    assert precision == expected_precision, msg
+    if isinstance(precision, tuple):
+      assert precision[0] == expected_precision, msg
+      assert precision[1] == expected_precision, msg
+    else:
+      assert precision == expected_precision, msg
 
 
 _CACHED_INDICES: Dict[int, Sequence[int]] = {}
@@ -764,6 +833,29 @@ def cases_from_gens(*gens):
     for i in range(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
 
+def named_cases_from_sampler(gen):
+  seen = set()
+  retries = 0
+  rng = npr.RandomState(42)
+  def choose_one(x):
+    if not isinstance(x, (list, tuple)):
+      x = list(x)
+    return [x[rng.randint(len(x))]]
+  while (len(seen) < FLAGS.num_generated_cases and
+         retries < FLAGS.max_cases_sampling_retries):
+    retries += 1
+    cases = list(gen(choose_one))
+    if not cases:
+      continue
+    if len(cases) > 1:
+      raise RuntimeError("Generator is expected to only return a single case when sampling")
+    case = cases[0]
+    if case["testcase_name"] in seen:
+      continue
+    retries = 0
+    seen.add(case["testcase_name"])
+    yield case
+
 
 class JaxTestLoader(absltest.TestLoader):
   def getTestCaseNames(self, testCaseClass):
@@ -779,8 +871,18 @@ class JaxTestLoader(absltest.TestLoader):
     return names
 
 
+def with_config(**kwds):
+  """Test case decorator for subclasses of JaxTestCase"""
+  def decorator(cls):
+    assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
+    cls._default_config = {**JaxTestCase._default_config, **kwds}
+    return cls
+  return decorator
+
+
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
+  _default_config = {'jax_enable_checks': True}
 
   # TODO(mattjj): this obscures the error messages from failures, figure out how
   # to re-enable it
@@ -788,63 +890,77 @@ class JaxTestCase(parameterized.TestCase):
   #   assert core.reset_trace_state()
 
   def setUp(self):
-    super(JaxTestCase, self).setUp()
-    core.skip_checks = False
+    super().setUp()
+    self._original_config = {}
+    for key, value in self._default_config.items():
+      self._original_config[key] = getattr(config, key)
+      config.update(key, value)
+
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
 
+  def tearDown(self):
+    for key, value in self._original_config.items():
+      config.update(key, value)
+    super().tearDown()
+
   def rng(self):
     return self._rng
 
-  def assertArraysEqual(self, x, y, *, check_dtypes=True):
+  def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg=''):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
       self.assertDtypesMatch(x, y)
-    np.testing.assert_array_equal(x, y)
+    # Work around https://github.com/numpy/numpy/issues/18992
+    with np.errstate(over='ignore'):
+      np.testing.assert_array_equal(x, y, err_msg=err_msg)
 
   def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
-                           rtol=None):
+                           rtol=None, err_msg=''):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
     atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
     rtol = max(tolerance(_dtype(x), rtol), tolerance(_dtype(y), rtol))
 
-    _assert_numpy_allclose(x, y, atol=atol, rtol=rtol)
+    _assert_numpy_allclose(x, y, atol=atol, rtol=rtol, err_msg=err_msg)
 
     if check_dtypes:
       self.assertDtypesMatch(x, y)
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
-    if not FLAGS.jax_enable_x64 and canonicalize_dtypes:
+    if not config.x64_enabled and canonicalize_dtypes:
       self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x)),
                        _dtypes.canonicalize_dtype(_dtype(y)))
     else:
       self.assertEqual(_dtype(x), _dtype(y))
 
   def assertAllClose(self, x, y, *, check_dtypes=True, atol=None, rtol=None,
-                     canonicalize_dtypes=True):
+                     canonicalize_dtypes=True, err_msg=''):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
     if isinstance(x, dict):
       self.assertIsInstance(y, dict)
       self.assertEqual(set(x.keys()), set(y.keys()))
       for k in x.keys():
         self.assertAllClose(x[k], y[k], check_dtypes=check_dtypes, atol=atol,
-                            rtol=rtol, canonicalize_dtypes=canonicalize_dtypes)
+                            rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
+                            err_msg=err_msg)
     elif is_sequence(x) and not hasattr(x, '__array__'):
       self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
       self.assertEqual(len(x), len(y))
       for x_elt, y_elt in zip(x, y):
         self.assertAllClose(x_elt, y_elt, check_dtypes=check_dtypes, atol=atol,
-                            rtol=rtol, canonicalize_dtypes=canonicalize_dtypes)
+                            rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
+                            err_msg=err_msg)
     elif hasattr(x, '__array__') or np.isscalar(x):
       self.assertTrue(hasattr(y, '__array__') or np.isscalar(y))
       if check_dtypes:
         self.assertDtypesMatch(x, y, canonicalize_dtypes=canonicalize_dtypes)
       x = np.asarray(x)
       y = np.asarray(y)
-      self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol)
+      self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol,
+                                err_msg=err_msg)
     elif x == y:
       return
     else:
@@ -861,7 +977,7 @@ class JaxTestCase(parameterized.TestCase):
                               msg="Found\n{}\nExpecting\n{}".format(what, expected))
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True,
-                       rtol=None, atol=None):
+                       rtol=None, atol=None, check_cache_misses=True):
     """Helper method for running JAX compilation and allclose assertions."""
     args = args_maker()
 
@@ -878,10 +994,11 @@ class JaxTestCase(parameterized.TestCase):
 
     cache_misses = xla.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
-    self.assertEqual(
-        cache_misses, xla.xla_primitive_callable.cache_info().misses,
-        "Compilation detected during second call of {} in op-by-op "
-        "mode.".format(fun))
+    if check_cache_misses:
+      self.assertEqual(
+          cache_misses, xla.xla_primitive_callable.cache_info().misses,
+          "Compilation detected during second call of {} in op-by-op "
+          "mode.".format(fun))
 
     cfun = api.jit(wrapped_fun)
     python_should_be_executing = True
@@ -917,12 +1034,60 @@ class JaxTestCase(parameterized.TestCase):
                         canonicalize_dtypes=canonicalize_dtypes)
 
 
+class BufferDonationTestCase(JaxTestCase):
+  assertDeleted = lambda self, x: self._assertDeleted(x, True)
+  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
+
+  def _assertDeleted(self, x, deleted):
+    if hasattr(x, "device_buffer"):
+      self.assertEqual(x.device_buffer.is_deleted(), deleted)
+    else:
+      for buffer in x.device_buffers:
+        self.assertEqual(buffer.is_deleted(), deleted)
+
+
 @contextmanager
 def ignore_warning(**kw):
   with warnings.catch_warnings():
     warnings.filterwarnings("ignore", **kw)
     yield
 
+# -------------------- Mesh parametrization helpers --------------------
+
+MeshSpec = List[Tuple[str, int]]
+
+@contextmanager
+def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
+  """Test utility for setting up meshes given mesh data from `schedules`."""
+  # This is similar to the `with_mesh` function above, but isn't a decorator.
+  axis_names, shape = unzip2(named_shape)
+  size = prod(shape)
+  local_devices = list(api.local_devices())
+  if len(local_devices) < size:
+    raise unittest.SkipTest(f"Test requires {size} local devices")
+  mesh_devices = np.array(local_devices[:size]).reshape(shape)
+  with mesh(mesh_devices, axis_names):
+    yield
+
+def with_mesh_from_kwargs(f):
+  return lambda *args, **kwargs: with_mesh(kwargs['mesh'])(f)(*args, **kwargs)
+
+def with_and_without_mesh(f):
+  return parameterized.named_parameters(
+    {"testcase_name": name, "mesh": mesh, "axis_resources": axis_resources}
+    for name, mesh, axis_resources in (
+      ('', (), ()),
+      ('Mesh', (('x', 2),), (('i', 'x'),))
+    ))(with_mesh_from_kwargs(f))
+
+old_spmd_lowering_flag = False
+def set_spmd_lowering_flag(val: bool):
+  global old_spmd_lowering_flag
+  old_spmd_lowering_flag = config.experimental_xmap_spmd_lowering
+  config.update('experimental_xmap_spmd_lowering', val)
+
+def restore_spmd_lowering_flag():
+  config.update('experimental_xmap_spmd_lowering', old_spmd_lowering_flag)
 
 class _cached_property:
   null = object()

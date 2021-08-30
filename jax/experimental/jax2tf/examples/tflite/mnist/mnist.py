@@ -21,8 +21,8 @@ from jax.experimental.jax2tf.examples import mnist_lib
 
 import numpy as np
 
-import tensorflow as tf
-import tensorflow_datasets as tfds
+import tensorflow as tf  # type: ignore[import]
+import tensorflow_datasets as tfds  # type: ignore[import]
 
 flags.DEFINE_string('tflite_file_path',
                     '/usr/local/google/home/qiuminxu/jax2tf/mnist.tflite',
@@ -113,7 +113,7 @@ def main(_):
   print('which is about %d%% of the float model size.' %
         (quantized_model_size * 100 / float_model_size))
 
-  # Evaluate the TF Lite float model. You'll find that its accurary is identical
+  # Evaluate the TF Lite float model. You'll find that its accuracy is identical
   # to the original Flax model because they are essentially the same model
   # stored in different format.
   float_accuracy = evaluate_tflite_model(tflite_float_model, test_ds)

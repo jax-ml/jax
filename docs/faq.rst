@@ -2,11 +2,9 @@ JAX Frequently Asked Questions (FAQ)
 ====================================
 
 .. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html
-.. comment Some links referenced here. Use JAX_sharp_bits_ (underscore at the end) to reference
+.. comment Some links referenced here. Use `JAX - The Sharp Bits`_ (underscore at the end) to reference
 
-
-.. _JAX_sharp_bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
-.. _How_JAX_primitives_work: https://jax.readthedocs.io/en/latest/notebooks/How_JAX_primitives_work.html
+.. _JAX - The Sharp Bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
 
 We are collecting here answers to frequently asked questions.
 Contributions welcome!
@@ -51,7 +49,7 @@ with the same first value of ``y``.
 
 Additional reading:
 
-  * JAX_sharp_bits_
+  * `JAX - The Sharp Bits`_
 
 .. _faq-slow-compile:
 
@@ -62,10 +60,10 @@ If your ``jit`` decorated function takes tens of seconds (or more!) to run the
 first time you call it, but executes quickly when called again, JAX is taking a
 long time to trace or compile your code.
 
-This is usually a symptom of calling your function generating a large amount of
+This is usually a sign that calling your function generates a large amount of
 code in JAX's internal representation, typically because it makes heavy use of
-Python control flow such as ``for`` loop. For a handful of loop iterations
-Python is OK, but if you need _many_ loop iterations, you should rewrite your
+Python control flow such as ``for`` loops. For a handful of loop iterations,
+Python is OK, but if you need *many* loop iterations, you should rewrite your
 code to make use of JAX's
 `structured control flow primitives <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#Structured-control-flow-primitives>`_
 (such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
@@ -142,57 +140,90 @@ and its use is not recommended.)
 
 For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
-`multi_device_test.py <https://github.com/google/jax/blob/master/tests/multi_device_test.py>`_.
+`multi_device_test.py <https://github.com/google/jax/blob/main/tests/multi_device_test.py>`_.
+
+.. _faq-benchmark:
+
+Benchmarking JAX code
+---------------------
+
+You just ported a tricky function from NumPy/SciPy to JAX. Did that actuallly
+speed things up?
+
+Keep in mind these important differences from NumPy when measuring the
+speed of code using JAX:
+
+1. **JAX code is Just-In-Time (JIT) compiled.** Most code written in JAX can be
+   written in such a way that it supports JIT compilation, which can make it run
+   *much faster* (see `To JIT or not to JIT`_). To get maximium performance from
+   JAX, you should apply :func:`jax.jit` on your outer-most function calls.
+
+   Keep in mind that the first time you run JAX code, it will be slower because
+   it is being compiled. This is true even if you don't use ``jit`` in your own
+   code, because JAX's builtin functions are also JIT compiled.
+2. **JAX has asynchronous dispatch.** This means that you need to call
+   ``.block_until_ready()`` to ensure that computation has actually happened
+   (see :ref:`async-dispatch`).
+3. **JAX by default only uses 32-bit dtypes.** You may want to either explicitly
+   use 32-bit dtypes in NumPy or enable 64-bit dtypes in JAX (see
+   `Double (64 bit) precision`_) for a fair comparison.
+4. **Transferring data between CPUs and accelerators takes time.** If you only
+   want to measure the how long it takes to evaluate a function, you may want to
+   transfer data to the device on which you want to run it first (see
+   :ref:`faq-data-placement`).
+
+Here's an example of how to put together all these tricks into a microbenchmark
+for comparing JAX versus NumPy, making using of IPython's convenient
+`%time and %timeit magics`_::
+
+    import numpy as np
+    import jax.numpy as jnp
+    import jax
+
+    def f(x):  # function we're benchmarking (works in both NumPy & JAX)
+      return x.T @ (x - x.mean(axis=0))
+
+    x_np = np.ones((1000, 1000), dtype=np.float32)  # same as JAX default dtype
+    %timeit f(x_np)  # measure NumPy runtime
+
+    %time x_jax = jax.device_put(x_np)  # measure JAX device transfer time
+    f_jit = jax.jit(f)
+    %time f_jit(x_jax).block_until_ready()  # measure JAX compilation time
+    %timeit f_jit(x_jax).block_until_ready()  # measure JAX runtime
+
+When run with a GPU in Colab_, we see:
+
+- NumPy takes 16.2 ms per evaluation on the CPU
+- JAX takes 1.26 ms to copy the NumPy arrays onto the GPU
+- JAX takes 193 ms to compile the function
+- JAX takes 485 µs per evaluation on the GPU
+
+In this case, we see that once the data is transfered and the function is
+compiled, JAX on the GPU is about 30x faster for repeated evaluations.
+
+Is this a fair comparison? Maybe. The performance that ultimately matters is for
+running full applications, which inevitably include some amount of both data
+transfer and compilation. Also, we were careful to pick large enough arrays
+(1000x1000) and an intensive enough computation (the ``@`` operator is
+performing matrix-matrix multiplication) to amortize the increased overhead of
+JAX/accelerators vs NumPy/CPU. For example, if we switch this example to use
+10x10 input instead, JAX/GPU runs 10x slower than NumPy/CPU (100 µs vs 10 µs).
+
+.. _To JIT or not to JIT: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
+.. _Double (64 bit) precision: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+.. _`%time and %timeit magics`: https://ipython.readthedocs.io/en/stable/interactive/magics.html#magic-time
+.. _Colab: https://colab.research.google.com/
 
 .. comment We refer to the anchor below in JAX error messages
 
 ``Abstract tracer value encountered where concrete value is expected`` error
 ----------------------------------------------------------------------------
+See :class:`jax.errors.ConcretizationTypeError`
 
-If you are getting an error that a library function is called with
-*"Abstract tracer value encountered where concrete value is expected"*, you may need to
-change how you invoke JAX transformations. Below is an example and a couple of possible 
-solutions, followed by the details of what is actually happening, if you are curious 
-or the simple solution does not work for you.
-
-Some library functions take arguments that specify shapes or axes,
-such as the second and third arguments for :func:`jax.numpy.split`::
-
-  # def np.split(arr, num_sections: Union[int, Sequence[int]], axis: int):
-  np.split(np.zeros(2), 2, 0)  # works
-
-If you try the following code::
-
-  jax.jit(np.split)(np.zeros(4), 2, 0)
-
-you will get the following error::
-
-    ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected (in jax.numpy.split argument 1).
-    Use transformation parameters such as `static_argnums` for `jit` to avoid tracing input values.
-    See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-where-concrete-value-is-expected-error`.
-    Encountered value: Traced<ShapedArray(int32[], weak_type=True):JaxprTrace(level=-1/1)>
-
-You must change the way you use :func:`jax.jit` to ensure that the ``num_sections``
-and ``axis`` arguments use their concrete values (``2`` and ``0`` respectively).
-The best mechanism is to use special transformation parameters
-to declare some arguments to be static, e.g., ``static_argnums`` for :func:`jax.jit`::
-
-  jax.jit(np.split, static_argnums=(1, 2))(np.zeros(4), 2, 0)
-
-An alternative is to apply the transformation to a closure
-that encapsulates the arguments to be protected, either manually as below
-or by using ``functools.partial``::
-
-  jax.jit(lambda arr: np.split(arr, 2, 0))(np.zeros(4))
-
-**Note a new closure is created at every invocation, which defeats the
-compilation caching mechanism, which is why static_argnums is preferred.**
-
-To understand more subtleties having to do with tracers vs. regular values, and
-concrete vs. abstract values, you may want to read `Different kinds of JAX values`_.
+.. _faq-different-kinds-of-jax-values:
 
 Different kinds of JAX values
-------------------------------
+-----------------------------
 
 In the process of transforming functions, JAX replaces some function
 arguments with special tracer values.
@@ -201,7 +232,7 @@ You could see this if you use a ``print`` statement::
 
   def func(x):
     print(x)
-    return np.cos(x)
+    return jnp.cos(x)
 
   res = jax.jit(func)(0.)
 
@@ -209,7 +240,7 @@ The above code does return the correct value ``1.`` but it also prints
 ``Traced<ShapedArray(float32[])>`` for the value of ``x``. Normally, JAX
 handles these tracer values internally in a transparent way, e.g.,
 in the numeric JAX primitives that are used to implement the
-``jax.numpy`` functions. This is why ``np.cos`` works in the example above.
+``jax.numpy`` functions. This is why ``jnp.cos`` works in the example above.
 
 More precisely, a **tracer** value is introduced for the argument of
 a JAX-transformed function, except the arguments identified by special
@@ -285,31 +316,31 @@ If you define a function using ``where`` to avoid an undefined value, if you
 are not careful you may obtain a ``NaN`` for reverse differentiation::
 
   def my_log(x):
-    return np.where(x > 0., np.log(x), 0.)
+    return jnp.where(x > 0., jnp.log(x), 0.)
 
   my_log(0.) ==> 0.  # Ok
   jax.grad(my_log)(0.)  ==> NaN
 
 A short explanation is that during ``grad`` computation the adjoint corresponding
-to the undefined ``np.log(x)`` is a ``NaN`` and when it gets accumulated to the
-adjoint of the ``np.where``. The correct way to write such functions is to ensure
-that there is a ``np.where`` *inside* the partially-defined function, to ensure
+to the undefined ``jnp.log(x)`` is a ``NaN`` and it gets accumulated to the
+adjoint of the ``jnp.where``. The correct way to write such functions is to ensure
+that there is a ``jnp.where`` *inside* the partially-defined function, to ensure
 that the adjoint is always finite::
 
   def safe_for_grad_log(x):
-    return np.log(np.where(x > 0., x, 1.))
+    return jnp.log(jnp.where(x > 0., x, 1.))
 
   safe_for_grad_log(0.) ==> 0.  # Ok
   jax.grad(safe_for_grad_log)(0.)  ==> 0.  # Ok
 
-The inner ``np.where`` may be needed in addition to the original one, e.g.::
+The inner ``jnp.where`` may be needed in addition to the original one, e.g.::
 
   def my_log_or_y(x, y):
     """Return log(x) if x > 0 or y"""
-    return np.where(x > 0., np.log(np.where(x > 0., x, 1.), y)
+    return jnp.where(x > 0., jnp.log(jnp.where(x > 0., x, 1.), y)
 
 
 Additional reading:
 
-  * `Issue: gradients through np.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
+  * `Issue: gradients through jnp.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.

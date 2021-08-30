@@ -2,7 +2,7 @@ Internal APIs
 =============
 
 core
------
+----
 
 .. currentmodule:: jax.core
 .. automodule:: jax.core

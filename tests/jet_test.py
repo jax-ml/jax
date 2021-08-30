@@ -111,12 +111,12 @@ class JetTest(jtu.JaxTestCase):
 
     rng = np.random.RandomState(0)
 
-    x = rng.randn(*input_shape).astype("float32")
+    x = rng.randn(*input_shape)
     primals = (W, b, x)
 
-    series_in1 = [rng.randn(*W.shape).astype("float32") for _ in range(order)]
-    series_in2 = [rng.randn(*b.shape).astype("float32") for _ in range(order)]
-    series_in3 = [rng.randn(*x.shape).astype("float32") for _ in range(order)]
+    series_in1 = [rng.randn(*W.shape) for _ in range(order)]
+    series_in2 = [rng.randn(*b.shape) for _ in range(order)]
+    series_in3 = [rng.randn(*x.shape) for _ in range(order)]
 
     series_in = (series_in1, series_in2, series_in3)
 
@@ -125,7 +125,8 @@ class JetTest(jtu.JaxTestCase):
 
     self.check_jet(f, primals, series_in, check_dtypes=False)
 
-  def unary_check(self, fun, lims=[-2, 2], order=3, dtype=None):
+  def unary_check(self, fun, lims=[-2, 2], order=3, dtype=None, atol=1e-4,
+                  rtol=1e-4):
     dims = 2, 3
     rng = np.random.RandomState(0)
     if dtype is None:
@@ -135,7 +136,7 @@ class JetTest(jtu.JaxTestCase):
       rng = jtu.rand_uniform(rng, *lims)
       primal_in = rng(dims, dtype)
       terms_in = [rng(dims, dtype) for _ in range(order)]
-    self.check_jet(fun, (primal_in,), (terms_in,), atol=1e-4, rtol=1e-4)
+    self.check_jet(fun, (primal_in,), (terms_in,), atol, rtol)
 
   def binary_check(self, fun, lims=[-2, 2], order=3, finite=True, dtype=None):
     dims = 2, 3
@@ -343,13 +344,13 @@ class JetTest(jtu.JaxTestCase):
   def test_process_call(self):
     def f(x):
       return jit(lambda x: x * x)(x)
-    self.unary_check(f)
+    self.unary_check(f, rtol=2e-4)
 
   def test_post_process_call(self):
     def f(x):
       return jit(lambda y: x * y)(2.)
 
-    self.unary_check(f)
+    self.unary_check(f, rtol=5e-4)
 
   def test_select(self):
     M, K = 2, 3
@@ -363,7 +364,7 @@ class JetTest(jtu.JaxTestCase):
     terms_x = [rng.randn(*x.shape) for _ in range(order)]
     terms_y = [rng.randn(*y.shape) for _ in range(order)]
     series_in = (terms_b, terms_x, terms_y)
-    self.check_jet(jnp.where, primals, series_in)
+    self.check_jet(jnp.where, primals, series_in, rtol=5e-4)
 
   def test_inst_zero(self):
     def f(x):
@@ -387,6 +388,26 @@ class JetTest(jtu.JaxTestCase):
       x = jnp.array(1.)
       return jax.grad(f)(x, eps)
     jet(g, (1.,), ([1.],))  # doesn't crash
+
+  def test_scatter_add(self):
+    # very basic test from https://github.com/google/jax/issues/5365
+    def f(x):
+      x0 = x[0]
+      x1 = x[1]
+      return (x0**5 + x1**5).sum()
+
+    def h(eps):
+      from jax import jacfwd, grad
+
+      x = jnp.array([1., 1.])
+      μ = eps * x
+
+      def F(t):
+        return f(x + t * μ)
+
+      return grad(jacfwd(F))(0.)
+
+    self.check_jet(h, (0.,), ([1., 2., 3.],), rtol=1e-3)
 
 
 if __name__ == '__main__':

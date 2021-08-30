@@ -24,9 +24,8 @@ import numpy as np
 
 def _fill_lanczos_kernel(radius, x):
   y = radius * jnp.sin(np.pi * x) * jnp.sin(np.pi * x / radius)
-  with np.errstate(divide='ignore', invalid='ignore'):
-    out = y / (np.pi ** 2 * x ** 2)
-  out = jnp.where(x <= 1e-3, 1., out)
+  #  out = y / (np.pi ** 2 * x ** 2) where x >1e-3, 1 otherwise
+  out = jnp.where(x > 1e-3, jnp.divide(y, jnp.where(x != 0, np.pi**2 * x**2, 1)), 1)
   return jnp.where(x > radius, 0., out)
 
 
@@ -36,7 +35,7 @@ def _fill_keys_cubic_kernel(x):
   # IEEE Transactions on Acoustics, Speech, and Signal Processing,
   # 29(6):1153–1160, 1981.
   out = ((1.5 * x - 2.5) * x) * x + 1.
-  out = jnp.where(x >= 1., ((-0.5* x + 2.5) * x - 4.) * x + 2., out)
+  out = jnp.where(x >= 1., ((-0.5 * x + 2.5) * x - 4.) * x + 2., out)
   return jnp.where(x >= 2., 0., out)
 
 
@@ -63,10 +62,10 @@ def compute_weight_mat(input_size: int, output_size: int, scale,
   weights = kernel(x)
 
   total_weight_sum = jnp.sum(weights, axis=0, keepdims=True)
-  with np.errstate(invalid='ignore', divide='ignore'):
-    weights = jnp.where(
-        jnp.abs(total_weight_sum) > 1000. * np.finfo(np.float32).eps,
-        weights / total_weight_sum, 0)
+  weights = jnp.where(
+      jnp.abs(total_weight_sum) > 1000. * np.finfo(np.float32).eps,
+      jnp.divide(weights, jnp.where(total_weight_sum != 0,  total_weight_sum, 1)),
+      0)
   # Zero out weights where the sample location is completely outside the input
   # range.
   # Note sample_f has already had the 0.5 removed, hence the weird range below.
@@ -145,8 +144,10 @@ def scale_and_translate(image, shape: Sequence[int],
   Generates a new image of shape 'shape' by resampling from the input image
   using the sampling method corresponding to method. For 2D images, this
   operation transforms a location in the input images, (x, y), to a location
-  in the output image according to:
+  in the output image according to::
+
     (x * scale[1] + translation[1], y * scale[0] + translation[0])
+
   (Note the _inverse_ warp is used to generate the sample locations.)
   Assumes half-centered pixels, i.e the pixel at integer location row,col has
   coordinates y, x = row + 0.5, col + 0.5.
@@ -252,7 +253,8 @@ def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   # since all of the current resize methods (kernels) are interpolating, so the
   # output = input under an identity warp.
   spatial_dims = tuple(np.nonzero(np.not_equal(image.shape, shape))[0])
-  scale = [float(shape[d]) / image.shape[d] for d in spatial_dims]
+  scale = [1.0 if shape[d] == 0 else float(shape[d]) / image.shape[d]
+           for d in spatial_dims]
   return _scale_and_translate(image, shape, spatial_dims,
                               scale, [0.] * len(spatial_dims), kernel,
                               antialias, precision)

@@ -23,10 +23,12 @@ limitations under the License.
 
 namespace jax {
 
-std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n);
+struct ThreeFry2x32Descriptor {
+  std::int64_t n;
+};
 
-void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
-                      std::size_t opaque_len);
+void LaunchThreeFry2x32Kernel(cudaStream_t stream, void** buffers,
+                              ThreeFry2x32Descriptor descriptor);
 
 }  // namespace jax
 

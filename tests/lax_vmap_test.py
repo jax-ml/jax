@@ -23,14 +23,14 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax import api
+from jax._src import api
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
 from jax.lib import xla_client
 from jax._src.util import safe_map, safe_zip
 
-from tests.lax_test import LAX_OPS
+from lax_test import LAX_OPS
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -100,8 +100,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng,
                         atol=tol, rtol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
+  @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
+       "testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
        "rhs_dilation={}_dims={}_feature_group_count={}_batch_group_count={}"
        "_lhs_bdim={}_rhs_bdim={}"
@@ -115,31 +115,30 @@ class LaxVmapTest(jtu.JaxTestCase):
        "perms": perms, "lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim,
        "feature_group_count": feature_group_count,
        "batch_group_count": batch_group_count,
-       }
-      for batch_group_count, feature_group_count in ([(1, 1), (2, 1), (1, 2)])
-      for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
-          ((b * batch_group_count, i * feature_group_count, 6, 7),  # lhs_shape
-           (j * batch_group_count * feature_group_count, i, 1, 2),  # rhs_shape
-           [(1, 1), (1, 2), (2, 1)],  # strides
-           [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
-           [(1, 1), (2, 1)],  # lhs_dils
-           [(1, 1), (2, 2)])  # rhs_dils
-          for b, i, j in itertools.product([1, 2], repeat=3)]
-      for strides in all_strides
-      for rhs_dil in rhs_dils
-      for lhs_dil in lhs_dils
-      for dtype in [np.float32]
-      for padding in all_pads
-      for dim_nums, perms in [
-          (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
-          (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
-          (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
-      for lhs_bdim in itertools.chain([cast(Optional[int], None)],
-                                      range(len(lhs_shape) + 1))
-      for rhs_bdim in itertools.chain([cast(Optional[int], None)],
-                                      range(len(rhs_shape) + 1))
-      if (lhs_bdim, rhs_bdim) != (None, None)
-  ))
+     } for batch_group_count, feature_group_count in s([(1, 1), (2, 1), (1, 2)])
+       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in s([
+           ((b * batch_group_count, i * feature_group_count, 6, 7),  # lhs_shape
+            (j * batch_group_count * feature_group_count, i, 1, 2),  # rhs_shape
+            [(1, 1), (1, 2), (2, 1)],  # strides
+            [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
+            [(1, 1), (2, 1)],  # lhs_dils
+            [(1, 1), (2, 2)])  # rhs_dils
+           for b, i, j in itertools.product([1, 2], repeat=3)])
+       for strides in s(all_strides)
+       for rhs_dil in s(rhs_dils)
+       for lhs_dil in s(lhs_dils)
+       for dtype in s([np.float32])
+       for padding in s(all_pads)
+       for dim_nums, perms in s([
+           (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
+           (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
+           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))])
+       for lhs_bdim in s(itertools.chain([cast(Optional[int], None)],
+                                         range(len(lhs_shape) + 1)))
+       for rhs_bdim in s(itertools.chain([cast(Optional[int], None)],
+                                         range(len(rhs_shape) + 1)))
+       if (lhs_bdim, rhs_bdim) != (None, None)
+       )))
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
       dimension_numbers, perms, feature_group_count, batch_group_count,
@@ -176,6 +175,20 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 10, bdims, (shape,), (from_dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nmant={}_nexp={}_bdims={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), nmant, nexp, bdims),
+       "shape": shape, "dtype": dtype, "nmant": nmant, "nexp": nexp, "bdims": bdims}
+      for dtype in float_dtypes
+      for shape in [(2, 4)]
+      for nexp in [1, 3, 5]
+      for nmant in [0, 2, 4]
+      for bdims in all_bdims(shape)))
+  def testReducePrecision(self, shape, dtype, nmant, nexp, bdims):
+    rng = jtu.rand_default(self.rng())
+    op = lambda x: lax.reduce_precision(x, exponent_bits=nexp, mantissa_bits=nmant)
+    self._CheckBatching(op, 10, bdims, (shape,), (dtype,), rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_from_dtype={}_to_dtype={}_bdims={}".format(
           shape, from_dtype, to_dtype, bdims),
        "shape": shape, "from_dtype": from_dtype, "to_dtype": to_dtype,
@@ -207,7 +220,6 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(min_shape, operand_shape, max_shape)))
   def testClamp(self, min_shape, operand_shape, max_shape, dtype, bdims):
     rng = jtu.rand_default(self.rng())
-    raise SkipTest("batching rule for clamp not implemented")  # TODO(mattj)
     shapes = [min_shape, operand_shape, max_shape]
     self._CheckBatching(lax.clamp, 10, bdims, shapes, [dtype] * 3, rng)
 
@@ -369,13 +381,13 @@ class LaxVmapTest(jtu.JaxTestCase):
        .format(jtu.format_shape_dtype_string(shape, dtype), pads, bdims),
        "shape": shape, "dtype": dtype, "pads": pads, "bdims": bdims}
       for shape in [(2, 3)]
-      for bdims in all_bdims(shape)
+      for bdims in all_bdims(shape, ())
       for dtype in default_dtypes
       for pads in [[(1, 2, 1), (0, 1, 0)]]))
   def testPad(self, shape, dtype, pads, bdims):
     rng = jtu.rand_small(self.rng())
-    fun = lambda operand: lax.pad(operand, np.array(0, dtype), pads)
-    self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
+    fun = lambda operand, padding: lax.pad(operand, padding, pads)
+    self._CheckBatching(fun, 5, bdims, (shape, ()), (dtype, dtype), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}_bdims={}".format(
@@ -557,8 +569,6 @@ class LaxVmapTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   @jtu.ignore_warning(message="Using reduced precision for gradient.*")
   def testSelectAndGatherAdd(self, dtype, padding):
-    if jtu.device_under_test() == "tpu" and dtype == dtypes.bfloat16:
-      raise SkipTest("bfloat16 _select_and_gather_add doesn't work on tpu")
     rng = jtu.rand_small(self.rng())
     all_configs = itertools.chain(
         itertools.product(
@@ -614,7 +624,6 @@ class LaxVmapTest(jtu.JaxTestCase):
       for shape in [(5,), (3, 4, 5), (2, 3, 4, 5)]
       for bdims in all_bdims(shape)
       for fft_ndims in range(0, min(3, len(shape)) + 1)))
-  @jtu.skip_on_devices("tpu")  # TODO(b/137993701): unimplemented cases.
   def testFft(self, fft_ndims, shape, bdims):
     rng = jtu.rand_default(self.rng())
     ndims = len(shape)
@@ -675,7 +684,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     fun = partial(lax.scatter_add, dimension_numbers=dnums)
     self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape, update_shape],
                         [dtype, idxs.dtype, dtype], jtu.rand_default(self.rng()),
-                        rtol={np.float16: 5e-3})
+                        rtol={np.float16: 5e-3, dtypes.bfloat16: 3e-2})
 
   def testShapeUsesBuiltinInt(self):
     x = lax.iota(np.int32, 3) + 1

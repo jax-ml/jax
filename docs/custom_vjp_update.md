@@ -7,7 +7,7 @@ derivative rules for JAX-transformable Python
 functions](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html)
 notebook.
 
-### What to update
+## What to update
 
 After JAX [PR #4008](https://github.com/google/jax/pull/4008), the arguments
 passed into a `custom_vjp` function's `nondiff_argnums` can't be `Tracer`s (or
@@ -75,7 +75,7 @@ def skip_app(f, x):
   return f(x)
 
 def skip_app_fwd(f, x):
-  return skip_bwd(f, x), None
+  return skip_app(f, x), None
 
 def skip_app_bwd(f, _, g):
   return (g,)
@@ -84,10 +84,10 @@ skip_app.defvjp(skip_app_fwd, skip_app_bwd)
 ```
 
 
-### Explanation
+## Explanation
 
 Passing `Tracer`s into `nondiff_argnums` arguments was always buggy. While there
-were some cases which worked correctly, others would lead to complex and
+were some cases that worked correctly, others would lead to complex and
 confusing error messages.
 
 The essence of the bug was that `nondiff_argnums` was implemented in a way that

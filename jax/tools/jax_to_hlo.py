@@ -105,7 +105,7 @@ def jax_to_hlo(fn, input_shapes, constants=None):
   for arg_name, shape in input_shapes:
     if not shape.is_array():
       raise ValueError('Shape %s is not an array, but currently only arrays '
-                       'are supported (i.e., no tuples).' % str(shape))
+                       'are supported (i.e., no tuples, nor tokens).' % str(shape))
 
     # Check that `shape` either doesn't have a layout or has the default layout.
     #

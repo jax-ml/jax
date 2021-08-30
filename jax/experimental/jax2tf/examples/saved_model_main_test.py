@@ -30,6 +30,7 @@ FLAGS = flags.FLAGS
 class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):
+    super().setUp()
     FLAGS.model_path = os.path.join(absltest.get_default_test_tmpdir(),
                                     "saved_models")
     FLAGS.num_epochs = 1
@@ -42,10 +43,10 @@ class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
           model=model,
           serving_batch_size=serving_batch_size)
       for model in ["mnist_pure_jax", "mnist_flax"]
-      for serving_batch_size in [1])
+      for serving_batch_size in [1, -1])
   def test_train_and_save_full(self,
-                               model="mnist_pure_jax",
-                               serving_batch_size=1):
+                               model="mnist_flax",
+                               serving_batch_size=-1):
     FLAGS.model = model
     FLAGS.model_classifier_layer = True
     FLAGS.serving_batch_size = serving_batch_size
@@ -54,7 +55,7 @@ class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
   @parameterized.named_parameters(
       dict(testcase_name=f"_{model}", model=model)
       for model in ["mnist_pure_jax", "mnist_flax"])
-  def test_train_and_save_features(self, model="mnist_pure_jax"):
+  def test_train_and_save_features(self, model="mnist_flax"):
     FLAGS.model = model
     FLAGS.model_classifier_layer = False
     saved_model_main.train_and_save()

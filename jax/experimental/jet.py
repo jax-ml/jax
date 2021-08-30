@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 from jax import core
 from jax._src.util import unzip2
-from jax import ad_util
+from jax._src import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
 import jax.linear_util as lu
@@ -163,11 +163,11 @@ class JetTrace(core.Trace):
     return fun.call_wrapped(*tracers)
 
 
-class ZeroTerm(object): pass
+class ZeroTerm: pass
 zero_term = ZeroTerm()
 register_pytree_node(ZeroTerm, lambda z: ((), None), lambda _, xs: zero_term)
 
-class ZeroSeries(object): pass
+class ZeroSeries: pass
 zero_series = ZeroSeries()
 register_pytree_node(ZeroSeries, lambda z: ((), None), lambda _, xs: zero_series)
 
@@ -364,7 +364,7 @@ def _exp_taylor(primals_in, series_in):
   u = [x] + series
   v = [lax.exp(x)] + [None] * len(series)
   for k in range(1,len(v)):
-    v[k] = fact(k-1) * sum([_scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
+    v[k] = fact(k-1) * sum([_scale(k, j) * v[k-j] * u[j] for j in range(1, k+1)])
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.exp_p] = _exp_taylor
@@ -377,7 +377,7 @@ def _pow_taylor(primals_in, series_in):
   u = [x] + series
   v = [u_ ** r_] + [None] * len(series)
   for k in range(1, len(v)):
-    v[k] = fact(k-1) * sum([_scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
+    v[k] = fact(k-1) * sum([_scale(k, j) * v[k-j] * u[j] for j in range(1, k+1)])
   primal_out, *series_out = v
 
   return primal_out, series_out
@@ -412,7 +412,7 @@ def _expit_taylor(primals_in, series_in):
   e = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
   for k in range(1, len(v)):
     v[k] = fact(k-1) * sum([_scale(k, j) * e[k-j] * u[j] for j in range(1, k+1)])
-    e[k] = (1 - v[0]) * v[k] - fact(k) * sum([_scale2(k, j)* v[j] * v[k-j] for j in range(1, k+1)])
+    e[k] = (1 - v[0]) * v[k] - fact(k) * sum([_scale2(k, j) * v[j] * v[k-j] for j in range(1, k+1)])
 
   primal_out, *series_out = v
   return primal_out, series_out
@@ -549,7 +549,6 @@ def _select_taylor_rule(primal_in, series_in, **params):
   return primal_out, series_out
 jet_rules[lax.select_p] = _select_taylor_rule
 
-
 def _lax_max_taylor_rule(primal_in, series_in):
     x, y = primal_in
 
@@ -590,5 +589,13 @@ def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
   return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
 jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
 
-
-deflinear(lax.tie_in_p)
+def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
+                      dimension_numbers, indices_are_sorted, unique_indices):
+  bind = partial(lax.scatter_add_p.bind, update_jaxpr=update_jaxpr,
+                 update_consts=update_consts, dimension_numbers=dimension_numbers,
+                 indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
+  operand, scatter_indices, updates = primals_in
+  primal_out = bind(operand, scatter_indices, updates)
+  series_out = [bind(d1, scatter_indices, d2) for d1, _, d2 in zip(*series_in)]
+  return primal_out, series_out
+jet_rules[lax.scatter_add_p] = _scatter_add_rule

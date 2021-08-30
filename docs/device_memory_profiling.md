@@ -80,7 +80,7 @@ For more information about how to interpret callgraph visualizations, see the
 
 Functions compiled with {func}`jax.jit` are opaque to the device memory profiler.
 That is, any memory allocated inside a `jit`-compiled function will be
-attributed to the function as whole.
+attributed to the function as a whole.
 
 In the example, the call to `block_until_ready()` is to ensure that `func2`
 completes before the device memory profile is collected. See
@@ -90,7 +90,7 @@ completes before the device memory profile is collected. See
 
 We can also use the JAX device memory profiler to track down memory leaks by using
 `pprof` to visualize the change in memory usage between two device memory profiles
-taken at different times. For example consider the following program which
+taken at different times. For example, consider the following program which
 accumulates JAX arrays into a constantly-growing Python list.
 
 ```python

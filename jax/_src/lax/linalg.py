@@ -13,27 +13,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+
 import numpy as np
 
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.vectorize import vectorize
-from jax import ad_util
-from jax import api
+from jax._src import ad_util
+from jax._src import api
 from jax import lax
 from jax import ops
-from jax import dtypes
+from jax._src import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax._src.util import partial, prod
-from jax.core import Primitive, ShapedArray
+from jax.core import Primitive, ShapedArray, raise_to_shaped
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype, _broadcasting_select)
 from jax._src.lax import lax as lax_internal
 from jax.lib import lapack
 
+from jax.lib import cuda_linalg
 from jax.lib import cusolver
+from jax.lib import cusparse
 from jax.lib import rocsolver
 
 from jax.lib import xla_client
@@ -98,18 +102,37 @@ def eigh(x, lower: bool = True, symmetrize_input: bool = True):
       eigendecomposition by computing :math:`\\frac{1}{2}(x + x^H)`.
 
   Returns:
-    A tuple ``(v, w)``.
-
-    ``v`` is an array with the same dtype as ``x`` (or its real counterpart if
-    complex) with shape ``[..., n]`` containing the eigenvalues of ``x``.
+    A tuple ``(w, v)``.
 
     ``w`` is an array with the same dtype as ``x`` such that ``w[..., :, i]`` is
     the eigenvector corresponding to ``v[..., i]``.
+
+    ``v`` is an array with the same dtype as ``x`` (or its real counterpart if
+    complex) with shape ``[..., n]`` containing the eigenvalues of ``x``.
   """
   if symmetrize_input:
     x = symmetrize(x)
   v, w = eigh_p.bind(x, lower=lower)
   return v, w
+
+
+def lu_pivots_to_permutation(pivots, permutation_size: int):
+  """Converts the pivots (row swaps) returned by LU to a permutation.
+
+  We build a permutation rather than applying `pivots` directly to the rows
+  of a matrix because lax loops aren't differentiable.
+
+  Args:
+    pivots: an int32 array of shape (..., k) of row swaps to perform
+    permutation_size: the size of the output permutation. Has to be >= k.
+
+  Returns:
+    An int32 array of shape (..., permutation_size).
+  """
+  permutation = lu_pivots_to_permutation_p.bind(
+      pivots, permutation_size=int(permutation_size))
+  return permutation
+
 
 def lu(x):
   """LU decomposition with partial pivoting.
@@ -371,8 +394,8 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
     n = operand.shape[-1]
     dtype = np.complex64 if dtypes.finfo(operand.dtype).bits == 32 else np.complex128
     dtype = dtypes.canonicalize_dtype(dtype)
-    vl = vr = ShapedArray(batch_dims + (n, n), dtype)
-    w = ShapedArray(batch_dims + (n,), dtype)
+    vl = vr = operand.update(shape=batch_dims + (n, n), dtype=dtype)
+    w = operand.update(shape=batch_dims + (n,), dtype=dtype)
   else:
     raise NotImplementedError
 
@@ -455,11 +478,8 @@ def eigh_translation_rule(c, operand, lower):
   shape = c.get_shape(operand)
   dims = shape.dimensions()
   if dims[-1] == 0:
-    return xops.Tuple(c, [operand, xops.Reshape(operand, dims[:-1])])
-  if not lower:
-    n = len(dims)
-    operand = xops.Transpose(operand, list(range(n - 2)) + [n - 1, n - 2])
-  return xops.Tuple(c, xops.Eigh(operand))
+    return xops.Tuple(c, [operand, xops.Real(xops.Reshape(operand, dims[:-1]))])
+  return xops.Tuple(c, xops.Eigh(operand, lower=lower))
 
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
@@ -470,9 +490,9 @@ def eigh_abstract_eval(operand, lower):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    v = ShapedArray(batch_dims + (n, n), operand.dtype)
-    w = ShapedArray(batch_dims + (n,),
-                    lax_internal._complex_basetype(operand.dtype))
+    v = operand.update(shape=batch_dims + (n, n))
+    w = operand.update(shape=batch_dims + (n,),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
   return v, w
@@ -697,7 +717,7 @@ def _triangular_solve_gpu_translation_rule(trsm_impl,
   if conjugate_a and not transpose_a:
     a = xops.Conj(a)
     conjugate_a = False
-  if batch > 1 and m <= 32 and n <= 32:
+  if batch > 1 and m <= 256 and n <= 256:
     return trsm_impl(
       c, a, b, left_side, lower, transpose_a,
       conjugate_a, unit_diagonal)
@@ -718,6 +738,100 @@ if cusolver is not None:
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][triangular_solve_p] = \
       partial(_triangular_solve_gpu_translation_rule, rocsolver.trsm)
+
+# Support operation for LU decomposition: Transformation of the pivots returned
+# by LU decomposition into permutations.
+
+
+# Define this outside lu_pivots_to_permutation to ensure fori_loop cache hits
+def _lu_pivots_body_fn(i, permutation_and_swaps):
+  permutation, swaps = permutation_and_swaps
+  batch_dims = swaps.shape[:-1]
+  j = swaps[..., i]
+  iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in batch_dims))
+  x = permutation[..., i]
+  y = permutation[iotas + (j,)]
+  permutation = ops.index_update(permutation, ops.index[..., i], y)
+  return ops.index_update(permutation, ops.index[iotas + (j,)], x), swaps
+
+
+@partial(api.jit, static_argnums=(1,))
+def _generic_lu_pivots_to_permutation(swaps, m):
+  """Converts the pivots (row swaps) returned by LU to a permutation.
+
+  We build a permutation rather than applying `swaps` directly to the rows
+  of a matrix because lax loops aren't differentiable.
+
+  Args:
+    swaps: an array of shape (..., k) of row swaps to perform
+    m: the size of the output permutation. m should be >= k.
+  Returns:
+    An int32 array of shape (..., m).
+  """
+  assert len(swaps.shape) >= 1
+  batch_dims = swaps.shape[:-1]
+  k = swaps.shape[-1]
+
+  permutation = lax.broadcasted_iota(jnp.int32, batch_dims + (m,),
+                                     len(batch_dims))
+  if m == 0:
+    return permutation
+  result, _ = lax.fori_loop(np.array(0, np.int32), np.array(k, np.int32),
+                            _lu_pivots_body_fn, (permutation, swaps))
+  return result
+
+
+def _lu_pivots_to_permutation_abstract_eval(pivots, *, permutation_size):
+  pivots = raise_to_shaped(pivots)
+  if isinstance(pivots, ShapedArray):
+    if pivots.ndim < 1 or pivots.dtype != np.dtype(np.int32):
+      raise ValueError(
+          'Argument to lu_pivots_to_permutation must have rank >= 1 and dtype '
+          'int32. Got shape={} and dtype={}'.format(pivots.shape, pivots.dtype))
+
+    if permutation_size < pivots.shape[-1]:
+      raise ValueError(
+          'Output permutation size {} has to exceed the trailing dimension of '
+          'the pivots. Got shape {}'.format(permutation_size, pivots.shape))
+
+    batch_dims = pivots.shape[:-1]
+    permutations = pivots.update(shape=batch_dims + (permutation_size,))
+  else:
+    permutations = pivots
+
+  return permutations
+
+
+def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
+                                            permutation_size):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.moveaxis(x, bd, 0)
+  return lu_pivots_to_permutation_p.bind(
+      x, permutation_size=permutation_size), 0
+
+
+def _lu_pivots_to_permutation_translation_rule(c, pivots, *, permutation_size):
+  lowered_fun = xla.lower_fun(
+      lambda x: _generic_lu_pivots_to_permutation(x, permutation_size),
+      multiple_results=False)
+  return lowered_fun(c, pivots)
+
+
+lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
+lu_pivots_to_permutation_p.multiple_results = False
+lu_pivots_to_permutation_p.def_impl(
+    partial(xla.apply_primitive, lu_pivots_to_permutation_p))
+lu_pivots_to_permutation_p.def_abstract_eval(
+    _lu_pivots_to_permutation_abstract_eval)
+batching.primitive_batchers[lu_pivots_to_permutation_p] = (
+    _lu_pivots_to_permutation_batching_rule)
+xla.translations[lu_pivots_to_permutation_p] = (
+    _lu_pivots_to_permutation_translation_rule)
+
+if cuda_linalg:
+  xla.backend_specific_translations['gpu'][lu_pivots_to_permutation_p] = (
+      cuda_linalg.lu_pivots_to_permutation)
 
 # LU decomposition
 
@@ -809,6 +923,7 @@ def _lu_impl(operand):
   return lu, pivot, perm
 
 def _lu_abstract_eval(operand):
+  operand = raise_to_shaped(operand)
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to LU decomposition must have ndims >= 2")
@@ -816,8 +931,8 @@ def _lu_abstract_eval(operand):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    pivot = ShapedArray(batch_dims + (min(m, n),), jnp.int32)
-    perm = ShapedArray(batch_dims + (m,), jnp.int32)
+    pivot = operand.update(shape=batch_dims + (min(m, n),), dtype=jnp.int32)
+    perm = operand.update(shape=batch_dims + (m,), dtype=jnp.int32)
   else:
     pivot = operand
     perm = operand
@@ -877,7 +992,7 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
-def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
+def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand, backend):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
   m = shape.dimensions()[-2]
@@ -888,7 +1003,7 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   lu = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), lu,
                             _nan_like(c, lu))
   perm = xla.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
-                       multiple_results=False)(c, pivot)
+                       multiple_results=False, backend=backend)(c, pivot)
   return xops.Tuple(c, [lu, pivot, perm])
 
 
@@ -909,55 +1024,17 @@ ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
 xla.backend_specific_translations['cpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, lapack.getrf)
+  _lu_cpu_gpu_translation_rule, lapack.getrf, backend='cpu')
 
 if cusolver is not None:
   xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, cusolver.getrf)
+    _lu_cpu_gpu_translation_rule, cusolver.getrf, backend='gpu')
 
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, rocsolver.getrf)
+    _lu_cpu_gpu_translation_rule, rocsolver.getrf, backend='gpu')
 
 xla.backend_specific_translations['tpu'][lu_p] = _lu_tpu_translation_rule
-
-
-# Define this outside lu_pivots_to_permutation to ensure fori_loop cache hits
-def _lu_pivots_body_fn(i, permutation_and_swaps):
-  permutation, swaps = permutation_and_swaps
-  batch_dims = swaps.shape[:-1]
-  j = swaps[..., i]
-  iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in batch_dims))
-  x = permutation[..., i]
-  y = permutation[iotas + (j,)]
-  permutation = ops.index_update(permutation, ops.index[..., i], y)
-  return ops.index_update(permutation, ops.index[iotas + (j,)], x), swaps
-
-
-@partial(api.jit, static_argnums=(1,))
-def lu_pivots_to_permutation(swaps, m):
-  """Converts the pivots (row swaps) returned by LU to a permutation.
-
-  We build a permutation rather than applying `swaps` directly to the rows
-  of a matrix because lax loops aren't differentiable.
-
-  Args:
-    swaps: an array of shape (..., k) of row swaps to perform
-    m: the size of the output permutation. m should be >= k.
-  Returns:
-    An int32 array of shape (..., m).
-  """
-  assert len(swaps.shape) >= 1
-  batch_dims = swaps.shape[:-1]
-  k = swaps.shape[-1]
-
-  permutation = lax.broadcasted_iota(jnp.int32, batch_dims + (m,),
-                                     len(batch_dims))
-  if m == 0:
-    return permutation
-  result, _ = lax.fori_loop(np.array(0, np.int32), np.array(k, np.int32),
-                            _lu_pivots_body_fn, (permutation, swaps))
-  return result
 
 
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
@@ -1032,8 +1109,8 @@ def qr_abstract_eval(operand, full_matrices):
     m = operand.shape[-2]
     n = operand.shape[-1]
     k = m if full_matrices else min(m, n)
-    q = ShapedArray(batch_dims + (m, k), operand.dtype)
-    r = ShapedArray(batch_dims + (k, n), operand.dtype)
+    q = operand.update(shape=batch_dims + (m, k))
+    r = operand.update(shape=batch_dims + (k, n))
   else:
     q = operand
     r = operand
@@ -1154,11 +1231,11 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    s = ShapedArray(batch_dims + (min(m, n),),
-                    lax_internal._complex_basetype(operand.dtype))
+    s = operand.update(shape=batch_dims + (min(m, n),),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
     if compute_uv:
-      u = ShapedArray(batch_dims + (m, m if full_matrices else min(m, n)), operand.dtype)
-      vt = ShapedArray(batch_dims + (n if full_matrices else min(m, n), n), operand.dtype)
+      u = operand.update(shape=batch_dims + (m, m if full_matrices else min(m, n)))
+      vt = operand.update(shape=batch_dims + (n if full_matrices else min(m, n), n))
       return s, u, vt
     else:
       return s,
@@ -1276,3 +1353,97 @@ if cusolver is not None:
 if rocsolver is not None:
   xla.backend_specific_translations['gpu'][svd_p] = partial(
     _svd_cpu_gpu_translation_rule, rocsolver.gesvd)
+
+
+tridiagonal_solve_p = Primitive('tridiagonal_solve')
+tridiagonal_solve_p.multiple_results = False
+tridiagonal_solve_p.def_impl(
+    functools.partial(xla.apply_primitive, tridiagonal_solve_p))
+tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
+# TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
+if cusparse is not None and hasattr(cusparse, "gtsv2"):
+  xla.backend_specific_translations['gpu'][tridiagonal_solve_p] = cusparse.gtsv2
+
+
+def _tridiagonal_solve_translation_rule(c, dl, d, du, b, *, m, n, ldb, t):
+  del m, n, ldb, t
+  lowered_fun = xla.lower_fun(_tridiagonal_solve_jax, multiple_results=False)
+  return lowered_fun(c, dl, d, du, b)
+
+xla.translations[tridiagonal_solve_p] = _tridiagonal_solve_translation_rule
+
+
+def _tridiagonal_solve_jax(dl, d, du, b):
+  """Pure JAX implementation of `tridiagonal_solve`."""
+  prepend_zero = lambda x: jnp.append(jnp.zeros([1], dtype=x.dtype), x[:-1])
+  fwd1 = lambda tu_, x: x[1] / (x[0] - x[2] * tu_)
+  fwd2 = lambda b_, x: (x[0] - x[3] * b_) / (x[1] - x[3] * x[2])
+  bwd1 = lambda x_, x: x[0] - x[1] * x_
+  double = lambda f, args: (f(*args), f(*args))
+
+  # Forward pass.
+  _, tu_ = lax.scan(lambda tu_, x: double(fwd1, (tu_, x)),
+                    du[0] / d[0],
+                    (d, du, dl),
+                    unroll=32)
+
+  _, b_ = lax.scan(lambda b_, x: double(fwd2, (b_, x)),
+                   b[0] / d[0],
+                   (b, d, prepend_zero(tu_), dl),
+                   unroll=32)
+
+  # Backsubstitution.
+  _, x_ = lax.scan(lambda x_, x: double(bwd1, (x_, x)),
+                   b_[-1],
+                   (b_[::-1], tu_[::-1]),
+                   unroll=32)
+
+  return x_[::-1]
+
+
+def tridiagonal_solve(dl, d, du, b):
+  r"""Computes the solution of a tridiagonal linear system.
+
+  This function computes the solution of a tridiagonal linear system::
+
+  .. math::
+    A . X = B
+
+  Args:
+    dl: The lower diagonal of A: ``dl[i] := A[i, i-1]`` for i in ``[0,m)``.
+      Note that ``dl[0] = 0``.
+    d: The middle diagnoal of A: ``d[i]  := A[i, i]`` for i in ``[0,m)``.
+    du: The upper diagonal of A: ``du[i] := A[i, i+1]`` for i in ``[0,m)``.
+      Note that ``dl[m - 1] = 0``.
+    b: Right hand side matrix.
+
+  Returns:
+    Solution ``X`` of tridiagonal system.
+  """
+  if dl.ndim != 1 or d.ndim != 1 or du.ndim != 1:
+    raise ValueError('dl, d and du must be vectors')
+
+  if dl.shape != d.shape or d.shape != du.shape:
+    raise ValueError(
+        f'dl={dl.shape}, d={d.shape} and du={du.shape} must all be `[m]`')
+
+  if b.ndim != 2:
+    raise ValueError(f'b={b.shape} must be a matrix')
+
+  m, = dl.shape
+  if m < 3:
+    raise ValueError(f'm ({m}) must be >= 3')
+
+  ldb, n = b.shape
+  if ldb < max(1, m):
+    raise ValueError(f'Leading dimension of b={ldb} must be ≥ max(1, {m})')
+
+  if dl.dtype != d.dtype or d.dtype != du.dtype or du.dtype != b.dtype:
+    raise ValueError(f'dl={dl.dtype}, d={d.dtype}, du={du.dtype} and '
+                     f'b={b.dtype} must be the same dtype,')
+
+  t = dl.dtype
+  if t not in (np.float32, np.float64):
+    raise ValueError(f'Only f32/f64 are supported, got {t}')
+
+  return tridiagonal_solve_p.bind(dl, d, du, b, m=m, n=n, ldb=ldb, t=t)

@@ -33,7 +33,7 @@ import jax.ops as jo
 #   all(X[t + 1] == f(X[t], U[t]) for t in range(T)) .
 #
 # The special case in which `c` is quadratic and `f` is linear is the
-# linear-quadratic regulator (LQR) problem, and can be specified explicity
+# linear-quadratic regulator (LQR) problem, and can be specified explicitly
 # further below.
 #
 ControlSpec = collections.namedtuple(

@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from jax._src.dlpack import (to_dlpack, from_dlpack)
+from jax._src.dlpack import (to_dlpack, from_dlpack, SUPPORTED_DTYPES)

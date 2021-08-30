@@ -30,7 +30,7 @@ in Tensorflow errors (for some devices and compilation modes). These limitations
 are captured as jax2tf_limitations.Jax2TfLimitation objects.
 
 From the limitations objects, we generate a
-[report](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+[report](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 The report has instructions for how to re-generate it.
 
 If a harness run fails with error, and a limitation that matches the device
@@ -61,16 +61,16 @@ from absl.testing import parameterized
 
 import jax
 from jax import dtypes
-from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
+from jax.experimental import jax2tf
 from jax.interpreters import xla
 
 import numpy as np
+import tensorflow as tf  # type: ignore[import]
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -95,9 +95,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # test will be called "test_prim_xxx_..." and the custom parameters for
   # the test are defined in the class method "jax2tf_limitations.Jax2TfLimitation.xxx".
   # See more details in the comment at top of file and in Jax2TfLimitation class.
+  # If you want to run this test for only one harness, add parameter
+  # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses, include_jax_unimpl=False,
-      )
+      #one_containing="pad_inshape=uint8[2,3]_pads=[(0, 0, 0), (-1, -1, 0)]_enable_xla=False"
+  )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
   def test_prim(self, harness: primitive_harness.Harness):
@@ -107,7 +110,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                                   dtype=harness.dtype), limitations))
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
-    self.ConvertAndCompare(func_jax, *args, limitations=limitations)
+    enable_xla = harness.params.get("enable_xla", True)
+    self.ConvertAndCompare(func_jax, *args, limitations=limitations,
+                           enable_xla=enable_xla)
 
   def test_primitive_coverage(self):
     """Fail if there are JAX primitives that are not implemented."""
@@ -126,10 +131,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     all_primitives = tuple(sorted(all_primitives, key=str))
     for p in all_primitives:
-      # TODO: remove tie_in once omnistaging is on by default
-      if p.name == "axis_index" or p.name == "tie_in":
+      if p.name == "axis_index":
         continue
-      if p in tf_not_yet_impl:
+      if p.name in tf_not_yet_impl:
         self.assertNotIn(
             p, tf_impl)  # Should not be in both tf_impl and tf_not_yet_impl
       else:
@@ -143,7 +147,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     harnesses = [
         h for h in primitive_harness.all_harnesses
-        if h.filter(h, include_jax_unimpl=False)
+        if h.filter(h, include_jax_unimpl=True)
     ]
     print(f"Found {len(harnesses)} test harnesses that work in JAX")
 
@@ -153,6 +157,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     unique_limitations: Dict[Any, Tuple[primitive_harness.Harness, Jax2TfLimitation]] = {}
     for h in harnesses:
+      for l in h.jax_unimplemented:
+        if l.enabled:
+          # Fake a Jax2TFLimitation from the Limitation
+          tfl = Jax2TfLimitation(description="Not implemented in JAX: " + l.description,
+                                 devices = l.devices,
+                                 dtypes = l.dtypes,
+                                 expect_tf_error = False,
+                                 skip_tf_run = True)
+          unique_limitations[hash(unique_hash(h, tfl))] = (h, tfl)
+    for h in harnesses:
       for l in Jax2TfLimitation.limitations_for_harness(h):
         unique_limitations[hash(unique_hash(h, l))] = (h, l)
 
@@ -160,7 +174,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     tf_error_table = [
         """
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices | Affected compilation modes |
-| --- | --- | --- | --- | --- | ---|"""
+| --- | --- | --- | --- | --- |"""
     ]
     tf_numerical_discrepancies_table = list(tf_error_table)  # a copy
     for h, l in sorted(
@@ -169,7 +183,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       modes = ", ".join(sorted(l.modes))
       description = l.description
       if l.skip_comparison:
-        description = "Numeric comparision disabled: " + description
+        description = "Numeric comparison disabled: " + description
       if l.expect_tf_error:
         description = "TF error: " + description
       if l.skip_tf_run:
@@ -194,7 +208,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     # The CPU has more supported types, and harnesses
     self.assertEqual("cpu", jtu.device_under_test())
     self.assertTrue(
-        FLAGS.jax_enable_x64,
+        config.x64_enabled,
         "Documentation generation must be run with JAX_ENABLE_X64=1")
 
     with open(
@@ -231,16 +245,15 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         y = np.array([3, 4], dtype=y_dtype)
         self.ConvertAndCompare(f_jax, x, y)
 
-  def test_disable_xla(self):
-
-    def fun(x):
-      return lax.pad(x, np.float32(0), [(-1, 0, 0), (0, 0, 0)])
-
-    with self.assertRaisesRegex(
-        NotImplementedError, "Call to pad can only be converted through "
-                             "TFXLA, but XLA is disabled"):
-      self.ConvertAndCompare(
-          fun, np.ones((2, 3), dtype=np.float32), enable_xla=False)
+  def test_integer_div(self):
+    x = jnp.array([-4, -3, -1, 0, 1, 3, 6])
+    y = np.int32(3)
+    self.ConvertAndCompare(jnp.floor_divide, x, y)
+    expected = jnp.floor_divide(x, y)
+    # Try it with TF 1 as well (#5831)
+    with tf.compat.v1.Session() as sess:
+      tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
+      self.assertAllClose(expected, tf1_res)
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
@@ -286,7 +299,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_reduce_ops_with_boolean_input(self, f_jax):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

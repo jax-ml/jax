@@ -14,12 +14,14 @@
 
 
 from collections import defaultdict
+from functools import partial
 import itertools
 
 import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax import lax
 import jax.numpy as jnp
 import jax.test_util as jtu
@@ -28,6 +30,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_numpy_rank_promotion="raise")
 class EinsumTest(jtu.JaxTestCase):
 
   def _check(self, s, *ops):
@@ -338,6 +341,13 @@ class EinsumTest(jtu.JaxTestCase):
     y = r.randn(2, 4, 3)
     s = '...ij,...j'
     self._check(s, x, y)
+
+  def test_no_unnecessary_transpose(self):
+    r = self.rng()
+    x = r.randn(2, 2, 2)
+    y = r.randn(2, 2)
+    jaxpr = jax.make_jaxpr(partial(jnp.einsum, "ijk,kl->ijl"))(x, y)
+    self.assertNotIn('transpose', str(jaxpr))
 
 
 if __name__ == '__main__':

@@ -77,8 +77,8 @@ Example Usage:
     opt_state = opt_update(step, grads, opt_state)
     return value, opt_state
 
-  for step in range(num_steps):
-    value, opt_state = step(step, opt_state)
+  for i in range(num_steps):
+    value, opt_state = step(i, opt_state)
 """
 
 from typing import Any, Callable, NamedTuple, Tuple, Union
@@ -108,7 +108,7 @@ OptimizerState = namedtuple("OptimizerState",
 register_pytree_node(
     OptimizerState,
     lambda xs: ((xs.packed_state,), (xs.tree_def, xs.subtree_defs)),
-    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
+    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))  # type: ignore[index]
 
 
 Array = Any
@@ -213,7 +213,7 @@ def sgd(step_size):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -233,7 +233,7 @@ def momentum(step_size: Schedule, mass: float):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     mass: positive scalar representing the momentum coefficient.
 
   Returns:
@@ -260,7 +260,7 @@ def nesterov(step_size: Schedule, mass: float):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     mass: positive scalar representing the momentum coefficient.
 
   Returns:
@@ -290,7 +290,7 @@ def adagrad(step_size, momentum=0.9):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     momentum: optional, a positive scalar value for momentum
 
   Returns:
@@ -324,7 +324,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
       gamma: Decay parameter.
       eps: Epsilon parameter.
 
@@ -355,7 +355,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     gamma: Decay parameter.
     eps: Epsilon parameter.
     momentum: Momentum parameter.
@@ -386,7 +386,7 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     b1: optional, a positive scalar value for beta_1, the exponential decay rate
       for the first moment estimates (default 0.9).
     b2: optional, a positive scalar value for beta_2, the exponential decay rate
@@ -422,7 +422,7 @@ def adamax(step_size, b1=0.9, b2=0.999, eps=1e-8):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     b1: optional, a positive scalar value for beta_1, the exponential decay rate
       for the first moment estimates (default 0.9).
     b2: optional, a positive scalar value for beta_2, the exponential decay rate
@@ -460,7 +460,7 @@ def sm3(step_size, momentum=0.9):
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
+      that maps the iteration index to a positive scalar.
     momentum: optional, a positive scalar value for momentum
 
   Returns:
@@ -478,22 +478,24 @@ def sm3(step_size, momentum=0.9):
     return x[tuple(idx)]
 
   def init(x0):
+    x_shape = x0.shape
+    x0 = jnp.atleast_1d(x0)
     vs = [jnp.zeros(sz, dtype=x0.dtype) for sz in x0.shape]
-    return x0, jnp.zeros_like(x0), vs
+    return x0, jnp.zeros_like(x0), vs, x_shape
 
   def update(i, g, state):
-    x, m, vs = state
+    x, m, vs, x_shape = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
     accum = functools.reduce(jnp.minimum, vs) + jnp.square(g)
     accum_inv_sqrt = jnp.where(accum > 0, 1. / jnp.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
     vs = [accum.max(splice(range(x.ndim), j, [])) for j in range(x.ndim)]
-    return x, m, vs
+    return x, m, vs, x_shape
 
   def get_params(state):
-    x, _, _ = state
-    return x
+    x, _, _, x_shape = state
+    return x.reshape(x_shape)
 
   return init, update, get_params
 

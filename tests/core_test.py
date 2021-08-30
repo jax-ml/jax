@@ -27,8 +27,8 @@ from jax import core
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
-from jax.abstract_arrays import make_shaped_array
-from jax.api import jvp, linearize, vjp, jit, make_jaxpr
+from jax._src.abstract_arrays import make_shaped_array
+from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax._src.util import partial
@@ -275,7 +275,24 @@ class CoreTest(jtu.JaxTestCase):
     try:
       fn(params)
       gc.set_debug(gc.DEBUG_SAVEALL)
-      self.assertEqual(gc.collect(), 0)
+      self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
+    finally:
+      gc.set_debug(debug)
+
+  def test_reference_cycles_jit(self):
+    gc.collect()
+
+    def f(x):
+      return x.sum()
+
+    fn = jit(f)
+    params = jnp.zeros([])
+
+    debug = gc.get_debug()
+    try:
+      fn(params).block_until_ready()
+      gc.set_debug(gc.DEBUG_SAVEALL)
+      self.assertEqual(gc.collect(), 0, msg=str(gc.garbage))
     finally:
       gc.set_debug(debug)
 
@@ -315,6 +332,12 @@ class CoreTest(jtu.JaxTestCase):
       return x, 2 * y
     args_maker = lambda: (core.unit, 1)
     self._CompileAndCheck(f, args_maker)
+
+  def test_concrete_array_string_representation(self):
+    # https://github.com/google/jax/issues/5364
+    self.assertEqual(
+        str(core.ConcreteArray(np.array([1], dtype=np.int32))),
+        'ConcreteArray([1], dtype=int32)')
 
 
 class JaxprTypeChecks(jtu.JaxTestCase):
@@ -468,6 +491,25 @@ class JaxprTypeChecks(jtu.JaxTestCase):
   def test_raise_to_shaped_weak_type(self, value, weak_type):
     aval = core.raise_to_shaped(core.get_aval(value))
     self.assertEqual(aval.weak_type, weak_type)
+
+  def test_lattice_join_named_shape(self):
+    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
+    self.assertEqual(core.lattice_join(aval1, aval1), aval1)
+
+    aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
+    expected = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
+    self.assertEqual(core.lattice_join(aval1, aval2), expected)
+
+    aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
+    self.assertRaises(TypeError, lambda: core.lattice_join(aval1, aval3))
+
+  def test_typecompat_named_shape(self):
+    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
+    aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
+    self.assertTrue(core.typecompat(aval1, aval2))
+
+    aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
+    self.assertFalse(core.typecompat(aval1, aval3))
 
 
 if __name__ == '__main__':

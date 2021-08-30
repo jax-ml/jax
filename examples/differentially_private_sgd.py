@@ -30,7 +30,7 @@ This code depends on tensorflow_privacy (https://github.com/tensorflow/privacy)
     $ pip install .
 
 The results match those in the reference TensorFlow baseline implementation:
-  https://github.com/tensorflow/privacy/tree/master/tutorials
+  https://github.com/tensorflow/privacy/tree/main/tutorials
 
 Example invocations:
   # this non-private baseline should get ~99% acc
@@ -79,7 +79,7 @@ from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
-from examples import datasets
+from jax.examples import datasets
 import numpy.random as npr
 
 # https://github.com/tensorflow/privacy

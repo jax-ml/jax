@@ -29,23 +29,23 @@ from absl.testing import absltest
 
 from jax import test_util as jtu
 from jax.config import config
-from jax.experimental.jax2tf.tests import tf_test_util
 
 import numpy as np
 
 config.parse_flags_with_absl()
-FLAGS = config.FLAGS
 
 # Import after parsing flags
 from jax.experimental.jax2tf.tests import primitive_harness
 
 
-class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
+class JaxPrimitiveTest(jtu.JaxTestCase):
 
   # This test runs for all primitive harnesses. For each primitive "xxx" the
   # test will be called "test_jax_implemented_xxx_...". The test harnesses,
   # including which dtypes are expected to fail, are defined in the
   # file primitive_harness.py.
+  # If you want to run this test for only one harness, add parameter
+  # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(primitive_harness.all_harnesses,
                                    include_jax_unimpl=True)
   @jtu.ignore_warning(category=UserWarning,
@@ -56,6 +56,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     jax_unimpl = [l for l in harness.jax_unimplemented
                   if l.filter(device=jtu.device_under_test(),
                               dtype=harness.dtype)]
+    if any([lim.skip_run for lim in jax_unimpl]):
+      logging.info(
+          f"Skipping run with expected JAX limitations: "
+          f"{[u.description for u in jax_unimpl]} in harness {harness.fullname}")
+      return
     try:
       harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     except Exception as e:
@@ -93,11 +98,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for h in harnesses:
       harness_groups[h.group_name].append(h)
       for l in h.jax_unimplemented:
-        unique_limitations[hash(unique_hash(h, l))] = (h, l)
+        if l.enabled:
+          unique_limitations[hash(unique_hash(h, l))] = (h, l)
 
     primitive_coverage_table = ["""
 | Primitive | Total test harnesses | dtypes supported on at least one device | dtypes NOT tested on any device |
-| --- | --- | --- | --- | --- |"""]
+| --- | --- | --- | --- |"""]
     all_dtypes = set(jtu.dtypes.all)
 
     for group_name in sorted(harness_groups.keys()):
@@ -114,7 +120,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     print(f"Found {len(unique_limitations)} unique limitations")
     primitive_unimpl_table = ["""
 | Affected primitive | Description of limitation | Affected dtypes | Affected devices |
-| --- | --- | --- | --- | --- |"""]
+| --- | --- | --- | --- |"""]
     for h, l in sorted(
         unique_limitations.values(), key=lambda pair: unique_hash(*pair)):
       devices = ", ".join(l.devices)
@@ -126,7 +132,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("Set JAX_OUTPUT_LIMITATIONS_DOC=1 to enable the generation of the documentation")
     # The CPU/GPU have more supported types than TPU.
     self.assertEqual("cpu", jtu.device_under_test(), "The documentation can be generated only on CPU")
-    self.assertTrue(FLAGS.jax_enable_x64, "The documentation must be generated with JAX_ENABLE_X64=1")
+    self.assertTrue(config.x64_enabled, "The documentation must be generated with JAX_ENABLE_X64=1")
 
     with open(os.path.join(os.path.dirname(__file__),
                            '../g3doc/jax_primitives_coverage.md.template')) as f:
