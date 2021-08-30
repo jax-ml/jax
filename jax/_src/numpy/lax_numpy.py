@@ -4071,19 +4071,16 @@ def polyint(p, m=1, k=None):
 def polydiv(u,v):
   _check_arraylike("polydiv", u, v)
   u, v = _promote_dtypes_inexact(u, v)
-
-  w = u[0] + v[0]
   m = len(u) - 1
   n = len(v) - 1
   scale = 1. / v[0]
-  q = zeros((_max(m - n + 1, 1),), w.dtype)
-  r = u.astype(w.dtype)
+  q = zeros(_max(m - n + 1, 1),)
   for k in range(0, m-n+1):
-    d = scale * r[k]   
+    d = scale * u[k]   
     q = q.at[k].set(d)
-    r = r.at[k:k+n+1].add(-d*v)
-  r = r.at[~(abs(r) > 1E-14).cumsum().astype(bool)].set(0)
-  return q, r
+    u = u.at[k:k+n+1].add(-d*v)
+  u = u.at[~(abs(u) > 1E-14).cumsum().astype(bool)].set(0)
+  return q, u
 
 
 @_wraps(np.polyder)
