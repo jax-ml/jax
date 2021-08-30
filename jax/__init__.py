@@ -38,58 +38,65 @@ from . import config as _config_module
 del _config_module
 
 from ._src.config import (
-  config, enable_checks, check_tracer_leaks, checking_leaks, enable_custom_prng,
-  debug_nans, debug_infs, log_compiles, default_matmul_precision,
-  numpy_rank_promotion
+  config as config,
+  enable_checks as enable_checks,
+  check_tracer_leaks as check_tracer_leaks,
+  checking_leaks as checking_leaks,
+  enable_custom_prng as enable_custom_prng,
+  debug_nans as debug_nans,
+  debug_infs as debug_infs,
+  log_compiles as log_compiles,
+  default_matmul_precision as default_matmul_precision,
+  numpy_rank_promotion as numpy_rank_promotion,
 )
 from ._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
-  checkpoint,
-  checkpoint_policies,
-  closure_convert,
+  checkpoint as checkpoint,
+  checkpoint_policies as checkpoint_policies,
+  closure_convert as closure_convert,
   curry,  # TODO(phawkins): update users to avoid this.
-  custom_ivjp,
-  custom_gradient,
-  custom_jvp,
-  custom_vjp,
-  default_backend,
-  device_count,
-  device_get,
-  device_put,
-  device_put_sharded,
-  device_put_replicated,
-  devices,
-  disable_jit,
-  eval_shape,
+  custom_ivjp as custom_ivjp,
+  custom_gradient as custom_gradient,
+  custom_jvp as custom_jvp,
+  custom_vjp as custom_vjp,
+  default_backend as default_backend,
+  device_count as device_count,
+  device_get as device_get,
+  device_put as device_put,
+  device_put_sharded as device_put_sharded,
+  device_put_replicated as device_put_replicated,
+  devices as devices,
+  disable_jit as disable_jit,
+  eval_shape as eval_shape,
   flatten_fun_nokwargs,  # TODO(phawkins): update users to avoid this.
-  float0,
-  grad,
-  hessian,
-  host_count,
-  host_id,
-  host_ids,
-  invertible,
-  jacobian,
-  jacfwd,
-  jacrev,
-  jit,
-  jvp,
-  local_device_count,
-  local_devices,
-  linearize,
-  linear_transpose,
-  make_jaxpr,
-  mask,
-  named_call,
+  float0 as float0,
+  grad as grad,
+  hessian as hessian,
+  host_count as host_count,
+  host_id as host_id,
+  host_ids as host_ids,
+  invertible as invertible,
+  jacobian as jacobian,
+  jacfwd as jacfwd,
+  jacrev as jacrev,
+  jit as jit,
+  jvp as jvp,
+  local_device_count as local_device_count,
+  local_devices as local_devices,
+  linearize as linearize,
+  linear_transpose as linear_transpose,
+  make_jaxpr as make_jaxpr,
+  mask as mask,
+  named_call as named_call,
   partial,  # TODO(phawkins): update callers to use functools.partial.
-  pmap,
-  process_count,
-  process_index,
+  pmap as pmap,
+  process_count as process_count,
+  process_index as process_index,
   pxla,  # TODO(phawkins): update users to avoid this.
-  remat,
-  shapecheck,
-  ShapedArray,
-  ShapeDtypeStruct,
+  remat as remat,
+  shapecheck as shapecheck,
+  ShapedArray as ShapedArray,
+  ShapeDtypeStruct as ShapeDtypeStruct,
   # TODO(phawkins): hide tree* functions from jax, update callers to use
   # jax.tree_util.
   treedef_is_leaf,
@@ -106,26 +113,26 @@ from ._src.api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation,
 )
-from .experimental.maps import soft_pmap
-from .version import __version__
+from .experimental.maps import soft_pmap as soft_pmap
+from .version import __version__ as __version__
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
-from . import abstract_arrays
-from . import api
-from . import api_util
-from . import dtypes
-from . import errors
-from . import image
-from . import lax
-from . import nn
-from . import profiler
-from . import random
-from . import tree_util
-from . import util
+from . import abstract_arrays as abstract_arrays
+from . import api as api
+from . import api_util as api_util
+from . import dtypes as dtypes
+from . import errors as errors
+from . import image as image
+from . import lax as lax
+from . import nn as nn
+from . import profiler as profiler
+from . import random as random
+from . import tree_util as tree_util
+from . import util as util
 
 def _init():
-  from . import numpy # side-effecting import sets up operator overloads
+  from . import numpy as numpy # side-effecting import sets up operator overloads
 
 _init()
 del _init

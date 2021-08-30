@@ -15,28 +15,28 @@
 # flake8: noqa: F401
 
 from jax._src.numpy.linalg import (
-  cholesky,
-  det,
-  eig,
-  eigh,
-  eigvals,
-  eigvalsh,
-  inv,
-  lstsq,
-  matrix_power,
-  matrix_rank,
-  norm,
-  pinv,
-  qr,
-  slogdet,
-  solve,
-  svd,
+  cholesky as cholesky,
+  det as det,
+  eig as eig,
+  eigh as eigh,
+  eigvals as eigvals,
+  eigvalsh as eigvalsh,
+  inv as inv,
+  lstsq as lstsq,
+  matrix_power as matrix_power,
+  matrix_rank as matrix_rank,
+  norm as norm,
+  pinv as pinv,
+  qr as qr,
+  slogdet as slogdet,
+  solve as solve,
+  svd as svd,
 )
 from jax._src.third_party.numpy.linalg import (
-  cond,
-  multi_dot,
-  tensorinv,
-  tensorsolve
+  cond as cond,
+  multi_dot as multi_dot,
+  tensorinv as tensorinv,
+  tensorsolve as tensorsolve,
 )
 
 # Module initialization is encapsulated in a function to avoid accidental

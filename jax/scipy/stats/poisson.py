@@ -15,7 +15,7 @@
 # flake8: noqa: F401
 
 from jax._src.scipy.stats.poisson import (
-  logpmf,
-  pmf,
-  cdf
+  logpmf as logpmf,
+  pmf as pmf,
+  cdf as cdf,
 )

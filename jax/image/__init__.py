@@ -16,7 +16,7 @@
 
 # flake8: noqa: F401
 from jax._src.image.scale import (
-  resize,
-  ResizeMethod,
-  scale_and_translate,
+  resize as resize,
+  ResizeMethod as ResizeMethod,
+  scale_and_translate as scale_and_translate,
 )

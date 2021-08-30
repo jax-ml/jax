@@ -15,10 +15,10 @@
 # flake8: noqa: F401
 
 from jax._src.scipy.stats.logistic import (
-  cdf,
-  isf,
-  logpdf,
-  pdf,
-  ppf,
-  sf,
+  cdf as cdf,
+  isf as isf,
+  logpdf as logpdf,
+  pdf as pdf,
+  ppf as ppf,
+  sf as sf,
 )

@@ -14,4 +14,7 @@
 
 # flake8: noqa: F401
 
-from jax._src.scipy.optimize.minimize import (minimize, OptimizeResults)
+from jax._src.scipy.optimize.minimize import (
+  minimize as minimize,
+  OptimizeResults as OptimizeResults,
+)

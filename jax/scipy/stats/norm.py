@@ -15,9 +15,9 @@
 # flake8: noqa: F401
 
 from jax._src.scipy.stats.norm import (
-  cdf,
-  logcdf,
-  logpdf,
-  pdf,
-  ppf,
+  cdf as cdf,
+  logcdf as logcdf,
+  logpdf as logpdf,
+  pdf as pdf,
+  ppf as ppf,
 )
