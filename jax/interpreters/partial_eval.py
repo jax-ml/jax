@@ -565,6 +565,8 @@ def new_eqn_recipe(invars: Sequence[JaxprTracer],
   # TODO(necula): move these checks to core.check_jaxpr, and call in more places
   if primitive.call_primitive or primitive.map_primitive:
     assert "call_jaxpr" in params
+    # assert len(invars) == len(params["call_jaxpr"].invars)  # TODO constvars?
+    assert len(outvars) == len(params["call_jaxpr"].outvars)
   if primitive.map_primitive:
     assert ("in_axes" in params and
             len(params["in_axes"]) == len(params["call_jaxpr"].invars))

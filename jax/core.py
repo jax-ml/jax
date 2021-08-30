@@ -143,6 +143,8 @@ class JaxprEqn(NamedTuple):
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
 def new_jaxpr_eqn(invars, outvars, primitive, params, source_info=None):
+  if primitive.call_primitive:
+    assert len(outvars) == len(params["call_jaxpr"].outvars)
   return JaxprEqn(invars, outvars, primitive, params, source_info)
 
 
