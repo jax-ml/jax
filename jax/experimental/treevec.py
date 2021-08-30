@@ -456,21 +456,6 @@ call_param_updaters[xla.xla_call_p] = _xla_call_param_updater
 tree_rules: Dict[core.Primitive, Callable] = {}
 
 
-def tie_in_tree_rule(treedefs_in, leafshapes_in, leaves_in) -> TreeState:
-  x_treedefs, y_treedefs = treedefs_in
-  x_leafshapes, y_leafshapes = leafshapes_in
-  x_leaves, y_leaves = leaves_in
-  # TODO(shoyer): should we try somehow to add a data depedency on everything,
-  # not just the first value?
-  x_example = next(iter(x_leaves.values()))
-  out_leaves = {}
-  for coords in _iter_leaf_coords(y_treedefs):
-    out_leaves[coords] = lax.tie_in_p.bind(x_example, y_leaves[coords])
-  return y_treedefs, y_leafshapes, out_leaves
-
-tree_rules[lax.tie_in_p] = tie_in_tree_rule
-
-
 def vectorized_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in, **params):
   treedefs, = treedefs_in
   leafshapes, = leafshapes_in
