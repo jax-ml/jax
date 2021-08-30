@@ -470,31 +470,17 @@ def bdim_at_front(x, bdim, size):
     return moveaxis(x, bdim, 0)
 
 
-zero_if_mapped = object()
-
 def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name, main_type):
-  if instantiate is None:
-    instantiate = False
-  if isinstance(instantiate, bool):
-    instantiate = [instantiate] * len(closed_jaxpr.out_avals)
-  out_axes = [0 if inst else zero_if_mapped for inst in instantiate]
-  return batch_jaxpr_axes(
-      closed_jaxpr, axis_size,
-      [0 if b else not_mapped for b in in_batched],
-      out_axes,
-      axis_name, main_type)
-
-def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes, axis_name, main_type):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
-  f, out_batched = batch_subtrace_instantiate(f, axis_size, out_axes)
-  f = batchfun(f, axis_name, axis_size, in_axes, main_type)
-  avals_in = [core.unmapped_aval(axis_size, b, aval) if b is not not_mapped
-              else aval for aval, b in zip(closed_jaxpr.in_avals, in_axes)]
+  f, out_batched = batch_subtrace_instantiate(f, instantiate, axis_size)
+  f = batchfun(f, axis_name, axis_size, [0 if b else None for b in in_batched], main_type)
+  avals_in = [core.unmapped_aval(axis_size, 0, aval) if b else aval
+              for aval, b in zip(closed_jaxpr.in_avals, in_batched)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
 @lu.transformation_with_aux
-def batch_subtrace_instantiate(axis_size, out_axes, main, in_dims, *in_vals):
+def batch_subtrace_instantiate(instantiate, axis_size, main, in_dims, *in_vals):
   # this is like `batch_subtrace` but we take an extra `instantiate` arg
   # analogue of `jvp_subtrace` in ad.py
   trace = main.with_cur_sublevel()
@@ -504,12 +490,13 @@ def batch_subtrace_instantiate(axis_size, out_axes, main, in_dims, *in_vals):
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
 
-  out_axes = [(None if od is not_mapped else 0) if out_axis is zero_if_mapped else out_axis
-              for od, out_axis in zip(out_dims, out_axes)]
-  out_vals = [moveaxis(x, d, od) if d is not not_mapped
-              else broadcast(x, axis_size, od) if od is not None else x
-              for x, d, od in zip(out_vals, out_dims, out_axes)]
-  out_batched = [od is not None for od in out_axes]
+  if type(instantiate) is bool:
+    instantiate = [instantiate] * len(out_vals)
+  out_vals = [moveaxis(x, d, 0) if d is not not_mapped and d != 0
+              else broadcast(x, axis_size, 0) if d is not_mapped and inst else x
+              for x, d, inst in zip(out_vals, out_dims, instantiate)]
+  out_batched = [d is not not_mapped or inst
+                 for d, inst in zip(out_dims, instantiate)]
   yield out_vals, out_batched
 
 @lu.transformation_with_aux
