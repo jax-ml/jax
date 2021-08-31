@@ -5342,7 +5342,7 @@ def _reduction_computation(c, jaxpr, consts, init_values, singleton=True):
   return subc.build(out_nodes)
 
 def _reduce_jvp(reducer, init_values, primals, tangents, axes):
-  input_shape = np.array(primals[0].shape)
+  input_shape = np.array(primals[0].shape, dtype=np.int_)
 
   n = np.prod(input_shape[list(axes)])
   non_axes = np.delete(np.arange(len(input_shape)), axes)
