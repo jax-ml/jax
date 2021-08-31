@@ -39,7 +39,7 @@ jobs:
             os: ubuntu-latest
             enable-x64: 0
             package-overrides: "none"
-            num_generated_cases: 10
+            num_generated_cases: 1
             use-latest-jaxlib: false
           - name-prefix: "with numpy-dispatch"
             python-version: 3.9
@@ -47,15 +47,7 @@ jobs:
             enable-x64: 1
             # Test experimental NumPy dispatch
             package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
-            num_generated_cases: 10
-            use-latest-jaxlib: false
-          - name-prefix: "with internal numpy/scipy"
-            python-version: 3.7
-            os: ubuntu-latest
-            enable-x64: 1
-            # Test with numpy version that matches Google's internal version
-            package-overrides: "numpy==1.19.5 scipy==1.2.1"
-            num_generated_cases: 10
+            num_generated_cases: 1
             use-latest-jaxlib: false
           - name-prefix: "with 3.7"
             python-version: 3.7
