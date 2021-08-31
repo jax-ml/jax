@@ -233,8 +233,8 @@ class XMapTest(XMapTestCase):
     devices = np.array(local_devices[:4]).reshape((2, 2))
     with mesh(devices, ('x', 'y')):
       fm = xmap(f,
-                in_axes=[{0: 'a', 1: 'b'}, ['c', ...]],
-                out_axes=[{0: 'a', 1: 'b'}, ['c', ...]],
+                in_axes=({0: 'a', 1: 'b'}, ['c', ...]),
+                out_axes=({0: 'a', 1: 'b'}, ['c', ...]),
                 axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
       ashape = (16, 8, 5)
       a = jnp.arange(np.prod(ashape)).reshape(ashape)
@@ -247,8 +247,8 @@ class XMapTest(XMapTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testCollectiveReduce(self):
     fm = xmap(lambda a, b: (lax.psum(a * 2, 'a'), b * 4),
-              in_axes=[['a', 'b', ...], {0: 'c'}],
-              out_axes=[['b', ...], {0: 'c'}],
+              in_axes=(['a', 'b', ...], {0: 'c'}),
+              out_axes=(['b', ...], {0: 'c'}),
               axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
     ashape = (16, 8, 5)
     a = jnp.arange(np.prod(ashape)).reshape(ashape)
@@ -286,7 +286,7 @@ class XMapTest(XMapTestCase):
   def testOneLogicalTwoMeshAxesBasic(self):
     def f(v):
       return lax.psum(v * 2, 'a'), v * 4
-    fm = xmap(f, in_axes=['a', ...], out_axes=[{}, {1: 'a'}],
+    fm = xmap(f, in_axes=['a', ...], out_axes=({}, {1: 'a'}),
               axis_resources={'a': ('x', 'y')})
     vshape = (4, 5)
     v = jnp.arange(np.prod(vshape)).reshape(vshape)
@@ -515,7 +515,7 @@ class XMapTest(XMapTestCase):
   def testAutodiffBroadcast(self):
     f = xmap(lambda x, y: jnp.cos(lax.dot(x, jnp.sin(y),
                                           precision=lax.Precision.HIGHEST)),
-             in_axes=[['i', ...], {}], out_axes=['i', ...])
+             in_axes=(['i', ...], {}), out_axes=['i', ...])
     x = jnp.arange(12, dtype=jnp.float32).reshape((3, 4)) / 100
     y = jnp.arange(20, dtype=jnp.float32).reshape((4, 5)) / 100
     jtu.check_grads(f, (x, y), order=2, modes=['fwd'])
@@ -528,7 +528,7 @@ class XMapTest(XMapTestCase):
   def testAutodiffNoBroadcast(self):
     f = xmap(lambda x, y: jnp.cos(lax.dot(x, jnp.sin(y),
                                           precision=lax.Precision.HIGHEST)),
-             in_axes=[['i', ...], [None, 'i']], out_axes=['i'])
+             in_axes=(['i', ...], [None, 'i']), out_axes=['i'])
     x = jnp.arange(12, dtype=jnp.float32).reshape((3, 4)) / 100
     y = jnp.arange(12, dtype=jnp.float32).reshape((4, 3)) / 100
     jtu.check_grads(f, (x, y), order=2)
@@ -891,7 +891,7 @@ class PDotTests(XMapTestCase):
       return lax.pdot(x, y, 'i')
 
     f_mapped = xmap(f,
-                    in_axes=[{1: 'i'}, {0: 'i'}],
+                    in_axes=({1: 'i'}, {0: 'i'}),
                     out_axes={},
                     axis_resources={'i': 'r1'})
 
@@ -913,7 +913,7 @@ class PDotTests(XMapTestCase):
     y = rng.randn(2, 8, 5)
 
     f_mapped = xmap(f,
-                    in_axes=[{0: 'j', 2: 'i'}, {0: 'j', 1: 'i'}],
+                    in_axes=({0: 'j', 2: 'i'}, {0: 'j', 1: 'i'}),
                     out_axes=['j', ...],
                     axis_resources={'i': 'r1'})
 
@@ -931,7 +931,7 @@ class PDotTests(XMapTestCase):
     y = rng.randn(2, 8, 5)
 
     f_mapped = xmap(f,
-                    in_axes=[{0: 'j', 2: 'i'}, {0: 'j', 1: 'i'}],
+                    in_axes=({0: 'j', 2: 'i'}, {0: 'j', 1: 'i'}),
                     out_axes=['j', ...],
                     axis_resources={'j': 'r1'})
 
@@ -964,7 +964,7 @@ class PDotTests(XMapTestCase):
                           pos_batch=pdot_spec.pos_batch_after_mapping,
                           pos_contract=pdot_spec.pos_contract_after_mapping)
 
-    fun = xmap(pdot_fun, in_axes=[pdot_spec.lhs_in_axes, pdot_spec.rhs_in_axes],
+    fun = xmap(pdot_fun, in_axes=(pdot_spec.lhs_in_axes, pdot_spec.rhs_in_axes),
                out_axes=[*pdot_spec.batch_names, ...],
                axis_resources=axis_resources)
 
@@ -1007,8 +1007,8 @@ class PDotTests(XMapTestCase):
       return pdot_vjp(out_bar)
 
     fun = xmap(pdot_fun,
-               in_axes=[pdot_spec.lhs_in_axes, pdot_spec.rhs_in_axes,
-                        [*pdot_spec.batch_names, ...]],
+               in_axes=(pdot_spec.lhs_in_axes, pdot_spec.rhs_in_axes,
+                        [*pdot_spec.batch_names, ...]),
                out_axes=(pdot_spec.lhs_in_axes, pdot_spec.rhs_in_axes),
                axis_resources=axis_resources)
 
@@ -1272,6 +1272,37 @@ class XMapErrorTest(jtu.JaxTestCase):
              r"collectives\), but `i` violates that rule")
     with self.assertRaisesRegex(RuntimeError, error):
       fm(x)
+
+  def testAxesMismatch(self):
+    x = jnp.ones((4,))
+    p = [['x'], ['x'], ['x']]
+    xmap(lambda x: x, (p,), p)([x, x, x])  # OK
+    xmap(lambda x: x, [p], p)([x, x, x])  # OK
+    error = re.escape(
+        r"xmap in_axes specification must be a tree prefix of the "
+        r"corresponding value, got specification (['x'], ['x'], ['x']) for value "
+        r"tree PyTreeDef((*, *)). Note that xmap in_axes that are "
+        r"non-trivial pytrees should always be wrapped in a tuple representing "
+        r"the argument list.")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x, y: x, p, p)(x, x)  # Error, but make sure we hint at tupling
+    # TODO(apaszke): Disable implicit list casts and enable this
+    # error = re.escape(
+        # r"xmap in_axes specification must be a tree prefix of the "
+        # r"corresponding value, got specification (['x'], ['x'], ['x']) for value "
+        # r"tree PyTreeDef(([*, *, *],)). Note that xmap in_axes that "
+        # r"are non-trivial pytrees should always be wrapped in a tuple representing "
+        # r"the argument list. In particular, you're passing in a single argument "
+        # r"which means that xmap in_axes might need to be wrapped in a "
+        # r"singleton tuple.")
+    # with self.assertRaisesRegex(ValueError, error):
+      # xmap(lambda x: x, p, p)([x, x, x])  # Error, but make sure we hint at singleton tuple
+    error = re.escape(
+        r"xmap out_axes specification must be a tree prefix of the "
+        r"corresponding value, got specification ([['x'], ['x'], ['x']], ['x']) for "
+        r"value tree PyTreeDef([*, *, *]).")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x: x, (p,), (p, ['x']))([x, x, x])  # Error, we raise a generic tree mismatch message
 
 
 class NamedAutodiffTests(jtu.JaxTestCase):
