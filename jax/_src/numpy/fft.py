@@ -78,7 +78,7 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
     else:
       s = [a.shape[axis] for axis in axes]
 
-  transformed = lax.fft(a, fft_type, s)
+  transformed = lax.fft(a, fft_type, tuple(s))
 
   if orig_axes is not None:
     transformed = jnp.moveaxis(transformed, axes, orig_axes)

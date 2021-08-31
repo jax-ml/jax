@@ -43,6 +43,7 @@ def _promote_to_real(arg):
   dtype = dtypes.result_type(arg, np.float32)
   return lax.convert_element_type(arg, dtype)
 
+@partial(jit, static_argnums=(1, 2))
 def fft(x, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
     if np.iscomplexobj(x):
