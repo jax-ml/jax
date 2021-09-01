@@ -26,15 +26,12 @@ for _name, _value in _pocketfft.registrations().items():
 
 FftType = xla_client.FftType
 
-flatbuffers_version_2 = hasattr(flatbuffers, "__version__")
-
 
 def pocketfft(c, a, *, fft_type: FftType, fft_lengths: List[int]):
   """PocketFFT kernel for CPU."""
   shape = c.get_shape(a)
   n = len(shape.dimensions())
   dtype = shape.element_type()
-  builder = flatbuffers.Builder(128)
 
   fft_lengths = list(fft_lengths)
   assert len(fft_lengths) >= 1
@@ -86,56 +83,32 @@ def pocketfft(c, a, *, fft_type: FftType, fft_lengths: List[int]):
     return xla_client.ops.Broadcast(
         xla_client.ops.Constant(c, np.array(0, dtype=out_dtype)), out_shape)
 
-  # Builds a PocketFftDescriptor flatbuffer. This descriptor is passed to the
-  # C++ kernel to describe the FFT to perform.
-  pd.PocketFftDescriptorStartShapeVector(builder, n)
-  for d in reversed(
-      shape.dimensions() if fft_type != FftType.IRFFT else out_shape):
-    builder.PrependUint64(d)
-  if flatbuffers_version_2:
-    pocketfft_shape = builder.EndVector()
-  else:
-    pocketfft_shape = builder.EndVector(n)
-
-  pd.PocketFftDescriptorStartStridesInVector(builder, n)
+  strides_in = []
   stride = dtype.itemsize
   for d in reversed(shape.dimensions()):
-    builder.PrependUint64(stride)
+    strides_in.append(stride)
     stride *= d
-  if flatbuffers_version_2:
-    strides_in = builder.EndVector()
-  else:
-    strides_in = builder.EndVector(n)
-  pd.PocketFftDescriptorStartStridesOutVector(builder, n)
+  strides_in = list(reversed(strides_in))
+
+  strides_out = []
   stride = out_dtype.itemsize
   for d in reversed(out_shape):
-    builder.PrependUint64(stride)
+    strides_out.append(stride)
     stride *= d
-  if flatbuffers_version_2:
-    strides_out = builder.EndVector()
-  else:
-    strides_out = builder.EndVector(n)
+  strides_out = list(reversed(strides_out))
 
-  pd.PocketFftDescriptorStartAxesVector(builder, len(fft_lengths))
-  for d in range(len(fft_lengths)):
-    builder.PrependUint32(n - d - 1)
-  if flatbuffers_version_2:
-    axes = builder.EndVector()
-  else:
-    axes = builder.EndVector(len(fft_lengths))
-
-  scale = 1. if forward else (1. / np.prod(fft_lengths))
-  pd.PocketFftDescriptorStart(builder)
-  pd.PocketFftDescriptorAddDtype(builder, pocketfft_dtype)
-  pd.PocketFftDescriptorAddFftType(builder, pocketfft_type)
-  pd.PocketFftDescriptorAddShape(builder, pocketfft_shape)
-  pd.PocketFftDescriptorAddStridesIn(builder, strides_in)
-  pd.PocketFftDescriptorAddStridesOut(builder, strides_out)
-  pd.PocketFftDescriptorAddAxes(builder, axes)
-  pd.PocketFftDescriptorAddForward(builder, forward)
-  pd.PocketFftDescriptorAddScale(builder, scale)
-  descriptor = pd.PocketFftDescriptorEnd(builder)
-  builder.Finish(descriptor)
+  descriptor = pd.PocketFftDescriptorT()
+  descriptor.dtype = pocketfft_dtype
+  descriptor.fftType = pocketfft_type
+  descriptor.shape = list(shape.dimensions() if fft_type != FftType.IRFFT
+                          else out_shape)
+  descriptor.stridesIn = strides_in
+  descriptor.stridesOut = strides_out
+  descriptor.axes = [n - len(fft_lengths) + d for d in range(len(fft_lengths))]
+  descriptor.forward = forward
+  descriptor.scale = 1. if forward else (1. / np.prod(fft_lengths))
+  builder = flatbuffers.Builder(128)
+  builder.Finish(descriptor.Pack(builder))
   descriptor_bytes = builder.Output()
 
   return xla_client.ops.CustomCallWithLayout(
