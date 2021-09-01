@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2021 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,36 +14,7 @@
 
 # flake8: noqa: F401
 
-from jax._src.scipy.special import (
-  betainc,
-  betaln,
-  digamma,
-  entr,
-  erf,
-  erfc,
-  erfinv,
-  exp1,
-  expi,
-  expit,
-  expn,
-  gammainc,
-  gammaincc,
-  gammaln,
-  i0,
-  i0e,
-  i1,
-  i1e,
-  logit,
-  logsumexp,
-  lpmn,
-  lpmn_values,
-  multigammaln,
-  log_ndtr,
-  ndtr,
-  ndtri,
-  polygamma,
-  sph_harm,
-  xlogy,
-  xlog1py,
-  zeta,
+from jax._src.scipy.fft import (
+  dct,
+  dctn
 )

@@ -36,9 +36,10 @@ setup(
     package_data={'jax': ['py.typed']},
     python_requires='>=3.7',
     install_requires=[
-        'numpy>=1.18',
         'absl-py',
+        'numpy>=1.18',
         'opt_einsum',
+        'scipy>=1.2.1',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.

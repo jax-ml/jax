@@ -1273,8 +1273,7 @@ for dtype in jtu.dtypes.all:
       [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
       [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
   ]:
-    works_without_xla = all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in pads)
-    for enable_xla in ([True, False] if works_without_xla else [True]):
+    for enable_xla in [True, False]:
       define(
         lax.pad_p,
         f"inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_pads={pads}_enable_xla={enable_xla}",
@@ -2388,7 +2387,7 @@ for dtype in (np.float32, np.float64):
     define(
         "random_gamma",
         f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-        jax.jit(jax.random.gamma),
+        jax.jit(jax._src.random.gamma_threefry2x32),
         [np.array([42, 43], dtype=np.uint32),
          RandArg(shape, dtype)],
         dtype=dtype)

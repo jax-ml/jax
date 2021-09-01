@@ -242,8 +242,7 @@ def backends():
     return _backends
 
 
-@lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
-def get_backend(platform=None):
+def _get_backend_uncached(platform=None):
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
   if not isinstance(platform, (type(None), str)):
@@ -262,6 +261,11 @@ def get_backend(platform=None):
     return backend
   else:
     return _default_backend
+
+
+@lru_cache(maxsize=None)  # don't use util.memoize because there is no X64 dependence.
+def get_backend(platform=None):
+  return _get_backend_uncached(platform)
 
 
 def get_device_backend(device=None):

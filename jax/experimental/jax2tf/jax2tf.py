@@ -35,6 +35,7 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 from jax._src.lax import lax
 from jax._src.lax import linalg as lax_linalg
+import jax._src.prng
 import jax._src.random
 from jax.experimental import maps
 from jax.experimental import pjit
@@ -230,9 +231,12 @@ def convert(fun: Callable,
       in a SavedModel, the custom gradients are currently lost and an error will
       be raised if a gradient computation is attempted. This is due to a current
       bug in TensorFlow.
-    enable_xla: if unset, the converter will try harder to use pure TF ops to
-      convert the function, and raise an error if it can not be converted
-      without resorting to XLA ops (default: True).
+    enable_xla: if set (default), the converter will use the simplest conversion
+      and use XLA TF ops when necessary. These ops are known to create issues
+      for the TFLite and TFjs converters. For those cases, unset this parameter
+      so the converter tries harder to use non-XLA TF ops to convert the function,
+      and raises an error if it can not be converted
+      without resorting to XLA ops.
 
   Returns:
     A version of `fun` that expects TfVals as arguments (or
@@ -1739,21 +1743,59 @@ tf_impl_with_avals[lax.squeeze_p] = _squeeze
 def _pad(operand, padding_value, *, padding_config,
          _in_avals: Sequence[core.ShapedArray],
          _out_aval: core.ShapedArray):
-  del _in_avals
   low, high, interior = util.unzip3(padding_config)
   if _thread_local_state.enable_xla:
     out = tfxla.pad(operand, padding_value, low, high, interior)
     return out
 
-  if all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in padding_config):
-    return tf.pad(
-        operand,
-        zip(low, high),
-        mode="CONSTANT",
-        constant_values=padding_value)
-  raise _xla_disabled_error("pad", "Only use cases without interior or negative padding can be converted without XLA.")
+  # Do only the interior padding first. This is rarely needed.
+  if any(i != 0 for _, _, i in padding_config):
+    operand = _interior_padding(operand, padding_value, padding_config,
+                                _eval_shape(_in_avals[0].shape))
+
+  # Now do the non-negative edge padding. This is the common case, use tf.pad.
+  non_negative_padding = [((lo if lo >= 0 else 0), (hi if hi >= 0 else 0))
+                          for lo, hi, _ in padding_config]
+  operand = tf.pad(operand, non_negative_padding,
+                   mode="CONSTANT",
+                   constant_values=padding_value)
+  # Now the negative edge padding (this is also rare)
+  if any(lo < 0 or hi < 0 for lo, hi, _ in padding_config):
+    output_shape = _eval_shape(_out_aval.shape)
+    begins = [(-lo if lo < 0 else 0) for lo, _, _ in padding_config]
+    operand = tf.slice(operand, begins, output_shape)
+
+  return operand
 
 tf_impl_with_avals[lax.pad_p] = _pad
+
+def _interior_padding(operand, padding_value, padding_config, operand_shape):
+  # Used only when enable_xla=False
+  # Applies only the interior padding from the padding_config.
+  # We do this somewhat inefficiently, as as a scatter.
+  # For each dimension we compute the indices_by_dim as [0, f, 2f, 3f, ...] where
+  # f is the dilation factor for the dimension, i.e., 1 + interior_padding.
+  # Then we compute the cartesian production of the indices (using broadcast
+  # and concat).
+
+  # We could make this code more complex and do all the padding at once, but
+  # we prefer to keep it simple.
+  indices_by_dim = []
+  indices_shape = operand_shape + (1,)
+  output_shape = []  # considering only interior padding
+  for d, (dsz, (_, _, i)) in enumerate(zip(operand_shape, padding_config)):
+    dilation_factor = i + 1
+    output_shape.append(dsz * dilation_factor - i)
+    indices = tf.range(dsz) * dilation_factor
+    expansion = [None] * (1 + len(operand_shape))
+    expansion[d] = slice(None, None, None)
+    indices_by_dim.append(tf.broadcast_to(indices[expansion], indices_shape))
+
+  indices_cartesian = tf.concat(indices_by_dim, axis=len(operand_shape))
+  scattered = tf.scatter_nd(indices_cartesian, operand, output_shape)
+  # What elements from the output array we use from
+  mask = tf.scatter_nd(indices_cartesian, tf.ones_like(operand, dtype=np.bool_), output_shape)
+  return tf.where(mask, scattered, padding_value)
 
 
 def _rev(operand, *, dimensions):
@@ -2221,13 +2263,13 @@ tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   res = _convert_jax_impl(
-      partial(jax._src.random._threefry2x32_lowering, use_rolled_loops=False),
+      partial(jax._src.prng._threefry2x32_lowering, use_rolled_loops=False),
       multiple_results=True, extra_name_stack="threefry")(
           *args, _in_avals=_in_avals, _out_aval=_out_aval)
   return res
 
 
-tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
+tf_impl_with_avals[jax._src.prng.threefry2x32_p] = _threefry2x32_jax_impl
 
 # Use the vmap implementation, otherwise on TPU the performance is really bad
 # With use_vmap=True on, we get about the same performance for JAX and jax2tf.
@@ -2519,8 +2561,6 @@ def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
       xla_update_computation,
       proto,
       indices_are_sorted=indices_are_sorted)
-  # TODO: implement shape analysis for XlaScatter
-  out.set_shape(_aval_to_tf_shape(_out_aval))
   return out
 
 

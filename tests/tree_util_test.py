@@ -323,6 +323,11 @@ class TreeTest(jtu.JaxTestCase):
     treedef = tree_util.tree_structure(tree)
     self.assertRegex(str(treedef), correct_string)
 
+  def testTreeDefWithEmptyDictStringRepresentation(self):
+    if jax.lib._xla_extension_version < 35:
+      self.skipTest("fixed in future jaxlib")
+    self.assertEqual(str(tree_util.tree_structure({})), "PyTreeDef({})")
+
 
 class RavelUtilTest(jtu.JaxTestCase):
 

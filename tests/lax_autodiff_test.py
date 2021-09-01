@@ -643,6 +643,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       ]
       for dtype in dtypes
       for shape, dims in [
+          [(), ()],
           [(3, 4, 5), ()],
           [(3, 4, 5), (0,)],
           [(3, 4, 5), (1, 2)],

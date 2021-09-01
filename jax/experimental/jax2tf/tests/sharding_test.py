@@ -149,7 +149,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     yshape = (8, 5)
     y = np.arange(np.prod(yshape), dtype=np.float32).reshape(yshape)
     self._check_sharding_annotations(
-        sharded_jax_func, [x, y],
+        sharded_jax_func,
+        [x, y],
         expected=[
             r"f32\[3,8\].*sharding={devices=\[1,2\]",
             r"f32\[8,5\].*sharding={devices=\[2,1\]",
@@ -159,7 +160,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
             # TODO(necula): relax ordering
             r"f32\[4,5\].*sharding={devices=\[2,1\]",
             r"f32\[3,4\].*sharding={devices=\[1,2\]",
-            r"f32\[3,5\].*convolution",
+            r"f32\[3,5\].*fusion",
             r"f32\[3,5\].*all-reduce",
         ],
         num_partitions=2)

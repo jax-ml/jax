@@ -51,14 +51,14 @@ xe = xc._xla
 xops = xc._xla.ops
 
 # Types
-Backend = Any  # xc.LocalBackend (why does mypy not like this?)
-Device = Any  # xc.Device
-Buffer = Any
+Backend = xe.Client
+Device = xc.Device
+Buffer = xe.Buffer
 
-XlaOp = Any  # xla_extension.XlaOp
-XlaShape = Any # xla_client.Shape
-XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
-XlaExecutable = Any # xla_extension.LocalExecutable
+XlaOp = xc.XlaOp
+XlaShape = xc.Shape
+XlaComputationBuilder = xc.XlaBuilder
+XlaExecutable = xc.Executable
 
 # This flag is set on exit; no logging should be attempted
 _on_exit = False
@@ -1097,7 +1097,7 @@ def make_device_array(
   This is to be used only within JAX. It will return either a PythonDeviceArray
   or a C++ equivalent implementation.
   """
-  if (isinstance(device_buffer, _CppDeviceArray)):
+  if isinstance(device_buffer, _CppDeviceArray):
 
     if device_buffer.aval == aval and device_buffer._device == device:
       return device_buffer
@@ -1244,7 +1244,10 @@ for device_array in [DeviceArray]:
     prefix = '{}('.format(self.__class__.__name__.lstrip('_'))
     s = np.array2string(self._value, prefix=prefix, suffix=',',
                         separator=', ', max_line_width=line_width)
-    dtype_str = 'dtype={})'.format(self.dtype.name)
+    if self.aval.weak_type:
+      dtype_str = f'dtype={self.dtype.name}, weak_type=True)'
+    else:
+      dtype_str = f'dtype={self.dtype.name})'
     last_line_len = len(s) - s.rfind('\n') + 1
     sep = ' '
     if last_line_len + len(dtype_str) + 1 > line_width:

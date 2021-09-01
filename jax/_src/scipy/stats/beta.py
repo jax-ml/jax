@@ -18,7 +18,7 @@ from jax import lax
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import (_promote_args_inexact, _constant_like,
                                       where, inf, logical_or)
-from jax.scipy.special import betaln
+from jax.scipy.special import betaln, xlogy, xlog1py
 
 
 @_wraps(osp_stats.beta.logpdf, update_doc=False)
@@ -27,8 +27,8 @@ def logpdf(x, a, b, loc=0, scale=1):
   one = _constant_like(x, 1)
   shape_term = lax.neg(betaln(a, b))
   y = lax.div(lax.sub(x, loc), scale)
-  log_linear_term = lax.add(lax.mul(lax.sub(a, one), lax.log(y)),
-                            lax.mul(lax.sub(b, one), lax.log1p(lax.neg(y))))
+  log_linear_term = lax.add(xlogy(lax.sub(a, one), y),
+                            xlog1py(lax.sub(b, one), lax.neg(y)))
   log_probs = lax.sub(lax.add(shape_term, log_linear_term), lax.log(scale))
   return where(logical_or(lax.gt(x, lax.add(loc, scale)),
                           lax.lt(x, loc)), -inf, log_probs)

@@ -16,7 +16,7 @@ import contextlib
 import itertools
 import os.path
 import threading
-from typing import Any, Optional, Iterator
+from typing import Optional, Iterator
 
 import jax.version
 from jax.lib import xla_client
@@ -25,8 +25,8 @@ from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 
-Traceback = Any  # xla_client.Traceback
-Frame = Any  # xla_client.Traceback::Frame
+Traceback = xla_client.Traceback
+Frame = xla_client.Frame
 
 _exclude_paths = [os.path.dirname(jax.version.__file__)]
 

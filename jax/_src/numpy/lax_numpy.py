@@ -1037,6 +1037,11 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
   if weights is not None and weights.shape != (N,):
     raise ValueError("should have one weight for each sample.")
 
+  if range is not None and (
+      len(range) != D or _any(r is not None and len(r) != 2 for r in range)):
+    raise ValueError(f"For sample.shape={(N, D)}, range must be a sequence "
+                     f"of {D} pairs or Nones; got range={range}")
+
   try:
     num_bins = len(bins)
     if num_bins != D:
@@ -1051,7 +1056,8 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
   dedges = D*[None]
 
   for i in builtins.range(D):
-    bin_edges = histogram_bin_edges(sample[:, i], bins[i], range, weights)
+    range_i = None if range is None else range[i]
+    bin_edges = histogram_bin_edges(sample[:, i], bins[i], range_i, weights)
     bin_idx = searchsorted(bin_edges, sample[:, i], side='right')
     bin_idx = where(sample[:, i] == bin_edges[-1], bin_idx - 1, bin_idx)
     bin_idx_by_dim[i] = bin_idx
@@ -1362,6 +1368,76 @@ def gradient(f, *varargs, axis: Optional[Union[int, Tuple[int, ...]]] = None,
 def isrealobj(x):
   return not iscomplexobj(x)
 
+_POLYFIT_DOC = """\
+Unlike NumPy's implementation of polyfit, :py:func:`jax.numpy.polyfit` will not warn on rank reduction, which indicates an ill conditioned matrix
+Also, it works best on rcond <= 10e-3 values.
+"""
+@_wraps(np.polyfit, lax_description=_POLYFIT_DOC )
+def polyfit(x, y, deg, rcond=None, full=False, w=None, cov=False):
+  _check_arraylike("polyfit", x, y)
+  deg = core.concrete_or_error(int, deg, "deg must be int")
+  order = deg + 1
+  # check arguments
+  if deg < 0:
+    raise ValueError("expected deg >= 0")
+  if x.ndim != 1:
+    raise TypeError("expected 1D vector for x")
+  if x.size == 0:
+    raise TypeError("expected non-empty vector for x")
+  if y.ndim < 1 or y.ndim > 2:
+    raise TypeError("expected 1D or 2D array for y")
+  if x.shape[0] != y.shape[0]:
+    raise TypeError("expected x and y to have same length")
+
+  # set rcond
+  if rcond is None:
+    rcond = len(x)*finfo(x.dtype).eps
+  rcond = core.concrete_or_error(float, rcond, "rcond must be float")
+  # set up least squares equation for powers of x
+  lhs = vander(x, order)
+  rhs = y
+
+  # apply weighting
+  if w is not None:
+    _check_arraylike("polyfit", w)
+    w, = _promote_dtypes_inexact(w)
+    if w.ndim != 1:
+      raise TypeError("expected a 1-d array for weights")
+    if w.shape[0] != y.shape[0]:
+      raise TypeError("expected w and y to have the same length")
+    lhs *= w[:, newaxis]
+    if rhs.ndim == 2:
+      rhs *= w[:, newaxis]
+    else:
+      rhs *= w
+
+  # scale lhs to improve condition number and solve
+  scale = sqrt((lhs*lhs).sum(axis=0))
+  lhs /= scale[newaxis,:]
+  from . import linalg
+  c, resids, rank, s = linalg.lstsq(lhs, rhs, rcond)
+  c = (c.T/scale).T  # broadcast scale coefficients
+
+  if full:
+    return c, resids, rank, s, rcond
+  elif cov:
+    Vbase = linalg.inv(dot(lhs.T, lhs))
+    Vbase /= outer(scale, scale)
+    if cov == "unscaled":
+      fac = 1
+    else:
+      if len(x) <= order:
+        raise ValueError("the number of data points must exceed order "
+                            "to scale the covariance matrix")
+      fac = resids / (len(x) - order)
+      fac = fac[0] #making np.array() of shape (1,) to int
+    if y.ndim == 1:
+      return c, Vbase * fac
+    else:
+      return c, Vbase[:,:, newaxis] * fac
+  else:
+    return c
+
 
 @_wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a, newshape, order="C"):
@@ -1614,6 +1690,7 @@ def interp(x, xp, fp, left=None, right=None, period=None):
 In the JAX version, the `assume_unique` argument is not referenced.
 """)
 def in1d(ar1, ar2, assume_unique=False, invert=False):
+  _check_arraylike("in1d", ar1, ar2)
   ar1 = ravel(ar1)
   ar2 = ravel(ar2)
   # Note: an algorithm based on searchsorted has better scaling, but in practice
@@ -1634,8 +1711,10 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
 In the JAX version, the `assume_unique` argument is not referenced.
 """)
 def setdiff1d(ar1, ar2, assume_unique=False):
-  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in setdiff1d()")
-  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in setdiff1d()")
+  _check_arraylike("setdiff1d", ar1, ar2)
+
+  ar1 = core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
+  ar2 = core.concrete_or_error(None, ar2, "The error arose in setdiff1d()")
 
   ar1 = unique(ar1)
   ar2 = unique(ar2)
@@ -1654,9 +1733,7 @@ the minimum value of the union."""
 
 @_wraps(np.union1d, lax_description=_UNION1D_DOC)
 def union1d(ar1, ar2, *, size=None):
-  # TODO(jakevdp): call _check_arraylike on inputs
-  ar1 = asarray(ar1)
-  ar2 = asarray(ar2)
+  _check_arraylike("union1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
     ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
@@ -1670,8 +1747,9 @@ In the JAX version, the input arrays are explicitly flattened regardless
 of assume_unique value.
 """)
 def setxor1d(ar1, ar2, assume_unique=False):
-  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in setxor1d()")
-  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in setxor1d()")
+  _check_arraylike("setxor1d", ar1, ar2)
+  ar1 = core.concrete_or_error(None, ar1, "The error arose in setxor1d()")
+  ar2 = core.concrete_or_error(None, ar2, "The error arose in setxor1d()")
 
   ar1 = ravel(ar1)
   ar2 = ravel(ar2)
@@ -1710,8 +1788,9 @@ def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
 
 @_wraps(np.intersect1d)
 def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
-  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in intersect1d()")
-  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in intersect1d()")
+  _check_arraylike("intersect1d", ar1, ar2)
+  ar1 = core.concrete_or_error(None, ar1, "The error arose in intersect1d()")
+  ar2 = core.concrete_or_error(None, ar2, "The error arose in intersect1d()")
 
   if not assume_unique:
     if return_indices:
@@ -1774,16 +1853,16 @@ three-argument form does not have a data-dependent shape and can be JIT-compiled
 successfully. Alternatively, you can specify the optional ``size`` keyword:
 if specified, the first ``size`` True elements will be returned; if there
 are fewer True elements than ``size`` indicates, the index arrays will be
-padded with zeros.
+padded with ``fill_value`` (default is 0.)
 """
 
 @_wraps(np.where, update_doc=False, lax_description=_WHERE_DOC)
-def where(condition, x=None, y=None, *, size=None):
+def where(condition, x=None, y=None, *, size=None, fill_value=None):
   if x is None and y is None:
-    return nonzero(asarray(condition), size=size)
+    return nonzero(asarray(condition), size=size, fill_value=fill_value)
   else:
-    if size is not None:
-      raise ValueError("size argument cannot be used in three-term where function.")
+    if size is not None or fill_value is not None:
+      raise ValueError("size and fill_value arguments cannot be used in three-term where function.")
     return _where(condition, x, y)
 
 
@@ -2419,12 +2498,14 @@ def nanmax(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 @_wraps(np.nansum, skip_params=['out'])
 def nansum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
            out=None, keepdims=None):
+  lax._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims)
 
 @_wraps(np.nanprod, skip_params=['out'])
 def nanprod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
             out=None, keepdims=None):
+  lax._check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims)
 
@@ -3264,6 +3345,10 @@ def _wrap_numpy_nullary_function(f):
   """
   @_wraps(f, update_doc=False)
   def wrapper(*args, **kwargs):
+    args = [core.concrete_or_error(None, arg, f"the error occured in argument {i} jnp.{f.__name__}()")
+            for i, arg in enumerate(args)]
+    kwargs = {key: core.concrete_or_error(None, val, f"the error occured in argument '{key}' jnp.{f.__name__}()")
+              for key, val in kwargs.items()}
     return asarray(f(*args, **kwargs))
   return wrapper
 
@@ -4017,21 +4102,18 @@ def poly(seq_of_zeros):
 
 @_wraps(np.polyval)
 def polyval(p, x):
-  if isinstance(p, np.poly1d):
-    p = np.asarray(p)
-  if isinstance(x, np.poly1d):
-    y = 0
-  else:
-    y = zeros_like(x)
+  _check_arraylike("polyval", p, x)
+  p, x = _promote_dtypes_inexact(p, x)
+  y = zeros_like(x)
   for i in range(len(p)):
     y = y * x + p[i]
   return y
 
+
 @_wraps(np.polyadd)
 def polyadd(a1, a2):
-  a1 = asarray(a1)
-  a2 = asarray(a2)
-
+  _check_arraylike("polyadd", a1, a2)
+  a1, a2 = _promote_dtypes(a1, a2)
   if a2.shape[0] <= a1.shape[0]:
     return a1.at[-a2.shape[0]:].add(a2)
   else:
@@ -4041,15 +4123,15 @@ def polyadd(a1, a2):
 @_wraps(np.polyint)
 def polyint(p, m=1, k=None):
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyint")
-  p = asarray(p)
+  k = 0 if k is None else k
+  _check_arraylike("polyint", p, k)
+  p, k = _promote_dtypes_inexact(p, k)
   if m < 0:
     raise ValueError("Order of integral must be positive (see polyder)")
-  if k is None:
-    k = zeros(m)
   k = atleast_1d(k)
   if len(k) == 1:
     k = full((m,), k[0])
-  if len(k) != m or k.ndim > 1:
+  if k.shape != (m,):
     raise ValueError("k must be a scalar or a rank-1 array of length 1 or m.")
   if m == 0:
     return p
@@ -4060,8 +4142,9 @@ def polyint(p, m=1, k=None):
 
 @_wraps(np.polyder)
 def polyder(p, m=1):
+  _check_arraylike("polyder", p)
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyder")
-  p = asarray(p)
+  p, = _promote_dtypes_inexact(p)
   if m < 0:
     raise ValueError("Order of derivative must be positive")
   if m == 0:
@@ -4069,16 +4152,18 @@ def polyder(p, m=1):
   coeff = (arange(len(p), m, -1)[newaxis, :] - 1 - arange(m)[:, newaxis]).prod(0)
   return p[:-m] * coeff
 
+
 @_wraps(np.trim_zeros)
 def trim_zeros(filt, trim='fb'):
   filt = core.concrete_or_error(asarray, filt,
     "Error arose in the `filt` argument of trim_zeros()")
-  nz = asarray(filt) == 0
+  nz = (filt == 0)
   if all(nz):
     return empty(0, _dtype(filt))
   start = argmin(nz) if 'f' in trim.lower() else 0
   end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
   return filt[start:len(filt) - end]
+
 
 _LEADING_ZEROS_DOC = """\
 Setting trim_leading_zeros=True makes the output match that of numpy.
@@ -4087,10 +4172,8 @@ But prevents the function from being able to be used in compiled code.
 
 @_wraps(np.polymul, lax_description=_LEADING_ZEROS_DOC)
 def polymul(a1, a2, *, trim_leading_zeros=False):
-  if isinstance(a1, np.poly1d):
-    a1 = asarray(a1)
-  if isinstance(a2, np.poly1d):
-    a2 = asarray(a2)
+  _check_arraylike("polymul", a1, a2)
+  a1, a2 = _promote_dtypes_inexact(a1, a2)
   if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
     a1, a2 = trim_zeros(a1, trim='f'), trim_zeros(a2, trim='f')
   if len(a1) == 0:
@@ -4100,9 +4183,12 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   val = convolve(a1, a2, mode='full')
   return val
 
+
 @_wraps(np.polysub)
 def polysub(a1, a2):
-  return polyadd(asarray(a1), -asarray(a2))
+  _check_arraylike("polysub", a1, a2)
+  a1, a2 = _promote_dtypes(a1, a2)
+  return polyadd(a1, -a2)
 
 
 @_wraps(np.append)
@@ -4941,7 +5027,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
   """
   Find the unique elements of an array, ignoring shape.
   """
-  if ar.size == 0 and size is not None and size > 0:
+  if np.size(ar) == 0 and size is not None and size > 0:
     raise ValueError("jnp.unique(): Cannot pass nonzero size for zero-sized array.")
 
   aux, mask, perm = _unique1d_sorted_mask(ar, return_index or return_inverse)
@@ -5029,12 +5115,12 @@ The `size` cannot currently be used with the `axis` argument."""
 @_wraps(np.unique, skip_params=['axis'], lax_description=_UNIQUE_DOC)
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis: Optional[int] = None, *, size=None):
+  _check_arraylike("unique", ar)
+
   # TODO(jakevdp): call _check_arraylike on input.
   if axis is not None and size is not None:
     # TODO(jakevdp): implement size & axis together.
     raise NotImplementedError("jnp.unique `size` and `axis` arguments cannot be used together.")
-
-  ar = asarray(ar)
 
   if size is None:
     ar = core.concrete_or_error(None, ar, "The error arose for the first argument of jnp.unique()")
@@ -5987,7 +6073,7 @@ _operators = {
 # These numpy.ndarray methods are just refs to an equivalent numpy function
 _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
                     "nonzero", "searchsorted", "round"]
-_diff_methods = ["clip", "conj", "conjugate", "cumprod", "cumsum",
+_diff_methods = ["choose", "clip", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "tile", "trace", "var"]

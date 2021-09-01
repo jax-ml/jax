@@ -796,7 +796,8 @@ def reshape(operand: Array, new_sizes: Shape,
   new_sizes = tuple(new_sizes)
   same_shape = core.symbolic_equal_shape(np.shape(operand), new_sizes)
   same_dims = dimensions is None or tuple(dimensions) == tuple(range(np.ndim(operand)))
-  if np.shape(operand) and same_shape and same_dims:
+  if (np.shape(operand) and same_shape and same_dims
+      and isinstance(operand, (core.Tracer, xla.DeviceArray))):
     return operand
   else:
     return reshape_p.bind(
@@ -1231,7 +1232,8 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   operator.
   """
   permutation = tuple(permutation)
-  if permutation == tuple(range(np.ndim(operand))):
+  if (permutation == tuple(range(np.ndim(operand)))
+      and isinstance(operand, (core.Tracer, xla.DeviceArray))):
     return operand
   else:
     return transpose_p.bind(operand, permutation=permutation)
@@ -2235,7 +2237,7 @@ def _broadcasting_shape_rule(name, *avals):
   if not shapes:
     return ()
   if len({len(shape) for shape in shapes}) != 1:
-    msg = '{} got arrays of different rank: {}.'
+    msg = '{}: arrays must have same number of dimensions, got {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
   result_shape = _try_broadcast_shapes(shapes)
   if result_shape is None:
@@ -2642,19 +2644,6 @@ cbrt_p = standard_unop(_float, 'cbrt',
 ad.defjvp2(cbrt_p,
            lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
 
-# TODO(b/194222106): remove the TPU-specific translation rule after XLA's cbrt
-# is improved on TPU.
-def _cbrt_tpu(y):
-  abs_y = abs(y)
-  z = pow(abs_y, _const(y, -1/3))
-  # Newton-Raphson step: https://csclub.uwaterloo.ca/~pbarfuss/qbrt.pdf
-  z1 = z + _const(y, 1/3) * (z - (z * z) * (z * (z * abs_y)))
-  return select(eq(abs_y, _zeros(abs_y)) | eq(abs_y, full_like(abs_y, np.inf)),
-                y, z1 * (z1 * y))
-
-xla.backend_specific_translations['tpu'][cbrt_p] = xla.lower_fun(
-  _cbrt_tpu, multiple_results=False)
-
 pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
 
 def _pow_jvp_lhs(g, ans, x, y):
@@ -2750,7 +2739,8 @@ def _add_inverse(r, x, y):
   yr = r - x
   return xr, yr
 
-add_p = standard_naryop([_num, _num], 'add')
+# TODO(slebedev): Why does mypy fail to infer the type here?
+add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
 iad.definverse(add_p, _add_inverse)
@@ -3718,8 +3708,8 @@ def _concatenate_shape_rule(*operands, **kwargs):
     op = next(op for op in operands if not isinstance(op, UnshapedArray))
     raise TypeError(msg.format(type(op)))
   if len({operand.ndim for operand in operands}) != 1:
-    msg = "Cannot concatenate arrays with different ranks, got {}."
-    raise TypeError(msg.format(", ".join(str(o.ndim) for o in operands)))
+    msg = "Cannot concatenate arrays with different numbers of dimensions: got {}."
+    raise TypeError(msg.format(", ".join(str(o.shape) for o in operands)))
   if not 0 <= dimension < operands[0].ndim:
     msg = "concatenate dimension out of bounds: dimension {} for shapes {}."
     raise TypeError(msg.format(dimension, ", ".join([str(o.shape) for o in operands])))
@@ -5352,7 +5342,7 @@ def _reduction_computation(c, jaxpr, consts, init_values, singleton=True):
   return subc.build(out_nodes)
 
 def _reduce_jvp(reducer, init_values, primals, tangents, axes):
-  input_shape = np.array(primals[0].shape)
+  input_shape = np.array(primals[0].shape, dtype=np.int_)
 
   n = np.prod(input_shape[list(axes)])
   non_axes = np.delete(np.arange(len(input_shape)), axes)
@@ -6588,7 +6578,7 @@ rng_bit_generator_p.def_abstract_eval(
 xla.translations[rng_bit_generator_p] = _rng_bit_generator_translation_rule
 
 RandomAlgorithm = xops.RandomAlgorithm
-RandomAlgorithm.__str__ = lambda algorithm: algorithm.name
+RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
 
 
 def rng_bit_generator(key,

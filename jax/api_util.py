@@ -20,7 +20,7 @@ import numpy as np
 
 from . import core
 from ._src import dtypes
-from .tree_util import (tree_flatten, tree_unflatten, tree_multimap,
+from .tree_util import (PyTreeDef, tree_flatten, tree_unflatten, tree_multimap,
                         tree_structure, treedef_children, treedef_is_leaf)
 from ._src.tree_util import _replace_nones
 from . import linear_util as lu
@@ -86,7 +86,6 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
-PyTreeDef = Any
 def flattened_fun_in_tree(fn: lu.WrappedFun) -> Optional[Tuple[PyTreeDef, bool]]:
   # This implementation relies on internal details of linear_util.py's
   # WrappedFun, but it's for the worthy cause of better user error messages.

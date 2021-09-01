@@ -507,6 +507,20 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_omnistaging(self):
     # See https://github.com/google/jax/issues/5206
+
+    # TODO(frostig): remove once we always enable_custom_prng
+    def _prng_key_as_array(key):
+      return key.keys if config.jax_enable_custom_prng else key
+
+    # TODO(frostig): remove once we always enable_custom_prng
+    def _array_as_prng_key(arr):
+      arr = np.array(arr, dtype=np.uint32)
+      if config.jax_enable_custom_prng:
+        return jax._src.prng.PRNGKeyArray(
+            jax._src.prng.threefry_prng_impl, arr)
+      else:
+        return arr
+
     key_list = [None]
 
     def init():
@@ -514,10 +528,10 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       key_list[0] = key
       return jax.random.normal(subkey, ())
 
-    key_list[0] = np.array([2384771982, 3928867769], dtype=np.uint32)
+    key_list[0] = _array_as_prng_key([2384771982, 3928867769])
     init()
     self.jit(init)()
-    self.assertIsInstance(key_list[0], core.Tracer)
+    self.assertIsInstance(_prng_key_as_array(key_list[0]), core.Tracer)
 
   def test_jit_wrapped_attributes(self):
     def f(x: int) -> int:
@@ -647,6 +661,27 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       np.testing.assert_allclose(f_pruned(*args), 3)
     self.assertEqual(count[0], 1)
 
+  @unittest.skipIf(jax.lib._xla_extension_version <= 36,
+                   "Test requires jaxlib 0.1.71")
+  def testBuffersAreFreedPromptly(self):
+    # Regression test for a bug where garbage collection was delayed too long
+    # for NumPy buffers that are aliased zero-copy by the runtime.
+    @self.jit
+    def f(x):
+      return x + 1
+
+    refs = []
+    x = np.ones((10000,), np.float32)
+    for step in range(1000):
+      x = f(x)
+      refs.append(weakref.ref(x))
+      x = np.asarray(x)
+
+    # We expect most of the input buffers to have been garbage
+    # collected in parallel with the execution. We can't call
+    # block_until_ready() here because it would force a garbage collection.
+    live_refs = len([ref for ref in refs if ref() is not None])
+    self.assertLessEqual(live_refs, 100)
 
 class PythonJitTest(CPPJitTest):
 
@@ -2948,6 +2983,20 @@ class APITest(jtu.JaxTestCase):
 
     with jax.checking_leaks():
       _ = jax.grad(loss)(A, x)  # doesn't crash
+
+  def test_vmap_caching(self):
+    # https://github.com/google/jax/issues/7621
+
+    f = lambda x: jnp.square(x).mean()
+    jf = jax.jit(f)
+    x = jax.random.uniform(jax.random.PRNGKey(0), shape=(8, 4))
+
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      jax.hessian(jf)(x).block_until_ready()
+      jax.hessian(jf)(x).block_until_ready()
+      jax.hessian(jf)(x).block_until_ready()
+
+    self.assertEqual(count[0], 2)
 
 
 class RematTest(jtu.JaxTestCase):
@@ -5336,6 +5385,21 @@ class CustomVJPTest(jtu.JaxTestCase):
     g_c, g_x = api.grad(solve, argnums=(0, 2))(c, s, x)
     self.assertAllClose(g_c, 42. * c, check_dtypes=False)
     self.assertAllClose(g_x, 17. * x, check_dtypes=False)
+
+  def test_float0_cotangents_automatically_handled(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return x
+
+    def f_fwd(x, y):
+      return x, None
+
+    def f_bwd(_, zbar):
+      return (0., 1)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    jax.jit(lambda x: jax.vjp(f, 0., x)[1](1.))(1)  # doesn't crash
 
 
 class CustomTransposeTest(jtu.JaxTestCase):

@@ -114,17 +114,22 @@ flags.DEFINE_bool(
 
 
 def _nan_check_posthook(fun, args, kwargs, output):
-  """Hook function called by the C++ jit to perform NaN checking."""
+  """Hook function called by the C++ jit/pmap to perform NaN checking."""
+  leaves = tree_leaves(output)
+
+  buffers = []
+  for da_or_sda in leaves:
+    if hasattr(da_or_sda, "device_buffer"):
+      buffers.append(da_or_sda.device_buffer)
+    elif hasattr(da_or_sda, "device_buffers"):
+      buffers.extend(da_or_sda.device_buffers)
+
   try:
-    xla.check_special(xla.xla_call_p, [
-        da.device_buffer
-        for da in tree_leaves(output)
-        if hasattr(da, "device_buffer")
-    ])
+    xla.check_special(xla.xla_call_p, buffers)
   except FloatingPointError:
     # compiled_fun can only raise in this case
     assert config.jax_debug_nans or config.jax_debug_infs
-    print("Invalid nan value encountered in the output of a C++-jit "
+    print("Invalid nan value encountered in the output of a C++-jit/pmap "
           "function. Calling the de-optimized version.")
     fun._cache_miss(*args, **kwargs)[0]  # probably won't return
 
@@ -1244,7 +1249,7 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
   broadcast across the mapped axis:
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(jnp.arange(2.), 4.))
-  (DeviceArray([4., 5.], dtype=float32), DeviceArray([8., 8.], dtype=float32))
+  (DeviceArray([4., 5.], dtype=float32), DeviceArray([8., 8.], dtype=float32, weak_type=True))
 
   If the ``out_axes`` is specified for a mapped result, the result is transposed
   accordingly.
@@ -1255,8 +1260,6 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
   if fun.__doc__:
     docstr += "\n\nOriginal documentation:\n\n"
     docstr += fun.__doc__
-
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
 
   if isinstance(in_axes, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
@@ -1779,8 +1782,9 @@ def _cpp_pmap(
     execute = pxla.parallel_callable.most_recent_entry()
     use_fastpath = (
         execute is not None and
-        # We don't support JAX extension backends.
-        execute[0].func is pxla.execute_replicated and
+        # We don't support JAX extension backends. In particular, some
+        # extentions do not return a partial with a `func` attribute.
+        getattr(execute[0], "func", None) is pxla.execute_replicated and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(isinstance(x, xla.DeviceArray) for x in out_flat))
@@ -1806,8 +1810,9 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
-  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss, static_broadcasted_tuple,
-                               pxla._shard_arg)
+  # TODO(slebedev): Remove the ignore once jaxlib>=0.1.71.
+  cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,  # type: ignore[call-arg]
+                               static_broadcasted_tuple, pxla._shard_arg)
 
   # TODO(jblespiau): make cpp callable follow descriptor protocol for bound
   # methods
@@ -1994,7 +1999,7 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   >>> def f(x): return 3. * jnp.sin(x) + jnp.cos(x / 2.)
   ...
   >>> jax.jvp(f, (2.,), (3.,))
-  (DeviceArray(3.26819, dtype=float32), DeviceArray(-5.00753, dtype=float32))
+  (DeviceArray(3.26819, dtype=float32, weak_type=True), DeviceArray(-5.00753, dtype=float32, weak_type=True))
   >>> y, f_jvp = jax.linearize(f, 2.)
   >>> print(y)
   3.2681944
@@ -2480,7 +2485,35 @@ def _device_get(x):
   else:
     return copy()
 
-def device_get(x):
+def device_get(x: Any):
+  """Transfer ``x`` to host.
+
+  Args:
+    x: An array, scalar, DeviceArray or (nested) standard Python container thereof
+      representing the array to be transferred to host.
+
+  Returns:
+    An array or (nested) Python container thereof representing the
+    value of ``x``.
+
+  Examples:
+    Passing a DeviceArray:
+
+    >>> import jax
+    >>> x = jax.numpy.array([1., 2., 3.])
+    >>> jax.device_get(x)
+    array([1., 2., 3.], dtype=float32)
+
+    Passing a scalar (has no effect):
+
+    >>> jax.device_get(1)
+    1
+
+  See Also:
+    - device_put
+    - device_put_sharded
+    - device_put_replicated
+  """
   for y in tree_leaves(x):
     try:
       y.copy_to_host_async()

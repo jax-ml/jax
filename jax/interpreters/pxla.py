@@ -34,8 +34,9 @@ from collections import defaultdict, OrderedDict
 import itertools as it
 import operator as op
 import threading
-from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
-                    Type, Union, Iterable, NamedTuple, TYPE_CHECKING)
+from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional,
+                    Sequence, Set, Tuple, Type, Union, Iterable)
+
 from absl import logging
 import numpy as np
 
@@ -79,33 +80,12 @@ unsafe_map, map = map, safe_map  # type: ignore
 
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
+NoSharding = pmap_lib.NoSharding
+Chunked = pmap_lib.Chunked
+Unstacked = pmap_lib.Unstacked
 
-# mypy cannot deal with the C++ types. An alternative is to use `# type: ignore`
-if TYPE_CHECKING:
-  # We cannot use `NoSharding = Any` with mypy, otherwise you get:
-  # error: Cannot use isinstance() with Any type  [misc]
-  class NoSharding:
-    pass
-
-  class Chunked(NamedTuple):
-    chunks: List[int]
-
-  class Unstacked(NamedTuple):
-    size: int
-
-  class ShardedAxis(NamedTuple):
-    axis: int
-
-  class Replicated(NamedTuple):
-    replicas: int
-else:
-  # See the C++ code for comments.
-  NoSharding = pmap_lib.NoSharding
-  Chunked = pmap_lib.Chunked
-  Unstacked = pmap_lib.Unstacked
-
-  ShardedAxis = pmap_lib.ShardedAxis
-  Replicated = pmap_lib.Replicated
+ShardedAxis = pmap_lib.ShardedAxis
+Replicated = pmap_lib.Replicated
 
 _UNSHARDED_INSTANCE = NoSharding()
 AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
@@ -498,11 +478,16 @@ def make_sharded_device_array(
   if indices is None:
     indices = spec_to_indices(aval.shape, sharding_spec)
 
+  for buf in device_buffers:
+    buf.aval = ShapedArray(buf.shape, buf.dtype)
+
   if (_USE_CPP_SDA and
       (not device_buffers or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
-    return pmap_lib.ShardedDeviceArray(aval, sharding_spec, device_buffers,
-                                       indices, aval.weak_type)
+    # TODO(slebedev): Remove the ignore once jaxlib>=0.1.71.
+    return pmap_lib.ShardedDeviceArray(
+        aval, sharding_spec, device_buffers,  # type: ignore[arg-type, call-arg]
+        indices, aval.weak_type)
 
   return _ShardedDeviceArray(aval, sharding_spec, device_buffers, indices)
 

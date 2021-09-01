@@ -111,12 +111,12 @@ class JetTest(jtu.JaxTestCase):
 
     rng = np.random.RandomState(0)
 
-    x = rng.randn(*input_shape).astype("float32")
+    x = rng.randn(*input_shape)
     primals = (W, b, x)
 
-    series_in1 = [rng.randn(*W.shape).astype("float32") for _ in range(order)]
-    series_in2 = [rng.randn(*b.shape).astype("float32") for _ in range(order)]
-    series_in3 = [rng.randn(*x.shape).astype("float32") for _ in range(order)]
+    series_in1 = [rng.randn(*W.shape) for _ in range(order)]
+    series_in2 = [rng.randn(*b.shape) for _ in range(order)]
+    series_in3 = [rng.randn(*x.shape) for _ in range(order)]
 
     series_in = (series_in1, series_in2, series_in3)
 

@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Cancel previous
-        uses: styfle/cancel-workflow-action@0.8.0
+        uses: styfle/cancel-workflow-action@0.9.1
         with:
           access_token: ${{ github.token }}
         if: ${{github.ref != 'refs/head/main'}}
@@ -25,7 +25,7 @@ jobs:
         uses: actions/setup-python@v2
         with:
           python-version: 3.8
-      - uses: pre-commit/action@v2.0.0
+      - uses: pre-commit/action@v2.0.3
 
   build:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
@@ -34,12 +34,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - name-prefix: "with many tests"
+          - name-prefix: "with 3.8"
             python-version: 3.8
             os: ubuntu-latest
             enable-x64: 0
             package-overrides: "none"
-            num_generated_cases: 25
+            num_generated_cases: 10
             use-latest-jaxlib: false
           - name-prefix: "with numpy-dispatch"
             python-version: 3.9
@@ -68,7 +68,7 @@ jobs:
             use-latest-jaxlib: true
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.7.0
+      uses: styfle/cancel-workflow-action@0.9.1
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/head/main'}}
@@ -118,7 +118,7 @@ jobs:
         python-version: [3.7]
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.7.0
+      uses: styfle/cancel-workflow-action@0.9.1
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/head/main'}}

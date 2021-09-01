@@ -1379,10 +1379,41 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
               jtu.tolerance(rhs_dtype, tol_spec))
     # TODO(phawkins): there are float32/float64 disagreements for some inputs.
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
-                            tol=tol)
-    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=False, atol=tol,
-                          rtol=tol)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=False, atol=tol, rtol=tol)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_deg={}_rcond={}_full={}_w={}_cov={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          deg,
+          rcond,
+          full,
+          w,
+          cov),
+      "shape": shape, "dtype": dtype, "deg": deg,
+      "rcond": rcond, "full": full, "w":w, "cov":cov}
+      for dtype in [dt for dt in float_dtypes if dt not in [jnp.float16, jnp.bfloat16]]
+      for shape in [shape for shape in one_dim_array_shapes if shape != (1,)]
+      for deg in [1, 2, 3]
+      for rcond in [None, -1, 10e-3, 10e-5, 10e-10]
+      for full in [False, True]
+      for w in [False, True]
+      for cov in [False, True, "unscaled"]))
+  def testPolyfit(self, shape, dtype, deg, rcond, full, w, cov):
+    rng = jtu.rand_default(self.rng())
+    tol_spec = {np.float32: 1e-3, np.float64: 1e-13, np.complex64: 1e-5}
+    if jtu.device_under_test() == "tpu":
+      tol_spec[np.float32] = tol_spec[np.complex64] = 2e-1
+    tol = jtu.tolerance(dtype, tol_spec)
+    _w = lambda a: abs(a) if w else None
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype), rng(shape, dtype)]
+    jnp_fun = lambda x, y, a: jnp.polyfit(x, y, deg=deg, rcond=rcond, full=full, w=_w(a), cov=cov)
+    np_fun = jtu.ignore_warning(
+      message="Polyfit may be poorly conditioned*")(lambda x, y, a: np.polyfit(x, y, deg=deg, rcond=rcond, full=full, w=_w(a), cov=cov))
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=False, atol=tol, rtol=tol)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_amin={}_amax={}".format(
@@ -3147,25 +3178,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_{}_bins={}_weights={}_density={}".format(
-      jtu.format_shape_dtype_string(shape, dtype), bins, weights, density),
-      "shape": shape,
-      "dtype": dtype,
-      "bins": bins,
-      "weights": weights,
-      "density": density
+    {"testcase_name": "_{}_bins={}_weights={}_density={}_range={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), bins, weights, density, range),
+      "shape": shape, "dtype": dtype, "bins": bins, "weights": weights, "density": density, "range": range,
     }
     for shape in [(5,), (12,)]
     for dtype in int_dtypes
     for bins in [2, [2, 2], [[0, 1, 3, 5], [0, 2, 3, 4, 6]]]
     for weights in [False, True]
     for density in [False, True]
+    for range in [None, [(-1, 1), None], [(-1, 1), (-2, 2)]]
   ))
-  def testHistogram2d(self, shape, dtype, bins, weights, density):
+  def testHistogram2d(self, shape, dtype, bins, weights, density, range):
     rng = jtu.rand_default(self.rng())
     _weights = lambda w: abs(w) if weights else None
-    np_fun = lambda a, b, w: np.histogram2d(a, b, bins=bins, weights=_weights(w), density=density)
-    jnp_fun = lambda a, b, w: jnp.histogram2d(a, b, bins=bins, weights=_weights(w), density=density)
+    np_fun = jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")(
+        lambda a, b, w: np.histogram2d(a, b, bins=bins, weights=_weights(w), density=density, range=range))
+    jnp_fun = lambda a, b, w: jnp.histogram2d(a, b, bins=bins, weights=_weights(w), density=density, range=range)
     args_maker = lambda: [rng(shape, dtype), rng(shape, dtype), rng(shape, dtype)]
     tol = {jnp.bfloat16: 2E-2, np.float16: 1E-1}
     # np.searchsorted errors on bfloat16 with
@@ -3177,25 +3206,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_{}_bins={}_weights={}_density={}".format(
-      jtu.format_shape_dtype_string(shape, dtype), bins, weights, density),
-      "shape": shape,
-      "dtype": dtype,
-      "bins": bins,
-      "weights": weights,
-      "density": density
+    {"testcase_name": "_{}_bins={}_weights={}_density={}_range={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), bins, weights, density, range),
+      "shape": shape, "dtype": dtype, "bins": bins, "weights": weights, "density": density, "range": range,
     }
     for shape in [(5, 3), (10, 3)]
     for dtype in int_dtypes
     for bins in [(2, 2, 2), [[-5, 0, 4], [-4, -1, 2], [-6, -1, 4]]]
     for weights in [False, True]
     for density in [False, True]
+    for range in [None, [(-1, 1), None, None], [(-1, 1), (-2, 2), (-3, 3)]]
   ))
-  def testHistogramdd(self, shape, dtype, bins, weights, density):
+  def testHistogramdd(self, shape, dtype, bins, weights, density, range):
     rng = jtu.rand_default(self.rng())
     _weights = lambda w: abs(w) if weights else None
-    np_fun = lambda a, w: np.histogramdd(a, bins=bins, weights=_weights(w), density=density)
-    jnp_fun = lambda a, w: jnp.histogramdd(a, bins=bins, weights=_weights(w), density=density)
+    np_fun = jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")(
+        lambda a, w: np.histogramdd(a, bins=bins, weights=_weights(w), density=density, range=range))
+    jnp_fun = lambda a, w: jnp.histogramdd(a, bins=bins, weights=_weights(w), density=density, range=range)
     args_maker = lambda: [rng(shape, dtype), rng((shape[0],), dtype)]
     tol = {jnp.bfloat16: 2E-2, np.float16: 1E-1}
     # np.searchsorted errors on bfloat16 with

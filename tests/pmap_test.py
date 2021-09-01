@@ -1116,7 +1116,9 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @vmap
     def s(keys):
-      keys = jnp.broadcast_to(keys, (N_DEVICES,) + keys.shape)
+      keys = tree_util.tree_map(
+          lambda x: jnp.broadcast_to(x, (N_DEVICES,) + x.shape),
+          keys)
       return g(keys)
 
     ans = s(keys)  # doesn't crash
@@ -1723,13 +1725,14 @@ class PythonPmapTest(jtu.JaxTestCase):
     cond_of_pmap(jnp.zeros((xla_bridge.device_count(), 2)))
 
 
-if config.FLAGS.experimental_cpp_pmap:
+class CppPmapTest(PythonPmapTest):
 
-  class CppPmapTest(PythonPmapTest):
-
-    @property
-    def pmap(self):
+  @property
+  def pmap(self):
+    if jax.lib._xla_extension_version >= 36:
       return src_api._cpp_pmap
+    else:
+      return src_api._python_pmap
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):

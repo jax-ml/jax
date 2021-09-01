@@ -11,6 +11,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.20 (unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.19...main).
+* Breaking Changes
+  * `jnp.poly*` functions now require array-like inputs ({jax-issue}`#7732`)
+  * `jnp.unique` and other set-like operations now require array-like inputs
+    ({jax-issue}`#7662`)
 
 ## jax 0.2.19 (Aug 12, 2021)
 * [GitHub
