@@ -27,6 +27,7 @@ rules for the underlying :code:`lax` primitives.
 import builtins
 import collections
 import collections.abc
+import functools
 import operator
 import types
 from typing import Any, Sequence, FrozenSet, Optional, Tuple, Union, cast
@@ -4100,15 +4101,22 @@ def poly(seq_of_zeros):
   return a
 
 
-@_wraps(np.polyval)
-def polyval(p, x):
+@_wraps(np.polyval, lax_description="""\
+The ``unroll`` parameter is JAX specific. It does not effect correctness but can
+have a major impact on performance for evaluating high-order polynomials. The
+parameter controls the number of unrolled steps with ``lax.scan`` inside the
+``polyval`` implementation. Consider setting ``unroll=128`` (or even higher) to
+improve runtime performance on accelerators, at the cost of increased
+compilation time.
+""")
+@functools.partial(jax.jit, static_argnames=['unroll'])
+def polyval(p, x, *, unroll=16):
   _check_arraylike("polyval", p, x)
   p, x = _promote_dtypes_inexact(p, x)
-  y = zeros_like(x)
-  for i in range(len(p)):
-    y = y * x + p[i]
+  shape = lax.broadcast_shapes(p.shape[1:], x.shape)
+  y = lax.full_like(x, 0, shape=shape, dtype=x.dtype)
+  y, _ = lax.scan(lambda y, p: (y * x + p, None), y, p, unroll=unroll)
   return y
-
 
 @_wraps(np.polyadd)
 def polyadd(a1, a2):
