@@ -602,6 +602,28 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("tpu")
+  def testPsumUnevenReplicaGroups(self):
+    replicas = xla_bridge.device_count()
+    if replicas <= 2:
+      raise SkipTest("Test expected devices greater than 2.")
+    axis_index_groups = [[0,1], np.arange(2,replicas)]
+    f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
+    f = self.pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    def sum_helper(a):
+      return np.broadcast_to(a.sum(0, keepdims=True),
+                              (len(a), x.shape[1]))
+    expected_psum_1 = sum_helper(x[0:2])
+    expected_psum_2 = sum_helper(x[2:])
+    expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected = x - expected_psum
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testPsumReplicaGroups(self):
     replicas = xla_bridge.device_count()
     if replicas % 2 != 0:

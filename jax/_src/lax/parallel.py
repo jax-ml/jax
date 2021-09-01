@@ -57,7 +57,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform psums over the first
       two and last two replicas). Groups must cover all axis indices exactly
-      once, and all groups must be the same size.
+      once.
 
 
   Returns:
@@ -78,7 +78,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
     axis_name = (axis_name,)
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
-  _validate_axis_index_groups(axis_index_groups)
+  _validate_reduce_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
   leaves = [lax.convert_element_type(l, np.int32)
             if dtypes.dtype(l) == np.bool_ else l for l in leaves]
@@ -99,7 +99,7 @@ def pmean(x, axis_name, *, axis_index_groups=None):
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmeans over the first
       two and last two replicas). Groups must cover all axis indices exactly
-      once, and all groups must be the same size.
+      once, and on TPUs all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -132,7 +132,7 @@ def pmax(x, axis_name, *, axis_index_groups=None):
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmaxes over the first
       two and last two replicas). Groups must cover all axis indices exactly
-      once, and all groups must be the same size.
+      once, and on TPUs all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -142,7 +142,7 @@ def pmax(x, axis_name, *, axis_index_groups=None):
     axis_name = (axis_name,)
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
-  _validate_axis_index_groups(axis_index_groups)
+  _validate_reduce_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
   out_flat = pmax_p.bind(*leaves, axes=axis_name,
                          axis_index_groups=axis_index_groups)
@@ -161,7 +161,7 @@ def pmin(x, axis_name, *, axis_index_groups=None):
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmins over the first
       two and last two replicas). Groups must cover all axis indices exactly
-      once, and all groups must be the same size.
+      once, and on TPUs all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -171,7 +171,7 @@ def pmin(x, axis_name, *, axis_index_groups=None):
     axis_name = (axis_name,)
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
-  _validate_axis_index_groups(axis_index_groups)
+  _validate_reduce_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
   out_flat = pmin_p.bind(*leaves, axes=axis_name,
                          axis_index_groups=axis_index_groups)
@@ -194,13 +194,10 @@ def _axis_index_of_val(x, val, axis_name):
   validx = lax_numpy.where(val == x, idx, dtypes.iinfo(dtypes.dtype(idx)).max)
   return pmin(validx, axis_name)
 
-def _validate_axis_index_groups(axis_index_groups):
+def _validate_reduce_axis_index_groups(axis_index_groups):
   if axis_index_groups is None:
     return
-  len_0 = len(axis_index_groups[0])
-  if any(len(g) != len_0 for g in axis_index_groups):
-    raise ValueError("axis_index_groups must all be the same size")
-  axis_space = range(len_0 * len(axis_index_groups))
+  axis_space = range(sum(len(group) for group in axis_index_groups))
   if {i for g in axis_index_groups for i in g} != set(axis_space):
     raise ValueError("axis_index_groups must cover all indices exactly once")
 
@@ -645,6 +642,10 @@ def _allreduce_abstract_eval(*args, axes, axis_index_groups):
 
 def _allreduce_translation_rule(prim, pos_prim, c, *args, axes, axis_index_groups,
                                 axis_env, platform):
+  if axis_index_groups is not None and platform == "tpu":
+    len_0 = len(axis_index_groups[0])
+    if any(len(g) != len_0 for g in axis_index_groups):
+      raise ValueError("axis_index_groups must all be the same size")
   named_axes, positional_axes = axes_partition = [], []
   for axis in axes:
     axes_partition[isinstance(axis, int)].append(axis)
