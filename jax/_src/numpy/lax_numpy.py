@@ -27,7 +27,6 @@ rules for the underlying :code:`lax` primitives.
 import builtins
 import collections
 import collections.abc
-import functools
 import operator
 import types
 from typing import Any, Sequence, FrozenSet, Optional, Tuple, Union, cast
@@ -4109,7 +4108,7 @@ parameter controls the number of unrolled steps with ``lax.scan`` inside the
 improve runtime performance on accelerators, at the cost of increased
 compilation time.
 """)
-@functools.partial(jax.jit, static_argnames=['unroll'])
+@partial(jax.jit, static_argnames=['unroll'])
 def polyval(p, x, *, unroll=16):
   _check_arraylike("polyval", p, x)
   p, x = _promote_dtypes_inexact(p, x)
