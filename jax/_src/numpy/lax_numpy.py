@@ -2826,8 +2826,7 @@ def einsum(*operands, out=None, optimize='optimal', precision=None,
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
 
-  if (_use_xeinsum or isinstance(operands[0], str) and '{' in operands[0] and
-      len(operands[1:]) == 2):
+  if (_use_xeinsum or isinstance(operands[0], str) and '{' in operands[0]):
     return lax.xeinsum(*operands)
 
   optimize = 'optimal' if optimize is True else optimize
