@@ -16,6 +16,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jnp.unique` and other set-like operations now require array-like inputs
     ({jax-issue}`#7662`)
 
+## jaxlib 0.1.71 (Sep 1, 2021)
+* Breaking changes:
+  * Support for CUDA 11.0 and CUDA 10.1 has been dropped. Jaxlib now supports
+    CUDA 10.2 and CUDA 11.1+.
+
 ## jax 0.2.19 (Aug 12, 2021)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.18...jax-v0.2.19).

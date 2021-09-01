@@ -15,8 +15,8 @@
 from setuptools import setup, find_packages
 
 # The following should be updated with each new jaxlib release.
-_current_jaxlib_version = '0.1.70'
-_available_cuda_versions = ['101', '102', '110', '111']
+_current_jaxlib_version = '0.1.71'
+_available_cuda_versions = ['102', '111']
 
 _dct = {}
 with open('jax/version.py') as f:
