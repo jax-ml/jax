@@ -29,6 +29,7 @@ import itertools as it
 import sys
 import threading
 import weakref
+import types
 from typing import (Any, Callable, Iterable, NamedTuple, Mapping, Optional,
                     Sequence, Tuple, TypeVar, Union, overload)
 from warnings import warn
@@ -36,6 +37,7 @@ from warnings import warn
 import numpy as np
 from contextlib import contextmanager, ExitStack
 
+import jax
 from .. import core
 from .. import lib
 from .. import linear_util as lu
@@ -2639,6 +2641,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
 
 def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
+               policy: Optional[Callable[..., bool]] = None,
                ) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
@@ -2685,6 +2688,12 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
       ``pmap``, CSE can defeat the purpose of this decorator. But in some
       settings, like when used inside a ``scan``, this CSE prevention mechanism
       is unnecessary, in which case ``prevent_cse`` can be set to False.
+    policy: This is an experimental feature and the API is likely to change.
+      Optional callable, one of the attributes of ``jax.checkpoint_policies``,
+      which takes as input a type-level specification of a first-order primitive
+      application and returns a boolean indicating whether the corresponding
+      output value(s) can be saved as a residual (or, if not, instead must be
+      recomputed in the (co)tangent computation).
 
   Returns:
     A function (callable) with the same input/output behavior as ``fun`` but
@@ -2736,10 +2745,17 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
     out_flat = pe.remat_call(flat_fun, *args_flat, name=flat_fun.__name__,
                              concrete=concrete, prevent_cse=prevent_cse,
-                             differentiated=False)
+                             differentiated=False,
+                             policy=policy)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint
+
+checkpoint_policies = types.SimpleNamespace(
+    checkpoint_dots=
+    lambda prim, *_, **__: prim in {jax._src.lax.lax.dot_general_p,
+                                    jax._src.lax.lax.conv_general_dilated_p},
+)
 
 
 def named_call(

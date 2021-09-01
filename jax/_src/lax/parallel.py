@@ -1218,7 +1218,7 @@ def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
 reduce_scatter_p = core.AxisPrimitive("reduce_scatter")
 reduce_scatter_p.def_abstract_eval(_reduce_scatter_abstract_eval)
 xla.parallel_translations[reduce_scatter_p] = partial(
-    _reduce_scatter_translation_rule, lax.add_p, psum)
+    _reduce_scatter_translation_rule, lax.add_p, psum)  # type: ignore
 pxla.multi_host_supported_collectives.add(reduce_scatter_p)
 
 

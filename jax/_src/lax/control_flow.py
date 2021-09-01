@@ -560,6 +560,7 @@ pe.custom_partial_eval_rules[while_p] = _while_partial_eval
 xla.initial_style_translations[while_p] = _while_loop_translation_rule
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.initial_style_batchers[while_p] = _while_loop_batching_rule
+pe.partial_eval_jaxpr_custom_rules[while_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
 
 
 ### cond and switch
@@ -1136,6 +1137,7 @@ pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.initial_style_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
 core.custom_typechecks[cond_p] = _cond_typecheck
+pe.partial_eval_jaxpr_custom_rules[cond_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
 
 
 ### scan
@@ -1887,6 +1889,7 @@ xla.initial_style_translations[scan_p] = xla.lower_fun_initial_style(_scan_impl)
 batching.initial_style_batchers[scan_p] = _scan_batching_rule
 masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
+pe.partial_eval_jaxpr_custom_rules[scan_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
 
 
 @api_boundary
@@ -2434,6 +2437,7 @@ xla.initial_style_translations[linear_solve_p] = \
     xla.lower_fun_initial_style(_custom_linear_solve_impl)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
 batching.initial_style_batchers[linear_solve_p] = _linear_solve_batching_rule
+pe.partial_eval_jaxpr_custom_rules[linear_solve_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
 
 
 def _interleave(a, b, axis):

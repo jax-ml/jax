@@ -16,7 +16,8 @@
 from functools import update_wrapper, reduce, partial
 import inspect
 import operator as op
-from typing import Callable, Generic, Optional, Sequence, Tuple, TypeVar, Any
+from typing import (Callable, Generic, Optional, Sequence, Tuple, List, TypeVar,
+                    Any)
 
 from jax import core
 from jax import linear_util as lu
@@ -377,6 +378,23 @@ def _custom_jvp_call_jaxpr_transpose(reduce_axes, cts, *args, fun_jaxpr,
       fun_jaxpr.jaxpr, reduce_axes, fun_jaxpr.consts, args, cts)
 ad.reducing_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
+def custom_jvp_jaxpr_custom_partial_eval_rule(
+    saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
+    eqn: core.JaxprEqn
+  ) -> Tuple[core.JaxprEqn, core.JaxprEqn, List[bool], List[bool], List[core.Var]]:
+  # It doesn't make sense to unzip (i.e. break up) a custom_jvp function into
+  # constituent parts, so we always perform full remat. An alternative would be
+  # to allow the policy function to decide whether the value of a
+  # custom_jvp-decorated function's application should be saved or not.
+  if any(unks_in): raise NotImplementedError  # TODO(mattjj): linear fn
+  unks_out = [False] * len(eqn.outvars)
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+  inst_out = [True] * len(eqn.outvars)
+  return eqn, eqn, unks_out, inst_out, new_inst
+pe.partial_eval_jaxpr_custom_rules[custom_jvp_call_jaxpr_p] = \
+    custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
+
 
 ### VJPs
 
@@ -663,6 +681,9 @@ xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 xla.translations[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 
+pe.partial_eval_jaxpr_custom_rules[custom_vjp_call_jaxpr_p] = \
+    custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore
+
 
 def custom_gradient(fun):
   """Convenience function for defining custom VJP rules (aka custom gradients).
@@ -688,7 +709,9 @@ def custom_gradient(fun):
   over intermediate values computed when evaluating the function to be
   differentiated. That is, use lexical closure to share work between the forward
   pass and the backward pass of reverse-mode automatic differentiation. However,
-  it cannot support Python control flow.
+  it cannot perform Python control flow which depends on the values of the
+  closed-over intermediate values or its cotangent arguments; if the function
+  includes such control flow, an error is raised.
 
   Args:
     fun: a Python callable specifying both the mathematical function to be
