@@ -20,6 +20,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Breaking changes:
   * Support for CUDA 11.0 and CUDA 10.1 has been dropped. Jaxlib now supports
     CUDA 10.2 and CUDA 11.1+.
+* New features:
+  * Experimental multi-host GPU support.
 
 ## jax 0.2.19 (Aug 12, 2021)
 * [GitHub
