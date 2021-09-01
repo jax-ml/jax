@@ -26,8 +26,6 @@ for _name, _value in _pocketfft.registrations().items():
 
 FftType = xla_client.FftType
 
-flatbuffers_version_2 = hasattr(flatbuffers, "__version__")
-
 
 def pocketfft(c, a, *, fft_type: FftType, fft_lengths: List[int]):
   """PocketFFT kernel for CPU."""
@@ -92,37 +90,25 @@ def pocketfft(c, a, *, fft_type: FftType, fft_lengths: List[int]):
   for d in reversed(
       shape.dimensions() if fft_type != FftType.IRFFT else out_shape):
     builder.PrependUint64(d)
-  if flatbuffers_version_2:
-    pocketfft_shape = builder.EndVector()
-  else:
-    pocketfft_shape = builder.EndVector(n)
+  pocketfft_shape = builder.EndVector()
 
   pd.PocketFftDescriptorStartStridesInVector(builder, n)
   stride = dtype.itemsize
   for d in reversed(shape.dimensions()):
     builder.PrependUint64(stride)
     stride *= d
-  if flatbuffers_version_2:
-    strides_in = builder.EndVector()
-  else:
-    strides_in = builder.EndVector(n)
+  strides_in = builder.EndVector()
   pd.PocketFftDescriptorStartStridesOutVector(builder, n)
   stride = out_dtype.itemsize
   for d in reversed(out_shape):
     builder.PrependUint64(stride)
     stride *= d
-  if flatbuffers_version_2:
-    strides_out = builder.EndVector()
-  else:
-    strides_out = builder.EndVector(n)
+  strides_out = builder.EndVector()
 
   pd.PocketFftDescriptorStartAxesVector(builder, len(fft_lengths))
   for d in range(len(fft_lengths)):
     builder.PrependUint32(n - d - 1)
-  if flatbuffers_version_2:
-    axes = builder.EndVector()
-  else:
-    axes = builder.EndVector(len(fft_lengths))
+  axes = builder.EndVector()
 
   scale = 1. if forward else (1. / np.prod(fft_lengths))
   pd.PocketFftDescriptorStart(builder)
