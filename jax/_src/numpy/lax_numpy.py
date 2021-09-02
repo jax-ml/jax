@@ -1623,7 +1623,7 @@ def moveaxis(a, source: Union[int, Sequence[int]],
 
 @_wraps(np.isclose)
 def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
-  a, b = _promote_args("isclose", asarray(a), asarray(b))
+  a, b = _promote_args("isclose", a, b)
   dtype = _dtype(a)
   if issubdtype(dtype, inexact):
     if issubdtype(dtype, complexfloating):
@@ -2423,6 +2423,7 @@ def ptp(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
 
 @_wraps(np.allclose)
 def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
+  _check_arraylike("allclose", a, b)
   return all(isclose(a, b, rtol, atol, equal_nan))
 
 

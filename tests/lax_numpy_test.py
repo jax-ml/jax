@@ -3555,7 +3555,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testAllClose(self, x, y, equal_nan):
     jnp_fun = partial(jnp.allclose, equal_nan=equal_nan, rtol=1E-3)
     np_fun = partial(np.allclose, equal_nan=equal_nan, rtol=1E-3)
-    args_maker = lambda: [x, y]
+    args_maker = lambda: [np.array(x), np.array(y)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
