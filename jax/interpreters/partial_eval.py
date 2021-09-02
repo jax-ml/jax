@@ -798,8 +798,9 @@ def _remat_partial_eval(trace, _, f, tracers, params):
     out_consts = core.eval_jaxpr(jaxpr_known, (), *in_consts)
     out_consts_ = iter(out_consts)
     # reconstruct known outs, inserting units
-    outs1 = [unit if x.aval is abstract_unit else next(out_consts_)
-             for uk, x in zip(out_unknowns, jaxpr.outvars) if not uk]
+    outs1 = [pval.get_known() if x.aval is abstract_unit else next(out_consts_)
+             for uk, pval, x in zip(out_unknowns, eval_out_pvals, jaxpr.outvars)
+             if not uk]
     # form known outputs and collect residual tracers
     out_known_tracers = [JaxprTracer(trace, PartialVal.known(c), None)
                          for c in outs1]
@@ -971,16 +972,17 @@ def call_partial_eval_custom_rule(
       eqn.params['call_jaxpr'], unks_in, saveable)
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
+  out_binders_known = [v for v in out_binders_known if v is not dropvar]
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   newvar = core.gensym([jaxpr_known, jaxpr_staged])
   residuals = [newvar(v.aval) for v in jaxpr_staged.invars[:num_res]]
   params_known = dict(eqn.params, call_jaxpr=jaxpr_known)
   params_staged = dict(eqn.params, call_jaxpr=jaxpr_staged)
   params_known, params_staged = params_updater(unks_in, num_res, params_known, params_staged)
-  eqn_known = JaxprEqn(ins_known, [*out_binders_known, *residuals],
-                       eqn.primitive, params_known, eqn.source_info)
-  eqn_staged = JaxprEqn([*residuals, *eqn.invars], out_binders_staged,
-                        eqn.primitive, params_staged, eqn.source_info)
+  eqn_known = new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
+                            eqn.primitive, params_known, eqn.source_info)
+  eqn_staged = new_jaxpr_eqn([*residuals, *eqn.invars], out_binders_staged,
+                             eqn.primitive, params_staged, eqn.source_info)
   assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
@@ -1040,9 +1042,9 @@ def dce_jaxpr_call_rule(used_outputs: List[bool], eqn: JaxprEqn
   update_params = call_param_updaters.get(eqn.primitive)
   if update_params:
     new_params = update_params(new_params, used_inputs)
-  new_eqn = JaxprEqn([v for v, used in zip(eqn.invars, used_inputs) if used],
-                     [v for v, used in zip(eqn.outvars, used_outputs) if used],
-                     eqn.primitive, new_params, eqn.source_info)
+  new_eqn = new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs) if used],
+                          [v for v, used in zip(eqn.outvars, used_outputs) if used],
+                          eqn.primitive, new_params, eqn.source_info)
   return used_inputs, new_eqn
 dce_rules[core.call_p] = dce_jaxpr_call_rule
 dce_rules[core.named_call_p] = dce_jaxpr_call_rule
