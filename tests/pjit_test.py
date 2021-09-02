@@ -643,6 +643,22 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError, error):
       pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(jnp.arange(4))
 
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLinearizeNotImplemented(self):
+    # pending https://github.com/google/jax/pull/6876
+    @partial(pjit,
+             in_axis_resources=(P(None, 'x', 'y'), P('y')),
+             out_axis_resources=P('x'))
+    def f(x, y):
+      return x @ y
+
+    x_shape = (8, 6, 4)
+    y_shape = (4, 2)
+    x = jnp.arange(np.prod(x_shape)).reshape(x_shape)
+    y = jnp.arange(np.prod(y_shape)).reshape(y_shape)
+    with self.assertRaisesRegex(NotImplementedError, "6876"):
+      jax.linearize(f, x, y)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

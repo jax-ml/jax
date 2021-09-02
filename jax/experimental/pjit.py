@@ -519,6 +519,13 @@ def _pjit_jvp(primals_in, tangents_in,
 ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 
+def _pjit_partial_eval(trace, *in_tracers, jaxpr, in_axis_resources,
+                       out_axis_resources, resource_env, donated_invars, name):
+  raise NotImplementedError("linearize, vjp, and grad of pjit not supported, "
+                            "see https://github.com/google/jax/pull/6876")
+pe.custom_partial_eval_rules[pjit_p] = _pjit_partial_eval
+
+
 def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources):
   pjit_resources = set(it.chain.from_iterable(pos_axis_resources))
   aval_resources = set(it.chain.from_iterable(
