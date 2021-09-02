@@ -3642,6 +3642,17 @@ class RematTest(jtu.JaxTestCase):
       return lax.scan(lambda x, _: (f(x), None), x, None, length=2)[0]
     jtu.check_grads(g, (3.,), order=2, modes=['rev'])
 
+  def test_remat_dropvar_policy(self):
+    def f(x):
+      return x, x
+
+    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    def g(x):
+      x = api.grad(lambda x: f(x)[0])(x)
+      return x
+
+    api.grad(g)(3.)
+
 
 class JaxprTest(jtu.JaxTestCase):
 
