@@ -1015,9 +1015,11 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
     if rule:
       used_ins, new_eqn = rule(used_outs, eqn)
       if any(used_ins): new_eqns.append(new_eqn)
+    elif any(used_outs):
+      new_eqns.append(eqn)
+      used_ins = [True] * len(eqn.invars)
     else:
-      used_ins = [any(used_outs)] * len(eqn.invars)
-      if any(used_ins): new_eqns.append(eqn)
+      used_ins = [False] * len(eqn.invars)
     map(write, eqn.invars, used_ins)
   used_inputs = map(read, jaxpr.invars)
 
