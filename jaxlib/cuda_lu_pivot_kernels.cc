@@ -16,19 +16,11 @@ limitations under the License.
 #include "jaxlib/cuda_lu_pivot_kernels.h"
 
 #include "jaxlib/cuda_gpu_kernel_helpers.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
-#include "include/pybind11/pybind11.h"
+#include "jaxlib/kernel_helpers.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 namespace {
-
-std::string BuildCudaLuPivotsToPermutationDescriptor(
-    std::int64_t batch_size, std::int32_t pivot_size,
-    std::int32_t permutation_size) {
-  return PackDescriptorAsString(LuPivotsToPermutationDescriptor{
-      batch_size, pivot_size, permutation_size});
-}
 
 absl::Status CudaLuPivotsToPermutation_(cudaStream_t stream, void** buffers,
                                         const char* opaque,
@@ -41,6 +33,8 @@ absl::Status CudaLuPivotsToPermutation_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
+}  // namespace
+
 void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
                                const char* opaque, size_t opaque_len,
                                XlaCustomCallStatus* status) {
@@ -51,23 +45,5 @@ void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
   }
 }
 
-pybind11::dict Registrations() {
-  pybind11::dict dict;
-  dict["cuda_lu_pivots_to_permutation"] =
-      EncapsulateFunction(CudaLuPivotsToPermutation);
-  return dict;
-}
 
-PYBIND11_MODULE(cuda_lu_pivot_kernels, m) {
-  m.def("registrations", &Registrations);
-  m.def("cuda_lu_pivots_to_permutation_descriptor",
-        [](std::int64_t batch_size, std::int32_t pivot_size,
-           std::int32_t permutation_size) {
-          std::string result = BuildCudaLuPivotsToPermutationDescriptor(
-              batch_size, pivot_size, permutation_size);
-          return pybind11::bytes(result);
-        });
-}
-
-}  // namespace
 }  // namespace jax

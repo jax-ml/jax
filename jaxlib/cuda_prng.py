@@ -22,22 +22,16 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from . import cuda_prng_kernels
-  for _name, _value in cuda_prng_kernels.registrations().items():
+  from . import _cuda_prng
+  for _name, _value in _cuda_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   pass
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
-# TODO(phawkins): remove after we no longer need to support old jax releases.
-def _unpack_builder(c):
-  # If `c` is a ComputationBuilder object, extracts the underlying XlaBuilder.
-  return getattr(c, "_builder", c)
-
 def threefry2x32(c, keys, data):
   """ThreeFry2x32 kernel for GPU."""
-  c = _unpack_builder(c)
   assert len(keys) == 2, keys
   assert len(data) == 2, data
   dims = c.get_shape(keys[0]).dimensions()
@@ -48,7 +42,7 @@ def threefry2x32(c, keys, data):
     assert dims == x_shape.dimensions(), (dims, x_shape)
   ndims = len(dims)
 
-  opaque = cuda_prng_kernels.cuda_threefry2x32_descriptor(_prod(dims))
+  opaque = _cuda_prng.cuda_threefry2x32_descriptor(_prod(dims))
   layout = tuple(range(ndims - 1, -1, -1))
   shape = xla_client.Shape.array_shape(dtype, dims, layout)
   return xla_client.ops.CustomCallWithLayout(

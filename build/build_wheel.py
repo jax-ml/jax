@@ -177,16 +177,16 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_pocketfft.so"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/pocketfft.py"))
-  if r.Rlocation("__main__/jaxlib/cusolver_kernels.so") is not None:
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.so"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.so"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.so"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.so"))
-  if r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd") is not None:
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusolver_kernels.pyd"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cublas_kernels.pyd"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_lu_pivot_kernels.pyd"))
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cuda_prng_kernels.pyd"))
+  if r.Rlocation("__main__/jaxlib/_cusolver.so") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cusolver.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cublas.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cuda_linalg.so"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cuda_prng.so"))
+  if r.Rlocation("__main__/jaxlib/_cusolver.pyd") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cusolver.pyd"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cublas.pyd"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cuda_linalg.pyd"))
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cuda_prng.pyd"))
   if r.Rlocation("__main__/jaxlib/cusolver.py") is not None:
     libdevice_dir = os.path.join(jaxlib_dir, "cuda", "nvvm", "libdevice")
     os.makedirs(libdevice_dir)
@@ -198,8 +198,8 @@ def prepare_wheel(sources_path):
   if r.Rlocation("__main__/jaxlib/rocblas_kernels.so") is not None:
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocblas_kernels.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/rocsolver.py"))
-  if r.Rlocation("__main__/jaxlib/cusparse_kernels.so") is not None:
-    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse_kernels.so"))
+  if r.Rlocation("__main__/jaxlib/_cusparse.so") is not None:
+    copy_to_jaxlib(r.Rlocation("__main__/jaxlib/_cusparse.so"))
     copy_to_jaxlib(r.Rlocation("__main__/jaxlib/cusparse.py"))
   copy_to_jaxlib(r.Rlocation("__main__/jaxlib/version.py"))
 

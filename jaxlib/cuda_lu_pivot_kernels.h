@@ -20,6 +20,7 @@ limitations under the License.
 #include <string>
 
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 
@@ -32,6 +33,10 @@ struct LuPivotsToPermutationDescriptor {
 void LaunchLuPivotsToPermutationKernel(
     cudaStream_t stream, void** buffers,
     LuPivotsToPermutationDescriptor descriptor);
+
+void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
+                               const char* opaque, size_t opaque_len,
+                               XlaCustomCallStatus* status);
 
 }  // namespace jax
 

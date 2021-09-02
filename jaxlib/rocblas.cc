@@ -47,10 +47,6 @@ absl::Status AsStatus(rocblas_status status) {
   }
 }
 
-namespace {
-
-namespace py = pybind11;
-
 using rocBlasHandlePool = HandlePool<rocblas_handle, hipStream_t>;
 
 template <>
@@ -70,6 +66,10 @@ template <>
   }
   return rocBlasHandlePool::Handle(pool, handle, stream);
 }
+
+namespace {
+
+namespace py = pybind11;
 
 // Set of types known to Rocsolver.
 enum class Type {

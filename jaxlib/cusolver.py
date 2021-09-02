@@ -21,15 +21,15 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from . import cublas_kernels
-  for _name, _value in cublas_kernels.registrations().items():
+  from . import _cublas
+  for _name, _value in _cublas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   pass
 
 try:
-  from . import cusolver_kernels
-  for _name, _value in cusolver_kernels.registrations().items():
+  from . import _cusolver
+  for _name, _value in _cusolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   pass
@@ -83,7 +83,7 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
   if conj_a and not trans_a:
     raise NotImplementedError("Conjugation without transposition not supported")
 
-  lwork, opaque = cublas_kernels.build_trsm_batched_descriptor(
+  lwork, opaque = _cublas.build_trsm_batched_descriptor(
     np.dtype(dtype), batch, m, n, left_side, lower, trans_a, conj_a, diag)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   out = _ops.CustomCallWithLayout(
@@ -115,7 +115,7 @@ def potrf(c, a, lower):
   num_bd = len(batch_dims)
   batch = _prod(batch_dims)
 
-  lwork, opaque = cusolver_kernels.build_potrf_descriptor(
+  lwork, opaque = _cusolver.build_potrf_descriptor(
       np.dtype(dtype), lower, batch, n)
   kernel = b"cusolver_potrf"
 
@@ -152,12 +152,12 @@ def getrf(c, a):
   batch = _prod(batch_dims)
 
   if batch > 1 and m == n and m // batch <= 128:
-    lwork, opaque = cublas_kernels.build_getrf_batched_descriptor(
+    lwork, opaque = _cublas.build_getrf_batched_descriptor(
       np.dtype(dtype), batch, m)
     workspace = _Shape.array_shape(np.dtype(np.int8), (lwork,), (0,))
     kernel = b"cublas_getrf_batched"
   else:
-    lwork, opaque = cusolver_kernels.build_getrf_descriptor(
+    lwork, opaque = _cusolver.build_getrf_descriptor(
         np.dtype(dtype), batch, m, n)
     workspace = _Shape.array_shape(dtype, (lwork,), (0,))
     kernel = b"cusolver_getrf"
@@ -197,7 +197,7 @@ def geqrf(c, a):
   num_bd = len(batch_dims)
   batch = _prod(batch_dims)
 
-  lwork, opaque = cusolver_kernels.build_geqrf_descriptor(
+  lwork, opaque = _cusolver.build_geqrf_descriptor(
       np.dtype(dtype), batch, m, n)
   workspace = _Shape.array_shape(dtype, (lwork,), (0,))
   kernel = b"cusolver_geqrf"
@@ -241,7 +241,7 @@ def orgqr(c, a, tau):
   assert tau_dims[:-1] == dims[:-2]
   k = tau_dims[-1]
 
-  lwork, opaque = cusolver_kernels.build_orgqr_descriptor(
+  lwork, opaque = _cusolver.build_orgqr_descriptor(
       np.dtype(dtype), batch, m, n, k)
   workspace = _Shape.array_shape(dtype, (lwork,), (0,))
   kernel = b"cusolver_orgqr"
@@ -288,11 +288,11 @@ def syevd(c, a, lower=False):
 
   if n <= 32:
     kernel = b"cusolver_syevj"
-    lwork, opaque = cusolver_kernels.build_syevj_descriptor(
+    lwork, opaque = _cusolver.build_syevj_descriptor(
         np.dtype(dtype), lower, batch, n)
   else:
     kernel = b"cusolver_syevd"
-    lwork, opaque = cusolver_kernels.build_syevd_descriptor(
+    lwork, opaque = _cusolver.build_syevd_descriptor(
         np.dtype(dtype), lower, batch, n)
   eigvals_type = _real_type(dtype)
 
@@ -334,7 +334,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
   singular_vals_dtype = np.dtype(_real_type(dtype))
 
   if m < 32 and n < 32:
-    lwork, opaque = cusolver_kernels.build_gesvdj_descriptor(
+    lwork, opaque = _cusolver.build_gesvdj_descriptor(
         np.dtype(dtype), b, m, n, compute_uv)
     scalar_layout = tuple(range(num_bd - 1, -1, -1))
     vector_layout = (num_bd,) + scalar_layout
@@ -365,7 +365,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     if np.issubdtype(dtype, np.complexfloating):
       vt = _ops.Conj(vt)
   elif m < n:
-    lwork, opaque = cusolver_kernels.build_gesvd_descriptor(
+    lwork, opaque = _cusolver.build_gesvd_descriptor(
         np.dtype(dtype), b, n, m, compute_uv, full_matrices)
     scalar_layout = tuple(range(num_bd - 1, -1, -1))
     vector_layout = (num_bd,) + scalar_layout
@@ -393,7 +393,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     u = _ops.GetTupleElement(out, 3)
     info = _ops.GetTupleElement(out, 4)
   else:
-    lwork, opaque = cusolver_kernels.build_gesvd_descriptor(
+    lwork, opaque = _cusolver.build_gesvd_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, full_matrices)
 
     scalar_layout = tuple(range(num_bd - 1, -1, -1))

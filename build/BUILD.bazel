@@ -38,11 +38,11 @@ py_binary(
     ] + if_not_windows([
         "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
     ]) + if_cuda([
-        "//jaxlib:cublas_kernels",
-        "//jaxlib:cusolver_kernels",
-        "//jaxlib:cusparse_kernels",
-        "//jaxlib:cuda_lu_pivot_kernels",
-        "//jaxlib:cuda_prng_kernels",
+        "//jaxlib:_cublas",
+        "//jaxlib:_cusolver",
+        "//jaxlib:_cusparse",
+        "//jaxlib:_cuda_linalg",
+        "//jaxlib:_cuda_prng",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
         "//jaxlib:rocblas_kernels",

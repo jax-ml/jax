@@ -20,8 +20,8 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from . import cuda_lu_pivot_kernels
-  for _name, _value in cuda_lu_pivot_kernels.registrations().items():
+  from . import _cuda_linalg
+  for _name, _value in _cuda_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   pass
@@ -40,7 +40,7 @@ def lu_pivots_to_permutation(c, pivots, *, permutation_size):
   batch_size = _prod(dims[:-1])
   pivot_size = dims[-1]
 
-  opaque = cuda_lu_pivot_kernels.cuda_lu_pivots_to_permutation_descriptor(
+  opaque = _cuda_linalg.cuda_lu_pivots_to_permutation_descriptor(
       batch_size, pivot_size, permutation_size)
   pivots_layout = tuple(range(len(dims) - 1, -1, -1))
   pivots_shape_with_layout = xla_client.Shape.array_shape(

@@ -1,4 +1,4 @@
-/* Copyright 2020 Google LLC
+/* Copyright 2019 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,22 +13,31 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <complex>
+#include "jaxlib/cuda_prng_kernels.h"
 
+#include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
-#include "jaxlib/pocketfft_kernels.h"
 #include "include/pybind11/pybind11.h"
 
 namespace jax {
 namespace {
 
+std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n) {
+  return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
+}
 pybind11::dict Registrations() {
   pybind11::dict dict;
-  dict["pocketfft"] = EncapsulateFunction(PocketFft);
+  dict["cuda_threefry2x32"] = EncapsulateFunction(CudaThreeFry2x32);
   return dict;
 }
 
-PYBIND11_MODULE(_pocketfft, m) { m.def("registrations", &Registrations); }
+PYBIND11_MODULE(_cuda_prng, m) {
+  m.def("registrations", &Registrations);
+  m.def("cuda_threefry2x32_descriptor", [](std::int64_t n) {
+    std::string result = BuildCudaThreeFry2x32Descriptor(n);
+    return pybind11::bytes(result);
+  });
+}
 
 }  // namespace
 }  // namespace jax

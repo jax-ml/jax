@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 
 namespace jax {
-namespace {
 
 // To avoid creating cublas/cusolver contexts in the middle of execution, we
 // maintain a pool of them.
@@ -106,7 +105,6 @@ void HandlePool<HandleType, StreamType>::Return(HandleType handle,
 // template <typename HandleType, typename StreamType>
 // HandlePool<HandleType, StreamType>::Borrow(StreamType stream)
 
-}  // namespace
 }  // namespace jax
 
 #endif  // JAXLIB_HANDLE_POOL_H_
