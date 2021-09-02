@@ -280,10 +280,24 @@ pybind_extension(
     ],
 )
 
-cuda_library(
+cc_library(
     name = "cuda_lu_pivot_kernels",
     srcs = [
         "cuda_lu_pivot_kernels.cc",
+    ],
+    hdrs = ["cuda_lu_pivot_kernels.h"],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_lu_pivot_kernels_impl",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cuda_library(
+    name = "cuda_lu_pivot_kernels_impl",
+    srcs = [
         "cuda_lu_pivot_kernels.cu.cc",
     ],
     hdrs = ["cuda_lu_pivot_kernels.h"],
@@ -307,6 +321,7 @@ pybind_extension(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_lu_pivot_kernels",
+        ":cuda_lu_pivot_kernels_impl",
         ":kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@local_config_cuda//cuda:cuda_headers",
@@ -314,10 +329,24 @@ pybind_extension(
     ],
 )
 
-cuda_library(
+cc_library(
     name = "cuda_prng_kernels",
     srcs = [
         "cuda_prng_kernels.cc",
+    ],
+    hdrs = ["cuda_prng_kernels.h"],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_prng_kernels_impl",
+        ":kernel_helpers",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cuda_library(
+    name = "cuda_prng_kernels_impl",
+    srcs = [
         "cuda_prng_kernels.cu.cc",
     ],
     hdrs = ["cuda_prng_kernels.h"],
