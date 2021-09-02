@@ -31,7 +31,8 @@ Alternate syntax           Equivalent in-place expression
 =========================  ===================================================
 
 None of these expressions modify the original `x`; instead they return
-a modified copy of `x`.
+a modified copy of `x`. However, inside a :py:func:`jit` compiled function,
+expressions like ``x = x.at[idx].set(y)`` are guaranteed to be applied inplace.
 
 
 Indexed update functions (deprecated)

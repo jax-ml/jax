@@ -6022,8 +6022,9 @@ def _swap_args(f):
 
 def _unimplemented_setitem(self, i, x):
   msg = ("'{}' object does not support item assignment. JAX arrays are "
-         "immutable; perhaps you want jax.ops.index_update or "
-         "jax.ops.index_add instead?")
+         "immutable. Instead of ``x[idx] = y``, use ``x = x.at[idx].set(y)`` "
+         "or another .at[] method: "
+         "https://jax.readthedocs.io/en/latest/jax.ops.html")
   raise TypeError(msg.format(type(self)))
 
 def _operator_round(number, ndigits=None):
