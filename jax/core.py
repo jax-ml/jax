@@ -547,8 +547,8 @@ class Tracer:
   def __float__(self): return self.aval._float(self)
   def __complex__(self): return self.aval._complex(self)
 
-  def __setitem__(self, idx, val):
-    raise TypeError("JAX 'Tracer' objects do not support item assignment")
+  # raises the better error message from ShapedArray
+  def __setitem__(self, idx, val): return self.aval._setitem(self, idx, val)
 
   # NumPy also only looks up special methods on classes.
   def __array_module__(self, types): return self.aval._array_module(self, types)
