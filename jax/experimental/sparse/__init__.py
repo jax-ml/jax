@@ -126,10 +126,10 @@ this function that does accept sparse matrices:
 
 Currently support for :func:`sparsify` is limited to a couple dozen primitives, including:
 
-- generalized matrix-matrix products ():obj:`~jax.lax.dot_general_p`)
-- generalized array transpose ():obj:`~jax.lax.transpose_p`)
+- generalized matrix-matrix products (:obj:`~jax.lax.dot_general_p`)
+- generalized array transpose (:obj:`~jax.lax.transpose_p`)
 - zero-preserving elementwise binary operations (:obj:`~jax.lax.add_p`, :obj:`~jax.lax.mul_p`)
-- zero-preserving elementwise unary operations (:obj:`~jax.lax.abs_p`, :obj`jax.lax.neg_p`, etc.)
+- zero-preserving elementwise unary operations (:obj:`~jax.lax.abs_p`, :obj:`jax.lax.neg_p`, etc.)
 - summation reductions (:obj:`lax.reduce_sum_p`)
 - some higher-order functions (:obj:`lax.cond_p`, :obj:`lax.while_p`, :obj:`lax.scan_p`)
 
