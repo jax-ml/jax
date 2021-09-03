@@ -36,6 +36,7 @@ from jax import random
 from jax import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2
+from jax.experimental import maps
 from jax.lib import xla_bridge
 from jax.interpreters import xla
 import jax.numpy as jnp  # scan tests use numpy
@@ -2738,6 +2739,31 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return carry, val+1
       lax.scan(side_effecting_scan, None, jnp.ones((2, 2)))
       lst[0] += 1
+
+  def test_while_loop_fixed_point_with_nested_named_axes(self):
+    def f(x):
+      z = x + lax.axis_index('a')
+      y = x + lax.axis_index('b')
+      def cond(carry):
+        i, x = carry
+        return x < 5
+      def body(carry):
+        i, x = carry
+        return i + 1, x + lax.psum(y, 'b')
+      return lax.while_loop(cond, body, (0, z))[1]
+    maps.xmap(f, axis_sizes=dict(a=2, b=10), out_axes=(['a']), in_axes={})(1.)
+
+  def test_while_loop_fixed_point_with_batched_pred_and_consts(self):
+    def f(i, x):
+      def cond(carry):
+        i, x = carry
+        return i < 5
+      def body(carry):
+        i, z = carry
+        # Close over const with batch dim = 1
+        return i + 1, z + x
+      return lax.while_loop(cond, body, (i, jnp.ones(3)))[1]
+    jax.vmap(f, in_axes=(0, 1))(jnp.arange(4), jnp.ones((3, 4)))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
