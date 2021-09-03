@@ -1035,6 +1035,25 @@ class BCOOTest(jtu.JaxTestCase):
       self.assertEqual(Msp.shape, M.shape)
       self.assertArraysEqual(Msp.todense(), M)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_bcoo_unbatch(self, shape, dtype, n_batch, n_dense):
+    rng_sparse = rand_sparse(self.rng())
+    M1 = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
+    M2 = M1._unbatch()
+    self.assertEqual(M2.n_batch, 0)
+    self.assertEqual(M1.n_dense, M2.n_dense)
+    self.assertEqual(M1.shape, M2.shape)
+    self.assertEqual(M1.dtype, M2.dtype)
+    self.assertArraysEqual(M1.todense(), M2.todense())
+
+
 class SparseGradTest(jtu.JaxTestCase):
   def test_sparse_grad(self):
     rng_sparse = rand_sparse(self.rng())

@@ -597,6 +597,19 @@ def _dedupe_bcoo_one(data, indices):
   return data_unique, indices_unique
 
 
+def _unbatch_bcoo(data, indices, shape):
+  n_batch, _, _ = _validate_bcoo(data, indices, shape)
+  if n_batch == 0:
+    return data, indices
+  data = jnp.broadcast_to(data, shape[:n_batch] + data.shape[n_batch:])
+  indices = jnp.broadcast_to(indices, shape[:n_batch] + indices.shape[n_batch:])
+  batch_indices = jnp.mgrid[tuple(slice(None, d) for d in indices.shape[:n_batch + 1])][:-1]
+  batch_indices = batch_indices.reshape(n_batch, -1).T
+  data = data.reshape(np.prod(data.shape[:n_batch + 1]), *data.shape[n_batch + 1:])
+  indices = indices.reshape(np.prod(indices.shape[:n_batch + 1]), *indices.shape[n_batch + 1:])
+  return data, jnp.hstack([batch_indices, indices])
+
+
 def _validate_bcoo(data, indices, shape):
   assert jnp.issubdtype(indices.dtype, jnp.integer)
 
@@ -1478,6 +1491,10 @@ class BCOO(JAXSparse):
     data = jnp.asarray(mat.data)
     indices = jnp.column_stack((mat.row, mat.col)).astype(index_dtype)
     return cls((data, indices), shape=mat.shape)
+
+  def _unbatch(self):
+    """Return an unbatched representation of the BCOO matrix."""
+    return BCOO(_unbatch_bcoo(self.data, self.indices, self.shape), shape=self.shape)
 
   @api.jit
   def todense(self):
