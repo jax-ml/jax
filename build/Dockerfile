@@ -13,9 +13,9 @@ RUN /pyenv/bin/pyenv install 3.8.0
 RUN /pyenv/bin/pyenv install 3.9.0
 
 # We pin numpy to the minimum permitted version to avoid compatibility issues.
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.18.5 scipy==1.5.4 setuptools wheel six auditwheel
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install numpy==1.18.5 scipy==1.5.4 setuptools wheel six auditwheel
-RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.9.0 && pip install numpy==1.19.4 scipy==1.5.4 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.18.5 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install numpy==1.18.5 setuptools wheel six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.9.0 && pip install numpy==1.19.4 setuptools wheel six auditwheel
 
 # Change the CUDA version if it doesn't match the installed version.
 ARG JAX_CUDA_VERSION=10.0

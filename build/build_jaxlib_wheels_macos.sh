@@ -23,9 +23,8 @@ eval "$(pyenv init -)"
 build_jax () {
   PY_VERSION="$1"
   NUMPY_VERSION="$2"
-  SCIPY_VERSION="$3"
   echo -e "\nBuilding JAX for Python ${PY_VERSION}"
-  echo "NumPy version ${NUMPY_VERSION}, SciPy version ${SCIPY_VERSION}"
+  echo "NumPy version ${NUMPY_VERSION}"
   pyenv install -s "${PY_VERSION}"
   VENV="jax-build-${PY_VERSION}"
   if pyenv virtualenvs | grep "${VENV}" ;then
@@ -36,7 +35,7 @@ build_jax () {
   # We pin the Numpy wheel to a version < 1.16.0 for Python releases prior to
   # 3.8, because Numpy extensions built at 1.16.0 are not backward compatible to
   # earlier Numpy versions.
-  pip install numpy==$NUMPY_VERSION scipy==$SCIPY_VERSION wheel future six
+  pip install numpy==$NUMPY_VERSION wheel future six
   rm -fr build/build
   python build/build.py --output_path=dist/
   pyenv deactivate
@@ -45,6 +44,6 @@ build_jax () {
 
 
 rm -fr dist
-build_jax 3.7.2 1.18.5 1.2.0
-build_jax 3.8.0 1.18.5 1.3.2
-build_jax 3.9.0 1.19.4 1.5.4
+build_jax 3.7.2 1.18.5
+build_jax 3.8.0 1.18.5
+build_jax 3.9.0 1.19.4

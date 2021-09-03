@@ -22,7 +22,6 @@ load(
     "if_cuda_is_configured",
     "if_rocm_is_configured",
     "pybind_extension",
-    "pyx_library",
 )
 
 licenses(["notice"])
@@ -112,16 +111,11 @@ cc_library(
     ],
 )
 
-pyx_library(
-    name = "lapack",
-    srcs = ["lapack.pyx"],
-    py_deps = ["@org_tensorflow//third_party/py/numpy"],
-)
-
 py_library(
     name = "jaxlib",
     srcs = [
         "init.py",
+        "lapack.py",
         "pocketfft.py",
         "version.py",
     ] + if_cuda_is_configured([
@@ -139,6 +133,104 @@ exports_files([
     "setup.py",
     "setup.cfg",
 ])
+
+# CPU kernels
+
+pybind_extension(
+    name = "cpu_feature_guard",
+    srcs = ["cpu_feature_guard.c"],
+    module_name = "cpu_feature_guard",
+    deps = [
+        "@org_tensorflow//third_party/python_runtime:headers",
+    ],
+)
+
+# LAPACK
+
+cc_library(
+    name = "lapack_kernels",
+    srcs = ["lapack_kernels.cc"],
+    hdrs = ["lapack_kernels.h"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+    ],
+)
+
+py_library(
+    name = "lapack",
+    srcs = ["lapack.py"],
+    deps = ["//third_party/py/numpy"],
+)
+
+pybind_extension(
+    name = "_lapack",
+    srcs = ["lapack.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_lapack",
+    deps = [
+        ":kernel_pybind11_helpers",
+        ":lapack_kernels",
+        "@pybind11",
+    ],
+)
+
+# PocketFFT
+
+flatbuffer_cc_library(
+    name = "pocketfft_flatbuffers_cc",
+    srcs = ["pocketfft.fbs"],
+)
+
+flatbuffer_py_library(
+    name = "pocketfft_flatbuffers_py",
+    srcs = ["pocketfft.fbs"],
+)
+
+cc_library(
+    name = "pocketfft_kernels",
+    srcs = ["pocketfft_kernels.cc"],
+    hdrs = ["pocketfft_kernels.h"],
+    copts = ["-fexceptions"],  # PocketFFT may throw.
+    features = ["-use_header_modules"],
+    deps = [
+        ":pocketfft_flatbuffers_cc",
+        "@flatbuffers//:runtime_cc",
+        "@pocketfft",
+    ],
+)
+
+pybind_extension(
+    name = "_pocketfft",
+    srcs = ["pocketfft.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_pocketfft",
+    deps = [
+        ":kernel_pybind11_helpers",
+        ":pocketfft_kernels",
+        "@pybind11",
+    ],
+)
+
+cc_library(
+    name = "cpu_kernels",
+    srcs = ["cpu_kernels.cc"],
+    deps = [
+        ":lapack_kernels",
+        ":pocketfft_kernels",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
+    ],
+    alwayslink = 1,
+)
+
+# GPU kernels
 
 py_library(
     name = "gpu_support",
@@ -408,56 +500,6 @@ pybind_extension(
     ],
 )
 
-# PocketFFT
-
-flatbuffer_cc_library(
-    name = "pocketfft_flatbuffers_cc",
-    srcs = ["pocketfft.fbs"],
-)
-
-flatbuffer_py_library(
-    name = "pocketfft_flatbuffers_py",
-    srcs = ["pocketfft.fbs"],
-)
-
-cc_library(
-    name = "pocketfft_kernels",
-    srcs = ["pocketfft_kernels.cc"],
-    hdrs = ["pocketfft_kernels.h"],
-    copts = ["-fexceptions"],  # PocketFFT may throw.
-    features = ["-use_header_modules"],
-    deps = [
-        ":pocketfft_flatbuffers_cc",
-        "@flatbuffers//:runtime_cc",
-        "@pocketfft",
-    ],
-)
-
-pybind_extension(
-    name = "_pocketfft",
-    srcs = ["pocketfft.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    module_name = "_pocketfft",
-    deps = [
-        ":kernel_pybind11_helpers",
-        ":pocketfft_kernels",
-        "@pybind11",
-    ],
-)
-
-pybind_extension(
-    name = "cpu_feature_guard",
-    srcs = ["cpu_feature_guard.c"],
-    module_name = "cpu_feature_guard",
-    deps = [
-        "@org_tensorflow//third_party/python_runtime:headers",
-    ],
-)
-
 cc_library(
     name = "gpu_kernels",
     srcs = ["gpu_kernels.cc"],
@@ -469,4 +511,5 @@ cc_library(
         ":cusparse_kernels",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
     ],
+    alwayslink = 1,
 )

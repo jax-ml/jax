@@ -32,7 +32,7 @@ py_binary(
         "//jaxlib:setup.py",
         "//jaxlib:setup.cfg",
         "//jaxlib:cpu_feature_guard.so",
-        "//jaxlib:lapack.so",
+        "//jaxlib:_lapack.so",
         "//jaxlib:_pocketfft.so",
         "//jaxlib:pocketfft_flatbuffers_py",
     ] + if_not_windows([

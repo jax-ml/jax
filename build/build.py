@@ -88,15 +88,6 @@ def check_numpy_version(python_bin_path):
     sys.exit(-1)
   return version
 
-def check_scipy_version(python_bin_path):
-  version = shell(
-      [python_bin_path, "-c", "import scipy as sp; print(sp.__version__)"])
-  scipy_version = tuple(map(int, version.split(".")[:2]))
-  if scipy_version < (1, 0):
-    print("ERROR: JAX requires SciPy 1.0 or newer, found " + version + ".")
-    sys.exit(-1)
-  return version
-
 # Bazel
 
 BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/4.1.0/"
@@ -434,8 +425,6 @@ def main():
 
   numpy_version = check_numpy_version(python_bin_path)
   print("NumPy version: {}".format(numpy_version))
-  scipy_version = check_scipy_version(python_bin_path)
-  print("SciPy version: {}".format(scipy_version))
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print("Target CPU: {}".format(wheel_cpu))
