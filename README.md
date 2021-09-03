@@ -436,9 +436,7 @@ The jaxlib version must correspond to the version of the existing CUDA
 installation you want to use:
 * For CUDA 11.1, 11.2, or 11.3, use `cuda111`. The same wheel should work for
   CUDA 11.x releases from 11.1 onwards.
-* For CUDA 11.0, use `cuda110`.
-* For CUDA 10.2, use `cuda102`.
-* For CUDA 10.1, use `cuda101`.
+* For CUDA 10.2, use `cuda102` (will be dropped in the next release).
 * Older CUDA versions are not supported.
 
 You can find your CUDA version with the command:
@@ -449,7 +447,7 @@ nvcc --version
 
 Some GPU functionality expects the CUDA installation to be at
 `/usr/local/cuda-X.X`, where X.X should be replaced with the CUDA version number
-(e.g. `cuda-10.2`). If CUDA is installed elsewhere on your system, you can either
+(e.g. `cuda-11.1`). If CUDA is installed elsewhere on your system, you can either
 create a symlink:
 
 ```bash
