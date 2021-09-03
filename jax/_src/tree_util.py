@@ -252,6 +252,8 @@ def tree_reduce(function: Callable[[T, Any], T],
 def tree_all(tree):
   return all(tree_leaves(tree))
 
+register_pytree_node(str, lambda x: ((), x), lambda x, _: x)
+
 register_pytree_node(
   collections.OrderedDict,
   lambda x: (tuple(x.values()), tuple(x.keys())),
