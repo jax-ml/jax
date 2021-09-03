@@ -49,15 +49,6 @@ jobs:
             package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 1
             use-latest-jaxlib: false
-          - name-prefix: "with 3.7"
-            python-version: 3.7
-            os: ubuntu-latest
-            enable-x64: 0
-            # Test with the oldest legal NumPy version.
-            package-overrides: "numpy==1.18.5 scipy==1.2.1"
-            num_generated_cases: 8
-            # Test against latest jaxlib
-            use-latest-jaxlib: true
     steps:
     - name: Cancel previous
       uses: styfle/cancel-workflow-action@0.9.1
