@@ -228,6 +228,26 @@ def sparsify_raw(f):
   return wrapped
 
 def sparsify(f):
+  """Experimental sparsification transform.
+
+  Examples:
+
+    Decorate JAX functions to make them compatible with :class:`jax.experimental.sparse.BCOO`
+    matrices:
+
+    >>> from jax.experimental import sparse
+
+    >>> @sparse.sparsify
+    ... def f(M, v):
+    ...   return 2 * M.T @ v
+
+    >>> M = sparse.BCOO.fromdense(jnp.arange(12).reshape(3, 4))
+
+    >>> v = jnp.array([3, 4, 2])
+
+    >>> f(M, v)
+    DeviceArray([ 64,  82, 100, 118], dtype=int32)
+  """
   f_raw = sparsify_raw(f)
   @functools.wraps(f)
   def wrapped(*args, **params):

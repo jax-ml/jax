@@ -12,6 +12,7 @@ jax.experimental package
     jax.experimental.maps
     jax.experimental.pjit
     jax.experimental.optimizers
+    jax.experimental.sparse
     jax.experimental.stax
 
 .. automodule:: jax.experimental

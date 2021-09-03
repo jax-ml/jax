@@ -1396,7 +1396,55 @@ def _asarray_or_float0(arg):
 
 @tree_util.register_pytree_node_class
 class BCOO(JAXSparse):
-  """Experimental BCOO matrix implemented in JAX; API subject to change."""
+  """Experimental batched COO matrix implemented in JAX
+
+  Args:
+    (data, indices) : data and indices in batched COO format.
+    shape : shape of sparse array.
+
+  Attributes:
+    data : ndarray of shape ``[*batch_dims, nse, *dense_dims]`` containing the
+      explicitly stored data within the sparse matrix.
+    indices : ndarray of shape ``[*batch_dims, nse, n_sparse]`` containing the
+      indices of the explicitly stored data. Duplicate entries will be summed.
+
+  Examples:
+    Create a sparse array from a dense array:
+
+    >>> M = jnp.array([[0., 2., 0.], [1., 0., 4.]])
+    >>> M_sp = BCOO.fromdense(M)
+    >>> M_sp
+    BCOO(float32[2, 3], nse=3)
+
+    Examine the internal representation:
+
+    >>> M_sp.data
+    DeviceArray([2., 1., 4.], dtype=float32)
+    >>> M_sp.indices
+    DeviceArray([[0, 1],
+                 [1, 0],
+                 [1, 2]], dtype=int32)
+
+    Create a dense array from a sparse array:
+
+    >>> M_sp.todense()
+    DeviceArray([[0., 2., 0.],
+                 [1., 0., 4.]], dtype=float32)
+
+    Create a sparse array from COO data & indices:
+
+    >>> data = jnp.array([1., 3., 5.])
+    >>> indices = jnp.array([[0, 0],
+    ...                      [1, 1],
+    ...                      [2, 2]])
+    >>> mat = BCOO((data, indices), shape=(3, 3))
+    >>> mat
+    BCOO(float32[3, 3], nse=3)
+    >>> mat.todense()
+    DeviceArray([[1., 0., 0.],
+                 [0., 3., 0.],
+                 [0., 0., 5.]], dtype=float32)
+  """
   data: jnp.ndarray
   indices: jnp.ndarray
   nse = property(lambda self: self.indices.shape[-2])
@@ -1418,10 +1466,12 @@ class BCOO(JAXSparse):
 
   @classmethod
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32, n_dense=0, n_batch=0):
+    """Create a BCOO array from a (dense) :class:`DeviceArray`."""
     return cls(bcoo_fromdense(mat, nse=nse, index_dtype=index_dtype, n_dense=n_dense, n_batch=n_batch), shape=mat.shape)
 
   @classmethod
   def from_scipy_sparse(cls, mat, *, index_dtype=None, n_dense=0, n_batch=0):
+    """Create a BCOO array from a :mod:`scipy.sparse` array."""
     if n_dense != 0 or n_batch != 0:
       raise NotImplementedError("BCOO.fromscipy with nonzero n_dense/n_batch")
     mat = mat.tocoo()
@@ -1431,6 +1481,7 @@ class BCOO(JAXSparse):
 
   @api.jit
   def todense(self):
+    """Create a dense version of the array."""
     return bcoo_todense(self.data, self.indices, shape=self.shape)
 
   def __matmul__(self, other):
@@ -1460,6 +1511,7 @@ class BCOO(JAXSparse):
                              dimension_numbers=(([other.ndim - 1], [0]), ([], [])))
 
   def transpose(self, axes=None):
+    """Create a new array containing the transpose."""
     axes = np.arange(self.ndim)[::-1] if axes is None else axes
     data_T, indices_T = bcoo_transpose(self.data, self.indices, shape=self.shape, permutation=axes)
     shape_T = [self.shape[i] for i in axes]
@@ -1513,5 +1565,6 @@ class BCOO(JAXSparse):
     return sparsify(jnp.add)(other, self)
 
   def sum(self, *args, **kwargs):
+    """Sum array along axis."""
     from jax.experimental.sparse import sparsify
     return sparsify(lambda x: x.sum(*args, **kwargs))(self)
