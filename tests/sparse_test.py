@@ -398,7 +398,7 @@ class BCOOTest(jtu.JaxTestCase):
     assert data.dtype == dtype
     assert data.shape == shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:]
     assert indices.dtype == jnp.int32  # TODO: test passing this arg
-    assert indices.shape == shape[:n_batch] + (n_sparse, nse)
+    assert indices.shape == shape[:n_batch] + (nse, n_sparse)
 
     todense = partial(sparse.bcoo_todense, shape=shape)
     self.assertArraysEqual(M, todense(data, indices))
@@ -474,7 +474,7 @@ class BCOOTest(jtu.JaxTestCase):
     assert data.dtype == dtype
     assert data.shape == shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:]
     assert indices.dtype == jnp.int32  # TODO: test passing this arg
-    assert indices.shape == shape[:n_batch] + (n_sparse, nse)
+    assert indices.shape == shape[:n_batch] + (nse, n_sparse)
 
     self.assertArraysEqual(M, todense(data, indices))
     self.assertArraysEqual(M, jit(todense)(data, indices))
@@ -1051,7 +1051,7 @@ class SparseGradTest(jtu.JaxTestCase):
     grad_sparse = sparse.grad(f, argnums=0)(Xsp, y)
 
     # extract sparse gradient from dense gradient
-    indices = tuple(Xsp.indices)
+    indices = tuple(Xsp.indices.T)
     grad_sparse_from_dense = jnp.zeros_like(grad_dense).at[indices].set(grad_dense[indices])
 
     self.assertArraysEqual(grad_sparse.todense(), grad_sparse_from_dense)
@@ -1080,8 +1080,8 @@ class SparseObjectTest(jtu.JaxTestCase):
     elif isinstance(M, sparse.COO):
       assert len(M.data) == len(M.row) == len(M.col)
     elif isinstance(M, sparse.BCOO):
-      assert M.data.shape[M.n_batch] == M.indices.shape[-1]
-      assert M.indices.shape[-2] == M.n_sparse
+      assert M.data.shape[M.n_batch] == M.indices.shape[-2]
+      assert M.indices.shape[-1] == M.n_sparse
     else:
       raise ValueError("Obj={Obj} not expected.")
 

@@ -279,7 +279,7 @@ def _transpose_sparse(spenv, *argspecs, permutation):
   out_shape = tuple(shape[i] for i in permutation)
 
   n_batch = args[0].indices.ndim - 2
-  n_sparse = args[0].indices.shape[-2]
+  n_sparse = args[0].indices.shape[-1]
   batch_dims_unchanged = (permutation[:n_batch] == tuple(range(n_batch)))
   dense_dims_unchanged = (permutation[n_batch + n_sparse:] == tuple(range(n_batch + n_sparse, len(shape))))
   sparse_dims_unchanged = (permutation[n_batch:n_batch + n_sparse] == tuple(range(n_batch, n_batch + n_sparse)))
@@ -313,7 +313,7 @@ def _add_sparse(spenv, *argspecs):
       raise NotImplementedError("Addition between sparse matrices with different batch/dense dimensions.")
     else:
       out_indices = lax.concatenate([X.indices(spenv), Y.indices(spenv)],
-                                    dimension=X.indices(spenv).ndim - 1)
+                                    dimension=X.indices(spenv).ndim - 2)
       out_data = lax.concatenate([X.data(spenv), Y.data(spenv)],
                                  dimension=X.indices(spenv).ndim - 2)
       out_argspec = ArgSpec(X.shape, spenv.push(out_data), spenv.push(out_indices))
@@ -373,13 +373,13 @@ def _squeeze_sparse(spenv, *argspecs, dimensions):
                      f"got shape={arr.shape} and dimensions={dimensions}")
   data = arr.data(spenv)
   indices = arr.indices(spenv)
-  n_sparse = indices.shape[-2]
+  n_sparse = indices.shape[-1]
   n_batch = indices.ndim - 2
   batch_dims = tuple(d for d in dimensions if d < n_batch)
   sparse_dims = np.array([i for i in range(n_sparse) if i + n_batch not in dimensions], dtype=int)
   dense_dims = tuple(d - n_sparse + 1 for d in dimensions if d >= n_batch + n_sparse)
   data_out = lax.squeeze(data, batch_dims + dense_dims)
-  indices_out = lax.squeeze(indices[..., sparse_dims, :], batch_dims)
+  indices_out = lax.squeeze(indices[..., sparse_dims], batch_dims)
   out_shape = tuple(s for i, s in enumerate(arr.shape) if i not in dimensions)
   return (ArgSpec(out_shape, spenv.push(data_out), spenv.push(indices_out)),)
 
