@@ -952,6 +952,46 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(jr_sparse, jr_dense, atol=tol)
     self.assertAllClose(jf_sparse, jr_sparse, atol=tol)
 
+  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_{}".format(
+        jtu.format_shape_dtype_string(lhs_shape, dtype),
+        jtu.format_shape_dtype_string(rhs_shape, dtype),
+        dimension_numbers),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape,
+       "dimension_numbers": dimension_numbers, "dtype": dtype}
+      for lhs_shape, rhs_shape, dimension_numbers, in [
+          ((5,), (5,), (([0], [0]), ([], []))),
+          ((7,), (7,), (([0], [0]), ([], []))),
+          ((5, 7), (7,), (([1], [0]), ([], []))),
+          ((2, 3, 4), (2, 4), (([2], [1]), ([0], [0]))),
+          ((2, 3, 4), (2, 4), (([2], [1]), ([], []))),
+          ((2, 3, 4), (3, 4), (([2], [1]), ([1], [0]))),
+          ((2, 3, 4), (3, 4), (([2], [1]), ([], []))),
+      ]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_bcoo_spdot_general(self, lhs_shape, rhs_shape, dtype, dimension_numbers):
+    sprng = rand_sparse(self.rng())
+    def args_maker():
+      x = sprng(lhs_shape, dtype)
+      y = sprng(rhs_shape, dtype)
+      xsp = sparse.BCOO.fromdense(x, n_batch=x.ndim - 1)
+      ysp = sparse.BCOO.fromdense(y, n_batch=y.ndim - 1)
+      return x, y, xsp, ysp
+
+    def f_dense(x, y, xsp, ysp):
+      return lax.dot_general(x, y, dimension_numbers=dimension_numbers)
+
+    def f_sparse(x, y, xsp, ysp):
+      return sparse.bcoo_spdot_general(xsp.data, xsp.indices, ysp.data, ysp.indices,
+                                       lhs_shape=x.shape, rhs_shape=y.shape,
+                                       dimension_numbers=dimension_numbers)
+
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
+    # TODO(jakevdp): This occasionally fails python_should_be_executing check. Why?
+    # self._CompileAndCheck(f_sparse, args_maker)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
