@@ -3125,7 +3125,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     }
     for shape in [(5,), (5, 5)]
     for dtype in number_dtypes
-    for bins in [10, np.arange(-5, 6), [-5, 0, 3]]
+    for bins in [10, np.arange(-5, 6), np.array([-5, 0, 3])]
     for range in [None, (0, 0), (0, 10)]
     for weights in [True, False]
   ))
@@ -3157,7 +3157,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for dtype in default_dtypes
     # We only test explicit integer-valued bin edges because in other cases
     # rounding errors lead to flaky tests.
-    for bins in [np.arange(-5, 6), [-5, 0, 3]]
+    for bins in [np.arange(-5, 6), np.array([-5, 0, 3])]
     for density in [True, False]
     for weights in [True, False]
   ))
@@ -3184,7 +3184,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     }
     for shape in [(5,), (12,)]
     for dtype in int_dtypes
-    for bins in [2, [2, 2], [[0, 1, 3, 5], [0, 2, 3, 4, 6]]]
+    for bins in [2, [2, 2], [np.array([0, 1, 3, 5]), np.array([0, 2, 3, 4, 6])]]
     for weights in [False, True]
     for density in [False, True]
     for range in [None, [(-1, 1), None], [(-1, 1), (-2, 2)]]
@@ -3212,7 +3212,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     }
     for shape in [(5, 3), (10, 3)]
     for dtype in int_dtypes
-    for bins in [(2, 2, 2), [[-5, 0, 4], [-4, -1, 2], [-6, -1, 4]]]
+    for bins in [(2, 2, 2), [np.array([-5, 0, 4]), np.array([-4, -1, 2]), np.array([-6, -1, 4])]]
     for weights in [False, True]
     for density in [False, True]
     for range in [None, [(-1, 1), None, None], [(-1, 1), (-2, 2), (-3, 3)]]
@@ -3784,8 +3784,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     (0, (2, 1, 3)),
     (5, (2, 1, 3)),
     (0, ()),
-    ([0, 1, 2], (2, 2)),
-    ([[[0, 1], [2, 3]]], (2, 2)))
+    (np.array([0, 1, 2]), (2, 2)),
+    (np.array([[[0, 1], [2, 3]]]), (2, 2)))
   def testUnravelIndex(self, flat_index, shape):
     args_maker = lambda: (flat_index, shape)
     self._CheckAgainstNumpy(np.unravel_index, jnp.unravel_index,
