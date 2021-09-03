@@ -25,7 +25,7 @@ from jax import api
 from jax import config
 from jax import dtypes
 from jax.experimental import sparse
-from jax.experimental.sparse.ops import _bcoo_nse, _dedupe_bcoo
+from jax.experimental.sparse.ops import _bcoo_nse
 from jax import lax
 from jax.lib import cusparse
 from jax.lib import xla_bridge
@@ -963,15 +963,11 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_dedupe(self, shape, dtype, n_batch, n_dense):
     rng = self.rng()
     rng_sparse = rand_sparse(self.rng())
-    M = rng_sparse(shape, dtype)
-    data, indices = sparse.bcoo_fromdense(M, n_batch=n_batch, n_dense=n_dense)
+    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype))
     for i, s in enumerate(shape[n_batch:len(shape) - n_dense]):
-      indices = indices.at[..., i, :].set(rng.randint(0, s, size=indices.shape[-1]))
-    data2, indices2 = _dedupe_bcoo(data, indices)
-    M1 = sparse.bcoo_todense(data, indices, shape=shape)
-    M2 = sparse.bcoo_todense(data2, indices2, shape=shape)
-
-    self.assertAllClose(M1, M2)
+      M.indices = M.indices.at[..., i, :].set(rng.randint(0, s, size=M.indices.shape[-1]))
+    M_dedup = M._dedupe()
+    self.assertAllClose(M.todense(), M_dedup.todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}_axes={}".format(

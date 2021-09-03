@@ -565,13 +565,13 @@ def _bcoo_nse(mat, n_batch=0, n_dense=0):
   mask = mask.sum(list(range(n_batch, mask.ndim)))
   return mask.max()
 
-def _dedupe_bcoo(data, indices):
+def _dedupe_bcoo(data, indices, shape):
+  n_batch, _, _ = _validate_bcoo(data, indices, shape)
+  if indices.shape[:n_batch] != data.shape[:n_batch]:
+    # TODO: handle broadcasted dimensions.
+    raise NotImplementedError("dedupe_bcoo for broadcasted dimensions.")
   f = _dedupe_bcoo_one
-  n_batch = indices.ndim - 2
-  for s1, s2 in safe_zip(indices.shape[:n_batch], data.shape[:n_batch]):
-    if s1 != s2:
-      # TODO: handle broadcasted dimensions.
-      raise NotImplementedError("dedupe_bcoo for broadcasted dimensions.")
+  for _ in range(n_batch):
     f = vmap(f)
   return f(data, indices)
 
@@ -1495,6 +1495,10 @@ class BCOO(JAXSparse):
   def _unbatch(self):
     """Return an unbatched representation of the BCOO matrix."""
     return BCOO(_unbatch_bcoo(self.data, self.indices, self.shape), shape=self.shape)
+
+  def _dedupe(self):
+    """Return a de-duplicated representation of the BCOO matrix."""
+    return BCOO(_dedupe_bcoo(self.data, self.indices, self.shape), shape=self.shape)
 
   @api.jit
   def todense(self):
