@@ -612,6 +612,7 @@ def _unbatch_bcoo(data, indices, shape):
 
 def _validate_bcoo(data, indices, shape):
   assert jnp.issubdtype(indices.dtype, jnp.integer)
+  shape = tuple(shape)
 
   nse, n_sparse = indices.shape[-2:]
   n_batch = indices.ndim - 2
