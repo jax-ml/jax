@@ -44,7 +44,7 @@ Inputs to a pjit’d function will be automatically partitioned across devices i
 
 +++ {"id": "iZNcsMjoHRtj"}
 
-# Single Host Example
+## Single Host Example
 
 +++ {"id": "ej2PCAVGHcIU"}
 
@@ -61,7 +61,7 @@ Each parameter is explained in detail below:
 
 +++ {"id": "S4PO128OIg1p"}
 
-## Setup
+### Setup
 
 +++ {"id": "JIofdJEodwd1"}
 
@@ -89,7 +89,7 @@ import numpy as np
 
 +++ {"id": "quolviRCIoZG"}
 
-## Mesh
+### Mesh
 Mesh is defined in [jax/interpreters/pxla](https://github.com/google/jax/blob/main/jax/interpreters/pxla.py#L1389), and it is a numpy array of jax devices in a multi-dimensional grid, alongside names for the axes of this mesh. It is also called the logical mesh.
 
 
@@ -131,7 +131,7 @@ For example, we can have a physical mesh of size (4, 4, 4). If the computation r
 
 +++ {"id": "JGNV0XCJKPlN"}
 
-## Input Data
+### Input Data
 A numpy array of size (8,2)
 
 ```{code-cell}
@@ -154,7 +154,7 @@ input_data
 
 +++ {"id": "IzM6BGB2KhOK"}
 
-## in_axis_resources & out_axis_resources
+### in_axis_resources & out_axis_resources
 Pytree of structure matching that of arguments to fun, with all actual arguments replaced by resource assignment specifications. It is also valid to specify a pytree prefix (e.g. one value in place of a whole subtree), in which case the leaves get broadcast to all values in that subtree.
 
 The valid resource assignment specifications are:
@@ -185,7 +185,7 @@ out_axis_resources=PartitionSpec('x', 'y')
 
 +++ {"id": "6HbI_Y40MN4X"}
 
-## Putting everything together
+### Putting everything together
 
 ```{code-cell}
 ---
@@ -415,7 +415,7 @@ the second dimension of the input is sharded over y axis and the first dimension
 
 +++ {"id": "0iQTcTM-aCkK"}
 
-# Multiple Host Example
+## Multiple Host Example
 
 +++ {"id": "mP7VeBP0aeNN"}
 
@@ -433,7 +433,7 @@ The pjit’d function applied with a given mesh distributes an even slice to eac
 
 +++ {"id": "pinw32PtcD3W"}
 
-## Setup
+### Setup
 ```python
 import jax
 from jax.experimental import maps
@@ -445,7 +445,7 @@ import numpy as np
 
 +++ {"id": "wRNv_eogcLaZ"}
 
-## Mesh
+### Mesh
 
 In this example, there are 4 hosts with 32 devices. These physical devices are abstracted to a logical mesh of size (16, 2). The first (vertical) axis is named ‘x’ and has length 16, and the second (horizontal) axis is named ‘y’ and has length 2. Within the global mesh, the first (4, 2) devices are connected to host 0, the second (4, 2) devices are connected to host 1. The first 8 devices (in the order of left to right, top to bottom) always belong to host 0, and the second 8 devices always belong to host 1 and so on. 
 
@@ -458,7 +458,7 @@ mesh = maps.Mesh(devices, ('x', 'y'))
 
 +++ {"id": "UnUZlK_Ect1_"}
 
-## Input data
+### Input data
 
 In a multi-host environment, all the devices connected to one host have to contain a subslice of a single continuous large slice of the data. In JAX SPMD, there are no direct communications between hosts, so hosts only talk to each other via collective communication between devices. As a result, users need to handle distributed data loading on hosts. 
 
@@ -477,7 +477,7 @@ else:
 
 +++ {"id": "gTS_bgtkdch1"}
 
-## in_axis_resources & out_axis_resources
+### in_axis_resources & out_axis_resources
 
 - `in_axis_resources`: PartitionSpec(('x', 'y'),). This partitions the first dimension of input data over both `x` and `y` axes. This lets Pjit know that the (32, 2) input data is already split evenly across hosts (done by user). Since input argument dimensions partitioned over multi-process mesh axes should be of size equal to the corresponding local mesh axis size, pjit sends the (8, 2) on each host to its devices based on `in_axis_resources`. Since each host has a logical mesh of size (4, 2) within the entire logical mesh, each device has a (1, 2) slice. 
 - `out_axis_resources`: PartitionSpec('x', 'y'). It specifies that the two dimensions of output data are sharded over `x` and `y` respectively, so each device gets a (2,1) slice. 
@@ -486,7 +486,7 @@ else:
 
 +++ {"id": "8b4kf6GtgPgD"}
 
-## Putting everything together
+### Putting everything together
 ```python
 f = pjit(
    lambda x: x,
