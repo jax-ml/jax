@@ -189,9 +189,16 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
       1, *dtypes._lattice_result_type(*tree_leaves(b)))
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
-  x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
+  x_final, r, *_, k = lax.while_loop(cond_fun, body_fun, initial_value)
 
-  return x_final
+  # compute the final error and whever it has converged.
+  rs = _vdot_real_tree(r, r)
+  converged = rs <= atol2
+
+  # additional info output structure
+  info = {'error': rs, 'converged':converged, 'niter': k}
+
+  return x_final, info
 
 
 def _shapes(pytree):
@@ -766,4 +773,4 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   return _isolve(_bicgstab_solve,
                  A=A, b=b, x0=x0, tol=tol, atol=atol,
-                 maxiter=maxiter, M=M)
+                 maxiter=maxiter, M=M, has_aux=True)
