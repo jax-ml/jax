@@ -192,7 +192,7 @@ def _shapes(pytree):
 
 
 def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
-            maxiter=None, M=None, check_symmetric=False):
+            maxiter=None, M=None, check_symmetric=False, has_aux=False):
   if x0 is None:
     x0 = tree_map(jnp.zeros_like, b)
 
@@ -225,12 +225,9 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
     return not issubclass(x.dtype.type, np.complexfloating)
   symmetric = all(map(real_valued, tree_leaves(b))) \
     if check_symmetric else False
-  x = lax.custom_linear_solve(
+  return lax.custom_linear_solve(
       A, b, solve=isolve_solve, transpose_solve=isolve_solve,
-      symmetric=symmetric)
-  info = None
-  return x, info
-
+      symmetric=symmetric, has_aux=has_aux)
 
 def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   """Use Conjugate Gradient iteration to solve ``Ax = b``.
