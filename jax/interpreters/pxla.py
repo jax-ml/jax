@@ -445,8 +445,8 @@ pxla_result_handlers[ConcreteArray] = array_result_handler
 
 ### lazy device-memory persistence and result handling
 
-# TODO(jblespiau): Remove when jaxlib 0.1.72 is the minimal version.
-_USE_CPP_SDA = _xla_extension_version >= 38
+# TODO(jblespiau): Remove when jaxlib 0.1.71 is the minimal version.
+_USE_CPP_SDA = _xla_extension_version >= 34
 
 
 def make_sharded_device_array(
@@ -484,8 +484,8 @@ def make_sharded_device_array(
   if (_USE_CPP_SDA and
       (not device_buffers or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
-    # TODO(slebedev): Remove the ignore once jaxlib>=0.1.72.
-    return pmap_lib.ShardedDeviceArray.make(
+    # TODO(slebedev): Remove the ignore once jaxlib>=0.1.71.
+    return pmap_lib.ShardedDeviceArray(
         aval, sharding_spec, device_buffers,  # type: ignore[arg-type, call-arg]
         indices, aval.weak_type)
 
