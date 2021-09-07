@@ -5973,6 +5973,20 @@ def _nbytes(arr):
   return size(arr) * _dtype(arr).itemsize
 
 
+def _clip(number, min=None, max=None, out=None, *, a_min=None, a_max=None):
+  # ndarray.clip has a slightly different API from clip (min -> a_min, max -> a_max)
+  # TODO: remove after deprecation window
+  if a_min is not None or a_max is not None:
+    warnings.warn('`a_min` and `a_max` keyword arguments to ndarray.clip are deprecated '
+                  'in favor of `min` and `max` for compatibility with numpy. '
+                  'They will be removed in JAX 0.22.2', FutureWarning)
+  if min is None and a_min is not None:
+    min = a_min
+  if max is None and a_max is not None:
+    max = a_max
+  return clip(number, a_min=min, a_max=max, out=out)
+
+
 def _view(arr, dtype=None, type=None):
   lax._check_user_dtype_supported(dtype, "view")
   if type is not None:
@@ -6109,7 +6123,7 @@ _operators = {
 # These numpy.ndarray methods are just refs to an equivalent numpy function
 _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
                     "nonzero", "searchsorted", "round"]
-_diff_methods = ["choose", "clip", "conj", "conjugate", "cumprod", "cumsum",
+_diff_methods = ["choose", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "tile", "trace", "var"]
@@ -6340,6 +6354,7 @@ def _set_shaped_array_attributes(shaped_array):
   setattr(shaped_array, "astype", core.aval_method(_astype))
   setattr(shaped_array, "view", core.aval_method(_view))
   setattr(shaped_array, "nbytes", core.aval_property(_nbytes))
+  setattr(shaped_array, "clip", core.aval_method(_clip))
 
   setattr(shaped_array, "_array_module", staticmethod(__array_module__))
   setattr(shaped_array, "broadcast", core.aval_method(lax.broadcast))
@@ -6367,6 +6382,7 @@ def _set_device_array_base_attributes(device_array):
   setattr(device_array, "astype", _astype)
   setattr(device_array, "view", _view)
   setattr(device_array, "nbytes", property(_nbytes))
+  setattr(device_array, "clip", _clip)
 
 _set_device_array_base_attributes(DeviceArray)
 
