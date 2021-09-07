@@ -37,7 +37,7 @@ from ..interpreters import partial_eval as pe
 from ..interpreters.sharded_jit import PartitionSpec
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..tree_util import tree_flatten, tree_unflatten
+from ..tree_util import tree_map, tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
                          split_list, cache, tuple_insert)
@@ -160,15 +160,13 @@ def pjit(fun: Callable,
   warn("pjit is an experimental feature and probably has bugs!")
   _check_callable(fun)
 
-  # To be a tree prefix of the positional args tuple, in_axes can never be a
-  # list: if in_axes is not a leaf, it must be a tuple of trees. However,
-  # in cases like these users expect tuples and lists to be treated
-  # essentially interchangeably, so we canonicalize lists to tuples here
-  # rather than raising an error. https://github.com/google/jax/issues/2367
   if isinstance(in_axis_resources, list):
+    # To be a tree prefix of the positional args tuple, in_axes can never be a
+    # list: if in_axes is not a leaf, it must be a tuple of trees. However,
+    # in cases like these users expect tuples and lists to be treated
+    # essentially interchangeably, so we canonicalize lists to tuples here
+    # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axis_resources = tuple(in_axis_resources)
-  if isinstance(out_axis_resources, list):
-    out_axis_resources = tuple(out_axis_resources)
 
   in_axis_resources, in_axis_resources_entries, _ = \
       _prepare_axis_resources(in_axis_resources, "in_axis_resources")
@@ -238,12 +236,23 @@ def hashable_pytree(pytree):
   return HashableFunction(lambda: tree_unflatten(treedef, vals),
                           closure=(treedef, vals))
 
+def flatten_axis_resources(what, tree, axis_resources, tupled_args):
+  try:
+    return tuple(flatten_axes(what, tree, axis_resources, tupled_args=tupled_args))
+  except ValueError:
+    pass
+  # Replace axis_resources with unparsed versions to avoid revealing internal details
+  flatten_axes(what, tree, tree_map(lambda parsed: parsed.user_spec, axis_resources),
+               tupled_args=tupled_args)
+  raise AssertionError("Please open a bug request!")  # This should be unreachable
+
 @lu.cache
 def _pjit_jaxpr(fun, mesh, local_in_avals,
                 in_tree, in_axis_resources_thunk,
                 out_tree, out_axis_resources_thunk):
-  in_axis_resources_flat = tuple(flatten_axes("pjit in_axis_resources",
-                                              in_tree, in_axis_resources_thunk()))
+  in_axis_resources_flat = flatten_axis_resources(
+        "pjit in_axis_resources", in_tree,
+        in_axis_resources_thunk(), tupled_args=True)
   _check_shapes_against_resources("pjit arguments", False, mesh.local_mesh.shape,
                                   local_in_avals, in_axis_resources_flat)
   global_in_avals = local_to_global(mesh, local_in_avals, in_axis_resources_flat)
@@ -251,8 +260,9 @@ def _pjit_jaxpr(fun, mesh, local_in_avals,
   jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
   jaxpr = core.ClosedJaxpr(jaxpr, consts)
 
-  out_axis_resources_flat = tuple(flatten_axes("pjit out_axis_resources",
-                                               out_tree(), out_axis_resources_thunk()))
+  out_axis_resources_flat = flatten_axis_resources(
+        "pjit out_axis_resources", out_tree(),
+        out_axis_resources_thunk(), tupled_args=False)
   _check_shapes_against_resources("pjit outputs", mesh.is_multi_process, mesh.shape,
                                   global_out_avals, out_axis_resources_flat)
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple

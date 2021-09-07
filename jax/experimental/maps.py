@@ -292,7 +292,8 @@ def _parse_entry(arg_name, entry):
     if entry and entry[-1] == ...:
       constr = AxisNamePos
       entry = entry[:-1]
-      user_repr = str(entry + [DotDotDotRepr()])
+      tail = [DotDotDotRepr()] if isinstance(entry, list) else (DotDotDotRepr(),)
+      user_repr = str(entry + tail)
     else:
       constr = partial(AxisNamePosWithRank, expected_rank=len(entry))
       user_repr = str(entry)
@@ -498,15 +499,13 @@ def xmap(fun: Callable,
   warn("xmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
 
-  # To be a tree prefix of the positional args tuple, in_axes can never be a
-  # list: if in_axes is not a leaf, it must be a tuple of trees. However,
-  # in cases like these users expect tuples and lists to be treated
-  # essentially interchangeably, so we canonicalize lists to tuples here
-  # rather than raising an error. https://github.com/google/jax/issues/2367
   if isinstance(in_axes, list) and not _is_axes_leaf(in_axes):
+    # To be a tree prefix of the positional args tuple, in_axes can never be a
+    # list: if in_axes is not a leaf, it must be a tuple of trees. However,
+    # in cases like these users expect tuples and lists to be treated
+    # essentially interchangeably, so we canonicalize lists to tuples here
+    # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axes = tuple(in_axes)
-  if isinstance(out_axes, list) and not _is_axes_leaf(out_axes):
-    out_axes = tuple(out_axes)
 
   if in_axes == ():  # Allow empty argument lists
     in_axes, in_axes_entries = (), []
@@ -578,12 +577,12 @@ def xmap(fun: Callable,
       donated_invars = donation_vector(donate_argnums, args, ())
     else:
       donated_invars = (False,) * len(args_flat)
-    in_axes_flat = flatten_axes("xmap in_axes", in_tree, in_axes)
+    in_axes_flat = _flatten_axes("xmap in_axes", in_tree, in_axes, tupled_args=True)
 
     # Some pytree containers might be unhashable, so we flatten the out_axes
     # pytree into a treedef and entries which are guaranteed to be hashable.
     out_axes_thunk = HashableFunction(
-      lambda: tuple(flatten_axes("xmap out_axes", out_tree(), out_axes)),
+      lambda: tuple(_flatten_axes("xmap out_axes", out_tree(), out_axes, tupled_args=False)),
       closure=(out_axes_entries, out_axes_treedef))
 
     axis_resource_count = _get_axis_resource_count(normalized_axis_resources, resource_env)
@@ -1674,6 +1673,19 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
                       dict(resource_env=resource_env, axis_resources=ParsedPartitionSpec((), ())),
                       eqn.source_info))
   return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, new_eqns)
+
+def _flatten_axes(what, tree, axes, tupled_args):
+  try:
+    return tuple(flatten_axes(what, tree, axes, tupled_args=tupled_args))
+  except ValueError:
+    pass
+  # Replace axis_resources with unparsed versions to avoid revealing internal details
+  flatten_axes(what, tree, tree_map(lambda parsed: NoQuotesStr(parsed.user_repr), axes),
+               tupled_args=tupled_args)
+  raise AssertionError("Please open a bug request!")  # This should be unreachable
+
+class NoQuotesStr(str):
+  __repr__ = str.__str__
 
 
 # -------- soft_pmap --------
