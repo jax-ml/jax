@@ -15,6 +15,7 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 
+import re
 from typing import Dict, Tuple
 
 from absl.testing import absltest
@@ -103,6 +104,25 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_jax = jax.jit(lambda x: jnp.sin(jax.jit(jnp.cos)(x)))
     f_tf = jax2tf.convert(f_jax)
     np.testing.assert_allclose(f_jax(0.7), f_tf(0.7))
+
+  def test_nested_jit_is_compiled(self):
+    # Check that nested jax.jit are compiled with tf.function(jit_compile=True)
+    # We do this by looking for the _XlaMustCompile attribute in the function graph
+    def has_xla_must_compile(f_tf, x):
+      f_conc = tf.function(f_tf, autograph=True).get_concrete_function(tf.convert_to_tensor(x))
+      for n in f_conc.graph._nodes_by_id.values():
+        try:
+          n.get_attr("_XlaMustCompile")
+          return True
+        except ValueError:
+          continue
+      return False
+
+    x = np.array(0.7)
+    f_no_jit = lambda x: x
+    self.assertFalse(has_xla_must_compile(jax2tf.convert(f_no_jit), x))
+    f_jit = lambda x: jax.jit(jnp.sin)(x)
+    self.assertTrue(has_xla_must_compile(jax2tf.convert(f_jit), x))
 
   def test_converts_jax_arrays(self):
     f_tf = tf.function(lambda x: x)
@@ -752,39 +772,49 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     def f(x):
       return x + const + const + const + const
 
-    f_tf_nr_consts = self.CountTfConstants(jax2tf.convert(f), const)
-    # It seems that there is already a shape constant in the graph, we want to
-    # make sure our 4 instances of "const" are shared.
-    self.assertEqual(f_tf_nr_consts, 2)
+    f_tf_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f), const)
+    self.assertEqual(f_tf_nr_consts, 1)
 
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    const = np.arange(16, dtype=np.float32)
-    x = np.ones((16,), dtype=np.float32)
+    const = np.arange(256, dtype=np.float32)
+    x = np.ones((256,), dtype=np.float32)
     def f1(x):
       return lax.cond(x[0] >= 0., lambda x: x + const, lambda x: x * const, x) + const
     def f2(x):
       return f1(x) + const  # The extra const should not cost anything
-    f1_nr_consts = self.CountTfConstants(jax2tf.convert(f1), x)
-    f2_nr_consts = self.CountTfConstants(jax2tf.convert(f2), x)
+    f1_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f1), x)
+    f2_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f2), x)
     self.assertEqual(f1_nr_consts, f2_nr_consts)
 
   def test_shared_constants_under_scan(self):
     # See https://github.com/google/jax/issues/7992.
-    const = np.arange(16, dtype=np.float32)
-    xs = np.ones((8, 16), dtype=np.float32)
+    const = np.arange(256, dtype=np.float32)
+    xs = np.ones((8, 256), dtype=np.float32)
     def f1(xs):
       res, _ = lax.scan(lambda carry, x: (carry + x + const, None),
-                        np.zeros((16,), dtype=np.float32), xs)
+                        np.zeros((256,), dtype=np.float32), xs)
       return res
 
     def f2(xs):
       return f1(xs) + const  # The extra const should not be saved
 
-    f1_nr_consts = self.CountTfConstants(jax2tf.convert(f1), xs)
-    f2_nr_consts = self.CountTfConstants(jax2tf.convert(f2), xs)
+    f1_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f1), xs)
+    f2_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f2), xs)
     self.assertEqual(f1_nr_consts, f2_nr_consts)
+
+  def test_shared_constants_under_jit(self):
+    # We do not share constants under jit.
+    const = np.ones((16, 16))
+    @jax.jit
+    def g_jit(x):
+      return x * const
+    def f(x):
+      return g_jit(x) + const + const
+
+    f_tf_graph_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f), const)
+    self.assertEqual(f_tf_graph_nr_consts, 2)
 
   def test_weak_types(self):
     mul = jax.jit(jnp.multiply)

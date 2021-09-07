@@ -65,6 +65,13 @@ from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
 
 PolyShape = shape_poly.PolyShape
 
+# A temporary internal flag, to enable the wrapping of jax.jit functions
+# with tf.function(jit_compile=True). See #7389. This change has triggered a
+# number of failures in TF. We keep this until we are confident that it does
+# not create problems.
+# TODO(necula): remove this flag
+_WRAP_JAX_JIT_WITH_TF_FUNCTION = True
+
 # The scope name need to be a valid TensorFlow name. See
 # https://github.com/tensorflow/tensorflow/blob/r2.3/tensorflow/core/framework/node_def_util.cc#L731
 _VALID_SCOPE_REGEX = re.compile("^[A-Za-z0-9.][A-Za-z0-9_.\\/>-]*$")
@@ -483,6 +490,22 @@ def _interpret_fun(
     extra_name_stack: Optional[str],
     fresh_constant_cache: bool = False
 ) -> Sequence[Tuple[TfVal, core.ShapedArray]]:
+  with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
+    fun = _interpret_subtrace(fun, main, in_avals)
+    with _extended_name_stack(extra_name_stack):
+      with core.new_sublevel():
+          out_vals: Sequence[Tuple[TfVal, core.ShapedArray]] = \
+              _call_wrapped_with_new_constant_cache(fun, in_vals,
+                                                    fresh_constant_cache=fresh_constant_cache)
+
+      del main
+
+  return tuple(out_vals)
+
+def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
+                                          in_vals: Sequence[TfVal],
+                                          fresh_constant_cache: bool = False
+                                          ) -> Sequence[Tuple[TfVal, core.ShapedArray]]:
   try:
     prev_constant_cache = _thread_local_state.constant_cache
     prev_constant_cache_keys = set(prev_constant_cache.keys()) if prev_constant_cache is not None else set()
@@ -491,13 +514,8 @@ def _interpret_fun(
     if fresh_constant_cache:
       _thread_local_state.constant_cache = {}
 
-    with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
-      fun = _interpret_subtrace(fun, main, in_avals)
-      with _extended_name_stack(extra_name_stack):
-        with core.new_sublevel():
-          out_vals: Sequence[Tuple[TfVal, core.ShapedArray]] = \
-              fun.call_wrapped(*in_vals)
-        del main
+    out_vals: Sequence[Tuple[TfVal, core.ShapedArray]] = \
+        fun.call_wrapped(*in_vals)
   finally:
     if prev_constant_cache is not None and not fresh_constant_cache:
       newly_added_keys = set(prev_constant_cache.keys()) - prev_constant_cache_keys
@@ -505,9 +523,7 @@ def _interpret_fun(
       for k in newly_added_keys:
         del prev_constant_cache[k]
     _thread_local_state.constant_cache = prev_constant_cache
-
-  return tuple(out_vals)
-
+  return out_vals
 
 def _convert_jax_impl(jax_impl: Callable, *,
                       multiple_results=True,
@@ -853,6 +869,21 @@ class TensorFlowTrace(core.Trace):
                 fun.call_wrapped(*vals)
         elif call_primitive == sharded_jit.sharded_call_p:
           vals_out = _sharded_call(fun, vals, **params)
+        elif call_primitive == xla.xla_call_p:
+          if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+            # Make a nested tf.function(jit_compile=True)
+            store_tf_res_avals = None
+            def f_tf(*tf_args):
+              nonlocal store_tf_res_avals
+              tf_res_out: Sequence[Tuple[TfVal, core.ShapedArray]] = _call_wrapped_with_new_constant_cache(fun, tf_args,
+                                                                                                           fresh_constant_cache=False)
+              tf_res_vals, tf_res_avals = util.unzip2(tf_res_out)
+              store_tf_res_avals = tf_res_avals
+              return tf_res_vals
+            tf_vals_out = tf.function(f_tf, autograph=False, jit_compile=True)(*vals)
+            vals_out = zip(tf_vals_out, store_tf_res_avals)
+          else:
+            vals_out: Sequence[Tuple[TfVal, core.ShapedArray]] = fun.call_wrapped(*vals)
         else:
           vals_out = fun.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
@@ -1470,6 +1501,8 @@ def _conv_general_dilated(lhs, rhs, *,
         use_v2=True)
     # TODO: implement shape inference for XlaConv
     out.set_shape(out_tf_shape)
+    if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+      out = tf.stop_gradient(out)  # See #7839
     return out
 
   # Follow the lowering for complex convolutions from
@@ -1518,6 +1551,8 @@ def _dot_general(lhs, rhs, *, dimension_numbers,
       precision_config_proto,
       preferred_element_type=preferred_element_type,
       use_v2=True)
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    res = tf.stop_gradient(res)  # See #7839
   return res
 
 
@@ -1567,6 +1602,8 @@ def _pad(operand, padding_value, *, padding_config,
          _out_aval: core.ShapedArray):
   low, high, interior = util.unzip3(padding_config)
   out = tfxla.pad(operand, padding_value, low, high, interior)
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    out = tf.stop_gradient(out)  # See #7839
   return out
 
 
@@ -1738,6 +1775,8 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
       padding=padding)
   # TODO: implement shape inference for XlaReduceWindow
   out.set_shape(_aval_to_tf_shape(_out_aval))
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    out = tf.stop_gradient(out)  # See #7839
   return out
 
 
@@ -1886,10 +1925,12 @@ def _reduce(*operands: TfVal,
       tf.function(reducer_computation,
                   autograph=False).get_concrete_function(*reducer_arg_spec))
 
-  out = tfxla.variadic_reduce(operands, init_vals,
-                              dimensions_to_reduce=dimensions,
-                              reducer=xla_reducer_computation)
-  return out
+  outs = tfxla.variadic_reduce(operands, init_vals,
+                               dimensions_to_reduce=dimensions,
+                               reducer=xla_reducer_computation)
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    outs = tuple(tf.stop_gradient(out) for out in outs)  # See #7839
+  return outs
 
 tf_impl_with_avals[lax.reduce_p] = _reduce
 
@@ -1946,6 +1987,8 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
                                  padding, source, init_value, select_fn,
                                  scatter_fn)
   out.set_shape(_aval_to_tf_shape(_out_aval))
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    out = tf.stop_gradient(out)  # See #7839
   return out
 
 
@@ -1969,7 +2012,7 @@ tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
     multiple_results=False, extra_name_stack="random_gamma")
 
 
-def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm):
+def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm) -> Sequence[TfVal]:
   shape_tf = _eval_shape(shape)
   # JAX uses XLA algorithm enums; tfxla uses tf.random.Algorithm
   if algorithm == lax.RandomAlgorithm.RNG_THREE_FRY:
@@ -1980,9 +2023,11 @@ def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm):
     algorithm_tf = tf.random.Algorithm.AUTO_SELECT
   else:
     assert False
-  out = tfxla.rng_bit_generator(algorithm_tf.value, key, shape_tf,
-                                dtype=_to_tf_dtype(dtype))
-  return out
+  outs = tfxla.rng_bit_generator(algorithm_tf.value, key, shape_tf,
+                                 dtype=_to_tf_dtype(dtype))
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    outs = tuple(tf.stop_gradient(out) for out in outs) # See #7839
+  return outs
 
 
 tf_impl[lax.rng_bit_generator_p] = _rng_bit_generator
@@ -2018,6 +2063,8 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
   out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf,
                      indices_are_sorted)
   out.set_shape(_aval_to_tf_shape(_out_aval))
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    out = tf.stop_gradient(out)  # See #7839
   return out
 
 
@@ -2048,6 +2095,8 @@ def _dynamic_slice(operand, *start_indices, slice_sizes: core.Shape,
   slice_sizes_tf = _eval_shape(slice_sizes)
 
   res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes_tf)
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    res = tf.stop_gradient(res)  # See #7839
   return res
 
 
@@ -2057,7 +2106,10 @@ tf_impl_with_avals[lax.dynamic_slice_p] = _dynamic_slice
 def _dynamic_update_slice(operand, update, *start_indices,
                           _in_avals: Sequence[core.ShapedArray],
                           _out_aval: core.ShapedArray):
-  return tfxla.dynamic_update_slice(operand, update, tf.stack(start_indices))
+  out = tfxla.dynamic_update_slice(operand, update, tf.stack(start_indices))
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    out = tf.stop_gradient(out)  # See #7839
+  return out
 
 
 tf_impl_with_avals[lax.dynamic_update_slice_p] = _dynamic_update_slice
@@ -2103,6 +2155,8 @@ def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
       xla_update_computation,
       proto,
       indices_are_sorted=indices_are_sorted)
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    out = tf.stop_gradient(out)  # See #7839
   return out
 
 
@@ -2274,6 +2328,8 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
       dimension=dimension,
       is_stable=is_stable,
       comparator=xla_comparator_computation)
+  if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
+    results = tuple(tf.stop_gradient(out) for out in results)  # See #7839
   return results
 
 

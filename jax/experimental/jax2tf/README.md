@@ -84,6 +84,12 @@ accuracy w.r.t. the JAX execution:
 ```python
 tf.function(jax2tf.convert(f_jax), autograph=False, jit_compile=True)(x)
 ```
+The above happens automatically for JAX code that uses `jax.jit`. E.g.,
+the above is equivalent to:
+
+```python
+jax2tf.convert(jax.jit(f_jax))(x)
+```
 
 ## Usage: saved model
 
