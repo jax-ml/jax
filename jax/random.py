@@ -78,6 +78,10 @@ for the design and its motivation.
 
 # flake8: noqa: F401
 
+# TODO(frostig): replace with KeyArray from jax._src.random once we
+# always enable_custom_prng
+from jax._src.prng import PRNGKeyArray as KeyArray
+
 from jax._src.random import (
   PRNGKey as PRNGKey,
   bernoulli as bernoulli,
