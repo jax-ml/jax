@@ -30,10 +30,22 @@ from jax._src.util import safe_zip as zip
 _nonempty_prod = functools.partial(functools.reduce, operator.mul)
 _nonempty_sum = functools.partial(functools.reduce, operator.add)
 
+
+def _mirror_index_fixer(index, size):
+    s = size - 1 # Half-wavelength of triangular wave
+    # Scaled, integer-valued version of the triangular wave |x - round(x)|
+    return jnp.abs((index + s) % (2 * s) - s)
+
+
+def _reflect_index_fixer(index, size):
+    return jnp.floor_divide(_mirror_index_fixer(2*index+1, 2*size+1) - 1, 2)
+
 _INDEX_FIXERS = {
     'constant': lambda index, size: index,
     'nearest': lambda index, size: jnp.clip(index, 0, size - 1),
     'wrap': lambda index, size: index % size,
+    'mirror': _mirror_index_fixer,
+    'reflect': _reflect_index_fixer,
 }
 
 
@@ -112,7 +124,7 @@ def _map_coordinates(input, coordinates, order, mode, cval):
 
 @_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
     Only nearest neighbor (``order=0``), linear interpolation (``order=1``) and
-    modes ``'constant'``, ``'nearest'`` and ``'wrap'`` are currently supported.
+    modes ``'constant'``, ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently supported.
     Note that interpolation near boundaries differs from the scipy function,
     because we fixed an outstanding bug (https://github.com/scipy/scipy/issues/2640);
     this function interprets the ``mode`` argument as documented by SciPy, but
