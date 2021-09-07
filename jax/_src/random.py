@@ -230,7 +230,9 @@ def uniform(key: KeyArray,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.as_named_shape(shape)
-  return _uniform(key, shape, dtype, minval, maxval)  # type: ignore
+  out = _uniform(key, shape, dtype, minval, maxval)  # type: ignore
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _uniform(key, shape, dtype, minval, maxval) -> jnp.ndarray:
@@ -287,7 +289,9 @@ def randint(key: KeyArray,
   key, _ = _check_prng_key(key)
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _randint(key, shape, minval, maxval, dtype)
+  out = _randint(key, shape, minval, maxval, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(1, 4), inline=True)
 def _randint(key, shape, minval, maxval, dtype):
@@ -367,7 +371,9 @@ def shuffle(key: KeyArray, x: Array, axis: int = 0) -> jnp.ndarray:
          "Use jax.random.permutation with independent=True.")
   warnings.warn(msg, FutureWarning)
   key, _ = _check_prng_key(key)
-  return _shuffle(key, x, axis)  # type: ignore
+  out = _shuffle(key, x, axis)  # type: ignore
+  key.consume()
+  return out
 
 
 def permutation(key: KeyArray,
@@ -394,11 +400,14 @@ def permutation(key: KeyArray,
     if not np.issubdtype(lax.dtype(x), np.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
     r = core.concrete_or_error(int, x, 'argument x of jax.random.permutation()')
-    return _shuffle(key, jnp.arange(r), axis)
-  if independent or np.ndim(x) == 1:
-    return _shuffle(key, x, axis)
-  ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[union-attr]
-  return jnp.take(x, ind, axis)
+    out = _shuffle(key, jnp.arange(r), axis)
+  elif independent or np.ndim(x) == 1:
+    out = _shuffle(key, x, axis)
+  else:
+    ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[union-attr]
+    out = jnp.take(x, ind, axis)
+  key.consume()
+  return out
 
 
 @partial(jit, static_argnums=(2,), inline=True)
@@ -520,7 +529,9 @@ def normal(key: KeyArray,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.as_named_shape(shape)
-  return _normal(key, shape, dtype)  # type: ignore
+  out = _normal(key, shape, dtype)  # type: ignore
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _normal(key, shape, dtype) -> jnp.ndarray:
@@ -580,7 +591,9 @@ def multivariate_normal(key: KeyArray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype, method)  # type: ignore
+  out = _multivariate_normal(key, mean, cov, shape, dtype, method)  # type: ignore
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(3, 4, 5), inline=True)
 def _multivariate_normal(key, mean, cov, shape, dtype, method) -> jnp.ndarray:
@@ -645,7 +658,9 @@ def truncated_normal(key: KeyArray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.as_named_shape(shape)
-  return _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
+  out = _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(3, 4), inline=True)
 def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
@@ -696,7 +711,9 @@ def bernoulli(key: KeyArray,
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
-  return _bernoulli(key, p, shape)  # type: ignore
+  out = _bernoulli(key, p, shape)  # type: ignore
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(2,), inline=True)
 def _bernoulli(key, p, shape) -> jnp.ndarray:
@@ -778,7 +795,9 @@ def cauchy(key: KeyArray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _cauchy(key, shape, dtype)
+  out = _cauchy(key, shape, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _cauchy(key, shape, dtype):
@@ -818,7 +837,9 @@ def dirichlet(key: KeyArray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _dirichlet(key, alpha, shape, dtype)
+  out = _dirichlet(key, alpha, shape, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(2, 3), inline=True)
 def _dirichlet(key, alpha, shape, dtype):
@@ -857,7 +878,9 @@ def exponential(key: KeyArray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _exponential(key, shape, dtype)
+  out = _exponential(key, shape, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _exponential(key, shape, dtype):
@@ -993,9 +1016,11 @@ def gamma(key: KeyArray,
   if key.impl is not prng.threefry_prng_impl:
     raise NotImplementedError(
         f'`gamma` is only implemented for the threefry2x32 RNG, not {key.impl}')
-  return gamma_threefry2x32(key.unsafe_raw_array(), a, shape, dtype)
+  out = _gamma_threefry2x32(key.unsafe_raw_array(), a, shape, dtype)
+  key.consume()
+  return out
 
-def gamma_threefry2x32(key: jnp.ndarray,  # raw ndarray form of a 2x32 key
+def _gamma_threefry2x32(key: jnp.ndarray,  # raw ndarray form of a 2x32 key
                        a: RealArray,
                        shape: Optional[Sequence[int]] = None,
                        dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
@@ -1134,7 +1159,9 @@ def poisson(key: KeyArray,
   if np.shape(lam) != shape:
     lam = jnp.broadcast_to(lam, shape)
   lam = lax.convert_element_type(lam, np.float32)
-  return _poisson(key, lam, shape, dtype)
+  out = _poisson(key, lam, shape, dtype)
+  key.consume()
+  return out
 
 
 def gumbel(key: KeyArray,
@@ -1158,7 +1185,9 @@ def gumbel(key: KeyArray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _gumbel(key, shape, dtype)
+  out = _gumbel(key, shape, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _gumbel(key, shape, dtype):
@@ -1226,7 +1255,9 @@ def laplace(key: KeyArray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _laplace(key, shape, dtype)
+  out = _laplace(key, shape, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _laplace(key, shape, dtype):
@@ -1257,7 +1288,9 @@ def logistic(key: KeyArray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _logistic(key, shape, dtype)
+  out = _logistic(key, shape, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _logistic(key, shape, dtype):
@@ -1293,7 +1326,9 @@ def pareto(key: KeyArray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _pareto(key, b, shape, dtype)
+  out = _pareto(key, b, shape, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(2, 3), inline=True)
 def _pareto(key, b, shape, dtype):
@@ -1333,7 +1368,12 @@ def t(key: KeyArray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _t(key, df, shape, dtype)
+  if key.impl is not prng.threefry_prng_impl:
+    raise NotImplementedError(
+        f'`random.t` is only implemented for the threefry2x32 RNG, not {key.impl}')
+  out = _t(key, df, shape, dtype)
+  key.consume()
+  return out
 
 @partial(jit, static_argnums=(2, 3), inline=True)
 def _t(key, df, shape, dtype):
@@ -1347,7 +1387,7 @@ def _t(key, df, shape, dtype):
   n = normal(key_n, shape, dtype)
   two = _constant_like(n, 2)
   half_df = lax.div(df, two)
-  g = gamma(key_n, half_df, shape, dtype)
+  g = _gamma_threefry2x32(key_n.unsafe_raw_array(), half_df, shape, dtype)
   return n * jnp.sqrt(half_df / g)
 
 
@@ -1369,12 +1409,14 @@ def rademacher(key: KeyArray,
   key, _ = _check_prng_key(key)
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _rademacher(key, shape, dtype)
+  out = _rademacher(key, shape, dtype)
+  key.consume()
+  return out
 
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _rademacher(key, shape, dtype):
-  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape)
+  bernoulli_samples = _bernoulli(key=key, p=0.5, shape=shape)
   return (2 * bernoulli_samples - 1).astype(dtype)
 
 
@@ -1402,7 +1444,9 @@ def maxwell(key: KeyArray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _maxwell(key, shape, dtype)
+  out = _maxwell(key, shape, dtype)
+  key.consume()
+  return out
 
 
 @partial(jit, static_argnums=(1, 2), inline=True)
@@ -1439,7 +1483,9 @@ def double_sided_maxwell(key: KeyArray,
                      f" dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _double_sided_maxwell(key, loc, scale, shape, dtype)
+  out = _double_sided_maxwell(key, loc, scale, shape, dtype)
+  key.consume()
+  return out
 
 
 @partial(jit, static_argnums=(3, 4), inline=True)
@@ -1484,7 +1530,9 @@ def weibull_min(key: KeyArray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _weibull_min(key, scale, concentration, shape, dtype)
+  out = _weibull_min(key, scale, concentration, shape, dtype)
+  key.consume()
+  return out
 
 
 @partial(jit, static_argnums=(3, 4), inline=True)
