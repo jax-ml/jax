@@ -623,7 +623,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
     out = compiled_fun(*args)
   except FloatingPointError:
     assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
-    print("Invalid value encountered in the output of a jit function. "
+    print("Invalid value encountered in the output of a jit/pmap-ed function. "
           "Calling the de-optimized version.")
     # We want to run the wrapped function again (after _xla_callable already ran
     # it), but linear_util.WrappedFun instances are meant to be run only once.

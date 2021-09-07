@@ -1762,6 +1762,7 @@ def _cpp_pmap(
       out_axes)
   del static_broadcasted_argnums, donate_argnums
 
+  @api_boundary
   def cache_miss(*args, **kwargs):
     f_pmapped_ = _get_f_mapped(
         fun=fun,
@@ -1816,15 +1817,7 @@ def _cpp_pmap(
   cpp_mapped_f = pmap_lib.pmap(fun, cache_miss,  # type: ignore[call-arg]
                                static_broadcasted_tuple, pxla._shard_arg)
 
-  # TODO(jblespiau): make cpp callable follow descriptor protocol for bound
-  # methods
-  @wraps(fun)
-  @api_boundary
-  def f_pmapped(*args, **kwargs):
-    return cpp_mapped_f(*args, **kwargs)
-
-  f_pmapped._cpp_mapped_f = cpp_mapped_f
-
+  f_pmapped = wraps(fun)(cpp_mapped_f)
   return f_pmapped
 
 

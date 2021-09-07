@@ -1746,12 +1746,22 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     cond_of_pmap(jnp.zeros((xla_bridge.device_count(), 2)))
 
+  def test_static_argnum_on_method(self):
+
+    class A:
+
+      @partial(self.pmap, static_broadcasted_argnums=(0,))
+      def my_func_pmap(self, x):
+        return x + 2
+
+    A().my_func_pmap(jnp.asarray([3] * jax.device_count()))
+
 
 class CppPmapTest(PythonPmapTest):
 
   @property
   def pmap(self):
-    if jax.lib._xla_extension_version >= 36:
+    if jax.lib._xla_extension_version >= 38:
       return src_api._cpp_pmap
     else:
       return src_api._python_pmap

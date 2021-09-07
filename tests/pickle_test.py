@@ -24,6 +24,7 @@ except ImportError:
   cloudpickle = None
 
 import jax
+from jax import numpy as jnp
 from jax.config import config
 from jax import test_util as jtu
 
@@ -51,6 +52,27 @@ class CloudpickleTest(jtu.JaxTestCase):
 
     g_unpickled = pickle.loads(s)
     actual = g_unpickled(32)
+    self.assertEqual(expected, actual)
+
+  @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
+  @unittest.skipIf(jax.lib._xla_extension_version < 39,
+                   "Requires jaxlib 0.1.72")
+  def testPickleOfPmappedFunctions(self):
+
+    @jax.pmap
+    def f(x, y):
+      return x * y
+
+    @jax.pmap
+    def g(z):
+      return f(z, z + 77)  # noqa: F821
+
+    expected = g(jnp.asarray([[32]]))
+    s = cloudpickle.dumps(g)
+    del f, g
+
+    g_unpickled = pickle.loads(s)
+    actual = g_unpickled(jnp.asarray([[32]]))
     self.assertEqual(expected, actual)
 
 
