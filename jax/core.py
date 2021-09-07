@@ -1654,10 +1654,12 @@ def _map_unit(size: int, axis: int, aval: AbstractUnit) -> AbstractUnit:
 
 def _map_shaped_array(size: int, axis: int, aval: ShapedArray) -> ShapedArray:
   assert aval.shape[axis] == size
-  return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype)
+  return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
+                     named_shape=aval.named_shape)
 
 def _unmap_shaped_array(size: int, axis: int, aval: ShapedArray) -> ShapedArray:
-  return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype)
+  return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
+                     named_shape=aval.named_shape)
 
 AvalMapHandlerPair = Tuple[Callable, Callable]
 aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {

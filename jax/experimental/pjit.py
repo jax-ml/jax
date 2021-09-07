@@ -456,6 +456,10 @@ def _pjit_translation_rule(c, axis_env, in_nodes, name_stack, backend, name,
 xla.call_translations[pjit_p] = _pjit_translation_rule
 
 
+def remove_axis(axis_to_remove, axis):
+  if axis == axis_to_remove: return ()
+  return (axis,)
+
 def _pjit_batcher(insert_axis,
                   vals_in, dims_in,
                   axis_name, main_type,
@@ -469,6 +473,8 @@ def _pjit_batcher(insert_axis,
   new_jaxpr, is_mapped_out = batching.batch_jaxpr(
       jaxpr, axis_size, is_mapped_in,
       instantiate=False, axis_name=axis_name, main_type=main_type)
+  # TODO(apaszke): Make batching remove axis names!
+  new_jaxpr = core.subst_axis_names_jaxpr(new_jaxpr, partial(remove_axis, axis_name))
 
   new_parts = (axis_name,) if insert_axis else ()
   in_axis_resources = tuple(

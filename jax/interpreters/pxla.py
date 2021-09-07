@@ -1473,17 +1473,19 @@ class Mesh:
                           tile_aval_nd(self.shape, axes, aval))
 
 
-def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
+def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval, tiling_sizes=None):
+  if tiling_sizes is None:
+    tiling_sizes = axis_sizes
   if aval is core.abstract_unit:
     return aval
   assert isinstance(aval, ShapedArray)
   shape = list(aval.shape)
   named_shape = dict(aval.named_shape)
   for name, axis in in_axes.items():
-    assert shape[axis] % axis_sizes[name] == 0
+    assert shape[axis] % tiling_sizes[name] == 0
     assert name not in named_shape
     named_shape[name] = axis_sizes[name]
-    shape[axis] //= axis_sizes[name]
+    shape[axis] //= tiling_sizes[name]
   return aval.update(shape=tuple(shape), named_shape=named_shape)
 
 def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
@@ -1548,7 +1550,9 @@ def mesh_callable(fun: lu.WrappedFun,
               f"mesh with args {local_in_untiled_avals}. Argument mapping: {in_axes}.")
 
   # 1. Trace to jaxpr and preprocess/verify it
-  in_tiled_avals = [tile_aval_nd(local_axis_sizes, aval_in_axes, aval)
+  # Note that we tile by the local axis sizes, but use global axis sizes for named_shape
+  in_tiled_avals = [tile_aval_nd(global_axis_sizes, aval_in_axes, aval,
+                                 tiling_sizes=local_axis_sizes)
                     for aval, aval_in_axes in safe_zip(local_in_untiled_avals, in_axes)]
   if spmd_lowering:
     # TODO: Consider handling xmap's 'vectorize' in here. We can vmap once instead of vtile twice!
