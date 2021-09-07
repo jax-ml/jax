@@ -992,8 +992,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       message="Calling nonzero on 0d arrays.*")(np.argwhere)
     jnp_fun = jnp.argwhere
     args_maker = lambda: [rng(shape, dtype)]
-    if shape in (scalar_shapes + [()]) and numpy_version < (1, 18):
-      self.skipTest("np.argwhere() result for scalar input changed in numpy 1.18.")
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
     # JIT compilation requires specifying a size statically. Full test of this
@@ -3335,9 +3333,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.expand_dims(x, dim)
     args_maker = lambda: [rng(arg_shape, dtype)]
     self._CompileAndCheck(jnp_fun, args_maker)
-
-    if isinstance(dim, (tuple, list)) and numpy_version < (1, 18, 0):
-      raise SkipTest("support for multiple axes added in NumPy 1.18.0")
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -4991,10 +4986,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-        {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
-                           "_retstep={}_dtype={}").format(
-            start_shape, stop_shape, num, endpoint, retstep,
-            dtype.__name__ if dtype else "None"),
+        {"testcase_name": f"_start_shape={start_shape}_stop_shape={stop_shape}"
+                          f"_num={num}_endpoint={endpoint}_retstep={retstep}"
+                          f"_dtype={dtype.__name__ if dtype else 'None'}",
          "start_shape": start_shape, "stop_shape": stop_shape,
          "num": num, "endpoint": endpoint, "retstep": retstep,
          "dtype": dtype}
@@ -5003,11 +4997,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for num in [0, 1, 2, 5, 20]
         for endpoint in [True, False]
         for retstep in [True, False]
-        for dtype in number_dtypes + [None,]))
+        # floating-point compute between jitted platforms and non-jit + rounding
+        # cause unavoidable variation in integer truncation for some inputs, so
+        # we currently only test inexact 'dtype' arguments.
+        for dtype in inexact_dtypes + [None,]))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLinspace(self, start_shape, stop_shape, num, endpoint, retstep, dtype):
-    if num == 1 and not endpoint and numpy_version < (1, 18):
-      raise SkipTest("Numpy < 1.18 has a linspace bug.")
     rng = jtu.rand_default(self.rng())
     # relax default tolerances slightly
     tol = jtu.tolerance(dtype if dtype else np.float32) * 10
@@ -5037,15 +5032,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
                               check_dtypes=False, tol=tol)
-      # floating-point compute between jitted platforms and non-jit + rounding
-      # cause unavoidable variation in integer truncation for some inputs.
-      if dtype in (inexact_dtypes + [None,]):
-        self._CompileAndCheck(jnp_op, args_maker,
-                              check_dtypes=False, atol=tol, rtol=tol)
+      self._CompileAndCheck(jnp_op, args_maker,
+                            check_dtypes=False, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-        {"testcase_name": "_dtype={}".format(dtype), "dtype": dtype}
+        {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
         for dtype in number_dtypes))
   def testLinspaceEndpoints(self, dtype):
     """Regression test for Issue #3014."""

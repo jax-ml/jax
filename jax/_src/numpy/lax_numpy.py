@@ -3365,6 +3365,14 @@ def _wrap_numpy_nullary_function(f):
 @_wraps(np.linspace)
 def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
              axis: int = 0):
+  num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.linspace")
+  axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
+  return _linspace(start, stop, int(num), endpoint, retstep, dtype,
+                   operator.index(axis))
+
+@partial(jit, static_argnames=('num', 'endpoint', 'retstep', 'dtype', 'axis'))
+def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
+              axis: int = 0):
   """Implementation of linspace differentiable in start and stop args."""
   lax._check_user_dtype_supported(dtype, "linspace")
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.linspace")
@@ -3383,24 +3391,22 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   broadcast_stop = broadcast_to(stop, bounds_shape)
   axis = len(bounds_shape) + axis + 1 if axis < 0 else axis
   bounds_shape.insert(axis, 1)
-  iota_shape = [1,] * len(bounds_shape)
-  iota_shape[axis] = num
   div = (num - 1) if endpoint else num
   if num > 1:
     delta = lax.convert_element_type(stop - start, computation_dtype) / div
-    if issubdtype(dtype, integer):
-      # This is similar to how numpy computes linspace, but it
-      # can fail to recover the endpoints in float32 arithmetic.
-      out = (reshape(broadcast_start, bounds_shape) +
-        reshape(lax.iota(dtype, num), iota_shape) *
-        reshape(delta, bounds_shape))
-      out = lax.floor(out)
-    else:
-      # This approach recovers the endpoints with float32 arithmetic,
-      # but can lead to rounding errors for integer outputs.
-      step = reshape(lax.iota(computation_dtype, num), iota_shape) / div
-      out = (reshape(broadcast_start, bounds_shape) * (1 - step) +
-        reshape(broadcast_stop, bounds_shape) * step)
+    iota_shape = [1,] * len(bounds_shape)
+    iota_shape[axis] = div
+    # This approach recovers the endpoints with float32 arithmetic,
+    # but can lead to rounding errors for integer outputs.
+    real_dtype = finfo(computation_dtype).dtype
+    step = reshape(lax.iota(real_dtype, div), iota_shape) / div
+    out = (reshape(broadcast_start, bounds_shape) * (1 - step) +
+      reshape(broadcast_stop, bounds_shape) * step)
+
+    if endpoint:
+      out = lax.concatenate([out, lax.expand_dims(broadcast_stop, (axis,))],
+                            _canonicalize_axis(axis, out.ndim))
+
   elif num == 1:
     delta = nan if endpoint else stop - start
     out = reshape(broadcast_start, bounds_shape)
@@ -3409,6 +3415,10 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
     empty_shape.insert(axis, 0)
     delta = nan
     out = reshape(array([], dtype=dtype), empty_shape)
+
+  if issubdtype(dtype, integer) and not issubdtype(out.dtype, integer):
+    out = lax.floor(out)
+
   if retstep:
     return lax.convert_element_type(out, dtype), delta
   else:
