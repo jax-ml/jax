@@ -108,6 +108,19 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(result_sparse, result_dense)
 
+  def testSparsifyWithConsts(self):
+    M_dense = jnp.arange(24).reshape(4, 6)
+    M_sparse = BCOO.fromdense(M_dense)
+
+    @sparsify
+    def func(x):
+      return jit(lambda x: jnp.sum(x, 1))(x)
+
+    result_dense = func(M_dense)
+    result_sparse = func(M_sparse)
+
+    self.assertAllClose(result_sparse.todense(), result_dense)
+
   def testSparseMatmul(self):
     X = jnp.arange(16).reshape(4, 4)
     Xsp = BCOO.fromdense(X)
