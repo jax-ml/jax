@@ -1402,12 +1402,12 @@ class LaxTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}_start_indices={}_limit_indices={}_strides={}".format(
+       "_shape={}_indices={}_limit_indices={}_strides={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
-          start_indices, limit_indices, strides),
-       "shape": shape, "dtype": dtype, "starts": start_indices,
+          indices, limit_indices, strides),
+       "shape": shape, "dtype": dtype, "starts": indices,
        "limits": limit_indices, "strides": strides}
-      for shape, start_indices, limit_indices, strides in [
+      for shape, indices, limit_indices, strides in [
         [(3,), (1,), (2,), None],
         [(7,), (4,), (7,), None],
         [(5,), (1,), (5,), (2,)],
@@ -1427,12 +1427,12 @@ class LaxTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}_start_indices={}_limit_indices={}_strides={}".format(
+       "_shape={}_indices={}_limit_indices={}_strides={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
-          start_indices, limit_indices, strides),
-       "shape": shape, "dtype": dtype, "starts": start_indices,
+          indices, limit_indices, strides),
+       "shape": shape, "dtype": dtype, "starts": indices,
        "limits": limit_indices, "strides": strides}
-      for shape, start_indices, limit_indices, strides in [
+      for shape, indices, limit_indices, strides in [
         [(3,), (1,), (2,), None],
         [(7,), (4,), (7,), None],
         [(5,), (1,), (5,), (2,)],
@@ -1452,39 +1452,39 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_start_indices={}_size_indices={}".format(
+      {"testcase_name": "_shape={}_indices={}_size_indices={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
-          start_indices, size_indices),
-       "shape": shape, "dtype": dtype, "start_indices": start_indices,
+          indices, size_indices),
+       "shape": shape, "dtype": dtype, "indices": indices,
        "size_indices": size_indices}
-      for shape, start_indices, size_indices in [
+      for shape, indices, size_indices in [
         [(3,), np.array((1,)), (1,)],
         [(5, 3), (1, 1), (3, 1)],
         [(5, 3), np.array((1, 1)), (3, 1)],
         [(7, 5, 3), np.array((4, 1, 0)), (2, 0, 1)],
       ]
       for dtype in default_dtypes))
-  def testDynamicSlice(self, shape, dtype, start_indices, size_indices):
+  def testDynamicSlice(self, shape, dtype, indices, size_indices):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype), np.array(start_indices)]
+    args_maker = lambda: [rng(shape, dtype), np.array(indices)]
     op = lambda x, starts: lax.dynamic_slice(x, starts, size_indices)
     self._CompileAndCheck(op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_start_indices={}_size_indices={}".format(
+      {"testcase_name": "_shape={}_indices={}_size_indices={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
-          start_indices, size_indices),
-       "shape": shape, "dtype": dtype, "start_indices": start_indices,
+          indices, size_indices),
+       "shape": shape, "dtype": dtype, "indices": indices,
        "size_indices": size_indices}
-      for shape, start_indices, size_indices in [
+      for shape, indices, size_indices in [
         [(3,), (1,), (1,)],
         [(5, 3), (1, 1), (3, 1)],
         [(7, 5, 3), (4, 1, 0), (2, 0, 1)],
       ]
       for dtype in default_dtypes))
-  def testDynamicSliceAgainstNumpy(self, shape, dtype, start_indices, size_indices):
+  def testDynamicSliceAgainstNumpy(self, shape, dtype, indices, size_indices):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype), np.array(start_indices)]
+    args_maker = lambda: [rng(shape, dtype), np.array(indices)]
     op = lambda x, s: lax.dynamic_slice(x, s, size_indices)
     numpy_op = lambda x, s: lax_reference.dynamic_slice(x, s, size_indices)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
@@ -1496,45 +1496,43 @@ class LaxTest(jtu.JaxTestCase):
     np.testing.assert_equal(lax.dynamic_slice_in_dim(x, 2, 3), x[2:5])
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_start_indices={}_update_shape={}".format(
+      {"testcase_name": "_shape={}_indices={}_update_shape={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
-          start_indices, update_shape),
-       "shape": shape, "dtype": dtype, "start_indices": start_indices,
+          indices, update_shape),
+       "shape": shape, "dtype": dtype, "indices": indices,
        "update_shape": update_shape}
-      for shape, start_indices, update_shape in [
+      for shape, indices, update_shape in [
         [(3,), (1,), (1,)],
         [(5, 3), (1, 1), (3, 1)],
         [(7, 5, 3), (4, 1, 0), (2, 0, 1)],
       ]
       for dtype in default_dtypes))
-  def testDynamicUpdateSlice(self, shape, dtype, start_indices, update_shape):
+  def testDynamicUpdateSlice(self, shape, dtype, indices, update_shape):
     rng = jtu.rand_default(self.rng())
 
     def args_maker():
-      return [rng(shape, dtype), rng(update_shape, dtype),
-              np.array(start_indices)]
+      return [rng(shape, dtype), rng(update_shape, dtype), np.array(indices)]
 
     self._CompileAndCheck(lax.dynamic_update_slice, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_start_indices={}_update_shape={}".format(
+      {"testcase_name": "_shape={}_indices={}_update_shape={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
-          start_indices, update_shape),
-       "shape": shape, "dtype": dtype, "start_indices": start_indices,
+          indices, update_shape),
+       "shape": shape, "dtype": dtype, "indices": indices,
        "update_shape": update_shape}
-      for shape, start_indices, update_shape in [
+      for shape, indices, update_shape in [
         [(3,), (1,), (1,)],
         [(5, 3), (1, 1), (3, 1)],
         [(7, 5, 3), (4, 1, 0), (2, 0, 1)],
       ]
       for dtype in default_dtypes))
-  def testDynamicUpdateSliceAgainstNumpy(self, shape, dtype, start_indices,
+  def testDynamicUpdateSliceAgainstNumpy(self, shape, dtype, indices,
                                          update_shape):
     rng = jtu.rand_default(self.rng())
 
     def args_maker():
-      return [rng(shape, dtype), rng(update_shape, dtype),
-              np.array(start_indices)]
+      return [rng(shape, dtype), rng(update_shape, dtype), np.array(indices)]
 
     self._CheckAgainstNumpy(lax_reference.dynamic_update_slice,
                             lax.dynamic_update_slice, args_maker)
@@ -1989,13 +1987,13 @@ class LaxTest(jtu.JaxTestCase):
   # variations to account for the implicit setting of index_vector_dim in JAX.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{testcase_name}", "operand_shape": operand_shape,
-       "start_indices_shape": start_indices_shape,
+       "indices_shape": indices_shape,
        "dimension_numbers": lax.GatherDimensionNumbers(
           offset_dims=offset_dims,
           collapsed_slice_dims=collapsed_slice_dims,
           start_index_map=start_index_map),
        "slice_sizes": slice_sizes, "msg": msg}
-      for (testcase_name, operand_shape, start_indices_shape, offset_dims,
+      for (testcase_name, operand_shape, indices_shape, offset_dims,
            collapsed_slice_dims, start_index_map, slice_sizes, msg) in [
         ("NonAscendingWindowIndices", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
          (4, 5, 6, 8, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
@@ -2022,7 +2020,7 @@ class LaxTest(jtu.JaxTestCase):
         ("MismatchingGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
          (4, 5, 6, 7, 8), (), (0, 1, 2, 3), (10, 9, 8, 7, 6),
          "Gather op has 4 elements in start_index_map and the bound of "
-         "dimension index_vector_dim=4 of start_indices is 5. These two "
+         "dimension index_vector_dim=4 of indices is 5. These two "
          "numbers must be equal."),
         ("OutOfBoundsGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
          (4, 5, 6, 7, 8), (), (0, 1, 2, 3, 7), (10, 9, 8, 7, 6),
@@ -2045,13 +2043,13 @@ class LaxTest(jtu.JaxTestCase):
          "is 9 for index 1 at position 0.")
       ]
   ))
-  def testGatherShapeCheckingRule(self, operand_shape, start_indices_shape,
+  def testGatherShapeCheckingRule(self, operand_shape, indices_shape,
                                   dimension_numbers, slice_sizes, msg):
     operand = np.ones(operand_shape, dtype=np.int32)
-    start_indices = np.ones(start_indices_shape, dtype=np.int32)
+    indices = np.ones(indices_shape, dtype=np.int32)
 
     with self.assertRaisesRegex(TypeError, msg):
-      lax.gather(operand, start_indices, dimension_numbers, slice_sizes)
+      lax.gather(operand, indices, dimension_numbers, slice_sizes)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
@@ -2166,13 +2164,13 @@ class LaxTest(jtu.JaxTestCase):
   # variations to account for the implicit setting of index_vector_dim in JAX.
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_{testcase_name}", "operand_shape": operand_shape,
-       "scatter_indices": scatter_indices, "update_shape": update_shape,
+       "indices": indices, "update_shape": update_shape,
        "dimension_numbers": lax.ScatterDimensionNumbers(
           update_window_dims=update_window_dims,
           inserted_window_dims=inserted_window_dims,
           scatter_dims_to_operand_dims=scatter_dims_to_operand_dims),
        "msg": msg}
-      for (testcase_name, operand_shape, scatter_indices, update_shape,
+      for (testcase_name, operand_shape, indices, update_shape,
            update_window_dims, inserted_window_dims,
            scatter_dims_to_operand_dims, msg) in [
               ("ScatterWithUpdatesBiggerThanInput", (64, 48), np.zeros((32, 1)),
@@ -2224,7 +2222,7 @@ class LaxTest(jtu.JaxTestCase):
                np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
                (4, 5, 6), (1, 2), (0, 1, 2, 3),
                "Scatter op has 4 elements in scatter_dims_to_operand_dims and "
-               "the bound of dimension index_vector_dim=4 of scatter_indices "
+               "the bound of dimension index_vector_dim=4 of indices "
                "is 5. These two numbers must be equal"),
               ("OutOfBoundsScatterDimsToOperandDims", (50, 49, 48, 47, 46),
                np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
@@ -2241,13 +2239,13 @@ class LaxTest(jtu.JaxTestCase):
                "rank 5.")
            ]
       ))
-  def testScatterShapeCheckingRule(self, operand_shape, scatter_indices,
+  def testScatterShapeCheckingRule(self, operand_shape, indices,
                                    update_shape, dimension_numbers, msg):
 
     def f(x, y):
       operand = lax.broadcast(x, operand_shape)
       updates = lax.broadcast(y, update_shape)
-      return lax.scatter(operand, scatter_indices, updates, dimension_numbers)
+      return lax.scatter(operand, indices, updates, dimension_numbers)
     with self.assertRaisesRegex(TypeError, msg):
       jax.eval_shape(f, np.int32(1), np.int32(1))
 

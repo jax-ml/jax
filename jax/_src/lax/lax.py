@@ -4462,7 +4462,7 @@ def _no_duplicate_dims(dims, op_name, name):
   if len(set(dims)) != len(dims):
     raise TypeError(f"{name} in {op_name} op must not repeat; got: {dims}.")
 
-def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
+def _gather_shape_rule(operand, indices, *, dimension_numbers,
                        slice_sizes, unique_indices, indices_are_sorted):
   """Validates the well-formedness of the arguments to Gather.
 
@@ -4478,22 +4478,21 @@ def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
 
   # Note: in JAX, index_vector_dim is always computed as below, cf. the
   # documentation of the GatherDimensionNumbers class.
-  index_vector_dim = _rank(start_indices) - 1
+  index_vector_dim = _rank(indices) - 1
 
   # This case should never happen in JAX, due to the implicit construction of
   # index_vector_dim, but is included for completeness.
-  if _rank(start_indices) < index_vector_dim or index_vector_dim < 0:
+  if _rank(indices) < index_vector_dim or index_vector_dim < 0:
     raise TypeError(f"Gather index leaf dimension must be within [0, rank("
-                    f"start_indices) + 1). rank(start_indices) is "
-                    f"{_rank(start_indices)} and gather index leaf dimension "
-                    f"is {index_vector_dim}.")
+                    f"indices) + 1). rank(indices) is {_rank(indices)} and "
+                    f"gather index leaf dimension is {index_vector_dim}.")
 
-  expanded_start_indices_shape = list(start_indices.shape)
+  expanded_indices_shape = list(indices.shape)
 
   # This case should never happen in JAX, due to the implicit construction of
   # index_vector_dim, but is included for completeness.
-  if len(expanded_start_indices_shape) == index_vector_dim:
-    expanded_start_indices_shape.append(1)
+  if len(expanded_indices_shape) == index_vector_dim:
+    expanded_indices_shape.append(1)
 
   # Start ValidateGatherDimensions
   # In the error messages output by XLA, "offset_dims" is called "Output window
@@ -4503,7 +4502,7 @@ def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
   _no_duplicate_dims(offset_dims, "gather", "offset_dims")
 
   output_offset_dim_count = len(offset_dims)
-  output_shape_rank = len(offset_dims) + _rank(start_indices) - 1
+  output_shape_rank = len(offset_dims) + _rank(indices) - 1
 
   for i in range(output_offset_dim_count):
     offset_dim = offset_dims[i]
@@ -4512,11 +4511,11 @@ def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
                       f"got {offset_dim}, but should have been in "
                       f"[0, {output_shape_rank})")
 
-  if len(start_index_map) != start_indices.shape[index_vector_dim]:
+  if len(start_index_map) != indices.shape[index_vector_dim]:
     raise TypeError(f"Gather op has {len(start_index_map)} elements in "
                     f"start_index_map and the bound of dimension "
-                    f"index_vector_dim={index_vector_dim} of start_indices is "
-                    f"{start_indices.shape[index_vector_dim]}. These two "
+                    f"index_vector_dim={index_vector_dim} of indices is "
+                    f"{indices.shape[index_vector_dim]}. These two "
                     f"numbers must be equal.")
 
   for i in range(len(start_index_map)):
@@ -4568,30 +4567,30 @@ def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
                       f"or 0, but bound is {bound} for index "
                       f"{collapsed_slice_dims[i]} at position {i}.")
 
-  expanded_start_indices_shape.pop(index_vector_dim)
-  start_indices_shape = iter(expanded_start_indices_shape)
+  expanded_indices_shape.pop(index_vector_dim)
+  indices_shape = iter(expanded_indices_shape)
 
   slice_sizes = iter(np.delete(slice_sizes, collapsed_slice_dims))
   return tuple(next(slice_sizes) if i in offset_dims
-               else next(start_indices_shape) for i in range(output_shape_rank))
+               else next(indices_shape) for i in range(output_shape_rank))
 
-def _gather_translation_rule(c, operand, start_indices, *, dimension_numbers,
+def _gather_translation_rule(c, operand, indices, *, dimension_numbers,
                              slice_sizes, unique_indices, indices_are_sorted):
-  indices_shape = c.get_shape(start_indices)
+  indices_shape = c.get_shape(indices)
   # We don't consume unique_indices directly in gather(), only in its transpose
   # (scatter).
   return xops.Gather(
-    operand, start_indices,
+    operand, indices,
     _gather_dimensions_proto(indices_shape, dimension_numbers), slice_sizes,
     indices_are_sorted=indices_are_sorted)
 
-def _gather_jvp_rule(g, operand, start_indices, *, dimension_numbers,
+def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
                      slice_sizes, unique_indices, indices_are_sorted):
-  return gather(g, start_indices, dimension_numbers, slice_sizes,
+  return gather(g, indices, dimension_numbers, slice_sizes,
                 unique_indices=unique_indices,
                 indices_are_sorted=indices_are_sorted)
 
-def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
+def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
                            slice_sizes, unique_indices, indices_are_sorted):
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
@@ -4603,17 +4602,17 @@ def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
       update_window_dims=dimension_numbers.offset_dims,
       inserted_window_dims=dimension_numbers.collapsed_slice_dims,
       scatter_dims_to_operand_dims=dimension_numbers.start_index_map)
-    out = scatter_add(zeros, start_indices, t, scatter_dnums,
+    out = scatter_add(zeros, indices, t, scatter_dnums,
                       unique_indices=unique_indices,
                       indices_are_sorted=indices_are_sorted)
   return [out, None]
 
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                           slice_sizes, unique_indices, indices_are_sorted):
-  operand, start_indices = batched_args
-  operand_bdim, start_indices_bdim = batch_dims
+  operand, indices = batched_args
+  operand_bdim, indices_bdim = batch_dims
 
-  if operand_bdim is not None and start_indices_bdim is None:
+  if operand_bdim is not None and indices_bdim is None:
     operand = batching.moveaxis(operand, operand_bdim, 0)
     slice_sizes = (operand.shape[0],) + slice_sizes
     offset_dims = (0,) + tuple(np.add(1, dimension_numbers.offset_dims))
@@ -4623,12 +4622,12 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         offset_dims=offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
         start_index_map=start_index_map)
-    return gather(operand, start_indices, dimension_numbers=dnums,
+    return gather(operand, indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes, unique_indices=unique_indices,
                   indices_are_sorted=indices_are_sorted), 0
 
-  elif operand_bdim is None and start_indices_bdim is not None:
-    start_indices = batching.moveaxis(start_indices, start_indices_bdim, 0)
+  elif operand_bdim is None and indices_bdim is not None:
+    indices = batching.moveaxis(indices, indices_bdim, 0)
     offset_dims = tuple(np.add(1, dimension_numbers.offset_dims))
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
@@ -4636,23 +4635,23 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         start_index_map=dimension_numbers.start_index_map)
     # If batching indexed accesses into the same array, the batched gather may
     # no longer have sorted or unique indices.
-    return gather(operand, start_indices, dimension_numbers=dnums,
+    return gather(operand, indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes, unique_indices=False,
                   indices_are_sorted=False), 0
 
   else:
     # move batch dimensions to the front to simplify logic
     operand = batching.moveaxis(operand, operand_bdim, 0)
-    start_indices = batching.moveaxis(start_indices, start_indices_bdim, 0)
+    indices = batching.moveaxis(indices, indices_bdim, 0)
 
-    # Example: user code had start_indices shape (3, 4, 5), and we have to deal
-    # with start_indices shape (7, 3, 4, 5). We transform that to a
-    # start_indices of shape (7, 3, 4, 6) where we concatenated an iota that
-    # counts along our batch dimension to the front of the ndindex.
-    count_shape = list(start_indices.shape)
+    # Example: user code had indices shape (3, 4, 5), and we have to deal with
+    # indices shape (7, 3, 4, 5). We transform that to indices of shape
+    # (7, 3, 4, 6) where we concatenated an iota that counts along our batch
+    # dimension to the front of the ndindex.
+    count_shape = list(indices.shape)
     count_shape[-1] = 1
-    counts = broadcasted_iota(start_indices.dtype, tuple(count_shape), 0)
-    start_indices = concatenate([counts, start_indices], len(count_shape) - 1)
+    counts = broadcasted_iota(indices.dtype, tuple(count_shape), 0)
+    indices = concatenate([counts, indices], len(count_shape) - 1)
 
     batch_slice_size = 1 if core.greater_equal_dim(operand.shape[0], 1) else 0
     slice_sizes = (batch_slice_size,) + slice_sizes
@@ -4664,7 +4663,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
         offset_dims=offset_dims,
         collapsed_slice_dims=collapsed_slice_dims,
         start_index_map=start_index_map)
-    return gather(operand, start_indices, dimension_numbers=dnums,
+    return gather(operand, indices, dimension_numbers=dnums,
                   slice_sizes=slice_sizes, unique_indices=unique_indices,
                   indices_are_sorted=indices_are_sorted), 0
 
@@ -4688,13 +4687,13 @@ def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   proto.index_vector_dim = indices_shape.rank() - 1
   return proto
 
-def _scatter_dtype_rule(operand, scatter_indices, updates, **kwargs):
-  if not dtypes.issubdtype(scatter_indices.dtype, np.integer):
-    raise ValueError("scatter_indices must have an integer type")
+def _scatter_dtype_rule(operand, indices, updates, **kwargs):
+  if not dtypes.issubdtype(indices.dtype, np.integer):
+    raise ValueError("indices must have an integer type")
   _check_same_dtypes("scatter", False, operand.dtype, updates.dtype)
   return dtypes.canonicalize_dtype(operand.dtype)
 
-def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
+def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
                         update_consts, dimension_numbers, indices_are_sorted,
                         unique_indices):
   """Validates the well-formedness of the ``dimension_numbers`` argument to
@@ -4711,23 +4710,22 @@ def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
   scatter_dims_to_operand_dims = dimension_numbers.scatter_dims_to_operand_dims
   # Note: in JAX, index_vector_dim is always computed as below, cf. the
   # documentation of the ScatterDimensionNumbers class.
-  index_vector_dim = _rank(scatter_indices) - 1
+  index_vector_dim = _rank(indices) - 1
 
   # This case should never happen in JAX, due to the implicit construction of
   # index_vector_dim, but is included for completeness.
-  if _rank(scatter_indices) < index_vector_dim or index_vector_dim < 0:
+  if _rank(indices) < index_vector_dim or index_vector_dim < 0:
     raise TypeError(f"Scatter index leaf dimension must be within [0, "
-                    f"rank(scatter_indices) + 1). rank(scatter_indices) is "
-                    f"{_rank(scatter_indices)} and scatter index leaf "
-                    f"dimension is {index_vector_dim}.")
+                    f"rank(indices) + 1). rank(indices) is {_rank(indices)} "
+                    f"and scatter index leaf dimension is {index_vector_dim}.")
 
-  expanded_scatter_indices_shape = list(scatter_indices.shape)
+  expanded_indices_shape = list(indices.shape)
   # This case should never happen in JAX, due to the implicit construction of
   # index_vector_dim, but is included for completeness.
-  if len(expanded_scatter_indices_shape) == index_vector_dim:
-    expanded_scatter_indices_shape.append(1)
+  if len(expanded_indices_shape) == index_vector_dim:
+    expanded_indices_shape.append(1)
 
-  expected_updates_rank = (len(expanded_scatter_indices_shape) - 1 +
+  expected_updates_rank = (len(expanded_indices_shape) - 1 +
                            len(update_window_dims))
 
   if _rank(updates) != expected_updates_rank:
@@ -4754,12 +4752,11 @@ def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
 
   # Validate scatter_dims_to_operand_dims
   if (len(scatter_dims_to_operand_dims) !=
-      scatter_indices.shape[index_vector_dim]):
+      indices.shape[index_vector_dim]):
     raise TypeError(f"Scatter op has {len(scatter_dims_to_operand_dims)} "
                     f"elements in scatter_dims_to_operand_dims and the bound "
                     f"of dimension index_vector_dim={index_vector_dim} of "
-                    f"scatter_indices is "
-                    f"{scatter_indices.shape[index_vector_dim]}. These two "
+                    f"indices is {indices.shape[index_vector_dim]}. These two "
                     f"numbers must be equal")
 
   for i in range(len(scatter_dims_to_operand_dims)):
@@ -4790,34 +4787,34 @@ def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
   for i in update_scatter_dims:
     if scatter_dims_seen == index_vector_dim:
       scatter_dims_seen += 1
-    if updates.shape[i] != expanded_scatter_indices_shape[scatter_dims_seen]:
+    if updates.shape[i] != expanded_indices_shape[scatter_dims_seen]:
       raise TypeError(f"Bounds of the scatter dimensions of updates must be "
                       f"the same as the bounds of the corresponding dimensions "
                       f"of scatter indices. For scatter dimension {i}, updates "
-                      f"bound is {updates.shape[i]}, scatter_indices bound is "
-                      f"{expanded_scatter_indices_shape[scatter_dims_seen]}.")
+                      f"bound is {updates.shape[i]}, indices bound is "
+                      f"{expanded_indices_shape[scatter_dims_seen]}.")
     scatter_dims_seen += 1
 
   return operand.shape
 
-def _scatter_translation_rule(c, operand, scatter_indices, updates, *,
+def _scatter_translation_rule(c, operand, indices, updates, *,
                               update_jaxpr, update_consts, dimension_numbers,
                               indices_are_sorted, unique_indices):
   dtype = c.get_shape(operand).numpy_dtype()
   init_value = xb.constant(c, np.array(0, dtype))
   update_computation = _reduction_computation(
       c, update_jaxpr, update_consts, init_value)
-  indices_shape = c.get_shape(scatter_indices)
-  return xops.Scatter(operand, scatter_indices, updates, update_computation,
+  indices_shape = c.get_shape(indices)
+  return xops.Scatter(operand, indices, updates, update_computation,
                       _scatter_dimensions_proto(indices_shape, dimension_numbers),
                       indices_are_sorted, unique_indices)
 
 def _scatter_add_translation_rule(
-    c, operand, scatter_indices, updates, *, update_jaxpr, update_consts,
+    c, operand, indices, updates, *, update_jaxpr, update_consts,
     dimension_numbers, indices_are_sorted, unique_indices,
     expand_complex128=False):
   dtype = c.get_shape(operand).numpy_dtype()
-  scatter_dims = _scatter_dimensions_proto(c.get_shape(scatter_indices),
+  scatter_dims = _scatter_dimensions_proto(c.get_shape(indices),
                                            dimension_numbers)
 
   def _make_reducer(dtype):
@@ -4829,25 +4826,25 @@ def _scatter_add_translation_rule(
 
   if expand_complex128 and dtype == np.complex128:
     update_computation = _make_reducer(np.float64)
-    re = xops.Scatter(xops.Real(operand), scatter_indices, xops.Real(updates),
+    re = xops.Scatter(xops.Real(operand), indices, xops.Real(updates),
                       update_computation, scatter_dims, indices_are_sorted,
                       unique_indices)
-    im = xops.Scatter(xops.Imag(operand), scatter_indices, xops.Imag(updates),
+    im = xops.Scatter(xops.Imag(operand), indices, xops.Imag(updates),
                       update_computation, scatter_dims, indices_are_sorted,
                       unique_indices)
     return xops.Complex(re, im)
   else:
     update_computation = _make_reducer(dtype)
-    return xops.Scatter(operand, scatter_indices, updates, update_computation,
+    return xops.Scatter(operand, indices, updates, update_computation,
                         scatter_dims, indices_are_sorted, unique_indices)
 
 def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
                      dimension_numbers, indices_are_sorted, unique_indices):
-  operand, scatter_indices, updates = primals
-  g_operand, g_scatter_indices, g_updates = tangents
-  del g_scatter_indices  # ignored
+  operand, indices, updates = primals
+  g_operand, g_indices, g_updates = tangents
+  del g_indices  # ignored
   val_out = scatter_add_p.bind(
-      operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
+      operand, indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dimension_numbers,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
@@ -4856,15 +4853,15 @@ def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
     g_operand = ad.instantiate_zeros(g_operand)
     g_updates = ad.instantiate_zeros(g_updates)
     tangent_out = scatter_add_p.bind(
-        g_operand, scatter_indices, g_updates, update_jaxpr=update_jaxpr,
+        g_operand, indices, g_updates, update_jaxpr=update_jaxpr,
         update_consts=update_consts, dimension_numbers=dimension_numbers,
         indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
   return val_out, tangent_out
 
-def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
+def _scatter_add_transpose_rule(t, operand, indices, updates, *,
                                 update_jaxpr, update_consts, dimension_numbers,
                                 indices_are_sorted, unique_indices):
-  assert not ad.is_undefined_primal(scatter_indices)
+  assert not ad.is_undefined_primal(indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
   else:
@@ -4890,14 +4887,14 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
         else:
           slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
           pos += 1
-      update_t = gather(t, scatter_indices, dimension_numbers=gather_dnums,
+      update_t = gather(t, indices, dimension_numbers=gather_dnums,
                         slice_sizes=slice_sizes)
   return [operand_t, None, update_t]
 
-def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
+def _scatter_mul_transpose_rule(t, operand, indices, updates, *,
                                 update_jaxpr, update_consts, dimension_numbers,
                                 indices_are_sorted, unique_indices):
-  assert not ad.is_undefined_primal(scatter_indices)
+  assert not ad.is_undefined_primal(indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
   else:
@@ -4909,7 +4906,7 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
     operand_t = update_t = None
     if ad.is_undefined_primal(operand):
       operand_t = scatter_mul(
-          t, scatter_indices, updates, dimension_numbers=dimension_numbers,
+          t, indices, updates, dimension_numbers=dimension_numbers,
           indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
     if ad.is_undefined_primal(updates):
       gather_dnums = GatherDimensionNumbers(
@@ -4924,7 +4921,7 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
         else:
           slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
           pos += 1
-      update_t = gather(mul(t, operand), scatter_indices,
+      update_t = gather(mul(t, operand), indices,
                         dimension_numbers=gather_dnums, slice_sizes=slice_sizes)
   return [operand_t, None, update_t]
 
@@ -4932,8 +4929,8 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
 def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
                            update_jaxpr, update_consts, dimension_numbers,
                            indices_are_sorted, unique_indices):
-  operand, scatter_indices, updates = batched_args
-  operand_bdim, scatter_indices_bdim, updates_bdim = batch_dims
+  operand, indices, updates = batched_args
+  operand_bdim, indices_bdim, updates_bdim = batch_dims
   del update_jaxpr, update_consts  # Unused.
 
   # move the operand batch dim to the front if it is not None, otherwise create
@@ -4945,7 +4942,7 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 
   updates = batching.bdim_at_front(updates, updates_bdim, size)
 
-  if scatter_indices_bdim is None:
+  if indices_bdim is None:
     inserted_window_dims = tuple(np.add(1, dimension_numbers.inserted_window_dims))
     update_window_dims = (0,) + tuple(np.add(1, dimension_numbers.update_window_dims))
     scatter_dims_to_operand_dims = tuple(np.add(1, dimension_numbers.scatter_dims_to_operand_dims))
@@ -4954,19 +4951,17 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
         inserted_window_dims=inserted_window_dims,
         scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
     return scatter_op(
-      operand, scatter_indices, updates, dnums,
+      operand, indices, updates, dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices), 0
 
 
   # see the third case in _gather_batching_rule for comparison and comments
-  scatter_indices = batching.bdim_at_front(
-    scatter_indices, scatter_indices_bdim, size)
+  indices = batching.bdim_at_front(indices, indices_bdim, size)
 
-  count_shape = list(scatter_indices.shape)
+  count_shape = list(indices.shape)
   count_shape[-1] = 1
-  counts = broadcasted_iota(scatter_indices.dtype, tuple(count_shape), 0)
-  scatter_indices = concatenate([counts, scatter_indices],
-                                len(count_shape) - 1)
+  counts = broadcasted_iota(indices.dtype, tuple(count_shape), 0)
+  indices = concatenate([counts, indices], len(count_shape) - 1)
 
   update_window_dims = tuple(np.add(1, dimension_numbers.update_window_dims))
   inserted_window_dims = (0,) + tuple(np.add(1, dimension_numbers.inserted_window_dims))
@@ -4977,7 +4972,7 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
       inserted_window_dims=inserted_window_dims,
       scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
   return scatter_op(
-      operand, scatter_indices, updates, dnums,
+      operand, indices, updates, dnums,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices), 0
 
 scatter_add_p = standard_primitive(
