@@ -55,7 +55,7 @@ import numpy as np
 from jax import core
 from jax import lax
 from jax import linear_util as lu
-from jax.api_util import flatten_fun_nokwargs
+from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten

@@ -29,8 +29,8 @@ from .._src.api import _check_callable, _check_arg
 from ..tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
                          tree_leaves)
 from .._src.tree_util import _replace_nones
-from ..api_util import (flatten_fun_nokwargs, flatten_axes, _ensure_index_tuple,
-                        donation_vector)
+from .._src.api_util import (flatten_fun_nokwargs, flatten_axes,
+                             _ensure_index_tuple, donation_vector)
 from .._src import source_info_util
 from .._src.config import config
 from ..errors import JAXTypeError

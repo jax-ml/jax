@@ -43,7 +43,7 @@ from .. import lib
 from .. import linear_util as lu
 from . import dtypes
 from ..core import eval_jaxpr
-from ..api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
+from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial,
                        argnums_partial_except, flatten_axes, donation_vector,
                        rebase_donate_argnums, _ensure_index, _ensure_index_tuple,

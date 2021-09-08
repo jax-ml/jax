@@ -36,7 +36,7 @@ from jax._src import util
 from jax._src.lax import lax
 from jax import linear_util as lu
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
-from jax.api_util import flatten_fun_nokwargs
+from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla

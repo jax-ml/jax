@@ -113,6 +113,7 @@ from .version import __version__
 # jax and rely on the names imported above.
 from . import abstract_arrays
 from . import api
+from . import api_util
 from . import dtypes
 from . import errors
 from . import image

@@ -30,7 +30,7 @@ import jax
 from jax import core
 from jax._src import ad_util
 from jax._src import api
-from jax import api_util
+from jax._src import api_util
 from jax import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util

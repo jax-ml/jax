@@ -30,7 +30,7 @@ from .._src.util import (unzip2, safe_map, safe_zip, partial, split_list,
                          wrap_name, as_hashable_function)
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
-from ..api_util import flatten_fun, flatten_fun_nokwargs
+from .._src.api_util import flatten_fun, flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten, Partial
 from .._src import source_info_util
 

@@ -22,7 +22,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 import jax
 from jax._src import ad_util
-from jax import api_util, config
+from jax._src import api_util
+from jax import config
 from jax._src import api
 from jax import core, custom_derivatives
 from jax._src import dtypes

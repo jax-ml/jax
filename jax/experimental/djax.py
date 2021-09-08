@@ -437,7 +437,7 @@ class Array:
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
 
-from jax.api_util import flatten_fun
+from jax._src.api_util import flatten_fun
 from jax.tree_util import tree_flatten, tree_unflatten
 
 def make_djaxpr(fun, *args, **kwargs):

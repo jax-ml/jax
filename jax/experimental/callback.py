@@ -28,7 +28,7 @@ from jax._src.util import partial, safe_map, wraps, split_list
 from jax._src.lax import control_flow as lcf
 
 import inspect
-from jax.api_util import flatten_fun_nokwargs
+from jax._src.api_util import flatten_fun_nokwargs
 from jax.tree_util import tree_flatten, tree_unflatten, tree_structure, tree_map
 
 map = safe_map

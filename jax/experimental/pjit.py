@@ -25,9 +25,9 @@ from .. import core
 from .. import linear_util as lu
 from .._src.api import _check_callable, _check_arg
 from .._src import source_info_util
-from ..api_util import (argnums_partial_except, flatten_axes,
-                        flatten_fun_nokwargs, _ensure_index_tuple,
-                        donation_vector, rebase_donate_argnums)
+from .._src.api_util import (argnums_partial_except, flatten_axes,
+                             flatten_fun_nokwargs, _ensure_index_tuple,
+                             donation_vector, rebase_donate_argnums)
 from ..errors import JAXTypeError
 from ..interpreters import ad
 from ..interpreters import pxla

@@ -22,7 +22,7 @@ from jax import linear_util as lu
 from . import ad
 from . import partial_eval as pe
 from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
-from ..api_util import flatten_fun_nokwargs
+from .._src.api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten, register_pytree_node
 from .._src.util import safe_map, safe_zip, split_list
 from .._src import custom_derivatives
