@@ -243,6 +243,25 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self.assertAllClose(
       osp_stats.gamma.pdf(0.0, 1.0), lsp_stats.gamma.pdf(0.0, 1.0), atol=1E-6)
 
+  @genNamedParametersNArgs(4)
+  def testNBinomLogPmf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.nbinom.logpmf
+    lax_fun = lsp_stats.nbinom.logpmf
+
+    def args_maker():
+      k, n, logit, loc = map(rng, shapes, dtypes)
+      k = np.floor(np.abs(k))
+      n = np.ceil(np.abs(n))
+      p = expit(logit)
+      loc = np.floor(loc)
+      return [k, n, p, loc]
+
+    tol = {np.float32: 1e-6, np.float64: 1e-8}
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=5e-4)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
+
   @genNamedParametersNArgs(3)
   def testLaplaceLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
