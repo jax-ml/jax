@@ -66,11 +66,6 @@ flags.DEFINE_bool(
     bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
-flags.DEFINE_string(
-    'jax_cpu_backend_variant',
-     os.getenv('JAX_CPU_BACKEND_VARIANT', 'tfrt'),
-    'Selects CPU backend runtime variant: "stream_executor" or "tfrt". The '
-    'default is "tfrt".')
 
 def get_compile_options(
     num_replicas: int,
@@ -176,15 +171,9 @@ def register_backend_factory(name, factory, *, priority=0):
 
 register_backend_factory('interpreter', xla_client.make_interpreter_client,
                          priority=-100)
-if FLAGS.jax_cpu_backend_variant == 'stream_executor':
-  register_backend_factory('cpu',
-                           partial(xla_client.make_cpu_client, use_tfrt=False),
-                           priority=0)
-else:
-  assert FLAGS.jax_cpu_backend_variant == 'tfrt'
-  register_backend_factory('cpu',
-                           partial(xla_client.make_cpu_client, use_tfrt=True),
-                           priority=0)
+register_backend_factory('cpu',
+                         partial(xla_client.make_cpu_client, use_tfrt=True),
+                         priority=0)
 register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
 register_backend_factory('gpu', xla_client.make_gpu_client,
