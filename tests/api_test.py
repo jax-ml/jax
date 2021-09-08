@@ -439,10 +439,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     jitted_f(1, 1)
 
     msg = ("Non-hashable static arguments are not supported. An error occured "
-           "while trying to hash an object of type <class 'numpy.ndarray'>, 1. "
-           "The error was:\nTypeError: unhashable type: 'numpy.ndarray'")
+           ".*while trying to hash an object of type "
+           "<class 'numpy\\.ndarray'>, 1. The error was:\nTypeError: "
+           "unhashable type: 'numpy\\.ndarray'")
 
-    with self.assertRaisesRegex(ValueError, re.escape(msg)):
+    with self.assertRaisesRegex(ValueError, msg):
       jitted_f(1, np.asarray(1))
 
     class HashableWithoutEq:
