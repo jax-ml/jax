@@ -270,25 +270,25 @@ def _main_trace_for_axis_names(main_trace: core.MainTrace,
 def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests, main_type):
   bwd, out_dims_thunk = batch_subtrace(bwd)
   return _match_axes_and_sum(batchfun(bwd, axis_name, axis_size, in_dims, main_type),
-                             axis_size, out_dims_thunk, out_dim_dests)
+                             axis_size, axis_name, out_dims_thunk, out_dim_dests)
 
 @lu.transformation
-def _match_axes_and_sum(axis_size, out_dims_thunk, out_dim_dests, *in_vals):
+def _match_axes_and_sum(axis_size, axis_name, out_dims_thunk, out_dim_dests, *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = yield in_vals, {}
-  yield map(partial(_matchaxis_symbolic_zeros, axis_size, sum_match=True),
+  yield map(partial(_matchaxis_symbolic_zeros, axis_size, axis_name, sum_match=True),
             out_dims_thunk(), out_dim_dests, out_vals)
 
-def _matchaxis_symbolic_zeros(sz, src, dst, x, sum_match=False):
+def _matchaxis_symbolic_zeros(sz, name, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py
   if isinstance(x, Zero):
     if src == dst:
       return x
     elif type(src) == type(dst) == int:
       aval = core.mapped_aval(sz, src, x.aval)
-      return Zero(core.unmapped_aval(sz, dst, aval))
+      return Zero(core.unmapped_aval(sz, name, dst, aval))
     elif src is not_mapped and dst is not not_mapped:
-      return Zero(core.unmapped_aval(sz, dst, x.aval))
+      return Zero(core.unmapped_aval(sz, name, dst, x.aval))
     elif dst is not_mapped and sum_match:
       return Zero(core.mapped_aval(sz, src, x.aval))
     else:
@@ -488,7 +488,7 @@ def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes, axis_name, main
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_batched = batch_subtrace_instantiate(f, axis_size, out_axes)
   f = batchfun(f, axis_name, axis_size, in_axes, main_type)
-  avals_in = [core.unmapped_aval(axis_size, b, aval) if b is not not_mapped
+  avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval) if b is not not_mapped
               else aval for aval, b in zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()

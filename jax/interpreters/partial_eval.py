@@ -196,7 +196,7 @@ class JaxprTrace(Trace):
       jaxpr, out_pvals, consts, env_tracers = self.partial_eval(
           f, in_pvals, app, instantiate=False)
       if primitive.map_primitive:
-        unmapped_aval = partial(core.unmapped_aval, params['axis_size'])
+        unmapped_aval = partial(core.unmapped_aval, params['axis_size'], params['axis_name'])
         out_axes = params['out_axes_thunk']()
         out_pvals = [pval if pval.is_known() else
                      PartialVal.unknown(unmapped_aval(out_axis, pval[0])) if out_axis is not None else
@@ -258,7 +258,7 @@ class JaxprTrace(Trace):
     if primitive.map_primitive:
       out_axes = params['out_axes_thunk']()
       sz = params['axis_size']
-      out_pvs = [None if pv is None else core.unmapped_aval(sz, ax, pv)
+      out_pvs = [None if pv is None else core.unmapped_aval(sz, params['axis_name'], ax, pv)
                  for pv, ax in zip(out_pvs, out_axes)]
 
     def todo(x):
@@ -1319,7 +1319,7 @@ class DynamicJaxprTrace(core.Trace):
         jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
             f, self.main, reduced_in_avals)
       out_axes = params['out_axes_thunk']()
-      out_avals = [core.unmapped_aval(params['axis_size'], out_axis, a)
+      out_avals = [core.unmapped_aval(axis_size, axis_name, out_axis, a)
                   if out_axis is not None else a
                   for a, out_axis in zip(reduced_out_avals, out_axes)]
       source_info = source_info_util.current()

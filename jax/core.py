@@ -1642,24 +1642,28 @@ def mapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
   else:
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
-def unmapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
+def unmapped_aval(size: int, axis_name, axis: int, aval: AbstractValue) -> AbstractValue:
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
-    return handler(size, axis, aval)
+    return handler(size, axis_name, axis, aval)
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
-def _map_unit(size: int, axis: int, aval: AbstractUnit) -> AbstractUnit:
-  return aval
+def _map_unit(*_) -> AbstractUnit:
+  return abstract_unit
 
 def _map_shaped_array(size: int, axis: int, aval: ShapedArray) -> ShapedArray:
   assert aval.shape[axis] == size
+  # TODO: Extend the named shape
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      named_shape=aval.named_shape)
 
-def _unmap_shaped_array(size: int, axis: int, aval: ShapedArray) -> ShapedArray:
+def _unmap_shaped_array(size: int, axis_name, axis: int, aval: ShapedArray) -> ShapedArray:
+  named_shape = dict(aval.named_shape)
+  # TODO: Make this mandatory
+  named_shape.pop(axis_name, None)
   return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                     named_shape=aval.named_shape)
+                     named_shape=named_shape)
 
 AvalMapHandlerPair = Tuple[Callable, Callable]
 aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {
@@ -1974,6 +1978,9 @@ def check_map(prim, in_avals, params):
   typecheck_assert("axis_size" in params,
                    f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
+  typecheck_assert("axis_name" in params,
+                   f"Map primitive {prim} missing 'axis_name' parameter")
+  axis_name = params["axis_name"]
   typecheck_assert("in_axes" in params,
                    f"Map primitive {prim} missing 'in_axes' parameter")
   in_axes = params["in_axes"]
@@ -1981,7 +1988,7 @@ def check_map(prim, in_avals, params):
                    f"Map primitive {prim} missing 'out_axes' parameter")
   out_axes = params["out_axes"]
 
-  binder_avals = [unmapped_aval(axis_size, in_axis, v.aval)
+  binder_avals = [unmapped_aval(axis_size, axis_name, in_axis, v.aval)
                   if in_axis is not None else v.aval
                   for v, in_axis in zip(call_jaxpr.invars, in_axes)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
@@ -1996,7 +2003,7 @@ def check_map(prim, in_avals, params):
     _check_jaxpr(call_jaxpr, mapped_avals)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_size, out_axis, aval) if out_axis is not None else aval
+  out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval) if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals
 

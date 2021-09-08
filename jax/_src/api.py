@@ -2460,7 +2460,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
     raise ValueError("`devices` argument to `device_put_replicated must be "
                      "a non-empty sequence.")
   def _device_put_replicated(x):
-    aval = core.unmapped_aval(len(devices), 0,
+    aval = core.unmapped_aval(len(devices), None, 0,
                               core.raise_to_shaped(core.get_aval(x)))
     assert isinstance(aval, core.ShapedArray) and aval._num_buffers == 1
     buf, = xla.device_put(x, devices[0])

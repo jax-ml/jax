@@ -975,7 +975,7 @@ def parallel_callable(fun: lu.WrappedFun,
   local_out_avals = [get_local_aval(aval, parts, lparts)
                      for aval, parts, lparts
                      in safe_zip(out_sharded_avals, out_parts, local_out_parts)]
-  local_unmapped_avals = [core.unmapped_aval(axis_size, out_axis, aval)
+  local_unmapped_avals = [core.unmapped_aval(axis_size, axis_name, out_axis, aval)
                           if out_axis is not None else aval
                           for aval, out_axis in safe_zip(local_out_avals, out_axes)]
 

@@ -988,7 +988,7 @@ def batch_jaxpr(jaxpr, axis_size, in_dims):
   dimvars = dict((v, v.aval) for v in jaxpr.in_dim_binders)
   in_avals = [_replace_vars_with_avals(dimvars, v.aval) for v in jaxpr.in_binders]
 
-  in_avals = [core.unmapped_aval(axis_size, d, aval)
+  in_avals = [core.unmapped_aval(axis_size, None, d, aval)
               if d is not batching.not_mapped else aval
               for d, aval in zip(in_dims, in_avals)]
 
