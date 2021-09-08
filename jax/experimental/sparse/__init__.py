@@ -193,6 +193,8 @@ from .ops import (
     bcoo_fromdense_p,
     bcoo_reduce_sum,
     bcoo_rdot_general,
+    bcoo_spdot_general,
+    bcoo_spdot_general_p,
     bcoo_todense,
     bcoo_todense_p,
     bcoo_transpose,
