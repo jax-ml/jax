@@ -74,6 +74,18 @@ class SparsifyTest(jtu.JaxTestCase):
     result = sparsify(jit(f))(x, core.unit)
     self.assertBcooIdentical(result, x)
 
+  def testDropvar(self):
+    def inner(x):
+      return x * 2, x * 3
+
+    def f(x):
+      _, y = jit(inner)(x)
+      return y * 4
+
+    x_dense = jnp.arange(5)
+    x_sparse = BCOO.fromdense(x_dense)
+    self.assertArraysEqual(sparsify(f)(x_sparse).todense(), f(x_dense))
+
   def testPytreeInput(self):
     f = sparsify(lambda x: x)
     args = (jnp.arange(4), BCOO.fromdense(jnp.arange(4)))

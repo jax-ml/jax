@@ -182,6 +182,7 @@ def eval_sparse(
   def write(var: core.Var, a: ArgSpec) -> None:
     if var is core.dropvar:
       return
+    assert a is not None
     env[var] = a
 
   # TODO: handle unitvar at all?
@@ -208,8 +209,11 @@ def eval_sparse(
         out_bufs = prim.bind(*(val.data(spenv) for val in invals), **eqn.params)
       out_bufs = out_bufs if prim.multiple_results else [out_bufs]
       out = []
-      for buf in out_bufs:
-        out.append(ArgSpec(buf.shape, spenv.push(buf), None))
+      for buf, outvar in safe_zip(out_bufs, eqn.outvars):
+        if outvar is core.dropvar:
+          out.append(None)
+        else:
+          out.append(ArgSpec(buf.shape, spenv.push(buf), None))
     safe_map(write, eqn.outvars, out)
 
   return safe_map(read, jaxpr.outvars)
