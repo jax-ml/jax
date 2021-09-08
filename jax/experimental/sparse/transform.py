@@ -414,6 +414,10 @@ def _sparsify_jaxpr(spenv, jaxpr, *argspecs):
 
   @lu.wrap_init
   def wrapped(*args_flat):
+    # TODO(frostig,jakevdp): This closes over `spenv`, which can bring
+    # in buffers from the "outer scope" as constants. Is this a
+    # problem for primitives like cond and while_loop, which always
+    # convert constvars to invars when staging out their subjaxprs?
     nonlocal out_tree
     args = tree_unflatten(in_tree, args_flat)
     argspecs = arrays_to_argspecs(spenv, args)
@@ -426,7 +430,7 @@ def _sparsify_jaxpr(spenv, jaxpr, *argspecs):
   args_flat, in_tree = tree_flatten(args)
   avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
   sp_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped, avals_flat)
-  sp_jaxpr = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(sp_jaxpr), consts)
+  sp_jaxpr = pe.ClosedJaxpr(sp_jaxpr, consts)
   return sp_jaxpr, out_tree
 
 def _while_sparse(spenv, *argspecs, cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts):
