@@ -560,7 +560,7 @@ def xmap(fun: Callable,
   has_input_rank_assertions = any(spec.expected_rank is not None for spec in in_axes_entries)
   has_output_rank_assertions = any(spec.expected_rank is not None for spec in out_axes_entries)
 
-  def fun_mapped(*args):
+  def infer_params(*args):
     # Putting this outside of fun_mapped would make resources lexically scoped
     resource_env = thread_resources.env
     available_resources = set(resource_env.shape.keys())
@@ -609,8 +609,7 @@ def xmap(fun: Callable,
           raise ValueError(f"xmap argument has an in_axes specification of {spec.user_repr}, "
                            f"which asserts that it should be of rank {spec.expected_rank}, "
                            f"but the argument has rank {arg.ndim} (and shape {arg.shape})")
-    out_flat = xmap_p.bind(
-      fun_flat, *args_flat,
+    params = dict(
       name=getattr(fun, '__name__', '<unnamed function>'),
       in_axes=tuple(in_axes_flat),
       out_axes_thunk=out_axes_thunk,
@@ -621,13 +620,21 @@ def xmap(fun: Callable,
       backend=backend,
       spmd_in_axes=None,
       spmd_out_axes_thunk=None)
+    return fun_flat, args_flat, params, out_tree
+
+  def verify_outputs(out_flat, out_tree, params):
     if has_output_rank_assertions:
-      for out, spec in zip(out_flat, out_axes_thunk()):
+      for out, spec in zip(out_flat, params['out_axes_thunk']()):
         if spec.expected_rank is not None and spec.expected_rank != out.ndim:
           raise ValueError(f"xmap output has an out_axes specification of {spec.user_repr}, "
                            f"which asserts that it should be of rank {spec.expected_rank}, "
                            f"but the output has rank {out.ndim} (and shape {out.shape})")
     return tree_unflatten(out_tree(), out_flat)
+
+  def fun_mapped(*args):
+    fun_flat, args_flat, params, out_tree = infer_params(*args)
+    out_flat = xmap_p.bind(fun_flat, *args_flat, **params)
+    return verify_outputs(out_flat, out_tree, params)
 
   # Decorate fun_mapped
   for loop_params in reversed(anon_serial_loops):
@@ -689,17 +696,11 @@ def make_xmap_callable(fun: lu.WrappedFun,
   if used_mesh_axes:
     assert spmd_in_axes is None and spmd_out_axes_thunk is None  # No outer xmaps, so should be None
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
-    return pxla.mesh_callable(f,
-                              name,
-                              backend,
-                              resource_env.physical_mesh,
-                              mesh_in_axes,
-                              mesh_out_axes,
-                              donated_invars,
-                              use_spmd_lowering,
-                              *in_avals,
-                              tile_by_mesh_axes=True,
-                              do_resource_typecheck=None)
+    return pxla.lower_mesh_computation(
+        f, name, resource_env.physical_mesh,
+        mesh_in_axes, mesh_out_axes, donated_invars,
+        use_spmd_lowering, in_avals,
+        tile_by_mesh_axes=True, do_resource_typecheck=None).compile().unsafe_call
   else:
     return xla._xla_callable(f, None, backend, name, donated_invars,
                              *((a, None) for a in in_avals))

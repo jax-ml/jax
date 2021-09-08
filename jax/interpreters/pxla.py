@@ -36,7 +36,6 @@ import operator as op
 import threading
 from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional,
                     Sequence, Set, Tuple, Type, Union, Iterable)
-
 from absl import logging
 import numpy as np
 
@@ -1529,17 +1528,20 @@ def vtile_by_mesh(fun: lu.WrappedFun,
                          main_type=SPMDBatchTrace)
   return fun
 
-def mesh_callable(fun: lu.WrappedFun,
-                  transformed_name: str,
-                  backend_name: Optional[str],
-                  mesh: Mesh,
-                  in_axes: Sequence[ArrayMapping],
-                  out_axes: Union[Sequence[ArrayMapping], Callable[[], Sequence[ArrayMapping]]],
-                  donated_invars: Sequence[bool],
-                  spmd_lowering: bool,
-                  *local_in_untiled_avals,
-                  tile_by_mesh_axes: bool,
-                  do_resource_typecheck: Optional[str]):
+def lower_mesh_computation(
+    fun: lu.WrappedFun,
+    transformed_name: str,
+    mesh: Mesh,
+    in_axes: Sequence[ArrayMapping],
+    out_axes: Union[Sequence[ArrayMapping], Callable[[], Sequence[ArrayMapping]]],
+    donated_invars: Sequence[bool],
+    spmd_lowering: bool,
+    local_in_untiled_avals: Sequence[core.ShapedArray],
+    tile_by_mesh_axes: bool,
+    do_resource_typecheck: Optional[str]):
+  assert not mesh.empty
+  backend = xb.get_device_backend(mesh.devices.flat[0])
+
   local_mesh = mesh.local_mesh
   global_axis_sizes = mesh.shape
   local_axis_sizes = local_mesh.shape
@@ -1615,72 +1617,94 @@ def mesh_callable(fun: lu.WrappedFun,
       donated_invars=donated_invars)
   with core.extend_axis_env_nd(mesh.shape.items()):
     out_nodes = xla.jaxpr_subcomp(
-        c, jaxpr, backend_name, axis_env, xla_consts,
+        c, jaxpr, backend.platform, axis_env, xla_consts,
         extend_name_stack(wrap_name(transformed_name, 'xmap')), *xla_args)
-  if backend_name is None:
-    backend = xb.get_device_backend(mesh.devices.flat[0])
-  else:
-    backend = xb.get_backend(backend_name)
   if spmd_lowering:
     out_partitions_t = xb.tuple_sharding_proto(out_partitions)
     out_tuple = xb.with_sharding_proto(c, out_partitions_t, xops.Tuple, c, out_nodes)
   else:
     out_tuple = xops.Tuple(c, out_nodes)
+
   if backend.platform in ("gpu", "tpu"):
     xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
     # TODO: Warn about unused donations?
+
   built = c.Build(out_tuple)
+  return MeshComputation(
+      built, mesh, local_in_untiled_avals,
+      local_out_untiled_avals, in_axes, out_axes,
+      spmd_lowering, tuple_args)
 
-  return compile_and_wrap_mesh_hlo(built, backend, mesh, local_in_untiled_avals,
-                                   local_out_untiled_avals, in_axes, out_axes,
-                                   spmd_lowering, tuple_args)
+
+class MeshComputation:
+  def __init__(self, hlo, *compile_args):
+    self._executable = None
+    self.hlo = hlo
+    self.compile_args = compile_args
+
+  def compile(self):
+    if self._executable is None:
+      self._executable = MeshExecutable(self.hlo, *self.compile_args)
+    return self._executable
 
 
-def compile_and_wrap_mesh_hlo(computation: xc.XlaComputation, backend,
-                              mesh: Mesh,
-                              local_in_untiled_avals: Sequence[ShapedArray],
-                              local_out_untiled_avals: Sequence[ShapedArray],
-                              in_axes: Sequence[ArrayMapping],
-                              out_axes: Sequence[ArrayMapping],
-                              spmd_lowering: bool, tuple_args: bool):
-  local_mesh = mesh.local_mesh
-  local_axis_sizes = local_mesh.shape
-  if spmd_lowering:
-    num_replicas, num_partitions = 1, mesh.size
-    num_local_replicas, num_local_partitions = 1, local_mesh.size
-  else:
-    num_replicas, num_partitions = mesh.size, 1
-    num_local_replicas, num_local_partitions = local_mesh.size, 1
-  device_assignment = mesh.device_ids.reshape((num_replicas, num_partitions))
-  compile_options = xb.get_compile_options(
-      num_replicas=num_replicas,
-      num_partitions=num_partitions,
-      device_assignment=device_assignment,
-      use_spmd_partitioning=spmd_lowering,
-  )
-  compile_options.parameter_is_tupled_arguments = tuple_args
+class MeshExecutable:
+  def __init__(self,
+               computation: xc.XlaComputation,
+               mesh: Mesh,
+               local_in_untiled_avals: Sequence[ShapedArray],
+               local_out_untiled_avals: Sequence[ShapedArray],
+               in_axes: Sequence[ArrayMapping],
+               out_axes: Sequence[ArrayMapping],
+               spmd_lowering: bool, tuple_args: bool):
+    assert not mesh.empty
+    backend = xb.get_device_backend(mesh.devices.flat[0])
 
-  local_sharding_spec = mesh_sharding_specs(local_axis_sizes, mesh.axis_names)
-  local_input_specs = [local_sharding_spec(aval, aval_in_axes)
-                       if aval is not core.abstract_unit else None
-                       for aval, aval_in_axes in safe_zip(local_in_untiled_avals, in_axes)]
-  input_indices = [spec_to_indices(aval.shape, spec)
-                   if spec is not None else None
-                   for aval, spec in safe_zip(local_in_untiled_avals, local_input_specs)]
+    local_mesh = mesh.local_mesh
+    local_axis_sizes = local_mesh.shape
+    if spmd_lowering:
+      num_replicas, num_partitions = 1, mesh.size
+      num_local_replicas, num_local_partitions = 1, local_mesh.size
+    else:
+      num_replicas, num_partitions = mesh.size, 1
+      num_local_replicas, num_local_partitions = local_mesh.size, 1
+    device_assignment = mesh.device_ids.reshape((num_replicas, num_partitions))
+    compile_options = xb.get_compile_options(
+        num_replicas=num_replicas,
+        num_partitions=num_partitions,
+        device_assignment=device_assignment,
+        use_spmd_partitioning=spmd_lowering,
+    )
+    compile_options.parameter_is_tupled_arguments = tuple_args
 
-  local_output_specs = [local_sharding_spec(aval, aval_out_axes)
-                        for aval, aval_out_axes in safe_zip(local_out_untiled_avals, out_axes)]
-  handle_outs = avals_to_results_handler(num_local_replicas, num_local_partitions,
-                                         local_output_specs, local_out_untiled_avals)
+    local_sharding_spec = mesh_sharding_specs(local_axis_sizes, mesh.axis_names)
+    local_input_specs = [local_sharding_spec(aval, aval_in_axes)
+                         if aval is not core.abstract_unit else None
+                         for aval, aval_in_axes in safe_zip(local_in_untiled_avals, in_axes)]
+    input_indices = [spec_to_indices(aval.shape, spec)
+                     if spec is not None else None
+                     for aval, spec in safe_zip(local_in_untiled_avals, local_input_specs)]
 
-  if hasattr(backend, "compile_replicated"):
-    return backend.compile_replicated(computation, compile_options,
-                                      input_indices, local_input_specs,
-                                      handle_outs)
-  compiled = xla.compile_or_get_cached(backend, computation, compile_options)
-  handle_args = InputsHandler(compiled.local_devices(), local_input_specs,
-                              input_indices)
-  return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
+    local_output_specs = [local_sharding_spec(aval, aval_out_axes)
+                          for aval, aval_out_axes in safe_zip(local_out_untiled_avals, out_axes)]
+    handle_outs = avals_to_results_handler(num_local_replicas, num_local_partitions,
+                                           local_output_specs, local_out_untiled_avals)
+
+    if hasattr(backend, "compile_replicated"):
+      self.unsafe_call = backend.compile_replicated(
+          computation, compile_options,
+          input_indices, local_input_specs,
+          handle_outs)
+    else:
+      compiled = xla.compile_or_get_cached(backend, computation, compile_options)
+      handle_args = InputsHandler(compiled.local_devices(), local_input_specs,
+                                  input_indices)
+      self.unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
+
+  def __call__(self, *args):
+    # TODO(apaszke): Validate arguments
+    return self.unsafe_call(*args)
+
 
 _forbidden_primitives = {
   'xla_pmap': 'pmap',

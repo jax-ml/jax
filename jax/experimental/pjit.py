@@ -178,10 +178,9 @@ def pjit(fun: Callable,
   donate_argnums = _ensure_index_tuple(donate_argnums)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
-  @wraps(fun)
-  def wrapped(*args, **kwargs):
+  def infer_params(*args, **kwargs):
     if kwargs:
-      raise NotImplementedError("pjit over kwargs not yet supported")
+      raise NotImplementedError("pjit does not support kwargs")
     if max(static_argnums + donate_argnums, default=-1) >= len(args):
       raise ValueError(f"jitted function has static_argnums={static_argnums}, "
                        f"donate_argnums={donate_argnums} but "
@@ -214,16 +213,28 @@ def pjit(fun: Callable,
         _pjit_jaxpr(flat_fun, mesh, local_in_avals,
                     in_tree, hashable_pytree(in_axis_resources),
                     HashableFunction(out_tree, closure=()), hashable_pytree(out_axis_resources))
-
-    out = pjit_p.bind(
-        *args_flat,
+    params = dict(
         jaxpr=jaxpr,
         in_axis_resources=in_axis_resources_flat,
         out_axis_resources=out_axis_resources_flat,
         resource_env=resource_env,
         donated_invars=donated_invars,
         name=flat_fun.__name__)
-    return tree_unflatten(out_tree(), out)
+    return args_flat, params, out_tree()
+
+  @wraps(fun)
+  def wrapped(*args, **kwargs):
+    args_flat, params, out_tree = infer_params(*args, **kwargs)
+    out = pjit_p.bind(*args_flat, **params)
+    return tree_unflatten(out_tree, out)
+
+  def lower(*args, **kwargs):
+    args_flat, params, out_tree = infer_params(*args, **kwargs)
+    return _pjit_lower(
+        params['jaxpr'], params['in_axis_resources'],
+        params['out_axis_resources'], params['resource_env'],
+        params['donated_invars'], params['name'])
+  wrapped.lower = lower
 
   return wrapped
 
@@ -399,23 +410,22 @@ pjit_p.multiple_results = True
 def _pjit_call_impl(*args, jaxpr,
                     in_axis_resources, out_axis_resources,
                     resource_env, donated_invars, name):
-  compiled = pjit_callable(
+  compiled = _pjit_lower(
       jaxpr, in_axis_resources, out_axis_resources,
-      resource_env, donated_invars, name)
+      resource_env, donated_invars, name).compile()
   distributed_debug_log(("Running pjit'd function", name),
                         ("mesh", resource_env.physical_mesh))
-  return compiled(*args)
+  return compiled.unsafe_call(*args)
 pjit_p.def_impl(_pjit_call_impl)
 
 @cache()
-def pjit_callable(
+def _pjit_lower(
     jaxpr: core.ClosedJaxpr,
     in_axis_resources: Tuple[ParsedPartitionSpec, ...],
     out_axis_resources: Tuple[ParsedPartitionSpec, ...],
     resource_env,
     donated_invars,
     name: str):
-
   in_axes = [get_array_mapping(axes) for axes in in_axis_resources]
   out_axes = [get_array_mapping(axes) for axes in out_axis_resources]
   f = core.jaxpr_as_fun(jaxpr)
@@ -423,12 +433,11 @@ def pjit_callable(
   fun = lu.wrap_init(f)
   local_in_avals = global_to_local(resource_env.physical_mesh,
                                    jaxpr.in_avals, in_axis_resources)
-  # TODO(skye): allow for using a submesh of physical_mesh
-  return pxla.mesh_callable(fun, name, None, resource_env.physical_mesh,
-                            in_axes, out_axes, donated_invars,
-                            True, *local_in_avals, tile_by_mesh_axes=False,
-                            do_resource_typecheck="pjit")
-
+  return pxla.lower_mesh_computation(
+      fun, name, resource_env.physical_mesh,
+      in_axes, out_axes, donated_invars,
+      True, local_in_avals, tile_by_mesh_axes=False,
+      do_resource_typecheck="pjit")
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env, **_):
