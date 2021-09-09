@@ -33,6 +33,7 @@ The core infrastructure that supports parallel model training is the XLA SPMD pa
 
 +++ {"id": "qF01HxLwC-s0"}
 
+![spmd](../_static/xla_spmd.jpg)
 
 +++ {"id": "PNP-0AH-Bz48"}
 
