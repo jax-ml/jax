@@ -4022,6 +4022,26 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = 2. * jnp.ones(3)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_initial_style_vmap_with_collective(self):
+
+    @api.custom_jvp
+    def f(x):
+      return lax.psum(x, 'foo')
+
+    @f.defjvp
+    def f_jvp(xs, ts):
+      x, = xs
+      t, = ts
+      return lax.psum(x, 'foo'), t
+
+    def g(x):
+      jaxpr = api.make_jaxpr(f)(x)
+      return core.eval_jaxpr(jaxpr.jaxpr, [], x)[0]
+
+    v = api.vmap(lambda _, x: g(x), axis_name='foo', in_axes=(0, None),
+        out_axes=None)(jnp.arange(4.), 2.)
+    self.assertAllClose(v, 8.)
+
   def test_closed_over_tracers_error_message(self):
     def f(x):
       @api.custom_jvp
@@ -5285,6 +5305,27 @@ class CustomVJPTest(jtu.JaxTestCase):
     ans = api.grad(lambda x: api.vmap(foo)(x).sum())(jnp.arange(3.))
     expected = 2. * jnp.cos(jnp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_initial_style_vmap_with_collective(self):
+
+    @api.custom_vjp
+    def f(x):
+      return lax.psum(x, 'foo')
+
+    def f_fwd(x):
+      return lax.psum(x, 'foo'), None
+
+    def f_bwd(res, dx):
+      return dx
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      jaxpr = api.make_jaxpr(f)(x)
+      return core.eval_jaxpr(jaxpr.jaxpr, [], x)[0]
+
+    out = api.vmap(lambda _, x: g(x), axis_name='foo', in_axes=(0, None),
+        out_axes=None)(jnp.arange(4.), 2.)
+    self.assertAllClose(out, 8.)
 
   def test_bwd_closes_over_tracer(self):
     def f(y):

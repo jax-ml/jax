@@ -89,12 +89,12 @@ def powerset(s):
 
 ensure_bdim_p = core.Primitive('ensure_bdim')
 ensure_bdim_p.def_abstract_eval(lambda x, **kwargs: core.raise_to_shaped(x))
-def _ensure_bdim_batcher(frame, vals_in, dims_in, axis_name, bdim):
+def _ensure_bdim_batcher(axis_size, frame_name, main_type, vals_in, dims_in, axis_name, bdim):
   v, = vals_in
   d, = dims_in
   assert d is not batching.not_mapped
   return jnp.moveaxis(v, d, bdim), bdim
-batching.collective_rules[ensure_bdim_p] = _ensure_bdim_batcher
+batching.axis_primitive_batchers[ensure_bdim_p] = _ensure_bdim_batcher
 batching.primitive_batchers[ensure_bdim_p] = lambda v, d: (v[0], d[0])
 core.axis_substitution_rules[ensure_bdim_p] = partial(jax._src.lax.parallel._subst_all_names_in_param,
                                                       'axis_name')

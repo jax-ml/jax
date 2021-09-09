@@ -700,6 +700,8 @@ class Sublevel:
 AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
 AxisName = Hashable
 
+no_axis_name = object()
+
 class TraceState:
   trace_stack: TraceStack
   substack: List[Sublevel]
@@ -1810,7 +1812,7 @@ def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   if isinstance(jaxpr, ClosedJaxpr):
     consts = jaxpr.consts
     jaxpr = jaxpr.jaxpr
-  var_map: Dict[Var, Var] = {}
+  var_map: Dict[Var, Var] = {unitvar: unitvar}
   invars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.invars]
   constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]
   eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]

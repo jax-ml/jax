@@ -590,10 +590,10 @@ def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
   return vals_out, [d if d is batching.not_mapped else 0 for d in dims_in]
 
 def _batched_reduction_collective(
-    prim, if_unmapped, frame, vals_in, dims_in, axes,
+    prim, if_unmapped, axis_size, frame_name, _, vals_in, dims_in, axes,
     axis_index_groups):
   assert prim.multiple_results
-  assert frame.name in axes
+  assert frame_name in axes
   # Note that we have a choice here. We can either unfuse the reduction into one
   # that handles the batched dims and then another one that handles the rest.
   # Alternatively, we can keep the dimension reduction fused with the rest, but
@@ -602,10 +602,10 @@ def _batched_reduction_collective(
   # We choose the second strategy here.
   vals_out = _reduction_with_positional_batcher(
       prim, vals_in, dims_in, axis_index_groups,
-      lambda d, d_vals_in: (tuple(axis for axis in axes if axis != frame.name),
-                            [if_unmapped(v, frame.size) for v in d_vals_in]),
+      lambda d, d_vals_in: (tuple(axis for axis in axes if axis != frame_name),
+                            [if_unmapped(v, axis_size) for v in d_vals_in]),
       lambda d, d_vals_in: (tuple(axis + (axis >= d) if isinstance(axis, int) else
-                                  axis if axis != frame.name else
+                                  axis if axis != frame_name else
                                   d
                                   for axis in axes),
                             d_vals_in))
@@ -700,7 +700,7 @@ xla.parallel_translations[psum_p] = partial(_allreduce_translation_rule,
 ad.deflinear2(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 batching.primitive_batchers[psum_p] = partial(_reduction_batcher, psum_p)
-batching.collective_rules[psum_p] = \
+batching.axis_primitive_batchers[psum_p] = \
   partial(_batched_reduction_collective, psum_p, lambda v, axis_size: axis_size * v)
 core.axis_substitution_rules[psum_p] = partial(_subst_all_names_in_param, 'axes')
 
@@ -735,7 +735,7 @@ xla.parallel_translations[pmax_p] = partial(_allreduce_translation_rule,
                                             lax.max_p, lax.reduce_max_p)  # type: ignore
 pxla.multi_host_supported_collectives.add(pmax_p)
 batching.primitive_batchers[pmax_p] = partial(_reduction_batcher, pmax_p)
-batching.collective_rules[pmax_p] = \
+batching.axis_primitive_batchers[pmax_p] = \
   partial(_batched_reduction_collective, pmax_p, lambda v, axis_size: v)
 core.axis_substitution_rules[pmax_p] = partial(_subst_all_names_in_param, 'axes')
 
@@ -748,7 +748,7 @@ xla.parallel_translations[pmin_p] = partial(_allreduce_translation_rule,
                                             lax.min_p, lax.reduce_min_p)  # type: ignore
 pxla.multi_host_supported_collectives.add(pmin_p)
 batching.primitive_batchers[pmin_p] = partial(_reduction_batcher, pmin_p)
-batching.collective_rules[pmin_p] = \
+batching.axis_primitive_batchers[pmin_p] = \
   partial(_batched_reduction_collective, pmin_p, lambda v, axis_size: v)
 core.axis_substitution_rules[pmin_p] = partial(_subst_all_names_in_param, 'axes')
 
@@ -772,19 +772,19 @@ def _ppermute_transpose_rule(t, x, perm, axis_name):
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
-def _ppermute_batcher(frame, vals_in, dims_in, axis_name, perm):
+def _ppermute_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, perm):
   (v,), (d,) = vals_in, dims_in
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
-  remaining_axes = tuple(axis for axis in axis_name if axis != frame.name)
-  if frame.size == 1 and remaining_axes:
+  remaining_axes = tuple(axis for axis in axis_name if axis != frame_name)
+  if axis_size == 1 and remaining_axes:
     return ppermute_p.bind(v, perm=perm, axis_name=remaining_axes), d
   if remaining_axes:
     raise NotImplementedError("ppermute batcher only supports a single axis")
-  assert axis_name[0] == frame.name, "ppermute batcher called with a wrong axis!"
-  assert len(perm) == frame.size, "Permutation doesn't match the axis size!"
+  assert axis_name[0] == frame_name, "ppermute batcher called with a wrong axis!"
+  assert len(perm) == axis_size, "Permutation doesn't match the axis size!"
   assert d is not batching.not_mapped
-  perm_indices = [None] * frame.size
+  perm_indices = [None] * axis_size
   for src, dst in perm:
     perm_indices[src] = dst
   return lax_numpy.take(v, perm_indices, d), d
@@ -798,7 +798,7 @@ ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
 batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
-batching.collective_rules[ppermute_p] = _ppermute_batcher
+batching.axis_primitive_batchers[ppermute_p] = _ppermute_batcher
 core.axis_substitution_rules[ppermute_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 
@@ -886,7 +886,7 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
       axis_index_groups=axis_index_groups)
   return result, d
 
-def _all_to_all_batched_collective(frame, vals_in, dims_in,
+def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups):
   if axis_index_groups is not None:
@@ -894,7 +894,7 @@ def _all_to_all_batched_collective(frame, vals_in, dims_in,
   x, = vals_in
   d, = dims_in
   if isinstance(axis_name, (list, tuple)):
-    pos = axis_name.index(frame.name)
+    pos = axis_name.index(frame_name)
     major_axes, minor_axes = axis_name[:pos], axis_name[pos + 1:]
   else:
     major_axes, minor_axes = (), ()
@@ -903,12 +903,12 @@ def _all_to_all_batched_collective(frame, vals_in, dims_in,
     if split_axis == concat_axis:
       axis = split_axis + (d <= split_axis)
       d_pre_split = d
-      x = _splitaxis(axis, frame.size, x)
+      x = _splitaxis(axis, axis_size, x)
       d += (axis <= d)
       return _foldaxis(axis, moveaxis(x, (d, axis), (axis, d))), d_pre_split
     else:
       x_concat = _foldaxis(concat_axis, _moveaxis(d, concat_axis, x))
-      return _splitaxis(split_axis, frame.size, x_concat), split_axis
+      return _splitaxis(split_axis, axis_size, x_concat), split_axis
   # Here we have to handle either the major or the minor dimensions
   # We will be accumulating chunks into the three leading dims: [Major, Current, Minor, ...]
   x, d = lax.expand_dims(_moveaxis(d, 0, x), (0, 2)), 1
@@ -919,7 +919,7 @@ def _all_to_all_batched_collective(frame, vals_in, dims_in,
                           split_axis=split_axis, concat_axis=0,
                           axis_index_groups=axis_index_groups)
   # Split out the local part into axis new_d (NOTE: d is already in axis 1)
-  x = _splitaxis(split_axis, frame.size, x)
+  x = _splitaxis(split_axis, axis_size, x)
   new_d = split_axis
   concat_axis += (split_axis <= concat_axis)  # Offset the existing axes by the new batch axis
   split_axis += 1
@@ -951,7 +951,7 @@ xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
-batching.collective_rules[all_to_all_p] = _all_to_all_batched_collective
+batching.axis_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
 core.axis_substitution_rules[all_to_all_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 
@@ -1102,16 +1102,17 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
       tiled=tiled)
   return result, d
 
-def _all_gather_batched_collective(frame, vals_in, dims_in, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
+def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in, all_gather_dimension, axis_name,
+                                   axis_index_groups, axis_size, tiled):
   if tiled:
     raise NotImplementedError("Please open a feature request!")
   assert axis_index_groups is None, "axis_index_groups not supported in vmap"
-  assert axis_size == frame.size, "axis size doesn't match"
+  assert axis_size == frame_size, "axis size doesn't match"
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if len(axis_name) > 1:
     raise NotImplementedError("Please open a feature request!")
-  assert axis_name == (frame.name,), "batcher called with wrong axis name"
+  assert axis_name == (frame_name,), "batcher called with wrong axis name"
   (x,), (d,) = vals_in, dims_in
   if d is batching.not_mapped:
     out_shape = list(np.shape(x))
@@ -1127,7 +1128,7 @@ xla.parallel_translations[all_gather_p] = _all_gather_translation_rule
 ad.deflinear2(all_gather_p, _all_gather_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_gather_p)
 batching.primitive_batchers[all_gather_p] = _all_gather_batcher
-batching.collective_rules[all_gather_p] = _all_gather_batched_collective
+batching.axis_primitive_batchers[all_gather_p] = _all_gather_batched_collective
 core.axis_substitution_rules[all_gather_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 
@@ -1363,7 +1364,7 @@ def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch):
                  if name not in axis_name}
   return pos_aval.update(named_shape=named_shape)
 
-def _pdot_vmap_collective_rule(frame, vals_in, dims_in, *, axis_name,
+def _pdot_vmap_collective_rule(axis_size, frame_name, _, vals_in, dims_in, *, axis_name,
                                pos_contract, pos_batch):
   x, y = vals_in
   x_dim, y_dim = dims_in
@@ -1373,12 +1374,12 @@ def _pdot_vmap_collective_rule(frame, vals_in, dims_in, *, axis_name,
   x_pos_batch, y_pos_batch = pos_batch
   x_pos_batch = [d + (d >= x_dim) for d in x_pos_batch]
   y_pos_batch = [d + (d >= y_dim) for d in y_pos_batch]
-  remaining_axis_names = tuple(n for n in axis_name if n != frame.name)
+  remaining_axis_names = tuple(n for n in axis_name if n != frame_name)
   out = pdot_p.bind(x, y, axis_name=remaining_axis_names,
                     pos_contract=[x_pos_contract, y_pos_contract],
                     pos_batch=[x_pos_batch, y_pos_batch])
   return out, None
-batching.collective_rules[pdot_p] = _pdot_vmap_collective_rule
+batching.axis_primitive_batchers[pdot_p] = _pdot_vmap_collective_rule
 
 def _pdot_vmap_batching_rule(vals_in, dims_in, *, axis_name, pos_contract,
                              pos_batch):
@@ -1466,7 +1467,7 @@ def _pgather_batcher(vals_in, dims_in, *, axes):
   else:
     assert False  # This shouldn't get called anyway
 
-def _pgather_collective_batcher(frame, vals_in, dims_in, *, axes):
+def _pgather_collective_batcher(axis_size, frame_name, _, vals_in, dims_in, *, axes):
   src, idx = vals_in
   dsrc, didx = dims_in
   if dsrc is batching.not_mapped:
@@ -1475,7 +1476,7 @@ def _pgather_collective_batcher(frame, vals_in, dims_in, *, axes):
     # NOTE: This is allowed and the output would be mapped along this axis!
     raise NotImplementedError("Please open a feature request!")
   # Now source is mapped, idx is not
-  new_axes = tuple(dsrc if axis == frame.name else
+  new_axes = tuple(dsrc if axis == frame_name else
                    axis + (dsrc <= axis) if isinstance(axis, int) else
                    axis
                    for axis in axes)
@@ -1494,5 +1495,5 @@ pgather_p.def_abstract_eval(_pgather_abstract_eval)
 xla.parallel_translations[pgather_p] = _pgather_parallel_translation
 # TODO: Transpose? That requires adding pscatter...
 batching.primitive_batchers[pgather_p] = _pgather_batcher
-batching.collective_rules[pgather_p] = _pgather_collective_batcher
+batching.axis_primitive_batchers[pgather_p] = _pgather_collective_batcher
 core.axis_substitution_rules[pgather_p] = partial(_subst_all_names_in_param, 'axes')

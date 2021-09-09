@@ -1263,6 +1263,8 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
     docstr += "\n\nOriginal documentation:\n\n"
     docstr += fun.__doc__
 
+  axis_name = core.no_axis_name if axis_name is None else axis_name
+
   if isinstance(in_axes, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
     # list: if in_axes is not a leaf, it must be a tuple of trees. However,
@@ -2460,7 +2462,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
     raise ValueError("`devices` argument to `device_put_replicated must be "
                      "a non-empty sequence.")
   def _device_put_replicated(x):
-    aval = core.unmapped_aval(len(devices), None, 0,
+    aval = core.unmapped_aval(len(devices), core.no_axis_name, 0,
                               core.raise_to_shaped(core.get_aval(x)))
     assert isinstance(aval, core.ShapedArray) and aval._num_buffers == 1
     buf, = xla.device_put(x, devices[0])

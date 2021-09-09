@@ -305,7 +305,7 @@ def _custom_jvp_call_jaxpr_abstract_eval(*args, fun_jaxpr: core.ClosedJaxpr, **p
   del args, params
   return fun_jaxpr.out_avals
 
-custom_jvp_call_jaxpr_p = core.Primitive('custom_jvp_call_jaxpr')
+custom_jvp_call_jaxpr_p = core.AxisPrimitive('custom_jvp_call_jaxpr')
 custom_jvp_call_jaxpr_p.multiple_results = True
 custom_jvp_call_jaxpr_p.def_impl(_custom_jvp_call_jaxpr_impl)
 custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
@@ -331,17 +331,16 @@ def _custom_jvp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
 def _custom_jvp_call_jaxpr_vmap(
-    args, in_dims, axis_name, main_type, *, fun_jaxpr: core.ClosedJaxpr,
+    axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
     jvp_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     num_consts: int):
-  size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
   num_out = len(fun_jaxpr.out_avals)
 
   in_batched = [d is not not_mapped for d in in_dims]
   batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-      fun_jaxpr, size, in_batched, False, axis_name, main_type)
+      fun_jaxpr, axis_size, in_batched, False, axis_name, main_type)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []  # mutable cell updated by batched_jvp_jaxpr_thunk
 
@@ -349,13 +348,13 @@ def _custom_jvp_call_jaxpr_vmap(
   def batched_jvp_jaxpr_thunk():
     jvp_jaxpr = core.ClosedJaxpr(*jvp_jaxpr_thunk())  # consts can be tracers
     _, args_batched = split_list(in_batched, [num_consts])
-    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, size, args_batched * 2, False,
+    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, axis_size, args_batched * 2, False,
                                           axis_name, main_type)
     primals_batched, tangents_batched = split_list(all_batched, [num_out])
     out_batched = map(op.or_, primals_batched, tangents_batched)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     batched_jvp_jaxpr, _ = batching.batch_jaxpr(
-        jvp_jaxpr, size, args_batched * 2, out_batched * 2,
+        jvp_jaxpr, axis_size, args_batched * 2, out_batched * 2,
         axis_name, main_type)
     return batched_jvp_jaxpr.jaxpr, batched_jvp_jaxpr.consts
 
@@ -364,7 +363,7 @@ def _custom_jvp_call_jaxpr_vmap(
       jvp_jaxpr_thunk=batched_jvp_jaxpr_thunk, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.initial_style_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
+batching.axis_primitive_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
 
 xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_jvp_call_jaxpr_impl)
@@ -611,7 +610,7 @@ def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
 def _custom_vjp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
   return fun_jaxpr.out_avals
 
-custom_vjp_call_jaxpr_p = core.Primitive('custom_vjp_call_jaxpr')
+custom_vjp_call_jaxpr_p = core.AxisPrimitive('custom_vjp_call_jaxpr')
 custom_vjp_call_jaxpr_p.multiple_results = True
 custom_vjp_call_jaxpr_p.def_impl(_custom_vjp_call_jaxpr_impl)
 custom_vjp_call_jaxpr_p.def_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
@@ -641,10 +640,9 @@ def _custom_vjp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
 def _custom_vjp_call_jaxpr_vmap(
-    args, in_dims, axis_name, main_type, *, fun_jaxpr: core.ClosedJaxpr,
+    axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
-  axis_size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
 
@@ -674,7 +672,7 @@ def _custom_vjp_call_jaxpr_vmap(
       out_trees=out_trees, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.initial_style_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
+batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
 xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_vjp_call_jaxpr_impl)
