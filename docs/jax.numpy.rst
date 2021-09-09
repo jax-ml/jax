@@ -177,6 +177,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     full
     full_like
     gcd
+    get_printoptions
     geomspace
     gradient
     greater
@@ -301,6 +302,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     polyval
     positive
     power
+    printoptions
     prod
     product
     promote_types
