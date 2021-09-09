@@ -689,6 +689,9 @@ def _xla_consts(c, consts):
 
 @lu.cache
 def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
+  return lower_xla_callable(fun, device, backend, name, donated_invars, *arg_specs).compile().unsafe_call
+
+def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
@@ -712,14 +715,12 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   device = _xla_callable_device(nreps, backend, device, arg_devices)
   backend = xb.get_device_backend(device) if device else (
       xb.get_backend(backend) if backend is not None else None)
-  result_handlers = map(partial(aval_to_result_handler, device), out_avals)
 
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
-    return partial(_execute_trivial, jaxpr, device, consts, out_avals,
-                   result_handlers, kept_var_idx)
+    return XlaComputation(None, True, jaxpr, consts, device, out_avals, kept_var_idx)
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -764,19 +765,63 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
                         for a, d in zip(xla_args, donated_invars) if d]
     warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
   built = c.build(out_tuple)
+  return XlaComputation(
+      built, False, nreps, device, backend, tuple_args, out_avals, kept_var_idx)
 
-  options = xb.get_compile_options(
-      num_replicas=nreps,
-      num_partitions=1,
-      device_assignment=(device.id,) if device else None)
-  options.parameter_is_tupled_arguments = tuple_args
-  compiled = compile_or_get_cached(backend, built, options)
-  if nreps == 1:
-    return partial(_execute_compiled, compiled, out_avals, result_handlers,
-                   kept_var_idx)
-  else:
-    return partial(_execute_replicated, compiled, out_avals, result_handlers,
-                   kept_var_idx)
+
+class XlaComputation:
+  def __init__(self, hlo, is_trivial, *compile_args):
+    self.hlo = hlo
+    self._is_trivial = is_trivial
+    self._executable = None
+    self.compile_args = compile_args
+
+  def compile(self):
+    if self._executable is None:
+      if self._is_trivial:
+        self._executable = XlaCompiledComputation.from_trivial_jaxpr(*self.compile_args)
+      else:
+        self._executable = XlaCompiledComputation.from_xla_computation(self.hlo, *self.compile_args)
+    return self._executable
+
+
+class XlaCompiledComputation:
+  def __init__(self, unsafe_call):
+    self.unsafe_call = unsafe_call
+
+  @staticmethod
+  def from_xla_computation(
+      xla_computation,
+      nreps: int,
+      device,
+      backend,
+      tuple_args: bool,
+      out_avals,
+      kept_var_idx):
+    result_handlers = map(partial(aval_to_result_handler, device), out_avals)
+    options = xb.get_compile_options(
+        num_replicas=nreps,
+        num_partitions=1,
+        device_assignment=(device.id,) if device else None)
+    options.parameter_is_tupled_arguments = tuple_args
+    compiled = compile_or_get_cached(backend, xla_computation, options)
+    if nreps == 1:
+      return XlaCompiledComputation(partial(
+          _execute_compiled, compiled, out_avals, result_handlers, kept_var_idx))
+    else:
+      return XlaCompiledComputation(partial(
+          _execute_replicated, compiled, out_avals, result_handlers, kept_var_idx))
+
+  @staticmethod
+  def from_trivial_jaxpr(jaxpr, consts, device, out_avals, kept_var_idx):
+    result_handlers = map(partial(aval_to_result_handler, device), out_avals)
+    return XlaCompiledComputation(partial(
+        _execute_trivial, jaxpr, device, consts, out_avals,
+        result_handlers, kept_var_idx))
+
+  def __call__(self, *args):
+    # TODO(apaszke,frostig): Check that args are compatible with input avals!
+    return self.unsafe_call(*args)
 
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
