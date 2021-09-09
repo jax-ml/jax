@@ -810,7 +810,12 @@ $$
 \hline
 \end{array}
 $$
-<center>$\ast$ = argument-__value__-independent loop condition - unrolls the loop </center>
+
+<center>
+
+$\ast$ = argument-<b>value</b>-independent loop condition - unrolls the loop
+
+</center>
 
 +++ {"id": "DKTMw6tRZyK2"}
 
