@@ -2993,11 +2993,17 @@ class APITest(jtu.JaxTestCase):
     x = jax.random.uniform(jax.random.PRNGKey(0), shape=(8, 4))
 
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
-      jax.hessian(jf)(x).block_until_ready()
-      jax.hessian(jf)(x).block_until_ready()
-      jax.hessian(jf)(x).block_until_ready()
+      for _ in range(5):
+        jax.hessian(jf)(x).block_until_ready()
 
-    self.assertEqual(count[0], 2)
+      n = count[0]
+      # The exact number of compilations may vary depending on the number of
+      # jit decorators in the function above, but it should not grow after an
+      # initial warmup phase.
+      for _ in range(5):
+        jax.hessian(jf)(x).block_until_ready()
+
+    self.assertEqual(count[0], n)
 
 
 class RematTest(jtu.JaxTestCase):
