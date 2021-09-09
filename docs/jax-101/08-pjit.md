@@ -126,6 +126,7 @@ For example, we can have a physical mesh of size (4, 4, 4). If the computation r
 
 
 +++ {"id": "-EBn4AXojvbe"}
+![spmd](../_static/mesh.jpg)
 
 +++ {"id": "JGNV0XCJKPlN"}
 
@@ -254,7 +255,7 @@ Each color represents a different device. Since an (8,2) array is partitioned ac
 
 +++ {"id": "NQSi0q8cMlj8"}
 
-
+![spmd](../_static/partition_spec_x_y.png)
 +++ {"id": "mDkB4FNBK9ct"}
 
 ### More information on PartitionSpec:
@@ -298,8 +299,7 @@ data.device_buffers
 
 the first dimension of the input is sharded across `x` axis and the other dimensions are replicated across other axes. `None` can also be omitted in the PartitionSpec. If `out_axis_resources = PartitionSpec(“x”, None)` in the example above, the result visualization will be the following:
 
-
-
+![spmd](../_static/partition_spec_x_none.png)
 +++ {"id": "EwN6tPSLy9Tz"}
 
 ### **- `PartitionSpec(“y”, None)`**
@@ -333,6 +333,7 @@ data.device_buffers
 
 the first dimension of the input is sharded across `y` axis and the other dimensions are replicated across other axes. If `out_axis_resources = PartitionSpec(“y”, None)` in the example above, the result visualization will be the following: 
 
+![spmd](../_static/partition_spec_y_none.png)
 +++ {"id": "E2pbgVJazQfJ"}
 
 ### **- `PartitionSpec((“x”, “y”), None)`**
@@ -366,7 +367,7 @@ data.device_buffers
 
 the first dimension of the input is sharded across both `x` and `y` axis and the other dimensions are replicated across other axes. We can think of this as stretching the 2D mesh into an 1D mesh and then do the partition. If `out_axis_resources = PartitionSpec((“x”, “y”), None)` in the example above, the result visualization will be the following: 
 
-
+![spmd](../_static/partition_spec_xy.png)
 +++ {"id": "d_Vdh_yh3XhP"}
 
 ### **- `PartitionSpec(None, 'y')`**
@@ -400,7 +401,7 @@ data.device_buffers
 
 the second dimension of the input is sharded over y axis and the first dimensions is replicated across other axes. We can think of this as stretching the 2D mesh into an 1D mesh and then do the partition. If out_axis_resources = PartitionSpec(None, 'y') in the example above, the result visualization will be the following:
 
-
+![spmd](../_static/partition_spec_none_y.png)
 +++ {"id": "bILc3_4w3ueA"}
 
 ### **- `PartitionSpec(None, 'x')`**
@@ -497,3 +498,5 @@ with maps.mesh(mesh.devices, mesh.axis_names):
 +++ {"id": "LtaOndLDg3DK"}
 
 **Result on host 0**
+
+![spmd](../_static/multi_host.jpg)
