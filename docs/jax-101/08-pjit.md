@@ -126,6 +126,7 @@ For example, we can have a physical mesh of size (4, 4, 4). If the computation r
 
 
 +++ {"id": "-EBn4AXojvbe"}
+
 ![spmd](../_static/mesh.jpg)
 
 +++ {"id": "JGNV0XCJKPlN"}
