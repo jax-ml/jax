@@ -477,9 +477,6 @@ def make_sharded_device_array(
   if indices is None:
     indices = spec_to_indices(aval.shape, sharding_spec)
 
-  for buf in device_buffers:
-    buf.aval = ShapedArray(buf.shape, buf.dtype)
-
   if (_USE_CPP_SDA and
       (not device_buffers or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
