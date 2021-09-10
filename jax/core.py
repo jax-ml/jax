@@ -38,7 +38,7 @@ from . import linear_util as lu
 
 from jax._src import source_info_util
 from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
-                   tuple_insert, tuple_delete, as_hashable_function,
+                   tuple_insert, tuple_delete, cache, as_hashable_function,
                    HashableFunction)
 from ._src.pprint_util import pp, vcat, PrettyPrint
 
@@ -1749,13 +1749,17 @@ def axis_frame(axis_name):
 ParamDict = Dict[str, Any]
 AxisSubst = Callable[[AxisName], Tuple[AxisName, ...]]
 
-def used_axis_names(primitive: Primitive, params: ParamDict) -> Set[AxisName]:
-  axis_names = set()
-  def register_name(axis_name):
-    axis_names.add(axis_name)
+class NameGatheringSubst:
+  def __init__(self):
+    self.axis_names = set()
+  def __call__(self, axis_name):
+    self.axis_names.add(axis_name)
     return (axis_name,)
-  subst_axis_names(primitive, params, register_name)
-  return axis_names
+
+def used_axis_names(primitive: Primitive, params: ParamDict) -> Set[AxisName]:
+  subst = NameGatheringSubst()
+  subst_axis_names(primitive, params, subst)
+  return subst.axis_names
 
 def subst_axis_names(primitive: Primitive, params: ParamDict, subst: AxisSubst, traverse: bool = True) -> ParamDict:
   if primitive in axis_substitution_rules:
@@ -1807,7 +1811,7 @@ def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: Dict[Var, Var
   params = subst_axis_names(eqn.primitive, eqn.params, subst)
   return new_jaxpr_eqn(invars, outvars, eqn.primitive, params, eqn.source_info)
 
-def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
+def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   consts = None
   if isinstance(jaxpr, ClosedJaxpr):
     consts = jaxpr.consts
@@ -1821,6 +1825,19 @@ def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
   if consts is not None:
     return ClosedJaxpr(new_jaxpr, consts)
   return new_jaxpr
+
+@cache()
+def used_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr]):
+  subst = NameGatheringSubst()
+  do_subst_axis_names_jaxpr(jaxpr, subst)
+  return frozenset(subst.axis_names)
+
+def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
+  if isinstance(subst, NameGatheringSubst):  # This is a common case, so we optimize it!
+    subst.axis_names |= used_axis_names_jaxpr(jaxpr)
+    return jaxpr
+  return do_subst_axis_names_jaxpr(jaxpr, subst)
+
 
 axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst, bool], ParamDict]] = {}
 
