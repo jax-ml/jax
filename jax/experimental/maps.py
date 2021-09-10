@@ -636,10 +636,22 @@ def xmap(fun: Callable,
     out_flat = xmap_p.bind(fun_flat, *args_flat, **params)
     return verify_outputs(out_flat, out_tree, params)
 
-  # Decorate fun_mapped
-  for loop_params in reversed(anon_serial_loops):
-    fun_mapped = serial_loop(*loop_params)(fun_mapped)
-  fun_mapped = wraps(fun)(fun_mapped)
+  def decorate_serial(f):
+    for loop_params in reversed(anon_serial_loops):
+      f = serial_loop(*loop_params)(f)
+    return f
+
+  def lower(*args):
+    fun_flat, args_flat, params, out_tree = infer_params(*args)
+    avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
+    return make_xmap_callable(
+        fun_flat, params['name'], params['in_axes'], params['out_axes_thunk'],
+        params['donated_invars'], params['global_axis_sizes'], params['axis_resources'],
+        params['resource_env'], params['backend'], params['spmd_in_axes'],
+        params['spmd_out_axes_thunk'], *avals_flat)
+
+  fun_mapped = wraps(fun)(decorate_serial(fun_mapped))
+  fun_mapped.lower = decorate_serial(lower)
 
   return fun_mapped
 
@@ -651,7 +663,7 @@ def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_
       fun, name, in_axes, out_axes_thunk, donated_invars, global_axis_sizes,
       axis_resources, resource_env, backend,
       spmd_in_axes, spmd_out_axes_thunk,
-      *in_avals)
+      *in_avals).compile().unsafe_call
   distributed_debug_log(("Running xmapped function", name),
                         ("python function", fun.f),
                         ("mesh", resource_env.physical_mesh),
@@ -700,10 +712,10 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, name, resource_env.physical_mesh,
         mesh_in_axes, mesh_out_axes, donated_invars,
         use_spmd_lowering, in_avals,
-        tile_by_mesh_axes=True, do_resource_typecheck=None).compile().unsafe_call
+        tile_by_mesh_axes=True, do_resource_typecheck=None)
   else:
-    return xla._xla_callable(f, None, backend, name, donated_invars,
-                             *((a, None) for a in in_avals))
+    return xla.lower_xla_callable(
+        f, None, backend, name, donated_invars, *((a, None) for a in in_avals))
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
