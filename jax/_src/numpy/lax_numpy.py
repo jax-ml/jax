@@ -2200,7 +2200,7 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   else:
     result = lax.reduce(a, init_val, op, dims)
   if initial is not None:
-    result = op(_reduction_init_val(a, initial), result)
+    result = op(lax.convert_element_type(initial, a.dtype), result)
   if keepdims:
     result = expand_dims(result, pos_dims)
   return lax.convert_element_type(result, dtype or result_dtype)
@@ -2224,15 +2224,17 @@ def _reduction_dims(a, axis):
     return canon_axis, canon_axis
 
 def _reduction_init_val(a, init_val):
+  # This function uses np.* functions because lax pattern matches against the
+  # specific concrete values of the reduction inputs.
   a_dtype = dtypes.canonicalize_dtype(_dtype(a))
   if a_dtype == 'bool':
-    return array(init_val > 0, dtype=a_dtype)
+    return np.array(init_val > 0, dtype=a_dtype)
   try:
-    return array(init_val, dtype=a_dtype)
+    return np.array(init_val, dtype=a_dtype)
   except OverflowError:
     assert issubdtype(a_dtype, integer)
     sign, info = np.sign(init_val), iinfo(a_dtype)
-    return array(where(sign < 0, info.min, info.max), dtype=a_dtype)
+    return np.array(info.min if sign < 0 else info.max, dtype=a_dtype)
 
 def _cast_to_bool(operand):
   with warnings.catch_warnings():
