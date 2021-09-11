@@ -1062,8 +1062,10 @@ threefry_random_bits = jax._src.prng.threefry_random_bits
 threefry_fold_in = jax._src.prng.threefry_fold_in
 
 def _double_threefry_seed(seed):
-  return jnp.vstack([threefry_seed(seed + 1),
-                     threefry_seed(seed + 2)])
+  int_t = seed.dtype.type if hasattr(seed, 'dtype') else type(seed)
+  s1, s2 = seed ^ int_t(1), seed ^ int_t(3)
+  return jnp.vstack([threefry_seed(s1),
+                     threefry_seed(s2)])
 
 def _double_threefry_split(key, num):
   split0 = threefry_split(key[0], num)
@@ -1126,6 +1128,7 @@ for test_prefix in [
     'testPoissonBatched',
     'testPoissonShape',
     'testPoissonZeros',
+    'testT',
 ]:
   for attr in dir(LaxRandomTest):
     if attr.startswith(test_prefix):
