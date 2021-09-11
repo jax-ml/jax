@@ -193,8 +193,6 @@ execution_excludepatterns = [
     'notebooks/neural_network_with_tfds_data.*',
     # Slow notebook
     'notebooks/Neural_Network_and_Data_Loading.*',
-    'notebooks/score_matching.*',
-    'notebooks/maml.*',
     # Strange error apparently due to asynchronous cell execution
     'notebooks/thinking_in_jax.*',
     # TODO(jakevdp): enable execution on these

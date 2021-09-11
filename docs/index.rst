@@ -44,8 +44,6 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    notebooks/Writing_custom_interpreters_in_Jax
    notebooks/Neural_Network_and_Data_Loading
    notebooks/XLA_in_Python
-   notebooks/maml
-   notebooks/score_matching
    notebooks/xmap_tutorial
    multi_process
 
