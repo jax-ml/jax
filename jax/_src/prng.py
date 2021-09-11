@@ -125,6 +125,7 @@ class PRNGKeyArray:
           'deprecated `dtype` attribute of PRNG key arrays', FutureWarning)
       return np.uint32
 
+  @property
   def shape(self):
     # TODO(frostig): simplify once we always enable_custom_prng
     if config.jax_enable_custom_prng:
