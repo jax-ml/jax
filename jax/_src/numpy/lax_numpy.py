@@ -5806,15 +5806,11 @@ def compress(condition, a, axis: Optional[int] = None, out=None):
   if ndim(condition) != 1:
     raise ValueError("condition must be a 1D array")
   condition = asarray(condition).astype(bool)
-  print(repr(a))
   if axis is None:
-    print('raveling')
     axis = 0
     a = ravel(a)
   else:
-    print('moveaxising')
     a = moveaxis(a, axis, 0)
-  print(repr(a))
   condition, extra = condition[:a.shape[0]], condition[a.shape[0]:]
   if any(extra):
     raise ValueError("condition contains entries that are out of bounds")
