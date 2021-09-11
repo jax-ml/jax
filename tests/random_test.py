@@ -1095,6 +1095,22 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
   def seed_prng(self, seed):
     return prng.seed_with_impl(double_threefry_prng_impl, seed)
 
+  def test_split_shape(self):
+    key = self.seed_prng(73)
+    keys = random.split(key, 10)
+    self.assertEqual(keys.shape, (10,))
+
+  def test_vmap_fold_in_shape(self):
+    key = self.seed_prng(73)
+    keys = vmap(lambda i: random.fold_in(key, i))(jnp.arange(3))
+    self.assertEqual(keys.shape, (3,))
+
+  def test_cannot_add(self):
+    key = self.seed_prng(73)
+    self.assertRaisesRegex(
+        TypeError, r'unsupported operand type\(s\) for \+*',
+        lambda: key + 47)
+
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
 
