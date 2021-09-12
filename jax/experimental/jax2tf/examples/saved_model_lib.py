@@ -43,8 +43,9 @@ def convert_and_save_model(
     saved_model_options: Optional[tf.saved_model.SaveOptions] = None):
   """Convert a JAX function and saves a SavedModel.
 
-  This is an example, for serious uses you will likely want to copy and
-  expand it as needed (see note at the top of the model).
+  This is an example, we do not promise backwards compatibility for this code.
+  For serious uses, please copy and and expand it as needed (see note at the top
+  of the module).
 
   Use this function if you have a trained ML model that has both a prediction
   function and trained parameters, which you want to save separately from the
@@ -74,14 +75,10 @@ def convert_and_save_model(
       the default serving signature. The additional signatures will be used
       only to ensure that the `jax_fn` is traced and converted to TF for the
       corresponding input shapes.
-    with_gradient: whether the SavedModel should support gradients. If True,
-      then a custom gradient is saved. If False, then a
-      tf.raw_ops.PreventGradient is saved to error if a gradient is attempted.
-      (At the moment due to a bug in SavedModel, custom gradients are not
-      supported.)
-    enable_xla: whether the jax2tf converter is allowed to use TFXLA ops. If
-      False, the conversion tries harder to use purely TF ops and raises an
-      exception if it is not possible. (default: True)
+    with_gradient: the value to use for the `with_gradient` parameter for
+      `jax2tf.convert`.
+    enable_xla: the value to use for the `enable_xla` parameter for
+      `jax2tf.convert`.
     compile_model: use TensorFlow jit_compiler on the SavedModel. This
       is needed if the SavedModel will be used for TensorFlow serving.
     polymorphic_shapes: if given then it will be used as the
@@ -105,10 +102,6 @@ def convert_and_save_model(
   # Create tf.Variables for the parameters. If you want more useful variable
   # names, you can use `tree.map_structure_with_path` from the `dm-tree` package
   param_vars = tf.nest.map_structure(
-    # Due to a bug in SavedModel it is not possible to use tf.GradientTape on
-    # a function converted with jax2tf and loaded from SavedModel. Thus, we
-    # mark the variables as non-trainable to ensure that users of the
-    # SavedModel will not try to fine tune them.
     lambda param: tf.Variable(param, trainable=with_gradient),
     params)
   tf_graph = tf.function(lambda inputs: tf_fn(param_vars, inputs),

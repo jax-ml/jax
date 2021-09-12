@@ -226,22 +226,20 @@ def convert(fun: Callable,
       for more details.
 
     in_shapes: DEPRECATED in favor of `polymorphic_shapes`.
-    with_gradient: if set, will add a tf.custom_gradient to the converted
-      function, by converting the ``jax.vjp(fun)``. Only first-order
-      differentiation is supported for now. If the converted function is saved
-      in a SavedModel, the custom gradients are currently lost and an error will
-      be raised if a gradient computation is attempted. This is due to a current
-      bug in TensorFlow.
+    with_gradient: if set (default), add a tf.custom_gradient to the converted
+      function, by converting the ``jax.vjp(fun)``. This means that reverse-mode
+      TensorFlow AD is supported for the output TensorFlow function, and the
+      value of the gradient will be JAX-accurate.
     enable_xla: if set (default), the converter will use the simplest conversion
       and use XLA TF ops when necessary. These ops are known to create issues
       for the TFLite and TFjs converters. For those cases, unset this parameter
-      so the converter tries harder to use non-XLA TF ops to convert the function,
-      and raises an error if it can not be converted
-      without resorting to XLA ops.
+      so the converter tries harder to use non-XLA TF ops to convert the
+      function and aborts if this is not possible.
 
   Returns:
     A version of `fun` that expects TfVals as arguments (or
-    tuple/lists/dicts) thereof, and returns TfVals as outputs.
+    tuple/lists/dicts) thereof, and returns TfVals as outputs, and uses
+    only TensorFlow ops.
   """
   api._check_callable(fun)
   fun_name = getattr(fun, "__name__", "unknown")
