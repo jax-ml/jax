@@ -142,6 +142,7 @@ from jax._src.lax.lax import (
   gather_p,
   ge,
   ge_p,
+  gradient_based_conv_transpose,
   gt,
   gt_p,
   igamma,

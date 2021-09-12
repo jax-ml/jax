@@ -86,6 +86,7 @@ Operators
     full_like
     gather
     ge
+    gradient_based_conv_transpose
     gt
     igamma
     igammac
