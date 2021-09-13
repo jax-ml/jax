@@ -13,10 +13,10 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from . import linalg
-from . import ndimage
-from . import signal
-from . import sparse
-from . import special
-from . import stats
-from . import fft
+from . import linalg as linalg
+from . import ndimage as ndimage
+from . import signal as signal
+from . import sparse as sparse
+from . import special as special
+from . import stats as stats
+from . import fft as fft

@@ -15,12 +15,12 @@
 # flake8: noqa: F401
 from jax._src.dtypes import (
     _jax_types,  # TODO(phawkins): fix users and remove?
-    bfloat16,
-    canonicalize_dtype,
+    bfloat16 as bfloat16,
+    canonicalize_dtype as canonicalize_dtype,
     finfo,  # TODO(phawkins): switch callers to jnp.finfo?
-    float0,
+    float0 as float0,
     iinfo,  # TODO(phawkins): switch callers to jnp.iinfo?
     issubdtype,  # TODO(phawkins): switch callers to jnp.issubdtype?
-    result_type,
-    scalar_type_of,
+    result_type as result_type,
+    scalar_type_of as scalar_type_of,
 )

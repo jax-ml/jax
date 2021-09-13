@@ -13,10 +13,12 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from ._src.errors import (JAXTypeError,
-                          JAXIndexError,
-                          ConcretizationTypeError,
-                          NonConcreteBooleanIndexError,
-                          TracerArrayConversionError,
-                          TracerIntegerConversionError,
-                          UnexpectedTracerError)
+from ._src.errors import (
+  JAXTypeError as JAXTypeError,
+  JAXIndexError as JAXIndexError,
+  ConcretizationTypeError as ConcretizationTypeError,
+  NonConcreteBooleanIndexError as NonConcreteBooleanIndexError,
+  TracerArrayConversionError as TracerArrayConversionError,
+  TracerIntegerConversionError as TracerIntegerConversionError,
+  UnexpectedTracerError as UnexpectedTracerError,
+)

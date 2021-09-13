@@ -15,7 +15,7 @@
 # flake8: noqa: F401
 
 from jax._src.scipy.stats.laplace import (
-  cdf,
-  logpdf,
-  pdf,
+  cdf as cdf,
+  logpdf as logpdf,
+  pdf as pdf,
 )

@@ -14,4 +14,6 @@
 
 # flake8: noqa: F401
 
-from jax._src.scipy.ndimage import map_coordinates
+from jax._src.scipy.ndimage import (
+  map_coordinates as map_coordinates,
+)

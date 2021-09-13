@@ -15,6 +15,6 @@
 # flake8: noqa: F401
 
 from jax._src.scipy.fft import (
-  dct,
-  dctn
+  dct as dct,
+  dctn as dctn,
 )

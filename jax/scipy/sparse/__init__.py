@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from . import linalg
+from . import linalg as linalg

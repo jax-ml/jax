@@ -15,6 +15,6 @@
 # flake8: noqa: F401
 
 from jax._src.scipy.stats.geom import (
-  logpmf,
-  pmf,
+  logpmf as logpmf,
+  pmf as pmf,
 )
