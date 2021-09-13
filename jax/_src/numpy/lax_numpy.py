@@ -89,7 +89,10 @@ PZERO = np.PZERO
 NZERO = np.NZERO
 nan = np.nan
 
-# And some numpy utility functions
+# NumPy utility functions
+
+get_printoptions = np.get_printoptions
+printoptions = np.printoptions
 set_printoptions = np.set_printoptions
 
 # We want isinstance(x, np.ndarray) checks in user code to work with the our
