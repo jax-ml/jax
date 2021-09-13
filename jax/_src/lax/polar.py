@@ -32,7 +32,7 @@ import jax.scipy as jsp
 def _add_to_diagonal(X, val):
   new_diagonal = X.diagonal() + val
   diag_indices = jnp.diag_indices(X.shape[0])
-  return jax.ops.index_update(X, diag_indices, new_diagonal)
+  return X.at[diag_indices].set(new_diagonal)
 
 
 @jax.jit

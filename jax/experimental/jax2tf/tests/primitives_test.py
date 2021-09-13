@@ -279,17 +279,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-          dict(testcase_name=f"_{op.__name__}", op=op) for op in (
-              jax.ops.index_add,
-              jax.ops.index_max,
-              jax.ops.index_min,
-              jax.ops.index_mul,
-              jax.ops.index_update,
+          dict(testcase_name=f"_{op}", op=op) for op in (
+              "add", "max", "min", "multiply", "set"
           )))
   def test_scatter_static(self, op):
     values = np.ones((5, 6), dtype=np.float32)
     update = np.float32(6.)
-    f_jax = jax.jit(lambda v, u: op(v, jax.ops.index[::2, 3:], u))
+    f_jax = jax.jit(lambda v, u: getattr(v.at[::2, 3:], op)(u))
     self.ConvertAndCompare(f_jax, values, update)
 
   @parameterized.named_parameters(

@@ -21,7 +21,6 @@ from jax.lib import xla_client
 from jax._src.util import safe_zip
 from .util import _wraps
 from . import lax_numpy as jnp
-from jax import ops as jaxops
 
 
 def _fft_core(func_name, fft_type, a, s, axes, norm):
@@ -203,19 +202,17 @@ def fftfreq(n, d=1.0):
   k = jnp.zeros(n)
   if n % 2 == 0:
     # k[0: n // 2 - 1] = jnp.arange(0, n // 2 - 1)
-    k = jaxops.index_update(k, jaxops.index[0: n // 2], jnp.arange(0, n // 2))
+    k = k.at[0: n // 2].set( jnp.arange(0, n // 2))
 
     # k[n // 2:] = jnp.arange(-n // 2, -1)
-    k = jaxops.index_update(k, jaxops.index[n // 2:], jnp.arange(-n // 2, 0))
+    k = k.at[n // 2:].set( jnp.arange(-n // 2, 0))
 
   else:
     # k[0: (n - 1) // 2] = jnp.arange(0, (n - 1) // 2)
-    k = jaxops.index_update(k, jaxops.index[0: (n - 1) // 2 + 1],
-                            jnp.arange(0, (n - 1) // 2 + 1))
+    k = k.at[0: (n - 1) // 2 + 1].set(jnp.arange(0, (n - 1) // 2 + 1))
 
     # k[(n - 1) // 2 + 1:] = jnp.arange(-(n - 1) // 2, -1)
-    k = jaxops.index_update(k, jaxops.index[(n - 1) // 2 + 1:],
-                            jnp.arange(-(n - 1) // 2, 0))
+    k = k.at[(n - 1) // 2 + 1:].set(jnp.arange(-(n - 1) // 2, 0))
 
   return k / (d * n)
 

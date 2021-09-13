@@ -17,7 +17,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
-from jax import lax, ops
+from jax import lax
 from .line_search import line_search
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
@@ -206,7 +206,7 @@ def _two_loop_recursion(state: LBFGSResults):
     i = his_size - 1 - j
     _q, _a_his = carry
     a_i = state.rho_history[i] * jnp.real(_dot(jnp.conj(state.s_history[i]), _q))
-    _a_his = ops.index_update(_a_his, ops.index[i], a_i)
+    _a_his = _a_his.at[i].set(a_i)
     _q = _q - a_i * jnp.conj(state.y_history[i])
     return _q, _a_his
 
@@ -225,9 +225,9 @@ def _two_loop_recursion(state: LBFGSResults):
 
 def _update_history_vectors(history, new):
   # TODO(Jakob-Unfried) use rolling buffer instead? See #6053
-  return ops.index_update(jnp.roll(history, -1, axis=0), ops.index[-1, :], new)
+  return jnp.roll(history, -1, axis=0).at[-1, :].set(new)
 
 
 def _update_history_scalars(history, new):
   # TODO(Jakob-Unfried) use rolling buffer instead? See #6053
-  return ops.index_update(jnp.roll(history, -1, axis=0), ops.index[-1], new)
+  return jnp.roll(history, -1, axis=0).at[-1].set(new)

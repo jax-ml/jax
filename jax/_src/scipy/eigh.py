@@ -138,7 +138,7 @@ def split_spectrum(H, split_point, V0=None, precision=lax.Precision.HIGHEST):
     Vp: An isometry from the input space of `V0` to `Hp`.
   """
   def _fill_diagonal(X, vals):
-    return jax.ops.index_update(X, jnp.diag_indices(X.shape[0]), vals)
+    return X.at[jnp.diag_indices(X.shape[0])].set(vals)
 
   H_shift = _fill_diagonal(H, H.diagonal() - split_point)
   U, _ = jsp.linalg.polar_unitary(H_shift)

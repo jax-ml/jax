@@ -948,7 +948,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     def f(x):
       n = x.shape[0]
       y = np.arange(n, dtype=x.dtype)
-      return jax.ops.index_update(x, np.diag_indices(n), y)
+      return jax.device_put(x).at[np.diag_indices(n)].set(y)
     rng = jtu.rand_default(self.rng())
     check_grads(f, (rng((5, 5), np.float32),), 2, ["fwd", "rev"], 1e-2, 1e-2,
                 1.)

@@ -50,7 +50,6 @@ from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
 from jax.interpreters import pxla
 from jax import lax
 from jax._src.lax.lax import _device_put_raw
-from jax import ops
 from jax._src.ops import scatter
 from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
@@ -4038,10 +4037,8 @@ def repeat(a, repeats, axis: Optional[int] = None, *, total_repeat_length=None):
   # Cumsum to get indices of new number in repeated tensor, e.g. [0, 1, 3, 3]
   scatter_indices = cumsum(exclusive_repeats)
   # Scatter these onto a zero buffer, e.g. [1,1,0,2,0,0,0,0]
-  block_split_indicators = ops.index_add(
-      x=zeros([total_repeat_length], dtype=int32),
-      idx=scatter_indices,
-      y=1)
+  block_split_indicators = zeros([total_repeat_length], dtype=int32)
+  block_split_indicators = block_split_indicators.at[scatter_indices].add(1)
   # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,3,3,3,3,3]
   gather_indices = cumsum(block_split_indicators) - 1
   return take(a, gather_indices, axis=axis)
@@ -4220,7 +4217,7 @@ def diagflat(v, k=0):
     fi = i+k+i*adj_length
   else:
     fi = i+(i-k)*adj_length
-  res = ops.index_update(res, ops.index[fi], v)
+  res = res.at[fi].set(v)
   res = res.reshape(adj_length, adj_length)
   return res
 
