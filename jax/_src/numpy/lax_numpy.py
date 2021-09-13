@@ -27,6 +27,7 @@ rules for the underlying :code:`lax` primitives.
 import builtins
 import collections
 import collections.abc
+from functools import partial
 import operator
 import types
 from typing import Sequence, FrozenSet, Optional, Tuple, Union
@@ -51,7 +52,7 @@ from jax.interpreters import pxla
 from jax import lax
 from jax._src.lax.lax import _device_put_raw
 from jax._src.ops import scatter
-from jax._src.util import (partial, unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
+from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
 

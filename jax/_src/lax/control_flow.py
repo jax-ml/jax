@@ -19,6 +19,7 @@ Control flow primitives.
 
 import collections
 import functools
+from functools import partial
 import inspect
 import itertools
 import operator
@@ -45,7 +46,7 @@ from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax._src.traceback_util import api_boundary
-from jax._src.util import (partial, unzip2, unzip3, safe_map, safe_zip,
+from jax._src.util import (unzip2, unzip3, safe_map, safe_zip,
                            split_list, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,

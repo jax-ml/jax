@@ -14,6 +14,7 @@
 
 
 from collections import defaultdict, deque
+from functools import partial
 import itertools as it
 import operator as op
 import re
@@ -36,7 +37,7 @@ from ..core import (ConcreteArray, ShapedArray, AbstractToken,
                     Literal, pp_eqn_compact, raise_to_shaped, abstract_token)
 from ..errors import UnexpectedTracerError
 from jax._src.pprint_util import pp
-from .._src.util import (partial, partialmethod, cache, prod, unzip2,
+from .._src.util import (partialmethod, cache, prod, unzip2,
                          extend_name_stack, wrap_name, safe_zip, safe_map,
                          partition_list)
 from ..lib import xla_bridge as xb

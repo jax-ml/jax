@@ -88,7 +88,6 @@ from ._src.api import (
   make_jaxpr as make_jaxpr,
   mask as mask,
   named_call as named_call,
-  partial,  # TODO(phawkins): update callers to use functools.partial.
   pmap as pmap,
   process_count as process_count,
   process_index as process_index,
@@ -113,6 +112,7 @@ from ._src.api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation,
 )
+from functools import partial as partial  # TODO(phawkins): remove this export.
 from .experimental.maps import soft_pmap as soft_pmap
 from .version import __version__ as __version__
 

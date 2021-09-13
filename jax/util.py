@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # flake8: noqa: F401
+from functools import partial as partial  # TODO(phawkins): remove this export
 from jax._src.util import (
   HashableFunction as HashableFunction,
   as_hashable_function as as_hashable_function,

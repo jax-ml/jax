@@ -13,19 +13,19 @@
 # limitations under the License.
 
 
-import operator
-from operator import attrgetter
-from contextlib import contextmanager
 from collections import namedtuple
-from functools import total_ordering
+from contextlib import contextmanager
+from functools import partial, total_ordering
 import gc
 import itertools as it
-from weakref import ref
+import operator
+from operator import attrgetter
 import threading
 import types
 from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
                     Type, Union, cast, Iterable, Hashable)
+from weakref import ref
 
 import numpy as np
 
@@ -37,9 +37,9 @@ from .errors import (ConcretizationTypeError, TracerArrayConversionError,
 from . import linear_util as lu
 
 from jax._src import source_info_util
-from ._src.util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
-                   tuple_insert, tuple_delete, cache, as_hashable_function,
-                   HashableFunction)
+from ._src.util import (safe_zip, safe_map, curry, prod, partialmethod,
+                        tuple_insert, tuple_delete, cache, as_hashable_function,
+                        HashableFunction)
 from ._src.pprint_util import pp, vcat, PrettyPrint
 
 from ._src import traceback_util
