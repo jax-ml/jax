@@ -399,7 +399,7 @@ class LaxTest(jtu.JaxTestCase):
        "_lhs_shape={}_rhs_shape={}_preferred_element_type={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype),
-           preferred_element_type),
+           preferred_element_type.__name__),
           "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
           "preferred_element_type": preferred_element_type}
       for lhs_shape, rhs_shape in [
@@ -419,7 +419,10 @@ class LaxTest(jtu.JaxTestCase):
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("np.complex128 is not yet supported on TPU")
     # x64 implementation is only accurate to ~float32 precision for this case.
-    tol = 1e-5 if dtype == np.complex64 and preferred_element_type == np.complex128 else None
+    if dtype == np.complex64 and preferred_element_type == np.complex128:
+      tol = 1e-5
+    else:
+      tol = {np.float64: 1e-14}
     rng = jtu.rand_default(self.rng())
     x = rng(lhs_shape, dtype)
     y = rng(rhs_shape, dtype)
