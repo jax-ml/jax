@@ -21,7 +21,7 @@ import numpy as np
 import scipy as osp
 import scipy.stats as osp_stats
 
-from jax._src import api
+import jax
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
@@ -557,7 +557,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     cov = factor @ factor.transpose(0, 2, 1)
 
     result1 = lsp_stats.multivariate_normal.logpdf(x, mean, cov)
-    result2 = api.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
+    result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
     self.assertArraysEqual(result1, result2)
 
 

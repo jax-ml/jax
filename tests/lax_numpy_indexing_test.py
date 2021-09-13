@@ -26,7 +26,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax._src import api
 from jax import dtypes
 from jax import numpy as jnp
 from jax import ops
@@ -58,8 +57,8 @@ def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   atol = atol or default_tol
   rtol = rtol or default_tol
   eps = eps or default_tol
-  jtu.check_jvp(f, partial(api.jvp, f), args, atol, rtol, eps)
-  jtu.check_vjp(f, partial(api.vjp, f), args, atol, rtol, eps)
+  jtu.check_jvp(f, partial(jax.jvp, f), args, atol, rtol, eps)
+  jtu.check_vjp(f, partial(jax.vjp, f), args, atol, rtol, eps)
 
 
 STATIC_INDEXING_TESTS = [
@@ -518,7 +517,7 @@ class IndexingTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
-    @api.jit
+    @jax.jit
     def fun(x, unpacked_indexer):
       indexer = pack_indexer(unpacked_indexer)
       return x[indexer]
@@ -589,7 +588,7 @@ class IndexingTest(jtu.JaxTestCase):
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
-    @api.jit
+    @jax.jit
     def fun(unpacked_indexer, x):
       indexer = pack_indexer(unpacked_indexer)
       return x[indexer]
@@ -694,7 +693,7 @@ class IndexingTest(jtu.JaxTestCase):
     index_array = np.array([0, 2, -1, 0])
 
     op = lambda x, index_array: x[..., index_array, :]
-    cop = api.jit(op)
+    cop = jax.jit(op)
 
     a1 = op(x, index_array)
     a2 = cop(x, index_array)
@@ -702,7 +701,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(a1, a2)
 
     op = lambda x, index_array: x[..., index_array, :, index_array, None]
-    cop = api.jit(op)
+    cop = jax.jit(op)
 
     a1 = op(x, index_array)
     a2 = cop(x, index_array)
@@ -710,7 +709,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(a1, a2)
 
     op = lambda x, index_array: x[index_array, ..., index_array[:, None], None]
-    cop = api.jit(op)
+    cop = jax.jit(op)
 
     a1 = op(x, index_array)
     a2 = cop(x, index_array)
@@ -723,7 +722,7 @@ class IndexingTest(jtu.JaxTestCase):
       a, b, c = x
       return a + b + c
 
-    cfoo = api.jit(foo)
+    cfoo = jax.jit(foo)
 
     a1 = foo(np.arange(3))
     a2 = cfoo(np.arange(3))
@@ -732,21 +731,21 @@ class IndexingTest(jtu.JaxTestCase):
 
   def testBooleanIndexingArray1D(self):
     idx = np.array([True, True, False])
-    x = api.device_put(np.arange(3))
+    x = jax.device_put(np.arange(3))
     ans = x[idx]
     expected = np.arange(3)[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBooleanIndexingList1D(self):
     idx = [True, True, False]
-    x = api.device_put(np.arange(3))
+    x = jax.device_put(np.arange(3))
     with self.assertRaisesRegex(TypeError, ARRAY_MSG):
       x[idx]
 
   def testBooleanIndexingArray2DBroadcast(self):
     idx = np.array([True, True, False, True])
     x = np.arange(8).reshape(4, 2)
-    ans = api.device_put(x)[idx]
+    ans = jax.device_put(x)[idx]
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -754,7 +753,7 @@ class IndexingTest(jtu.JaxTestCase):
     idx = [True, True, False, True]
     x = np.arange(8).reshape(4, 2)
     with self.assertRaisesRegex(TypeError, ARRAY_MSG):
-      api.device_put(x)[idx]
+      jax.device_put(x)[idx]
 
   def testBooleanIndexingArray2D(self):
     idx = np.array([[True, False],
@@ -762,21 +761,21 @@ class IndexingTest(jtu.JaxTestCase):
                      [False, False],
                      [True, True]])
     x = np.arange(8).reshape(4, 2)
-    ans = api.device_put(x)[idx]
+    ans = jax.device_put(x)[idx]
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testBooleanIndexingDynamicShapeError(self):
     x = np.zeros(3)
     i = np.array([True, True, False])
-    self.assertRaises(IndexError, lambda: api.jit(lambda x, i: x[i])(x, i))
+    self.assertRaises(IndexError, lambda: jax.jit(lambda x, i: x[i])(x, i))
 
   def testIssue187(self):
     x = jnp.ones((5, 5))
     x[[0, 2, 4], [0, 2, 4]]  # doesn't crash
 
     x = np.arange(25).reshape((5, 5))
-    ans = api.jit(lambda x: x[[0, 2, 4], [0, 2, 4]])(x)
+    ans = jax.jit(lambda x: x[[0, 2, 4], [0, 2, 4]])(x)
     expected = x[[0, 2, 4], [0, 2, 4]]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -786,7 +785,7 @@ class IndexingTest(jtu.JaxTestCase):
     x = jnp.ones((3, 4), jnp.float32)
     i = jnp.ones((3,), jnp.int32)
     f = lambda x, i: jnp.sum(x[i])
-    primals, tangents = api.jvp(api.grad(f), (x, i),
+    primals, tangents = jax.jvp(jax.grad(f), (x, i),
                                 (x, np.zeros(i.shape, dtypes.float0)))
     expected = np.broadcast_to(
       np.array([0, 3, 0], dtype=np.float32)[:, None], (3, 4))
@@ -795,7 +794,7 @@ class IndexingTest(jtu.JaxTestCase):
 
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/google/jax/issues/1621
-    jaxpr = api.make_jaxpr(lambda x: x[:, None])(np.arange(4))
+    jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertNotIn('gather', str(jaxpr))
 
@@ -814,7 +813,7 @@ class IndexingTest(jtu.JaxTestCase):
       _ = x[0, 0]  # JAX indexing
     with self.assertRaisesRegex(IndexError,
                                 "index is out of bounds for axis .* with size 0"):
-      api.jit(lambda i: x[0, i])(0)  # JAX indexing under jit
+      jax.jit(lambda i: x[0, i])(0)  # JAX indexing under jit
 
   def testBooleanIndexingWithEmptyResult(self):
     # based on a TensorFlow Probability test that started failing after #1622
@@ -853,7 +852,7 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
       jnp.zeros((2, 2))[(0, 0.)]
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
-      api.jit(lambda idx: jnp.zeros((2, 2))[idx])((0, 0.))
+      jax.jit(lambda idx: jnp.zeros((2, 2))[idx])((0, 0.))
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
       ops.index_add(jnp.zeros(2), 0., 1.)
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):

@@ -23,7 +23,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax._src import api
+import jax
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
@@ -73,7 +73,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     batched_shapes = map(partial(add_bdim, bdim_size), bdims, shapes)
     args = [rng(shape, dtype) for shape, dtype in zip(batched_shapes, dtypes)]
     args_slice = args_slicer(args, bdims)
-    ans = api.vmap(op, bdims)(*args)
+    ans = jax.vmap(op, bdims)(*args)
     if bdim_size == 0:
       args = [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
       out = op(*args)
@@ -293,7 +293,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                         rng)
 
     # Checks that batching didn't introduce any transposes or broadcasts.
-    jaxpr = api.make_jaxpr(dot)(np.zeros(lhs_shape, dtype),
+    jaxpr = jax.make_jaxpr(dot)(np.zeros(lhs_shape, dtype),
                                 np.zeros(rhs_shape, dtype))
     for eqn in jtu.iter_eqns(jaxpr.jaxpr):
       self.assertFalse(eqn.primitive in ["transpose", "broadcast"])
@@ -608,7 +608,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       return lax._select_and_scatter_add(operand, cotangents, lax.ge_p, dims,
                                          strides, pads)
     ones = (1,) * len(shape)
-    cotangent_shape = api.eval_shape(
+    cotangent_shape = jax.eval_shape(
       lambda x: lax._select_and_gather_add(x, x, lax.ge_p, dims, strides,
                                            pads, ones, ones),
       np.ones(shape, dtype)).shape

@@ -20,6 +20,7 @@ import time
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax._src import api
 from jax import lax
 from jax import random
@@ -152,7 +153,7 @@ class X64ContextTests(jtu.JaxTestCase):
     y = x.astype(jnp.int32)
     self.assertEqual(y.dtype, jnp.int32)
 
-    z = api.jit(lambda x: x.astype(jnp.int32))(x)
+    z = jax.jit(lambda x: x.astype(jnp.int32))(x)
     self.assertEqual(z.dtype, jnp.int32)
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax._src import api
+import jax
 from jax.config import config
 from jax import numpy as jnp
 from jax import test_util as jtu
@@ -64,7 +64,7 @@ def call_tf_simple_ad(tf_fun: Callable, arg, *, result_shape):
   functions and must be called outside the JAX computation.
   """
 
-  @api.custom_vjp
+  @jax.custom_vjp
   def make_call(arg):
     """We wrap it all in `make_call` so that we can attach custom VJP."""
     return call_tf_no_ad(tf_fun, arg, result_shape=result_shape)
@@ -103,7 +103,7 @@ def call_tf_full_ad(tf_fun: Callable, arg, *, result_shape):
   Supports higher-order AD and pytree arguments.
   """
 
-  @api.custom_vjp
+  @jax.custom_vjp
   def make_call(arg):
     """We wrap it all in `make_call` so that we can attach custom VJP."""
     return call_tf_no_ad(tf_fun, arg, result_shape=result_shape)
@@ -181,7 +181,7 @@ class CallToTFTest(jtu.JaxTestCase):
 
     res = f_outside(3.)
     self.assertAllClose(f_jax(3.), res)
-    self.assertAllClose(f_jax(3.), api.jit(f_outside)(3.))
+    self.assertAllClose(f_jax(3.), jax.jit(f_outside)(3.))
 
   @parameterized.named_parameters(
       dict(
@@ -201,8 +201,8 @@ class CallToTFTest(jtu.JaxTestCase):
     x = 4.
     self.assertAllClose(f_jax(x), f_outside(x))
 
-    grad_f = api.grad(f_outside)(x)
-    self.assertAllClose(api.grad(f_jax)(x), grad_f)
+    grad_f = jax.grad(f_outside)(x)
+    self.assertAllClose(jax.grad(f_jax)(x), grad_f)
 
   def test_grad_pytree(self):
     call_tf = call_tf_full_ad
@@ -220,8 +220,8 @@ class CallToTFTest(jtu.JaxTestCase):
 
     xy = (5., 6.)
     self.assertAllClose(f_jax(xy), f_outside(xy))
-    res_jax = api.grad(f_jax)(xy)
-    self.assertAllClose(res_jax, api.grad(f_outside)(xy))
+    res_jax = jax.grad(f_jax)(xy)
+    self.assertAllClose(res_jax, jax.grad(f_outside)(xy))
 
   @parameterized.named_parameters(
       dict(
@@ -241,8 +241,8 @@ class CallToTFTest(jtu.JaxTestCase):
     grad_jax = f_jax
     grad_outside = f_outside
     for i in range(degree):
-      grad_jax = api.grad(grad_jax)
-      grad_outside = api.grad(grad_outside)
+      grad_jax = jax.grad(grad_jax)
+      grad_outside = jax.grad(grad_outside)
 
     res_jax = grad_jax(5.)
     self.assertAllClose(res_jax, grad_outside(5.))

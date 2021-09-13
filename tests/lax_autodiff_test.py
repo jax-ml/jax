@@ -24,7 +24,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax._src import api
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
@@ -405,9 +404,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads_bilinear(dot, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
     # check that precision config is preserved
-    result, pullback = api.vjp(dot, lhs, rhs)
+    result, pullback = jax.vjp(dot, lhs, rhs)
     gresult = lax.zeros_like_array(result)
-    s = str(api.make_jaxpr(pullback)(gresult))
+    s = str(jax.make_jaxpr(pullback)(gresult))
     assert "Precision.HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -436,9 +435,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                           precision=lax.Precision.HIGHEST)
     check_grads_bilinear(dot_general, (lhs, rhs), order=2, modes=["fwd", "rev"])
     # check that precision config is preserved
-    result, pullback = api.vjp(dot_general, lhs, rhs)
+    result, pullback = jax.vjp(dot_general, lhs, rhs)
     gresult = lax.zeros_like_array(result)
-    s = str(api.make_jaxpr(pullback)(gresult))
+    s = str(jax.make_jaxpr(pullback)(gresult))
     assert "Precision.HIGHEST" in s
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1016,15 +1015,15 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       return lax.sin(x) * lax.cos(y)
 
     x = 3.14
-    ans = api.grad(f)(x)
-    expected = api.grad(f2)(x, x)
+    ans = jax.grad(f)(x)
+    expected = jax.grad(f2)(x, x)
     self.assertAllClose(ans, expected)
 
-    ans = api.grad(api.grad(f))(x)
-    expected = api.grad(api.grad(f2))(x, x)
+    ans = jax.grad(jax.grad(f))(x)
+    expected = jax.grad(jax.grad(f2))(x, x)
     self.assertAllClose(ans, expected)
 
-    ans = api.grad(lambda x: lax.stop_gradient({'foo':x})['foo'])(3.)
+    ans = jax.grad(lambda x: lax.stop_gradient({'foo':x})['foo'])(3.)
     expected = np.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1058,14 +1057,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   def test_linear_transpose_real(self):
     f = lambda x: x.real
-    transpose = api.linear_transpose(f, 1.j)
+    transpose = jax.linear_transpose(f, 1.j)
     actual, = transpose(1.)
     expected = 1.
     self.assertEqual(actual, expected)
 
   def test_linear_transpose_imag(self):
     f = lambda x: x.imag
-    transpose = api.linear_transpose(f, 1.j)
+    transpose = jax.linear_transpose(f, 1.j)
     actual, = transpose(1.)
     expected = -1.j
     self.assertEqual(actual, expected)
