@@ -22,7 +22,6 @@ from jax._src.numpy.vectorize import vectorize
 from jax._src import ad_util
 from jax._src import api
 from jax import lax
-from jax import ops
 from jax._src import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
@@ -751,8 +750,8 @@ def _lu_pivots_body_fn(i, permutation_and_swaps):
   iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in batch_dims))
   x = permutation[..., i]
   y = permutation[iotas + (j,)]
-  permutation = ops.index_update(permutation, ops.index[..., i], y)
-  return ops.index_update(permutation, ops.index[iotas + (j,)], x), swaps
+  permutation = permutation.at[..., i].set(y)
+  return permutation.at[iotas + (j,)].set(x), swaps
 
 
 @partial(api.jit, static_argnums=(1,))
@@ -853,16 +852,13 @@ def _lu_unblocked(a):
     else:
       magnitude = jnp.abs(a[:, k])
     i = jnp.argmax(jnp.where(m_idx >= k, magnitude, -jnp.inf))
-    pivot = ops.index_update(pivot, ops.index[k], i)
-
-    a = ops.index_update(a, ops.index[[k, i],], a[[i, k],])
-
-    perm = ops.index_update(perm, ops.index[[i, k],], perm[[k, i],])
+    pivot = pivot.at[k].set(i)
+    a = a.at[[k, i],].set(a[[i, k],])
+    perm = perm.at[[i, k],].set(perm[[k, i],])
 
     # a[k+1:, k] /= a[k, k], adapted for loop-invariant shapes
     x = a[k, k]
-    a = ops.index_update(a, ops.index[:, k],
-                         jnp.where(m_idx > k, a[:, k] / x, a[:, k]))
+    a = a.at[:, k].set(jnp.where(m_idx > k, a[:, k] / x, a[:, k]))
 
     # a[k+1:, k+1:] -= jnp.outer(a[k+1:, k], a[k, k+1:])
     a = a - jnp.where((m_idx[:, None] > k) & (n_idx > k),
@@ -888,20 +884,17 @@ def _lu_blocked(a, block_size=128):
     b = min(r - k, block_size)
     block_pivot, block_perm, lu_block = _lu_unblocked(a[k:, k:k+b])
 
-    pivot = ops.index_update(pivot, ops.index[k:k+b], block_pivot + k)
-    perm = ops.index_update(perm, ops.index[k:], perm[block_perm + k])
-    a = ops.index_update(a, ops.index[k:, :], a[block_perm + k, :])
-    a = ops.index_update(a, ops.index[k:, k:k+b], lu_block)
+    pivot = pivot.at[k:k+b].set(block_pivot + k)
+    perm = perm.at[k:].set(perm[block_perm + k])
+    a = a.at[k:, :].set(a[block_perm + k, :])
+    a = a.at[k:, k:k+b].set(lu_block)
 
     if k + b < n:
-      a = ops.index_update(
-        a, ops.index[k:k+b, k+b:],
-        triangular_solve(a[k:k+b, k:k+b], a[k:k+b, k+b:],
-                         left_side=True, lower=True, unit_diagonal=True))
-      a = ops.index_add(
-        a, ops.index[k+b:, k+b:],
-        -lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
-                 precision=lax.Precision.HIGHEST))
+      a = a.at[k:k+b, k+b:].set(
+        triangular_solve(a[k:k+b, k:k+b], a[k:k+b, k+b:], left_side=True,
+                         lower=True, unit_diagonal=True))
+      a = a.at[k+b:, k+b:].add(-lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
+                                        precision=lax.Precision.HIGHEST))
   return a, pivot, perm
 
 def _lu_python(x):

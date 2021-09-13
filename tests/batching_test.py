@@ -28,7 +28,6 @@ from jax import random
 from jax import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax import vmap
 from jax._src.util import partial
-import jax.ops
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -936,7 +935,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertEqual((), empty_tuple)
 
   def testIndexAddBatchedIndexesOnly(self):
-    f = lambda x, idx, y: jax.ops.index_add(x, jax.ops.index[idx], y)
+    f = lambda x, idx, y: jnp.asarray(x).at[idx].add(y)
     result = vmap(f, (None, 0, None))(np.zeros((10,)), np.arange(10,), 1.)
     self.assertAllClose(result, np.eye(10), check_dtypes=False)
 

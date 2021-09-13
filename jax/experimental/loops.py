@@ -34,10 +34,10 @@ returns an updated array, e.g.::
 
   arr = np.zeros(5)
   def loop_body(i, acc_arr):
-    arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
+    arr1 = acc_arr.at[i].set(acc_arr[i] + 2.)
     return lax.cond(i % 2 == 0,
                     arr1,
-                    lambda arr1: ops.index_update(arr1, i, arr1[i] + 1),
+                    lambda arr1: arr1.at[i].set(arr1[i] + 1),
                     arr1,
                     lambda arr1: arr1)
   arr = lax.fori_loop(0, arr.shape[0], loop_body, arr)
@@ -52,9 +52,9 @@ special `loops.scope` object and use `for` loops over special
   with loops.Scope() as s:
     s.arr = np.zeros(5)  # Create the mutable state of the loop as `scope` fields.
     for i in s.range(s.arr.shape[0]):
-      s.arr = ops.index_update(s.arr, i, s.arr[i] + 2.)
+      s.arr = s.arr.at[i].set(s.arr[i] + 2.)
       for _ in s.cond_range(i % 2 == 0):  # Conditionals as loops with 0 or 1 iterations
-        s.arr = ops.index_update(s.arr, i, s.arr[i] + 1.)
+        s.arr = s.arr.at[i].set(s.arr[i] + 1.)
 
 Loops constructed with `range` must have literal constant bounds. If you need
 loops with dynamic bounds, you can use the more general `while_range` iterator.
