@@ -15,6 +15,7 @@
 
 """Serial algorithm for eigh."""
 
+import functools
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -87,7 +88,7 @@ def _projector_subspace(P, H, rank, maxiter=2):
   return V1, V2
 
 
-@jax.partial(jax.jit, static_argnums=(3, 4))
+@functools.partial(jax.jit, static_argnums=(3, 4))
 def _split_spectrum_jittable(P, H, V0, rank, precision):
   """ The jittable portion of `split_spectrum`. At this point the sizes of the
   relevant matrix blocks have been concretized.

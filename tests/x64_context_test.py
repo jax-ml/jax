@@ -14,6 +14,7 @@
 
 
 import concurrent.futures
+from functools import partial
 import time
 
 from absl.testing import absltest
@@ -21,7 +22,6 @@ from absl.testing import parameterized
 
 from jax._src import api
 from jax import lax
-from jax import partial
 from jax import random
 from jax.config import config
 from jax.experimental import enable_x64, disable_x64
