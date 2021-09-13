@@ -633,7 +633,7 @@ def conv_general_dilated(
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count,
       lhs_shape=lhs.shape, rhs_shape=rhs.shape,
-      precision=_canonicalize_precision(precision),
+      precision=canonicalize_precision(precision),
       preferred_element_type=preferred_element_type)
 
 def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
@@ -702,7 +702,7 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
   batch_dims = tuple(map(tuple, batch_dims_seq))  # type: ignore
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(contract_dims, batch_dims),
-                            precision=_canonicalize_precision(precision),
+                            precision=canonicalize_precision(precision),
                             preferred_element_type=preferred_element_type)
 
 def broadcast(operand: Array, sizes: Sequence[int]) -> Array:
@@ -6826,7 +6826,7 @@ def remaining(original, *removed_lists):
   return [i for i in original if i not in removed]
 
 
-def _canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[PrecisionType, PrecisionType]]:
+def canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[PrecisionType, PrecisionType]]:
   """Turns an API precision specification, into a pair of enumeration values.
 
   The API can take the precision as a string, or int, and either as a single
@@ -6854,7 +6854,7 @@ def _canonicalize_precision(precision: PrecisionLike) -> Optional[Tuple[Precisio
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(s, str) for s in precision)):
     s1, s2 = precision
-    return (_canonicalize_precision(s1)[0], _canonicalize_precision(s2)[0])  # type: ignore
+    return (canonicalize_precision(s1)[0], canonicalize_precision(s2)[0])  # type: ignore
   else:
     raise ValueError(
         f"Precision argument must be None, a string in {_precision_strings}, "
