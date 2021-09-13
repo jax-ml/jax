@@ -48,7 +48,8 @@ class ConcretizationTypeError(JAXTypeError):
     One common cause of this error is using a traced value where a static value
     is required. For example:
 
-      >>> from jax import jit, partial
+      >>> from functools import partial
+      >>> from jax import jit
       >>> import jax.numpy as jnp
       >>> @jit
       ... def func(x, axis):
@@ -274,7 +275,8 @@ class TracerArrayConversionError(JAXTypeError):
     This error can occur when a JAX Tracer object is passed to a raw numpy
     function, or a method on a numpy.ndarray object. For example::
 
-      >>> from jax import jit, partial
+      >>> from functools import partial
+      >>> from jax import jit
       >>> import numpy as np
       >>> import jax.numpy as jnp
 
@@ -353,7 +355,8 @@ class TracerIntegerConversionError(JAXTypeError):
     This error can occur if you attempt to pass a tracer to a function that
     requires an integer argument; for example::
 
-      >>> from jax import jit, partial
+      >>> from functools import partial
+      >>> from jax import jit
       >>> import numpy as np
 
       >>> @jit
@@ -392,8 +395,9 @@ class TracerIntegerConversionError(JAXTypeError):
     quantity.
     For example::
 
+      >>> from functools import partial
       >>> import jax.numpy as jnp
-      >>> from jax import jit, partial
+      >>> from jax import jit
 
       >>> L = [1, 2, 3]
 

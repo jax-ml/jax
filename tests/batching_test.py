@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from functools import partial
 import itertools as it
 import numpy as np
 from absl.testing import absltest
@@ -27,7 +27,6 @@ from jax._src.lax import parallel
 from jax import random
 from jax import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax import vmap
-from jax._src.util import partial
 
 from jax.config import config
 config.parse_flags_with_absl()

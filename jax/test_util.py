@@ -15,6 +15,7 @@
 from contextlib import contextmanager
 import inspect
 import functools
+from functools import partial
 import re
 import os
 import textwrap
@@ -34,7 +35,7 @@ from . import core
 from ._src import dtypes as _dtypes
 from . import lax
 from ._src.config import flags, bool_env, config
-from ._src.util import partial, prod, unzip2
+from ._src.util import prod, unzip2
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla

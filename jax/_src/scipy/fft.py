@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+
 import scipy.fftpack as osp_fft  # TODO use scipy.fft once scipy>=1.4.0 is used
-from jax import lax, numpy as jnp, partial
+from jax import lax, numpy as jnp
 from jax._src.lax.lax import _canonicalize_axis
 from jax._src.numpy.util import _wraps
 

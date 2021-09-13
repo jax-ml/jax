@@ -28,14 +28,16 @@
 # This encoding is assumed by various parts of the system, e.g. generating
 # replica groups for collective operations.
 
-import sys
 from contextlib import contextmanager
 from collections import defaultdict, OrderedDict
+from functools import partial
 import itertools as it
 import operator as op
 import threading
 from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional,
                     Sequence, Set, Tuple, Type, Union, Iterable)
+import sys
+
 from absl import logging
 import numpy as np
 
@@ -45,7 +47,7 @@ from .. import linear_util as lu
 from jax._src.abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray
 from .._src import source_info_util
-from .._src.util import (partial, unzip3, prod, safe_map, safe_zip,
+from .._src.util import (unzip3, prod, safe_map, safe_zip,
                          extend_name_stack, wrap_name, assert_unreachable,
                          tuple_insert, tuple_delete, distributed_debug_log)
 from ..errors import JAXTypeError

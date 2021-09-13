@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+
 import numpy as np
 from typing import Any, Callable, Dict, Optional, Tuple, Union, Sequence, Iterable, Type
 
@@ -22,7 +24,7 @@ from ..core import raise_to_shaped, Trace, Tracer
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero)
 from .. import linear_util as lu
-from .._src.util import (unzip2, partial, safe_map, safe_zip, wrap_name, split_list,
+from .._src.util import (unzip2, safe_map, safe_zip, wrap_name, split_list,
                          canonicalize_axis, moveaxis, as_hashable_function, curry)
 from . import xla
 from . import partial_eval as pe
