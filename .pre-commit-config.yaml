@@ -25,3 +25,9 @@ repos:
   hooks:
   - id: jupytext
     args: [--sync]
+
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v4.0.1
+  hooks:
+  - id: check-added-large-files
+  - args: ['--maxkb=1000']
