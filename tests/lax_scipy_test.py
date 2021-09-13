@@ -26,7 +26,6 @@ import numpy as np
 import scipy.special as osp_special
 
 import jax
-from jax._src import api
 from jax import numpy as jnp
 from jax import lax
 from jax import scipy as jsp
@@ -305,14 +304,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   def testGradOfXlogyAtZero(self):
     partial_xlogy = functools.partial(lsp_special.xlogy, 0.)
-    self.assertAllClose(api.grad(partial_xlogy)(0.), 0., check_dtypes=False)
+    self.assertAllClose(jax.grad(partial_xlogy)(0.), 0., check_dtypes=False)
 
   def testXlog1pyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlog1py(0., -1.), 0., check_dtypes=False)
 
   def testGradOfXlog1pyAtZero(self):
     partial_xlog1py = functools.partial(lsp_special.xlog1py, 0.)
-    self.assertAllClose(api.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
+    self.assertAllClose(jax.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

@@ -24,7 +24,7 @@ import scipy.linalg
 import scipy.special
 import scipy.stats
 
-from jax._src import api
+import jax
 from jax import core
 from jax import dtypes
 from jax import grad
@@ -89,7 +89,7 @@ class PrngTest(jtu.JaxTestCase):
 
   def testThreefry2x32Empty(self):
     # Regression test for an op-by-op crash for empty arrays in CUDA mode.
-    with api.disable_jit():
+    with jax.disable_jit():
       result = prng.threefry_2x32(
         (np.uint32(0x13198a2e), np.uint32(0x03707344)),
         jnp.ones((10, 0,), jnp.uint32))
@@ -199,7 +199,7 @@ class PrngTest(jtu.JaxTestCase):
       self.skipTest("Expected failure: integer out of range for jit.")
     seed = type(seed)
     if jit:
-      actual = _prng_key_as_array(api.jit(random.PRNGKey)(seed))
+      actual = _prng_key_as_array(jax.jit(random.PRNGKey)(seed))
     else:
       actual = _prng_key_as_array(random.PRNGKey(seed))
     expected = jnp.array(key, dtype=jnp.uint32)
@@ -258,7 +258,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testNumpyAndXLAAgreeOnFloatEndianness(self, dtype):
     bits_dtype = np.uint32 if jnp.finfo(dtype).bits == 32 else np.uint64
     numpy_bits = np.array(1., dtype).view(bits_dtype)
-    xla_bits = api.jit(
+    xla_bits = jax.jit(
         lambda: lax.bitcast_convert_type(np.array(1., dtype), bits_dtype))()
     self.assertEqual(numpy_bits, xla_bits)
 
@@ -268,7 +268,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testRngUniform(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -286,7 +286,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     key = self.seed_prng(0)
     rand = lambda key: random.randint(key, (10000,), lo, hi, dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -301,7 +301,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testNormal(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -322,7 +322,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testNormalComplex(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -338,7 +338,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testTruncatedNormal(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -357,7 +357,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     x = np.arange(100).astype(dtype)
     rand = lambda key: random.shuffle(key, x)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     with self.assertWarns(FutureWarning):
       perm1 = rand(key)
@@ -386,7 +386,7 @@ class LaxRandomTest(jtu.JaxTestCase):
          np.arange(N, dtype=dtype))
     p = None if not weighted else jnp.arange(N)
     rand = lambda key: random.choice(key, x, shape, p=p, replace=replace)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     sample1 = rand(key)
     sample2 = crand(key)
@@ -407,7 +407,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     x = jnp.arange(np.prod(shape)).reshape(shape).astype(dtype)
     rand = lambda key: random.permutation(key, x)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     perm1 = rand(key)
     perm2 = crand(key)
@@ -423,7 +423,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     x = 100
     rand = lambda key: random.permutation(key, x)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     perm1 = rand(key)
     perm2 = crand(key)
@@ -438,7 +438,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       random.permutation(key, 10.)
     with self.assertRaises(core.ConcretizationTypeError):
-      api.jit(random.permutation)(key, 10)
+      jax.jit(random.permutation)(key, 10)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_p={}_dtype={}".format(p, np.dtype(dtype).name),
@@ -449,7 +449,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     p = np.array(p, dtype=dtype)
     rand = lambda key, p: random.bernoulli(key, p, (10000,))
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, p)
     compiled_samples = crand(key, p)
@@ -475,7 +475,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     out_shape = tuple(np.delete(logits.shape, axis))
     shape = sample_shape + out_shape
     rand = partial(random.categorical, shape=shape, axis=axis)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, logits)
     compiled_samples = crand(key, logits)
@@ -512,7 +512,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       raise SkipTest("skip test except on X64")
     key = self.seed_prng(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, a, b)
     compiled_samples = crand(key, a, b)
@@ -526,7 +526,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testCauchy(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -545,7 +545,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testDirichlet(self, alpha, dtype):
     key = self.seed_prng(0)
     rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, alpha)
     compiled_samples = crand(key, alpha)
@@ -562,7 +562,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testExponential(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.exponential(key, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -578,7 +578,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testGamma(self, a, dtype):
     key = self.seed_prng(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, a)
     compiled_samples = crand(key, a)
@@ -598,7 +598,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     rng = self.seed_prng(0)
     alphas = np.full((100,), alpha)
     z = random.gamma(rng, alphas)
-    actual_grad = api.grad(lambda x: random.gamma(rng, x).sum())(alphas)
+    actual_grad = jax.grad(lambda x: random.gamma(rng, x).sum())(alphas)
 
     eps = 0.01 * alpha / (1.0 + np.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
@@ -617,7 +617,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     b = jnp.array(3., dtype=jnp.float32)
     f = lambda x, y: random.gamma(key=key, a=x, dtype=jnp.float32) / y
     # Should not crash with a type error.
-    api.vjp(f, a, b)
+    jax.vjp(f, a, b)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lam={}_dtype={}".format(lam, np.dtype(dtype).name),
@@ -627,7 +627,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testPoisson(self, lam, dtype):
     key = self.seed_prng(0)
     rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, lam)
     compiled_samples = crand(key, lam)
@@ -663,7 +663,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testGumbel(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.gumbel(key, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -677,7 +677,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testLaplace(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.laplace(key, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -691,7 +691,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testLogistic(self, dtype):
     key = self.seed_prng(0)
     rand = lambda key: random.logistic(key, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
@@ -707,7 +707,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testPareto(self, b, dtype):
     key = self.seed_prng(0)
     rand = lambda key, b: random.pareto(key, b, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, b)
     compiled_samples = crand(key, b)
@@ -730,7 +730,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testT(self, df, dtype):
     key = self.seed_prng(0)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(key, df)
     compiled_samples = crand(key, df)
@@ -754,7 +754,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     rand = partial(random.multivariate_normal, mean=mean, cov=cov,
                    shape=(10000,), method=method)
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     with jax.numpy_rank_promotion('allow'):
       uncompiled_samples = np.asarray(rand(key), np.float64)
@@ -840,7 +840,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     if config.jax_disable_jit:
       raise SkipTest("test only relevant when jit enabled")
 
-    @api.jit
+    @jax.jit
     def feature_map(n, d, sigma=1.0, seed=123):
       key = self.seed_prng(seed)
       W = random.normal(key, (d, n)) / sigma
@@ -887,7 +887,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     rng = self.seed_prng(0)
 
     rand = lambda x: random.maxwell(x, (num_samples, ))
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     loc = scipy.stats.maxwell.mean()
     std = scipy.stats.maxwell.std()
@@ -910,7 +910,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     rng = self.seed_prng(0)
 
     rand = lambda x: random.weibull_min(x, scale, concentration, (num_samples,))
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     loc = scipy.stats.weibull_min.mean(c=concentration, scale=scale)
     std = scipy.stats.weibull_min.std(c=concentration, scale=scale)
@@ -935,7 +935,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     rand = lambda key: random.double_sided_maxwell(
         rng, loc, scale, (num_samples,))
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     mean = loc
     std = np.sqrt(3.) * scale
@@ -972,7 +972,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     num_samples = 10**5
 
     rand = lambda x: random.rademacher(x, (num_samples,))
-    crand = api.jit(rand)
+    crand = jax.jit(rand)
 
     uncompiled_samples = rand(rng)
     compiled_samples = crand(rng)
@@ -998,7 +998,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     def f(x):
       return random.normal(self.seed_prng(x), (int(1e12),))
     with jax.enable_checks(False):  # check_jaxpr will materialize array
-      api.eval_shape(f, 0)  # doesn't error
+      jax.eval_shape(f, 0)  # doesn't error
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_seed={seed}_type={type}", "seed": seed, "type": type}
@@ -1019,12 +1019,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     with self.assertRaises(OverflowError):
       self.seed_prng(seed)
     with self.assertRaises(OverflowError):
-      api.jit(self.seed_prng)(seed)
+      jax.jit(self.seed_prng)(seed)
 
   def test_random_split_doesnt_device_put_during_tracing(self):
     key = _prng_key_as_array(self.seed_prng(1)).block_until_ready()
     with jtu.count_device_put() as count:
-      api.jit(random.split)(key)
+      jax.jit(random.split)(key)
     self.assertEqual(count[0], 1)  # 1 for the argument device_put
 
   @parameterized.named_parameters(jtu.cases_from_list(

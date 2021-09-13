@@ -35,7 +35,6 @@ except ImportError:
 
 import jax
 import jax.ops
-from jax._src import api
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
@@ -1931,7 +1930,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for ptype in ['int', 'np.int', 'jnp.int']))
   def testIntegerPower(self, ptype):
     p = {'int': 2, 'np.int': np.int32(2), 'jnp.int': jnp.int32(2)}[ptype]
-    jaxpr = api.make_jaxpr(partial(jnp.power, x2=p))(1)
+    jaxpr = jax.make_jaxpr(partial(jnp.power, x2=p))(1)
     eqns = jaxpr.jaxpr.eqns
     self.assertLen(eqns, 1)
     self.assertEqual(eqns[0].primitive, lax.integer_pow_p)
@@ -2235,7 +2234,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testRepeatScalarFastPath(self):
     a = jnp.array([1,2,3,4])
     f = lambda a: jnp.repeat(a, repeats=2)
-    jaxpr = api.make_jaxpr(f)(a)
+    jaxpr = jax.make_jaxpr(f)(a)
     self.assertLessEqual(len(jaxpr.jaxpr.eqns), 6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -3026,7 +3025,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     fun = lambda x: getattr(jnp, func)(x, *args, dtype=out_dtype, shape=out_shape)
     expected_weak_type = weak_type and (out_dtype is None)
     self.assertEqual(dtypes.is_weakly_typed(fun(x)), expected_weak_type)
-    self.assertEqual(dtypes.is_weakly_typed(api.jit(fun)(x)), expected_weak_type)
+    self.assertEqual(dtypes.is_weakly_typed(jax.jit(fun)(x)), expected_weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_funcname={}_input_type={}_val={}_dtype={}".format(
@@ -3038,7 +3037,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for input_type in [int, float, np.int32, np.float32]))
   def testArrayWeakType(self, funcname, input_type, val, dtype):
     func = lambda x: getattr(jnp, funcname)(x, dtype=dtype)
-    fjit = api.jit(func)
+    fjit = jax.jit(func)
     val = input_type(val)
     expected_weak_type = dtype is None and input_type in set(dtypes._weak_types)
     self.assertEqual(dtypes.is_weakly_typed(func(val)), expected_weak_type)
@@ -3057,7 +3056,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = lax._convert_element_type(rng(shape, dtype), weak_type=weak_type)
     op = lambda x: x[slc]
     self.assertEqual(op(x).aval.weak_type, weak_type)
-    self.assertEqual(api.jit(op)(x).aval.weak_type, weak_type)
+    self.assertEqual(jax.jit(op)(x).aval.weak_type, weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(
@@ -3100,16 +3099,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     CONCRETIZATION_MSG = "Abstract tracer value encountered where concrete value is expected."
     with self.assertRaisesRegex(TypeError, CONCRETIZATION_MSG):
       # An abstract tracer for idx
-      api.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), idx))(2.)
+      jax.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), idx))(2.)
     with self.assertRaisesRegex(TypeError, CONCRETIZATION_MSG):
       # A list including an abstract tracer
-      api.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), [2, idx]))(2.)
+      jax.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), [2, idx]))(2.)
 
     # A concrete tracer -> no error
-    api.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), idx),
+    jax.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), idx),
             (2.,), (1.,))
     # A tuple including a concrete tracer -> no error
-    api.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), (1, idx)),
+    jax.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), (1, idx)),
             (2.,), (1.,))
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -3517,8 +3516,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         np.array([0x2a], dtype=np.uint8))
 
   def testIsClose(self):
-    c_isclose = api.jit(jnp.isclose)
-    c_isclose_nan = api.jit(partial(jnp.isclose, equal_nan=True))
+    c_isclose = jax.jit(jnp.isclose)
+    c_isclose_nan = jax.jit(partial(jnp.isclose, equal_nan=True))
     n = 2
 
     rng = np.random.RandomState(0)
@@ -3561,14 +3560,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def fun(x):
       return x * const
 
-    fun = api.jit(fun)
+    fun = jax.jit(fun)
     out_val = fun(3.)
     self.assertAllClose(out_val, 3. * const, check_dtypes=False)
 
   def testIsInstanceNdarrayDuringTracing(self):
     arr = np.ones(3)
 
-    @api.jit
+    @jax.jit
     def f(x):
       self.assertIsInstance(x, jnp.ndarray)
       return jnp.sum(x)
@@ -3587,12 +3586,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self.assertRaises(TypeError, lambda: g(x, y))
     self.assertRaises(TypeError, lambda: f(x, y))
-    self.assertRaises(TypeError, lambda: api.jit(g)(x, y))
-    self.assertRaises(TypeError, lambda: api.jit(f)(x, y))
+    self.assertRaises(TypeError, lambda: jax.jit(g)(x, y))
+    self.assertRaises(TypeError, lambda: jax.jit(f)(x, y))
 
   def testAbstractionErrorMessage(self):
 
-    @api.jit
+    @jax.jit
     def f(x, n):
       for _ in range(n):
         x = x * x
@@ -3600,7 +3599,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self.assertRaises(jax.errors.TracerIntegerConversionError, lambda: f(3., 3))
 
-    @api.jit
+    @jax.jit
     def g(x):
       if x > 0.:
         return x * 2
@@ -3617,7 +3616,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # No error if there's no tracing.
     foo(np.arange(3))
 
-    cfoo = api.jit(foo)
+    cfoo = jax.jit(foo)
     self.assertRaises(NotImplementedError, lambda: cfoo(np.arange(3)))
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -4397,7 +4396,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   #     x = jnp.where(x > 0.5, x, ones)
   #     return jnp.sum(x)
   #   x = jnp.array([[1, 2], [3, 4], [0, 0]], dtype=jnp.float64)
-  #   result = api.grad(test_fail)(x)
+  #   result = jax.grad(test_fail)(x)
   #   assert not np.any(np.isnan(result))
 
   def testIssue453(self):
@@ -4490,7 +4489,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.block, args_maker)
 
   def testLongLong(self):
-    self.assertAllClose(np.int64(7), api.jit(lambda x: x)(np.longlong(7)))
+    self.assertAllClose(np.int64(7), jax.jit(lambda x: x)(np.longlong(7)))
 
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype.*")
@@ -4525,7 +4524,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                       type(lax.iota(np.int32, 77)))
 
   def testArangeJit(self):
-    ans = api.jit(lambda: jnp.arange(5))()
+    ans = jax.jit(lambda: jnp.arange(5))()
     expected = np.arange(5)
     self.assertAllClose(ans, expected)
 
@@ -4542,7 +4541,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIssue764(self):
     x = jnp.linspace(190, 200, 4)
-    f = api.grad(lambda x: jnp.sum(jnp.tanh(x)))
+    f = jax.grad(lambda x: jnp.sum(jnp.tanh(x)))
     # Expected values computed with autograd in float64 precision.
     expected = np.array([3.71669453e-165, 4.72999108e-168, 6.01954653e-171,
                           7.66067839e-174], np.float64)
@@ -4556,14 +4555,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       # argument.
       return lax.tie_in(y, 7.)
 
-    self.assertAllClose(np.zeros(3,), api.grad(f)(np.ones(3,)))
+    self.assertAllClose(np.zeros(3,), jax.grad(f)(np.ones(3,)))
 
   # NOTE(mattjj): I disabled this test when removing lax._safe_mul because this
   # is a numerical stability issue that should be solved with a custom jvp rule
   # of the sigmoid function being differentiated here, not by safe_mul.
   # def testIssue777(self):
   #   x = jnp.linspace(-200, 0, 4, dtype=np.float32)
-  #   f = api.grad(lambda x: jnp.sum(1 / (1 + jnp.exp(-x))))
+  #   f = jax.grad(lambda x: jnp.sum(1 / (1 + jnp.exp(-x))))
   #   self.assertAllClose(f(x), np.array([0., 0., 0., 0.25], dtype=np.float32))
 
   @parameterized.named_parameters(
@@ -4602,7 +4601,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # from https://github.com/google/jax/issues/883
     raise SkipTest("we decided to disallow arrays as static args")
 
-    @partial(api.jit, static_argnums=(1,))
+    @partial(jax.jit, static_argnums=(1,))
     def f(x, v):
       return x
 
@@ -5209,12 +5208,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testStackArrayArgument(self):
     # tests https://github.com/google/jax/issues/1271
-    @api.jit
+    @jax.jit
     def foo(x):
       return jnp.stack(x)
     foo(np.zeros(2))  # doesn't crash
 
-    @api.jit
+    @jax.jit
     def foo(x):
       return jnp.concatenate(x)
     foo(np.zeros((2, 2)))  # doesn't crash
@@ -5362,12 +5361,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         TypeError,
         r"Shapes must be 1D sequences of concrete values of integer type.*\n"
         "If using `jit`, try using `static_argnums` or applying `jit` to smaller subfunctions.",
-        lambda: api.jit(jnp.zeros)(2))
+        lambda: jax.jit(jnp.zeros)(2))
 
   def testTraceMethod(self):
     x = self.rng().randn(3, 4).astype(jnp.float_)
     self.assertAllClose(x.trace(), jnp.array(x).trace())
-    self.assertAllClose(x.trace(), api.jit(lambda y: y.trace())(x))
+    self.assertAllClose(x.trace(), jax.jit(lambda y: y.trace())(x))
 
   def testIntegerPowersArePrecise(self):
     # See https://github.com/google/jax/pull/3036
@@ -5539,7 +5538,7 @@ class NumpyGradTests(jtu.JaxTestCase):
     # Some manual tests for sinc at zero, since it doesn't have well-behaved
     # numerical derivatives at zero
     def deriv(f):
-      return lambda x: api.jvp(f, (x,), (1.,))[1]
+      return lambda x: jax.jvp(f, (x,), (1.,))[1]
 
     def apply_all(fns, x):
       for f in fns:
@@ -5547,19 +5546,19 @@ class NumpyGradTests(jtu.JaxTestCase):
       return x
 
     d1 = 0.
-    for ops in itertools.combinations_with_replacement([deriv, api.grad], 1):
+    for ops in itertools.combinations_with_replacement([deriv, jax.grad], 1):
       self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d1)
 
     d2 = -np.pi ** 2 / 3
-    for ops in itertools.combinations_with_replacement([deriv, api.grad], 2):
+    for ops in itertools.combinations_with_replacement([deriv, jax.grad], 2):
       self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d2)
 
     d3 = 0.
-    for ops in itertools.combinations_with_replacement([deriv, api.grad], 3):
+    for ops in itertools.combinations_with_replacement([deriv, jax.grad], 3):
       self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d3)
 
     d4 = np.pi ** 4 / 5
-    for ops in itertools.combinations_with_replacement([deriv, api.grad], 4):
+    for ops in itertools.combinations_with_replacement([deriv, jax.grad], 4):
       self.assertAllClose(apply_all(ops, jnp.sinc)(0.), d4)
 
   def testSincGradArrayInput(self):

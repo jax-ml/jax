@@ -14,14 +14,12 @@
 
 from functools import partial
 import itertools
-from jax._src.api import vmap
 import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import api
 from jax import config
 from jax import dtypes
 from jax.experimental import sparse
@@ -285,12 +283,12 @@ class cuSparseTest(jtu.JaxTestCase):
     f = lambda data: sparse.coo_todense(data, row, col, shape=M.shape)
 
     # Forward-mode
-    primals, tangents = api.jvp(f, [data], [jnp.ones_like(data)])
+    primals, tangents = jax.jvp(f, [data], [jnp.ones_like(data)])
     self.assertArraysEqual(primals, f(data))
     self.assertArraysEqual(tangents, jnp.zeros_like(M).at[row, col].set(1))
 
     # Reverse-mode
-    primals, vjp_fun = api.vjp(f, data)
+    primals, vjp_fun = jax.vjp(f, data)
     data_out, = vjp_fun(primals)
     self.assertArraysEqual(primals, f(data))
     self.assertArraysEqual(data_out, data)
@@ -307,7 +305,7 @@ class cuSparseTest(jtu.JaxTestCase):
     f = lambda M: sparse.coo_fromdense(M, nse=nse)
 
     # Forward-mode
-    primals, tangents = api.jvp(f, [M], [jnp.ones_like(M)])
+    primals, tangents = jax.jvp(f, [M], [jnp.ones_like(M)])
     self.assertArraysEqual(primals[0], f(M)[0])
     self.assertArraysEqual(primals[1], f(M)[1])
     self.assertArraysEqual(primals[2], f(M)[2])
@@ -316,7 +314,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertEqual(tangents[2].dtype, dtypes.float0)
 
     # Reverse-mode
-    primals, vjp_fun = api.vjp(f, M)
+    primals, vjp_fun = jax.vjp(f, M)
     M_out, = vjp_fun(primals)
     self.assertArraysEqual(primals[0], f(M)[0])
     self.assertArraysEqual(primals[1], f(M)[1])
@@ -346,14 +344,14 @@ class cuSparseTest(jtu.JaxTestCase):
     # Forward-mode with respect to the vector
     f_dense = lambda x: M @ x
     f_sparse = lambda x: sparse.coo_matvec(data, row, col, x, shape=M.shape)
-    v_sparse, t_sparse = api.jvp(f_sparse, [x], [xdot])
-    v_dense, t_dense = api.jvp(f_dense, [x], [xdot])
+    v_sparse, t_sparse = jax.jvp(f_sparse, [x], [xdot])
+    v_dense, t_dense = jax.jvp(f_dense, [x], [xdot])
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
     self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
 
     # Reverse-mode with respect to the vector
-    primals_dense, vjp_dense = api.vjp(f_dense, x)
-    primals_sparse, vjp_sparse = api.vjp(f_sparse, x)
+    primals_dense, vjp_dense = jax.vjp(f_dense, x)
+    primals_sparse, vjp_sparse = jax.vjp(f_sparse, x)
     out_dense, = vjp_dense(primals_dense)
     out_sparse, = vjp_sparse(primals_sparse)
     self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
@@ -364,15 +362,15 @@ class cuSparseTest(jtu.JaxTestCase):
     f_dense = lambda data: sparse.coo_todense(data, row, col, shape=M.shape) @ x
     data = rng((len(data),), data.dtype)
     data_dot = rng((len(data),), data.dtype)
-    v_sparse, t_sparse = api.jvp(f_sparse, [data], [data_dot])
-    v_dense, t_dense = api.jvp(f_dense, [data], [data_dot])
+    v_sparse, t_sparse = jax.jvp(f_sparse, [data], [data_dot])
+    v_dense, t_dense = jax.jvp(f_dense, [data], [data_dot])
 
     self.assertAllClose(v_sparse, v_dense, atol=tol, rtol=tol)
     self.assertAllClose(t_sparse, t_dense, atol=tol, rtol=tol)
 
     # Reverse-mode with respect to nonzero elements of the matrix
-    primals_dense, vjp_dense = api.vjp(f_dense, data)
-    primals_sparse, vjp_sparse = api.vjp(f_sparse, data)
+    primals_dense, vjp_dense = jax.vjp(f_dense, data)
+    primals_sparse, vjp_sparse = jax.vjp(f_sparse, data)
     out_dense, = vjp_dense(primals_dense)
     out_sparse, = vjp_sparse(primals_sparse)
     self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
@@ -939,10 +937,10 @@ class BCOOTest(jtu.JaxTestCase):
       return sparse.bcoo_dot_general_sampled(
                 lhs, rhs, indices, dimension_numbers=dimension_numbers)
 
-    jf_dense = api.jacfwd(dense_fun)(lhs, rhs, indices)
-    jf_sparse = api.jacfwd(sparse_fun)(lhs, rhs, indices)
-    jr_dense = api.jacrev(dense_fun)(lhs, rhs, indices)
-    jr_sparse = api.jacrev(sparse_fun)(lhs, rhs, indices)
+    jf_dense = jax.jacfwd(dense_fun)(lhs, rhs, indices)
+    jf_sparse = jax.jacfwd(sparse_fun)(lhs, rhs, indices)
+    jr_dense = jax.jacrev(dense_fun)(lhs, rhs, indices)
+    jr_sparse = jax.jacrev(sparse_fun)(lhs, rhs, indices)
 
     tol = {}
     if jtu.device_under_test() == "tpu":
@@ -1066,7 +1064,7 @@ class BCOOTest(jtu.JaxTestCase):
       return sparse.BCOO.fromdense(M, nse=np.prod(M.shape[:-1], dtype=int), n_dense=1)
 
     for _ in range(3):
-      make_bcoo = vmap(make_bcoo)
+      make_bcoo = jax.vmap(make_bcoo)
       Msp = make_bcoo(M)
       self.assertEqual(Msp.shape, M.shape)
       self.assertArraysEqual(Msp.todense(), M)
@@ -1102,7 +1100,7 @@ class SparseGradTest(jtu.JaxTestCase):
     def f(X, y):
       return jnp.sum(X @ y)
 
-    grad_dense = api.grad(f, argnums=0)(X, y)
+    grad_dense = jax.grad(f, argnums=0)(X, y)
     grad_sparse = sparse.grad(f, argnums=0)(Xsp, y)
 
     # extract sparse gradient from dense gradient

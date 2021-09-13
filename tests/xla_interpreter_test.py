@@ -14,8 +14,8 @@
 
 from absl.testing import absltest
 
+import jax
 from jax import test_util as jtu
-from jax._src import api
 from jax.interpreters import xla
 
 
@@ -25,7 +25,7 @@ class XlaInterpreterTest(jtu.JaxTestCase):
     def f(*args):
       return args[0]
 
-    closed_jaxpr = api.make_jaxpr(f)(*range(10))
+    closed_jaxpr = jax.make_jaxpr(f)(*range(10))
     pruned_jaxpr, kept_const_idx, kept_var_idx = xla._prune_unused_inputs(
         closed_jaxpr.jaxpr)
     assert len(pruned_jaxpr.invars) == 1

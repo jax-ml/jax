@@ -19,7 +19,7 @@ from absl.testing import absltest
 import numpy as np
 import re
 
-from jax._src import api
+import jax
 from jax import lax, ops
 from jax import numpy as jnp
 from jax import test_util as jtu
@@ -58,12 +58,12 @@ class LoopsTest(jtu.JaxTestCase):
     def f_expected(inc):
       return 10 + 5 * inc
     self.assertAllClose(f_expected(2.), f_op(2.))
-    self.assertAllClose(f_expected(2.), api.jit(f_op)(2.))
-    self.assertAllClose(5., api.grad(f_op)(2.))
-    self.assertAllClose(5., api.grad(f_op)(2.))
+    self.assertAllClose(f_expected(2.), jax.jit(f_op)(2.))
+    self.assertAllClose(5., jax.grad(f_op)(2.))
+    self.assertAllClose(5., jax.grad(f_op)(2.))
     inc_batch = np.arange(5.0)
     self.assertAllClose(jnp.array([f_expected(inc) for inc in inc_batch]),
-                        api.vmap(f_op)(inc_batch))
+                        jax.vmap(f_op)(inc_batch))
 
 
   def test_loop_2(self):
@@ -365,11 +365,11 @@ class LoopsTest(jtu.JaxTestCase):
 
     self.assertAllClose(16., f_op(0, 4, 4.))
     # Ok to jit, as long as the start and end are static
-    self.assertAllClose(16., api.jit(f_op, static_argnums=(0, 1))(0, 4, 4.))
+    self.assertAllClose(16., jax.jit(f_op, static_argnums=(0, 1))(0, 4, 4.))
     with self.assertRaisesRegex(TypeError, "Abstract tracer value encountered where concrete value is expected"):
-      self.assertAllClose(16., api.jit(f_op)(0, 4, 4.))
+      self.assertAllClose(16., jax.jit(f_op)(0, 4, 4.))
     with self.assertRaisesRegex(TypeError, "Abstract tracer value encountered where concrete value is expected"):
-      self.assertAllClose(16., api.vmap(f_op)(jnp.zeros(10), jnp.ones(10), jnp.array([4.] * 10)))
+      self.assertAllClose(16., jax.vmap(f_op)(jnp.zeros(10), jnp.ones(10), jnp.array([4.] * 10)))
 
   def test_cond(self):
     def f_op(inc):
@@ -439,7 +439,7 @@ class LoopsTest(jtu.JaxTestCase):
         ValueError,
         r"^Body of cond_range or while_range should not use the index variable "
         r"returned by iterator\."):
-      api.make_jaxpr(f_op)(2.)
+      jax.make_jaxpr(f_op)(2.)
 
   def test_while(self):
     def f_op(init):
@@ -457,12 +457,12 @@ class LoopsTest(jtu.JaxTestCase):
       return out
 
     self.assertAllClose(f_expected(2.), f_op(2.))
-    self.assertAllClose(f_expected(2.), api.jit(f_op)(2.))
+    self.assertAllClose(f_expected(2.), jax.jit(f_op)(2.))
     self.assertAllClose(f_expected(1.), f_op(1.))
     init_batch = np.array([1., 2., 3.], dtype=np.float32)
     self.assertAllClose(np.array([f_expected(init) for init in init_batch],
                                   dtype=np.float32),
-                        api.vmap(f_op)(init_batch))
+                        jax.vmap(f_op)(init_batch))
 
   def test_error_while_cond_mutation(self):
     """Disallow mutation in the while conditional."""

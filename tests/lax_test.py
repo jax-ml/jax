@@ -26,7 +26,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax._src import api
 from jax import core
 from jax._src import dtypes
 from jax import lax
@@ -294,7 +293,7 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
     x_out = op(x_in)
     self.assertEqual(dtypes.is_weakly_typed(x_out), False)
-    x_out_jit = api.jit(op)(x_in)
+    x_out_jit = jax.jit(op)(x_in)
     self.assertEqual(dtypes.is_weakly_typed(x_out_jit), False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -814,7 +813,7 @@ class LaxTest(jtu.JaxTestCase):
     placeholder = np.ones(o_layout, data.dtype)
     conv = lambda x: lax.conv_general_dilated(x, kernel, strides, padding,
                                               one, rhs_dilation, dn)
-    _, g = api.vjp(conv, placeholder)
+    _, g = jax.vjp(conv, placeholder)
     return g(data)[0]
 
   @staticmethod
@@ -1358,7 +1357,7 @@ class LaxTest(jtu.JaxTestCase):
       lax.pad(np.zeros(2), 0., [(-4, 0, 1)])
 
   def testReverse(self):
-    rev = api.jit(lambda operand: lax.rev(operand, dimensions))
+    rev = jax.jit(lambda operand: lax.rev(operand, dimensions))
 
     dimensions = []
     self.assertAllClose(np.array([0, 1, 2, 3]), rev(np.array([0, 1, 2, 3])),
@@ -1628,7 +1627,7 @@ class LaxTest(jtu.JaxTestCase):
     fun = lambda arr, init: lax.reduce(arr, init, op, (0,))
     out = fun(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out), arr_weak_type and init_weak_type)
-    out_jit = api.jit(fun)(arr, init)
+    out_jit = jax.jit(fun)(arr, init)
     self.assertEqual(dtypes.is_weakly_typed(out_jit), arr_weak_type and init_weak_type)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1929,7 +1928,7 @@ class LaxTest(jtu.JaxTestCase):
 
   def testCollapse(self):
 
-    @api.jit
+    @jax.jit
     def collapse_first_two(x):
       return lax.collapse(x, 0, 2)
 
@@ -2256,9 +2255,9 @@ class LaxTest(jtu.JaxTestCase):
     # Tests the DeviceTuple constant handler
     def f(x):
       g = lambda *args: args[1]
-      return api.jit(lax.fori_loop, static_argnums=(2,))( 0, 10, g, x)
+      return jax.jit(lax.fori_loop, static_argnums=(2,))( 0, 10, g, x)
 
-    api.jit(f)(1.)  # doesn't crash
+    jax.jit(f)(1.)  # doesn't crash
 
   def testReshapeWithUnusualShapes(self):
     ans = lax.reshape(np.ones((3,), np.float32), (lax.add(1, 2), 1))
@@ -2295,7 +2294,7 @@ class LaxTest(jtu.JaxTestCase):
     # with core.skipping_checks():
     #   with self.assertRaisesRegex(
     #       TypeError, ".* of type .*tuple.* is not a valid JAX type"):
-    #     api.make_jaxpr(lambda x: lax.tie_in((x, x), 1))(1.)
+    #     jax.make_jaxpr(lambda x: lax.tie_in((x, x), 1))(1.)
 
   def test_primitive_jaxtype_error(self):
     with jax.enable_checks(False):
@@ -2400,7 +2399,7 @@ class LaxTest(jtu.JaxTestCase):
           k, shape=(5, 7), algorithm=lax.RandomAlgorithm.RNG_THREE_FRY)
 
     out = fn(key)
-    out_jit = api.jit(fn)(key)
+    out_jit = jax.jit(fn)(key)
     self.assertEqual(out[0].shape, (2,))
     self.assertEqual(out[1].shape, (5, 7))
     self.assertArraysEqual(out[0], out_jit[0])
@@ -2460,7 +2459,7 @@ class LazyConstantTest(jtu.JaxTestCase):
     argument_result = lax.add(zero, make_const())
 
     # check looping into a compiled computation works
-    jit_result = api.jit(lambda x: lax.add(x, make_const()))(zero)
+    jit_result = jax.jit(lambda x: lax.add(x, make_const()))(zero)
 
     # ensure they're all the same
     self.assertAllClose(asarray_result, expected)
@@ -2543,7 +2542,7 @@ class LazyConstantTest(jtu.JaxTestCase):
   def testConvertElementReturnType(self, input_type, dtype, value, jit):
     op = lambda x: lax.convert_element_type(x, dtype)
     if jit:
-      op = api.jit(op)
+      op = jax.jit(op)
     result = op(input_type(value))
     assert isinstance(result, xla.DeviceArray)
 
@@ -2603,7 +2602,7 @@ class LazyConstantTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.is_weakly_typed(x_in), weak_type)
     x_out = op(x_in)
     self.assertEqual(dtypes.is_weakly_typed(x_out), False)
-    x_out_jit = api.jit(op)(x_in)
+    x_out_jit = jax.jit(op)(x_in)
     self.assertEqual(dtypes.is_weakly_typed(x_out_jit), False)
 
   def testArgMaxOfNanChoosesNaN(self):
