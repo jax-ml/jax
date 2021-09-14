@@ -3660,6 +3660,24 @@ class RematTest(jtu.JaxTestCase):
 
     api.grad(g)(3.)
 
+  def test_remat_custom_jvp_linear_policy(self):
+    @api.custom_jvp
+    def sum(x):
+      return jnp.sum(x, axis=0)
+    @sum.defjvp
+    def sum_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return sum(x), sum(xdot)
+
+    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    def f(x):
+      return sum(x)
+    jtu.check_grads(f, (jnp.ones(3),), order=2, modes=['fwd', 'rev'])
+
+    def g(x):
+      return lax.scan(lambda _, x: (None, f(x)), None, x)[1]
+    jtu.check_grads(g, (jnp.ones((2, 3)),), order=2, modes=['fwd', 'rev'])
+
 
 class JaxprTest(jtu.JaxTestCase):
 
