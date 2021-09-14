@@ -1116,6 +1116,19 @@ class BatchingTest(jtu.JaxTestCase):
     zs = vmap(vmap(f, axis_name='i', in_axes=(1, 0), out_axes=None))(xs, ys)
     self.assertAllClose(zs, jnp.einsum('nij,njk->nik', xs, ys))
 
+  def testPdotPrecision(self):
+    def f(x, y):
+      return lax.pdot(x, y, 'i', precision=lax.Precision.HIGHEST)
+
+    f_jaxpr = make_jaxpr(f, axis_env=(('i', 4),))(jnp.ones(4), jnp.ones(4))
+    self.assertIn('HIGHEST', str(f_jaxpr))
+
+    vmap_jaxpr = make_jaxpr(jax.vmap(f, axis_name='i'))(jnp.ones((3, 4)),
+        jnp.ones((3, 4)))
+    self.assertIn('HIGHEST', str(vmap_jaxpr))
+
+
+
   def testPdotJvp(self):
     def f(x, y):
       return lax.pdot(x, y, 'i')
