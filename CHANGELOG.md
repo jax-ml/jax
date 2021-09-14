@@ -15,6 +15,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jnp.poly*` functions now require array-like inputs ({jax-issue}`#7732`)
   * `jnp.unique` and other set-like operations now require array-like inputs
     ({jax-issue}`#7662`)
+  * `jax.lax.partial` was an accidental export that has now been removed. Use
+    `functools.partial` instead.
 
 ## jaxlib 0.1.71 (Sep 1, 2021)
 * Breaking changes:
