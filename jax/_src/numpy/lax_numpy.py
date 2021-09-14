@@ -5079,6 +5079,7 @@ def take(a, indices, axis: Optional[int] = None, out=None, mode=None):
 def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
+  _check_arraylike("take", a)
   a = asarray(a)
   indices = asarray(indices)
 
