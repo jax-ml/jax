@@ -143,8 +143,8 @@ def predict(params, input_vec):
   activations = input_vec
   for W, b in params:
     outputs = jnp.dot(W, activations) + b  # `input_vec` on the right-hand side!
-    activations = jnp.tanh(outputs)
-  return outputs
+    activations = jnp.tanh(outputs)        # inputs to the next layer
+  return outputs                           # no activation on last layer
 ```
 
 We often instead write `jnp.dot(inputs, W)` to allow for a batch dimension on the
