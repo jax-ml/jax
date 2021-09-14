@@ -13,6 +13,12 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from ..interpreters.sharded_jit import (sharded_jit, PartitionSpec,
-                                        with_sharding_constraint)
-from .x64_context import enable_x64, disable_x64
+from ..interpreters.sharded_jit import (
+  sharded_jit as sharded_jit,
+  PartitionSpec as PartitionSpec,
+  with_sharding_constraint as with_sharding_constraint,
+)
+from .x64_context import (
+  enable_x64 as enable_x64,
+  disable_x64 as disable_x64,
+)

@@ -106,11 +106,11 @@ from ._src.api import (
   tree_structure,
   tree_transpose,
   tree_unflatten,
-  value_and_grad,
-  vjp,
-  vmap,
+  value_and_grad as value_and_grad,
+  vjp as vjp,
+  vmap as vmap,
   xla,  # TODO(phawkins): update users to avoid this.
-  xla_computation,
+  xla_computation as xla_computation,
 )
 from functools import partial as partial  # TODO(phawkins): remove this export.
 from .experimental.maps import soft_pmap as soft_pmap
