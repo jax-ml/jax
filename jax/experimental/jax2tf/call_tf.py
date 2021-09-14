@@ -302,14 +302,11 @@ def _code_generator_and_avals(
         "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion. "
         f"The following captures were found {concrete_function_flat_tf.captured_inputs}")
     logging.warning(msg)
-    next_var_idx = 0
     for inp in concrete_function_flat_tf.captured_inputs:
-      if inp.dtype == tf.resource:  # A variable; assume the next variable
-        assert next_var_idx < len(concrete_function_flat_tf.variables)
-        var = concrete_function_flat_tf.variables[next_var_idx]
-        next_var_idx += 1
-        assert inp is var.handle  # For extra safety
-        captured_inputs.append(var)
+      if inp.dtype == tf.resource:  # A variable; lookup by handle
+        inp_vars = [v for v in concrete_function_flat_tf.variables if inp is v.handle]
+        assert len(inp_vars) == 1, f"Found {inp_vars}"
+        captured_inputs.append(inp_vars[0])
       else:
         captured_inputs.append(inp)
 
