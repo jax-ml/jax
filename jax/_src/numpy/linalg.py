@@ -22,7 +22,6 @@ from typing import Tuple, Union, cast
 
 from jax import jit, custom_jvp
 from jax import lax
-from jax import ops
 from jax._src.lax import linalg as lax_linalg
 from jax._src import dtypes
 from .util import _wraps
@@ -218,7 +217,7 @@ def _cofactor_solve(a, b):
   # partial_det[:, -1] contains the full determinant and
   # partial_det[:, -2] contains det(u) / u_{nn}.
   partial_det = jnp.cumprod(diag, axis=-1) * sign[..., None]
-  lu = ops.index_update(lu, ops.index[..., -1, -1], 1.0 / partial_det[..., -2])
+  lu = lu.at[..., -1, -1].set(1.0 / partial_det[..., -2])
   permutation = jnp.broadcast_to(permutation, batch_dims + (a_shape[-1],))
   iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in batch_dims + (1,)))
   # filter out any matrices that are not full rank

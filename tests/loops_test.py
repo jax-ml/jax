@@ -20,7 +20,7 @@ import numpy as np
 import re
 
 import jax
-from jax import lax, ops
+from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental import loops
@@ -87,7 +87,7 @@ class LoopsTest(jtu.JaxTestCase):
         assert n == y.shape[0]
         s.out = jnp.zeros(shape=[n], dtype=jnp.float32)
         for i in s.range(n):
-          s.out = ops.index_add(s.out, i, x[i] + y[i])
+          s.out = s.out.at[i].add(x[i] + y[i])
         return s.out
 
     x = jnp.array([1., 2., 3.], dtype=jnp.float32)
@@ -104,7 +104,7 @@ class LoopsTest(jtu.JaxTestCase):
         for i in s.range(n):
           for j in s.range(p):
             for k in s.range(m):
-              s.out = ops.index_add(s.out, (i, j), x[i, k] * y[k, j])
+              s.out = s.out.at[(i, j)].add(x[i, k] * y[k, j])
         return s.out
 
     x = jnp.array([[1., 2., 3.]], dtype=jnp.float32)  # 1x3
@@ -178,10 +178,10 @@ class LoopsTest(jtu.JaxTestCase):
     def f_op_jax():
       arr = jnp.zeros(5)
       def loop_body(i, acc_arr):
-        arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
+        arr1 = acc_arr.at[i].set(acc_arr[i] + 2.)
         return lax.cond(i % 2 == 0,
                         arr1,
-                        lambda arr1: ops.index_update(arr1, i, arr1[i] + 1.),
+                        lambda arr1: arr1.at[i].set(arr1[i] + 1.),
                         arr1,
                         lambda arr1: arr1)
       arr = lax.fori_loop(0, arr.shape[0], loop_body, arr)
@@ -191,9 +191,9 @@ class LoopsTest(jtu.JaxTestCase):
       with loops.Scope() as s:
         s.arr = jnp.zeros(5)  # Must create the mutable state of the loop as `scope` fields.
         for i in s.range(s.arr.shape[0]):
-          s.arr = ops.index_update(s.arr, i, s.arr[i] + 2.)
+          s.arr = s.arr.at[i].set(s.arr[i] + 2.)
           for _ in s.cond_range(i % 2 == 0):  # Conditionals are also sugared as loops with 0 or 1 iterations
-            s.arr = ops.index_update(s.arr, i, s.arr[i] + 1.)
+            s.arr = s.arr.at[i].set(s.arr[i] + 1.)
         return s.arr
 
     self.assertAllClose(f_expected(), f_op_jax())

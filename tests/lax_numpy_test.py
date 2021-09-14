@@ -1711,10 +1711,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     def jnp_pad_with(vector, pad_width, iaxis, kwargs):
       pad_value = kwargs.get('padder', 10)
-      vector = jax.ops.index_update(
-          vector, jax.ops.index[:pad_width[0]], pad_value)
-      vector = jax.ops.index_update(
-          vector, jax.ops.index[-pad_width[1]:], pad_value)
+      vector = vector.at[:pad_width[0]].set(pad_value)
+      vector = vector.at[-pad_width[1]:].set(pad_value)
       return vector
 
     arr = np.arange(6).reshape(2, 3)

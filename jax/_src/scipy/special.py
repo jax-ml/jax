@@ -20,7 +20,6 @@ import scipy.special as osp_special
 from jax._src import api
 from jax import jit
 from jax import lax, core
-from jax import ops
 from jax.interpreters import ad
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
@@ -765,14 +764,14 @@ def _gen_derivatives(p: jnp.ndarray,
       p_p1 = p[1, 1:num_l - 1, :]
       coeff = -1.0 / ((l_vec + 1) * l_vec)
       update_p_p1 = jnp.einsum('i,ij->ij', coeff, p_p1)
-      p_mm2_lm1 = p_mm2_lm1.at[ops.index[1, 2:num_l, :]].set(update_p_p1)
+      p_mm2_lm1 = p_mm2_lm1.at[1, 2:num_l, :].set(update_p_p1)
 
     if num_l > 2:
       l_vec = jnp.arange(2, num_l - 1)
       p_p2 = p[2, 2:num_l - 1, :]
       coeff = 1.0 / ((l_vec + 2) * (l_vec + 1) * l_vec)
       update_p_p2 = jnp.einsum('i,ij->ij', coeff, p_p2)
-      p_mm2_lm1 = p_mm2_lm1.at[ops.index[0, 3:num_l, :]].set(update_p_p2)
+      p_mm2_lm1 = p_mm2_lm1.at[0, 3:num_l, :].set(update_p_p2)
 
   m_mat, l_mat = jnp.mgrid[:num_m, :num_l]
 
