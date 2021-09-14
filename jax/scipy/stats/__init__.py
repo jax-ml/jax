@@ -13,21 +13,21 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from . import bernoulli
-from . import beta
-from . import cauchy
-from . import dirichlet
-from . import expon
-from . import gamma
-from . import geom
-from . import laplace
-from . import logistic
-from . import multivariate_normal
-from . import nbinom
-from . import norm
-from . import pareto
-from . import poisson
-from . import t
-from . import uniform
-from . import chi2
-from . import betabinom
+from . import bernoulli as bernoulli
+from . import beta as beta
+from . import cauchy as cauchy
+from . import dirichlet as dirichlet
+from . import expon as expon
+from . import gamma as gamma
+from . import geom as geom
+from . import laplace as laplace
+from . import logistic as logistic
+from . import multivariate_normal as multivariate_normal
+from . import nbinom as nbinom
+from . import norm as norm
+from . import pareto as pareto
+from . import poisson as poisson
+from . import t as t
+from . import uniform as uniform
+from . import chi2 as chi2
+from . import betabinom as betabinom
