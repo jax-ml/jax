@@ -194,7 +194,6 @@ from jax._src.lax.lax import (
   pad as pad,
   pad_p as pad_p,
   padtype_to_pads as padtype_to_pads,
-  partial as partial,  # TODO(phawkins): remove this export.
   population_count as population_count,
   population_count_p as population_count_p,
   pow as pow,
