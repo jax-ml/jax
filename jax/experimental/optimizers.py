@@ -85,9 +85,10 @@ from typing import Any, Callable, NamedTuple, Tuple, Union
 
 from collections import namedtuple
 import functools
+from functools import partial
 
 import jax.numpy as jnp
-from jax._src.util import partial, safe_zip, safe_map, unzip2
+from jax._src.util import safe_zip, safe_map, unzip2
 from jax import tree_util
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            register_pytree_node)

@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import functools
+from functools import partial
 
 import numpy as np
 
@@ -26,7 +27,7 @@ from jax._src import dtypes
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax._src.util import partial, prod
+from jax._src.util import prod
 from jax.core import Primitive, ShapedArray, raise_to_shaped
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,

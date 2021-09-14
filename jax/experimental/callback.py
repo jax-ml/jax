@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import itertools as it
 
 from typing import Any, Callable, Dict, Sequence, Union
@@ -24,7 +25,7 @@ from jax import lax
 from jax import custom_derivatives as cd
 from jax.interpreters import partial_eval as pe
 from jax import linear_util as lu
-from jax._src.util import partial, safe_map, wraps, split_list
+from jax._src.util import safe_map, wraps, split_list
 from jax._src.lax import control_flow as lcf
 
 import inspect

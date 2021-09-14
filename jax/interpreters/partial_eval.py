@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
-import itertools as it
 from collections import namedtuple
 import contextlib
 import functools
+from functools import partial
+import inspect
+import itertools as it
 from typing import (Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple,
                     List, Union, cast)
 from weakref import ref
@@ -29,8 +30,8 @@ from .. import linear_util as lu
 from jax._src.ad_util import Zero
 from .._src.api_util import flattened_fun_in_tree
 from .._src.tree_util import PyTreeDef, tree_unflatten, tree_leaves
-from .._src.util import (unzip2, safe_zip, safe_map, toposort, partial,
-                         split_list, partition_list, cache, OrderedSet,
+from .._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
+                         partition_list, cache, OrderedSet,
                          as_hashable_function)
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,

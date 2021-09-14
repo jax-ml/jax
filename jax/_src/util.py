@@ -14,6 +14,7 @@
 
 
 import functools
+from functools import partial
 import itertools as it
 import operator
 import types
@@ -25,7 +26,6 @@ import numpy as np
 
 from jax.config import config
 
-partial = functools.partial
 Seq = Sequence
 
 

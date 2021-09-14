@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import operator
 
 from absl.testing import absltest
@@ -19,7 +20,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax import config, core, jit, lax, partial
+from jax import config, core, jit, lax
 import jax.numpy as jnp
 import jax.test_util as jtu
 from jax.experimental.sparse import BCOO, sparsify

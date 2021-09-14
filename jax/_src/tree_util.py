@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
 import collections
+import functools
+from functools import partial
 import operator as op
 from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, Type,
                     TypeVar, overload, TYPE_CHECKING)
 
 from ..lib import pytree
 
-from .._src.util import partial, safe_zip, unzip2
+from .._src.util import safe_zip, unzip2
 
 from .._src import traceback_util
 traceback_util.register_exclusion(__file__)
