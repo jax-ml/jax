@@ -5682,6 +5682,8 @@ def _expand_bool_indices(idx, shape):
       if not type(abstract_i) is ConcreteArray:
         # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
         raise errors.NonConcreteBooleanIndexError(abstract_i)
+      elif _ndim(i) == 0:
+        raise TypeError("JAX arrays do not support boolean scalar indices")
       else:
         i_shape = _shape(i)
         expected_shape = shape[len(out): len(out) + _ndim(i)]

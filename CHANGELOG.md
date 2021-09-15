@@ -14,6 +14,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * Breaking Changes
   * `jax.lax.partial` was an accidental export that has now been removed. Use
     `functools.partial` instead.
+  * Boolean scalar indices now raise a `TypeError`; previously this silently
+    returned wrong results ({jax-issue}`#7925`).
 
 ## jax 0.2.20 (Sept 2, 2021)
 * [GitHub
