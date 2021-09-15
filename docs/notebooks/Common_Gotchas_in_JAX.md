@@ -945,6 +945,8 @@ When this code sees a nan in the output of an `@jit` function, it calls into the
 
 ⚠️ You shouldn't have the NaN-checker on if you're not debugging, as it can introduce lots of device-host round-trips and performance regressions!
 
+⚠️ The NaN-checker doesn't work with `pmap`. To debug nans in `pmap` code, one thing to try is replacing `pmap` with `vmap`.
+
 +++ {"id": "YTktlwTTMgFl"}
 
 ## Double (64bit) precision

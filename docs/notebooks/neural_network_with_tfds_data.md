@@ -189,6 +189,10 @@ JAX is laser-focused on program transformations and accelerator-backed NumPy, so
 ```{code-cell} ipython3
 :id: uWvo1EgZCvnK
 
+import tensorflow as tf
+# Ensure TF does not see GPU and grab all GPU memory.
+tf.config.set_visible_devices([], device_type='GPU')
+
 import tensorflow_datasets as tfds
 
 data_dir = '/tmp/tfds'
