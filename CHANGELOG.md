@@ -8,15 +8,20 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
+## jax 0.2.21 (Unreleased)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.20...main).
+* Breaking Changes
+  * `jax.lax.partial` was an accidental export that has now been removed. Use
+    `functools.partial` instead.
+
 ## jax 0.2.20 (Sept 2, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.19...main).
+  commits](https://github.com/google/jax/compare/jax-v0.2.19...jax-v0.2.20).
 * Breaking Changes
   * `jnp.poly*` functions now require array-like inputs ({jax-issue}`#7732`)
   * `jnp.unique` and other set-like operations now require array-like inputs
     ({jax-issue}`#7662`)
-  * `jax.lax.partial` was an accidental export that has now been removed. Use
-    `functools.partial` instead.
 
 ## jaxlib 0.1.71 (Sep 1, 2021)
 * Breaking changes:
