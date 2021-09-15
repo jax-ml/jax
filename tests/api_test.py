@@ -5819,6 +5819,20 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(ftt(x),  x)
     self.assertAllClose(fttt(x), 7.)
 
+  def test_linear_call_jit(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return t / r
+      return x + api.linear_call(fn, tp, y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    self.assertAllClose(f(x, y), jax.jit(f)(x, y))
+
+    f1 = lambda x: f(x, y)
+    self.assertAllClose(self.transpose(f1, x)(x),
+                        jax.jit(self.transpose(f1, x))(x))
+
 
 class InvertibleADTest(jtu.JaxTestCase):
 

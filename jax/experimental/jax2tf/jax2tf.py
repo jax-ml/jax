@@ -920,6 +920,7 @@ tf_not_yet_impl = [
     "all_to_all",
     "create_token",
     "infeed",
+    "linear_call",
     "outfeed",
     "pmax_p",
     "pmin",

@@ -1063,3 +1063,4 @@ linear_call_p.multiple_results = True
 linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
+xla.initial_style_translations[linear_call_p] = xla.lower_fun_initial_style(_linear_call_impl)
