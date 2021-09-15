@@ -45,6 +45,7 @@ from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
 from jax.interpreters import xla
+from jax.interpreters import pxla
 from jax.interpreters.sharded_jit import PartitionSpec as P
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
@@ -886,11 +887,33 @@ class APITest(jtu.JaxTestCase):
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
                      "Transpose rule (for reverse-mode differentiation) for 'foo' not implemented")
 
+  def test_is_subclass(self):
+    self.assertTrue(issubclass(xla.DeviceArray, jnp.ndarray))
+    self.assertTrue(issubclass(xla._CppDeviceArray, jnp.ndarray))
+    self.assertTrue(issubclass(pxla.ShardedDeviceArray, jnp.ndarray))
+    self.assertTrue(issubclass(pxla._ShardedDeviceArray, jnp.ndarray))
+    self.assertFalse(issubclass(np.ndarray, jnp.ndarray))
+    self.assertFalse(issubclass(xla.DeviceArray, np.ndarray))
+    self.assertFalse(issubclass(xla._CppDeviceArray, np.ndarray))
+    self.assertFalse(issubclass(pxla.ShardedDeviceArray, np.ndarray))
+    self.assertFalse(issubclass(pxla._ShardedDeviceArray, np.ndarray))
+
+  def test_is_instance(self):
+    def f(x):
+      self.assertIsInstance(x, jnp.ndarray)
+      self.assertNotIsInstance(x, np.ndarray)
+      return x + 2
+    jit(f)(3)
+    jax.vmap(f)(np.arange(3))
+
   def test_device_put_and_get(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
     self.assertIsInstance(dx, xla.DeviceArray)
+    self.assertIsInstance(dx, jnp.ndarray)
+    self.assertNotIsInstance(dx, np.ndarray)
     x2 = api.device_get(dx)
+    self.assertNotIsInstance(x2, jnp.ndarray)
     self.assertIsInstance(x2, np.ndarray)
     assert np.all(x == x2)
 
