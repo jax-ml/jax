@@ -119,6 +119,16 @@ tf.saved_model.save(my_model, '/some/directory',
                     options=tf.saved_model.SaveOptions(experimental_custom_gradients=True))
 ```
 
+Note that if the JAX function is not reverse-mode differentiable, e.g., uses `lax.while_loop` then
+attempting to save its conversion to a SavedModel will fail with
+```
+ValueError: Error when tracing gradients for SavedModel
+```
+
+You have two options, either pass `enable_gradients=False` to `jax2tf.convert`, or
+set `tf.saved_model.SaveOption(experimental_custom_gradients=False)`. In either case,
+you will not be able to compute the gradients of the function loaded from the SavedModel.
+
 Some special care is needed to ensure that the model parameters are not embedded
 as constants in the graph and are instead saved separately as variables.
 This is useful for two reasons:
