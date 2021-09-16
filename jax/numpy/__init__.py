@@ -185,6 +185,7 @@ from jax._src.numpy.lax_numpy import (
     in1d as in1d,
     inf as inf,
     inner as inner,
+    insert as insert,
     int16 as int16,
     int32 as int32,
     int64 as int64,
