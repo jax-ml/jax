@@ -421,7 +421,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual = jnp.real(
         lsp_special.sph_harm(jnp.array([0]), jnp.array([1]), theta, phi, n_max))
 
-    self.assertAllClose(actual, expected, rtol=7e-8, atol=1.5e-8)
+    self.assertAllClose(actual, expected, rtol=1.3e-7, atol=6e-8)
 
   def testSphHarmOrderOneDegreeOne(self):
     """Tests the spherical harmonics of order one and degree one."""
