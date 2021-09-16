@@ -4449,7 +4449,7 @@ def insert(arr, obj, values, axis=None):
       values = moveaxis(values, 0, axis)
     indices = full(values.shape[axis], index)
   n_input = arr.shape[axis]
-  n_insert = 0 if len(indices) == 0 else _max(values.shape[axis], len(indices))
+  n_insert = broadcast_shapes(indices.shape, values.shape[axis])[0]
   out_shape = list(arr.shape)
   out_shape[axis] += n_insert
   out = zeros_like(arr, shape=tuple(out_shape))
