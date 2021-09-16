@@ -15,8 +15,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jax.api` has been removed. Functions that were available as `jax.api.*`
     were aliases for functions in `jax.*`; please use the functions in
     `jax.*` instead.
-  * `jax.lax.partial` was an accidental export that has now been removed. Use
-    `functools.partial` instead.
+  * `jax.partial` and `jax.lax.partial` were accidental exports that have now
+    been removed. Use `functools.partial` from the Python standard library
+    instead.
   * Boolean scalar indices now raise a `TypeError`; previously this silently
     returned wrong results ({jax-issue}`#7925`).
   * Many more `jax.numpy` functions now require array-like inputs, and will error

@@ -112,7 +112,6 @@ from ._src.api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation as xla_computation,
 )
-from functools import partial as partial  # TODO(phawkins): remove this export.
 from .experimental.maps import soft_pmap as soft_pmap
 from .version import __version__ as __version__
 
