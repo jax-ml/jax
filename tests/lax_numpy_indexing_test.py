@@ -770,6 +770,13 @@ class IndexingTest(jtu.JaxTestCase):
     i = np.array([True, True, False])
     self.assertRaises(IndexError, lambda: jax.jit(lambda x, i: x[i])(x, i))
 
+  def testScalarBooleanIndexingNotImplemented(self):
+    msg = "JAX arrays do not support boolean scalar indices"
+    with self.assertRaisesRegex(TypeError, msg):
+      jnp.arange(4)[True]
+    with self.assertRaisesRegex(TypeError, msg):
+      jnp.arange(4)[False]
+
   def testIssue187(self):
     x = jnp.ones((5, 5))
     x[[0, 2, 4], [0, 2, 4]]  # doesn't crash
