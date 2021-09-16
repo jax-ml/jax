@@ -197,9 +197,11 @@ Not every function in NumPy is implemented; contributions are welcome!
     iinfo
     imag
     in1d
+    index_exp
     indices
     inexact
     inner
+    insert
     int_
     int16
     int32
@@ -329,6 +331,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     round
     round_
     row_stack
+    s_
     save
     savez
     searchsorted
@@ -380,8 +383,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     uint32
     uint64
     uint8
-    unique
     union1d
+    unique
     unpackbits
     unravel_index
     unsignedinteger
