@@ -70,7 +70,7 @@ import functools
 
 from absl import app
 from absl import flags
-import jax.api
+import jax
 import jax.numpy as jnp
 from jax.lib import xla_client
 
@@ -130,7 +130,7 @@ def jax_to_hlo(fn, input_shapes, constants=None):
     arg_names = [arg_name for arg_name, _ in input_shapes]
     return fn_curried(**dict(zip(arg_names, args)))
 
-  comp = jax.api.xla_computation(ordered_wrapper)(*args)
+  comp = jax.xla_computation(ordered_wrapper)(*args)
   return (comp.as_serialized_hlo_module_proto(), comp.as_hlo_text())
 
 

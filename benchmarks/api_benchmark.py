@@ -175,7 +175,7 @@ def jit_dispatch_without_transfer(state):
   imgs = np.ones((128, 224, 224), np.float32)
   imgs = jax.device_put(imgs)
 
-  f = jax.api.jit(lambda x: x+1)
+  f = jax.jit(lambda x: x+1)
   f(imgs)
 
   while state:
@@ -186,7 +186,7 @@ def jit_dispatch_without_transfer(state):
 def jit_dispatch_with_transfer(state):
   imgs = np.ones((128, 224, 224), np.float32)
 
-  f = jax.api.jit(lambda x: x+1)
+  f = jax.jit(lambda x: x+1)
   f(imgs).block_until_ready()
 
   while state:

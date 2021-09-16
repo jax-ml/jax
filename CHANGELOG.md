@@ -12,6 +12,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.20...main).
 * Breaking Changes
+  * `jax.api` has been removed. Functions that were available as `jax.api.*`
+    were aliases for functions in `jax.*`; please use the functions in
+    `jax.*` instead.
   * `jax.lax.partial` was an accidental export that has now been removed. Use
     `functools.partial` instead.
   * Boolean scalar indices now raise a `TypeError`; previously this silently
