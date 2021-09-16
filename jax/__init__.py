@@ -119,7 +119,6 @@ from .version import __version__ as __version__
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
 from . import abstract_arrays as abstract_arrays
-from . import api as api
 from . import api_util as api_util
 from . import dtypes as dtypes
 from . import errors as errors
