@@ -2153,6 +2153,60 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "dtype": dtype, "shape": shape, "axis": axis}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in all_dtypes
+      for axis in [None] + list(range(-len(shape), len(shape)))))
+  def testInsertInteger(self, shape, dtype, axis):
+    x = jnp.empty(shape)
+    max_ind = x.size if axis is None else x.shape[axis]
+    rng = jtu.rand_default(self.rng())
+    i_rng = jtu.rand_int(self.rng(), -max_ind, max_ind)
+    args_maker = lambda: [rng(shape, dtype), i_rng((), np.int32), rng((), dtype)]
+    np_fun = lambda *args: np.insert(*args, axis=axis)
+    jnp_fun = lambda *args: jnp.insert(*args, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "dtype": dtype, "shape": shape, "axis": axis}
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in all_dtypes
+      for axis in [None] + list(range(-len(shape), len(shape)))))
+  def testInsertSlice(self, shape, dtype, axis):
+    x = jnp.empty(shape)
+    max_ind = x.size if axis is None else x.shape[axis]
+    rng = jtu.rand_default(self.rng())
+    i_rng = jtu.rand_int(self.rng(), -max_ind, max_ind)
+    slc = slice(i_rng((), jnp.int32).item(), i_rng((), jnp.int32).item())
+    args_maker = lambda: [rng(shape, dtype), rng((), dtype)]
+    np_fun = lambda x, val: np.insert(x, slc, val, axis=axis)
+    jnp_fun = lambda x, val: jnp.insert(x, slc, val, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.parameters([
+    [[[1, 1], [2, 2], [3, 3]], 1, 5, None],
+    [[[1, 1], [2, 2], [3, 3]], 1, 5, 1],
+    [[[1, 1], [2, 2], [3, 3]], 1, [1, 2, 3], 1],
+    [[[1, 1], [2, 2], [3, 3]], [1], [[1],[2],[3]], 1],
+    [[1, 1, 2, 2, 3, 3], [2, 2], [5, 6], None],
+    [[1, 1, 2, 2, 3, 3], slice(2, 4), [5, 6], None],
+    [[1, 1, 2, 2, 3, 3], [2, 2], [7.13, False], None],
+    [[[0, 1, 2, 3], [4, 5, 6, 7]], (1, 3), 999, 1]
+  ])
+  def testInsertExamples(self, arr, index, values, axis):
+    # Test examples from the np.insert docstring
+    args_maker = lambda: (
+      np.asarray(arr), index if isinstance(index, slice) else np.array(index),
+      np.asarray(values), axis)
+    self._CheckAgainstNumpy(np.insert, jnp.insert, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_out_dims={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           axis, out_dims),
