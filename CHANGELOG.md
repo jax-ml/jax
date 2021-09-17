@@ -16,6 +16,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     `functools.partial` instead.
   * Boolean scalar indices now raise a `TypeError`; previously this silently
     returned wrong results ({jax-issue}`#7925`).
+  * Many more `jax.numpy` functions now require array-like inputs, and will error
+    if passed a list ({jax-issue}`#7747` {jax-issue}`#7802` {jax-issue}`#7907`).
+    See {jax-issue}`#7737` for a discussion of the rationale behind this change.
+* New features:
+  * Added {func}`jax.numpy.insert` implementation ({jax-issue}`#7936`).
 
 ## jax 0.2.20 (Sept 2, 2021)
 * [GitHub
