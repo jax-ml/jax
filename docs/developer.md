@@ -92,8 +92,9 @@ is needed. See [Installing Bazel on Windows](https://docs.bazel.build/versions/m
 for more details. Install the following packages:
 
 ```
-pacman -S patch realpath
+pacman -S patch coreutils
 ```
+`realpath` in 'coreutils' package should be found in command lines.
 
 Once everything is installed. Open PowerShell, and make sure MSYS2 is in the
 path of the current session. Ensure `bazel`, `patch` and `realpath` are
@@ -109,7 +110,7 @@ python .\build\build.py `
   --cuda_version='10.1' `
   --cudnn_version='7.6.5'
 ```
-
+You may discard `--cuda_compute_capabilities` flag in case of argument exceptions.
 To build with debug information, add the flag `--bazel_options='--copt=/Z7'`.
 
 ## Installing `jax`
