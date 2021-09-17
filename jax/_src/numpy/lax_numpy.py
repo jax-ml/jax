@@ -2253,6 +2253,11 @@ def _ensure_optional_axes(x):
       return operator.index(x)
     except TypeError:
       return tuple(i if isinstance(i, str) else operator.index(i) for i in x)
+
+  if isinstance(x, tuple):
+    return tuple(core.concrete_or_error(
+      force, e, "The axis argument must be known statically.") for e in x)
+
   return core.concrete_or_error(
     force, x, "The axis argument must be known statically.")
 

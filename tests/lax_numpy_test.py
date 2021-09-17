@@ -3660,6 +3660,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self.assertRaises(jax.errors.ConcretizationTypeError, lambda: g(3.))
 
+    @jax.jit
+    def h(x, y):
+      return jnp.sum(x, axis=(y,))
+
+    self.assertRaises(jax.errors.ConcretizationTypeError,
+                      lambda: h(jnp.arange(5), 0))
+
   def testTracingPrimitiveWithNoTranslationErrorMessage(self):
     # TODO(mattjj): update this for jax3
     self.skipTest("test needs jax3 update")

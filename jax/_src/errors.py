@@ -147,7 +147,7 @@ class ConcretizationTypeError(JAXTypeError):
   """
   def __init__(self, tracer: "core.Tracer", context: str = ""):
     super().__init__(
-        "Abstract tracer value encountered where concrete value is expected: "
+        "Abstract tracer value encountered where a concrete value is expected: "
         f"{tracer}\n{context}{tracer._origin_msg()}\n")
 
 
