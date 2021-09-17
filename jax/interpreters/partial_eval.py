@@ -147,7 +147,7 @@ class JaxprTrace(Trace):
 
   def default_process_primitive(self, primitive, tracers, params):
     """By default, if all the input tracers are known, then execute the primitive
-    and all the ouputs are known. Otherwise, all the outputs are unknown."""
+    and all the outputs are known. Otherwise, all the outputs are unknown."""
     consts = [t.pval.get_known() for t in tracers]
     if all(c is not None for c in consts):
       return primitive.bind(*consts, **params)
