@@ -34,7 +34,7 @@ import operator
 
 from typing import Any, Sequence, Tuple
 
-from jax import api
+import jax
 from jax import core
 from jax import dtypes
 from jax import jit
@@ -1436,15 +1436,15 @@ class CSR(JAXSparse):
       nse = (mat != 0).sum()
     return cls(csr_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape)
 
-  @api.jit
+  @jax.jit
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape)
 
-  @api.jit
+  @jax.jit
   def matvec(self, v):
     return csr_matvec(self.data, self.indices, self.indptr, v, shape=self.shape)
 
-  @api.jit
+  @jax.jit
   def matmat(self, B):
     return csr_matmat(self.data, self.indices, self.indptr, B, shape=self.shape)
 
@@ -1475,15 +1475,15 @@ class CSC(JAXSparse):
       nse = (mat != 0).sum()
     return cls(csr_fromdense(mat.T, nse=nse, index_dtype=index_dtype), shape=mat.shape)
 
-  @api.jit
+  @jax.jit
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape[::-1]).T
 
-  @api.jit
+  @jax.jit
   def matvec(self, v):
     return csr_matvec(self.data, self.indices, self.indptr, v, shape=self.shape[::-1], transpose=True)
 
-  @api.jit
+  @jax.jit
   def matmat(self, B):
     return csr_matmat(self.data, self.indices, self.indptr, B, shape=self.shape[::-1], transpose=True)
 
@@ -1514,15 +1514,15 @@ class COO(JAXSparse):
       nse = (mat != 0).sum()
     return cls(coo_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape)
 
-  @api.jit
+  @jax.jit
   def todense(self):
     return coo_todense(self.data, self.row, self.col, shape=self.shape)
 
-  @api.jit
+  @jax.jit
   def matvec(self, v):
     return coo_matvec(self.data, self.row, self.col, v, shape=self.shape)
 
-  @api.jit
+  @jax.jit
   def matmat(self, B):
     return coo_matmat(self.data, self.row, self.col, B, shape=self.shape)
 
@@ -1635,7 +1635,7 @@ class BCOO(JAXSparse):
     """Return a de-duplicated representation of the BCOO matrix."""
     return BCOO(_dedupe_bcoo(self.data, self.indices, self.shape), shape=self.shape)
 
-  @api.jit
+  @jax.jit
   def todense(self):
     """Create a dense version of the array."""
     return bcoo_todense(self.data, self.indices, shape=self.shape)

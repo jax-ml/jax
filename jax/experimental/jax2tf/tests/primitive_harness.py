@@ -1783,7 +1783,7 @@ def _make_linear_solve_harnesses():
     return lax.custom_linear_solve(matvec, b, solve, transpose_solve, symmetric)
 
   def explicit_jacobian_solve(matvec, b):
-    return lax.stop_gradient(jnp.linalg.solve(jax.api.jacobian(matvec)(b), b))
+    return lax.stop_gradient(jnp.linalg.solve(jax.jacobian(matvec)(b), b))
 
   def _make_harness(name,
                     *,
@@ -2079,7 +2079,7 @@ def _make_select_and_scatter_add_harness(name,
                                          padding=((0, 0), (0, 0), (0, 0)),
                                          nb_inactive_dims=0):
   ones = (1,) * len(shape)
-  cotangent_shape = jax.api.eval_shape(
+  cotangent_shape = jax.eval_shape(
       lambda x: lax._select_and_gather_add(x, x, lax.ge_p, window_dimensions,
                                            window_strides, padding, ones, ones),
       np.ones(shape, dtype)).shape
