@@ -248,13 +248,13 @@ def write_bazelrc(python_bin_path=None, remote_build=None,
               .format(cudnn_version=cudnn_version))
     if cuda_compute_capabilities:
       f.write(
-        f'build:cuda --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"')
+        f'build:cuda --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"\n')
     if rocm_toolkit_path:
       f.write("build --action_env ROCM_PATH=\"{rocm_toolkit_path}\"\n"
               .format(rocm_toolkit_path=rocm_toolkit_path))
     if rocm_amdgpu_targets:
       f.write(
-        f'build:rocm --action_env TF_ROCM_AMDGPU_TARGETS="{rocm_amdgpu_targets}"')
+        f'build:rocm --action_env TF_ROCM_AMDGPU_TARGETS="{rocm_amdgpu_targets}"\n')
     if cpu is not None:
       f.write("build --distinct_host_configuration=true\n")
       f.write(f"build --cpu={cpu}\n")
