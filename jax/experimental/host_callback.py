@@ -1215,28 +1215,31 @@ ad.primitive_jvps[outside_call_p] = _outside_call_jvp_rule
 
 
 def _outside_call_partial_eval_rule(trace, *args, **params):
-  # The args have been prepared by the id_tap_jvp_rule: primals, tangents
+  # partial eval is used after jvp and before transpose.
   transforms = params.get("transforms", ())
   if not transforms or transforms[-1] != ("jvp",):
     # We are not in the process of computing VJP
     return trace.default_process_primitive(outside_call_p, args, params)
 
+  # The args have been prepared by the id_tap_jvp_rule: primals, tangents. The
+  # result is a pair of the primal outputs and output tangents.
+  # One invariant that JAX requires is that if the primals arguments are known
+  # then the primal outputs must be known. So, if the primal arguments are known
+  # and some of the tangents are unknown, then we must split the tap into
+  # one for the primals (thus the output will be considered known), and a
+  # separate tap for the tangents.
   assert "has_token" not in params
   if not params["identity"]:
     raise NotImplementedError("differentiation rules are implemented only for id_tap, not for call.")
 
   assert len(args) % 2 == 0
   nr_primals = len(args) // 2
-
-  consts = [t.pval.get_known() for t in args]
-  if all(c is not None for c in consts):
-    return trace.default_process_primitive(outside_call_p, args, params)
-  # Split into two taps, one for the knowns and one for the unknowns
-  # We implement here only the case when primals are known, and we make a tap
-  # with just the primals.
   primals, tangents = util.split_list(args, [nr_primals])
-  c_primals_tapped, _ = util.split_list(consts, [nr_primals])
-  assert all([c is not None for c in c_primals_tapped])
+  all_primals_known = all(p.is_known() for p in primals)
+  some_tangents_unknown = any(not t.is_known() for t in tangents)
+
+  if not (all_primals_known and some_tangents_unknown):
+    return trace.default_process_primitive(outside_call_p, args, params)
 
   prims, _ = params["arg_treedef"].unflatten(args)
   _, primals_treedef = api.tree_flatten(prims)

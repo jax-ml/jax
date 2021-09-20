@@ -1841,7 +1841,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     jax.grad(loss)(1.0)  # should not fail
 
-  def test_tap_remat(self):
+  def test_tap_remat_0(self):
     def f(i, k):
       x = hcb.id_print(k + i, output_stream=testing_stream)
       return k * x
@@ -1855,6 +1855,47 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       3
       10"""
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+          dict(testcase_name=f"_use_remat={use_remat}_{grad_func}_use_result={use_result}",
+               use_result=use_result, use_remat=use_remat, grad_func=grad_func)
+          for use_result in [True, False]
+          for grad_func in ["grad", "value_and_grad"]
+          for use_remat in [True, False]))
+  def test_tap_remat(self, use_result=False, grad_func="grad", use_remat=False):
+    def f(x):
+      id_print_result = hcb.id_print(x, output_stream=testing_stream)
+      if use_result:
+        x = id_print_result
+      return 3. * x
+    grad_f = jax.grad if grad_func == "grad" else jax.value_and_grad
+    trans_f = jax.remat(f) if use_remat else f
+    print(jax.make_jaxpr(grad_f(trans_f))(2.))
+    grad_f(trans_f)(2.)
+
+    hcb.barrier_wait()
+
+    if not use_result:
+      if use_remat:
+        expected = ""
+      else:
+        # TODO: if not use_result then we should only see the primal when
+        # computing value_and_grad.
+        expected = "2."
+    elif use_remat:
+      expected = """
+        2.
+        2.
+        transforms: ['jvp', 'transpose']
+        3."""
+    else:
+      expected = """
+        2.
+        transforms: ['jvp', 'transpose']
+        3."""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+    testing_stream.reset()
 
   def test_tap_named_call(self):
     def tap_scalar(init, do_print=False):
