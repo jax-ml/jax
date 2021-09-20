@@ -1093,6 +1093,15 @@ class XMapErrorTest(jtu.JaxTestCase):
       fxy = xmap(f, in_axes=['a', ...], out_axes=['a', ...],
                  axis_resources={'a': ('x', 'x')})
 
+  @jtu.with_mesh([('y', 2)])
+  def testUndefinedAxisResource(self):
+    error = re.escape(
+        r"In-scope resources are insufficient to execute the xmapped function. "
+        r"The missing resources are: {'x'}")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x: x, in_axes=['a', ...], out_axes=['a', ...],
+           axis_resources={'a': 'x'})(jnp.zeros((4,)))
+
   @jtu.with_mesh([('x', 2)])
   def testNestedDifferentResources(self):
     @partial(xmap, in_axes={0: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'x'})
