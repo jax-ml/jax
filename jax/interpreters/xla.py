@@ -474,31 +474,32 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
         source_info=eqn.source_info)
     c.set_op_metadata(op_metadata)
     in_nodes = _flatmap(read, eqn.invars)
-    # TODO(jakevdp): migrate `translations` table to `translations_with_avals`
-    if eqn.primitive in backend_specific_translations[platform]:
-      rule = backend_specific_translations[platform][eqn.primitive]
-      ans = rule(c, *in_nodes, **eqn.params)
-    elif eqn.primitive in translations:
-      ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
-    elif eqn.primitive in translations_with_avals:
-      rule = translations_with_avals[eqn.primitive]
-      ans = rule(c, map(aval, eqn.invars), in_nodes, eqn.params)
-    elif eqn.primitive in initial_style_translations:
-      new_params = check_backend_params(eqn.params, backend)
-      rule = initial_style_translations[eqn.primitive]
-      ans = rule(c, axis_env, extend_name_stack(name_stack, eqn.primitive.name),
-                 map(aval, eqn.invars), backend, *in_nodes, **new_params)
-    elif eqn.primitive in parallel_translations:
-      rule = parallel_translations[eqn.primitive]
-      ans = rule(c, *in_nodes, axis_env=axis_env, platform=platform, **eqn.params)
-    elif eqn.primitive in call_translations:
-      new_params = check_backend_params(eqn.params, backend)
-      rule = call_translations[eqn.primitive]
-      ans = rule(c, axis_env, in_nodes,
-                 name_stack, backend=backend, **new_params)
-    else:
-      raise NotImplementedError(
-          f"XLA translation rule for primitive '{eqn.primitive.name}' not found")
+    with source_info_util.user_context(eqn.source_info):
+      # TODO(jakevdp): migrate `translations` table to `translations_with_avals`
+      if eqn.primitive in backend_specific_translations[platform]:
+        rule = backend_specific_translations[platform][eqn.primitive]
+        ans = rule(c, *in_nodes, **eqn.params)
+      elif eqn.primitive in translations:
+        ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
+      elif eqn.primitive in translations_with_avals:
+        rule = translations_with_avals[eqn.primitive]
+        ans = rule(c, map(aval, eqn.invars), in_nodes, eqn.params)
+      elif eqn.primitive in initial_style_translations:
+        new_params = check_backend_params(eqn.params, backend)
+        rule = initial_style_translations[eqn.primitive]
+        ans = rule(c, axis_env, extend_name_stack(name_stack, eqn.primitive.name),
+                   map(aval, eqn.invars), backend, *in_nodes, **new_params)
+      elif eqn.primitive in parallel_translations:
+        rule = parallel_translations[eqn.primitive]
+        ans = rule(c, *in_nodes, axis_env=axis_env, platform=platform, **eqn.params)
+      elif eqn.primitive in call_translations:
+        new_params = check_backend_params(eqn.params, backend)
+        rule = call_translations[eqn.primitive]
+        ans = rule(c, axis_env, in_nodes,
+                   name_stack, backend=backend, **new_params)
+      else:
+        raise NotImplementedError(
+            f"XLA translation rule for primitive '{eqn.primitive.name}' not found")
 
     assert isinstance(ans, xe.XlaOp)
     c.get_shape(ans)  # force xla to do shape error checking
