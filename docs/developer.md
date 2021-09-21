@@ -92,8 +92,9 @@ is needed. See [Installing Bazel on Windows](https://docs.bazel.build/versions/m
 for more details. Install the following packages:
 
 ```
-pacman -S patch realpath
+pacman -S patch coreutils
 ```
+Once coreutils is installed, the realpath command should be present in your shell's path.
 
 Once everything is installed. Open PowerShell, and make sure MSYS2 is in the
 path of the current session. Ensure `bazel`, `patch` and `realpath` are
@@ -105,7 +106,6 @@ python .\build\build.py `
   --enable_cuda `
   --cuda_path='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1' `
   --cudnn_path='C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v10.1' `
-  --cuda_compute_capabilities='6.1' `
   --cuda_version='10.1' `
   --cudnn_version='7.6.5'
 ```
