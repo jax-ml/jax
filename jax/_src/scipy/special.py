@@ -17,6 +17,7 @@ from functools import partial
 import numpy as np
 import scipy.special as osp_special
 
+import jax
 from jax._src import api
 from jax import jit
 from jax import lax, core
@@ -140,7 +141,8 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
     if not np.issubdtype(out.dtype, np.complexfloating):
       # Use jnp.array(nan) to avoid false positives in debug_nans
       # (see https://github.com/google/jax/issues/7634)
-      out = jnp.where(sign < 0, jnp.array(np.nan, dtype=out.dtype), out)
+      with jax.debug_nans(False):
+        out = jnp.where(sign < 0, jnp.array(np.nan, dtype=out.dtype), out)
   return out
 
 

@@ -3005,6 +3005,11 @@ class APITest(jtu.JaxTestCase):
 
     self.assertEqual(count[0], n)
 
+  def test_jnp_array_doesnt_device_put(self):
+    with jtu.count_device_put() as count:
+      api.make_jaxpr(lambda: jnp.array(3))()
+    self.assertEqual(count[0], 0)
+
 
 class RematTest(jtu.JaxTestCase):
 

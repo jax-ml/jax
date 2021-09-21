@@ -23,6 +23,13 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Many more `jax.numpy` functions now require array-like inputs, and will error
     if passed a list ({jax-issue}`#7747` {jax-issue}`#7802` {jax-issue}`#7907`).
     See {jax-issue}`#7737` for a discussion of the rationale behind this change.
+  * When inside a transformation such as `jax.jit`, `jax.numpy.array` always
+    stages the array it produces into the traced computation. Previously
+    `jax.numpy.array` would sometimes produce a on-device array, even under
+    a `jax.jit` decorator. This change may break code that used JAX arrays to
+    perform shape or index computations that must be known statically; the
+    workaround is to perform such computations using classic NumPy arrays
+    instead.
 * New features:
   * Added {func}`jax.numpy.insert` implementation ({jax-issue}`#7936`).
 

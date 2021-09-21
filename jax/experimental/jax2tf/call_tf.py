@@ -30,10 +30,10 @@ import jax
 from jax import core
 from jax import dlpack
 from jax import dtypes
-from jax import numpy as jnp
 from jax import tree_util
 from jax._src import util
 from jax._src import ad_util
+from jax._src.lax.lax import _device_put_raw
 from jax.interpreters import xla
 from jax.lib import xla_client
 from . import jax2tf as jax2tf_internal
@@ -217,7 +217,7 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
         res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
         return jax.dlpack.from_dlpack(res_dlpack)
 
-    return jnp.asarray(np.asarray(res_tf))
+    return _device_put_raw(np.asarray(res_tf))
 
   return list(map(_res_tf_to_jax, res_tf_flat))
 
