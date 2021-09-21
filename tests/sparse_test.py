@@ -391,7 +391,9 @@ class BCOOTest(jtu.JaxTestCase):
     n_sparse = M.ndim - n_batch - n_dense
     nse = int(_bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
     data, indices = sparse.bcoo_fromdense(M, n_batch=n_batch, n_dense=n_dense)
-    # TODO: test fromdense JIT
+    data_jit, indices_jit = jit(partial(sparse.bcoo_fromdense, nse=nse, n_batch=n_batch, n_dense=n_dense))(M)
+    self.assertArraysEqual(data, data_jit)
+    self.assertArraysEqual(indices, indices_jit)
 
     assert data.dtype == dtype
     assert data.shape == shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:]
