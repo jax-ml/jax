@@ -18,7 +18,6 @@ from jax._src.util import (
   HashableFunction as HashableFunction,
   as_hashable_function as as_hashable_function,
   cache as cache,
-  partial as partial,
   safe_map as safe_map,
   safe_zip as safe_zip,
   split_dict as split_dict,
