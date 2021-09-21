@@ -525,10 +525,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIsInstance(y, jnp.ndarray)
     self.assertIsInstance(y, pxla.ShardedDeviceArray)
     self.assertIsInstance(y, jax.interpreters.xla.DeviceArray)
+    self.assertNotIsInstance(y, np.ndarray)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
     z = f(y)
     self.assertIsInstance(z, pxla.ShardedDeviceArray)
     self.assertIsInstance(z, jax.interpreters.xla.DeviceArray)
+    self.assertNotIsInstance(z, np.ndarray)
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can pass in a regular DeviceArray

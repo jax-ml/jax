@@ -24,9 +24,9 @@ transformations for NumPy primitives can be derived from the transformation
 rules for the underlying :code:`lax` primitives.
 """
 
+import abc
 import builtins
 import collections
-import collections.abc
 from functools import partial
 import operator
 import types
@@ -94,24 +94,27 @@ get_printoptions = np.get_printoptions
 printoptions = np.printoptions
 set_printoptions = np.set_printoptions
 
-# We want isinstance(x, np.ndarray) checks in user code to work with the our
-# array-like types, including DeviceArray and UnshapedArray (i.e. the abstract
-# array base class). We can override the isinstance behavior directly, without
-# having the complexity of multiple inheritance on those classes, by defining
-# the ndarray class to have a metaclass with special __instancecheck__ behavior.
-_arraylike_types = (np.ndarray, UnshapedArray, DeviceArray)
+# ndarray is defined as an virtual abstract base class.
 
-class _ArrayMeta(type(np.ndarray)):  # type: ignore
+class ArrayMeta(abc.ABCMeta):
   """Metaclass for overriding ndarray isinstance checks."""
 
   def __instancecheck__(self, instance):
+    # Allow tracer instances with avals that are instances of UnshapedArray.
+    # We could instead just declare Tracer an instance of the ndarray type, but
+    # there can be traced values that are not arrays. The main downside here is
+    # that isinstance(x, ndarray) might return true but
+    # issubclass(type(x), ndarray) might return false for an array tracer.
     try:
-      return isinstance(instance.aval, _arraylike_types)
+      return (hasattr(instance, "aval") and
+              isinstance(instance.aval, UnshapedArray))
     except AttributeError:
-      return isinstance(instance, _arraylike_types)
+      super().__instancecheck__(instance)
 
-class ndarray(np.ndarray, metaclass=_ArrayMeta):
+
+class ndarray(metaclass=ArrayMeta):
   dtype: np.dtype
+  ndim: int
   shape: Tuple[int, ...]
   size: int
 
@@ -119,6 +122,249 @@ class ndarray(np.ndarray, metaclass=_ArrayMeta):
                order=None):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
                     " Use jax.numpy.array, or jax.numpy.zeros instead.")
+
+  @abc.abstractmethod
+  def __getitem__(self, key, indices_are_sorted=False,
+                  unique_indices=False): ...
+  @abc.abstractmethod
+  def __setitem__(self, key, value): ...
+  @abc.abstractmethod
+  def __len__(self): ...
+  @abc.abstractmethod
+  def __iter__(self): ...
+  @abc.abstractmethod
+  def __reversed__(self): ...
+
+  # Comparisons
+  @abc.abstractmethod
+  def __lt__(self, other): ...
+  @abc.abstractmethod
+  def __le__(self, other): ...
+  @abc.abstractmethod
+  def __eq__(self, other): ...
+  @abc.abstractmethod
+  def __ne__(self, other): ...
+  @abc.abstractmethod
+  def __gt__(self, other): ...
+  @abc.abstractmethod
+  def __ge__(self, other): ...
+
+  # Unary arithmetic
+
+  @abc.abstractmethod
+  def __neg__(self): ...
+  @abc.abstractmethod
+  def __pos__(self): ...
+  @abc.abstractmethod
+  def __abs__(self): ...
+  @abc.abstractmethod
+  def __invert__(self): ...
+
+  # Binary arithmetic
+
+  @abc.abstractmethod
+  def __add__(self, other): ...
+  @abc.abstractmethod
+  def __sub__(self, other): ...
+  @abc.abstractmethod
+  def __mul__(self, other): ...
+  @abc.abstractmethod
+  def __matmul__(self, other): ...
+  @abc.abstractmethod
+  def __truediv__(self, other): ...
+  @abc.abstractmethod
+  def __floordiv__(self, other): ...
+  @abc.abstractmethod
+  def __mod__(self, other): ...
+  @abc.abstractmethod
+  def __divmod__(self, other): ...
+  @abc.abstractmethod
+  def __pow__(self, other): ...
+  @abc.abstractmethod
+  def __lshift__(self, other): ...
+  @abc.abstractmethod
+  def __rshift__(self, other): ...
+  @abc.abstractmethod
+  def __and__(self, other): ...
+  @abc.abstractmethod
+  def __xor__(self, other): ...
+  @abc.abstractmethod
+  def __or__(self, other): ...
+
+  @abc.abstractmethod
+  def __radd__(self, other): ...
+  @abc.abstractmethod
+  def __rsub__(self, other): ...
+  @abc.abstractmethod
+  def __rmul__(self, other): ...
+  @abc.abstractmethod
+  def __rmatmul__(self, other): ...
+  @abc.abstractmethod
+  def __rtruediv__(self, other): ...
+  @abc.abstractmethod
+  def __rfloordiv__(self, other): ...
+  @abc.abstractmethod
+  def __rmod__(self, other): ...
+  @abc.abstractmethod
+  def __rdivmod__(self, other): ...
+  @abc.abstractmethod
+  def __rpow__(self, other): ...
+  @abc.abstractmethod
+  def __rlshift__(self, other): ...
+  @abc.abstractmethod
+  def __rrshift__(self, other): ...
+  @abc.abstractmethod
+  def __rand__(self, other): ...
+  @abc.abstractmethod
+  def __rxor__(self, other): ...
+  @abc.abstractmethod
+  def __ror__(self, other): ...
+
+  @abc.abstractmethod
+  def __bool__(self): ...
+  @abc.abstractmethod
+  def __complex__(self): ...
+  @abc.abstractmethod
+  def __int__(self): ...
+  @abc.abstractmethod
+  def __float__(self): ...
+  @abc.abstractmethod
+  def __round__(self, ndigits=None): ...
+
+  @abc.abstractmethod
+  def __index__(self): ...
+
+  # np.ndarray methods:
+  @abc.abstractmethod
+  def all(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+          keepdims=None): ...
+  @abc.abstractmethod
+  def any(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+          keepdims=None): ...
+  @abc.abstractmethod
+  def argmax(self, axis: Optional[int] = None, out=None): ...
+  @abc.abstractmethod
+  def argmin(self, axis: Optional[int] = None, out=None): ...
+  @abc.abstractmethod
+  def argpartition(self, kth, axis=-1, kind='introselect', order=None): ...
+  @abc.abstractmethod
+  def argsort(self, axis: Optional[int] = -1, kind='quicksort', order=None): ...
+  @abc.abstractmethod
+  def astype(self, dtype): ...
+  @abc.abstractmethod
+  def choose(self, choices, out=None, mode='raise'): ...
+  @abc.abstractmethod
+  def clip(self, a_min=None, a_max=None, out=None): ...
+  @abc.abstractmethod
+  def compress(self, condition, axis: Optional[int] = None, out=None): ...
+  @abc.abstractmethod
+  def conj(self): ...
+  @abc.abstractmethod
+  def conjugate(self): ...
+  @abc.abstractmethod
+  def copy(self): ...
+  @abc.abstractmethod
+  def cumprod(self, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+              dtype=None, out=None): ...
+  @abc.abstractmethod
+  def cumsum(self, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+             dtype=None, out=None): ...
+  @abc.abstractmethod
+  def diagonal(self, offset=0, axis1: int = 0, axis2: int = 1): ...
+  @abc.abstractmethod
+  def dot(self, b, *, precision=None): ...
+  @abc.abstractmethod
+  def flatten(self): ...
+  @property
+  @abc.abstractmethod
+  def imag(self): ...
+  @abc.abstractmethod
+  def item(self, *args): ...
+  @abc.abstractmethod
+  def max(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+          keepdims=None, initial=None, where=None): ...
+  @abc.abstractmethod
+  def mean(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+           out=None, keepdims=False, *, where=None,): ...
+  @abc.abstractmethod
+  def min(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+          keepdims=None, initial=None, where=None): ...
+  @property
+  @abc.abstractmethod
+  def nbytes(self): ...
+  @abc.abstractmethod
+  def nonzero(self, *, size=None, fill_value=None): ...
+  @abc.abstractmethod
+  def prod(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+           out=None, keepdims=None, initial=None, where=None): ...
+  @abc.abstractmethod
+  def ptp(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, out=None,
+          keepdims=False,): ...
+  @abc.abstractmethod
+  def ravel(self, order='C'): ...
+  @property
+  @abc.abstractmethod
+  def real(self): ...
+  @abc.abstractmethod
+  def repeat(self, repeats, axis: Optional[int] = None, *,
+             total_repeat_length=None): ...
+  @abc.abstractmethod
+  def reshape(self, *args, order='C'): ...
+  @abc.abstractmethod
+  def round(self, decimals=0, out=None): ...
+  @abc.abstractmethod
+  def searchsorted(self, v, side='left', sorter=None): ...
+  @abc.abstractmethod
+  def sort(self, axis: Optional[int] = -1, kind='quicksort', order=None): ...
+  @abc.abstractmethod
+  def squeeze(self, axis: Optional[Union[int, Tuple[int, ...]]] = None): ...
+  @abc.abstractmethod
+  def std(self, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+          dtype=None, out=None, ddof=0, keepdims=False, *, where=None): ...
+  @abc.abstractmethod
+  def sum(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+          out=None, keepdims=None, initial=None, where=None): ...
+  @abc.abstractmethod
+  def swapaxes(self, axis1: int, axis2: int): ...
+  @abc.abstractmethod
+  def take(self, indices, axis: Optional[int] = None, out=None,
+           mode=None): ...
+  @abc.abstractmethod
+  def tobytes(self, order='C'): ...
+  @abc.abstractmethod
+  def tolist(self): ...
+  @abc.abstractmethod
+  def trace(self, offset=0, axis1: int = 0, axis2: int = 1, dtype=None,
+            out=None): ...
+  @abc.abstractmethod
+  def transpose(self, *args): ...
+  @abc.abstractmethod
+  def var(self, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+          dtype=None, out=None, ddof=0, keepdims=False, *, where=None): ...
+  @abc.abstractmethod
+  def view(self, dtype=None, type=None): ...
+
+  # Even though we don't always support the NumPy array protocol, e.g., for
+  # tracer types, for type checking purposes we must declare support so we
+  # implement the NumPy ArrayLike protocol.
+  def __array__(self): ...
+
+  # JAX extensions
+  @property
+  @abc.abstractmethod
+  def at(self): ...
+  @property
+  @abc.abstractmethod
+  def aval(self): ...
+  @property
+  @abc.abstractmethod
+  def weak_type(self) -> bool: ...
+
+
+ndarray.register(DeviceArray)
+ndarray.register(_CppDeviceArray)
+ndarray.register(pxla._SDA_BASE_CLASS)
+
 
 
 iscomplexobj = np.iscomplexobj
@@ -300,7 +546,8 @@ def _result_dtype(op, *args):
 
 
 def _arraylike(x):
-  return isinstance(x, ndarray) or hasattr(x, '__jax_array__') or isscalar(x)
+  return (isinstance(x, np.ndarray) or isinstance(x, ndarray) or
+          hasattr(x, '__jax_array__') or isscalar(x))
 
 def _check_arraylike(fun_name, *args):
   """Check if all args fit JAX's definition of arraylike."""
@@ -1974,7 +2221,14 @@ def broadcast_to(arr, shape):
 def _split(op, ary, indices_or_sections, axis=0):
   axis = core.concrete_or_error(int, axis, f"in jax.numpy.{op} argument `axis`")
   size = ary.shape[axis]
-  if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
+  if isinstance(indices_or_sections, (tuple, list)):
+    indices_or_sections = np.array(
+        [core.concrete_or_error(np.int64, i_s, f"in jax.numpy.{op} argument 1")
+         for i_s in indices_or_sections], np.int64)
+    split_indices = np.concatenate([[np.int64(0)], indices_or_sections,
+                                    [np.int64(size)]])
+  elif (isinstance(indices_or_sections, (np.ndarray, ndarray)) and
+        indices_or_sections.ndim > 0):
     indices_or_sections = np.array(
         [core.concrete_or_error(np.int64, i_s, f"in jax.numpy.{op} argument 1")
          for i_s in indices_or_sections], np.int64)
@@ -3060,7 +3314,7 @@ def stack(arrays, axis: int = 0, out=None):
     raise ValueError("Need at least one array to stack.")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.stack is not supported.")
-  if isinstance(arrays, ndarray):
+  if isinstance(arrays, (np.ndarray, ndarray)):
     axis = _canonicalize_axis(axis, arrays.ndim)
     return concatenate(expand_dims(arrays, axis + 1), axis=axis)
   else:
@@ -3105,7 +3359,7 @@ def _concatenate_array(arr, axis: int):
 
 @_wraps(np.concatenate)
 def concatenate(arrays, axis: int = 0):
-  if isinstance(arrays, ndarray):
+  if isinstance(arrays, (np.ndarray, ndarray)):
     return _concatenate_array(arrays, axis)
   _check_arraylike("concatenate", *arrays)
   if not len(arrays):
@@ -3131,7 +3385,7 @@ def concatenate(arrays, axis: int = 0):
 
 @_wraps(np.vstack)
 def vstack(tup):
-  if isinstance(tup, ndarray):
+  if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_2d)(tup)
   else:
     arrs = [atleast_2d(m) for m in tup]
@@ -3141,7 +3395,7 @@ row_stack = vstack
 
 @_wraps(np.hstack)
 def hstack(tup):
-  if isinstance(tup, ndarray):
+  if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_1d)(tup)
     arr0_ndim = arrs.ndim - 1
   else:
@@ -3152,7 +3406,7 @@ def hstack(tup):
 
 @_wraps(np.dstack)
 def dstack(tup):
-  if isinstance(tup, ndarray):
+  if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(atleast_3d)(tup)
   else:
     arrs = [atleast_3d(m) for m in tup]
@@ -3161,7 +3415,7 @@ def dstack(tup):
 
 @_wraps(np.column_stack)
 def column_stack(tup):
-  if isinstance(tup, ndarray):
+  if isinstance(tup, (np.ndarray, ndarray)):
     arrs = jax.vmap(lambda x: atleast_2d(x).T)(tup) if tup.ndim < 3 else tup
   else:
     arrs = [atleast_2d(arr).T if arr.ndim < 2 else arr for arr in map(asarray, tup)]
@@ -5520,7 +5774,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if isscalar(e) or isinstance(e, (Sequence, ndarray)))
+      if isscalar(e) or isinstance(e, (Sequence, ndarray, np.ndarray)))
     if normalize_indices:
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                         for e, i, j in advanced_pairs)
@@ -5692,7 +5946,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
-  return (isinstance(x, ndarray) and np.ndim(x) != 0
+  return (isinstance(x, (np.ndarray, ndarray)) and np.ndim(x) != 0
           or isinstance(x, (Sequence, slice))
           or x is Ellipsis or x is None)
 
@@ -5701,7 +5955,7 @@ def _eliminate_deprecated_list_indexing(idx):
   # non-tuple sequence containing slice objects, [Ellipses, or newaxis
   # objects]". Detects this and raises a TypeError.
   if not isinstance(idx, tuple):
-    if isinstance(idx, Sequence) and not isinstance(idx, ndarray):
+    if isinstance(idx, Sequence) and not isinstance(idx, (ndarray, np.ndarray)):
       # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
       # others are converted to arrays, based on a set of somewhat convoluted heuristics
       # (See https://github.com/numpy/numpy/blob/v1.19.2/numpy/core/src/multiarray/mapping.c#L179-L343)
@@ -5773,7 +6027,8 @@ def _is_int_arraylike(x):
 
 def _is_scalar(x):
   """Checks if a Python or NumPy scalar."""
-  return  np.isscalar(x) or (isinstance(x, ndarray) and np.ndim(x) == 0)
+  return  np.isscalar(x) or (isinstance(x, (np.ndarray, ndarray))
+                             and np.ndim(x) == 0)
 
 def _canonicalize_tuple_index(arr_ndim, idx):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
@@ -6288,11 +6543,12 @@ def _not_implemented(fun):
 # functions, which can themselves handle instances from any of these classes.
 
 _scalar_types = (int, float, complex, np.generic)
+_accepted_binop_types = (int, float, complex, np.generic, np.ndarray, ndarray)
 
 def _defer_to_unrecognized_arg(binary_op):
   # Ensure that other array types have the chance to override arithmetic.
   def deferring_binary_op(self, other):
-    if not isinstance(other, _scalar_types + _arraylike_types + (core.Tracer,)):
+    if not isinstance(other, _accepted_binop_types):
       return NotImplemented
     return binary_op(self, other)
   return deferring_binary_op
