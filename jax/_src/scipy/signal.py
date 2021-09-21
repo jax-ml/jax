@@ -45,7 +45,7 @@ def _convolve_nd(in1, in2, mode, *, precision):
   if swap:
     in1, in2 = in2, in1
   shape = in2.shape
-  in2 = in2[tuple(slice(None, None, -1) for s in shape)]
+  in2 = jnp.flip(in2)
 
   if mode == 'valid':
     padding = [(0, 0) for s in shape]
@@ -99,22 +99,22 @@ def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0,
   same_shape =  all(s1 == s2 for s1, s2 in zip(in1.shape, in2.shape))
 
   if mode == "same":
-    in1, in2 = in1[::-1, ::-1], in2.conj()
-    result = _convolve_nd(in1, in2, mode, precision=precision)[::-1, ::-1]
+    in1, in2 = jnp.flip(in1), in2.conj()
+    result = jnp.flip(_convolve_nd(in1, in2, mode, precision=precision))
   elif mode == "valid":
     if swap and not same_shape:
-      in1, in2 = in2[::-1, ::-1], in1.conj()
+      in1, in2 = jnp.flip(in2), in1.conj()
       result = _convolve_nd(in1, in2, mode, precision=precision)
     else:
-      in1, in2 = in1[::-1, ::-1], in2.conj()
-      result = _convolve_nd(in1, in2, mode, precision=precision)[::-1, ::-1]
+      in1, in2 = jnp.flip(in1), in2.conj()
+      result = jnp.flip(_convolve_nd(in1, in2, mode, precision=precision))
   else:
     if swap:
-      in1, in2 = in2[::-1, ::-1], in1.conj()
+      in1, in2 = jnp.flip(in2), in1.conj()
       result = _convolve_nd(in1, in2, mode, precision=precision).conj()
     else:
-      in1, in2 = in1[::-1, ::-1], in2.conj()
-      result = _convolve_nd(in1, in2, mode, precision=precision)[::-1, ::-1]
+      in1, in2 = jnp.flip(in1), in2.conj()
+      result = jnp.flip(_convolve_nd(in1, in2, mode, precision=precision))
   return result
 
 
