@@ -1075,7 +1075,7 @@ def _conv(x, y, mode, op, precision):
   elif op == 'convolve':
     if len(x) < len(y):
       x, y = y, x
-    y = y[::-1]
+    y = flip(y)
 
   if mode == 'valid':
     padding = [(0, 0)]
