@@ -879,6 +879,14 @@ class UpdateOps(enum.Enum):
     else:
       return default_dtypes
 
+def _update_tol(op):
+  if op == UpdateOps.POW:
+    tol = {np.complex64: 1e-4 if jtu.device_under_test() == "tpu" else 1e-5,
+           np.complex128: 1e-14}
+  else:
+    tol = {np.complex128: 1e-14}
+  return tol
+
 @jtu.with_config(jax_numpy_rank_promotion="raise")
 class IndexedUpdateTest(jtu.JaxTestCase):
 
@@ -905,8 +913,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
-    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker,
-                            tol={np.complex128: 1e-14})
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
     self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
@@ -927,9 +934,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
-    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y, unique_indices=True)
-    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker,
-                            tol={np.complex128: 1e-14})
+    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y,
+                                             unique_indices=True)
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
     self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
@@ -953,7 +960,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     jax_fn = lambda x, y: UpdateOps.sugar_fn(
       op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
     self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True,
-                            tol={np.complex128: 1e-14})
+                            tol=_update_tol(op))
     self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
@@ -975,8 +982,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
     jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
-    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker,
-                            tol={np.complex128: 1e-14})
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
     self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
@@ -1016,7 +1022,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testAdvancedIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                                 indexer, op):
     rng = jtu.rand_default(self.rng())
-    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y, unique_indices=True)
+    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y,
+                                             unique_indices=True)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
     check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
