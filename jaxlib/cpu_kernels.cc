@@ -97,8 +97,14 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "lapack_cgeev", ComplexGeev<std::complex<float>>::Kernel, "Host");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "lapack_zgeev", ComplexGeev<std::complex<double>>::Kernel, "Host");
-
-
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("lapack_sgees",
+                                         RealGees<float>::Kernel, "Host");
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("lapack_dgees",
+                                         RealGees<double>::Kernel, "Host");
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
+    "lapack_cgees", ComplexGees<std::complex<float>>::Kernel, "Host");
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
+    "lapack_zgees", ComplexGees<std::complex<double>>::Kernel, "Host");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("pocketfft", PocketFft, "Host");
 
 }  // namespace
