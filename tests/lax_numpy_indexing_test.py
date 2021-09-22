@@ -1058,7 +1058,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for dtype in float_dtypes
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else float_dtypes)))
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj,phawkins): tpu issues
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                               indexer, op):
     rng = jtu.rand_default(self.rng())
