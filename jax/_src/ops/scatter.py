@@ -75,7 +75,6 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
 def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
                   indices_are_sorted, unique_indices, normalize_indices):
   dtype = lax.dtype(x)
-  x, y = jnp._promote_dtypes(x, y)
 
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
@@ -85,6 +84,8 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   # to handle cases like zeros(0)[array([], int32)].
   if core.is_empty_shape(indexer.slice_shape):
     return x
+
+  x, y = jnp._promote_dtypes(x, y)
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
