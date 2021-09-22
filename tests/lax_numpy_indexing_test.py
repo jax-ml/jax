@@ -154,72 +154,6 @@ STATIC_INDEXING_TESTS = [
     ]),
 ]
 
-STATIC_INDEXING_GRAD_TESTS = [
-    ("OneIntIndex", [
-        IndexSpec(shape=(3,), indexer=1),
-        IndexSpec(shape=(3, 3), indexer=0),
-        IndexSpec(shape=(3, 4, 5), indexer=2),
-        IndexSpec(shape=(3,), indexer=-1),
-        IndexSpec(shape=(3,), indexer=-2),
-    ]),
-    ("TwoIntIndices", [
-        IndexSpec(shape=(3, 3), indexer=(2, 1)),
-        IndexSpec(shape=(3, 4, 5), indexer=(1, 2)),
-        IndexSpec(shape=(3, 4, 5), indexer=(-1, 2)),
-    ]),
-    ("ThreeIntIndices", [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
-    ("OneSliceIndex", [
-        IndexSpec(shape=(5,), indexer=slice(1, 3)),
-        IndexSpec(shape=(5,), indexer=slice(1, -1)),
-        IndexSpec(shape=(5,), indexer=slice(None, -1)),
-        IndexSpec(shape=(5,), indexer=slice(None, None, None)),
-        IndexSpec(shape=(5, 4), indexer=slice(1, 3)),
-        IndexSpec(shape=(5, 4), indexer=slice(1, None)),
-        IndexSpec(shape=(5, 4), indexer=slice(None, 3)),
-        IndexSpec(shape=(5, 4), indexer=slice(-3, None)),
-    ]),
-    ("TwoSliceIndices", [
-        IndexSpec(shape=(5, 4), indexer=(slice(1, 3), slice(0, 2))),
-        IndexSpec(shape=(5, 4), indexer=(slice(1, None), slice(None, 2))),
-        IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, 2))),
-        IndexSpec(shape=(5, 4, 3), indexer=(slice(1, 3), slice(0, None))),
-        IndexSpec(shape=(5, 4, 3), indexer=(slice(1, None), slice(0, 2))),
-    ]),
-    ("OneColonIndex", [
-        IndexSpec(shape=(3,), indexer=slice(None)),
-        IndexSpec(shape=(3, 4), indexer=slice(None)),
-    ]),
-    ("MultipleColonIndices", [
-        IndexSpec(shape=(3, 4), indexer=(slice(None), slice(None))),
-        IndexSpec(shape=(3, 4, 5), indexer=(slice(None), slice(None))),
-    ]),
-    ("MixedSliceIndices", [
-        IndexSpec(shape=(5, 4), indexer=(slice(None), slice(0, 2))),
-        IndexSpec(shape=(5, 4), indexer=(1, slice(None))),
-    ]),
-    ("EllipsisIndex", [
-        IndexSpec(shape=(3,), indexer=Ellipsis),
-        IndexSpec(shape=(3, 4), indexer=Ellipsis),
-        IndexSpec(shape=(3, 4, 5), indexer=(0, Ellipsis)),
-        IndexSpec(shape=(3, 4, 5), indexer=(Ellipsis, 2, 3)),
-    ]),
-    ("NoneIndex", [
-        IndexSpec(shape=(), indexer=None),
-        IndexSpec(shape=(), indexer=(None, None)),
-        IndexSpec(shape=(), indexer=(Ellipsis, None)),
-        IndexSpec(shape=(3,), indexer=None),
-        IndexSpec(shape=(3, 4), indexer=None),
-        IndexSpec(shape=(3, 4), indexer=(Ellipsis, None)),
-        IndexSpec(shape=(3, 4), indexer=(0, None, Ellipsis)),
-        IndexSpec(shape=(3, 4, 5), indexer=(1, None, Ellipsis)),
-    ]),
-    # TODO(mattjj): these fail for uninteresting dtype reasons
-    # ("EmptyIndex",
-    #  [IndexSpec(shape=(), indexer=()),
-    #   IndexSpec(shape=(3,), indexer=()),
-    #   IndexSpec(shape=(3, 4), indexer=()),
-    #   ]),
-]
 
 ADVANCED_INDEXING_TESTS = [
     ("One1DIntArrayIndex",
@@ -464,7 +398,7 @@ class IndexingTest(jtu.JaxTestCase):
                                             jtu.format_shape_dtype_string(
                                                 shape, dtype), indexer),
       "shape": shape, "dtype": dtype, "indexer": indexer
-  } for name, index_specs in STATIC_INDEXING_GRAD_TESTS
+  } for name, index_specs in STATIC_INDEXING_TESTS
     for shape, indexer in index_specs
     for dtype in float_dtypes)
   def testStaticIndexingGrads(self, shape, dtype, indexer):
