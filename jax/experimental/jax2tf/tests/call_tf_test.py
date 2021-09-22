@@ -818,18 +818,8 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x), f_rt(x))
     # TODO: clean this up b/191117111: it should fail with a clear error
     # The following results in a confusing error:
-    # TypeError: An op outside of the function building code is being passed
-    # a "Graph" tensor. It is possible to have Graph tensors
-    # leak out of the function building context by including a
-    # tf.init_scope in your function building code.
-    # For example, the following function will fail:
-    #   @tf.function
-    #   def has_init_scope():
-    #     my_constant = tf.constant(1.)
-    #     with tf.init_scope():
-    #       added = my_constant * 2
-    # The graph tensor has name: args_0:0
-    with self.assertRaisesRegex(TypeError, "An op outside of the function"):
+    # TypeError: tf.Graph captured an external symbolic tensor.
+    with self.assertRaises(TypeError):
       _ = jax.grad(f_rt)(x)
 
 
