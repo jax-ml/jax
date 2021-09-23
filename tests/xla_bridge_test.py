@@ -17,8 +17,8 @@ import warnings
 
 from absl.testing import absltest
 from jax import test_util as jtu
-from jax.lib import xla_bridge as xb
-from jax.lib import xla_client as xc
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 
 mock = absltest.mock
 
@@ -79,8 +79,8 @@ class XlaBridgeTest(absltest.TestCase):
         msg = str(w[-1].message)
         self.assertIn("Did you run your code on all TPU hosts?", msg)
 
-      with mock.patch(
-          "jax.lib.xla_client.make_tpu_client", side_effect=_mock_tpu_client):
+      with mock.patch("jax._src.lib.xla_client.make_tpu_client",
+                      side_effect=_mock_tpu_client):
         xb.tpu_client_timer_callback(0.01)
 
 

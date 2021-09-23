@@ -19,7 +19,7 @@ from absl.testing import absltest, parameterized
 import jax
 from jax.config import config
 import jax.dlpack
-from jax.lib import xla_bridge, xla_client
+from jax._src.lib import xla_bridge, xla_client
 import jax.numpy as jnp
 from jax import test_util as jtu
 

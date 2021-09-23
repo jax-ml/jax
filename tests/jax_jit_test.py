@@ -19,7 +19,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import api
 from jax import dtypes
-from jax import lib as jaxlib
+from jax._src import lib as jaxlib
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config

@@ -31,6 +31,7 @@ from jax.experimental.jax2tf.tests import tf_test_util
 from jax.interpreters import sharded_jit
 from jax.interpreters.sharded_jit import PartitionSpec as P
 import jax.numpy as jnp
+import jax._src.lib.xla_bridge
 
 import numpy as np
 
@@ -80,12 +81,12 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     self.AssertShardingAnnotations("JAX before optimizations", jax_hlo, expected)
 
     if jtu.device_under_test() == "tpu":
-      backend = jax.lib.xla_bridge.get_backend()
+      backend = jax._src.lib.xla_bridge.get_backend()
       num_replicas = 1
       device_assignment = np.arange(num_partitions * num_replicas)
       device_assignment = np.reshape(device_assignment, (-1, num_partitions))
       use_spmd_partitioning = num_partitions > 1
-      compile_options = jax.lib.xla_bridge.get_compile_options(
+      compile_options = jax._src.lib.xla_bridge.get_compile_options(
           num_replicas=num_replicas,
           num_partitions=num_partitions,
           device_assignment=device_assignment,

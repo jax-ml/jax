@@ -37,7 +37,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax import tree_util
-from jax.lib import xla_bridge
+from jax._src.lib import xla_bridge
 
 import numpy as np
 
@@ -162,7 +162,7 @@ def helper_set_hlo_dump():
 
 
 def helper_print_optimized_hlo(fun, *args):
-  backend = jax.lib.xla_bridge.get_backend()
+  backend = xla_bridge.get_backend()
   c = jax.xla_computation(fun)(*args)
   print(re.sub(r", metadata.*", "",
                backend.compile(c).hlo_modules()[0].to_string()))
@@ -177,13 +177,13 @@ def helper_log_ir(name,
   jax_comp = jax.xla_computation(f_jax)(*args)
   print(f"HLO[{name}]: {jax_comp.as_hlo_text()}")
 
-  backend = jax.lib.xla_bridge.get_backend()
+  backend = xla_bridge.get_backend()
   if num_partitions is not None:
     num_replicas = 1
     device_assignment = np.arange(num_partitions * num_replicas)
     device_assignment = np.reshape(device_assignment, (-1, num_partitions))
     use_spmd_partitioning = num_partitions > 1
-    compile_options = jax.lib.xla_bridge.get_compile_options(
+    compile_options = xla_bridge.get_compile_options(
         num_replicas=num_replicas,
         num_partitions=num_partitions,
         device_assignment=device_assignment,

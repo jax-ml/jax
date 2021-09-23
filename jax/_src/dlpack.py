@@ -15,8 +15,8 @@
 from jax import core
 from jax import numpy as jnp
 from jax.interpreters import xla
-from jax.lib import xla_client
-from jax.lib import xla_bridge
+from jax._src.lib import xla_client
+from jax._src.lib import xla_bridge
 
 SUPPORTED_DTYPES = set([jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                         jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,

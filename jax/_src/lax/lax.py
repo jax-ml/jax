@@ -50,9 +50,10 @@ from jax.interpreters import masking
 from jax._src.util import (cache, safe_zip, prod, safe_map, canonicalize_axis,
                            split_list)
 from jax.tree_util import tree_map
-from jax.lib import pytree
-from jax.lib import xla_bridge
-from jax.lib import xla_client
+import jax._src.lib
+from jax._src.lib import pytree
+from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
 
 xb = xla_bridge
 xc = xla_client
@@ -2631,7 +2632,7 @@ ad.defjvp2(rsqrt_p,
 
 # TODO(phawkins): remove the fallback translation rule after the minimum jaxlib
 # is 0.1.70 or newer.
-if jax.lib._xla_extension_version >= 28:
+if jax._src.lib._xla_extension_version >= 28:
   _cbrt_translation_rule = None
 else:
   def _cbrt_translation_rule(c, x):

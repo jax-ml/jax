@@ -130,6 +130,8 @@ from . import random as random
 from . import tree_util as tree_util
 from . import util as util
 
+import jax.lib  # TODO(phawkins): remove this export.
+
 def _init():
   from . import numpy as numpy # side-effecting import sets up operator overloads
 

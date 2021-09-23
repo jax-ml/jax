@@ -25,8 +25,8 @@ from jax import dtypes
 from jax.experimental import sparse
 from jax.experimental.sparse.ops import _bcoo_nse
 from jax import lax
-from jax.lib import cusparse
-from jax.lib import xla_bridge
+from jax._src.lib import cusparse
+from jax._src.lib import xla_bridge
 from jax import jit
 from jax import test_util as jtu
 from jax import xla

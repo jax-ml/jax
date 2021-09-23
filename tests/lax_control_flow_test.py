@@ -36,7 +36,6 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2
 from jax.experimental import maps
-from jax.lib import xla_bridge
 from jax.interpreters import xla
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
@@ -1744,7 +1743,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax.jit(jax.jacfwd(loop, argnums=(0,)))(arg)  # doesn't crash
 
   def testIssue804(self):
-    num_devices = xla_bridge.device_count()
+    num_devices = jax.device_count()
     f = partial(lax.scan, lambda c, x: (c + lax.psum(x, "i") , c), 0.)
     jax.pmap(f, axis_name="i")(jnp.ones((num_devices, 4)))  # doesn't crash
 

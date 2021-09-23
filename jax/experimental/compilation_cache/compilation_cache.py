@@ -17,7 +17,8 @@ import re
 
 import jax
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
-from jax.lib import xla_client
+import jax._src.lib
+from jax._src.lib import xla_client
 from absl import logging
 from typing import Optional
 
@@ -85,7 +86,7 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
     _hash_compile_options(hash_obj, compile_options)
     if logging.vlog_is_on(1):
         logging.vlog(1, f"get_cache_key hash after serializing compile_options: {hash_obj.digest().hex()}")
-    hash_obj.update(bytes(jax.lib.version))
+    hash_obj.update(bytes(jax._src.lib.version))
     if logging.vlog_is_on(1):
         logging.vlog(1, f"get_cache_key hash after serializing jax_lib version: {hash_obj.digest().hex()}")
     _hash_platform(hash_obj, backend)
@@ -110,7 +111,7 @@ def _hash_compile_options(hash_obj, compile_options_obj):
         hash_obj.update(compile_options_obj.device_assignment.serialize())
 
 def _hash_executable_build_options(hash_obj, executable_obj):
-    if jax.lib.version >= (0, 1, 72):
+    if jax._src.lib.version >= (0, 1, 72):
       expected_options = 31
     else:
       expected_options = 30
@@ -126,7 +127,7 @@ def _hash_executable_build_options(hash_obj, executable_obj):
     if executable_obj.device_assignment is not None:
         hash_obj.update(executable_obj.device_assignment.serialize())
     _hash_bool(hash_obj, executable_obj.use_spmd_partitioning)
-    if jax.lib.version >= (0, 1, 72):
+    if jax._src.lib.version >= (0, 1, 72):
       _hash_bool(hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output)
 
 def _hash_debug_options(hash_obj, debug_obj):

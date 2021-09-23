@@ -27,7 +27,7 @@ import numpy as np
 
 from jax._src import util
 from jax._src.config import flags, config
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)

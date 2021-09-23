@@ -19,7 +19,7 @@ import threading
 from typing import Optional, Iterator
 
 import jax.version
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)

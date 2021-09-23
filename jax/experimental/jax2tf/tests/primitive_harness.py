@@ -54,7 +54,7 @@ from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow
 from jax.interpreters import xla
 
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 
 import numpy as np
 
@@ -1515,7 +1515,7 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
           lax.linalg.qr,
           [RandArg(shape, dtype),
            StaticArg(full_matrices)],
-          # See jax.lib.lapack.geqrf for the list of compatible types
+          # See jax._src.lib.lapack.geqrf for the list of compatible types
           jax_unimplemented=[
               Limitation(
                   "unimplemented",

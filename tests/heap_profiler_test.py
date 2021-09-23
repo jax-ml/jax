@@ -16,6 +16,7 @@ import unittest
 from absl.testing import absltest
 
 import jax
+import jax._src.lib.xla_bridge
 from jax.config import config
 import jax.test_util as jtu
 
@@ -28,7 +29,7 @@ class HeapProfilerTest(unittest.TestCase):
   # not check functional correctness.
 
   def testBasics(self):
-    client = jax.lib.xla_bridge.get_backend()
+    client = jax._src.lib.xla_bridge.get_backend()
     _ = client.heap_profile()
 
     a = jax.device_put(1)

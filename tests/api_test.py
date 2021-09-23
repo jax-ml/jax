@@ -47,7 +47,8 @@ from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters.sharded_jit import PartitionSpec as P
-from jax.lib import xla_bridge as xb
+import jax._src.lib
+from jax._src.lib import xla_client
 from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
@@ -199,7 +200,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       assert len(side) == 3
 
   def test_jit_device(self):
-    device = xb.devices()[-1]
+    device = jax.devices()[-1]
     x = self.jit(lambda x: x, device=device)(3.)
     self.assertIsInstance(x, xla.DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
@@ -663,7 +664,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       np.testing.assert_allclose(f_pruned(*args), 3)
     self.assertEqual(count[0], 1)
 
-  @unittest.skipIf(jax.lib._xla_extension_version <= 36,
+  @unittest.skipIf(jax._src.lib._xla_extension_version <= 36,
                    "Test requires jaxlib 0.1.71")
   def testBuffersAreFreedPromptly(self):
     # Regression test for a bug where garbage collection was delayed too long
@@ -1757,7 +1758,7 @@ class APITest(jtu.JaxTestCase):
     param_shapes = c.program_shape().parameter_shapes()
     self.assertEqual(len(param_shapes), 1)
     self.assertEqual(param_shapes[0].xla_element_type(),
-                     xb.xla_client.PrimitiveType.TUPLE)
+                     xla_client.PrimitiveType.TUPLE)
 
   def test_xla_computation_duck_typing(self):
     def foo(x, y, z):
@@ -1774,7 +1775,7 @@ class APITest(jtu.JaxTestCase):
     param_shapes = c.program_shape().parameter_shapes()
     self.assertEqual(len(param_shapes), 1)
     self.assertEqual(param_shapes[0].xla_element_type(),
-                     xb.xla_client.PrimitiveType.TUPLE)
+                     xla_client.PrimitiveType.TUPLE)
 
   def test_staging_out_multi_replica(self):
     def f(x):

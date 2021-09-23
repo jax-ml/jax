@@ -39,8 +39,8 @@ from ..interpreters import pxla
 from ..interpreters import xla
 from ..interpreters import batching
 from ..interpreters import ad
-from ..lib import xla_bridge as xb
-from ..lib import xla_client as xc
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 from .._src.util import (safe_map, safe_zip, HashableFunction,
                          as_hashable_function, unzip2, distributed_debug_log,
                          tuple_insert, moveaxis, split_list, wrap_name)

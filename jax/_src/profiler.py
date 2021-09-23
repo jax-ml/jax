@@ -18,8 +18,8 @@ import threading
 from typing import Callable, Optional
 import warnings
 
-from jax.lib import xla_bridge
-from jax.lib import xla_client
+from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
 
 
 def start_server(port: int):

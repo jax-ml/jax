@@ -35,7 +35,7 @@ from jax._src import util
 from jax._src import ad_util
 from jax._src.lax.lax import _device_put_raw
 from jax.interpreters import xla
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 from . import jax2tf as jax2tf_internal
 
 import numpy as np

@@ -600,8 +600,8 @@ core.pytype_aval_mappings[BoundedInt] = _abstractify_bdint
 # XLA lowering
 
 from jax.interpreters import xla
-from jax.lib import xla_bridge as xb
-from jax.lib import xla_client as xc
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 xe = xc._xla
 xops = xc._xla.ops
 

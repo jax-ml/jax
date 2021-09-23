@@ -17,7 +17,7 @@ cusparse wrappers for performing sparse matrix computations in JAX
 
 import numpy as np
 
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 
 try:
   from . import _cusparse

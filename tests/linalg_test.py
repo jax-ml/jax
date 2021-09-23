@@ -25,7 +25,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-import jax.lib
 from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import numpy as jnp

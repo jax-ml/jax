@@ -17,7 +17,7 @@ import traceback
 import types
 
 import jax
-from jax.lib import xla_extension
+from jax._src.lib import xla_extension
 from jax._src import util
 
 _exclude_paths = [__file__, util.__file__]

@@ -19,7 +19,7 @@ import operator as op
 from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, Type,
                     TypeVar, overload, TYPE_CHECKING)
 
-from ..lib import pytree
+from jax._src.lib import pytree
 
 from .._src.util import safe_zip, unzip2
 

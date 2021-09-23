@@ -72,7 +72,7 @@ from absl import app
 from absl import flags
 import jax
 import jax.numpy as jnp
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 
 FLAGS = flags.FLAGS
 

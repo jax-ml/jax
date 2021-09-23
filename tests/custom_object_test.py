@@ -20,7 +20,7 @@ from jax import test_util as jtu
 import jax.numpy as jnp
 from jax import core, jit, lax, make_jaxpr
 from jax.interpreters import xla
-from jax.lib import xla_bridge, xla_client
+from jax._src.lib import xla_bridge, xla_client
 xops = xla_client.ops
 xb = xla_bridge
 

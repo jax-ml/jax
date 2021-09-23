@@ -43,8 +43,8 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import masking
-from jax.lib import xla_bridge as xb
-from jax.lib import xla_client
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip,
                            split_list, cache, extend_name_stack)

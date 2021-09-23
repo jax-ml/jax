@@ -37,7 +37,7 @@ from . import lax
 from ._src.config import flags, bool_env, config
 from ._src.util import prod, unzip2
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
-from .lib import xla_bridge
+from jax._src.lib import xla_bridge
 from .interpreters import xla
 from .experimental.maps import mesh
 

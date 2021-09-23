@@ -44,7 +44,7 @@ from jax.interpreters import ad
 from jax.interpreters import pxla
 from jax.interpreters import sharded_jit
 from jax.interpreters import xla
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 
 from . import shape_poly
 

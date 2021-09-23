@@ -27,6 +27,7 @@ import jax
 from jax import numpy as jnp
 from jax.config import config
 from jax import test_util as jtu
+import jax._src.lib
 
 config.parse_flags_with_absl()
 
@@ -34,7 +35,7 @@ config.parse_flags_with_absl()
 class CloudpickleTest(jtu.JaxTestCase):
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
-  @unittest.skipIf(jax.lib._xla_extension_version < 31,
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 31,
                    "Requires jaxlib 0.1.71")
   def testPickleOfJittedFunctions(self):
 
@@ -55,7 +56,7 @@ class CloudpickleTest(jtu.JaxTestCase):
     self.assertEqual(expected, actual)
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
-  @unittest.skipIf(jax.lib._xla_extension_version < 39,
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 39,
                    "Requires jaxlib 0.1.72")
   def testPickleOfPmappedFunctions(self):
 

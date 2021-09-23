@@ -118,7 +118,7 @@ def trace(name):
     def pp(v):
         """Print certain values more succinctly"""
         vtype = str(type(v))
-        if "jax.lib.xla_bridge._JaxComputationBuilder" in vtype:
+        if "jax._src.lib.xla_bridge._JaxComputationBuilder" in vtype:
             return "<JaxComputationBuilder>"
         elif "jaxlib.xla_extension.XlaOp" in vtype:
             return "<XlaOp at 0x{:x}>".format(id(v))
@@ -354,7 +354,7 @@ for most of them. However, XLA includes a `CustomCall` operation that can be use
 ```{code-cell} ipython3
 :id: FYQWSSjKJaWP
 
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 @trace("multiply_add_xla_translation")
 def multiply_add_xla_translation(c, xc, yc, zc):
   """The compilation to XLA of the primitive.

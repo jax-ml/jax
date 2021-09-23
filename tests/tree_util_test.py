@@ -25,7 +25,7 @@ from jax import tree_util
 from jax._src.tree_util import _process_pytree
 from jax import flatten_util
 import jax.numpy as jnp
-
+import jax._src.lib
 
 def _dummy_func(*args, **kwargs):
   return
@@ -206,7 +206,7 @@ class TreeTest(jtu.JaxTestCase):
   def testTreedefTupleFromChildren(self):
     # https://github.com/google/jax/issues/7377
     # TODO(frostig): remove after the minimum jaxlib is is 0.1.70 or newer.
-    if jax.lib._xla_extension_version < 29:
+    if jax._src.lib._xla_extension_version < 29:
       self.skipTest("fixed in future jaxlib")
     tree = ((1, 2, (3, 4)), (5,))
     leaves, treedef1 = tree_util.tree_flatten(tree)
@@ -324,7 +324,7 @@ class TreeTest(jtu.JaxTestCase):
     self.assertRegex(str(treedef), correct_string)
 
   def testTreeDefWithEmptyDictStringRepresentation(self):
-    if jax.lib._xla_extension_version < 35:
+    if jax._src.lib._xla_extension_version < 35:
       self.skipTest("fixed in future jaxlib")
     self.assertEqual(str(tree_util.tree_structure({})), "PyTreeDef({})")
 
