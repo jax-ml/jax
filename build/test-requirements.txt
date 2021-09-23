@@ -3,5 +3,3 @@ pillow>=8.3.1
 pytest-benchmark
 pytest-xdist
 wheel
-# Install jax from the current directory with minimum jaxlib from pypi.
-.[minimum-jaxlib]

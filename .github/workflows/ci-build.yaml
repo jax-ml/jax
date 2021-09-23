@@ -79,7 +79,9 @@ jobs:
           pip install ${{ matrix.package-overrides }}
         fi
         if [ "${{ matrix.use-latest-jaxlib }}" == "true" ]; then
-          pip install -e .[cpu]
+          pip install .[cpu]
+        else
+          pip install .[minimum-jaxlib]
         fi
 
     - name: Run tests
