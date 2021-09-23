@@ -27,7 +27,7 @@ import jax
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 from jax._src.util import safe_map, safe_zip
 
 from lax_test import LAX_OPS

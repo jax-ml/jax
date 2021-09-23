@@ -29,6 +29,7 @@ from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax._src import source_info_util
+import jax._src.lib.xla_bridge
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -972,7 +973,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
 
     jax_comp = jax.xla_computation(f_while)(x)
-    backend = jax.lib.xla_bridge.get_backend()
+    backend = jax._src.lib.xla_bridge.get_backend()
     modules = backend.compile(jax_comp).hlo_modules()
     jax_opt_hlo = modules[0].to_string()
     print(f"JAX OPT HLO = {jax_opt_hlo}")

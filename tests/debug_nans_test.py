@@ -24,6 +24,7 @@ from jax._src import api
 from jax import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit
+import jax._src.lib
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -97,7 +98,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
   def testPmap(self):
     pmap_funcs = [api._python_pmap]
-    if jax.lib._xla_extension_version >= 36:
+    if jax._src.lib._xla_extension_version >= 36:
       pmap_funcs.append(api._cpp_pmap)
 
     for pmap in pmap_funcs:

@@ -35,8 +35,8 @@ from ..interpreters import xla
 from ..interpreters import batching
 from ..interpreters import partial_eval as pe
 from ..interpreters.sharded_jit import PartitionSpec
-from ..lib import xla_bridge as xb
-from ..lib import xla_client as xc
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 from ..tree_util import tree_map, tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,

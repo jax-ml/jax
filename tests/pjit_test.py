@@ -33,7 +33,7 @@ from jax.experimental.maps import xmap, mesh
 from jax.experimental.pjit import pjit, pjit_p, with_sharding_constraint, SpecSync
 from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax.lib import xla_client
+from jax._src.lib import xla_client
 from jax._src.util import prod, curry
 
 from jax.config import config

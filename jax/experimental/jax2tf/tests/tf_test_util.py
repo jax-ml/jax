@@ -30,6 +30,7 @@ from jax.config import config
 from jax.experimental import jax2tf
 from jax.interpreters import masking
 from jax._src import util
+import jax._src.lib.xla_bridge
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
@@ -307,7 +308,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                     stage="hlo")
         logging.info(f"[{self._testMethodName}] TF NON OPT HLO\n{tf_hlo}")
 
-        backend = jax.lib.xla_bridge.get_backend()
+        backend = jax._src.lib.xla_bridge.get_backend()
         modules = backend.compile(jax_comp).hlo_modules()
         jax_opt_hlo = modules[0].to_string()
         logging.info(f"[{self._testMethodName}] "

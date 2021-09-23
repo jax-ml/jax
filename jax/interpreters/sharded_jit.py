@@ -25,8 +25,8 @@ from . import partial_eval as pe
 from . import pxla
 from . import xla
 from .. import linear_util as lu
-from ..lib import xla_bridge as xb
-from ..lib import xla_client as xc
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 from .._src.api_util import argnums_partial, flatten_axes, flatten_fun, _ensure_index_tuple
 from ..tree_util import tree_flatten, tree_unflatten
 from .._src.util import (extend_name_stack, wrap_name, wraps, safe_zip,

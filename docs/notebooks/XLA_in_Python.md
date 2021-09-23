@@ -66,7 +66,7 @@ https://github.com/google/jax/blob/main/jax/interpreters/xla.py
 import numpy as np
 
 # We only need to import JAX's xla_client, not all of JAX.
-from jax.lib import xla_client as xc
+from jax._src.lib import xla_client as xc
 xops = xc.ops
 
 # Plotting

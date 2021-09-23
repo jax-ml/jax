@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax import test_util as jtu
-from jax.lib import xla_bridge
+from jax._src.lib import xla_bridge
 from jax.interpreters import xla
 
 from jax.config import config

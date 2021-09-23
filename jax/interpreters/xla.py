@@ -40,8 +40,8 @@ from jax._src.pprint_util import pp
 from .._src.util import (partialmethod, cache, prod, unzip2,
                          extend_name_stack, wrap_name, safe_zip, safe_map,
                          partition_list)
-from ..lib import xla_bridge as xb
-from ..lib import xla_client as xc
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
 from . import masking

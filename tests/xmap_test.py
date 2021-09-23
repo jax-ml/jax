@@ -41,7 +41,7 @@ from jax.core import NamedShape, JaxprTypeError
 from jax.experimental import maps
 from jax.experimental.maps import Mesh, mesh, xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
-from jax.lib import xla_bridge
+from jax._src.lib import xla_bridge
 from jax._src.util import curry, unzip2, split_list, prod
 from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.lax.parallel import pgather

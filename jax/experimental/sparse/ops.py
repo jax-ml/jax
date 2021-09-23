@@ -44,9 +44,9 @@ from jax import vmap
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-from jax.lib import cusparse
-from jax.lib import xla_bridge
-from jax.lib import xla_client
+from jax._src.lib import cusparse
+from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 from jax.interpreters import ad

@@ -23,13 +23,13 @@ from jax import lax
 from jax import core
 from jax import numpy as jnp
 from jax import tree_util
-from jax._src.api import jit, vmap
 from jax.config import config
-from jax.lib import xla_bridge
-from jax.lib import xla_client
-from jax.lib import cuda_prng
 from jax.interpreters import batching
 from jax.interpreters import xla
+from jax._src.api import jit, vmap
+from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
+from jax._src.lib import cuda_prng
 from jax._src.pprint_util import pp, vcat
 from jax._src.util import prod
 

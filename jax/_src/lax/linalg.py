@@ -33,15 +33,15 @@ from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype, _broadcasting_select)
 from jax._src.lax import lax as lax_internal
-from jax.lib import lapack
+from jax._src.lib import lapack
 
-from jax.lib import cuda_linalg
-from jax.lib import cusolver
-from jax.lib import cusparse
-from jax.lib import rocsolver
+from jax._src.lib import cuda_linalg
+from jax._src.lib import cusolver
+from jax._src.lib import cusparse
+from jax._src.lib import rocsolver
 
-from jax.lib import xla_client
-from jax.lib import xla_bridge as xb
+from jax._src.lib import xla_client
+from jax._src.lib import xla_bridge as xb
 
 xops = xla_client.ops
 

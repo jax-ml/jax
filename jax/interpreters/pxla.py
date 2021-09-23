@@ -51,10 +51,10 @@ from .._src.util import (unzip3, prod, safe_map, safe_zip,
                          extend_name_stack, wrap_name, assert_unreachable,
                          tuple_insert, tuple_delete, distributed_debug_log)
 from ..errors import JAXTypeError
-from ..lib import xla_bridge as xb
-from ..lib import xla_client as xc
-from ..lib import pmap_lib
-from ..lib import _xla_extension_version
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
+from jax._src.lib import pmap_lib
+from jax._src.lib import _xla_extension_version
 from ..tree_util import tree_flatten, tree_map
 from . import batching
 from . import partial_eval as pe

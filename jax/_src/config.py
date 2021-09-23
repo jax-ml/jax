@@ -24,8 +24,8 @@ import threading
 from typing import Any, List, Callable, NamedTuple, Optional
 import warnings
 
-from jax import lib
-from jax.lib import jax_jit
+from jax._src import lib
+from jax._src.lib import jax_jit
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.
