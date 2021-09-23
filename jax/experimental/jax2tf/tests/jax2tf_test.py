@@ -15,6 +15,7 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 
+import re
 from typing import Dict, Tuple
 
 from absl.testing import absltest
@@ -327,7 +328,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     grad_g = jax.grad(g)
     self.ConvertAndCompare(grad_g, x)
 
-
   def test_gradient_with_float0_result(self):
     # Gradient over integer-argument functions, with float0 result
     def f(x, y):  # x is an int, y is a float
@@ -400,10 +400,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(g_jax2tf[2].numpy(), np.float32(2.))
     self.assertAllClose(g_jax2tf[3].numpy(), np.int32(0))
 
-  # @parameterized.named_parameters(jtu.cases_from_list(
-  #     dict(testcase_name=f"function={with_function}",
-  #          with_function=with_function)
-  #     for with_function in [False, True]))
+  @parameterized.named_parameters(jtu.cases_from_list(
+      dict(testcase_name=f"function={with_function}",
+           with_function=with_function)
+      for with_function in [False, True]))
   def test_gradients_int_argument(self, with_function=True):
     # https://github.com/google/jax/issues/6975
     # Also issue #6975.
@@ -745,6 +745,19 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         tf_fn_array(np.array([3, 4, 5])), np.array([4.5, 10, 17.5],
                                                    jnp.bfloat16))
 
+  def test_shared_constants(self):
+    # Check that the constants are shared properly in converted functions
+    # See https://github.com/google/jax/issues/7992.
+    const = np.ones((16, 16))
+    def f(x):
+      return x + const + const + const + const
+
+    f_tf_graph = tf.function(jax2tf.convert(f), autograph=False).get_concrete_function(const).graph.as_graph_def()
+    f_tf_graph_nr_consts = len(re.findall(r'op:\s*"Const"', str(f_tf_graph)))
+    # It seems that there is already a shape constant in the graph, we want to
+    # make sure our 4 instances of "const" are shared.
+    self.assertEqual(f_tf_graph_nr_consts, 2)
+
   def test_weak_types(self):
     mul = jax.jit(jnp.multiply)
     # The value `2` here should be weakly typed, and should not lead to
@@ -818,11 +831,11 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(jnp.sin, jnp.zeros((2, 3), jnp.float32))
 
   def test_randint(self):
-      def randint():
-        return jax.random.randint(
-            jax.random.PRNGKey(42), shape=(), minval=0, maxval=1)
+    def randint():
+      return jax.random.randint(
+          jax.random.PRNGKey(42), shape=(), minval=0, maxval=1)
 
-      self.ConvertAndCompare(randint)
+    self.ConvertAndCompare(randint)
 
   def test_op_metadata_simple(self):
     self.skipTest("include_xla_op_metadata not yet enabled")

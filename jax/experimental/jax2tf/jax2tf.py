@@ -148,6 +148,13 @@ class _ThreadLocalState(threading.local):
     # Whether to actually include XLA op metadata in the generated TF ops
     self.include_xla_op_metadata = True
 
+    # A cache for the tf.convert_to_tensor for constants. We try to preserve
+    # sharing for constants, to enable tf.Graph to take advantage of it.
+    # See https://github.com/google/jax/issues/7992.
+    self.constant_cache = None  # None means that we don't use a cache. We
+                                # may be outside a conversion scope.
+
+
 _thread_local_state = _ThreadLocalState()
 
 def _get_current_name_stack():
@@ -465,13 +472,22 @@ def _interpret_fun(
     in_avals: Sequence[core.ShapedArray],
     extra_name_stack: Optional[str]
 ) -> Sequence[Tuple[TfVal, core.ShapedArray]]:
-  with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
-    fun = _interpret_subtrace(fun, main, in_avals)
-    with _extended_name_stack(extra_name_stack):
-      with core.new_sublevel():
-        out_vals: Sequence[Tuple[TfVal, core.ShapedArray]] = \
-            fun.call_wrapped(*in_vals)
-      del main
+  try:
+    prev_constant_cache = _thread_local_state.constant_cache
+    _thread_local_state.constant_cache = {}  # Start a new cache, so that we
+                                             # don't share constants across
+                                             # tf.function boundaries.
+
+    with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
+      fun = _interpret_subtrace(fun, main, in_avals)
+      with _extended_name_stack(extra_name_stack):
+        with core.new_sublevel():
+          out_vals: Sequence[Tuple[TfVal, core.ShapedArray]] = \
+              fun.call_wrapped(*in_vals)
+        del main
+  finally:
+    _thread_local_state.constant_cache = prev_constant_cache
+
   return tuple(out_vals)
 
 
@@ -563,7 +579,8 @@ def _to_jax_dtype(tf_dtype):
 
 
 def _tfval_to_tensor_jax_dtype(val: TfVal,
-                               jax_dtype: Optional[DType] = None) -> Tuple[TfVal, DType]:
+                               jax_dtype: Optional[DType] = None,
+                               memoize_constants=False) -> Tuple[TfVal, DType]:
   """Converts a scalar, ndarray, or tf.Tensor to a tf.Tensor with proper type.
 
   If `jax_dtype` is missing, uses JAX typing rules.
@@ -573,6 +590,8 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     val: a scalar, ndarray, tf.Tensor, or tf.Variable
     jax_dtype: an optional dtype to use. If missing, uses JAX type inference
       rules for constants.
+    memoize_constants: whether to memoize TF constants. We can't do this
+      everywhere, we may be outside of a conversion scope.
 
   Returns:
     a tuple with a tf.Tensor with the type as needed by JAX, and the JAX type.
@@ -586,11 +605,28 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       return val, jax_dtype
   else:  # A constant
     jax_dtype = jax_dtype or xla.abstractify(val).dtype
-    conversion_dtype = _to_tf_dtype(jax_dtype)
-    # The float0 type is not known to TF.
-    if jax_dtype == dtypes.float0:
-      val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
-    return tf.convert_to_tensor(val, dtype=conversion_dtype), jax_dtype
+    # TODO(document): We assume that the value of a constant does not
+    # change through the scope of the function. But it may be an ndarray, ...
+    # JAX has the same problem when generating HLO.
+    const_key = (id(val), jax_dtype)
+    # Since we use id(val) as a cache key, we have to make sure that we keep
+    # the previous `val` alive. Otherwise, for an ndarray, it can get garbage
+    # collected and reused for a different value, which would create correctness
+    # issues. We keep the `val` alive by storing in the cache the pair
+    # `(val, tf_val)`.
+    if memoize_constants and _thread_local_state.constant_cache is not None:
+      _, tf_val = _thread_local_state.constant_cache.get(const_key, (None, None))
+    else:
+      tf_val = None
+    if tf_val is None:
+      conversion_dtype = _to_tf_dtype(jax_dtype)
+      # The float0 type is not known to TF.
+      if jax_dtype == dtypes.float0:
+        val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
+      tf_val = tf.convert_to_tensor(val, dtype=conversion_dtype)
+      if memoize_constants and _thread_local_state.constant_cache is not None:
+        _thread_local_state.constant_cache[const_key] = (val, tf_val)
+    return tf_val, jax_dtype
 
 def _args_to_avals_and_env(
     args: Sequence[TfVal],
@@ -696,7 +732,8 @@ class TensorFlowTracer(core.Tracer):
             assert aval_int == val_dim, f"expected {self._aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
 
     self.val = _tfval_to_tensor_jax_dtype(val,
-                                          self._aval.dtype)[0]  # type: ignore[attr-defined]
+                                          self._aval.dtype,
+                                          memoize_constants=True)[0]  # type: ignore[attr-defined]
 
   @property
   def aval(self):
@@ -743,7 +780,7 @@ class TensorFlowTrace(core.Trace):
       return TensorFlowTracer(self, tf.constant(np.nan, tf.float32),
                               core.abstract_unit)
     else:
-      tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val)
+      tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val, memoize_constants=True)
       return TensorFlowTracer(
         self, val, core.ShapedArray(tf_val.shape, jax_dtype,
                                     weak_type=dtypes.is_weakly_typed(val)))
