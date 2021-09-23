@@ -196,7 +196,7 @@ class custom_jvp(Generic[ReturnValue]):
     self.defjvp(jvp)
 
   @traceback_util.api_boundary
-  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     if not self.jvp:
       msg = "No JVP defined for custom_jvp function {} using defjvp."
       raise AttributeError(msg.format(self.__name__))
@@ -496,7 +496,7 @@ class custom_vjp(Generic[ReturnValue]):
     self.bwd = bwd
 
   @traceback_util.api_boundary
-  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
     if not self.fwd or not self.bwd:
       msg = "No VJP defined for custom_vjp function {} using defvjp."
       raise AttributeError(msg.format(self.__name__))
