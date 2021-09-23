@@ -40,7 +40,7 @@ Follow these steps to contribute code:
    git clone https://github.com/YOUR_USERNAME/jax
    cd jax
    pip install -r build/test-requirements.txt  # Installs all testing requirements.
-   pip install -e .  # Installs JAX from the current directory in editable mode.
+   pip install -e .[cpu]  # Installs JAX from the current directory in editable mode.
    ```
 
 4. Add the JAX repo as an upstream remote, so you can use it to sync your
@@ -91,7 +91,7 @@ Follow these steps to contribute code:
    git rebase upstream/main
    ```
 
-   Finally, push your commit on your development branch and create a remote 
+   Finally, push your commit on your development branch and create a remote
    branch in your fork that you can use to create a pull request from:
 
    ```bash
