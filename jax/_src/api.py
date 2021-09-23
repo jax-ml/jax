@@ -304,6 +304,29 @@ def jit(
                        donate_argnums, inline)
 
 
+def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
+                 args, kwargs):
+  if max(donate_argnums, default=-1) >= len(args):
+    raise ValueError(
+        f"jitted function has donate_argnums={donate_argnums} but "
+        f"was called with only {len(args)} positional arguments.")
+
+  f = lu.wrap_init(fun)
+  f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
+  f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
+  args_flat, in_tree = tree_flatten((args, kwargs))
+  if donate_argnums:
+    donated_invars = donation_vector(donate_argnums, args, kwargs)
+  else:
+    donated_invars = (False,) * len(args_flat)
+
+  for arg in args_flat:
+    _check_arg(arg)
+  flat_fun, out_tree = flatten_fun(f, in_tree)
+
+  return flat_fun, out_tree, args_flat, donated_invars
+
+
 def _python_jit(
     fun: F,
     static_argnums: Union[int, Iterable[int], None] = None,
@@ -326,26 +349,13 @@ def _python_jit(
   def f_jitted(*args, **kwargs):
     if config.jax_disable_jit:
       return fun(*args, **kwargs)
-    if max(donate_argnums, default=-1) >= len(args):
-      raise ValueError(
-          f"jitted function has donate_argnums={donate_argnums} but "
-          f"was called with only {len(args)} positional arguments.")
-
-    f = lu.wrap_init(fun)
-    f, args = argnums_partial_except(f, static_argnums, args,
-                                     allow_invalid=True)
-    f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, args, kwargs)
-    else:
-      donated_invars = (False,) * len(args_flat)
-    for arg in args_flat:
-      _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,
-        name=flat_fun.__name__, donated_invars=donated_invars, inline=inline)
-    return tree_unflatten(out_tree(), out)
+    flat_fun, out_tree, args_flat, donated_invars = _prepare_jit(
+        fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
+    out_flat = xla.xla_call(
+        flat_fun, *args_flat,
+        device=device, backend=backend, name=flat_fun.__name__,
+        donated_invars=donated_invars, inline=inline)
+    return tree_unflatten(out_tree(), out_flat)
 
   return f_jitted
 
@@ -397,22 +407,8 @@ def _cpp_jit(
     # An alternative would be for cache_miss to accept from C++ the arguments
     # (dyn_args, donated_invars, args_flat, in_tree), since otherwise we have
     # work/code that is redundant between C++ and Python. We can try that later.
-    if max(donate_argnums, default=-1) >= len(args):
-      raise ValueError(
-          f"jitted function has donate_argnums={donate_argnums} but "
-          f"was called with only {len(args)} positional arguments.")
-    f = lu.wrap_init(fun)
-    f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
-    f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, args, kwargs)
-    else:
-      donated_invars = (False,) * len(args_flat)
-
-    for arg in args_flat:
-      _check_arg(arg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
+    flat_fun, out_tree, args_flat, donated_invars = _prepare_jit(
+        fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     out_flat = xla.xla_call(
         flat_fun, *args_flat,
         device=device, backend=backend, name=flat_fun.__name__,
