@@ -268,6 +268,66 @@ class FilteredTracebackTest(jtu.JaxTestCase):
         ('f', 'return lax.associative_scan(err, xs)'),
         ('err', 'assert False')], filter_mode=filter_mode)
 
+  def test_custom_jvp(self, filter_mode):
+    def err(*args):
+      assert False
+      return args
+
+    @jax.custom_jvp
+    def f(x):
+      return err(x)
+
+    @f.defjvp
+    def f_jvp(x, tx):
+      x = err(x)
+      return x, tx
+
+    check_filtered_stack_trace(self, AssertionError, lambda: f(1.), [
+        ('f', 'return err(x)'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+    check_filtered_stack_trace(self, AssertionError, lambda: jax.jvp(f, [1.], [1.]), [
+        ('f_jvp', 'x = err(x)'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+
+  def test_custom_vjp(self, filter_mode):
+    def err(*args):
+      assert False
+      return args[0]
+
+    @jax.custom_vjp
+    def f(x):
+      return err(x)
+
+    def fwd(x):
+      return x, ()
+
+    def fwd_err(x):
+      x = err(x)
+      return x, ()
+
+    def bwd(_, g):
+      return (g,)
+
+    def bwd_err(_, g):
+      g = err(g)
+      return (g,)
+
+    f.defvjp(fwd_err, bwd)
+
+    check_filtered_stack_trace(self, AssertionError, lambda: f(1.), [
+        ('f', 'return err(x)'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+
+    check_filtered_stack_trace(self, AssertionError, lambda: jax.grad(f)(1.), [
+        ('fwd_err', 'x = err(x)'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+
+    f.defvjp(fwd, bwd_err)
+
+    check_filtered_stack_trace(self, AssertionError, lambda: jax.grad(f)(1.), [
+        ('bwd_err', 'g = err(g)'),
+        ('err', 'assert False')], filter_mode=filter_mode)
+
   def test_cause_chain(self, filter_mode):
     @jit
     def inner(x):
