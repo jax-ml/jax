@@ -124,6 +124,7 @@ from . import errors as errors
 from . import image as image
 from . import lax as lax
 from . import nn as nn
+from . import numpy as numpy
 from . import ops as ops
 from . import profiler as profiler
 from . import random as random
@@ -131,9 +132,3 @@ from . import tree_util as tree_util
 from . import util as util
 
 import jax.lib  # TODO(phawkins): remove this export.
-
-def _init():
-  from . import numpy as numpy # side-effecting import sets up operator overloads
-
-_init()
-del _init
