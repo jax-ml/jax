@@ -318,9 +318,12 @@ def _code_generator_and_avals(
       func_tf_hlo = function_flat_tf.experimental_get_compiler_ir(*args_tf_flat)(
             stage="hlo_serialized", device_name=tf_device_name)
     except Exception as e:
-      # TODO(xjun): Use a more robust mechanism instead of replying on error
+      # TODO(xjun): Use a more robust mechanism instead of relying on error
       # message.
-      if type(e) is TypeError and "external symbolic tensor" in str(e):
+      # Check two different error messages, to ensure the code works internally
+      # (with "external symbolic tensor") and also in OSS (with "An op outside ...").
+      if type(e) is TypeError and ("external symbolic tensor" in str(e) or
+                                   "An op outside of the function building code" in str(e)):
         # TODO(b/193754660): this may happen if we are in a function context
         # Try to salvage the situation if we are just doing abstract_eval, maybe
         # for jax2tf.convert. We can do that if all the output_shapes are known.
