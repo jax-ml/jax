@@ -24,6 +24,7 @@ from jax import core
 from jax import numpy as jnp
 from jax import tree_util
 from jax.config import config
+from jax.dtypes import float0
 from jax.interpreters import batching
 from jax.interpreters import xla
 from jax._src.api import jit, vmap
@@ -75,7 +76,7 @@ def _is_prng_key_data(impl, keys: jnp.ndarray) -> bool:
   try:
     return (keys.ndim >= 1 and
             keys.shape[-ndim:] == impl.key_shape and
-            keys.dtype == np.uint32)
+            (keys.dtype == np.uint32 or keys.dtype == float0))
   except AttributeError:
     return False
 
