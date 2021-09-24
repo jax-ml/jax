@@ -1254,8 +1254,8 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   if not compute_uv:
     return (s,), (ds,)
 
-  s_diffs = jnp.square(s_dim) - jnp.square(_T(s_dim))
-  s_diffs_zeros = jnp.eye(s.shape[-1], dtype=A.dtype)  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
+  s_diffs = (s_dim + _T(s_dim)) * (s_dim - _T(s_dim))
+  s_diffs_zeros = jnp.eye(s.shape[-1], dtype=s.dtype)  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
   F = 1 / (s_diffs + s_diffs_zeros) - s_diffs_zeros
   dSS = s_dim * dS  # dS.dot(jnp.diag(s))
   SdS = _T(s_dim) * dS  # jnp.diag(s).dot(dS)

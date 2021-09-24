@@ -29,7 +29,7 @@ from jax._src.numpy import linalg as np_linalg
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 
-@partial(jit, static_argnums=(1,))
+@partial(jit, static_argnames=('lower',))
 def _cholesky(a, lower):
   a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
   l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
@@ -44,7 +44,7 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
 def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
   return (cholesky(a, lower=lower), lower)
 
-@partial(jit, static_argnums=(2,))
+@partial(jit, static_argnames=('lower',))
 def _cho_solve(c, b, lower):
   c, b = np_linalg._promote_arg_dtypes(jnp.asarray(c), jnp.asarray(b))
   lax_linalg._check_solve_shapes(c, b)
@@ -60,13 +60,17 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
   c, lower = c_and_lower
   return _cho_solve(c, b, lower)
 
+
+@partial(jit, static_argnames=('full_matrices', 'compute_uv'))
+def _svd(a, *, full_matrices, compute_uv):
+  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  return lax_linalg.svd(a, full_matrices, compute_uv)
+
 @_wraps(scipy.linalg.svd)
 def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
         check_finite=True, lapack_driver='gesdd'):
   del overwrite_a, check_finite, lapack_driver
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
-  return lax_linalg.svd(a, full_matrices, compute_uv)
-
+  return _svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
 @_wraps(scipy.linalg.det)
 def det(a, overwrite_a=False, check_finite=True):
@@ -74,11 +78,8 @@ def det(a, overwrite_a=False, check_finite=True):
   return np_linalg.det(a)
 
 
-@_wraps(scipy.linalg.eigh)
-def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
-         overwrite_b=False, turbo=True, eigvals=None, type=1,
-         check_finite=True):
-  del overwrite_a, overwrite_b, turbo, check_finite
+@partial(jit, static_argnames=('lower', 'eigvals_only', 'eigvals', 'type'))
+def _eigh(a, b, lower, eigvals_only, eigvals, type):
   if b is not None:
     raise NotImplementedError("Only the b=None case of eigh is implemented")
   if type != 1:
@@ -95,6 +96,14 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
   else:
     return w, v
 
+@_wraps(scipy.linalg.eigh)
+def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
+         overwrite_b=False, turbo=True, eigvals=None, type=1,
+         check_finite=True):
+  del overwrite_a, overwrite_b, turbo, check_finite
+  return _eigh(a, b, lower, eigvals_only, eigvals, type)
+
+
 
 @_wraps(scipy.linalg.inv)
 def inv(a, overwrite_a=False, check_finite=True):
@@ -103,6 +112,7 @@ def inv(a, overwrite_a=False, check_finite=True):
 
 
 @_wraps(scipy.linalg.lu_factor)
+@partial(jit, static_argnames=('overwrite_a', 'check_finite'))
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
@@ -111,6 +121,7 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
 
 
 @_wraps(scipy.linalg.lu_solve)
+@partial(jit, static_argnames=('trans', 'overwrite_a', 'check_finite'))
 def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   lu, pivots = lu_and_piv
@@ -135,11 +146,12 @@ def _lu(a, permute_l):
     return p, l, u
 
 @_wraps(scipy.linalg.lu, update_doc=False)
+@partial(jit, static_argnames=('permute_l', 'overwrite_a', 'check_finite'))
 def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return _lu(a, permute_l)
 
-@partial(jit, static_argnums=(1, 2))
+@partial(jit, static_argnames=('mode', 'pivoting'))
 def _qr(a, mode, pivoting):
   if pivoting:
     raise NotImplementedError(
@@ -163,7 +175,7 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
   return _qr(a, mode, pivoting)
 
 
-@partial(jit, static_argnums=(2, 3))
+@partial(jit, static_argnames=('sym_pos', 'lower'))
 def _solve(a, b, sym_pos, lower):
   if not sym_pos:
     return np_linalg.solve(a, b)
@@ -193,7 +205,7 @@ def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False
   del overwrite_a, overwrite_b, debug, check_finite
   return _solve(a, b, sym_pos, lower)
 
-@partial(jit, static_argnums=(2, 3, 4))
+@partial(jit, static_argnames=('trans', 'lower', 'unit_diagonal'))
 def _solve_triangular(a, b, trans, lower, unit_diagonal):
   if trans == 0 or trans == "N":
     transpose_a, conjugate_a = False, False
@@ -252,11 +264,8 @@ where norm() denotes the L1 norm, and
 """)
 
 @_wraps(scipy.linalg.expm, lax_description=_expm_description)
+@partial(jit, static_argnames=('upper_triangular', 'max_squarings'))
 def expm(A, *, upper_triangular=False, max_squarings=16):
-  return _expm(A, upper_triangular, max_squarings)
-
-@partial(jit, static_argnums=(1, 2))
-def _expm(A, upper_triangular, max_squarings):
   P, Q, n_squarings = _calc_P_Q(A)
 
   def _nan(args):
@@ -391,10 +400,8 @@ support the ``method='blockEnlarge'`` argument.
 """)
 
 @_wraps(scipy.linalg.expm_frechet, lax_description=_expm_frechet_description)
+@partial(jit, static_argnames=('method', 'compute_expm'))
 def expm_frechet(A, E, *, method=None, compute_expm=True):
-  return _expm_frechet(A, E, method, compute_expm)
-
-def _expm_frechet(A, E, method=None, compute_expm=True):
   A = jnp.asarray(A)
   E = jnp.asarray(E)
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
