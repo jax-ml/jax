@@ -1030,15 +1030,15 @@ def gather(operand: Array, start_indices: Array,
     unique_indices: whether the indices in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve
       performance on some backends.
-    mode: how to handle indices that are out of bounds: when set to 'clip',
+    mode: how to handle indices that are out of bounds: when set to ``'clip'``,
       indices are clamped so that the slice is within bounds, and when
-      set to 'fill' or 'drop' gather returns a slice full of `fill_value`s for
-      the affected slice. The behavior for out-of-bounds indices when set to
-      'promise_in_bounds' is implementation-defined.
+      set to ``'fill'`` or ``'drop'`` gather returns a slice full of
+      ``fill_value`` for the affected slice. The behavior for out-of-bounds
+      indices when set to ``'promise_in_bounds'`` is implementation-defined.
     fill_value: the fill value to return for out-of-bounds slices when `mode`
-      is 'fill'. Ignored otherwise. Defaults to `NaN` for inexact types,
+      is ``'fill'``. Ignored otherwise. Defaults to ``NaN`` for inexact types,
       the largest negative value for signed types, the largest positive value
-      for unsigned types, and `True` for booleans.
+      for unsigned types, and ``True`` for booleans.
 
   Returns:
     An array containing the gather output.

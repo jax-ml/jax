@@ -21,7 +21,7 @@ follows (where ``idx`` is a NumPy index expression).
 =========================  ===================================================
 Alternate syntax           Equivalent in-place expression
 =========================  ===================================================
-``x.at[idx].get(y)``       ``x[idx]``
+``x.at[idx].get()``        ``x[idx]``
 ``x.at[idx].set(y)``       ``x[idx] = y``
 ``x.at[idx].add(y)``       ``x[idx] += y``
 ``x.at[idx].multiply(y)``  ``x[idx] *= y``
