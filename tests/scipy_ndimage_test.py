@@ -22,7 +22,7 @@ from absl.testing import parameterized
 import scipy.ndimage as osp_ndimage
 
 from jax import grad
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import dtypes
 from jax.scipy import ndimage as lsp_ndimage
 from jax._src.util import prod

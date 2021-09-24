@@ -15,7 +15,7 @@
 from absl.testing import absltest
 
 from jax import jaxpr_util, jit, make_jaxpr, numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.config import config
 
 

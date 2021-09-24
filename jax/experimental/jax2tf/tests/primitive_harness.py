@@ -48,7 +48,7 @@ import jax
 from jax import config
 from jax import dtypes
 from jax._src import ad_util
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow

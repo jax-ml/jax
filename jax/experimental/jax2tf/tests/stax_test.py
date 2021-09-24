@@ -15,7 +15,7 @@
 import functools
 from absl.testing import absltest
 import jax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 import numpy as np
 import os
 import unittest

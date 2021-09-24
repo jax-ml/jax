@@ -28,7 +28,7 @@ from jax import lax
 from jax._src.lib import cusparse
 from jax._src.lib import xla_bridge
 from jax import jit
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import xla
 import jax.numpy as jnp
 from jax import jvp

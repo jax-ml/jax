@@ -32,7 +32,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import prng
 from jax import random
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
 import jax._src.random

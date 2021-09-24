@@ -23,7 +23,7 @@ from absl.testing import absltest
 import jax
 from jax import dtypes
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import tree_util
 
 from jax.config import config

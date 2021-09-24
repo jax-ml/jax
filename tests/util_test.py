@@ -15,7 +15,7 @@
 from absl.testing import absltest
 
 from jax import linear_util as lu
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()

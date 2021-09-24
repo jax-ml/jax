@@ -19,7 +19,7 @@ from absl.testing import parameterized
 
 import jax
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()

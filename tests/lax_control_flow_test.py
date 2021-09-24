@@ -32,7 +32,7 @@ from jax import core
 from jax.errors import UnexpectedTracerError
 from jax import lax
 from jax import random
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2
 from jax.experimental import maps

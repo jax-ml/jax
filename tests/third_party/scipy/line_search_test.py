@@ -4,7 +4,7 @@ from absl.testing import absltest, parameterized
 from jax import grad
 from jax.config import config
 import jax.numpy as jnp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 from jax._src.scipy.optimize.line_search import line_search
 from scipy.optimize.linesearch import line_search_wolfe2
 

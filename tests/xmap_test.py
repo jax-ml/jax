@@ -33,7 +33,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import jax.scipy as jscipy
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import vmap
 from jax import lax
 from jax import core

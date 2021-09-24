@@ -14,7 +14,7 @@
 
 from absl.testing import absltest
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 import tempfile
 import threading
 import time

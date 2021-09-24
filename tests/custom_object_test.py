@@ -16,7 +16,7 @@ from absl.testing import absltest, parameterized
 
 import numpy as np
 
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax import core, jit, lax, make_jaxpr
 from jax.interpreters import xla

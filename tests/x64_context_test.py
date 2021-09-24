@@ -27,7 +27,7 @@ from jax import random
 from jax.config import config
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 
 config.parse_flags_with_absl()
 

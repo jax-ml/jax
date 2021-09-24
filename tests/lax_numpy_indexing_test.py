@@ -30,7 +30,7 @@ import jax
 from jax import dtypes
 from jax import numpy as jnp
 from jax import ops
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax._src import util
 
 from jax.config import config

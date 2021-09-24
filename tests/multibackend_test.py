@@ -23,7 +23,7 @@ import numpy.random as npr
 from unittest import SkipTest
 
 import jax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import numpy as jnp
 
 from jax.config import config

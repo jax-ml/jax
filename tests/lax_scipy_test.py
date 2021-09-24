@@ -29,7 +29,7 @@ import jax
 from jax import numpy as jnp
 from jax import lax
 from jax import scipy as jsp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 import jax._src.scipy.eigh
 

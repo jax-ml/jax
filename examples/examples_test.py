@@ -22,7 +22,7 @@ from absl.testing import parameterized
 import numpy as np
 
 from jax import lax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import random
 import jax.numpy as jnp
 

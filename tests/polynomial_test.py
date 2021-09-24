@@ -19,8 +19,9 @@ import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax import jit
 from jax import numpy as jnp
-from jax import test_util as jtu, jit
+from jax._src import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()

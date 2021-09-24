@@ -23,7 +23,7 @@ import scipy.sparse.linalg
 from jax import jit
 import jax.numpy as jnp
 from jax import lax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.tree_util import register_pytree_node_class
 import jax.scipy.sparse.linalg
 import jax._src.scipy.sparse.linalg

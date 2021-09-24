@@ -20,7 +20,7 @@ from absl.testing import absltest, parameterized
 import numpy as np
 
 from jax import lax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 import jax.scipy.signal as jsp_signal
 import scipy.signal as osp_signal
 

@@ -16,7 +16,7 @@ import time
 import warnings
 
 from absl.testing import absltest
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 

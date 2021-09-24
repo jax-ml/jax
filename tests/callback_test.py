@@ -16,7 +16,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.experimental.callback import find_by_value, rewrite, FoundValue
 import jax.numpy as jnp
 from jax import lax

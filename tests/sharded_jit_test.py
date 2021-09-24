@@ -27,7 +27,7 @@ from absl.testing import parameterized
 import jax
 from jax import jit, pmap, vjp
 from jax import lax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import tree_util
 from jax.experimental import (sharded_jit, with_sharding_constraint,
                               PartitionSpec as P)
