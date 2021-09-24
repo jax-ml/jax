@@ -19,7 +19,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import random
 from jax.experimental import stax
 from jax import dtypes

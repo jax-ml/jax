@@ -21,7 +21,7 @@ from absl.testing import absltest
 import jax
 import jax.numpy as jnp
 from jax import lax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge
 from jax.interpreters import xla
 

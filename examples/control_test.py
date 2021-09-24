@@ -18,7 +18,7 @@ from absl.testing import absltest
 import numpy as np
 
 from jax import lax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 import jax.numpy as jnp
 
 from examples import control

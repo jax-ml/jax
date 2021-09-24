@@ -18,7 +18,7 @@ from absl.testing import absltest
 import jax
 import jax.lax as lax
 import jax.numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 import numpy as np
 
 from jax.experimental.jax2tf.tests import tf_test_util

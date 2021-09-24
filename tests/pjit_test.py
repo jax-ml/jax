@@ -24,7 +24,7 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.errors import JAXTypeError
 from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?

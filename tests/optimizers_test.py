@@ -20,7 +20,7 @@ from absl.testing import absltest
 import numpy as np
 
 import jax.numpy as jnp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 from jax import jit, grad, jacfwd, jacrev
 from jax import tree_util
 from jax import lax

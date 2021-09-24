@@ -24,7 +24,7 @@ from absl.testing import parameterized
 import scipy.stats
 
 from jax import core
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.test_util import check_grads
 from jax import nn
 from jax import random

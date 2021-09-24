@@ -21,7 +21,7 @@ from absl.testing import parameterized
 import jax
 from jax import core, grad, jit, vmap, lax
 import jax.numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax._src import source_info_util
 from jax._src import traceback_util
 

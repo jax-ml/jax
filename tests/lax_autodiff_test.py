@@ -26,7 +26,7 @@ import numpy as np
 import jax
 from jax import dtypes
 from jax import lax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.test_util import check_grads
 from jax._src.util import prod
 

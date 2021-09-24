@@ -28,7 +28,7 @@ from jax.experimental.pjit import pjit
 import jax
 from jax import jit, lax, pmap
 from jax._src.util import prod
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 import jax._src.lib
 import numpy as np
 

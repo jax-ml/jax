@@ -20,7 +20,7 @@ import numpy as np
 import unittest
 
 import jax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 import jax.numpy as jnp
 import jax.scipy.special
 from jax import random

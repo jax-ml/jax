@@ -22,7 +22,7 @@ import numpy as np
 
 from jax import config, core, jit, lax
 import jax.numpy as jnp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 from jax.experimental.sparse import BCOO, sparsify
 from jax.experimental.sparse.transform import (
   arrays_to_argspecs, argspecs_to_arrays, sparsify_raw, ArgSpec, SparseEnv)

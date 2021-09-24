@@ -22,7 +22,7 @@ import unittest
 from absl.testing import absltest
 
 import jax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.config import config
 
 from jax.experimental import jax2tf

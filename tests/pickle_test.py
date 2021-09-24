@@ -26,7 +26,7 @@ except ImportError:
 import jax
 from jax import numpy as jnp
 from jax.config import config
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 import jax._src.lib
 
 config.parse_flags_with_absl()

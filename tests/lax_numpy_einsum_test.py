@@ -24,7 +24,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 import jax.numpy as jnp
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()

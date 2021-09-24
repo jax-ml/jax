@@ -21,7 +21,7 @@ import numpy as np
 from unittest import SkipTest
 
 from jax._src import api
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit
 import jax._src.lib

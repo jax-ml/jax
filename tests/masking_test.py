@@ -20,7 +20,7 @@ from absl.testing import absltest, parameterized
 
 from jax import lax
 from jax import core
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.config import config
 from jax._src.util import safe_map, safe_zip
 from jax.tree_util import tree_flatten

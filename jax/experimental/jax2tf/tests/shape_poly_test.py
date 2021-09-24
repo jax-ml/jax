@@ -28,7 +28,7 @@ from jax.experimental import jax2tf
 from jax.experimental.jax2tf import shape_poly
 from jax import lax
 import jax.numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax._src.lax import control_flow as lax_control_flow
 import numpy as np
 

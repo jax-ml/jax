@@ -35,7 +35,7 @@ from jax.experimental import maps
 from jax.experimental import pjit
 from jax import lax
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.lib import xla_bridge
 

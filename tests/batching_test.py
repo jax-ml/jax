@@ -21,7 +21,7 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
 from jax import random

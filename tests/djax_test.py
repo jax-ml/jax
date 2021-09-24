@@ -19,7 +19,7 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.util import safe_map, safe_zip
 
 from jax.experimental import djax

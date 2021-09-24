@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional, Sequence, Union
 
 from jax import lax
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax.experimental.jax2tf.tests import primitive_harness
 import numpy as np

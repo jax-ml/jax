@@ -29,7 +29,7 @@ import jax
 from jax import core
 from jax._src import dtypes
 from jax import lax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src import lax_reference
 from jax.test_util import check_grads

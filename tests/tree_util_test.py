@@ -20,7 +20,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.tree_util import _process_pytree
 from jax import flatten_util

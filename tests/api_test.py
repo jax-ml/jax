@@ -49,7 +49,7 @@ from jax.interpreters import pxla
 from jax.interpreters.sharded_jit import PartitionSpec as P
 import jax._src.lib
 from jax._src.lib import xla_client
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
 import jax._src.util

@@ -15,7 +15,7 @@
 from unittest import SkipTest
 
 from absl.testing import absltest
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 
 import jax
 from jax import numpy as jnp

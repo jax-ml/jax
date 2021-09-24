@@ -22,7 +22,7 @@ import scipy as osp
 import scipy.stats as osp_stats
 
 import jax
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 

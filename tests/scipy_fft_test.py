@@ -15,7 +15,7 @@ import itertools
 
 from absl.testing import absltest, parameterized
 
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 import jax.scipy.fft as jsp_fft
 import scipy.fftpack as osp_fft  # TODO use scipy.fft once scipy>=1.4.0 is used
 

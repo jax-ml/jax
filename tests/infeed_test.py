@@ -21,7 +21,7 @@ from jax import lax, numpy as jnp
 from jax import config
 from jax.experimental import host_callback as hcb
 from jax._src.lib import xla_client
-import jax.test_util as jtu
+import jax._src.test_util as jtu
 import numpy as np
 
 config.parse_flags_with_absl()

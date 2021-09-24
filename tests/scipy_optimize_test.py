@@ -17,7 +17,7 @@ import numpy as np
 import scipy.optimize
 
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax import jit
 from jax.config import config
 import jax.scipy.optimize

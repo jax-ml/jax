@@ -26,7 +26,7 @@ import jax
 from jax._src import dtypes
 from jax import lax
 from jax import numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 from jax.interpreters import xla
 
 from jax.config import config

@@ -21,7 +21,7 @@ from jax.config import config
 import jax.dlpack
 from jax._src.lib import xla_bridge, xla_client
 import jax.numpy as jnp
-from jax import test_util as jtu
+from jax._src import test_util as jtu
 
 import numpy as np
 
