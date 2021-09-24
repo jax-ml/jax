@@ -2446,11 +2446,16 @@ def _gather_using_tf_gather(operand: TfVal, start_indices: TfVal, *,
 
 @partial(bool_to_int8, argnums=[0])
 def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
-            indices_are_sorted, unique_indices,
+            indices_are_sorted, unique_indices, mode, fill_value,
             _in_avals: Sequence[core.ShapedArray],
             _out_aval: core.ShapedArray):
   """Tensorflow implementation of gather."""
-  del unique_indices
+  del unique_indices, fill_value
+
+  if mode == lax.GatherScatterMode.FILL_OR_DROP:
+    raise NotImplementedError("FILL_OR_DROP gather mode is not implemented in "
+                              "jax2tf")
+
   if _thread_local_state.enable_xla:
     proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
     slice_sizes_tf = _eval_shape(slice_sizes)
@@ -2571,10 +2576,14 @@ def _scatter_dimensions_proto(indices_shape, dimension_numbers):
 
 
 def _scatter(operand, scatter_indices, updates, *, update_jaxpr, update_consts,
-             dimension_numbers, indices_are_sorted, unique_indices,
+             dimension_numbers, indices_are_sorted, unique_indices, mode,
              _in_avals: Sequence[core.ShapedArray],
              _out_aval: core.ShapedArray):
   del unique_indices, _in_avals
+
+  if mode == lax.GatherScatterMode.CLIP:
+    raise NotImplementedError("CLIP scatter mode not implemented in jax2tf")
+
   assert len(update_consts) == 0, "Update computation cannot have constants"
 
   if not _thread_local_state.enable_xla:
