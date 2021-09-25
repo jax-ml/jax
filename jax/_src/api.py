@@ -2295,19 +2295,16 @@ def make_jaxpr(fun: Callable,
   >>> print(f(3.0))
   -0.83602
   >>> jax.make_jaxpr(f)(3.0)
-  { lambda  ; a.
-    let b = cos a
-        c = sin b
-    in (c,) }
+  { lambda ; a:f32[]. let b:f32[] = cos a; c:f32[] = sin b in (c,) }
   >>> jax.make_jaxpr(jax.grad(f))(3.0)
-  { lambda  ; a.
-    let b = cos a
-        c = sin a
-        _ = sin b
-        d = cos b
-        e = mul 1.0 d
-        f = neg e
-        g = mul f c
+  { lambda ; a:f32[]. let
+      b:f32[] = cos a
+      c:f32[] = sin a
+      _:* = sin b
+      d:f32[] = cos b
+      e:f32[] = mul 1.0 d
+      f:f32[] = neg e
+      g:f32[] = mul f c
     in (g,) }
   """
   _check_callable(fun)

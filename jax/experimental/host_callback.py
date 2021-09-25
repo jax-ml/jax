@@ -458,7 +458,7 @@ from jax import lax
 from jax.experimental import pjit
 from jax.interpreters import ad, xla, batching, masking, pxla
 from jax.interpreters import partial_eval as pe
-from jax._src import pprint_util as ppu
+from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lib import pytree
@@ -747,21 +747,31 @@ def _print_tap_func(
       f"{k}: {v}" for k, v in sorted(kwargs.items())
   ])
 
-  def pp_val(arg) -> ppu.PrettyPrint:
+  def pp_val(arg) -> pp.Doc:
     if isinstance(arg, tuple):
-      return (
-          ppu.pp("( ") >> ppu.vcat([pp_val(e) for e in arg]) >> ppu.pp(" )"))
+      return pp.group(pp.concat([
+        pp.text("( "),
+        pp.nest(2, pp.join(pp.brk(), [pp_val(e) for e in arg])),
+        pp.text(" )")
+      ]))
     elif isinstance(arg, list):
-      return (
-          ppu.pp("[ ") >> ppu.vcat([pp_val(e) for e in arg]) >> ppu.pp(" ]"))
+      return pp.group(pp.concat([
+        pp.text("[ "),
+        pp.nest(2, pp.join(pp.brk(), [pp_val(e) for e in arg])),
+        pp.text(" ]")
+      ]))
     elif isinstance(arg, dict):
-      return (ppu.pp("{ ") >> ppu.vcat([
-          ppu.pp(f"{k}=") >> pp_val(v) for k, v in sorted(arg.items())
-      ]) >> ppu.pp(" }"))
+      return pp.group(pp.concat([
+        pp.text("{ "),
+        pp.nest(2, pp.join(pp.brk(), [
+          pp.text(f"{k}=") + pp_val(v) for k, v in sorted(arg.items())
+        ])),
+        pp.text(" }")
+      ]))
     elif isinstance(arg, np.ndarray):
-      return ppu.pp(np.array2string(arg, threshold=threshold))
+      return pp.text(np.array2string(arg, threshold=threshold))
     else:
-      return ppu.pp(str(arg))
+      return pp.text(str(arg))
 
   with _print_tap_lock:
     if kv_pairs:
