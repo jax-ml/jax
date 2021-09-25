@@ -1379,7 +1379,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     ans =                scan(f, c, as_)
     expected = scan_reference(f, c, as_)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        rtol={np.float64: 1.4e-15}, atol={np.float64: 8e-15})
 
   @parameterized.named_parameters(
       {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
