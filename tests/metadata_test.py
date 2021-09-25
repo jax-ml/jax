@@ -80,7 +80,7 @@ class MetadataTest(jtu.JaxTestCase):
       return jax.lax.cond(True, x, true_fun, x, false_fun)
     hlo = jax.xla_computation(f)(1.).get_hlo_module().to_string()
     self.assertRegex(hlo, 'op_type="cond"')
-    self.assertRegex(hlo, 'op_name=".*cond\\[ linear=\\(False, False\\) \\]"')
+    self.assertRegex(hlo, 'op_name=".*cond\\[linear=\\(False, False\\)\\]"')
     self.assertRegex(hlo, 'op_type="cos"')
     self.assertRegex(hlo, 'op_name=".*cond/branch_0_fun/cos"')
     self.assertRegex(hlo, 'op_type="sin"')

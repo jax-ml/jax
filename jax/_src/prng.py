@@ -31,7 +31,7 @@ from jax._src.api import jit, vmap
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import cuda_prng
-from jax._src.pprint_util import pp, vcat
+import jax._src.pretty_printer as pp
 from jax._src.util import prod
 
 
@@ -64,9 +64,10 @@ class PRNGImpl(NamedTuple):
   fold_in: Callable
 
   def pprint(self):
-    return (pp(self.__class__.__name__) >> pp(':')) + vcat([
-        pp(k) >> pp(' = ') >> pp(v) for k, v in self._asdict().items()
-    ]).indent(2)
+    return (pp.text(f"{self.__class__.__name__}:") +
+            pp.nest(2, pp.group(pp.brk() + pp.join(pp.brk(), [
+              pp.text(f"{k} = {v}") for k, v in self._asdict().items()
+            ]))))
 
 
 # -- PRNG key arrays --
@@ -183,9 +184,11 @@ class PRNGKeyArray:
 
   def __repr__(self):
     arr_shape = self._shape
-    pp_keys = pp('shape = ') >> pp(arr_shape)
-    pp_impl = pp('impl = ') >> self.impl.pprint()
-    return str(pp('PRNGKeyArray:') + (pp_keys + pp_impl).indent(2))
+    pp_keys = pp.text('shape = ') + pp.text(str(arr_shape))
+    pp_impl = pp.text('impl = ') + self.impl.pprint()
+    return str(pp.group(
+      pp.text('PRNGKeyArray:') +
+      pp.nest(2, pp.brk() + pp_keys + pp.brk() + pp_impl)))
 
 
 def seed_with_impl(impl: PRNGImpl, seed: int) -> PRNGKeyArray:
