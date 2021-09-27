@@ -34,6 +34,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     perform shape or index computations that must be known statically; the
     workaround is to perform such computations using classic NumPy arrays
     instead.
+  * `jnp.ndarray` is now a true base-class for JAX arrays. In particular, this
+    means that for a standard numpy array `x`, `isinstance(x, jnp.ndarray)` will
+    now return `False` ({jax-issue}`7927`).
 * New features:
   * Added {func}`jax.numpy.insert` implementation ({jax-issue}`#7936`).
 
