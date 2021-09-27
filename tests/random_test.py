@@ -1113,6 +1113,13 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
         TypeError, r'unsupported operand type\(s\) for \+*',
         lambda: key + 47)
 
+  @skipIf(np.__version__ == "1.21.0",
+          "https://github.com/numpy/numpy/issues/19305")
+  def test_grad_of_prng_key(self):
+    key = self.seed_prng(73)
+    jax.grad(lambda x: 1., allow_int=True)(key)  # does not crash
+
+
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
 
