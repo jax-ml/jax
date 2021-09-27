@@ -22,7 +22,8 @@ from typing import Optional
 
 __all__ = [
   'cuda_linalg', 'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
-  'pocketfft', 'pytree', 'tpu_driver_client', 'version', 'xla_client'
+  'pocketfft', 'pytree', 'tpu_driver_client', 'version', 'xla_client',
+  'xla_extension',
 ]
 
 # First, before attempting to import jaxlib, warn about experimental machine
