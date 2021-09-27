@@ -30,7 +30,8 @@ from ..tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
                          tree_leaves)
 from .._src.tree_util import _replace_nones
 from .._src.api_util import (flatten_fun_nokwargs, flatten_axes,
-                             _ensure_index_tuple, donation_vector)
+                             _ensure_index_tuple, donation_vector,
+                             shaped_abstractify)
 from .._src import source_info_util
 from .._src.config import config
 from ..errors import JAXTypeError
@@ -571,7 +572,6 @@ def xmap(fun: Callable,
                        f"{necessary_resources - available_resources}")
 
     args_flat, in_tree = tree_flatten(args)
-    for arg in args_flat: _check_arg(arg)
     fun_flat, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
     if donate_argnums:
       donated_invars = donation_vector(donate_argnums, args, ())
@@ -632,6 +632,7 @@ def xmap(fun: Callable,
     return tree_unflatten(out_tree(), out_flat)
 
   def fun_mapped(*args):
+    tree_map(_check_arg, args)
     fun_flat, args_flat, params, out_tree = infer_params(*args)
     out_flat = xmap_p.bind(fun_flat, *args_flat, **params)
     return verify_outputs(out_flat, out_tree, params)
@@ -643,7 +644,7 @@ def xmap(fun: Callable,
 
   def lower(*args):
     fun_flat, args_flat, params, out_tree = infer_params(*args)
-    avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
+    avals_flat = [shaped_abstractify(arg) for arg in args_flat]
     return make_xmap_callable(
         fun_flat, params['name'], params['in_axes'], params['out_axes_thunk'],
         params['donated_invars'], params['global_axis_sizes'], params['axis_resources'],

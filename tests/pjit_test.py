@@ -352,6 +352,12 @@ class PJitTest(jtu.BufferDonationTestCase):
     finally:
       xla.call_translations[pjit_p] = rule
 
+  @jtu.with_mesh([('x', 2)])
+  def testLowerWithAbstractArgs(self):
+    x = jax.ShapeDtypeStruct((2, 2), jnp.float32)
+    # Make sure this doesn't crash
+    pjit(lambda x: x + 4, in_axis_resources=P('x'), out_axis_resources=P('x')).lower(x)
+
   def testInfeed(self):
     devices = np.array(jax.local_devices())
     nr_devices = len(devices)
