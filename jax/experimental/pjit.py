@@ -27,7 +27,8 @@ from .._src.api import _check_callable, _check_arg
 from .._src import source_info_util
 from .._src.api_util import (argnums_partial_except, flatten_axes,
                              flatten_fun_nokwargs, _ensure_index_tuple,
-                             donation_vector, rebase_donate_argnums)
+                             donation_vector, rebase_donate_argnums,
+                             shaped_abstractify)
 from ..errors import JAXTypeError
 from ..interpreters import ad
 from ..interpreters import pxla
@@ -201,14 +202,13 @@ def pjit(fun: Callable,
       dyn_args = args
 
     args_flat, in_tree = tree_flatten(args)
-    for arg in args_flat: _check_arg(arg)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
     if donate_argnums:
       donated_invars = donation_vector(donate_argnums, dyn_args, ())
     else:
       donated_invars = (False,) * len(args_flat)
 
-    local_in_avals = tuple(core.raise_to_shaped(core.get_aval(a)) for a in args_flat)
+    local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
     jaxpr, in_axis_resources_flat, out_axis_resources_flat = \
         _pjit_jaxpr(flat_fun, mesh, local_in_avals,
                     in_tree, hashable_pytree(in_axis_resources),
@@ -224,6 +224,7 @@ def pjit(fun: Callable,
 
   @wraps(fun)
   def wrapped(*args, **kwargs):
+    tree_map(_check_arg, args)
     args_flat, params, out_tree = infer_params(*args, **kwargs)
     out = pjit_p.bind(*args_flat, **params)
     return tree_unflatten(out_tree, out)

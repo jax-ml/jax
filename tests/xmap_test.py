@@ -586,6 +586,11 @@ class XMapTest(XMapTestCase):
               axis_resources={'i': ('x', SerialLoop(4))})(x)
     self.assertAllClose(y, x + 4)
 
+  def testLowerWithAbstractArgs(self):
+    x = jax.ShapeDtypeStruct((2, 2), jnp.float32)
+    # Make sure this doesn't crash
+    xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...]).lower(x)
+
 
 class XMapTestSPMD(SPMDTestMixin, XMapTest):
   """Re-executes all basic tests with the SPMD partitioner enabled"""
