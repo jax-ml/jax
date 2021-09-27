@@ -46,18 +46,21 @@ def _promote_arg_dtypes(*args):
 
 
 @_wraps(np.linalg.cholesky)
+@jit
 def cholesky(a):
   a = _promote_arg_dtypes(jnp.asarray(a))
   return lax_linalg.cholesky(a)
 
 
 @_wraps(np.linalg.svd)
+@partial(jit, static_argnames=('full_matrices', 'compute_uv'))
 def svd(a, full_matrices=True, compute_uv=True):
   a = _promote_arg_dtypes(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
 @_wraps(np.linalg.matrix_power)
+@partial(jit, static_argnames=('n',))
 def matrix_power(a, n):
   a = _promote_arg_dtypes(jnp.asarray(a))
 
@@ -95,6 +98,7 @@ def matrix_power(a, n):
 
 
 @_wraps(np.linalg.matrix_rank)
+@jit
 def matrix_rank(M, tol=None):
   M = _promote_arg_dtypes(jnp.asarray(M))
   if M.ndim > 2:
@@ -288,12 +292,14 @@ def eig(a):
 
 
 @_wraps(np.linalg.eigvals)
+@jit
 def eigvals(a):
   return lax_linalg.eig(a, compute_left_eigenvectors=False,
                         compute_right_eigenvectors=False)[0]
 
 
 @_wraps(np.linalg.eigh)
+@partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
 def eigh(a, UPLO=None, symmetrize_input=True):
   if UPLO is None or UPLO == "L":
     lower = True
@@ -309,6 +315,7 @@ def eigh(a, UPLO=None, symmetrize_input=True):
 
 
 @_wraps(np.linalg.eigvalsh)
+@partial(jit, static_argnames=('UPLO',))
 def eigvalsh(a, UPLO='L'):
   w, _ = eigh(a, UPLO)
   return w
@@ -320,6 +327,7 @@ def eigvalsh(a, UPLO='L'):
     default `rcond` is `1e-15`. Here the default is
     `10. * max(num_rows, num_cols) * jnp.finfo(dtype).eps`.
     """))
+@jit
 def pinv(a, rcond=None):
   # Uses same algorithm as
   # https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
@@ -356,6 +364,7 @@ def _pinv_jvp(rcond, primals, tangents):
 
 
 @_wraps(np.linalg.inv)
+@jit
 def inv(a):
   if jnp.ndim(a) < 2 or a.shape[-1] != a.shape[-2]:
     raise ValueError(
@@ -364,8 +373,10 @@ def inv(a):
     a, lax.broadcast(jnp.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
 
 
-@partial(jit, static_argnums=(1, 2, 3))
-def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
+@_wraps(np.linalg.norm)
+@partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
+def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
+         keepdims=False):
   x = _promote_arg_dtypes(jnp.asarray(x))
   x_shape = jnp.shape(x)
   ndim = len(x_shape)
@@ -451,12 +462,9 @@ def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
     raise ValueError(
         "Invalid axis values ({}) for jnp.linalg.norm.".format(axis))
 
-@_wraps(np.linalg.norm)
-def norm(x, ord=None, axis=None, keepdims=False):
-  return _norm(x, ord, axis, keepdims)
-
 
 @_wraps(np.linalg.qr)
+@partial(jit, static_argnames=('mode',))
 def qr(a, mode="reduced"):
   if mode in ("reduced", "r", "full"):
     full_matrices = False
@@ -478,20 +486,7 @@ def solve(a, b):
   return lax_linalg._solve(a, b)
 
 
-@_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\
-    It has two important differences:
-
-    1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and warns that in the future
-       the default will be `None`. Here, the default rcond is `None`.
-    2. In `np.linalg.lstsq` the returned residuals are empty for low-rank or over-determined
-       solutions. Here, the residuals are returned in all cases, to make the function
-       compatible with jit. The non-jit compatible numpy behavior can be recovered by
-       passing numpy_resid=True.
-
-    The lstsq function does not currently have a custom JVP rule, so the gradient is
-    poorly behaved for some inputs, particularly for low-rank `a`.
-    """))
-def lstsq(a, b, rcond=None, *, numpy_resid=False):
+def _lstsq(a, b, rcond, *, numpy_resid=False):
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   # TODO: add custom jvp rule for more robust lstsq differentiation
   a, b = _promote_arg_dtypes(a, b)
@@ -510,8 +505,8 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
   dtype = a.dtype
   if rcond is None:
     rcond = jnp.finfo(dtype).eps * max(n, m)
-  elif rcond < 0:
-    rcond = jnp.finfo(dtype).eps
+  else:
+    rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
   u, s, vt = svd(a, full_matrices=False)
   mask = s >= rcond * s[0]
   rank = mask.sum()
@@ -529,3 +524,23 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
   if b_orig_ndim == 1:
     x = x.ravel()
   return x, resid, rank, s
+
+_jit_lstsq = jit(partial(_lstsq, numpy_resid=False))
+
+@_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\
+    It has two important differences:
+
+    1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and warns that in the future
+       the default will be `None`. Here, the default rcond is `None`.
+    2. In `np.linalg.lstsq` the returned residuals are empty for low-rank or over-determined
+       solutions. Here, the residuals are returned in all cases, to make the function
+       compatible with jit. The non-jit compatible numpy behavior can be recovered by
+       passing numpy_resid=True.
+
+    The lstsq function does not currently have a custom JVP rule, so the gradient is
+    poorly behaved for some inputs, particularly for low-rank `a`.
+    """))
+def lstsq(a, b, rcond=None, *, numpy_resid=False):
+  if numpy_resid:
+    return _lstsq(a, b, rcond, numpy_resid=True)
+  return _jit_lstsq(a, b, rcond)
