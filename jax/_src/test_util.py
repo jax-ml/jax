@@ -71,12 +71,12 @@ flags.DEFINE_bool(
 
 flags.DEFINE_string(
   'test_targets', '',
-  'Regular expression specifying which tests to run, called via re.match on '
+  'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
 flags.DEFINE_string(
   'exclude_test_targets', '',
-  'Regular expression specifying which tests NOT to run, called via re.match '
+  'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
 
