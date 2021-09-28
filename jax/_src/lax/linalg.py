@@ -1457,7 +1457,7 @@ def schur(x,
       select_callable=select_callable)
 
 
-def schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
+def _schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
                select_callable):
   return (xla.apply_primitive(
       schur_p,
@@ -1467,12 +1467,12 @@ def schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
       select_callable=select_callable))
 
 
-def schur_translation_rule(c, operand, *, compute_schur_vectors, sort_eig_vals):
+def _schur_translation_rule(c, operand, *, compute_schur_vectors, sort_eig_vals):
   raise NotImplementedError(
       "Schur decomposition is only implemented on the CPU backend.")
 
 
-def schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
+def _schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
                         select_callable):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
@@ -1495,13 +1495,12 @@ def schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
   return tuple(output)
 
 
-_cpu_gees = lapack.gees
-
-
-def schur_cpu_translation_rule(c, operand, *, compute_schur_vectors,
+def _schur_cpu_translation_rule(c, operand, *, compute_schur_vectors,
                                sort_eig_vals, select_callable):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
+
+  _cpu_gees = lapack.gees
 
   if sort_eig_vals:
     T, vs, sdim, info = _cpu_gees(
@@ -1531,7 +1530,7 @@ def schur_cpu_translation_rule(c, operand, *, compute_schur_vectors,
   return xops.Tuple(c, output)
 
 
-def schur_batching_rule(batched_args, batch_dims, *, compute_schur_vectors,
+def _schur_batching_rule(batched_args, batch_dims, *, compute_schur_vectors,
                         sort_eig_vals, select_callable):
   x, = batched_args
   bd, = batch_dims
@@ -1544,7 +1543,7 @@ def schur_batching_rule(batched_args, batch_dims, *, compute_schur_vectors,
       select_callable=select_callable), (0,) * (1 + compute_schur_vectors))
 
 
-def schur_jvp_rule(primals, tangents, *, compute_schur_vectors, sort_eig_vals):
+def _schur_jvp_rule(primals, tangents, *, compute_schur_vectors, sort_eig_vals):
   raise NotImplementedError(
       'The differentiation rules for the Schur factorization have not been implemented.'
   )
@@ -1552,9 +1551,9 @@ def schur_jvp_rule(primals, tangents, *, compute_schur_vectors, sort_eig_vals):
 
 schur_p = Primitive('schur')
 schur_p.multiple_results = True
-schur_p.def_impl(schur_impl)
-schur_p.def_abstract_eval(schur_abstract_eval)
-xla.translations[schur_p] = schur_translation_rule
-xla.backend_specific_translations['cpu'][schur_p] = schur_cpu_translation_rule
-batching.primitive_batchers[schur_p] = schur_batching_rule
-ad.primitive_jvps[schur_p] = schur_jvp_rule
+schur_p.def_impl(_schur_impl)
+schur_p.def_abstract_eval(_schur_abstract_eval)
+xla.translations[schur_p] = _schur_translation_rule
+xla.backend_specific_translations['cpu'][schur_p] = _schur_cpu_translation_rule
+batching.primitive_batchers[schur_p] = _schur_batching_rule
+ad.primitive_jvps[schur_p] = _schur_jvp_rule
