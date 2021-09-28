@@ -628,6 +628,120 @@ template struct RealGeev<double>;
 template struct ComplexGeev<std::complex<float>>;
 template struct ComplexGeev<std::complex<double>>;
 
+// Gees
+
+template <typename T>
+typename RealGees<T>::FnType* RealGees<T>::fn = nullptr;
+
+template <typename T>
+void RealGees<T>::Kernel(void* out_tuple, void** data) {
+  int b = *(reinterpret_cast<int32_t*>(data[0]));
+  int n = *(reinterpret_cast<int32_t*>(data[1]));
+  char jobvs = *(reinterpret_cast<uint8_t*>(data[2]));
+  char sort = *(reinterpret_cast<uint8_t*>(data[3]));
+
+  const T* a_in = reinterpret_cast<T*>(data[4]);
+
+  // bool* select (T, T) = reinterpret_cast<bool* (T, T)>(data[5]);
+  bool (*select)(T, T);
+
+  void** out = reinterpret_cast<void**>(out_tuple);
+  T* a_work = reinterpret_cast<T*>(out[0]);
+  
+
+  T* wr_out = reinterpret_cast<T*>(out[1]);
+  T* wi_out = reinterpret_cast<T*>(out[2]);
+  T* vs_out = reinterpret_cast<T*>(out[3]);
+  int* sdim_out = reinterpret_cast<int*>(out[4]);
+  int* info_out = reinterpret_cast<int*>(out[5]);
+
+  bool* b_work;
+  if (sort == 'N')
+    b_work = new bool[n];
+
+  T work_query;
+  int lwork = -1;
+  fn(&jobvs, &sort, select, &n, a_work, &n, sdim_out, wr_out, wi_out, vs_out, &n,
+     &work_query, &lwork, b_work, info_out);
+  lwork = static_cast<int>(work_query);
+  T* work = new T[lwork];
+
+  for (int i = 0; i < b; ++i) {
+    std::memcpy(a_work, a_in,
+                static_cast<int64_t>(n) * static_cast<int64_t>(n) * sizeof(T));
+    fn(&jobvs, &sort, select, &n, a_work, &n, sdim_out, wr_out, wi_out, vs_out, &n,
+     work, &lwork, b_work, info_out);
+
+    a_in += static_cast<int64_t>(n) * n;
+    a_work += static_cast<int64_t>(n) * n;
+    wr_out += n;
+    wi_out += n;
+    vs_out += static_cast<int64_t>(n) * n;
+    ++sdim_out;
+    ++info_out;
+  }
+  delete[] work;
+  delete[] b_work;
+}
+
+template <typename T>
+typename ComplexGees<T>::FnType* ComplexGees<T>::fn = nullptr;
+
+template <typename T>
+void ComplexGees<T>::Kernel(void* out_tuple, void** data) {
+  int b = *(reinterpret_cast<int32_t*>(data[0]));
+  int n = *(reinterpret_cast<int32_t*>(data[1]));
+  char jobvs = *(reinterpret_cast<uint8_t*>(data[2]));
+  char sort = *(reinterpret_cast<uint8_t*>(data[3]));
+
+  const T* a_in = reinterpret_cast<T*>(data[4]);
+
+  // bool* select (T, T) = reinterpret_cast<bool* (T, T)>(data[5]);
+  bool (*select)(T);
+
+  void** out = reinterpret_cast<void**>(out_tuple);
+  T* a_work = reinterpret_cast<T*>(out[0]);    
+  typename T::value_type* r_work =
+      reinterpret_cast<typename T::value_type*>(out[1]);
+  T* w_out = reinterpret_cast<T*>(out[2]);
+  T* vs_out = reinterpret_cast<T*>(out[3]);
+  int* sdim_out = reinterpret_cast<int*>(out[4]);
+  int* info_out = reinterpret_cast<int*>(out[5]);
+
+  bool* b_work;
+  if (sort == 'N')
+    b_work = new bool[n];
+
+  T work_query;
+  int lwork = -1;
+  fn(&jobvs, &sort, select, &n, a_work, &n, sdim_out, w_out, vs_out, &n,
+     &work_query, &lwork, r_work, b_work, info_out);
+  lwork = static_cast<int>(work_query.real());
+  T* work = new T[lwork];
+
+
+  for (int i = 0; i < b; ++i) {
+    std::memcpy(a_work, a_in,
+                static_cast<int64_t>(n) * static_cast<int64_t>(n) * sizeof(T));
+    fn(&jobvs, &sort, select, &n, a_work, &n, sdim_out, w_out, vs_out, &n,
+     work, &lwork, r_work, b_work, info_out);
+
+    a_in += static_cast<int64_t>(n) * n;
+    a_work += static_cast<int64_t>(n) * n;
+    w_out += n;
+    vs_out += static_cast<int64_t>(n) * n;
+    ++info_out;
+    ++sdim_out;
+  }
+  delete[] work;
+  delete[] b_work;
+}
+
+template struct RealGees<float>;
+template struct RealGees<double>;
+template struct ComplexGees<std::complex<float>>;
+template struct ComplexGees<std::complex<double>>;
+
 // Normally JAX obtains its LAPACK/BLAS kernels via Scipy, but optionally
 // allow the user to link against LAPACK directly. This is useful when using
 // JAX-generated HLO from C++.
@@ -678,6 +792,11 @@ jax::RealGeev<double>::FnType dgeev_ ABSL_ATTRIBUTE_WEAK;
 jax::ComplexGeev<std::complex<float>>::FnType cgeev_ ABSL_ATTRIBUTE_WEAK;
 jax::ComplexGeev<std::complex<double>>::FnType zgeev_ ABSL_ATTRIBUTE_WEAK;
 
+jax::RealGees<float>::FnType sgees_ ABSL_ATTRIBUTE_WEAK;
+jax::RealGees<double>::FnType dgees_ ABSL_ATTRIBUTE_WEAK;
+jax::ComplexGees<std::complex<float>>::FnType cgees_ ABSL_ATTRIBUTE_WEAK;
+jax::ComplexGees<std::complex<double>>::FnType zgees_ ABSL_ATTRIBUTE_WEAK;
+
 }  // extern "C"
 
 namespace jax {
@@ -715,6 +834,10 @@ static auto init = []() -> int {
   RealGeev<double>::fn = dgeev_;
   ComplexGeev<std::complex<float>>::fn = cgeev_;
   ComplexGeev<std::complex<double>>::fn = zgeev_;
+  RealGees<float>::fn = sgees_;
+  RealGees<double>::fn = dgees_;
+  ComplexGees<std::complex<float>>::fn = cgees_;
+  ComplexGees<std::complex<double>>::fn = zgees_;
   return 0;
 }();
 
