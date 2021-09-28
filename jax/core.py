@@ -2053,7 +2053,7 @@ def check_map(prim, in_avals, params):
 def pp_vars(vs: Sequence[Any], *, print_shapes: bool = False) -> pp.Doc:
   if print_shapes:
     return pp.nest(2, pp.group(
-      pp.join(pp.brk(), [
+      pp.join(pp.group(pp.brk()), [
         pp.text(str(v)) +
         pp.dim(pp.text(":" + v.aval.str_short(short_dtypes=True)))
         for v in vs
@@ -2061,7 +2061,7 @@ def pp_vars(vs: Sequence[Any], *, print_shapes: bool = False) -> pp.Doc:
     ))
   else:
     return pp.nest(2, pp.group(
-      pp.join(pp.brk(), [pp.text(str(v)) for v in vs])
+      pp.join(pp.group(pp.brk()), [pp.text(str(v)) for v in vs])
     ))
 
 def pp_kv_pair(k:str, v: Any) -> pp.Doc:
