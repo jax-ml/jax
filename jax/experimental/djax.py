@@ -197,8 +197,8 @@ def pp_eqn(eqn: core.JaxprEqn) -> pp.Doc:
   lhs = pp_vars(eqn.outvars)
   pp_lhs = pp.text(f'{lhs} =')
   pp_rhs = (pp.text(eqn.primitive.name) +
-            core.pp_kv_pairs(sorted(eqn.params.items())) + pp.text(' ') +
-            pp.text(' '.join(map(str, eqn.invars))))
+            core.pp_kv_pairs(sorted(eqn.params.items()), core.JaxprPpContext())
+            + pp.text(' ') + pp.text(' '.join(map(str, eqn.invars))))
   return pp_lhs + pp.text(' ') + pp_rhs
 
 # Typechecking DJaxprs

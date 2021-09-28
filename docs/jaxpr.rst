@@ -214,9 +214,9 @@ For example:
     d:i32[] = clamp 0 c 2
     e:f32[] = cond[
       branches=(
-        { lambda ; a:f32[]. let b:f32[] = add a 1.0 in (b,) }
-        { lambda ; a:f32[]. let b:f32[] = sub a 2.0 in (b,) }
-        { lambda ; a:f32[]. let b:f32[] = add a 3.0 in (b,) }
+        { lambda ; f:f32[]. let g:f32[] = add f 1.0 in (g,) }
+        { lambda ; h:f32[]. let i:f32[] = sub h 2.0 in (i,) }
+        { lambda ; j:f32[]. let k:f32[] = add j 3.0 in (k,) }
       )
       linear=(False,)
     ] d b
@@ -252,8 +252,8 @@ Another example, using :py:func:`lax.cond`:
     c:i32[] = convert_element_type[new_dtype=int32 weak_type=False] b
     d:f32[] = cond[
       branches=(
-        { lambda ; a:f32[]. let b:f32[] = sub a 3.0 in (b,) }
-        { lambda ; a:f32[]. let b:f32[] = add a 3.0 in (b,) }
+        { lambda ; e:f32[]. let f:f32[] = sub e 3.0 in (f,) }
+        { lambda ; g:f32[]. let h:f32[] = add g 3.0 in (h,) }
       )
       linear=(False,)
     ] c a
@@ -281,11 +281,11 @@ contains a constant ``jnp.ones(1)`` that is hoisted as a `constvar`
     f:i32[] = convert_element_type[new_dtype=int32 weak_type=False] e
     g:f32[1] = cond[
       branches=(
-        { lambda ; a:i32[1] b:f32[1] c:f32[]. let
-            d:f32[1] = convert_element_type[new_dtype=float32 weak_type=True] a
-            e:f32[1] = add d c
-          in (e,) }
-        { lambda ; f_:i32[1] a:f32[1] b:f32[]. let  in (a,) }
+        { lambda ; h:i32[1] i:f32[1] j:f32[]. let
+            k:f32[1] = convert_element_type[new_dtype=float32 weak_type=True] h
+            l:f32[1] = add k j
+          in (l,) }
+        { lambda ; m_:i32[1] n:f32[1] o:f32[]. let  in (n,) }
       )
       linear=(False, False, False)
     ] f a c d
@@ -322,16 +322,16 @@ For example, here is an example fori loop
     c:f32[16] = broadcast_in_dim[broadcast_dimensions=() shape=(16,)] 1.0
     d:f32[16] = add a c
     _:* _:* e:f32[16] = while[
-      body_jaxpr={ lambda ; a:f32[16] b:f32[16] c:i32[] d:i32[] e:f32[16]. let
-          f:i32[] = add c 1
-          g:f32[16] = mul a 3.0
-          h:f32[16] = add e g
-          i:f32[16] = add h b
-        in (f, d, i) }
+      body_jaxpr={ lambda ; f:f32[16] g:f32[16] h:i32[] i:i32[] j:f32[16]. let
+          k:i32[] = add h 1
+          l:f32[16] = mul f 3.0
+          m:f32[16] = add j l
+          n:f32[16] = add m g
+        in (k, i, n) }
       body_nconsts=2
-      cond_jaxpr={ lambda ; a:i32[] b:i32[] c:f32[16]. let
-          d:bool[] = lt a b
-        in (d,) }
+      cond_jaxpr={ lambda ; o:i32[] p:i32[] q:f32[16]. let
+          r:bool[] = lt o p
+        in (r,) }
       cond_nconsts=0
     ] c a 0 b d
   in (e,) }
@@ -370,12 +370,12 @@ For the example consider the function ``func11`` below
 { lambda ; a:f32[16] b:f32[]. let
     c:f32[16] = broadcast_in_dim[broadcast_dimensions=() shape=(16,)] 1.0
     d:f32[] e:f32[16] = scan[
-      jaxpr={ lambda ; a:f32[] b:f32[] c:f32[] d:f32[]. let
-          e:f32[] = mul c d
-          f:f32[] = convert_element_type[new_dtype=float32 weak_type=False] b
-          g:f32[] = add f e
-          h:f32[] = add g a
-        in (h, b) }
+      jaxpr={ lambda ; f:f32[] g:f32[] h:f32[] i:f32[]. let
+          j:f32[] = mul h i
+          k:f32[] = convert_element_type[new_dtype=float32 weak_type=False] g
+          l:f32[] = add k j
+          m:f32[] = add l f
+        in (m, g) }
       length=16
       linear=(False, False, False, False)
       num_carry=1
@@ -415,20 +415,20 @@ which the computation should run. For example
     b:f32[] = sub a 2.0
     c:f32[1] = xla_call[
       backend=None
-      call_jaxpr={ lambda ; a:f32[] b:f32[]. let
-          c:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
-          d:f32[1] = mul a c
-          e:f32[] = convert_element_type[new_dtype=float32 weak_type=False] b
-          f:f32[1] = add e d
-        in (f,) }
+      call_jaxpr={ lambda ; d:f32[] e:f32[]. let
+          f:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
+          g:f32[1] = mul d f
+          h:f32[] = convert_element_type[new_dtype=float32 weak_type=False] e
+          i:f32[1] = add h g
+        in (i,) }
       device=None
       donated_invars=(False, False)
       inline=False
       name=inner
     ] a b
-    d:f32[] = convert_element_type[new_dtype=float32 weak_type=False] a
-    e:f32[1] = add d c
-  in (e,) }
+    j:f32[] = convert_element_type[new_dtype=float32 weak_type=False] a
+    k:f32[1] = add j c
+  in (k,) }
 
 
 XLA_pmap
@@ -451,13 +451,13 @@ captured using the ``xla_pmap`` primitive. Consider this example
       axis_name=rows
       axis_size=1
       backend=None
-      call_jaxpr={ lambda ; a:f32[] b:f32[3]. let
-          c:f32[3] = add b a
-          d:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
-          e:f32[3] = add c d
-          f:f32[3] = psum[axes=('rows',) axis_index_groups=None] b
-          g:f32[3] = div e f
-        in (g,) }
+      call_jaxpr={ lambda ; d:f32[] e:f32[3]. let
+          f:f32[3] = add e d
+          g:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
+          h:f32[3] = add f g
+          i:f32[3] = psum[axes=('rows',) axis_index_groups=None] e
+          j:f32[3] = div h i
+        in (j,) }
       devices=None
       donated_invars=(False, False)
       global_arg_shapes=(None,)
@@ -466,7 +466,7 @@ captured using the ``xla_pmap`` primitive. Consider this example
       name=inner
       out_axes=(0,)
     ] b a
-       in (c,) }
+    in (c,) }
 
 The ``xla_pmap`` primitive specifies the name of the axis (parameter
 ``axis_name``) and the body of the function to be mapped as the ``call_jaxpr``

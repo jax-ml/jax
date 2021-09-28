@@ -3752,12 +3752,12 @@ class JaxprTest(jtu.JaxTestCase):
     e:i32[] = convert_element_type[new_dtype=int32 weak_type=False] b
     f:f32[] = cond[
       branches=(
-        { lambda ; e_:f32[] a:f32[] b:f32[] c:f32[]. let
-            d:f32[] = sub c a
-          in (d,) }
-        { lambda ; a:f32[] f_:f32[] b:f32[] c:f32[]. let
-            d:f32[] = add b a
-          in (d,) }
+        { lambda ; g_:f32[] h:f32[] i:f32[] j:f32[]. let
+            k:f32[] = sub j h
+          in (k,) }
+        { lambda ; l:f32[] m_:f32[] n:f32[] o:f32[]. let
+            p:f32[] = add n l
+          in (p,) }
       )
       linear=(False, False, False, False)
     ] e a a c d
