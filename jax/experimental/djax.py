@@ -23,7 +23,7 @@ from jax._src import dtypes
 from jax.core import Var, Literal, Atom, Tracer
 from jax._src.util import (safe_zip, safe_map, curry, unzip2, split_list,
                            tuple_delete)
-from jax._src.pprint_util import pp, vcat, PrettyPrint
+import jax._src.pretty_printer as pp
 
 map = safe_map
 zip = safe_zip
@@ -177,7 +177,7 @@ class DJaxpr:
   def __repr__(self):
     return str(pp_djaxpr(self))
 
-def pp_djaxpr(jaxpr: DJaxpr) -> PrettyPrint:
+def pp_djaxpr(jaxpr: DJaxpr) -> pp.Doc:
   eqns = map(pp_eqn, jaxpr.eqns)
   in_dim_binders = pp_vars(jaxpr.in_dim_binders)
   in_binders = pp_vars(jaxpr.in_binders)
@@ -185,21 +185,21 @@ def pp_djaxpr(jaxpr: DJaxpr) -> PrettyPrint:
   outs = ', '.join(map(str, jaxpr.outs))
   out_dim_types = pp_vars(jaxpr.out_dims)
   outs_type = ', '.join(v.aval.str_short() for v in jaxpr.outs)
-  return (pp(f'{{ lambda {in_dim_binders} ; {in_binders} .')
-          + (pp('let ') >> vcat(eqns) +
-             pp(f'in ( {out_dims} ; {outs} ) '
-                f': ( {out_dim_types} ; {outs_type} ) }}')).indent(2))
+  return (pp.text(f'{{ lambda {in_dim_binders} ; {in_binders} .')
+          + (pp.text('let ') + pp.nest(2, pp.brk() + pp.join(pp.brk(), eqns)) +
+             pp.text(f'in ( {out_dims} ; {outs} ) '
+                f': ( {out_dim_types} ; {outs_type} ) }}')))
 
 def pp_vars(vs: Sequence[Atom]) -> str:
   return ', '.join(f'{v}:{v.aval.str_short()}' for v in vs)
 
-def pp_eqn(eqn: core.JaxprEqn) -> PrettyPrint:
+def pp_eqn(eqn: core.JaxprEqn) -> pp.Doc:
   lhs = pp_vars(eqn.outvars)
-  pp_lhs = pp(f'{lhs} =')
-  pp_rhs = (pp(eqn.primitive.name) >>
-            core.pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
-            pp(' '.join(map(str, eqn.invars))))
-  return pp_lhs >> pp(' ') >> pp_rhs
+  pp_lhs = pp.text(f'{lhs} =')
+  pp_rhs = (pp.text(eqn.primitive.name) +
+            core.pp_kv_pairs(sorted(eqn.params.items())) + pp.text(' ') +
+            pp.text(' '.join(map(str, eqn.invars))))
+  return pp_lhs + pp.text(' ') + pp_rhs
 
 # Typechecking DJaxprs
 

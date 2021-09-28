@@ -3722,15 +3722,10 @@ class JaxprTest(jtu.JaxTestCase):
 
   def test_const(self):
     def fun(x):
-      return (x, 1., np.zeros(1))
+      return (x, 1., np.zeros(1, dtype=jnp.float32))
 
-    expected = """
-    { lambda a ; b.
-    let
-    in (b, 1.0, a) }
-    """
-
-    jaxpr = api.make_jaxpr(fun)(0.)
+    expected = "{ lambda a:f32[1]; b:f32[]. let  in (b, 1.0, a) }"
+    jaxpr = api.make_jaxpr(fun)(jnp.float32(0.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
   def test_cond(self):
@@ -3740,23 +3735,24 @@ class JaxprTest(jtu.JaxTestCase):
                       lambda xt: xt + x,
                       x + 2.,
                       lambda xf: xf - x)
-    expected = """
-    { lambda  ; a.
-      let b = ge a 0.0
-          c = add a 1.0
-          d = add a 2.0
-          e = convert_element_type[ new_dtype=int32
-                                    weak_type=False ] b
-          f = cond[ branches=( { lambda  ; e_ a b c.
-                                  let d = sub c a
-                                  in (d,) }
-                                { lambda  ; a f_ b c.
-                                  let d = add b a
-                                  in (d,) } )
-                    linear=(False, False, False, False) ] e a a c d
-      in (f,) }
-      """
-    jaxpr = api.make_jaxpr(f)(3.)
+    expected = """{ lambda ; a:f32[]. let
+    b:bool[] = ge a 0.0
+    c:f32[] = add a 1.0
+    d:f32[] = add a 2.0
+    e:i32[] = convert_element_type[new_dtype=int32 weak_type=False] b
+    f:f32[] = cond[
+      branches=(
+        { lambda ; e_:f32[] a:f32[] b:f32[] c:f32[]. let
+            d:f32[] = sub c a
+          in (d,) }
+        { lambda ; a:f32[] f_:f32[] b:f32[] c:f32[]. let
+            d:f32[] = add b a
+          in (d,) }
+      )
+      linear=(False, False, False, False)
+    ] e a a c d
+  in (f,) }"""
+    jaxpr = api.make_jaxpr(f)(jnp.float32(3.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
   def test_make_jaxpr_static_argnums(self):

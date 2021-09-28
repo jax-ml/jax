@@ -1,3 +1,4 @@
+colorama>=0.4.4
 flatbuffers==2.0
 pillow>=8.3.1
 pytest-benchmark
