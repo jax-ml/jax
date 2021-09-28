@@ -124,7 +124,6 @@ from . import errors as errors
 from . import image as image
 from . import lax as lax
 from . import nn as nn
-from . import numpy as numpy
 from . import ops as ops
 from . import profiler as profiler
 from . import random as random

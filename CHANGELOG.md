@@ -8,13 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.2.22 (Unreleased)
+## jax 0.2.21 (Unreleased)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.21...main).
-
-## jax 0.2.21 (Sept 23, 2021)
-* [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.20...jax-v0.2.21).
+  commits](https://github.com/google/jax/compare/jax-v0.2.20...main).
 * Breaking Changes
   * `jax.api` has been removed. Functions that were available as `jax.api.*`
     were aliases for functions in `jax.*`; please use the functions in
@@ -34,9 +30,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     perform shape or index computations that must be known statically; the
     workaround is to perform such computations using classic NumPy arrays
     instead.
-  * `jnp.ndarray` is now a true base-class for JAX arrays. In particular, this
-    means that for a standard numpy array `x`, `isinstance(x, jnp.ndarray)` will
-    now return `False` ({jax-issue}`7927`).
 * New features:
   * Added {func}`jax.numpy.insert` implementation ({jax-issue}`#7936`).
 

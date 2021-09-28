@@ -40,7 +40,7 @@ from jax._src import source_info_util
 from ._src.util import (safe_zip, safe_map, curry, prod, partialmethod,
                         tuple_insert, tuple_delete, cache, as_hashable_function,
                         HashableFunction)
-import jax._src.pretty_printer as pp
+from ._src.pprint_util import pp, vcat, PrettyPrint
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)

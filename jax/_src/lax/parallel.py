@@ -30,9 +30,9 @@ from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
-from jax._src import dtypes
-from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_bridge as xb
+from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, moveaxis
+from jax.lib import xla_client as xc
+from jax.lib import xla_bridge as xb
 from jax._src.numpy import lax_numpy
 from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, moveaxis
 

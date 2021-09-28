@@ -367,22 +367,22 @@ For the example consider the function ``func11`` below
 ...   return lax.scan(body, 0., (arr, ones))
 ...
 >>> print(make_jaxpr(func11)(np.ones(16), 5.))
-{ lambda ; a:f32[16] b:f32[]. let
-    c:f32[16] = broadcast_in_dim[broadcast_dimensions=() shape=(16,)] 1.0
-    d:f32[] e:f32[16] = scan[
-      jaxpr={ lambda ; a:f32[] b:f32[] c:f32[] d:f32[]. let
-          e:f32[] = mul c d
-          f:f32[] = convert_element_type[new_dtype=float32 weak_type=False] b
-          g:f32[] = add f e
-          h:f32[] = add g a
-        in (h, b) }
-      length=16
-      linear=(False, False, False, False)
-      num_carry=1
-      num_consts=1
-      reverse=False
-      unroll=1
-    ] b 0.0 a c
+{ lambda  ; a b.
+  let c = broadcast_in_dim[ broadcast_dimensions=(  )
+                            shape=(16,) ] 1.0
+      d e = scan[ jaxpr={ lambda  ; a b c d.
+                          let e = mul c d
+                              f = convert_element_type[ new_dtype=float32
+                                                        weak_type=False ] b
+                              g = add f e
+                              h = add g a
+                          in (h, b) }
+                  length=16
+                  linear=(False, False, False, False)
+                  num_carry=1
+                  num_consts=1
+                  reverse=False
+                  unroll=1 ] b 0.0 a c
   in (d, e) }
 
 The ``linear`` parameter describes for each of the input variables whether they
@@ -411,23 +411,24 @@ which the computation should run. For example
 ...   return arg + inner(arg - 2.)
 ...
 >>> print(make_jaxpr(func12)(1.))
-{ lambda ; a:f32[]. let
-    b:f32[] = sub a 2.0
-    c:f32[1] = xla_call[
-      backend=None
-      call_jaxpr={ lambda ; a:f32[] b:f32[]. let
-          c:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
-          d:f32[1] = mul a c
-          e:f32[] = convert_element_type[new_dtype=float32 weak_type=False] b
-          f:f32[1] = add e d
-        in (f,) }
-      device=None
-      donated_invars=(False, False)
-      inline=False
-      name=inner
-    ] a b
-    d:f32[] = convert_element_type[new_dtype=float32 weak_type=False] a
-    e:f32[1] = add d c
+{ lambda  ; a.
+  let b = sub a 2.0
+      c = xla_call[ backend=None
+                    call_jaxpr={ lambda  ; a b.
+                                 let c = broadcast_in_dim[ broadcast_dimensions=(  )
+                                                           shape=(1,) ] 1.0
+                                     d = mul a c
+                                     e = convert_element_type[ new_dtype=float32
+                                                               weak_type=False ] b
+                                     f = add e d
+                                 in (f,) }
+                    device=None
+                    donated_invars=(False, False)
+                    inline=False
+                    name=inner ] a b
+      d = convert_element_type[ new_dtype=float32
+                                weak_type=False ] a
+      e = add d c
   in (e,) }
 
 
@@ -446,27 +447,27 @@ captured using the ``xla_pmap`` primitive. Consider this example
 ...   return pmap(inner, axis_name='rows')(arr)
 ...
 >>> print(make_jaxpr(func13)(jnp.ones((1, 3)), 5.))
-{ lambda ; a:f32[1,3] b:f32[]. let
-    c:f32[1,3] = xla_pmap[
-      axis_name=rows
-      axis_size=1
-      backend=None
-      call_jaxpr={ lambda ; a:f32[] b:f32[3]. let
-          c:f32[3] = add b a
-          d:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
-          e:f32[3] = add c d
-          f:f32[3] = psum[axes=('rows',) axis_index_groups=None] b
-          g:f32[3] = div e f
-        in (g,) }
-      devices=None
-      donated_invars=(False, False)
-      global_arg_shapes=(None,)
-      global_axis_size=None
-      in_axes=(None, 0)
-      name=inner
-      out_axes=(0,)
-    ] b a
-       in (c,) }
+{ lambda  ; a b.
+  let c = xla_pmap[ axis_name=rows
+                    axis_size=1
+                    backend=None
+                    call_jaxpr={ lambda  ; a b.
+                                 let c = add b a
+                                     d = broadcast_in_dim[ broadcast_dimensions=(  )
+                                                           shape=(1,) ] 1.0
+                                     e = add c d
+                                     f = psum[ axes=('rows',)
+                                               axis_index_groups=None ] b
+                                     g = div e f
+                                 in (g,) }
+                    devices=None
+                    donated_invars=(False, False)
+                    global_arg_shapes=(None,)
+                    global_axis_size=None
+                    in_axes=(None, 0)
+                    name=inner
+                    out_axes=(0,) ] b a
+  in (c,) }
 
 The ``xla_pmap`` primitive specifies the name of the axis (parameter
 ``axis_name``) and the body of the function to be mapped as the ``call_jaxpr``

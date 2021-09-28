@@ -56,11 +56,11 @@ from ..tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         treedef_is_leaf, treedef_children, Partial)
 from .util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                    extend_name_stack, wrap_name, cache, wraps, HashableFunction)
-from jax._src.lib import jax_jit
-from jax._src.lib import version
-from jax._src.lib import xla_bridge as xb
-from jax._src.lib import xla_client as xc
-from jax._src.lib import pmap_lib
+from ..lib import jax_jit
+from ..lib import version
+from ..lib import xla_bridge as xb
+from ..lib import xla_client as xc
+from ..lib import pmap_lib
 # Unused imports to be exported
 from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                               local_devices, process_index, process_count,
