@@ -293,10 +293,12 @@ def local_device_count(backend: Optional[str] = None) -> int:
 def devices(backend: Optional[str] = None) -> List[xla_client.Device]:
   """Returns a list of all devices for a given backend.
 
+  .. currentmodule:: jaxlib.xla_extension
+
   Each device is represented by a subclass of :class:`Device` (e.g.
   :class:`CpuDevice`, :class:`GpuDevice`). The length of the returned list is
   equal to ``device_count(backend)``. Local devices can be identified by
-  comparing :meth:`Device.process_index` to the value returned by
+  comparing :attr:`Device.process_index` to the value returned by
   :py:func:`jax.process_index`.
 
   If ``backend`` is ``None``, returns all the devices from the default backend.

@@ -22,6 +22,11 @@ Subpackages
     jax.dlpack
     jax.profiler
 
+.. toctree::
+   :hidden:
+
+   jax.lib
+
 .. _jax-jit:
 
 Just-in-time compilation (:code:`jit`)
