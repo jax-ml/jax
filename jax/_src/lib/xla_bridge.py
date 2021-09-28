@@ -53,14 +53,22 @@ flags.DEFINE_string(
 flags.DEFINE_string(
     'jax_backend_target', '',
     'Either "local" or "rpc:address" to connect to a remote service target.')
+# TODO(skye): warn when this is used once we test out --jax_platforms a bit
 flags.DEFINE_string(
     'jax_platform_name',
     os.getenv('JAX_PLATFORM_NAME', '').lower(),
-    'Platform name for XLA. The default is to attempt to use a GPU or TPU if '
-    'available, but fall back to CPU otherwise. To set the platform manually, '
-    'pass "cpu" for CPU, "gpu" for GPU, etc. If intending to use CPU, '
-    'setting the platform name to "cpu" can silence warnings that appear with '
-    'the default setting.')
+    'Deprecated, please use --jax_platforms instead.')
+flags.DEFINE_string(
+    'jax_platforms',
+    os.getenv('JAX_PLATFORMS', '').lower(),
+    'Comma-separated list of platform names specifying which platforms jax '
+    'should attempt to initialize. The first platform in the list that is '
+    'successfully initialized will be used as the default platform. For '
+    'example, --jax_platforms=cpu,gpu means that CPU and GPU backends will be '
+    'initialized, and the CPU backend will be used unless otherwise specified; '
+    '--jax_platforms=cpu means that only the CPU backend will be initialized. '
+    'By default, jax will try to initialize all available platforms and will '
+    'default to GPU or TPU if available, and fallback to CPU otherwise.')
 flags.DEFINE_bool(
     'jax_disable_most_optimizations',
     bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
@@ -196,8 +204,17 @@ def backends():
     if _backends:
       return _backends
 
+    if FLAGS.jax_platforms:
+      platforms = FLAGS.jax_platforms.split(",")
+      priorities = range(len(platforms), 0, -1)
+      platforms_and_priorites = zip(platforms, priorities)
+    else:
+      platforms_and_priorites = (
+          (platform, priority) for platform, (_, priority)
+          in _backend_factories.items())
+
     default_priority = -1000
-    for platform, (unused_factory, priority) in _backend_factories.items():
+    for platform, priority in platforms_and_priorites:
       try:
         backend = _init_backend(platform)
         _backends[platform] = backend
