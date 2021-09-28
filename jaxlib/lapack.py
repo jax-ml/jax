@@ -611,8 +611,8 @@ def gees(c, a, jobvs=True, sort=False, select=None):
   if dtype == np.float32 or dtype == np.float64:
     fn = b"lapack_sgees" if dtype == np.float32 else b"lapack_dgees"
     real = True
-    eigvecs_type = dtype
-    workspaces = (Shape.array_shape(np.dtype(eigvecs_type), dims, layout),)
+    schurvecs_type = dtype
+    workspaces = (Shape.array_shape(np.dtype(schurvecs_type), dims, layout),)
     eigvals = (Shape.array_shape(
         np.dtype(dtype), batch_dims + (n,), tuple(range(num_bd, -1, -1))),
                Shape.array_shape(
@@ -621,9 +621,9 @@ def gees(c, a, jobvs=True, sort=False, select=None):
   elif dtype == np.complex64 or dtype == np.complex128:
     fn = b"lapack_cgees" if dtype == np.complex64 else b"lapack_zgees"
     real = False
-    eigvecs_type = dtype
+    schurvecs_type = dtype
     workspaces = (
-        Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
+        Shape.array_shape(np.dtype(schurvecs_type), dims, layout),
         Shape.array_shape(
             np.dtype(np.float32 if dtype == np.complex64 else np.float64),
             (n,), (0,)))
@@ -643,7 +643,7 @@ def gees(c, a, jobvs=True, sort=False, select=None):
           #figure out how to put the callable select function here
           a),
       shape_with_layout=Shape.tuple_shape(workspaces + eigvals + (
-          Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
+          Shape.array_shape(np.dtype(schurvecs_type), dims, layout),
           Shape.array_shape(
               np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
           Shape.array_shape(
