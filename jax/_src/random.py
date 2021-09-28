@@ -550,10 +550,10 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> jnp.ndarray:
 
   if method == 'svd':
     (u, s, _) = svd(cov)
-    factor = u * jnp.sqrt(s)
+    factor = u * jnp.sqrt(s[..., None, :])
   elif method == 'eigh':
     (w, v) = eigh(cov)
-    factor = v * jnp.sqrt(w)
+    factor = v * jnp.sqrt(w[..., None, :])
   else: # 'cholesky'
     factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
