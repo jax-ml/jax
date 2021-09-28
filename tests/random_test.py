@@ -771,18 +771,19 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.norm().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dim={}_mean_batch_size={}_cov_batch_size={}_shape={}"\
-       .format(dim, mean_batch_size, cov_batch_size, shape),
+      {"testcase_name": "_dim={}_mean_batch_size={}_cov_batch_size={}_shape={}_method={}"\
+       .format(dim, mean_batch_size, cov_batch_size, shape, method),
        "dim": dim,
        "mean_batch_size": mean_batch_size,
        "cov_batch_size": cov_batch_size,
-       "shape": shape}
+       "shape": shape, "method": method}
       for dim in [1, 2, 4]
       for mean_batch_size in [(), (3,), (2, 3)]
       for cov_batch_size in [(), (3,), (2, 3)]
-      for shape in [(), (1,), (5,)]))
+      for shape in [(), (1,), (5,)]
+      for method in ['cholesky', 'svd', 'eigh']))
   def testMultivariateNormalShapes(self, dim, mean_batch_size, cov_batch_size,
-                                   shape):
+                                   shape, method):
     r = np.random.RandomState(0)
     key = self.seed_prng(0)
     eff_batch_size = mean_batch_size \
@@ -793,7 +794,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     cov += 1e-3 * np.eye(dim)
     shape = shape + eff_batch_size
     with jax.numpy_rank_promotion('allow'):
-      samples = random.multivariate_normal(key, mean, cov, shape=shape)
+      samples = random.multivariate_normal(key, mean, cov, shape=shape, method=method)
     assert samples.shape == shape + (dim,)
 
   def testMultivariateNormalCovariance(self):
