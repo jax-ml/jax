@@ -3515,8 +3515,16 @@ def atleast_3d(*arys):
     return [atleast_3d(arr) for arr in arys]
 
 
-@_wraps(np.array)
-def array(object, dtype=None, copy=True, order="K", ndmin=0):
+_ARRAY_DOC = """
+This function will create arrays on JAX's default device. For control of the
+device placement of data, see :func:`jax.device_put`. More information is
+available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
+https://jax.readthedocs.io/en/latest/faq.html).
+"""
+
+
+@_wraps(np.array, lax_description=_ARRAY_DOC)
+def array(object, dtype=None, copy=True, order="K", ndmin=0, *, device=None):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
@@ -3577,7 +3585,7 @@ def _can_call_numpy_array(x):
               for l in tree_leaves(x))
 
 
-@_wraps(np.asarray)
+@_wraps(np.asarray, lax_description=_ARRAY_DOC)
 def asarray(a, dtype=None, order=None):
   lax._check_user_dtype_supported(dtype, "asarray")
   dtype = dtypes.canonicalize_dtype(dtype) if dtype is not None else dtype
