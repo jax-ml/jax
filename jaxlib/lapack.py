@@ -610,7 +610,6 @@ def gees(c, a, jobvs=True, sort=False, select=None):
 
   if dtype == np.float32 or dtype == np.float64:
     fn = b"lapack_sgees" if dtype == np.float32 else b"lapack_dgees"
-    real = True
     schurvecs_type = dtype
     workspaces = (Shape.array_shape(np.dtype(schurvecs_type), dims, layout),)
     eigvals = (Shape.array_shape(
@@ -620,7 +619,6 @@ def gees(c, a, jobvs=True, sort=False, select=None):
                    tuple(range(num_bd, -1, -1))))
   elif dtype == np.complex64 or dtype == np.complex128:
     fn = b"lapack_cgees" if dtype == np.complex64 else b"lapack_zgees"
-    real = False
     schurvecs_type = dtype
     workspaces = (
         Shape.array_shape(np.dtype(schurvecs_type), dims, layout),

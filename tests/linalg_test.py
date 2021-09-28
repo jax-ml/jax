@@ -1439,7 +1439,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
     A[[1, 2], [0, 1]] = dl[1:]
     A[[0, 1], [1, 2]] = du[:-1]
     np.testing.assert_allclose(A @ X, B, rtol=1e-6, atol=1e-6)
-  
+
   @parameterized.named_parameters(
         jtu.cases_from_list({
             "testcase_name":
@@ -1449,13 +1449,13 @@ class LaxLinalgTest(jtu.JaxTestCase):
                             for dtype in float_types + complex_types))
   @jtu.skip_on_devices("gpu", "tpu")
   def testSchur(self, shape, dtype):
-      if jax._src.lib._xla_extension_version > 38:
-          rng = jtu.rand_default(self.rng())
-          n = shape[-1]
-          args_maker = lambda: [rng(shape, dtype)]
+      if jax._src.lib.version < (0, 1, 72):
+          self.skipTest("Schur LAPACK wrapper only implemented for jaxlib versions >= (0, 1, 72)")
+      rng = jtu.rand_default(self.rng())
+      args_maker = lambda: [rng(shape, dtype)]
 
-          self._CheckAgainstNumpy(osp.linalg.schur, lax.linalg.schur, args_maker)
-          self._CompileAndCheck(lax.linalg.schur, args_maker)
+      self._CheckAgainstNumpy(osp.linalg.schur, lax.linalg.schur, args_maker)
+      self._CompileAndCheck(lax.linalg.schur, args_maker)
 
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -1466,16 +1466,17 @@ class LaxLinalgTest(jtu.JaxTestCase):
                           for dtype in float_types + complex_types))
   @jtu.skip_on_devices("gpu", "tpu")
   def testSchurBatching(self, shape, dtype):
-      if jax._src.lib._xla_extension_version > 38:
-          rng = jtu.rand_default(self.rng())
-          batch_size = 10
-          shape = (batch_size, ) + shape
-          args = rng(shape, dtype)
-          Ts, Ss = vmap(lax.linalg.schur)(args)
-          for i in range(batch_size):
-              self.assertAllClose(
-                  (jnp.matmul(jnp.matmul(Ss[i], Ts[i]), jnp.conjugate(Ss[i].T))),
-                  args[i], atol=1e-4)
+      if jax._src.lib.version < (0, 1, 72):
+          self.skipTest("Schur LAPACK wrapper only implemented for jaxlib versions >= (0, 1, 72)")
+      rng = jtu.rand_default(self.rng())
+      batch_size = 10
+      shape = (batch_size, ) + shape
+      args = rng(shape, dtype)
+      Ts, Ss = vmap(lax.linalg.schur)(args)
+      for i in range(batch_size):
+          self.assertAllClose(
+              (jnp.matmul(jnp.matmul(Ss[i], Ts[i]), jnp.conjugate(Ss[i].T))),
+              args[i], atol=1e-4)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
