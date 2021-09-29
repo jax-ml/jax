@@ -1452,7 +1452,9 @@ class Mesh:
     # subcube of the full array. This is because we were biased towards taking a
     # "hull" spanned by the devices, and in case the local devices don't form a
     # subcube that hull will contain non-local devices.
-    assert is_local_device[subcube_indices].all()
+    if not is_local_device[subcube_indices].all():
+      raise ValueError("Devices connected to a single host must form a contiguous "
+                       "subcube of the global device mesh")
     return Mesh(self.devices[subcube_indices], self.axis_names)
 
   @property
