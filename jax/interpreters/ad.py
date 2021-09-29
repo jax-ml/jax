@@ -234,6 +234,10 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, consts, primals_in, cotangents
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return cotangents_out
 
+def closed_backward_pass(jaxpr: core.ClosedJaxpr, reduce_axes, primals_in, cotangents_in):
+  return backward_pass(jaxpr.jaxpr, reduce_axes, jaxpr.consts, primals_in, cotangents_in)
+
+
 class UndefinedPrimal:
   __slots__ = ['aval']
   def __init__(self, aval):

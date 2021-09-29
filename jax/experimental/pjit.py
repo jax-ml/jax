@@ -530,7 +530,7 @@ def _pjit_jvp(primals_in, tangents_in,
       donated_invars=(*donated_invars, *_filter_zeros_in(donated_invars)),
       name=wrap_name(name, 'jvp'))
 
-  primals_out, tangents_out = split_list(outputs, [-len(is_nz_tangents_out)])
+  primals_out, tangents_out = split_list(outputs, [len(jaxpr.jaxpr.outvars)])
   assert len(primals_out) == len(jaxpr.jaxpr.outvars)
   tangents_out_it = iter(tangents_out)
   return primals_out, [next(tangents_out_it) if nz else ad.Zero(aval)
@@ -538,11 +538,133 @@ def _pjit_jvp(primals_in, tangents_in,
 ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 
-def _pjit_partial_eval(trace, *in_tracers, jaxpr, in_axis_resources,
-                       out_axis_resources, resource_env, donated_invars, name):
-  raise NotImplementedError("linearize, vjp, and grad of pjit not supported, "
-                            "see https://github.com/google/jax/pull/6876")
+def _pjit_partial_eval(trace, *in_tracers,
+                       jaxpr, in_axis_resources, out_axis_resources,
+                       resource_env, donated_invars, name):
+  # XXX: At the moment all residuals get fully replicated, which is extremely
+  #      wasteful and might quickly lead to OOM errors.
+  mesh = resource_env.physical_mesh
+  in_pvals = [t.pval for t in in_tracers]
+
+  known_ins = tuple(pv.is_known() for pv in in_pvals)
+  unknown_ins = tuple(not k for k in known_ins)
+  raw_known_jaxpr, raw_unknown_jaxpr, unknown_outs = pe.partial_eval_jaxpr(
+      jaxpr, unknown_ins, instantiate=False)
+  unknown_outs = tuple(unknown_outs)
+  known_outs = tuple(not uk for uk in unknown_outs)
+  num_residuals = len(raw_known_jaxpr.jaxpr.outvars) - len(unknown_outs)
+
+  def keep_where(l, should_keep):
+    return tuple(x for x, keep in zip(l, should_keep) if keep)
+
+  # Prepare the known jaxpr
+  # TODO(apaszke): map_jaxpr will break caching!
+  known_jaxpr = raw_known_jaxpr.map_jaxpr(lambda jaxpr: pe._drop_vars(
+      jaxpr,
+      drop_ins=unknown_ins,
+      drop_outs=unknown_outs + (False,) * num_residuals))
+  # Compute the known outputs
+  known_params = dict(
+      jaxpr=known_jaxpr,
+      in_axis_resources=keep_where(in_axis_resources, known_ins),
+      out_axis_resources=(keep_where(out_axis_resources, known_outs) +
+                          (REPLICATED,) * num_residuals),
+      resource_env=resource_env,
+      donated_invars=keep_where(donated_invars, known_ins),
+      name=name)
+
+  if num_residuals:
+    executable = _pjit_lower(**known_params).compile(
+        _allow_propagation_to_outputs=True, _allow_compile_replicated=False)
+    output_op_sharding = executable.compiled.hlo_modules()[0].spmd_output_sharding
+    output_sharding_specs = parse_op_sharding(output_op_sharding, mesh)
+    residual_specs = tuple(output_sharding_specs[-num_residuals:])
+  else:
+    residual_specs = ()
+  known_params['out_axis_resources'] = (
+      keep_where(out_axis_resources, known_outs) + residual_specs)
+
+  all_known_outs = pjit_p.bind(
+      *(pv.get_known() for pv in in_pvals if pv.is_known()),
+      **known_params)
+  if num_residuals:
+    known_out_vals, residual_vals = split_list(all_known_outs, [-num_residuals])
+  else:
+    known_out_vals, residual_vals = all_known_outs, ()
+  known_tracers_out = [trace.new_const(known_out) for known_out in known_out_vals]
+  residual_tracers = [trace.new_instantiated_const(residual) for residual in residual_vals]
+
+  # Prepare the unknown jaxpr
+  # TODO(apaszke): map_jaxpr will break caching!
+  unknown_jaxpr = raw_unknown_jaxpr.map_jaxpr(lambda jaxpr: pe._drop_vars(
+      jaxpr,
+      drop_ins=known_ins + (False,) * num_residuals,
+      drop_outs=known_outs))
+  # Prepare unknown tracers
+  unknown_params = dict(
+      jaxpr=unknown_jaxpr,
+      in_axis_resources=(keep_where(in_axis_resources, unknown_ins) + residual_specs),
+      out_axis_resources=keep_where(out_axis_resources, unknown_outs),
+      resource_env=resource_env,
+      donated_invars=(keep_where(donated_invars, unknown_ins) +
+                      (False,) * num_residuals),
+      name=name)
+  unknown_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
+  unknown_tracers_out = [pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
+                         for aval in global_to_local(mesh, unknown_jaxpr.out_avals,
+                                                     unknown_params['out_axis_resources'])]
+  eqn = pe.new_eqn_recipe((*unknown_tracers_in, *residual_tracers),
+                          unknown_tracers_out,
+                          pjit_p,
+                          unknown_params,
+                          source_info_util.current())
+  for t in unknown_tracers_out: t.recipe = eqn
+  return pe._zip_knowns(known_tracers_out, unknown_tracers_out, unknown_outs)
 pe.custom_partial_eval_rules[pjit_p] = _pjit_partial_eval
+
+
+def _pjit_transpose(reduce_axes, cts_in, *primals_in,
+                    jaxpr, in_axis_resources, out_axis_resources,
+                    resource_env, donated_invars, name):
+  mesh = resource_env.physical_mesh
+
+  def prune_type(ty, xs, maybe_zeros):
+    return tuple(x for x, mz in zip(xs, maybe_zeros) if not type(mz) is ty)
+
+  body = lu.wrap_init(ad.closed_backward_pass)
+  body = lu.hashable_partial(body, jaxpr, reduce_axes)
+  primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
+  body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)
+
+  transpose_in_axis_resources = (
+    *prune_type(ad.UndefinedPrimal, in_axis_resources, primals_in),
+    *prune_type(ad.Zero, out_axis_resources, cts_in)
+  )
+  global_cts_in_avals = local_to_global(
+      mesh,
+      [core.raise_to_shaped(core.get_aval(ct)) for ct in primals_and_nz_cts_in],
+      transpose_in_axis_resources)
+  transpose_jaxpr, global_cts_out_avals, consts = pe.trace_to_jaxpr_dynamic(
+      body, global_cts_in_avals)
+  # TODO(apaszke): Creating ClosedJaxpr by hand will break compilation cache!
+  transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
+  del consts
+  cts_out_treedef = cts_out_treedef_thunk()
+  transpose_out_axis_resources = prune_type(
+      ad.Zero,
+      in_axis_resources,
+      tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
+
+  nz_cts_out = pjit_p.bind(
+      *primals_and_nz_cts_in,
+      jaxpr=transpose_jaxpr,
+      in_axis_resources=transpose_in_axis_resources,
+      out_axis_resources=transpose_out_axis_resources,
+      resource_env=resource_env,
+      donated_invars=(False,) * len(primals_and_nz_cts_in),
+      name=name)
+  return tree_unflatten(cts_out_treedef, nz_cts_out)
+ad.reducing_transposes[pjit_p] = _pjit_transpose
 
 
 def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources):
@@ -665,3 +787,127 @@ def global_to_local(mesh, avals, axes):
 def local_to_global(mesh, avals, axes):
   return [mesh.local_to_global(get_array_mapping(aval_axes), aval)
           for aval, aval_axes in zip(avals, axes)]
+
+# -------------------- XLA OpSharding to PartitionSpec --------------------
+# Note that OpSharding is more expressive than PartitionSpecs, so it's not
+# always possible to convert them, but the code below should at least
+# support handle all cases when this is possible.
+
+def strides_for_sizes(sizes):
+  """Returns an array of strides for major-to-minor sizes."""
+  return np.cumprod(sizes[::-1])[::-1] // np.asarray(sizes)
+
+def unflatten_array(named_sizes, assignment):
+  """Recovers the ordering of axis names based on a device assignment.
+
+  The device assignments that this function can convert into axis orders
+  are of the form::
+
+    np.arange(np.prod(named_sizes.values())).transpose(...).flatten()
+
+  for some transposition ``...``. This is satisfied by all OpSharding assignments
+  generated from partition specs.
+
+  Arguments:
+    named_sizes: A dictionary mapping axis names to their sizes.
+    assignment: A permutation of integers between 0 and the product of all
+      named sizes.
+
+  Returns:
+    A major-to-minor list of axis names that corresponds to the given assignment.
+  """
+  named_sizes = {name: size for name, size in named_sizes.items() if size != 1}
+  sizes = np.fromiter(named_sizes.values(), dtype=np.int64)
+  strides = strides_for_sizes(sizes)
+  dims = explode_superdims(sizes, unflatten_superdims(assignment))
+  dim_to_name = {(size, stride): name for size, stride, name in zip(sizes, strides, named_sizes)}
+  return [dim_to_name[d] for d in dims]
+
+def unflatten_superdims(assignment):
+  """Unflatten a list of dimension sizes and their strides that generates assignment.
+
+  If this function succeeds for a given ``assignment``, then the following property
+  should be satisfied::
+
+    dims_with_strides = unflatten_superdims(assignment)
+    base_array = np.arange(map(fst, sorted(dims_with_strides, key=snd, reverse=True)))
+    assignment == base_array.transpose(argsort(dims_with_strides, key=snd, reverse=True)).flatten()
+
+  That is, the returned dimensions list all sizes of the base array (with strides
+  indicating their initial order). The order of dimensions in the list corresponds
+  to the permutation that applied to the base array generates the assignment.
+  """
+  def check(cond):
+    if cond: return
+    raise NotImplementedError("Failed to convert OpSharding into a ShardingSpec. "
+                              "Please open a bug report!")
+  flat_assignment = np.asarray(assignment, dtype=np.int64)
+  check(flat_assignment[0] == 0)
+  dims = []
+  while flat_assignment.size > 1:
+    stride = flat_assignment[1]
+    for i in range(len(flat_assignment)):
+      if flat_assignment[i] != i * stride: break
+    else:
+      # After this loop i should point to an "element after the sequence", so
+      # we have to increment it if the whole array is a strided sequence.
+      i += 1
+    size = i
+    dims.append((size, stride))
+    assert size > 1  # Ensure progress
+    flat_assignment = flat_assignment[::size]
+  return dims
+
+def explode_superdims(sizes, dims):
+  """Explode superdims to fit a known shape.
+
+  The unflattening process might mistakenly generate too few too large dimensions.
+  For example, ``unflatten_superdims(np.arange(n))`` always returns ``[(n, 1)]``.
+  This function takes a list of such contiguous super-dimensions and splits them
+  into smaller dimensions such that::
+
+    set(map(fst, explode_superdims(sizes, dims))) == set(sizes)
+  """
+  strides_to_sizes = {stride: size for size, stride in zip(sizes, strides_for_sizes(sizes))}
+  dims = list(reversed(dims))
+  final_dims = []
+  for size, stride in dims:
+    target_size = strides_to_sizes[stride]
+    new_dims = []
+    while size > target_size:
+      assert target_size > 1  # Ensure progress
+      assert size % target_size == 0
+      new_dims.append((target_size, stride))
+      size //= target_size
+      stride *= target_size
+      target_size = strides_to_sizes[stride]
+    assert size == target_size
+    new_dims.append((size, stride))
+    final_dims += reversed(new_dims)
+  return final_dims
+
+def parse_op_sharding(op_sharding, mesh):
+  if op_sharding.type == xc.OpSharding.Type.TUPLE:
+    return [parse_op_sharding(s, mesh) for s in op_sharding.tuple_shardings]
+  elif op_sharding.type == xc.OpSharding.Type.REPLICATED:
+    return REPLICATED
+  elif op_sharding.type == xc.OpSharding.Type.OTHER:
+    mesh_shape = mesh.shape
+    mesh_axis_order = unflatten_array(mesh.shape, op_sharding.tile_assignment_devices)
+    mesh_axis = iter(mesh_axis_order)
+    shape = op_sharding.tile_assignment_dimensions
+    partitions = []
+    for dim_size in shape:
+      dim_partitions = []
+      while dim_size > 1:
+        axis = next(mesh_axis)
+        axis_size = mesh_shape[axis]
+        assert dim_size % axis_size == 0
+        dim_size //= axis_size
+        dim_partitions.append(axis)
+      partitions.append(tuple(dim_partitions))
+    if op_sharding.replicate_on_last_tile_dim:
+      partitions = partitions[:-1]
+    return ParsedPartitionSpec('<internally generated spec>', partitions)
+  else:
+    raise AssertionError("Unhandled OpSharding type. Please open a bug report!")

@@ -41,6 +41,7 @@ import sys
 from absl import logging
 import numpy as np
 
+import jax
 from .._src.config import config
 from .. import core
 from .. import linear_util as lu
@@ -271,7 +272,6 @@ ShardingSpec.indices = sharding_spec_indices
 ShardingSpec.__repr__ = sharding_spec_repr  # type: ignore
 # Do not pollute the namespace
 del sharding_spec_mesh_shape, sharding_spec_indices, sharding_spec_repr
-
 
 def spec_to_indices(shape: Tuple[int, ...],
                     spec: ShardingSpec) -> Tuple[Index, ...]:
@@ -1457,10 +1457,13 @@ class Mesh:
 
   @property
   def device_ids(self):
+    assert not self.empty
     return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
 
   def __repr__(self):
-    return f"Mesh({self.devices!r}, {self.axis_names!r})"
+    if self.empty:
+      return "Mesh([], ())"
+    return f"Mesh({self.device_ids!r}, {self.axis_names!r})"
 
   def local_to_global(self, axes: ArrayMapping, aval):
     return untile_aval_nd(self.shape, axes,
@@ -1640,9 +1643,14 @@ class MeshComputation:
     self.hlo = hlo
     self.compile_args = compile_args
 
-  def compile(self):
+  def compile(self,
+              _allow_propagation_to_outputs : bool = False,
+              _allow_compile_replicated : bool = True):
     if self._executable is None:
-      self._executable = MeshExecutable(self.hlo, *self.compile_args)
+      self._executable = MeshExecutable(
+          self.hlo, *self.compile_args,
+          _allow_propagation_to_outputs=_allow_propagation_to_outputs,
+          _allow_compile_replicated=_allow_compile_replicated)  # type: ignore
     return self._executable
 
 
@@ -1654,7 +1662,9 @@ class MeshExecutable:
                local_out_untiled_avals: Sequence[ShapedArray],
                in_axes: Sequence[ArrayMapping],
                out_axes: Sequence[ArrayMapping],
-               spmd_lowering: bool, tuple_args: bool):
+               spmd_lowering: bool, tuple_args: bool,
+               _allow_propagation_to_outputs: bool,
+               _allow_compile_replicated: bool):
     assert not mesh.empty
     backend = xb.get_device_backend(mesh.devices.flat[0])
 
@@ -1674,6 +1684,12 @@ class MeshExecutable:
         use_spmd_partitioning=spmd_lowering,
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
+    if jax._src.lib.version >= (0, 1, 72):
+      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
+          _allow_propagation_to_outputs
+    elif _allow_propagation_to_outputs:
+      raise RuntimeError("Propagation of SPMD sharding specs to outputs is only supported "
+                         "in jaxlib 0.1.72+. Please update your JAX version.")
 
     local_sharding_spec = mesh_sharding_specs(local_axis_sizes, mesh.axis_names)
     local_input_specs = [local_sharding_spec(aval, aval_in_axes)
@@ -1688,7 +1704,7 @@ class MeshExecutable:
     handle_outs = avals_to_results_handler(num_local_replicas, num_local_partitions,
                                            local_output_specs, local_out_untiled_avals)
 
-    if hasattr(backend, "compile_replicated"):
+    if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       self.unsafe_call = backend.compile_replicated(
           computation, compile_options,
           input_indices, local_input_specs,
@@ -1698,6 +1714,7 @@ class MeshExecutable:
       handle_args = InputsHandler(compiled.local_devices(), local_input_specs,
                                   input_indices)
       self.unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
+      self.compiled = compiled
 
   def __call__(self, *args):
     # TODO(apaszke): Validate arguments

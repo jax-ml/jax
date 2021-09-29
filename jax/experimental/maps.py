@@ -1050,7 +1050,7 @@ def restore_units(is_unit, vals):
 
 def _jaxpr_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params):
   from jax.interpreters.partial_eval import (
-      PartialVal, JaxprTracer, _drop_invars, _dce_open_jaxpr,
+      PartialVal, JaxprTracer, _drop_vars, _dce_open_jaxpr,
       convert_constvars_jaxpr, new_eqn_recipe)
   assert primitive is xmap_p
   in_axes = params['in_axes']
@@ -1112,7 +1112,7 @@ def _jaxpr_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params
     # Skip known invars and outvars, and lift constants as regular invars
     in_knowns = tuple(t.pval.is_known() for t in it.chain(env_tracers, tracers))
     out_unknowns = tuple(not pval.is_known() for pval in out_pvals)
-    jaxpr = _drop_invars(jaxpr, in_knowns)
+    jaxpr = _drop_vars(jaxpr, in_knowns, (False,) * len(jaxpr.outvars))
     jaxpr = _dce_open_jaxpr(jaxpr, out_unknowns, drop_outputs=True)
     jaxpr = convert_constvars_jaxpr(jaxpr)
 

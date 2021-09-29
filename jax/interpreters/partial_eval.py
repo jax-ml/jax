@@ -116,6 +116,10 @@ class JaxprTrace(Trace):
 
   def new_arg(self, pval: PartialVal) -> 'JaxprTracer':
     const = pval.get_known()
+    # XXX: Think twice before changing this constant argument pruning!
+    # This has really important consequences for partial_eval_jaxpr.
+    # Most importantly, this guarantees that the unknown jaxpr never uses
+    # known inputs (if it needs them, then they get passed through residuals).
     if const is None:
       return JaxprTracer(self, pval, LambdaBinding())
     else:
@@ -207,7 +211,7 @@ class JaxprTrace(Trace):
       # Skip known invars and outvars, and lift constants as regular invars
       in_knowns = tuple(t.pval.is_known() for t in it.chain(env_tracers, tracers))
       out_unknowns = tuple(not pval.is_known() for pval in out_pvals)
-      jaxpr = _drop_invars(jaxpr, in_knowns)
+      jaxpr = _drop_vars(jaxpr, in_knowns, (False,) * len(jaxpr.outvars))
       jaxpr = _dce_open_jaxpr(jaxpr, out_unknowns, drop_outputs=True)
 
       # Known tracers get propagated as if they were constants
@@ -1079,9 +1083,11 @@ def _dce_open_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False)
   return Jaxpr(jaxpr.constvars, jaxpr.invars, new_outvars, new_eqns)
 
 @cache()
-def _drop_invars(jaxpr: Jaxpr, drop: Tuple[bool, ...]):
-  return Jaxpr(jaxpr.constvars, [v for v, d in zip(jaxpr.invars, drop) if not d],
-               jaxpr.outvars, jaxpr.eqns)
+def _drop_vars(jaxpr: Jaxpr, drop_ins: Tuple[bool, ...], drop_outs: Tuple[bool, ...]):
+  return Jaxpr(jaxpr.constvars,
+               [v for v, d in zip(jaxpr.invars, drop_ins) if not d],
+               [v for v, d in zip(jaxpr.outvars, drop_outs) if not d],
+               jaxpr.eqns)
 
 
 def _reconstruct_pval(pval1: PartialVal, const2: core.Value):

@@ -17,6 +17,7 @@ from functools import partial
 import logging
 import threading
 from unittest import SkipTest
+from collections import OrderedDict, namedtuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -30,21 +31,35 @@ from jax import lax
 # TODO(skye): do we still wanna call this PartitionSpec?
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap, mesh
+import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import pjit, pjit_p, with_sharding_constraint, SpecSync
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src.lib import xla_client
-from jax._src.util import prod, curry
+from jax._src.util import prod, curry, unzip2
 
 from jax.config import config
 config.parse_flags_with_absl()
 
 
 def setUpModule():
+  if jax.default_backend() not in {'gpu', 'tpu'}:
+    raise SkipTest("pjit only supports GPU and TPU backends")
   jtu.set_spmd_lowering_flag(True)
 
 def tearDownModule():
   jtu.restore_spmd_lowering_flag()
+
+
+@curry
+def check_1d_2d_mesh(f, set_mesh):
+  return parameterized.named_parameters(
+    {"testcase_name": "_" + name, "mesh": mesh, "resources": resources}
+    for name, mesh, resources in (
+      ("2", (("x", 2),), "x"),
+      ("2x1", (("x", 2), ("y", 1)), ("x", "y")),
+      ("2x2", (("x", 2), ("y", 2)), ("x", "y")),
+    ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
 
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
@@ -240,14 +255,18 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(y, jnp.sin(x).sum() + h.sum())
     self.assertTrue(hasattr(y, "sharding_spec"))
 
-  @jtu.with_mesh([('x', 2), ('y', 1)])
-  def testJVP(self):
+  @check_1d_2d_mesh(set_mesh=True)
+  def testAutodiff(self, mesh, resources):
+    if len(mesh) != 2: return
+    assert resources == ('x', 'y')
     # Add a constant captured by the nested pjit to make things more complicated
     h = jnp.arange(4)
-    f = pjit(lambda x: x.sum() + h.sum(), in_axis_resources=P('x', 'y'), out_axis_resources=None)
-    g = pjit(lambda x: f(x + 2), in_axis_resources=P('x', None), out_axis_resources=None)
-    jtu.check_grads(g, (jnp.arange(16, dtype=jnp.float32).reshape((4, 4)),),
-                    order=2, modes=["fwd"], eps=1)
+    f = pjit(lambda x: x.sum(1) * h.sum(),
+             in_axis_resources=P('x', 'y'), out_axis_resources=P(('x', 'y')))
+    g = pjit(lambda x: f(jnp.sin(x * 4 + 2)),
+             in_axis_resources=P('x', None), out_axis_resources=P(('x', 'y')))
+    jtu.check_grads(g, (jnp.arange(16, dtype=jnp.float32).reshape((4, 4)) / 100,),
+                    order=2)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
@@ -466,16 +485,6 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     execution.join()
 
-@curry
-def check_1d_2d_mesh(f, set_mesh):
-  return parameterized.named_parameters(
-    {"testcase_name": "_" + name, "mesh": mesh, "resources": resources}
-    for name, mesh, resources in (
-      ("2", (("x", 2),), "x"),
-      ("2x1", (("x", 2), ("y", 1)), ("x", "y")),
-      ("2x2", (("x", 2), ("y", 2)), ("x", "y")),
-    ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
-
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
@@ -650,22 +659,6 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError, error):
       pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(jnp.arange(4))
 
-  @jtu.with_mesh([('x', 2), ('y', 2)])
-  def testLinearizeNotImplemented(self):
-    # pending https://github.com/google/jax/pull/6876
-    @partial(pjit,
-             in_axis_resources=(P(None, 'x', 'y'), P('y')),
-             out_axis_resources=P('x'))
-    def f(x, y):
-      return x @ y
-
-    x_shape = (8, 6, 4)
-    y_shape = (4, 2)
-    x = jnp.arange(np.prod(x_shape)).reshape(x_shape)
-    y = jnp.arange(np.prod(y_shape)).reshape(y_shape)
-    with self.assertRaisesRegex(NotImplementedError, "6876"):
-      jax.linearize(f, x, y)
-
   @jtu.with_mesh([('x', 2)])
   def testAxisResourcesMismatch(self):
     x = jnp.ones([])
@@ -696,6 +689,34 @@ class PJitErrorTest(jtu.JaxTestCase):
         r"value tree PyTreeDef([*, *, *]).")
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, (p,), [p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
+
+
+class UtilTest(jtu.JaxTestCase):
+  def testOpShardingRoundTrip(self):
+    FakeDevice = namedtuple('FakeDevice', ['id'])
+    mesh_named_shape = OrderedDict([('a', 2), ('b', 3), ('c', 4), ('d', 7), ('e', 4)])
+    mesh_axes, mesh_shape = unzip2(mesh_named_shape.items())
+    devices = [FakeDevice(i) for i in range(np.prod(list(mesh_shape)))]
+    mesh = pxla.Mesh(np.array(devices).reshape(*mesh_shape), tuple(mesh_axes))
+
+    dims = 5
+    aval = jax.core.ShapedArray((len(devices),) * dims, jnp.float32)
+    def roundtrip(spec):
+      op_sharding = pjit_lib.get_aval_sharding_proto(aval, spec, mesh)
+      parsed_spec = pjit_lib.parse_op_sharding(op_sharding, mesh).partitions
+      self.assertEqual(parsed_spec[:len(spec)], spec)
+      self.assertEqual(parsed_spec[len(spec):], ((),) * (len(parsed_spec) - len(spec)))
+
+    special_specs = [P()]
+    for spec in special_specs:
+      roundtrip(spec)
+
+    rng = np.random.default_rng(1)
+    for i in range(100):
+      spec = [()] * dims
+      for axis in rng.permutation(mesh_axes)[:rng.integers(low=1, high=len(mesh_axes) + 1)]:
+        spec[rng.choice(dims)] += (axis,)
+      roundtrip(P(*spec))
 
 
 if __name__ == '__main__':
