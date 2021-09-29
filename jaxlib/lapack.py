@@ -584,3 +584,79 @@ def geev(c, a, jobvl=True, jobvr=True):
   else:
     return (_ops.GetTupleElement(out, 2), _ops.GetTupleElement(out, 3),
             _ops.GetTupleElement(out, 4), _ops.GetTupleElement(out, 5))
+
+# # gees : Schur factorization
+
+def gees(c, a, jobvs=True, sort=False, select=None):
+  a_shape = c.get_shape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  assert m == n
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+
+  if sort:
+    raise NotImplementedError(
+        "The sort feature of LAPACK's gees routine is not implemented.")
+
+  jobvs = ord('V' if jobvs else 'N')
+  sort = ord('S' if sort else 'N')
+
+  if dtype == np.float32 or dtype == np.float64:
+    fn = b"lapack_sgees" if dtype == np.float32 else b"lapack_dgees"
+    schurvecs_type = dtype
+    workspaces = (Shape.array_shape(np.dtype(schurvecs_type), dims, layout),)
+    eigvals = (Shape.array_shape(
+        np.dtype(dtype), batch_dims + (n,), tuple(range(num_bd, -1, -1))),
+               Shape.array_shape(
+                   np.dtype(dtype), batch_dims + (n,),
+                   tuple(range(num_bd, -1, -1))))
+  elif dtype == np.complex64 or dtype == np.complex128:
+    fn = b"lapack_cgees" if dtype == np.complex64 else b"lapack_zgees"
+    schurvecs_type = dtype
+    workspaces = (
+        Shape.array_shape(np.dtype(schurvecs_type), dims, layout),
+        Shape.array_shape(
+            np.dtype(np.float32 if dtype == np.complex64 else np.float64),
+            (n,), (0,)))
+    eigvals = (Shape.array_shape(
+        np.dtype(dtype), batch_dims + (n,), tuple(range(num_bd, -1, -1))),)
+  else:
+    raise NotImplementedError("Unsupported dtype {}".format(dtype))
+
+  out = _ops.CustomCallWithLayout(
+      c,
+      fn,
+      operands=(
+          _constant_s32_scalar(c, b),
+          _constant_s32_scalar(c, n),
+          _ops.Constant(c, np.uint8(jobvs)),
+          _ops.Constant(c, np.uint8(sort)),
+          #figure out how to put the callable select function here
+          a),
+      shape_with_layout=Shape.tuple_shape(workspaces + eigvals + (
+          Shape.array_shape(np.dtype(schurvecs_type), dims, layout),
+          Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+          Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd -
+                                                          1, -1, -1))))),
+      operand_shapes_with_layout=(
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.int32), (), ()),
+          Shape.array_shape(np.dtype(np.uint8), (), ()),
+          Shape.array_shape(np.dtype(np.uint8), (), ()),
+          Shape.array_shape(dtype, dims, layout),
+      ))
+  if sort == ord('S'):
+    return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 3),
+            _ops.GetTupleElement(out, 4), _ops.GetTupleElement(out, 5))
+  else:
+    return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 3),
+            _ops.GetTupleElement(out, 5))

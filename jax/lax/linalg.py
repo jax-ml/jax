@@ -31,4 +31,6 @@ from jax._src.lax.linalg import (
   triangular_solve_p,
   tridiagonal_solve,
   tridiagonal_solve_p,
+  schur,
+  schur_p
 )

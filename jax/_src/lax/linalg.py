@@ -42,6 +42,7 @@ from jax._src.lib import rocsolver
 
 from jax._src.lib import xla_client
 from jax._src.lib import xla_bridge as xb
+from jax._src.lib import version as jaxlib_version
 
 xops = xla_client.ops
 
@@ -1441,3 +1442,119 @@ def tridiagonal_solve(dl, d, du, b):
     raise ValueError(f'Only f32/f64 are supported, got {t}')
 
   return tridiagonal_solve_p.bind(dl, d, du, b, m=m, n=n, ldb=ldb, t=t)
+
+
+# Schur Decomposition
+
+
+def schur(x,
+          compute_schur_vectors=True,
+          sort_eig_vals=False,
+          select_callable=None):
+  return schur_p.bind(
+      x,
+      compute_schur_vectors=compute_schur_vectors,
+      sort_eig_vals=sort_eig_vals,
+      select_callable=select_callable)
+
+
+def _schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
+                select_callable):
+  return xla.apply_primitive(
+      schur_p,
+      operand,
+      compute_schur_vectors=compute_schur_vectors,
+      sort_eig_vals=sort_eig_vals,
+      select_callable=select_callable)
+
+
+def _schur_translation_rule(c, operand, *, compute_schur_vectors,
+                            sort_eig_vals):
+  raise NotImplementedError(
+      "Schur decomposition is only implemented on the CPU backend.")
+
+
+def _schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
+                         select_callable):
+
+  if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
+    raise ValueError("Argument to Schur decomposition must have "
+                     "shape [..., n, n], got shape {}".format(operand.shape))
+
+  batch_dims = operand.shape[:-2]
+  n = operand.shape[-1]
+  dtype = operand.dtype
+  dtype = dtypes.canonicalize_dtype(dtype)
+  T = operand.update(shape=batch_dims + (n, n), dtype=dtype)
+  vs = operand.update(shape=batch_dims + (n, n), dtype=dtype)
+
+  return (T, vs) if compute_schur_vectors else (T,)
+
+
+def _schur_cpu_translation_rule(c, operand, *, compute_schur_vectors,
+                                sort_eig_vals, select_callable):
+  shape = c.get_shape(operand)
+  batch_dims = shape.dimensions()[:-2]
+
+  if jaxlib_version < (0, 1, 72):
+    raise NotImplementedError(
+        "The Schur primitive is only implemented for jaxlib versions >= 0.1.72"
+    )
+
+  _cpu_gees = lapack.gees
+
+  if sort_eig_vals:
+    T, vs, sdim, info = _cpu_gees(
+        c,
+        operand,
+        jobvs=compute_schur_vectors,
+        sort=sort_eig_vals,
+        select=select_callable)
+  else:
+    T, vs, info = _cpu_gees(
+        c,
+        operand,
+        jobvs=compute_schur_vectors,
+        sort=sort_eig_vals,
+        select=select_callable)
+
+  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  T = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), T,
+                           _nan_like(c, T))
+  output = [T]
+  if compute_schur_vectors:
+    vs = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vs,
+                              _nan_like(c, vs))
+
+    output.append(vs)
+
+  return xops.Tuple(c, output)
+
+
+def _schur_batching_rule(batched_args, batch_dims, *, compute_schur_vectors,
+                         sort_eig_vals, select_callable):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.moveaxis(x, bd, 0)
+
+  return schur_p.bind(
+      x,
+      compute_schur_vectors=compute_schur_vectors,
+      sort_eig_vals=sort_eig_vals,
+      select_callable=select_callable), (0,) * (1 + compute_schur_vectors)
+
+
+def _schur_jvp_rule(primals, tangents, *, compute_schur_vectors, sort_eig_vals):
+  raise NotImplementedError(
+      'The differentiation rules for the Schur factorization have not been implemented.'
+  )
+
+
+schur_p = Primitive('schur')
+schur_p.multiple_results = True
+schur_p.def_impl(_schur_impl)
+schur_p.def_abstract_eval(_schur_abstract_eval)
+xla.translations[schur_p] = _schur_translation_rule
+xla.backend_specific_translations['cpu'][schur_p] = _schur_cpu_translation_rule
+batching.primitive_batchers[schur_p] = _schur_batching_rule
+ad.primitive_jvps[schur_p] = _schur_jvp_rule

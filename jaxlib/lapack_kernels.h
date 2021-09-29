@@ -149,6 +149,27 @@ struct ComplexGeev {
   static void Kernel(void* out, void** data);
 };
 
+template <typename T>
+struct RealGees {
+  using FnType = void(char* jobvs, char* sort, bool (*select)(T, T),
+                      lapack_int* n, T* a, lapack_int* lda, lapack_int* sdim,
+                      T* wr, T* wi, T* vs, lapack_int* ldvs, T* work,
+                      lapack_int* lwork, bool* bwork, lapack_int* info);
+  static FnType* fn;
+  static void Kernel(void* out, void** data);
+};
+
+template <typename T>
+struct ComplexGees {
+  using FnType = void(char* jobvs, char* sort, bool (*select)(T), lapack_int* n,
+                      T* a, lapack_int* lda, lapack_int* sdim, T* w, T* vs,
+                      lapack_int* ldvs, T* work, lapack_int* lwork,
+                      typename T::value_type* rwork, bool* bwork,
+                      lapack_int* info);
+  static FnType* fn;
+  static void Kernel(void* out, void** data);
+};
+
 }  // namespace jax
 
 #endif  // JAXLIB_LAPACK_KERNELS_H_

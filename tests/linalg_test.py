@@ -1440,5 +1440,42 @@ class LaxLinalgTest(jtu.JaxTestCase):
     A[[0, 1], [1, 2]] = du[:-1]
     np.testing.assert_allclose(A @ X, B, rtol=1e-6, atol=1e-6)
 
+  @parameterized.named_parameters(
+        jtu.cases_from_list({
+            "testcase_name":
+            "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+            "shape": shape, "dtype": dtype
+        } for shape in [(4, 4), (15, 15), (50, 50), (100, 100)]
+                            for dtype in float_types + complex_types))
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testSchur(self, shape, dtype):
+      if jax._src.lib.version < (0, 1, 72):
+          self.skipTest("Schur LAPACK wrapper only implemented for jaxlib versions >= 0.1.72")
+      rng = jtu.rand_default(self.rng())
+      args_maker = lambda: [rng(shape, dtype)]
+
+      self._CheckAgainstNumpy(osp.linalg.schur, lax.linalg.schur, args_maker)
+      self._CompileAndCheck(lax.linalg.schur, args_maker)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name":
+          "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+          "shape": shape, "dtype": dtype
+      } for shape in [(2, 2), (4, 4), (15, 15), (50, 50), (100, 100)]
+                          for dtype in float_types + complex_types))
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testSchurBatching(self, shape, dtype):
+      if jax._src.lib.version < (0, 1, 72):
+          self.skipTest("Schur LAPACK wrapper only implemented for jaxlib versions >= 0.1.72")
+      rng = jtu.rand_default(self.rng())
+      batch_size = 10
+      shape = (batch_size, ) + shape
+      args = rng(shape, dtype)
+      reconstruct = vmap(lambda S, T: S @ T @ jnp.conj(S.T))
+
+      Ts, Ss = vmap(lax.linalg.schur)(args)
+      self.assertAllClose(reconstruct(Ss, Ts), args, atol=1e-4)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

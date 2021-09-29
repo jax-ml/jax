@@ -115,6 +115,16 @@ void GetLapackKernelsFromScipy() {
   ComplexGeev<std::complex<double>>::fn =
       reinterpret_cast<ComplexGeev<std::complex<double>>::FnType*>(
           lapack_ptr("zgeev"));
+  RealGees<float>::fn =
+      reinterpret_cast<RealGees<float>::FnType*>(lapack_ptr("sgees"));
+  RealGees<double>::fn =
+      reinterpret_cast<RealGees<double>::FnType*>(lapack_ptr("dgees"));
+  ComplexGees<std::complex<float>>::fn =
+      reinterpret_cast<ComplexGees<std::complex<float>>::FnType*>(
+          lapack_ptr("cgees"));
+  ComplexGees<std::complex<double>>::fn =
+      reinterpret_cast<ComplexGees<std::complex<double>>::FnType*>(
+          lapack_ptr("zgees"));
 }
 
 py::dict Registrations() {
@@ -165,6 +175,13 @@ py::dict Registrations() {
       EncapsulateFunction(ComplexGeev<std::complex<float>>::Kernel);
   dict["lapack_zgeev"] =
       EncapsulateFunction(ComplexGeev<std::complex<double>>::Kernel);
+
+  dict["lapack_sgees"] = EncapsulateFunction(RealGees<float>::Kernel);
+  dict["lapack_dgees"] = EncapsulateFunction(RealGees<double>::Kernel);
+  dict["lapack_cgees"] =
+      EncapsulateFunction(ComplexGees<std::complex<float>>::Kernel);
+  dict["lapack_zgees"] =
+      EncapsulateFunction(ComplexGees<std::complex<double>>::Kernel);
   return dict;
 }
 
