@@ -16,7 +16,7 @@ import re
 from functools import partial
 import logging
 import threading
-from unittest import SkipTest
+import unittest
 from collections import OrderedDict, namedtuple
 
 from absl.testing import absltest
@@ -44,7 +44,7 @@ config.parse_flags_with_absl()
 
 def setUpModule():
   if jax.default_backend() not in {'gpu', 'tpu'}:
-    raise SkipTest("pjit only supports GPU and TPU backends")
+    raise unittest.SkipTest("pjit only supports GPU and TPU backends")
   jtu.set_spmd_lowering_flag(True)
 
 def tearDownModule():
@@ -232,7 +232,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = np.arange(16).reshape(4, 4)
     devices = np.array(list(jax.local_devices())[:4])
     if devices.size < 4:
-      raise SkipTest("Test requires 4 devices")
+      raise unittest.SkipTest("Test requires 4 devices")
     devices = devices.reshape((2, 2))
     with mesh(devices, ('x', 'y')):
       should_be_tracing = True
@@ -256,6 +256,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertTrue(hasattr(y, "sharding_spec"))
 
   @check_1d_2d_mesh(set_mesh=True)
+  @unittest.skipIf(jax._src.lib.version < (0, 1, 72), "Needs jaxlib 0.1.72+")
   def testAutodiff(self, mesh, resources):
     if len(mesh) != 2: return
     assert resources == ('x', 'y')
