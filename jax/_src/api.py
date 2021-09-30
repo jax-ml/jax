@@ -870,7 +870,8 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                       f"but got only {len(args)} positional arguments.")
 
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = argnums_partial(f, argnums, args,
+                                          require_static_args_hashable=False)
     for leaf in tree_leaves(dyn_args):
       _check_input_dtype_grad(holomorphic, allow_int, leaf)
     if not has_aux:
@@ -966,7 +967,8 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = argnums_partial(f, argnums, args,
+                                          require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacfwd, holomorphic), dyn_args)
     pushfwd = partial(_jvp, f_partial, dyn_args)
     y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
@@ -1034,7 +1036,8 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args)
+    f_partial, dyn_args = argnums_partial(f, argnums, args,
+                                          require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacrev, holomorphic, allow_int), dyn_args)
     y, pullback = _vjp(f_partial, *dyn_args)
     tree_map(partial(_check_output_dtype_jacrev, holomorphic), y)
@@ -1417,6 +1420,10 @@ def pmap(
       raised. Each of the static arguments will be broadcasted to all devices.
       Arguments that are not arrays or containers thereof must be marked as
       static. Defaults to ().
+
+      Static arguments must be hashable, meaning both ``__hash__`` and
+      ``__eq__`` are implemented, and should be immutable.
+
     devices: This is an experimental feature and the API is likely to change.
       Optional, a sequence of Devices to map over. (Available devices can be
       retrieved via jax.devices()). Must be given identically for each process

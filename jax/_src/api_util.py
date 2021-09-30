@@ -24,7 +24,7 @@ from .tree_util import (PyTreeDef, tree_flatten, tree_unflatten, tree_multimap,
                         tree_structure, treedef_children, treedef_is_leaf)
 from .tree_util import _replace_nones
 from .. import linear_util as lu
-from .util import safe_map, WrapHashably, WrapKwArgs, Hashable
+from .util import safe_map, WrapKwArgs, Hashable, Unhashable
 from ..core import unit
 
 from . import traceback_util
@@ -118,13 +118,23 @@ def flatten_fun_nokwargs2(in_tree, *args_flat):
   yield (ans_flat, aux_flat), (ans_tree, aux_tree)
 
 
-def argnums_partial(f, dyn_argnums, args):
+def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
   dyn_argnums = _ensure_index_tuple(dyn_argnums)
-  fixed_args = tuple(unit if i in dyn_argnums else wrap_hashably(arg)
-                     for i, arg in enumerate(args))
-  dyn_args = tuple(args[i] for i in dyn_argnums)
-  return _argnums_partial(f, dyn_argnums, fixed_args), dyn_args
+  fixed_args = [unit] * len(args)
+  for i, arg in enumerate(args):
+    if i in dyn_argnums: continue
+    if require_static_args_hashable:
+      if not is_hashable(arg):
+        raise ValueError(
+            "Non-hashable static arguments are not supported, as this can lead "
+            f"to unexpected cache-misses. Static argument (index {i}) of type "
+            f"{type(arg)} for function {f.__name__} is non-hashable.")
+      fixed_args[i] = Hashable(arg)
+    else:
+      fixed_args[i] = Unhashable(arg)
 
+  dyn_args = tuple(args[i] for i in dyn_argnums)
+  return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
                            args: Tuple[Any], *, allow_invalid: bool):
@@ -161,14 +171,6 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
     args[i] = arg
   ans = yield args, kwargs
   yield ans
-
-
-def argnames_partial(f, dyn_argnames, kwargs):
-  dyn_argnames = _ensure_str_tuple(dyn_argnames)
-  fixed_kwargs = tuple((k, unit if k in dyn_argnames else wrap_hashably(v))
-                       for k, v in kwargs.items())
-  dyn_kwargs = {k: kwargs[k] for k in dyn_argnames}
-  return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 
 
 def argnames_partial_except(f: lu.WrappedFun, static_argnames: Tuple[str, ...],
@@ -247,13 +249,14 @@ def rebase_donate_argnums(donate_argnums, static_argnums) -> Tuple[int, ...]:
       j += 1
   return tuple(out)
 
-def wrap_hashably(arg):
+
+def is_hashable(arg):
   try:
     hash(arg)
+    return True
   except TypeError:
-    return WrapHashably(arg)  # e.g. ndarrays, DeviceArrays
-  else:
-    return Hashable(arg)
+    return False
+
 
 def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   # given an axis spec tree axis_tree (a pytree with integers and Nones at the

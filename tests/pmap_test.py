@@ -1759,6 +1759,16 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     A().my_func_pmap(jnp.asarray([3] * jax.device_count()))
 
+  def test_pmap_error_on_non_hashable_static_argument(self):
+    f = lambda x, y: x + 3
+    pmapped_f = self.pmap(f, static_broadcasted_argnums=(1,))
+
+    inputs = np.asarray([1] * jax.device_count())
+    with self.assertRaisesRegex(
+        ValueError, "Non-hashable static arguments are not supported.*"):
+      pmapped_f(inputs, np.asarray(1))
+
+
 
 class CppPmapTest(PythonPmapTest):
 

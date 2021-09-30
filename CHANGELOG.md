@@ -11,6 +11,23 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 ## jax 0.2.22 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.21...main).
+* Breaking Changes
+  * Static arguments to `jax.pmap` must now be hashable.
+
+    Unhashable static arguments have long been disallowed on `jax.jit`, but they
+    were still permitted on `jax.pmap`; `jax.pmap` compared unhashable static
+    arguments using object identity.
+
+    This behavior is a footgun, since comparing arguments using
+    object identity leads to recompilation each time the object identity
+    changes. Instead, we now ban unhashable arguments: if a user of `jax.pmap`
+    wants to compare static arguments by object identity, they can define
+    `__hash__` and `__eq__` methods on their objects that do that, or wrap their
+    objects in an object that has those operations with object identity
+    semantics. Another option is to use `functools.partial` to encapsulate the
+    unhashable static arguments into the function object.
+  * `jax.util.partial` was an accidental export that has now been removed. Use
+    `functools.partial` from the Python standard library instead.
 
 ## jax 0.2.21 (Sept 23, 2021)
 * [GitHub
@@ -19,9 +36,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jax.api` has been removed. Functions that were available as `jax.api.*`
     were aliases for functions in `jax.*`; please use the functions in
     `jax.*` instead.
-  * `jax.partial`, `jax.lax.partial`, and `jax.util.partial` were accidental
-    exports that have now been removed. Use `functools.partial` from the Python
-    standard library instead.
+  * `jax.partial`, and `jax.lax.partial` were accidental exports that have now
+    been removed. Use `functools.partial` from the Python standard library
+    instead.
   * Boolean scalar indices now raise a `TypeError`; previously this silently
     returned wrong results ({jax-issue}`#7925`).
   * Many more `jax.numpy` functions now require array-like inputs, and will error

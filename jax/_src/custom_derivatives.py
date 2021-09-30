@@ -24,9 +24,8 @@ from jax import linear_util as lu
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                         tree_multimap, treedef_is_leaf, treedef_tuple,
                         register_pytree_node_class)
-from jax._src.util import cache, safe_zip, safe_map, split_list
-from jax._src.api_util import (flatten_fun_nokwargs, argnums_partial,
-                               wrap_hashably)
+from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
+from jax._src.api_util import flatten_fun_nokwargs, argnums_partial
 from jax.core import raise_to_shaped
 from jax.errors import UnexpectedTracerError
 from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
@@ -206,7 +205,8 @@ class custom_jvp(Generic[ReturnValue]):
       args = tuple(_stop_gradient(x) if i in nondiff_argnums else x
                    for i, x in enumerate(args))
       diff_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
-      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), diff_argnums, args)
+      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), diff_argnums, args,
+                                     require_static_args_hashable=False)
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args)
     else:
@@ -220,7 +220,7 @@ class custom_jvp(Generic[ReturnValue]):
     return tree_unflatten(out_tree, out_flat)
 
 def _add_args(f, extra_args):
-  return _add_args_(f, tuple(map(wrap_hashably, extra_args)))
+  return _add_args_(f, tuple(Unhashable(arg) for arg in extra_args))
 
 @lu.transformation
 def _add_args_(extra_args, *args, **kwargs):
@@ -505,9 +505,11 @@ class custom_vjp(Generic[ReturnValue]):
       for i in self.nondiff_argnums: _check_for_tracers(args[i])
       nondiff_argnums = set(self.nondiff_argnums)
       dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
-      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
+      f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args,
+                                     require_static_args_hashable=False)
       static_args = [args[i] for i in self.nondiff_argnums]
-      fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args)
+      fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args,
+                               require_static_args_hashable=False)
       bwd = _add_args(lu.wrap_init(self.bwd), static_args)
     else:
       f_, dyn_args = lu.wrap_init(self.fun), args
