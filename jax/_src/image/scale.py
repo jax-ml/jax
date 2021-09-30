@@ -16,6 +16,7 @@ from functools import partial
 import enum
 from typing import Callable, Sequence, Union
 
+from jax import core
 from jax import jit
 from jax import lax
 from jax import numpy as jnp
@@ -194,6 +195,7 @@ def scale_and_translate(image, shape: Sequence[int],
   Returns:
     The scale and translated image.
   """
+  shape = core.canonicalize_shape(shape)
   if len(shape) != image.ndim:
     msg = ('shape must have length equal to the number of dimensions of x; '
            f' {shape} vs {image.shape}')
@@ -303,4 +305,5 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   Returns:
     The resized image.
   """
-  return _resize(image, tuple(shape), method, antialias, precision)
+  return _resize(image, core.canonicalize_shape(shape), method, antialias,
+                 precision)

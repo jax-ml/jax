@@ -382,6 +382,15 @@ class ImageTest(jtu.JaxTestCase):
     self.assertTrue(jnp.all(jnp.isfinite(translate_out)))
 
 
+  def testResizeWithUnusualShapes(self):
+    x = jnp.ones((3, 4))
+    # Array shapes are accepted
+    self.assertEqual((10, 17),
+                     jax.image.resize(x, jnp.array((10, 17)), "nearest").shape)
+    with self.assertRaises(TypeError):
+      # Fractional shapes are disallowed
+      jax.image.resize(x, [10.5, 17], "bicubic")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
