@@ -1028,7 +1028,7 @@ def _sph_harm(m: jnp.ndarray,
   cos_colatitude = jnp.cos(phi)
 
   legendre = _gen_associated_legendre(n_max, cos_colatitude, True)
-  legendre_val = legendre[abs(m), n, jnp.arange(len(n))]
+  legendre_val = legendre.at[abs(m), n, jnp.arange(len(n))].get(mode="clip")
 
   angle = abs(m) * theta
   vandermonde = lax.complex(jnp.cos(angle), jnp.sin(angle))

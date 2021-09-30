@@ -5431,7 +5431,8 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
     collapsed_slice_dims=(axis_idx,),
     start_index_map=(axis_idx,))
   return lax.gather(a, indices[..., None], dimension_numbers=dnums,
-                    slice_sizes=tuple(slice_sizes))
+                    slice_sizes=tuple(slice_sizes),
+                    mode="clip")
 
 
 def _normalize_index(index, axis_size):
