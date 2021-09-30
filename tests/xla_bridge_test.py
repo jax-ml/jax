@@ -20,6 +20,10 @@ from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 
+from jax._src.config import config
+config.parse_flags_with_absl()
+FLAGS = config.FLAGS
+
 mock = absltest.mock
 
 
@@ -207,6 +211,28 @@ class GetBackendTest(jtu.JaxTestCase):
       self.assertLen(w, 1)
       msg = str(w[-1].message)
       self.assertIn("No GPU/TPU found, falling back to CPU", msg)
+
+  def test_jax_platforms_flag(self):
+    self._register_factory("platform_A", 20)
+    self._register_factory("platform_B", 10)
+
+    orig_jax_platforms = config._read("jax_platforms")
+    try:
+      config.FLAGS.jax_platforms = "cpu,platform_A"
+
+      backend = xb.get_backend()
+      self.assertEqual(backend.platform, "cpu")
+      # Only specified backends initialized.
+      self.assertEqual(len(xb._backends), 2)
+
+      backend = xb.get_backend("platform_A")
+      self.assertEqual(backend.platform, "platform_A")
+
+      with self.assertRaisesRegex(RuntimeError, "Unknown backend platform_B"):
+        backend = xb.get_backend("platform_B")
+
+    finally:
+      config.FLAGS.jax_platforms = orig_jax_platforms
 
 
 if __name__ == "__main__":
