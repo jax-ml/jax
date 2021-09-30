@@ -371,7 +371,7 @@ xla.translations_with_avals[threefry2x32_p] = xla.lower_fun(
 xla.backend_specific_translations['cpu'][threefry2x32_p] = xla.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=True),
     multiple_results=True)
-if cuda_prng:
+if cuda_prng and hasattr(cuda_prng, '_cuda_prng'):
   xla.backend_specific_translations['gpu'][threefry2x32_p] = \
       _threefry2x32_gpu_translation_rule
 
