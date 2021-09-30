@@ -193,6 +193,8 @@ def pjit(fun: Callable,
     if mesh.empty:
       raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
                          "it's defined at the call site?")
+    if any(d.platform not in {'gpu', 'tpu'} for d in mesh.devices.flat):
+      raise RuntimeError("pjit only supports GPU and TPU devices")
 
     f = lu.wrap_init(fun)
     if static_argnums:
