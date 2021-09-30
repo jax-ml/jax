@@ -48,8 +48,7 @@ FLAGS = flags.FLAGS
 # TODO(phawkins): Remove jax_xla_backend.
 flags.DEFINE_string(
     'jax_xla_backend', '',
-    'jax_xla_backend is an alias for jax_platform_name. If both are '
-    'provided, --jax_xla_backend takes priority. Prefer --jax_platform_name.')
+    'Deprecated, please use --jax_platforms instead.')
 flags.DEFINE_string(
     'jax_backend_target', '',
     'Either "local" or "rpc:address" to connect to a remote service target.')
