@@ -43,6 +43,11 @@ Not every function in NumPy is implemented; contributions are welcome!
    # sorted() function.
 
 .. autosummary::
+   :toctree: _autosummary
+
+   ndarray.at
+
+.. autosummary::
   :toctree: _autosummary
 
     abs
