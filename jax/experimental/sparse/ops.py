@@ -51,11 +51,14 @@ import jax.numpy as jnp
 import numpy as np
 from jax.interpreters import ad
 from jax.util import safe_zip
-from jax._src.lax.lax import ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_computation
+from jax._src.lax.lax import (
+  ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
+  DotDimensionNumbers)
 
 xb = xla_bridge
 xops = xla_client.ops
 Dtype = Any
+Shape = Tuple[int]
 
 #--------------------------------------------------------------------
 # utilities
@@ -979,6 +982,14 @@ xla.translations[bcoo_transpose_p] = xla.lower_fun(
 
 bcoo_dot_general_p = core.Primitive('bcoo_dot_general')
 
+def _dot_general_validated_shape(lhs_shape: Shape, rhs_shape: Shape, dimension_numbers: DotDimensionNumbers) -> Shape:
+  """Validate the inputs and return the output shape."""
+  lhs = core.ShapedArray(lhs_shape, np.float32)
+  rhs = core.ShapedArray(rhs_shape, np.float32)
+  return _dot_general_shape_rule(
+    lhs, rhs, dimension_numbers=dimension_numbers,
+    precision=None, preferred_element_type=None)
+
 def bcoo_dot_general(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape):
   return bcoo_dot_general_p.bind(jnp.asarray(lhs_data), jnp.asarray(lhs_indices), jnp.asarray(rhs),
                                  dimension_numbers=dimension_numbers, lhs_shape=tuple(lhs_shape))
@@ -1047,14 +1058,7 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs
 def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   n_batch, n_sparse, _, _ = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
-
-  # Check for proper dimension_numbers
-  for dims in [lhs_contracting, rhs_contracting, lhs_batch, rhs_batch]:
-    assert len(dims) == len(set(dims))
-  assert not set(lhs_contracting).intersection(lhs_batch)
-  assert not set(rhs_contracting).intersection(rhs_batch)
-  assert [lhs_shape[d] for d in lhs_contracting] == [rhs.shape[d] for d in rhs_contracting]
-  assert [lhs_shape[d] for d in lhs_batch] == [rhs.shape[d] for d in rhs_batch]
+  out_shape = _dot_general_validated_shape(lhs_shape, rhs.shape, dimension_numbers)
 
   if lhs_batch and max(lhs_batch) >= n_batch:
     raise NotImplementedError(
@@ -1070,9 +1074,6 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
     raise NotImplementedError("bcoo_dot_general: contracting over dense dimensions.")
 
   out_dtype = jnp.promote_types(lhs_data.dtype, rhs.dtype)
-  out_shape = (tuple(lhs_shape[i] for i in lhs_batch) +
-               tuple(s for i, s in enumerate(lhs_shape) if i not in {*lhs_contracting, *lhs_batch}) +
-               tuple(s for i, s in enumerate(rhs.shape) if i not in {*rhs_contracting, *rhs_batch}))
   return core.ShapedArray(out_shape, out_dtype)
 
 def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_shape):
@@ -1168,8 +1169,7 @@ def _bcoo_dot_general_sampled_abstract_eval(A, B, indices, *, dimension_numbers)
 def _bcoo_dot_general_sampled_transpose(ct, A, B, indices, *, dimension_numbers):
   A_shape = A.aval.shape if hasattr(A, 'aval') else A.shape
   B_shape = B.aval.shape if hasattr(B, 'aval') else B.shape
-  mat_shape = _dot_general_shape_computation(
-    A_shape, B_shape, dimension_numbers=dimension_numbers)
+  mat_shape = _dot_general_validated_shape(A_shape, B_shape, dimension_numbers)
   mat = ad.UndefinedPrimal(core.ShapedArray(mat_shape, ct.dtype))
   indices, ct = _bcoo_extract_transpose(ct, indices, mat)
   kwds = {'dimension_numbers': dimension_numbers,
@@ -1265,14 +1265,7 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-
-  # Check for proper dimension_numbers
-  for dims in [lhs_contracting, rhs_contracting, lhs_batch, rhs_batch]:
-    assert len(dims) == len(set(dims))
-  assert not set(lhs_contracting).intersection(lhs_batch)
-  assert not set(rhs_contracting).intersection(rhs_batch)
-  assert [lhs_shape[d] for d in lhs_contracting] == [rhs_shape[d] for d in rhs_contracting]
-  assert [lhs_shape[d] for d in lhs_batch] == [rhs_shape[d] for d in rhs_batch]
+  out_shape = _dot_general_validated_shape(lhs_shape, rhs_shape, dimension_numbers)
 
   if not (lhs.n_dense == rhs.n_dense == 0):
     # TODO(jakevdp): handle dense dimensions
@@ -1287,10 +1280,6 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
   if tuple(lhs_contracting) != (lhs.n_batch,) or tuple(rhs_contracting) != (rhs.n_batch,):
     raise NotImplementedError("bcoo_spdot_general only supports contraction of sparse indices.")
 
-  out_shape = (
-    tuple(lhs_shape[dim] for dim in lhs_batch) +
-    tuple(lhs_shape[i] for i in range(lhs.n_batch) if i not in lhs_batch) +
-    tuple(rhs_shape[i] for i in range(rhs.n_batch) if i not in rhs_batch))
   out_dtype = jnp.promote_types(lhs_data.dtype, rhs_data.dtype)
 
   return core.ShapedArray(out_shape, dtype=out_dtype)
