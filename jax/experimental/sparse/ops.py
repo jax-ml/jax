@@ -1394,7 +1394,15 @@ class JAXSparse:
     self.shape = shape
 
   def __repr__(self):
-    repr_ = f"{self.__class__.__name__}({self.dtype}{list(self.shape)}, nse={self.nse})"
+    name = self.__class__.__name__
+    try:
+      nse = self.nse
+      dtype = self.dtype
+      shape = list(self.shape)
+    except:
+      repr_ = f"{name}(<invalid>)"
+    else:
+      repr_ = f"{name}({dtype}{shape}, nse={nse})"
     if isinstance(self.data, core.Tracer):
       repr_ = f"{type(self.data).__name__}[{repr_}]"
     return repr_
