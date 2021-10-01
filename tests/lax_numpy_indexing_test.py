@@ -844,9 +844,9 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
       jax.jit(lambda idx: jnp.zeros((2, 2))[idx])((0, 0.))
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
-      ops.index_add(jnp.zeros(2), 0., 1.)
+      jnp.zeros(2).at[0.].add(1.)
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
-      ops.index_update(jnp.zeros(2), 0., 1.)
+      jnp.zeros(2).at[0.].set(1.)
 
   def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
     x = jnp.arange(5, dtype=jnp.int32) + 1
@@ -1105,7 +1105,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     data = np.array([5, 1, 7, 2, 3, 4, 1, 3])
     segment_ids = np.array([0, 0, 0, 1, 2, 2, 3, 3])
 
-    ans = ops.index_add(np.zeros(np.max(segment_ids) + 1), segment_ids, data)
+    ans = jnp.zeros(np.max(segment_ids) + 1).at[segment_ids].add(data)
     expected = np.array([13, 2, 7, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 

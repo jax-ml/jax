@@ -19,7 +19,6 @@ import collections
 
 from jax import lax, grad, jacfwd, jacobian, vmap
 import jax.numpy as jnp
-import jax.ops as jo
 
 
 # Specifies a general finite-horizon, time-varying control problem. Given cost
@@ -85,11 +84,11 @@ def trajectory(dynamics, U, x0):
   d, = x0.shape
 
   X = jnp.zeros((T + 1, d))
-  X = jo.index_update(X, jo.index[0], x0)
+  X = X.at[0].set(x0)
 
   def loop(t, X):
     x = dynamics(t, X[t], U[t])
-    X = jo.index_update(X, jo.index[t + 1], x)
+    X = X.at[t + 1].set(x)
     return X
 
   return fori_loop(0, T, loop, X)
@@ -144,8 +143,8 @@ def lqr_solve(spec):
     P_ = Q + mm(AtP, A) + mm(K_.T, H)
     p_ = q + mv(A.T, p) + mv(K_.T, h)
 
-    K = jo.index_update(K, jo.index[t], K_)
-    k = jo.index_update(k, jo.index[t], k_)
+    K = K.at[t].set(K_)
+    k = k.at[t].set(k_)
     return spec, P_, p_, K, k
 
   _, P, p, K, k = fori_loop(
@@ -166,13 +165,13 @@ def lqr_predict(spec, x0):
     A, B = spec.A[t], spec.B[t]
     u = mv(K[t], X[t]) + k[t]
     x = mv(A, X[t]) + mv(B, u)
-    X = jo.index_update(X, jo.index[t + 1], x)
-    U = jo.index_update(U, jo.index[t], u)
+    X = X.at[t + 1].set(x)
+    U = U.at[t].set(u)
     return spec, X, U
 
   U = jnp.zeros((T, control_dim))
   X = jnp.zeros((T + 1, state_dim))
-  X = jo.index_update(X, jo.index[0], x0)
+  X = X.at[0].set(x0)
   _, X, U = fori_loop(0, T, fwd_loop, (spec, X, U))
   return X, U
 
@@ -214,10 +213,10 @@ def mpc_predict(solver, p, x0, U):
     _, U_ = solver(p_, xt, U_rem)
     ut = U_[0]
     x = p.dynamics(t, xt, ut)
-    X = jo.index_update(X, jo.index[t + 1], x)
-    U = jo.index_update(U, jo.index[t], ut)
+    X = X.at[t + 1].set(x)
+    U = U.at[t].set(ut)
     return X, U
 
   X = jnp.zeros((T + 1, p.state_dim))
-  X = jo.index_update(X, jo.index[0], x0)
+  X = X.at[0].set(x0)
   return fori_loop(0, T, loop, (X, U))
