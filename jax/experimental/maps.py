@@ -306,7 +306,7 @@ def _parse_entry(arg_name, entry):
     raise TypeError(f"""\
 Value mapping specification in xmap {arg_name} pytree can be either:
 - lists of axis names (possibly ending with the ellipsis object: ...)
-- dictionaries that map axis names to positional axes (integers)
+- dictionaries that map positional axes (integers) to axis names (e.g. {2: 'name'})
 but got: {entry}""")
   if len(result) != num_mapped_dims:
     raise ValueError(f"Named axes should be unique within each {arg_name} argument "
