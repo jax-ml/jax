@@ -696,21 +696,21 @@ def xla_computation(fun: Callable,
       for axis_name, size in axis_env or []:
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
-    jaxpr = xla.apply_outfeed_rewriter(jaxpr)
-    axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
-    if out_parts is None:
-      out_parts_flat = None
-    else:
-      out_parts_flat = tuple(flatten_axes(
-          "xla_computation out_parts", out_tree(), out_parts))
-    c = xb.make_computation_builder(f"xla_computation_{fun_name}")
-    xla_consts = map(partial(xb.constant, c), consts)
-    should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
-    xla_args, donated_invars = xla._xla_callable_args(
-        c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)
-    out_nodes = xla.jaxpr_subcomp(
-        c, jaxpr, backend, axis_env_, xla_consts,
-        extend_name_stack(wrap_name(fun_name, "xla_computation")), *xla_args)
+      jaxpr = xla.apply_outfeed_rewriter(jaxpr)
+      axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
+      if out_parts is None:
+        out_parts_flat = None
+      else:
+        out_parts_flat = tuple(flatten_axes(
+            "xla_computation out_parts", out_tree(), out_parts))
+      c = xb.make_computation_builder(f"xla_computation_{fun_name}")
+      xla_consts = map(partial(xb.constant, c), consts)
+      should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
+      xla_args, donated_invars = xla._xla_callable_args(
+          c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)
+      out_nodes = xla.jaxpr_subcomp(
+          c, jaxpr, backend, axis_env_, xla_consts,
+          extend_name_stack(wrap_name(fun_name, "xla_computation")), *xla_args)
     build_out_tuple = partial(xc.ops.Tuple, c, out_nodes)
     if out_parts is not None:
       out_tuple = xb.with_sharding(c, out_parts_flat, build_out_tuple)

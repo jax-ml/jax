@@ -1860,6 +1860,16 @@ class APITest(jtu.JaxTestCase):
     axis_env = [(axis_name, api.local_device_count())]
     _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
 
+  def test_xla_computation_axis_env(self):
+    def fn(x):
+      z = x * jax.lax.axis_index('i').astype(jnp.float32)
+      def inner_fn(carry, a):
+        return carry + a, ()
+      return jax.lax.scan(inner_fn, jnp.zeros_like(z[0]), z)
+
+    x = jnp.ones((5, 6, 4))
+    _ = jax.xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
+
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
