@@ -918,7 +918,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     hcb.barrier_wait()
 
     treedef = tree_util.tree_structure(arg)
-    print(jaxpr)
     assertMultiLineStrippedEqual(self, f"""
       {{ lambda ; a:f32[]. let
           b:f32[] = mul a 3.00

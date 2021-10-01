@@ -1142,7 +1142,8 @@ class DynamicJaxprTracer(core.Tracer):
                 f"depends on the value{'s' if len(invar_pos) > 1 else ''} "
                 f"of {dbg.arg_info(invar_pos)}.")
     elif progenitor_eqns:
-      msts = [f"  operation {core.pp_eqn(eqn, print_shapes=True)}\n"
+      msts = ["  operation "
+              f"{core.pp_eqn(eqn, core.JaxprPpContext(), print_shapes=True)}\n"
               f"    from line {source_info_util.summarize(eqn.source_info)}"
               for eqn in progenitor_eqns]
       origin = (f"While tracing the function {dbg.func_src_info} "

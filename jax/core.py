@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import collections
 from collections import namedtuple
 from contextlib import contextmanager
 from functools import partial, total_ordering
@@ -22,7 +23,7 @@ import operator
 from operator import attrgetter
 import threading
 import types
-from typing import (Any, Callable, ClassVar, Dict, Generator,
+from typing import (Any, Callable, ClassVar, DefaultDict, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
                     Type, Union, cast, Iterable, Hashable)
 from weakref import ref
@@ -74,11 +75,12 @@ class Jaxpr:
     self.eqns = list(eqns)
 
   def __str__(self):
-    return str(pp_jaxpr(self))
+    return str(pp_jaxpr(self, JaxprPpContext()))
   __repr__ = __str__
 
   def pretty_print(self, *, source_info=False, print_shapes=True, **kw):
-    doc = pp_jaxpr(self, source_info=source_info, print_shapes=print_shapes)
+    doc = pp_jaxpr(self, JaxprPpContext(), source_info=source_info,
+                   print_shapes=print_shapes)
     return doc.format(**kw)
 
 
@@ -133,7 +135,7 @@ class ClosedJaxpr:
   def __repr__(self): return repr(self.jaxpr)
 
   def pretty_print(self, *, source_info=False, print_shapes=True, **kw):
-    return pp_jaxpr(self.jaxpr, source_info=source_info,
+    return pp_jaxpr(self.jaxpr, JaxprPpContext(), source_info=source_info,
                     print_shapes=print_shapes).format(**kw)
 
 @curry
@@ -148,7 +150,7 @@ class JaxprEqn(NamedTuple):
   params: Dict[str, Any]
   source_info: Optional[source_info_util.Traceback]
 
-  def __repr__(self): return str(pp_eqn(self)).rstrip()
+  def __repr__(self): return str(pp_eqn(self, JaxprPpContext())).rstrip()
 
 def new_jaxpr_eqn(invars, outvars, primitive, params, source_info=None):
   if primitive.call_primitive:
@@ -176,14 +178,14 @@ class Var:
       return (self.count, self.suffix) < (other.count, other.suffix)
 
   def __repr__(self):
-    rem = self.count
-    s = ''
-    while True:
-      rem, i = rem // 26, rem % 26
-      s = chr(97 + i % 26) + s
-      if not rem:
-        break
-    return s + self.suffix
+    return _encode_digits_alphabetic(self.count) + self.suffix
+
+def _encode_digits_alphabetic(n):
+  s = ''
+  while len(s) == 0 or n:
+    n, i = n // 26, n % 26
+    s = chr(97 + i % 26) + s
+  return s
 
 def _jaxpr_vars(jaxpr):
   return it.chain(
@@ -1926,10 +1928,11 @@ def check_jaxpr(jaxpr: Jaxpr):
   except JaxprTypeError as e:
     if len(e.args) == 2:
       msg, eqn_idx = e.args
-      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, eqn_idx - 10, eqn_idx + 10))
+      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, eqn_idx - 10, eqn_idx + 10,
+                                         JaxprPpContext()))
     else:
       msg, = e.args
-      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, 0, 20))
+      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, 0, 20, JaxprPpContext()))
     msg = "\n\n".join([msg, "while checking jaxpr:", jaxpr_str])
     raise JaxprTypeError(msg) from None
 
@@ -1976,7 +1979,8 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
     except JaxprTypeError as e:
       msg, = e.args
       src = source_info_util.summarize(eqn.source_info)
-      msg = "\n\n".join([msg, "in equation:", str(pp.nest(2, pp_eqn(eqn))),
+      msg = "\n\n".join([msg, "in equation:",
+                        str(pp.nest(2, pp_eqn(eqn, JaxprPpContext()))),
                          f"from source: {src}"])
       raise JaxprTypeError(msg, eqn_idx) from None
 
@@ -2050,104 +2054,132 @@ def check_map(prim, in_avals, params):
 
 
 # ------------------- Jaxpr printed representation -------------------
-def pp_vars(vs: Sequence[Any], *, print_shapes: bool = False) -> pp.Doc:
+
+# A JaxprPpContext allows us to globally uniquify variable names within nested
+# Jaxprs.
+class JaxprPpContext:
+  var_ids: DefaultDict[Var, int]
+
+  def __init__(self):
+    self.var_ids = collections.defaultdict(it.count().__next__)
+
+
+def pp_var(v: Var, context: JaxprPpContext):
+  if isinstance(v, (Literal, DropVar)): return str(v)
+  return f"{_encode_digits_alphabetic(context.var_ids[v])}{v.suffix}"
+
+def pp_vars(vs: Sequence[Any], context: JaxprPpContext,
+            *, separator="", print_shapes: bool = False) -> pp.Doc:
   if print_shapes:
     return pp.nest(2, pp.group(
-      pp.join(pp.group(pp.brk()), [
-        pp.text(str(v)) +
+      pp.join(pp.text(separator) + pp.group(pp.brk()), [
+        pp.text(pp_var(v, context)) +
         pp.dim(pp.text(":" + v.aval.str_short(short_dtypes=True)))
         for v in vs
       ])
     ))
   else:
     return pp.nest(2, pp.group(
-      pp.join(pp.group(pp.brk()), [pp.text(str(v)) for v in vs])
+      pp.join(pp.text(separator) + pp.group(pp.brk()),
+              [pp.text(pp_var(v, context)) for v in vs])
     ))
 
-def pp_kv_pair(k:str, v: Any) -> pp.Doc:
+def pp_kv_pair(k:str, v: Any, context: JaxprPpContext) -> pp.Doc:
   if type(v) is tuple and all(isinstance(j, (Jaxpr, ClosedJaxpr)) for j in v):
-    pp_v = pp_jaxprs(v)
+    pp_v = pp_jaxprs(v, context)
   elif isinstance(v, Jaxpr):
-    pp_v = pp_jaxpr(v)
+    pp_v = pp_jaxpr(v, context)
   elif isinstance(v, ClosedJaxpr):
-    pp_v = pp_jaxpr(v.jaxpr)
+    pp_v = pp_jaxpr(v.jaxpr, context)
   else:
     pp_v = pp.text(str(v))
   return pp.text(f'{k}=') + pp_v
 
-def pp_kv_pairs(kv_pairs) -> pp.Doc:
+def pp_kv_pairs(kv_pairs, context: JaxprPpContext) -> pp.Doc:
   if not kv_pairs:
     return pp.nil()
   return pp.group(
     pp.nest(2, pp.concat([
       pp.text("["),  pp.brk(""),
-      pp.join(pp.brk(), [pp_kv_pair(k, v) for k, v in kv_pairs])
+      pp.join(pp.brk(), [pp_kv_pair(k, v, context) for k, v in kv_pairs])
     ]))
     + pp.brk("") + pp.text("]")
   )
 
-def pp_eqn(eqn, *, print_shapes=True, source_info=False) -> pp.Doc:
-  lhs = pp_vars(eqn.outvars, print_shapes=print_shapes)
+def pp_eqn(eqn, context: JaxprPpContext, *, print_shapes=True, source_info=False
+          ) -> pp.Doc:
+  lhs = pp_vars(eqn.outvars, context, print_shapes=print_shapes)
   annotation = (source_info_util.summarize(eqn.source_info)
                 if source_info else None)
   return pp.concat([
     lhs, pp.text(" = ", annotation=annotation), pp.text(eqn.primitive.name),
-    pp_kv_pairs(sorted(eqn.params.items())),
-    pp.text(" ") + pp_vars(eqn.invars)
+    pp_kv_pairs(sorted(eqn.params.items()), context),
+    pp.text(" ") + pp_vars(eqn.invars, context)
   ])
 
 
-def pp_eqns(eqns, *, print_shapes=True, source_info=False) -> pp.Doc:
+def pp_eqns(eqns, context: JaxprPpContext, *, print_shapes=True, source_info=False
+           ) -> pp.Doc:
   return pp.join(
     pp.brk("; "),
-    map(partial(pp_eqn, print_shapes=print_shapes, source_info=source_info),
-        eqns))
+    map(lambda e: pp_eqn(e, context, print_shapes=print_shapes,
+                         source_info=source_info), eqns))
 
-def pp_eqn_compact(primitive_name: str, params: Dict) -> pp.Doc:
+def pp_eqn_compact(primitive_name: str, params: Dict, context: JaxprPpContext
+                  ) -> pp.Doc:
   filtered_params = {k: v for k, v in params.items()
                      if (k != 'branches' and
                          not isinstance(v, (Jaxpr, ClosedJaxpr)))}
-  return pp.text(primitive_name) + pp_kv_pairs(sorted(filtered_params.items()))
+  return (pp.text(primitive_name) +
+          pp_kv_pairs(sorted(filtered_params.items()), context))
 
-def pp_jaxpr_skeleton(jaxpr, eqns_pp, *, print_shapes=True) -> pp.Doc:
-  str_outvars = str(tuple(jaxpr.outvars))
+def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext, *,
+                      print_shapes=True) -> pp.Doc:
+  constvars = pp_vars(jaxpr.constvars, context, print_shapes=print_shapes)
+  invars = pp_vars(jaxpr.invars, context, print_shapes=print_shapes)
+  eqns = eqns_fn()
+  outvars = pp.concat([
+    pp.text("("), pp_vars(jaxpr.outvars, context, separator=","),
+    pp.text(")" if len(jaxpr.outvars) != 1 else ",)")])
   return pp.group(pp.nest(2, pp.concat([
     pp.text("{ "), pp.bright(pp.text("lambda ")),
-    pp_vars(jaxpr.constvars, print_shapes=print_shapes),
-    pp.text("; "), pp_vars(jaxpr.invars, print_shapes=print_shapes),
+    constvars, pp.text("; "), invars,
     pp.text(". "), pp.bright(pp.text("let")),
-    pp.nest(2, pp.brk() + eqns_pp), pp.brk(),
-    pp.bright(pp.text("in")),
-    pp.text(f" {str_outvars}")
+    pp.nest(2, pp.brk() + eqns), pp.brk(),
+    pp.bright(pp.text("in ")), outvars
   ])) + pp.text(" }"))
 
 
-def pp_jaxpr(jaxpr, *, print_shapes=True, source_info=False) -> pp.Doc:
-  pps = pp_eqns(jaxpr.eqns, print_shapes=print_shapes, source_info=source_info)
-  return pp_jaxpr_skeleton(jaxpr, pps, print_shapes=print_shapes)
+def pp_jaxpr(jaxpr, context: JaxprPpContext, *, print_shapes=True,
+             source_info=False) -> pp.Doc:
+  eqns_fn = lambda: pp_eqns(jaxpr.eqns, context, print_shapes=print_shapes,
+                            source_info=source_info)
+  return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, print_shapes=print_shapes)
 
-def pp_jaxprs(jaxprs) -> pp.Doc:
+def pp_jaxprs(jaxprs, context: JaxprPpContext) -> pp.Doc:
   jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
   return pp.group(pp.nest(2, pp.concat([
-      pp.text('('), pp.brk(""), pp.join(pp.brk(), map(pp_jaxpr, jaxprs))]))
-    + pp.brk("") + pp.text(')')
+      pp.text('('), pp.brk(""),
+      pp.join(pp.brk(), map(lambda x: pp_jaxpr(x, context), jaxprs))]
+    )) + pp.brk("") + pp.text(')')
   )
 
 
-def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int, print_shapes=True,
-                       source_info: bool = False) -> pp.Doc:
+def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int, context: JaxprPpContext,
+                       print_shapes=True, source_info: bool = False) -> pp.Doc:
   lo = max(lo, 0)
   hi = max(lo, min(hi, len(jaxpr.eqns)))
   eqns = jaxpr.eqns[lo:hi]
-  pps = []
-  if len(eqns) == 0 and len(jaxpr.eqns) != 0:
-    pps.append(pp.text('...'))
-  else:
-    if lo != 0:
+  def eqns_fn():
+    pps = []
+    if len(eqns) == 0 and len(jaxpr.eqns) != 0:
       pps.append(pp.text('...'))
-    pps.extend(map(partial(pp_eqn, print_shapes=print_shapes,
-                           source_info=source_info), eqns))
-    if hi != len(jaxpr.eqns):
-      pps.append(pp.text('...'))
-  return pp_jaxpr_skeleton(jaxpr, pp.join(pp.brk("; "), pps),
-                           print_shapes=print_shapes)
+    else:
+      if lo != 0:
+        pps.append(pp.text('...'))
+      pps.extend(map((lambda e: pp_eqn(e, context, print_shapes=print_shapes,
+                                       source_info=source_info)), eqns))
+      if hi != len(jaxpr.eqns):
+        pps.append(pp.text('...'))
+    return pp.join(pp.brk("; "), pps)
+  return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, print_shapes=print_shapes)
