@@ -699,6 +699,21 @@ class PJitErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, (p,), [p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
 
+  @jtu.with_mesh([('x', 2)])
+  def testNestedDifferentResources(self):
+    @partial(pjit, in_axis_resources=P('x'), out_axis_resources=None)
+    def f(x):
+      with mesh(np.array([jax.local_devices()[0]]), ('x')):
+        @partial(pjit, in_axis_resources=P('x'), out_axis_resources=None)
+        def h(x):
+          return x
+        return h(x)
+    xshape = (2, 5, 6)
+    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    with self.assertRaisesRegex(RuntimeError,
+                                "Changing the physical mesh is not allowed.*"):
+      f(x)
+
 
 class UtilTest(jtu.JaxTestCase):
   def testOpShardingRoundTrip(self):

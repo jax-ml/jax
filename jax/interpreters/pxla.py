@@ -1540,8 +1540,7 @@ def lower_mesh_computation(
     donated_invars: Sequence[bool],
     spmd_lowering: bool,
     local_in_untiled_avals: Sequence[core.ShapedArray],
-    tile_by_mesh_axes: bool,
-    do_resource_typecheck: Optional[str]):
+    tile_by_mesh_axes: bool):
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
 
@@ -1583,8 +1582,6 @@ def lower_mesh_computation(
     out_tiled_avals = out_jaxpr_avals
   local_out_untiled_avals = [untile_aval_nd(local_axis_sizes, aval_out_axes, aval)
                              for aval, aval_out_axes in safe_zip(out_tiled_avals, out_axes)]
-  if do_resource_typecheck is not None:
-    resource_typecheck(jaxpr, {}, lambda: do_resource_typecheck)
   _sanitize_mesh_jaxpr(jaxpr)
   if local_mesh.shape != mesh.shape:
     check_multihost_collective_allowlist(jaxpr)
@@ -1739,7 +1736,7 @@ def _sanitize_mesh_jaxpr(jaxpr):
 
 custom_resource_typing_rules: Dict[core.Primitive, Callable] = {}
 
-def resource_typecheck(jaxpr, axis_resources, what_jaxpr_thunk):
+def resource_typecheck(jaxpr, resource_env, axis_resources, what_jaxpr_thunk):
   if isinstance(jaxpr, core.ClosedJaxpr):
     jaxpr = jaxpr.jaxpr
   def _check_aval(aval, what_thunk):
@@ -1769,10 +1766,11 @@ def resource_typecheck(jaxpr, axis_resources, what_jaxpr_thunk):
   for eqn in jaxpr.eqns:
     typing_rule = custom_resource_typing_rules.get(eqn.primitive, None)
     if typing_rule:
-      typing_rule([v.aval for v in eqn.invars], eqn.params,
-                  eqn.source_info, axis_resources)
+      typing_rule([v.aval for v in eqn.invars], eqn.params, eqn.source_info,
+                  resource_env, axis_resources)
     else:
       core.traverse_jaxpr_params(partial(resource_typecheck,
+                                         resource_env=resource_env,
                                          axis_resources=axis_resources,
                                          what_jaxpr_thunk=rec_what_jaxpr_thunk),
                                  eqn.params)

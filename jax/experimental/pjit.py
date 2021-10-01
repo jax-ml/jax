@@ -432,6 +432,7 @@ def _pjit_lower(
     name: str):
   in_axes = [get_array_mapping(axes) for axes in in_axis_resources]
   out_axes = [get_array_mapping(axes) for axes in out_axis_resources]
+  pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
   fun = lu.wrap_init(f)
@@ -440,8 +441,7 @@ def _pjit_lower(
   return pxla.lower_mesh_computation(
       fun, name, resource_env.physical_mesh,
       in_axes, out_axes, donated_invars,
-      True, local_in_avals, tile_by_mesh_axes=False,
-      do_resource_typecheck="pjit")
+      True, local_in_avals, tile_by_mesh_axes=False)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_axis_resources, resource_env, **_):
@@ -683,13 +683,15 @@ def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_ax
         f"a named axis appearing in its named_shape (both use mesh axes "
         f"{maps.show_axes(overlap)})")
 
-def _resource_typing_pjit(avals, params, source_info, named_axis_resources):
+def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_resources):
   jaxpr = params["jaxpr"]
   what = "pjit input"
+  if resource_env.physical_mesh != params['resource_env'].physical_mesh:
+    raise RuntimeError("Changing the physical mesh is not allowed inside pjit.")
   for aval, pos_axis_resources in zip(jaxpr.in_avals, params['in_axis_resources']):
     _check_resources_against_named_axes(what, aval, pos_axis_resources, named_axis_resources)
   pxla.resource_typecheck(
-      jaxpr.jaxpr, named_axis_resources,
+      jaxpr.jaxpr, resource_env, named_axis_resources,
       lambda: (f"a pjit'ed function {params['name']} "
                f"(pjit called at {source_info_util.summarize(source_info)})"))
   what = "pjit output"
@@ -749,7 +751,7 @@ def _sharding_constraint_batcher(insert_axis, axis_size, axis_name, main_type, v
 batching.axis_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, False)
 pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, True)
 
-def _resource_typing_sharding_constraint(avals, params, source_info, named_axis_resources):
+def _resource_typing_sharding_constraint(avals, params, source_info, resource_env, named_axis_resources):
   aval, = avals
   _check_resources_against_named_axes(
     "with_sharding_constraint input", aval,

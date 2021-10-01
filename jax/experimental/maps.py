@@ -692,8 +692,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
   _resource_typing_xmap([], dict(axis_resources=axis_resources,
                                  out_axes=out_axes,
                                  call_jaxpr=jaxpr,
+                                 resource_env=resource_env,
                                  name=name),
-                        None, {})
+                        None, resource_env, {})
   jaxpr = plan.subst_axes_with_resources(jaxpr)
   use_spmd_lowering = config.experimental_xmap_spmd_lowering
   ensure_fixed_sharding = config.experimental_xmap_ensure_fixed_sharding
@@ -713,7 +714,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, name, resource_env.physical_mesh,
         mesh_in_axes, mesh_out_axes, donated_invars,
         use_spmd_lowering, in_avals,
-        tile_by_mesh_axes=True, do_resource_typecheck=None)
+        tile_by_mesh_axes=True)
   else:
     return xla.lower_xla_callable(
         f, None, backend, name, donated_invars, *((a, None) for a in in_avals))
@@ -930,6 +931,7 @@ def show_axes(axes):
 def _resource_typing_xmap(avals,
                           params,
                           source_info: Optional[source_info_util.Traceback],
+                          resource_env,
                           outer_axis_resources):
   axis_resources = params['axis_resources']
   inner_axis_resources = dict(outer_axis_resources)
@@ -941,9 +943,12 @@ def _resource_typing_xmap(avals,
         f"{source_info_util.summarize(source_info)} "
         f"(shadowed axes: {show_axes(overlap)})")
 
+  if resource_env.physical_mesh != params['resource_env'].physical_mesh:
+    raise RuntimeError("Changing the physical mesh is not allowed inside xmap.")
+
   call_jaxpr = params['call_jaxpr']
   pxla.resource_typecheck(
-      params['call_jaxpr'], inner_axis_resources,
+      params['call_jaxpr'], resource_env, inner_axis_resources,
       lambda: (f"an xmapped function {params['name']} " +
                (f"(xmap called at {source_info_util.summarize(source_info)})"
                 if source_info else "")))
