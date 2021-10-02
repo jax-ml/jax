@@ -14,7 +14,7 @@
 
 
 from functools import partial
-from typing import Callable, Iterator, NamedTuple
+from typing import Callable, Iterator, NamedTuple, Sequence
 import warnings
 
 import numpy as np
@@ -431,7 +431,7 @@ def _threefry_fold_in(key, data):
 def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_threefry_prng_key(key):
-    raise TypeError("_random_bits got invalid prng key.")
+    raise TypeError("threefry_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
   shape = core.as_named_shape(shape)
@@ -490,3 +490,39 @@ threefry_prng_impl = PRNGImpl(
     split=threefry_split,
     random_bits=threefry_random_bits,
     fold_in=threefry_fold_in)
+
+
+# -- RngBitGenerator PRNG implementation --
+
+# This code is experimental!
+# https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator
+# Notice that the RngBitGenerator operations are not guaranteed to be
+# stable/deterministic across backends or compiler versions. Correspondingly, we
+# reserve the right to change any of these implementations at any time!
+
+def _rbg_seed(seed: int) -> jnp.ndarray:
+  halfkey = threefry_seed(seed)
+  return jnp.concatenate([halfkey, halfkey])
+
+def _rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
+  _, keys = lax.rng_bit_generator(key, (num, 4), dtype='uint32')
+  return keys
+
+def _rbg_random_bits(key: jnp.ndarray, bit_width: int, shape: Sequence[int]
+                     ) -> jnp.ndarray:
+  if not key.shape == (4,) and key.dtype == jnp.dtype('uint32'):
+    raise TypeError("_rbg_random_bits got invalid prng key.")
+  if bit_width not in (8, 16, 32, 64):
+    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+  _, bits = lax.rng_bit_generator(key, shape, dtype=UINT_DTYPES[bit_width])
+  return bits
+
+def _rbg_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
+  return jnp.uint32(data) ^ key
+
+rbg_prng_impl = PRNGImpl(
+    key_shape=(4,),
+    seed=_rbg_seed,
+    split=_rbg_split,
+    random_bits=_rbg_random_bits,
+    fold_in=_rbg_fold_in)
