@@ -1120,6 +1120,49 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
     key = self.seed_prng(73)
     jax.grad(lambda x: 1., allow_int=True)(key)  # does not crash
 
+@skipIf(not config.jax_enable_custom_prng,
+        'custom PRNG tests require config.jax_enable_custom_prng')
+@jtu.with_config(jax_numpy_rank_promotion="raise")
+class LaxRandomWithRBGPRNGTest(LaxRandomTest):
+  def seed_prng(self, seed):
+    return prng.seed_with_impl(prng.rbg_prng_impl, seed)
+
+  def test_split_shape(self):
+    key = self.seed_prng(73)
+    keys = random.split(key, 10)
+    self.assertEqual(keys.shape, (10,))
+
+  def test_vmap_fold_in_shape(self):
+    key = self.seed_prng(73)
+    keys = vmap(lambda i: random.fold_in(key, i))(jnp.arange(3))
+    self.assertEqual(keys.shape, (3,))
+
+  def test_cannot_add(self):
+    key = self.seed_prng(73)
+    self.assertRaisesRegex(
+        TypeError, r'unsupported operand type\(s\) for \+*',
+        lambda: key + 47)
+
+  @skipIf(np.__version__ == "1.21.0",
+          "https://github.com/numpy/numpy/issues/19305")
+  def test_grad_of_prng_key(self):
+    key = self.seed_prng(73)
+    jax.grad(lambda x: 1., allow_int=True)(key)  # does not crash
+
+  def test_random_split_doesnt_device_put_during_tracing(self):
+    return  # this test doesn't apply to the RBG PRNG
+
+  def test_randint_out_of_range(self):
+    # TODO(mattjj): enable this test if/when RngBitGenerator supports it
+    raise SkipTest('8-bit types not supported with RBG PRNG')
+
+def _sampler_unimplemented_with_rbg(*args, **kwargs):
+  # TODO(mattjj): enable these tests if/when RngBitGenerator supports them
+  raise SkipTest('8- and 16-bit types not supported with RBG PRNG')
+
+for attr in dir(LaxRandomWithRBGPRNGTest):
+  if 'int8' in attr or 'int16' in attr or 'float16' in attr:
+    setattr(LaxRandomWithRBGPRNGTest, attr, _sampler_unimplemented_with_rbg)
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
@@ -1142,6 +1185,9 @@ for test_prefix in [
     if attr.startswith(test_prefix):
       setattr(LaxRandomWithCustomPRNGTest, attr,
               _sampler_unimplemented_with_custom_prng)
+      setattr(LaxRandomWithRBGPRNGTest, attr,
+              _sampler_unimplemented_with_custom_prng)
+
 
 
 if __name__ == "__main__":

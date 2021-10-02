@@ -6741,24 +6741,44 @@ xla.translations[rng_uniform_p] = _rng_uniform_translation_rule
 
 
 def _rng_bit_generator_shape_rule(key, *, shape, dtype, algorithm):
-  _ = dtype, algorithm
+  del dtype, algorithm
   return (key.shape, tuple(shape))
 
 
 def _rng_bit_generator_dtype_rule(key, *, shape, dtype, algorithm):
-  _ = key, shape, algorithm
+  del shape, algorithm
   return (key.dtype, dtype)
 
 
 def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
-  _ = shape, dtype, algorithm
+  del shape, dtype, algorithm
   return (key.weak_type, False)
 
 
 def _rng_bit_generator_translation_rule(c, key, *, shape, dtype, algorithm):
-  _ = c
+  key_shape, key_dtype = c.get_shape(key).dimensions(), c.get_shape(key).numpy_dtype()
+  # While the RngBitGenerator HLO accepts a u64[2] key on all backends, we
+  # typically represent the key argument to this primitive as a u32[4] so as to
+  # sidestep issues with the jax_enable_x64=False configuration. As a result, we
+  # need to convert u32[4] -> u64[2] here in the translation rule. However, we
+  # also polymorphically allow a u64[2] for backward compatibility.
+  assert ((key_shape == (4,) and key_dtype == dtypes.dtype('uint32')) or
+          (key_shape == (2,) and key_dtype == dtypes.dtype('uint64')))
   xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
-  return xops.RngBitGenerator(algorithm, key, xla_shape)
+  if key_dtype == dtypes.dtype('uint32'):
+    u64_etype = xla_client.dtype_to_etype(dtypes.dtype('uint64'))
+    # TODO(mattjj): use BitcastConvertType implementation with newer jaxlib
+    # new_key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
+    new_key = xla_bridge.constant(c, np.zeros(2, dtype=np.dtype('uint64')),
+                                  canonicalize_types=False)
+    for i in range(4):
+      elt = xops.ConvertElementType(xops.Slice(key, [i], [i+1], [1]), u64_etype)
+      if i % 2 == 0:
+        elt = xops.ShiftLeft(elt, xla_bridge.constant(c, np.uint64(32), canonicalize_types=False))
+      new_key = xops.DynamicUpdateSlice(new_key, elt, [xla_bridge.constant(c, i // 2)])
+    return xops.RngBitGenerator(algorithm, new_key, xla_shape)
+  else:
+    return xops.RngBitGenerator(algorithm, key, xla_shape)
 
 
 def _rng_bit_generator_named_shape_rule(key, *, shape, dtype, algorithm):
