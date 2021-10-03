@@ -38,7 +38,7 @@ from ..interpreters import partial_eval as pe
 from ..interpreters.sharded_jit import PartitionSpec
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from ..tree_util import tree_map, tree_flatten, tree_unflatten
+from ..tree_util import tree_map, tree_flatten, tree_unflatten, tree_leaves
 from .._src.util import (extend_name_stack, HashableFunction, safe_zip,
                          wrap_name, wraps, distributed_debug_log,
                          split_list, cache, tuple_insert)
@@ -226,7 +226,8 @@ def pjit(fun: Callable,
 
   @wraps(fun)
   def wrapped(*args, **kwargs):
-    tree_map(_check_arg, args)
+    for arg in tree_leaves(args):
+      _check_arg(arg)
     args_flat, params, out_tree = infer_params(*args, **kwargs)
     out = pjit_p.bind(*args_flat, **params)
     return tree_unflatten(out_tree, out)
