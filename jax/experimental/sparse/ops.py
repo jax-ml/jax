@@ -1207,57 +1207,63 @@ def bcoo_spdot_general(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shap
   return bcoo_spdot_general_p.bind(lhs_data, lhs_indices, rhs_data, rhs_indices,
                                    lhs_shape=lhs_shape, rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
 
-def _bcoo_vv(lhs_data, lhs_indices, rhs_data, rhs_indices, *, size, dtype):
-  # Compute the dot product of two sparse vectors, returning a scalar
-  assert lhs_data.ndim == rhs_data.ndim == 1
-  assert lhs_indices.shape == (lhs_data.size, 1)
-  assert rhs_indices.shape == (rhs_data.size, 1)
-  indices = jnp.vstack([lhs_indices, rhs_indices])
-  size = min(indices.shape[0], size)
-  _, inv = jnp.unique(indices, size=size, return_inverse=True)
-  lhs_inv, rhs_inv = inv[:len(lhs_data)], inv[len(lhs_data):]
-  lhs = jnp.zeros(size, dtype).at[lhs_inv].add(lhs_data)
-  rhs = jnp.zeros(size, dtype).at[rhs_inv].add(rhs_data)
-  return lax.dot_general(lhs, rhs, dimension_numbers=(([0], [0]), ([], [])))
+def _bcoo_Mv(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_shape, dtype, lhs_contract):
+  """Helper function to compute the dot product of a sparse array and a sparse vector."""
+  lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
+  rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
+  # Inputs should be unbatched; batching is handled by vmapping at the call site.
+  assert lhs.n_batch == rhs.n_batch == 0
+  assert lhs.n_dense == rhs.n_dense == 0
+  assert lhs.n_sparse >= 1
+  assert rhs.n_sparse == 1
+  assert (lhs_shape[lhs_contract],) == rhs_shape
+  rhs_data, rhs_indices = _dedupe_bcoo(rhs_data, rhs_indices, rhs_shape)
+  lhs_i = lhs_indices[:, lhs_contract]
+  rhs_i = rhs_indices[:, 0]
+  mask = jnp.isin(lhs_i, rhs_i, assume_unique=True)
+  lhs_i_inv = (lhs_i[None, :] == rhs_i[:, None]).argmax(0)
+  out_data = lhs_data.at[jnp.arange(lhs.nse)].mul(jnp.where(mask, rhs_data[lhs_i_inv], 0))
+  out_indices = jnp.concatenate([lhs_indices[:, :lhs_contract], lhs_indices[:, lhs_contract + 1:]], axis=1)
+  return out_data, out_indices
 
 @bcoo_spdot_general_p.def_impl
 def _bcoo_spdot_general_impl(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_shape, dimension_numbers):
-  out_aval = _bcoo_spdot_general_abstract_eval(
+  out_shape = _dot_general_validated_shape(lhs_shape, rhs_shape, dimension_numbers)
+  data_aval, indices_aval = _bcoo_spdot_general_abstract_eval(
     lhs_data.aval, lhs_indices.aval, rhs_data.aval, rhs_indices.aval,
     lhs_shape=lhs_shape, rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
-  _, (lhs_batch, rhs_batch) = dimension_numbers
-  lhs_n_batch = lhs_indices.ndim - 2
-  rhs_n_batch = rhs_indices.ndim - 2
+  _validate_bcoo(data_aval, indices_aval, out_shape)
+  lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
+  rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
 
   # Move batch dimension to front
-  lhs_perm = tuple(lhs_batch) + tuple(i for i in range(lhs_n_batch) if i not in lhs_batch)
-  rhs_perm = tuple(rhs_batch) + tuple(i for i in range(rhs_n_batch) if i not in rhs_batch)
-  lhs_indices = lhs_indices.transpose(lhs_perm + (lhs_n_batch, lhs_n_batch + 1))
-  rhs_indices = rhs_indices.transpose(rhs_perm + (rhs_n_batch, rhs_n_batch + 1))
-  lhs_data = lhs_data.transpose(lhs_perm + (lhs_n_batch,))
-  rhs_data = rhs_data.transpose(rhs_perm + (rhs_n_batch,))
+  (lhs_contracting, _), (lhs_batch, rhs_batch) = dimension_numbers
+
+  lhs_perm = tuple(lhs_batch) + tuple(i for i in range(lhs.n_batch) if i not in lhs_batch)
+  rhs_perm = tuple(rhs_batch) + tuple(i for i in range(rhs.n_batch) if i not in rhs_batch)
+  lhs_indices = lhs_indices.transpose(lhs_perm + (lhs.n_batch, lhs.n_batch + 1))
+  rhs_indices = rhs_indices.transpose(rhs_perm + (rhs.n_batch, rhs.n_batch + 1))
+  lhs_data = lhs_data.transpose(lhs_perm + (lhs.n_batch,))
+  rhs_data = rhs_data.transpose(rhs_perm + (rhs.n_batch,))
 
   # Implement batched dot product via vmap
-  func = functools.partial(_bcoo_vv, size=lhs_shape[-1], dtype=out_aval.dtype)
+  func = functools.partial(_bcoo_Mv,
+      lhs_shape=lhs_shape[lhs.n_batch:], rhs_shape=rhs_shape[rhs.n_batch:],
+      dtype=data_aval.dtype, lhs_contract=lhs_contracting[0] - lhs.n_batch)
 
-  for dim in reversed(range(len(rhs_batch), rhs_n_batch)):
-    if rhs_data.shape[dim] == rhs_indices.shape[dim]:
-      in_axes = (None, None, 0, 0)
-    else:
-      raise NotImplementedError("unequal batches in rhs")
-    func = vmap(func, in_axes=in_axes)
-  for dim in reversed(range(len(lhs_batch), lhs_n_batch)):
-    if lhs_data.shape[dim] == lhs_indices.shape[dim]:
-      in_axes = (0, 0, None, None)
-    else:
-      raise NotImplementedError("unequal batches in lhs")
-    func = vmap(func, in_axes=in_axes)
+  if rhs_data.shape[:rhs.n_batch] != rhs_indices.shape[:rhs.n_batch]:
+    raise NotImplementedError("unequal batches in rhs")
+  if lhs_data.shape[:lhs.n_batch] != lhs_indices.shape[:lhs.n_batch]:
+    raise NotImplementedError("unequal batches in lhs")
+
+  for dim in reversed(range(len(rhs_batch), rhs.n_batch)):
+    func = vmap(func, in_axes=(None, None, 0, 0))
+  for dim in reversed(range(len(lhs_batch), lhs.n_batch)):
+    func = vmap(func, in_axes=(0, 0, None, None))
   for dim in range(len(lhs_batch)):
-    if lhs_data.shape[dim] == lhs_indices.shape[dim] == rhs_data.shape[dim] == rhs_indices.shape[dim]:
-      in_axes = 0
-    else:
+    if lhs_data.shape[dim] != rhs_data.shape[dim]:
       raise NotImplementedError("unequal batches in batched dims")
-    func = vmap(func, in_axes=in_axes)
+    func = vmap(func, in_axes=0)
   return func(lhs_data, lhs_indices, rhs_data, rhs_indices)
 
 @bcoo_spdot_general_p.def_abstract_eval
@@ -1265,24 +1271,36 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  out_shape = _dot_general_validated_shape(lhs_shape, rhs_shape, dimension_numbers)
+  _ = _dot_general_validated_shape(lhs_shape, rhs_shape, dimension_numbers)
 
   if not (lhs.n_dense == rhs.n_dense == 0):
     # TODO(jakevdp): handle dense dimensions
     raise NotImplementedError("bcoo_spdot_general with dense dimensions.")
 
-  if not (lhs.n_sparse == rhs.n_sparse == 1):
-    raise NotImplementedError("bcoo_spdot_general with more than one sparse dimension.")
+  if not (rhs.n_sparse == 1):
+    raise NotImplementedError("bcoo_spdot_general with n_sparse != 1 on the rhs.")
 
-  if any(dim >= lhs.n_batch for dim in lhs_batch) or any(dim > rhs.n_batch for dim in rhs_batch):
+  if max(lhs_batch, default=-1) >= lhs.n_batch or max(rhs_batch, default=-1) >= rhs.n_batch:
     raise NotImplementedError("bcoo_spdot_general: batch_dims must correspond to batch dimensions of the sparse representation.")
 
-  if tuple(lhs_contracting) != (lhs.n_batch,) or tuple(rhs_contracting) != (rhs.n_batch,):
+  if tuple(rhs_contracting) != (rhs.n_batch,) or lhs_contracting[0] not in range(lhs.n_batch, lhs.n_batch + lhs.n_sparse):
     raise NotImplementedError("bcoo_spdot_general only supports contraction of sparse indices.")
 
-  out_dtype = jnp.promote_types(lhs_data.dtype, rhs_data.dtype)
+  if rhs.n_batch > len(rhs_batch) and lhs.n_sparse > len(lhs_contracting):
+    raise ValueError("Cannot have unused batch dims on rhs with unused sparse dims on lhs.")
 
-  return core.ShapedArray(out_shape, dtype=out_dtype)
+  data_shape = (
+    *(lhs_shape[dim] for dim in lhs_batch),
+    *(lhs_data.shape[dim] for dim in range(lhs.n_batch) if dim not in lhs_batch),
+    *(rhs_data.shape[dim] for dim in range(rhs.n_batch) if dim not in rhs_batch),
+    lhs.nse)
+  indices_shape = (
+    *(lhs_shape[dim] for dim in lhs_batch),
+    *(lhs_indices.shape[dim] for dim in range(lhs.n_batch) if dim not in lhs_batch),
+    *(rhs_indices.shape[dim] for dim in range(rhs.n_batch) if dim not in rhs_batch),
+    lhs.nse, lhs.n_sparse - len(lhs_contracting))
+  out_dtype = jnp.promote_types(lhs_data.dtype, rhs_data.dtype)
+  return core.ShapedArray(data_shape, out_dtype), core.ShapedArray(indices_shape, lhs_indices.dtype)
 
 def _bcoo_spdot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers, lhs_shape, rhs_shape):
   lhs_data, lhs_indices, rhs_data, rhs_indices = batched_args
@@ -1659,10 +1677,13 @@ class BCOO(JAXSparse):
   def __matmul__(self, other):
     if isinstance(other, BCOO):
       dtype = jnp.promote_types(self.dtype, other.dtype)
-      return bcoo_spdot_general(self.data.astype(dtype), self.indices,
-                                other.data.astype(dtype), other.indices,
-                                lhs_shape=self.shape, rhs_shape=other.shape,
-                                dimension_numbers=(([self.ndim - 1], [0]), ([], [])))
+      dimension_numbers = (([self.ndim - 1], [0]), ([], []))
+      data, indices = bcoo_spdot_general(self.data.astype(dtype), self.indices,
+                                         other.data.astype(dtype), other.indices,
+                                         lhs_shape=self.shape, rhs_shape=other.shape,
+                                         dimension_numbers=dimension_numbers)
+      shape = _dot_general_validated_shape(self.shape, other.shape, dimension_numbers)
+      return BCOO((data, indices), shape=shape)
     elif isinstance(other, JAXSparse):
       raise NotImplementedError("sparse-sparse matmul")
     other = jnp.asarray(other)
