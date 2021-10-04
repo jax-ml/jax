@@ -6690,22 +6690,43 @@ class _IndexUpdateHelper:
 
   The ``at`` property is syntactic sugar for calling the indexed update functions
   defined in :mod:`jax.ops`, and acts as a pure equivalent of in-place
-  modificatons. For further information, see `Indexed Update Operators
-  <https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-operators>`_.
+  modificatons.
 
   In particular:
 
-  - ``x = x.at[idx].set(y)`` is a pure equivalent of ``x[idx] = y``.
-  - ``x = x.at[idx].add(y)`` is a pure equivalent of ``x[idx] += y``.
-  - ``x = x.at[idx].multiply(y)`` (aka ``mul``) is a pure equivalent of
-    ``x[idx] *= y``.
-  - ``x = x.at[idx].divide(y)`` is a pure equivalent of ``x[idx] /= y``.
-  - ``x = x.at[idx].power(y)`` is a pure equivalent of ``x[idx] **= y``.
-  - ``x = x.at[idx].min(y)`` is a pure equivalent of
-    ``x[idx] = minimum(x[idx], y)``.
-  - ``x = x.at[idx].max(y)`` is a pure equivalent of
-    ``x[idx] = maximum(x[idx], y)``.
+  ==============================  ================================
+  Alternate syntax                Equivalent In-place expression
+  ==============================  ================================
+  ``x = x.at[idx].set(y)``        ``x[idx] = y``
+  ``x = x.at[idx].add(y)``        ``x[idx] += y``
+  ``x = x.at[idx].multiply(y)``   ``x[idx] *= y``
+  ``x = x.at[idx].divide(y)``     ``x[idx] /= y``
+  ``x = x.at[idx].power(y)``      ``x[idx] **= y``
+  ``x = x.at[idx].min(y)``        ``x[idx] = minimum(x[idx], y)``
+  ``x = x.at[idx].max(y)``        ``x[idx] = maximum(x[idx], y)``
+  ``x = x.at[idx].get()``         ``x = x[idx]``
+  ==============================  ================================
+
+  None of these expressions modify the original ``x``; instead they return
+  a modified copy of ``x``. However, inside a :py:func:`jax.jit` compiled function,
+  expressions like ``x = x.at[idx].set(y)`` are guaranteed to be applied in-place.
+
+  Unlike NumPy in-place operations such as :code:`x[idx] += y`, if multiple
+  indices refer to the same location, all updates will be applied (NumPy would
+  only apply the last update, rather than applying all updates.) The order
+  in which conflicting updates are applied is implementation-defined and may be
+  nondeterministic (e.g., due to concurrency on some hardware platforms).
+
+  By default, JAX assumes that all indices are in-bounds. There is experimental
+  support for giving more precise semantics to out-of-bounds indexed accesses,
+  via the ``mode`` parameter to functions such as ``get`` and ``set``. Valid
+  values for ``mode`` include ``"clip"``, which means that out-of-bounds indices
+  will be clamped into range, and ``"fill"``/``"drop"``, which are aliases and
+  mean that out-of-bounds reads will be filled with a scalar ``fill_value``,
+  and out-of-bounds writes will be discarded.
   """
+  # TODO(jakevdp): document additional arguments to the methods, including
+  # `indices_are_sorted`, `unique_indices`, `mode`, and `fill_value`.
   __slots__ = ("array",)
 
   def __init__(self, array):
@@ -6716,6 +6737,7 @@ class _IndexUpdateHelper:
 
   def __repr__(self):
     return f"_IndexUpdateHelper({repr(self.array)})"
+ndarray.at.__doc__ = _IndexUpdateHelper.__doc__
 
 _power_fn = power
 _divide_fn = divide

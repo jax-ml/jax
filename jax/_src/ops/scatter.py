@@ -114,6 +114,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
 class _Indexable(object):
   """Helper object for building indexes for indexed update functions.
 
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
+
   This is a singleton object that overrides the :code:`__getitem__` method
   to return the index it is passed.
 
@@ -135,6 +138,9 @@ def index_add(x: Array,
               indices_are_sorted: bool = False,
               unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] += y`.
+
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
@@ -183,6 +189,9 @@ def index_mul(x: Array,
               unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] *= y`.
 
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
+
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
 
@@ -230,6 +239,9 @@ def index_min(x: Array,
               unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
+
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
 
@@ -274,6 +286,9 @@ def index_max(x: Array,
               unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
 
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
+
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
 
@@ -317,6 +332,9 @@ def index_update(x: Array,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False) -> Array:
   """Pure equivalent of :code:`x[idx] = y`.
+
+  .. deprecated:: 0.2.22
+     Prefer the use of :attr:`jax.numpy.ndarray.at`.
 
   Returns the value of `x` that would result from the
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
