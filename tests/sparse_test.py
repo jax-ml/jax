@@ -1000,6 +1000,7 @@ class BCOOTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
     # TODO(jakevdp): This occasionally fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
+    self._CheckAgainstNumpy(jit(f_dense), jit(f_sparse), args_maker)
 
 
   @parameterized.named_parameters(jtu.cases_from_list(

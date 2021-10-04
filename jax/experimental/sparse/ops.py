@@ -1202,6 +1202,7 @@ xla.translations[bcoo_dot_general_sampled_p] = xla.lower_fun(
 # Dense ND array.
 
 bcoo_spdot_general_p = core.Primitive('bcoo_spdot_general')
+bcoo_spdot_general_p.multiple_results = True
 
 def bcoo_spdot_general(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_shape, rhs_shape, dimension_numbers):
   return bcoo_spdot_general_p.bind(lhs_data, lhs_indices, rhs_data, rhs_indices,
@@ -1335,7 +1336,7 @@ def _bcoo_spdot_general_batch_rule(batched_args, batch_dims, *, dimension_number
 # TODO(JVP): jvp, transpose
 batching.primitive_batchers[bcoo_spdot_general_p] = _bcoo_spdot_general_batch_rule
 xla.translations[bcoo_spdot_general_p] = xla.lower_fun(
-    _bcoo_spdot_general_impl, multiple_results=False)
+    _bcoo_spdot_general_impl, multiple_results=True)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
