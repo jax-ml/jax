@@ -32,7 +32,7 @@ def initialize_cache(path, max_cache_size_bytes=32 * 2**30):
     global _cache
     assert _cache == None, f"The cache path has already been initialized to {_cache._path}"
     _cache = FileSystemCache(path, max_cache_size_bytes)
-    logging.warning(f"Initialized persistent compilation cache at {path}")
+    logging.warning("Initialized persistent compilation cache at %s", path)
 
 def get_executable(xla_computation, compile_options, backend) -> Optional[xla_client.Executable]:
     """Returns the cached executable if present, or None otherwise."""

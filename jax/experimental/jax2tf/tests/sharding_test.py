@@ -77,7 +77,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     jax_comp = jax.xla_computation(f_jax)(*args)
     jax_hlo = jax_comp.as_hlo_text()
     if LOG_HLO:
-      logging.info(f"[{self._testMethodName}] got JAX HLO {jax_hlo}")
+      logging.info("[%s] got JAX HLO %s", self._testMethodName, jax_hlo)
     self.AssertShardingAnnotations("JAX before optimizations", jax_hlo, expected)
 
     if jtu.device_under_test() == "tpu":
@@ -95,25 +95,26 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
       jax_optimized_hlo = backend.compile(
           jax_comp, compile_options).hlo_modules()[0].to_string()
       if LOG_HLO:
-        logging.info(f"[{self._testMethodName}] got JAX optimized HLO for "
-                     f"platform {backend.platform} {jax_optimized_hlo}")
+        logging.info("[%s] got JAX optimized HLO for platform %s %s",
+                     self._testMethodName, backend.platform, jax_optimized_hlo)
       self.AssertShardingAnnotations("JAX after optimizations",
                                      jax_optimized_hlo, expected_opt)
 
     f_tf = jax2tf.convert(f_jax)
     device_name = f"/device:{jtu.device_under_test().upper()}:0"
-    tf_hlo = tf.function(f_tf, jit_compile=True, autograph=False).\
-      experimental_get_compiler_ir(*args)(stage="hlo",
-                                          device_name=device_name)
+    tf_hlo = (tf.function(f_tf, jit_compile=True, autograph=False)
+              .experimental_get_compiler_ir(*args)(stage="hlo",
+                                                   device_name=device_name))
     if LOG_HLO:
-      logging.info(f"[{self._testMethodName}] got TF HLO {tf_hlo}")
+      logging.info("[%s] got TF HLO %s", self._testMethodName, tf_hlo)
     self.AssertShardingAnnotations("TF before optimizations", tf_hlo, expected)
-    tf_optimized_hlo = tf.function(f_tf, jit_compile=True).\
-      experimental_get_compiler_ir(*args)(stage="optimized_hlo",
-                                          device_name=device_name)
+    tf_optimized_hlo = (
+        tf.function(f_tf, jit_compile=True)
+        .experimental_get_compiler_ir(*args)(stage="optimized_hlo",
+                                             device_name=device_name))
     if LOG_HLO:
-      logging.info(f"[{self._testMethodName}] got TF optimized HLO "
-                   f"for {device_name}: {tf_optimized_hlo}")
+      logging.info("[%s] got TF optimized HLO for %s: %s", self._testMethodName,
+                   device_name, tf_optimized_hlo)
 
   def AssertShardingAnnotations(self, what: str, hlo: str,
                                 expected: Sequence[str]):

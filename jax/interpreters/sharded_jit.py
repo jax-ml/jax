@@ -135,8 +135,8 @@ def _sharded_callable(
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
-              f"Compiling {fun.__name__} for {nparts} devices with "
-              f"args {global_abstract_args}.")
+              "Compiling %s for %d devices with args %s.",
+              fun.__name__, nparts, global_abstract_args)
 
   c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
   xla_consts = _map(partial(xb.constant, c), consts)

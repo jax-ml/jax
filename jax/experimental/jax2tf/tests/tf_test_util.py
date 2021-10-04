@@ -159,7 +159,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         tf.config.list_logical_devices("GPU") +
         tf.config.list_logical_devices())
     self.tf_default_device = tf_preferred_devices[0]
-    logging.info(f"Running jax2tf converted code on {self.tf_default_device}.")
+    logging.info("Running jax2tf converted code on %s.", self.tf_default_device)
     # We need --config=cuda build flag for TF to see the GPUs
     self.assertEqual(jtu.device_under_test().upper(),
                      self.tf_default_device.device_type)
@@ -287,11 +287,12 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                 f"mode was {mode}")
           raise
 
-        logging.info(f"[{self._testMethodName}] Logging HLO for exception in mode {mode}: {e}")
+        logging.info("[%s] Logging HLO for exception in mode %s: %s",
+                     self._testMethodName, mode, e)
         jax_comp = jax.xla_computation(func_jax)(*args)
         jax_hlo = jax_comp.as_hlo_text()
-        logging.info(f"[{self._testMethodName}] "
-                     f"JAX NON_OPT HLO\n{jax_hlo}")
+        logging.info("[%s] JAX NON_OPT HLO\n%s",
+                     self._testMethodName, jax_hlo)
 
         tf_args_signature = _make_tf_input_signature(*args)
         # If we give the signature, we cannot pass scalars
@@ -306,13 +307,14 @@ class JaxToTfTestCase(jtu.JaxTestCase):
             input_signature=tf_args_signature)
         tf_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
                     stage="hlo")
-        logging.info(f"[{self._testMethodName}] TF NON OPT HLO\n{tf_hlo}")
+        logging.info("[%s] TF NON OPT HLO\n{%s}", self._testMethodName,
+                     tf_hlo)
 
         backend = jax._src.lib.xla_bridge.get_backend()
         modules = backend.compile(jax_comp).hlo_modules()
         jax_opt_hlo = modules[0].to_string()
-        logging.info(f"[{self._testMethodName}] "
-                     f"JAX OPT HLO\n{jax_opt_hlo}")
+        logging.info("[%s] JAX OPT HLO\n%s", self._testMethodName,
+                     jax_opt_hlo)
 
         # TODO(b/189265364): Remove this workaround
         if (jtu.device_under_test() == "gpu" and
@@ -322,7 +324,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         else:
           tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
                       stage="optimized_hlo")
-          logging.info(f"[{self._testMethodName}] TF OPT HLO\n{tf_opt_hlo}")
+          logging.info("[%s] TF OPT HLO\n%s", self._testMethodName, tf_opt_hlo)
 
         raise
 

@@ -154,9 +154,9 @@ def helper_set_hlo_dump():
   dump_dir = "/tmp/xla_dump"
   os.environ["XLA_FLAGS"] = f"{flags_str} --xla_dump_to={dump_dir}"
   if os.path.isdir(dump_dir):
-    logging.warning(f"Deleting old XLA dump directory {dump_dir}")
+    logging.warning("Deleting old XLA dump directory %s", dump_dir)
     shutil.rmtree(dump_dir)
-  logging.warning(f"Setting XLA dump directory {dump_dir}")
+  logging.warning("Setting XLA dump directory %s", dump_dir)
   # Clear any cached backends so new CPU backend will pick up the env var.
   xla_bridge.get_backend.cache_clear()
 
@@ -492,7 +492,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
   def test_tap_jit_devices(self):
     """Running on multiple devices."""
-    logging.info(f"{self._testMethodName}: has devices {local_devices()}")
+    logging.info("%s: has devices %s", self._testMethodName, local_devices())
 
     def func(x, device_id):
       x1 = hcb.id_print(x, dev=str(device_id), output_stream=testing_stream)
@@ -502,7 +502,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     for d in local_devices():
       self.assertEqual(112, jax.jit(func, device=d, static_argnums=1)(111, d.id))
     hcb.barrier_wait()
-    logging.info(f"{self._testMethodName}: found output {testing_stream.output}")
+    logging.info("%s: found output %s", self._testMethodName,
+                 testing_stream.output)
     self.assertEqual(
         len(local_devices()), len(re.findall(r"111", testing_stream.output)))
     self.assertEqual(
@@ -570,9 +571,9 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     def pause_tap(idx, _):
       received.add(int(idx))
-      logging.info(f"Starting do_tap {idx}. Sleeping 1sec ...")
+      logging.info("Starting do_tap %s. Sleeping 1sec ...", idx)
       time.sleep(0.3)
-      logging.info(f"Finish do_tap {idx}")
+      logging.info("Finish do_tap %s", idx)
 
     def do_tap(idx):
       jax.jit(lambda idx: hcb.id_tap(pause_tap, idx))(idx)
@@ -610,9 +611,9 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     jax.jit(long_run)(5.)
 
     def try_barrier(idx):
-      logging.info(f"Starting test barrier {idx}")
+      logging.info("Starting test barrier %s", idx)
       hcb.barrier_wait()
-      logging.info(f"Finished test barrier {idx}")
+      logging.info("Finished test barrier %s", idx)
 
     threads = [
         threading.Thread(

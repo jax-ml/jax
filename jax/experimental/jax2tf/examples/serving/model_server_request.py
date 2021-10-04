@@ -119,8 +119,8 @@ def main(_):
     running_accuracy = (
         100. * accurate_count / (1 + batch_idx) / FLAGS.serving_batch_size)
     logging.info(
-        f" predicted digits = {predictions_digit} labels {labels_digit}. "
-        f"Running accuracy {running_accuracy:.3f}%")
+        " predicted digits = %s labels %s. Running accuracy %.3f%%",
+        predictions_digit, labels_digit, running_accuracy)
 
 
 if __name__ == "__main__":

@@ -867,9 +867,9 @@ def parallel_callable(fun: lu.WrappedFun,
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
-              f"Compiling {fun.__name__} ({id(fun)}) for {num_global_shards} "
-              f"devices with args {avals}. (num_replicas={num_global_replicas}"
-              f" num_partitions={num_partitions})")
+              "Compiling %s (%d) for %d devices with args %s. (num_replicas=%d"
+              " num_partitions=%d)", fun.__name__, id(fun), num_global_shards,
+              avals, num_global_replicas, num_partitions)
 
   axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,))
 
@@ -1550,8 +1550,11 @@ def lower_mesh_computation(
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
-              f"Compiling {getattr(fun, '__name__', '<unnamed function>')} ({id(fun)}) for {tuple(global_axis_sizes.items())} "
-              f"mesh with args {local_in_untiled_avals}. Argument mapping: {in_axes}.")
+              "Compiling %s (%d) for %s mesh with args %s. Argument mapping: "
+              "%s.",
+              getattr(fun, '__name__', '<unnamed function>'), id(fun),
+              tuple(global_axis_sizes.items()), local_in_untiled_avals,
+              in_axes)
 
   # 1. Trace to jaxpr and preprocess/verify it
   # Note that we tile by the local axis sizes, but use global axis sizes for named_shape

@@ -1146,7 +1146,7 @@ def _outside_call_run_callback(
       return canonical_flat_results
 
   except Exception as e:
-    logging.error(f"Outside call {callback} threw exception {e}.")
+    logging.error("Outside call %s threw exception %s.", callback, e)
     if send_infeed:
       # Prepare some results to send in case of error. We are sending something
       # with a distinctive shape (int8[12345]), one that is unlikely to be what the device

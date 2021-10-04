@@ -223,16 +223,14 @@ class FftTest(jtu.JaxTestCase):
 
     self.assertRaisesRegex(
       ValueError,
-      "jax.numpy.fft.{} does not support multiple axes. "
-      "Please use jax.numpy.fft.{}n. "
-      "Got axis = \\[1, 1\\].".format(name, name),
+      f"jax.numpy.fft.{name} does not support multiple axes. "
+      f"Please use jax.numpy.fft.{name}n. Got axis = \\[1, 1\\].",
       lambda: func(rng([2, 3], dtype=np.float64), axis=[1, 1])
     )
     self.assertRaisesRegex(
       ValueError,
-      "jax.numpy.fft.{} does not support multiple axes. "
-      "Please use jax.numpy.fft.{}n. "
-      "Got axis = \\(1, 1\\).".format(name, name),
+      f"jax.numpy.fft.{name} does not support multiple axes. "
+      f"Please use jax.numpy.fft.{name}n. Got axis = \\(1, 1\\).",
       lambda: func(rng([2, 3], dtype=np.float64), axis=(1, 1))
     )
     self.assertRaises(
