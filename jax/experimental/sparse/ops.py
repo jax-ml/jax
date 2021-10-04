@@ -1331,7 +1331,7 @@ def _bcoo_spdot_general_batch_rule(batched_args, batch_dims, *, dimension_number
   batched_out = bcoo_spdot_general(lhs_data, lhs_indices, rhs_data, rhs_indices,
                                  dimension_numbers=new_dimension_numbers,
                                  lhs_shape=new_lhs_shape, rhs_shape=new_rhs_shape)
-  return batched_out, result_batch_dim
+  return batched_out, (result_batch_dim, result_batch_dim)
 
 # TODO(JVP): jvp, transpose
 batching.primitive_batchers[bcoo_spdot_general_p] = _bcoo_spdot_general_batch_rule

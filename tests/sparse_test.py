@@ -14,6 +14,7 @@
 
 from functools import partial
 import itertools
+import operator
 import unittest
 
 from absl.testing import absltest
@@ -1002,6 +1003,45 @@ class BCOOTest(jtu.JaxTestCase):
     # self._CompileAndCheck(f_sparse, args_maker)
     self._CheckAgainstNumpy(jit(f_dense), jit(f_sparse), args_maker)
 
+  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}[n_batch={}]_{}[n_batch={}]_in_axes={}".format(
+        jtu.format_shape_dtype_string(lhs_shape, dtype), lhs_n_batch,
+        jtu.format_shape_dtype_string(rhs_shape, dtype), rhs_n_batch,
+        in_axes),
+       "lhs_shape": lhs_shape, "lhs_n_batch": lhs_n_batch,
+       "rhs_shape": rhs_shape, "rhs_n_batch": rhs_n_batch,
+       "dtype": dtype, "in_axes": in_axes}
+      for lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, in_axes in [
+        ((3, 5), 1, (3, 5), 1, 0),
+        ((3, 4, 5), 1, (3, 5), 1, 0),
+        ((3, 4, 5), 2, (3, 5), 1, 0),
+        # TODO(jakevdp): test these once unequal batches are implemented
+        # ((4, 5), 1, (5,), 0, (0, None)),
+        # ((3, 4, 5), 1, (5,), 0, (0, None)),
+        # ((4, 5), 0, (3, 5), 1, (None, 0)),
+      ]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
+  def test_bcoo_spmm_batched(self, lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dtype, in_axes):
+    sprng = rand_sparse(self.rng())
+    def args_maker():
+      x = sprng(lhs_shape, dtype)
+      y = sprng(rhs_shape, dtype)
+      xsp = sparse.BCOO.fromdense(x, n_batch=lhs_n_batch)
+      ysp = sparse.BCOO.fromdense(y, n_batch=rhs_n_batch)
+      return x, y, xsp, ysp
+
+    def f_dense(x, y, _, __):
+      return jax.vmap(operator.matmul, in_axes=in_axes)(x, y)
+    def f_sparse(_, __, x, y):
+      return jax.vmap(operator.matmul, in_axes=in_axes)(x, y)
+
+    args = args_maker()
+    result_dense = f_dense(*args)
+    result_sparse = f_sparse(*args)
+    self.assertAllClose(result_dense, result_sparse.todense())
+    result_sparse_jit = jax.jit(f_sparse)(*args)
+    self.assertAllClose(result_dense, result_sparse_jit.todense())
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}".format(
