@@ -575,9 +575,9 @@ def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
       raise NotImplementedError(
           f"XLA translation rule for primitive '{eqn.primitive.name}' not found")
 
-    with source_info_util.user_context(eqn.source_info.traceback):
-      ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
-                 *in_nodes, **eqn.params)
+    eqn_ctx = ctx.replace(name_stack=source_info.name_stack)
+    ans = rule(eqn_ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
+               *in_nodes, **eqn.params)
 
     assert isinstance(ans, collections.abc.Sequence), (ans, eqn)
     assert all(isinstance(x, xe.XlaOp) for x in ans), (ans, eqn)

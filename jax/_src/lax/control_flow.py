@@ -340,7 +340,7 @@ def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
   cond_carry = xb.parameter(cond_c, 0, c.get_shape(init_carry))
   cond_carry_elts = [xops.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
-  name_stack = source_info_util.current_name_stack().extend('while')
+  name_stack = ctx.name_stack.extend('while')
   cond_ctx = ctx.replace(builder=cond_c, name_stack=name_stack.extend('cond'))
   pred, = xla.jaxpr_subcomp(
       cond_ctx, cond_jaxpr.jaxpr,
@@ -802,9 +802,7 @@ def _cond_abstract_eval(*args, **kwargs):
 def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
                            linear):
   del linear  # Unused.
-  name_stack = source_info_util.current_name_stack()
-
-  name_stack = name_stack.extend("cond")
+  name_stack = ctx.name_stack.extend("cond")
   def make_computation(name, jaxpr, op_shape):
     c = xla_client.XlaBuilder(name + '_comp')
     op = xb.parameter(c, 0, op_shape)
