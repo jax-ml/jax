@@ -128,8 +128,11 @@ def register_pytree_node(nodetype: Type[T],
       unflattened children. The function should return an instance of
       ``nodetype``.
   """
-  pytree.register_node(nodetype, flatten_func, unflatten_func)
-  _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+  try:
+    pytree.register_node(nodetype, flatten_func, unflatten_func)
+    _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+  except ValueError:
+    pass
 
 def register_pytree_node_class(cls):
   """Extends the set of types that are considered internal nodes in pytrees.

@@ -36,7 +36,7 @@ from typing import (Any, Callable, Iterable, NamedTuple, Mapping, Optional,
 from warnings import warn
 
 import numpy as np
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager, ExitStack, nullcontext
 
 import jax
 from .. import core
@@ -65,6 +65,7 @@ from jax._src.lib import pmap_lib
 from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                               local_devices, process_index, process_count,
                               host_id, host_ids, host_count, default_backend)
+from jax._src import source_info_util
 from ..core import ConcreteArray, ShapedArray, raise_to_shaped
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
@@ -352,10 +353,13 @@ def _python_jit(
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
-    out_flat = xla.xla_call(
-        flat_fun, *args_flat,
-        device=device, backend=backend, name=flat_fun.__name__,
-        donated_invars=donated_invars, inline=inline)
+    ctx = (source_info_util.extend_name_stack(flat_fun.__name__) if not inline else
+        nullcontext())
+    with ctx:
+      out_flat = xla.xla_call(
+          flat_fun, *args_flat,
+          device=device, backend=backend, name=flat_fun.__name__,
+          donated_invars=donated_invars, inline=inline)
     return tree_unflatten(out_tree(), out_flat)
 
   f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
@@ -413,10 +417,13 @@ def _cpp_jit(
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
-    out_flat = xla.xla_call(
-        flat_fun, *args_flat,
-        device=device, backend=backend, name=flat_fun.__name__,
-        donated_invars=donated_invars, inline=inline)
+    ctx = (source_info_util.extend_name_stack(flat_fun.__name__) if not inline else
+        nullcontext())
+    with ctx:
+      out_flat = xla.xla_call(
+          flat_fun, *args_flat,
+          device=device, backend=backend, name=flat_fun.__name__,
+          donated_invars=donated_invars, inline=inline)
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 
@@ -822,9 +829,9 @@ def xla_computation(fun: Callable,
       should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
       xla_args, donated_invars = xla._xla_callable_args(
           c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)
-      ctx = xla.TranslationContext(
-          c, backend, axis_env_,
-          extend_name_stack(wrap_name(fun_name, "xla_computation")))
+      name_stack = source_info_util.current_name_stack()
+      ctx = xla.TranslationContext(c, backend, axis_env_,
+          name_stack.extend(wrap_name(fun_name, 'xla_computation')))
       out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
     build_out_tuple = partial(xc.ops.Tuple, c, out_nodes)
     if out_parts is not None:
@@ -2952,6 +2959,7 @@ def named_call(
   """
   if name is None:
     name = fun.__name__
+  return source_info_util.extend_name_stack(name)(fun)
 
   _, in_tree = tree_flatten(())
 

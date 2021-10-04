@@ -638,7 +638,7 @@ def _pjit_partial_eval(trace, *in_tracers,
                           unknown_tracers_out,
                           pjit_p,
                           unknown_params,
-                          source_info_util.current())
+                          source_info_util.current_traceback())
   for t in unknown_tracers_out: t.recipe = eqn
   return pe._zip_knowns(known_tracers_out, unknown_tracers_out, unknown_outs)
 pe.custom_partial_eval_rules[pjit_p] = _pjit_partial_eval

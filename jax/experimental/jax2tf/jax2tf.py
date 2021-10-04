@@ -821,7 +821,7 @@ class TensorFlowTrace(core.Trace):
     if _thread_local_state.include_xla_op_metadata:
       op_metadata = xla.make_op_metadata(primitive, params,
                                          name_stack=_get_current_name_stack(),
-                                         source_info=source_info_util.current())
+                                         source_info=source_info_util.current_traceback())
       op_metadata_proto = xla_data_pb2.OpMetadata(
           op_type=op_metadata.op_type,
           op_name=op_metadata.op_name,

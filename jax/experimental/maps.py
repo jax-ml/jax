@@ -1020,7 +1020,7 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   out_avals = [_insert_aval_axes(a, a_out_axes, local_axis_sizes)
                for a, a_out_axes in zip(mapped_out_avals, out_axes)]
   _check_out_avals_vs_out_axes(out_avals, out_axes, params['global_axis_sizes'])
-  source_info = source_info_util.current()
+  source_info = source_info_util.current_traceback()
   out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
   invars = map(self.getvar, tracers)
   constvars = map(self.getvar, map(self.instantiate_const, consts))
@@ -1177,7 +1177,7 @@ def _jaxpr_trace_process_xmap(self, primitive, f: lu.WrappedFun, tracers, params
 
   eqn = new_eqn_recipe((*const_tracers, *unknown_tracers_in),
                        unknown_tracers_out,
-                       primitive, new_params, source_info_util.current())
+                       primitive, new_params, source_info_util.current_traceback())
   for t in unknown_tracers_out: t.recipe = eqn
   return pe._zip_knowns(known_tracers_out, unknown_tracers_out, out_unknowns)
 pe.JaxprTrace.process_xmap = _jaxpr_trace_process_xmap

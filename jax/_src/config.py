@@ -600,7 +600,7 @@ default_matmul_precision = config.define_enum_state(
 traceback_filtering = config.define_enum_state(
     name = 'jax_traceback_filtering',
     enum_values=["off", "tracebackhide", "remove_frames", "auto"],
-    default="auto",
+    default="off",
     help="Controls how JAX filters internal frames out of tracebacks.\n\n"
          "Valid values are:\n"
          " * \"off\": disables traceback filtering.\n"

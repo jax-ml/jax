@@ -148,7 +148,7 @@ class JaxprEqn(NamedTuple):
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
-  source_info: Optional[source_info_util.Traceback]
+  source_info: source_info_util.SourceInfo
 
   def __repr__(self): return str(pp_eqn(self, JaxprPpContext())).rstrip()
 
@@ -339,7 +339,9 @@ def eval_jaxpr_eqn(eqn, in_vals):
     del bind_params['out_axes']
   else:
     bind_params = params
-  with source_info_util.user_context(eqn.source_info):
+  name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
+  with source_info_util.user_context(eqn.source_info.traceback,
+      name_stack=name_stack):
     return eqn.primitive.bind(*(subfuns + in_vals), **bind_params)
 
 
@@ -2102,9 +2104,10 @@ def pp_eqn(eqn, context: JaxprPpContext, *, print_shapes=True, source_info=False
   annotation = (source_info_util.summarize(eqn.source_info)
                 if source_info else None)
   return pp.concat([
-    lhs, pp.text(" = ", annotation=annotation), pp.text(eqn.primitive.name),
+    lhs, pp.text(" = ", annotation=annotation), pp.text(eqn.primitive.name,
+      annotation=f'[{eqn.source_info.name_stack}]'),
     pp_kv_pairs(sorted(eqn.params.items()), context),
-    pp.text(" ") + pp_vars(eqn.invars, context)
+    pp.text(" ") + pp_vars(eqn.invars, context)# + pp.text(f' ({eqn.source_info.name_stack})')
   ])
 
 

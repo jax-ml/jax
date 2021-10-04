@@ -889,7 +889,7 @@ def parallel_callable(fun: lu.WrappedFun,
                                                     donated_invars=donated_invars)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     ctx = xla.TranslationContext(c, backend.platform, axis_env,
-                                 extend_name_stack(wrap_name(name, 'pmap')))
+                                 name_stack.extend(wrap_name(name, 'pmap')))
     out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   build_out_tuple = partial(xops.Tuple, c, out_nodes)
   if out_parts is not None:
@@ -1284,7 +1284,7 @@ ad.call_transpose_param_updaters[xla_pmap_p] = \
     ad.call_transpose_param_updaters[xla.xla_call_p]
 
 def _pmap_translation_rule(c, axis_env,
-                           in_nodes, name_stack, axis_name, axis_size,
+                           in_nodes, axis_name, axis_size,
                            global_axis_size, devices, name,
                            call_jaxpr, *, backend=None, in_axes, out_axes,
                            donated_invars, global_arg_shapes):
@@ -1295,6 +1295,7 @@ def _pmap_translation_rule(c, axis_env,
     raise ValueError("Nested pmap with explicit devices argument.")
   if global_axis_size is None:
     global_axis_size = axis_size
+  name_stack = source_info_util.current_name_stack()
   new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
   # Shard the in_nodes that are mapped
   in_avals = [v.aval for v in call_jaxpr.invars]
@@ -1305,7 +1306,7 @@ def _pmap_translation_rule(c, axis_env,
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     ctx = xla.TranslationContext(
         c, backend, new_env,
-        extend_name_stack(name_stack, wrap_name(name, 'pmap')))
+        name_stack.extend(wrap_name(name, 'pmap')))
     sharded_outs = xla.jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_xla_unshard(c, aval, new_env, out_axis, shard, backend=backend)
@@ -1633,7 +1634,7 @@ def lower_mesh_computation(
   with core.extend_axis_env_nd(mesh.shape.items()):
     ctx = xla.TranslationContext(
         c, backend.platform, axis_env,
-        extend_name_stack(wrap_name(transformed_name, 'xmap')))
+        source_info_util.NameStack().extend(wrap_name(transformed_name, 'xmap')))
     out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   if spmd_lowering:
     out_partitions_t = xb.tuple_sharding_proto(out_partitions)

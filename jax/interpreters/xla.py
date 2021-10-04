@@ -98,13 +98,13 @@ def _get_canonical_source_file(frame: source_info_util.Frame):
 tracebacks = {}
 def make_op_metadata(primitive: core.Primitive,
                      params: Dict, *,
-                     name_stack: str = "",
-                     source_info: Optional[source_info_util.Traceback] = None
+                     source_info: Optional[source_info_util.SourceInfo] = None
                      ) -> xc.OpMetadata:
-  eqn_str = str(pp.text(name_stack) +
+  name_stack = source_info.name_stack
+  eqn_str = str(pp.text(str(name_stack) + '/') +
                 pp_eqn_compact(primitive.name, params, JaxprPpContext()))
-  tracebacks[eqn_str] = source_info
-  frame = source_info_util.user_frame(source_info) if source_info else None
+  tracebacks[eqn_str] = source_info.traceback
+  frame = source_info_util.user_frame(source_info)
   return xc.OpMetadata(
         op_type=primitive.name,
         op_name=eqn_str,
@@ -528,12 +528,12 @@ class TranslationContext:
   # with a specific platform in mind.
   platform: Optional[str]
   axis_env: AxisEnv
-  name_stack: str
+  name_stack: source_info_util.NameStack
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 
 
-def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
+def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr, 
                   consts: Sequence[XlaOp], *args: XlaOp) -> Sequence[XlaOp]:
   # TODO(phawkins): make platform non-optional.
   # assert ctx.platform is not None
@@ -559,9 +559,11 @@ def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
   _partitionmap(write, jaxpr.constvars, consts)
   _partitionmap(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
+    source_info = eqn.source_info.replace(
+        name_stack=ctx.name_stack + eqn.source_info.name_stack)
     op_metadata = make_op_metadata(
-        eqn.primitive, eqn.params, name_stack=ctx.name_stack,
-        source_info=eqn.source_info)
+        eqn.primitive, eqn.params,
+        source_info=source_info)
     ctx.builder.set_op_metadata(op_metadata)
     in_nodes = _flatmap(read, eqn.invars)
     if (ctx.platform is not None and
@@ -573,7 +575,7 @@ def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
       raise NotImplementedError(
           f"XLA translation rule for primitive '{eqn.primitive.name}' not found")
 
-    with source_info_util.user_context(eqn.source_info):
+    with source_info_util.user_context(eqn.source_info.traceback):
       ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
                  *in_nodes, **eqn.params)
 
@@ -824,8 +826,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   xla_args, donated_invars = _xla_callable_args(c, abstract_args, tuple_args,
                                                 donated_invars=donated_invars)
   platform = backend.platform
-  ctx = TranslationContext(c, platform, AxisEnv(nreps, (), ()),
-                           extend_name_stack(wrap_name(name, 'jit')))
+  name_stack = source_info_util.current_name_stack().extend(wrap_name(name, 'jit'))
+  ctx = TranslationContext(c, platform, AxisEnv(nreps, (), ()), name_stack)
   out_nodes = jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   backend = xb.get_backend(backend)
   # There is a non-zero cost to building an output tuple, particularly on TPU.
@@ -1181,9 +1183,9 @@ def _xla_call_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
   check_backend_matches(backend, ctx.platform)
   subc = xc.XlaBuilder(f"jit_{name}")
   args = [xb.parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
-  sub_ctx = ctx.replace(
-      builder=subc,
-      name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'jit')))
+  name_stack = source_info_util.current_name_stack()
+  sub_ctx = ctx.replace(builder=subc,
+      name_stack=name_stack.extend(wrap_name(name, 'jit')))
   out_nodes = jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
   subc = subc.build(xops.Tuple(subc, out_nodes))
   return xla_destructure(c, xops.Call(c, subc, list(in_nodes)))
@@ -1275,7 +1277,7 @@ def _wrap_old_call_translation(prim: core.Primitive,
                *args: XlaOp, **kw) -> Sequence[XlaOp]:
     platform = kw.pop("backend", None)
     check_backend_matches(platform, ctx.platform)
-    ans = f(ctx.builder, ctx.axis_env, args, ctx.name_stack,
+    ans = f(ctx.builder, ctx.axis_env, args,
             backend=ctx.platform, **kw)
     if (prim.multiple_results or
         any(len(aval_to_xla_shapes(aval)) > 1 for aval in avals_out)):
@@ -1359,7 +1361,7 @@ def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
       wrapped_fun = _tuple_output(wrapped_fun)
     with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-    ctx = TranslationContext(c, backend, axis_env, '')
+    ctx = TranslationContext(c, backend, axis_env, source_info_util.NameStack())
     outs = jaxpr_subcomp(ctx, jaxpr, _xla_consts(c, consts), *xla_args)
     if (multiple_results or
         any(len(aval_to_xla_shapes(v.aval)) > 1 for v in jaxpr.outvars)):
@@ -1738,13 +1740,12 @@ def _remat_using_cond(ctx, in_nodes, name, call_jaxpr):
                         xc.Shape.array_shape(xc.PrimitiveType.F32, []))
   pred = xops.Lt(rng, xops.Constant(c, np.array(2, dtype=np.float32)))
 
+  name_stack = source_info_util.current_name_stack()
   true_op = xops.Tuple(c, in_nodes)
   remat_subc = xc.XlaBuilder("remat_call_subcomputation")
   input_op = xb.parameter(remat_subc, 0, c.get_shape(true_op), replicated=[])
   args = xla_destructure(remat_subc, input_op)
-  sub_ctx = ctx.replace(
-      builder=remat_subc,
-      name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'remat')))
+  sub_ctx = ctx.replace(builder=remat_subc, name_stack=name_stack.extend(wrap_name(name, 'remat')))
   out_nodes = jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
   out_node_shapes = [remat_subc.get_shape(o) for o in out_nodes]
   remat_subc = remat_subc.build(xops.Tuple(remat_subc, out_nodes))
@@ -1767,9 +1768,8 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   dummy_subc = xc.XlaBuilder("remat_dummy_subcomputation")
   dummy_input_op = xb.parameter(dummy_subc, 0, c.get_shape(dummy_inputs), replicated=[])
   dummy_args = xla_destructure(dummy_subc, dummy_input_op)
-  dummy_ctx = ctx.replace(
-      builder=dummy_subc,
-      name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'remat')))
+  name_stack = source_info_util.name_stack()
+  dummy_ctx = ctx.replace(builder=dummy_subc, name_stack=name_stack.extend(wrap_name(name, 'remat')))
   dummy_subcomp_outs = jaxpr_subcomp(dummy_ctx, call_jaxpr, (), *dummy_args)
   out_node_shapes = [dummy_subc.get_shape(o) for o in dummy_subcomp_outs]
 
@@ -1789,9 +1789,8 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   input_op = xb.parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
   i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes)+1]
   i_next = xops.Add(i, xops.Constant(body_subc, np.array(1, dtype=np.int32)))
-  body_ctx = ctx.replace(
-      builder=body_subc,
-      name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'remat')))
+  body_ctx = ctx.replace(builder=body_subc,
+      name_stack=name_stack.extend(wrap_name(name, 'remat')))
   subcomp_outs = jaxpr_subcomp(body_ctx, call_jaxpr, (), *args)
   out_nodes = [i_next] + args + list(subcomp_outs)
   body_subc = body_subc.build(xops.Tuple(body_subc, out_nodes))
@@ -1799,9 +1798,8 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   return xla_destructure(c, outs)[len(in_nodes)+1:]
 
 
-
-def _remat_translation_rule(ctx, avals_in, avals_out, *in_nodes,
-                            name, call_jaxpr,
+def _remat_translation_rule(c, axis_env, in_nodes,
+                            backend, name, call_jaxpr,
                             prevent_cse, differentiated, concrete,
                             policy, device=None):
   del device, concrete, policy  # Unused.
@@ -1826,8 +1824,8 @@ def _named_call_translation_rule(ctx, avals_in, avals_out, *in_nodes,
   c = ctx.builder
   subc = xc.XlaBuilder(name)
   args = [xb.parameter(subc, i, c.GetShape(n)) for i, n in enumerate(in_nodes)]
-  sub_ctx = ctx.replace(builder=subc,
-                        name_stack=extend_name_stack(ctx.name_stack, name))
+  name_stack = source_info_util.current_name_stack()
+  sub_ctx = ctx.replace(builder=subc, name_stack=name_stack.extend(name))
   out_nodes = jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
   subc = subc.Build(xops.Tuple(subc, out_nodes))
   return xla_destructure(c, xops.Call(c, subc, list(in_nodes)))

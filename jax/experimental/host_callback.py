@@ -1371,10 +1371,10 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
     # We need tokens but none is given in input; make one depending on all invars
     eqns.append(
         core.new_jaxpr_eqn(jaxpr.invars, [last_token_var],
-                           lax.create_token_p, {}, source_info_util.current()))
+                           lax.create_token_p, {}, source_info_util.current_traceback()))
     eqns.append(
         core.new_jaxpr_eqn(jaxpr.invars, [last_itoken_var],
-                           lax.create_token_p, {}, source_info_util.current()))
+                           lax.create_token_p, {}, source_info_util.current_traceback()))
 
   for eqn in jaxpr.eqns:
     if not xla.primitive_uses_outfeed(eqn.primitive, eqn.params):

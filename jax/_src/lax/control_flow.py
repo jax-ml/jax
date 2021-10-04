@@ -47,7 +47,7 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip,
-                           split_list, cache, extend_name_stack)
+                           split_list, cache)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves, tree_structure)
@@ -340,8 +340,8 @@ def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
   cond_carry = xb.parameter(cond_c, 0, c.get_shape(init_carry))
   cond_carry_elts = [xops.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
-  cond_ctx = ctx.replace(builder=cond_c,
-                         name_stack=extend_name_stack(ctx.name_stack, 'cond'))
+  name_stack = source_info_util.current_name_stack().extend('while')
+  cond_ctx = ctx.replace(builder=cond_c, name_stack=name_stack.extend('cond'))
   pred, = xla.jaxpr_subcomp(
       cond_ctx, cond_jaxpr.jaxpr,
       _map(partial(xla.pyval_to_ir_constant, cond_c), cond_jaxpr.consts),
@@ -356,15 +356,14 @@ def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
   body_carry = xb.parameter(body_c, 0, c.get_shape(init_carry))
   body_carry_elts = [xops.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
-  body_ctx = ctx.replace(builder=body_c,
-                         name_stack=extend_name_stack(ctx.name_stack, 'body'))
+  body_ctx = ctx.replace(builder=body_c, name_stack=name_stack.extend('body'))
   new_z = xla.jaxpr_subcomp(
       body_ctx, body_jaxpr.jaxpr,
       _map(partial(xla.pyval_to_ir_constant, body_c), body_jaxpr.consts),
       *(y + z))
   if batched:
     body_pred_ctx = body_ctx.replace(
-        name_stack=extend_name_stack(ctx.name_stack, 'body_pred'))
+        name_stack=name_stack.extend('body_pred'))
     body_pred, = xla.jaxpr_subcomp(
         body_pred_ctx, cond_jaxpr.jaxpr,
         _map(partial(xla.pyval_to_ir_constant, body_c), cond_jaxpr.consts),
@@ -747,6 +746,8 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals, 'cond')
+  import streamlit as st
+  st.markdown(f'cond: \n```\n{jaxprs[0].pretty_print()}\n```')
   true_jaxpr, false_jaxpr = jaxprs
   out_tree, false_out_tree = out_trees
 
@@ -801,17 +802,18 @@ def _cond_abstract_eval(*args, **kwargs):
 def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
                            linear):
   del linear  # Unused.
+  name_stack = source_info_util.current_name_stack()
 
-  name_stack = extend_name_stack(ctx.name_stack, "cond")
+  name_stack = name_stack.extend("cond")
   def make_computation(name, jaxpr, op_shape):
     c = xla_client.XlaBuilder(name + '_comp')
     op = xb.parameter(c, 0, op_shape)
     ops = [xops.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
-    subctx = ctx.replace(
-        builder=c, name_stack=extend_name_stack(name_stack, name + '_fun'))
+    subctx = ctx.replace(builder=c, name_stack=name_stack.extend(name + '_fun'))
     outs = xla.jaxpr_subcomp(
         subctx, jaxpr.jaxpr,
-        _map(partial(xla.pyval_to_ir_constant, c), jaxpr.consts), *ops)
+        _map(partial(xla.pyval_to_ir_constant, c), jaxpr.consts),
+        *ops)
     return c.build(xops.Tuple(c, outs))
 
   c = ctx.builder
@@ -987,9 +989,11 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
 
   linear_2 = (False,) * num_res + linear
   params = dict(branches=branches_2, linear=linear_2)
+  name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
+  source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
       [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
-      source_info_util.current())
+      source)
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -1083,7 +1087,7 @@ def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
     res, cts_out = split_list(args, [num_res])
     primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
     cts_in = ad.backward_pass(
-        jaxpr.jaxpr, reduce_axes, jaxpr.consts, primals, cts_out)
+        jaxpr.jaxpr, reduce_axes, False, jaxpr.consts, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
     return _map(ad.instantiate_zeros_aval, primal_avals, cts_in)
 
@@ -1354,11 +1358,12 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
                         out_tree_children[0], carry_avals_out,
                         init_tree, carry_avals)
 
-  out = scan_p.bind(*consts, *in_flat,
-                    reverse=reverse, length=length, jaxpr=jaxpr,
-                    num_consts=len(consts), num_carry=len(init_flat),
-                    linear=(False,) * (len(consts) + len(in_flat)),
-                    unroll=unroll)
+  with source_info_util.extend_name_stack('scan'):
+    out = scan_p.bind(*consts, *in_flat,
+                      reverse=reverse, length=length, jaxpr=jaxpr,
+                      num_consts=len(consts), num_carry=len(init_flat),
+                      linear=(False,) * (len(consts) + len(in_flat)),
+                      unroll=unroll)
   return tree_unflatten(out_tree, out)
 
 def _scan_impl_unrolled(*args, reverse, length, num_consts, num_carry, linear,
@@ -1715,13 +1720,15 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   linear_2 = ([False] * len(int_res_tracers) +
               [lin or not uk for uk, lin in zip(unknowns, linear)] +
               [False] * len(ext_res_tracers))
+  name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
+  source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(int_res_tracers + new_tracers + ext_res_tracers,
                           out_tracers, scan_p,
                           dict(reverse=reverse, length=length, jaxpr=jaxpr_2_opt,
                                num_consts=num_consts_2,
                                num_carry=num_carry, linear=tuple(linear_2),
                                unroll=unroll),
-                          source_info_util.current())
+                          source)
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -1790,7 +1797,7 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr, reduce_axes):
         res1_cbar_bbar_res2, [num_res1, num_c, num_b])
     primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
                [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
-    cbar_abar = ad.backward_pass(jaxpr.jaxpr, reduce_axes, jaxpr.consts,
+    cbar_abar = ad.backward_pass(jaxpr.jaxpr, reduce_axes, False, jaxpr.consts,
                                  primals, b_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
     a_bar = _map(ad.instantiate_zeros_aval, a_avals, a_bar)
