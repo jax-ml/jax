@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   language: python
@@ -84,10 +84,9 @@ rcParams['axes.grid'] = False
 ## Simple Computations
 
 ```{code-cell} ipython3
----
-id: UYUtxVzMYIiv
-outputId: 5c603ab4-0295-472c-b462-9928b2a9520d
----
+:id: UYUtxVzMYIiv
+:outputId: 5c603ab4-0295-472c-b462-9928b2a9520d
+
 # make a computation builder
 c = xc.XlaBuilder("simple_scalar")
 
@@ -121,10 +120,9 @@ device_out[0].to_py()
 ```
 
 ```{code-cell} ipython3
----
-id: rIA-IVMVvQs2
-outputId: a4d8ef32-43f3-4a48-f732-e85e158b602e
----
+:id: rIA-IVMVvQs2
+:outputId: a4d8ef32-43f3-4a48-f732-e85e158b602e
+
 # same as above with vector type:
 
 c = xc.XlaBuilder("simple_vector")
@@ -156,10 +154,9 @@ device_out[0].to_py()
 ## Simple While Loop
 
 ```{code-cell} ipython3
----
-id: MDQP1qW515Ao
-outputId: 53245817-b5fb-4285-ee62-7eb33a822be4
----
+:id: MDQP1qW515Ao
+:outputId: 53245817-b5fb-4285-ee62-7eb33a822be4
+
 # trivial while loop, decrement until 0
 #   x = 5
 #   while x > 0:
@@ -208,10 +205,9 @@ device_out[0].to_py()
 ## While loops w/ Tuples - Newton's Method for sqrt
 
 ```{code-cell} ipython3
----
-id: HEWz-vzd6QPR
-outputId: ad4c4247-8e81-4739-866f-2950fec5e759
----
+:id: HEWz-vzd6QPR
+:outputId: ad4c4247-8e81-4739-866f-2950fec5e759
+
 Xsqr = 2
 guess = 1.0
 converged_delta = 0.001
@@ -287,10 +283,9 @@ Let's exploit the XLA QR implementation to solve some eigenvalues for symmetric 
 This is the naive QR algorithm, without acceleration for closely-spaced eigenvalue convergence, nor any permutation to sort eigenvalues by magnitude.
 
 ```{code-cell} ipython3
----
-id: wjxDPbqCcuXT
-outputId: 2380db52-799d-494e-ded2-856e91f01b0f
----
+:id: wjxDPbqCcuXT
+:outputId: 2380db52-799d-494e-ded2-856e91f01b0f
+
 Niter = 200
 matrix_shape = (10, 10)
 
@@ -360,10 +355,9 @@ print(np.sort(eigh_vals) - np.sort(np.linalg.eigh(X)[0]))
 We can also calculate the  eigenbasis by accumulating the Qs.
 
 ```{code-cell} ipython3
----
-id: Kp3A-aAiZk0g
-outputId: bbaff039-20f4-45cd-b8fe-5a664d413f5b
----
+:id: Kp3A-aAiZk0g
+:outputId: bbaff039-20f4-45cd-b8fe-5a664d413f5b
+
 Niter = 100
 matrix_shape = (10, 10)
 
@@ -480,10 +474,9 @@ def _conv_general_proto(dimension_numbers):
 ```
 
 ```{code-cell} ipython3
----
-id: J8QkirDalBse
-outputId: 543a03fd-f038-46f2-9a76-a6532b86874e
----
+:id: J8QkirDalBse
+:outputId: 543a03fd-f038-46f2-9a76-a6532b86874e
+
 Niter=13
 matrix_shape = (1, 1, 20, 20)
 in_shape_0 = xc.Shape.array_shape(np.dtype(np.int32), matrix_shape)

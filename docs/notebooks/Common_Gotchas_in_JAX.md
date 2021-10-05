@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   language: python
@@ -298,10 +298,9 @@ Note also that, as the two behaviors described above are not inverses of each ot
 NumPy is generally happy accepting Python lists or tuples as inputs to its API functions:
 
 ```{code-cell} ipython3
----
-id: sErQES14sjCG
-outputId: 6bc29168-624a-4d51-eef1-220aeaf49985
----
+:id: sErQES14sjCG
+:outputId: 6bc29168-624a-4d51-eef1-220aeaf49985
+
 np.sum([1, 2, 3])
 ```
 
@@ -310,10 +309,9 @@ np.sum([1, 2, 3])
 JAX departs from this, generally returning a helpful error:
 
 ```{code-cell} ipython3
----
-id: DFEGcENSsmEc
-outputId: 86105261-0aec-41e0-c8a6-16eec437e2a8
----
+:id: DFEGcENSsmEc
+:outputId: 86105261-0aec-41e0-c8a6-16eec437e2a8
+
 try:
   jnp.sum([1, 2, 3])
 except TypeError as e:
@@ -327,10 +325,9 @@ This is a deliberate design choice, because passing lists or tuples to traced fu
 For example, consider the following permissive version of `jnp.sum` that allows list inputs:
 
 ```{code-cell} ipython3
----
-id: jhe-L_TwsvKd
-outputId: 24ef84d4-79e5-42de-f8d4-34e6701c2576
----
+:id: jhe-L_TwsvKd
+:outputId: 24ef84d4-79e5-42de-f8d4-34e6701c2576
+
 def permissive_sum(x):
   return jnp.sum(jnp.array(x))
 
@@ -343,10 +340,9 @@ permissive_sum(x)
 The output is what we would expect, but this hides potential performance issues under the hood. In JAX's tracing and JIT compilation model, each element in a Python list or tuple is treated as a separate JAX variable, and individually processed and pushed to device. This can be seen in the jaxpr for the ``permissive_sum`` function above:
 
 ```{code-cell} ipython3
----
-id: k81u6DQ7vAjQ
-outputId: 52847378-ba8c-4e84-fb8b-dabbaded6a00
----
+:id: k81u6DQ7vAjQ
+:outputId: 52847378-ba8c-4e84-fb8b-dabbaded6a00
+
 make_jaxpr(permissive_sum)(x)
 ```
 
@@ -357,10 +353,9 @@ Each entry of the list is handled as a separate input, resulting in a tracing & 
 If you would like to pass a tuple or list to a JAX function, you can do so by first explicitly converting it to an array:
 
 ```{code-cell} ipython3
----
-id: nFf_DydixG8v
-outputId: 5e4392b6-37eb-4a24-ce4f-43518e61d9b1
----
+:id: nFf_DydixG8v
+:outputId: 5e4392b6-37eb-4a24-ce4f-43518e61d9b1
+
 jnp.sum(jnp.array(x))
 ```
 

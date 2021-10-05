@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   language: python
@@ -64,8 +64,7 @@ When we call `fast_f`, what happens? JAX traces the function and constructs an X
 
 A tracer of special importance in Jax is the Jaxpr tracer, which records ops into a Jaxpr (Jax expression). A Jaxpr is a data structure that can be evaluated like a mini functional programming language and 
 thus Jaxprs are a useful intermediate representation
-for function transformation. 
-
+for function transformation.
 
 +++ {"id": "pH7s63lpaHJO"}
 
@@ -229,7 +228,6 @@ Notice that `eval_jaxpr` will always return a flat list even if the original fun
 Furthermore, this interpreter does not handle `subjaxprs`, which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/google/jax/blob/main/jax/core.py)) to see the edge cases that this interpreter does not cover.
 
 +++ {"id": "0vb2ZoGrCMM4"}
-
 
 ### Custom `inverse` Jaxpr interpreter
 

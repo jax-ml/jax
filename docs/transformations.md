@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   language: python
@@ -28,6 +28,7 @@ The most popular function is {func}`jax.grad` for {term}`reverse-mode<VJP>` grad
 
 ```{code-cell}
 :tags: [remove-cell]
+
 def _setup():
   # Set up runtime to mimic an 8-core machine for pmap example below:
   import os
@@ -86,6 +87,7 @@ def abs_val(x):
 abs_val_grad = grad(abs_val)
 print(abs_val_grad(1.0))
 ```
+
 ```{code-cell}
 print(abs_val_grad(-1.0))
 ```
@@ -112,6 +114,7 @@ def slow_f(x):
 x = jnp.ones((5000, 5000))
 %timeit slow_f(x).block_until_ready()
 ```
+
 ```{code-cell}
 fast_f = jit(slow_f)
 
@@ -154,6 +157,7 @@ batch of inputs at once, semantically we could just write
 
 ```{code-cell}
 :tags: [hide-cell]
+
 # Create some sample inputs & parameters
 import numpy as np
 k, N = 10, 5
@@ -194,6 +198,7 @@ separately at each example in a batch. With {func}`vmap`, it’s easy:
 
 ```{code-cell}
 :tags: [hide-cell]
+
 # create a sample loss function & inputs
 def loss(params, x, y0):
   y = predict(params, x)
@@ -269,6 +274,7 @@ def f(x):
 x = jnp.arange(8.0).reshape(2, 4)
 print(f(x))
 ```
+
 ```{code-cell}
 print(grad(lambda x: f(x).sum())(x))
 ```

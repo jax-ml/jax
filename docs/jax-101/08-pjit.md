@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   name: python3
@@ -23,8 +23,6 @@ Two examples are shown in this guide to demonstrate how pjit works in both singl
 ```python
 jax.experimental.pjit.pjit(fun, in_axis_resources, out_axis_resources, static_argnums=(), donate_argnums=())
 ```
-
-
 
 +++ {"id": "hATDpVCRBuXg"}
 
@@ -65,7 +63,7 @@ Each parameter is explained in detail below:
 
 +++ {"id": "JIofdJEodwd1"}
 
-This tutorial should be run on TPU with 8 devices. Please [build your own runtime](https://cloud.google.com/tpu/docs/jax-pods) on Google Cloud Platform and [connects to it using Jupyter](https://research.google.com/colaboratory/local-runtimes.html). 
+This tutorial should be run on TPU with 8 devices. Please [build your own runtime](https://cloud.google.com/tpu/docs/jax-pods) on Google Cloud Platform and [connects to it using Jupyter](https://research.google.com/colaboratory/local-runtimes.html).
 
 ```{code-cell}
 ---
@@ -92,10 +90,9 @@ import numpy as np
 ### Mesh
 Mesh is defined in [jax/interpreters/pxla](https://github.com/google/jax/blob/main/jax/interpreters/pxla.py#L1389), and it is a numpy array of jax devices in a multi-dimensional grid, alongside names for the axes of this mesh. It is also called the logical mesh.
 
-
 +++ {"id": "V3Vnmcb7Jq1L"}
 
-In the example we are working with, the first (vertical) axis is named ‘x’ and has length 4, and the second (horizontal) axis is named ‘y’ and has length 2. If a dimension of data is sharded across an axis, each device has a slice of the size of data.shape[dim] divided by mesh_shape[axis]. If data is replicated across an axis, devices on that axis should have the same data. 
+In the example we are working with, the first (vertical) axis is named ‘x’ and has length 4, and the second (horizontal) axis is named ‘y’ and has length 2. If a dimension of data is sharded across an axis, each device has a slice of the size of data.shape[dim] divided by mesh_shape[axis]. If data is replicated across an axis, devices on that axis should have the same data.
 
 ```{code-cell}
 ---
@@ -122,8 +119,7 @@ mesh
 
 The actual TPU physical device mesh are connected by Inter-chip Interconnect (ICI) fabric. The logical mesh with given axis names is created to abstract the physical device mesh because it is easier to reshape the logical mesh based on distributed computation needs. The layout of the logical mesh is different from that of the physical mesh.
 
-For example, we can have a physical mesh of size (4, 4, 4). If the computation requires a 16-way data parallelism and 4-way model parallelism, the physical mesh should be abstracted to a logical mesh with a shape of (16, 4). 
-
+For example, we can have a physical mesh of size (4, 4, 4). If the computation requires a 16-way data parallelism and 4-way model parallelism, the physical mesh should be abstracted to a logical mesh with a shape of (16, 4).
 
 +++ {"id": "-EBn4AXojvbe"}
 
@@ -164,7 +160,6 @@ The valid resource assignment specifications are:
 The size of every dimension has to be a multiple of the total number of resources assigned to it.
 
 out_axis_resources – Like in_axis_resources, but specifies resource assignment for function outputs.
-
 
 ```{code-cell}
 ---
@@ -247,21 +242,22 @@ data.device_buffers
 
 +++ {"id": "LgZbCPrrMg54"}
 
-The result after applying the pjit’d function is a  ShardedDeviceArray, and device_buffers show what data each device has.  
+The result after applying the pjit’d function is a  ShardedDeviceArray, and device_buffers show what data each device has.
 
 +++ {"id": "qSQhEouSMjV2"}
 
 **Result visualization:** 
-Each color represents a different device. Since an (8,2) array is partitioned across a (4,2) mesh in both ‘x’ and ‘y’ axes, each accelerator ends up with a (2,1) slice of the data. 
+Each color represents a different device. Since an (8,2) array is partitioned across a (4,2) mesh in both ‘x’ and ‘y’ axes, each accelerator ends up with a (2,1) slice of the data.
 
 +++ {"id": "NQSi0q8cMlj8"}
 
 ![spmd](../_static/partition_spec_x_y.png)
+
 +++ {"id": "mDkB4FNBK9ct"}
 
 ### More information on PartitionSpec:
 
-PartitionSpec is a named tuple, whose element can be a None, a mesh axis or a tuple of mesh axes. Each element describes which mesh dimension the input’s dimension is partitioned across. For example, `PartitionSpec(“x”, “y”)` is a PartitionSpec where the first dimension of data is sharded across `x` axis of the mesh, and the second dimension is sharded across `y` axis of the mesh. 
+PartitionSpec is a named tuple, whose element can be a None, a mesh axis or a tuple of mesh axes. Each element describes which mesh dimension the input’s dimension is partitioned across. For example, `PartitionSpec(“x”, “y”)` is a PartitionSpec where the first dimension of data is sharded across `x` axis of the mesh, and the second dimension is sharded across `y` axis of the mesh.
 
 +++ {"id": "lciyhDKOyvqr"}
 
@@ -301,6 +297,7 @@ data.device_buffers
 the first dimension of the input is sharded across `x` axis and the other dimensions are replicated across other axes. `None` can also be omitted in the PartitionSpec. If `out_axis_resources = PartitionSpec(“x”, None)` in the example above, the result visualization will be the following:
 
 ![spmd](../_static/partition_spec_x_none.png)
+
 +++ {"id": "EwN6tPSLy9Tz"}
 
 ### **- `PartitionSpec(“y”, None)`**
@@ -335,6 +332,7 @@ data.device_buffers
 the first dimension of the input is sharded across `y` axis and the other dimensions are replicated across other axes. If `out_axis_resources = PartitionSpec(“y”, None)` in the example above, the result visualization will be the following: 
 
 ![spmd](../_static/partition_spec_y_none.png)
+
 +++ {"id": "E2pbgVJazQfJ"}
 
 ### **- `PartitionSpec((“x”, “y”), None)`**
@@ -369,6 +367,7 @@ data.device_buffers
 the first dimension of the input is sharded across both `x` and `y` axis and the other dimensions are replicated across other axes. We can think of this as stretching the 2D mesh into an 1D mesh and then do the partition. If `out_axis_resources = PartitionSpec((“x”, “y”), None)` in the example above, the result visualization will be the following: 
 
 ![spmd](../_static/partition_spec_xy.png)
+
 +++ {"id": "d_Vdh_yh3XhP"}
 
 ### **- `PartitionSpec(None, 'y')`**
@@ -403,6 +402,7 @@ data.device_buffers
 the second dimension of the input is sharded over y axis and the first dimensions is replicated across other axes. We can think of this as stretching the 2D mesh into an 1D mesh and then do the partition. If out_axis_resources = PartitionSpec(None, 'y') in the example above, the result visualization will be the following:
 
 ![spmd](../_static/partition_spec_none_y.png)
+
 +++ {"id": "bILc3_4w3ueA"}
 
 ### **- `PartitionSpec(None, 'x')`**
