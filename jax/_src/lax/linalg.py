@@ -89,7 +89,7 @@ def eig(x, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
 def eigh(x, lower: bool = True, symmetrize_input: bool = True):
   """Eigendecomposition of a Hermitian matrix.
 
-  Computes the eigenvalues and eigenvectors of a complex Hermitian or real
+  Computes the eigenvectors and eigenvalues of a complex Hermitian or real
   symmetric square matrix.
 
   Args:
