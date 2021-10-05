@@ -14,7 +14,7 @@
 
 # Helpers for indexed updates.
 
-
+import warnings
 import sys
 from typing import Any, Callable, Optional, Sequence, Tuple, Union
 
@@ -178,6 +178,8 @@ def index_add(x: Array,
                [1., 1., 1., 7., 7., 7.],
                [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
+  warnings.warn("index_add is deprecated. Use x.at[idx].add(y) instead.",
+                DeprecationWarning)
   return _scatter_update(
       x, idx, y, lax.scatter_add, indices_are_sorted, unique_indices)
 
@@ -228,6 +230,8 @@ def index_mul(x: Array,
                [1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
+  warnings.warn("index_mul is deprecated. Use x.at[idx].mul(y) instead.",
+                DeprecationWarning)
   return _scatter_update(x, idx, y, lax.scatter_mul,
                          indices_are_sorted, unique_indices)
 
@@ -276,6 +280,8 @@ def index_min(x: Array,
                [1., 1., 1., 0., 0., 0.],
                [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
+  warnings.warn("index_min is deprecated. Use x.at[idx].min(y) instead.",
+                DeprecationWarning)
   return _scatter_update(
       x, idx, y, lax.scatter_min, indices_are_sorted, unique_indices)
 
@@ -323,6 +329,8 @@ def index_max(x: Array,
                [1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
+  warnings.warn("index_max is deprecated. Use x.at[idx].max(y) instead.",
+                DeprecationWarning)
   return _scatter_update(
       x, idx, y, lax.scatter_max, indices_are_sorted, unique_indices)
 
@@ -371,6 +379,8 @@ def index_update(x: Array,
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 6., 6., 6.]], dtype=float32)
   """
+  warnings.warn("index_update is deprecated. Use x.at[idx].set(y) instead.",
+                DeprecationWarning)
   return _scatter_update(
       x, idx, y, lax.scatter, indices_are_sorted, unique_indices)
 
