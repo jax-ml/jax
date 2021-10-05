@@ -28,7 +28,7 @@ from jax._src import util
 
 Array = Any
 if sys.version_info >= (3, 10):
-    from typing import EllipsisType
+    from types import EllipsisType
     SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
 else:
     SingleIndex = Union[None, int, slice, Sequence[int], Array]
