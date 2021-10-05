@@ -55,6 +55,7 @@ import jax._src.lib
 from jax._src.lib import pytree
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import version as jaxlib_version
 
 xb = xla_bridge
 xc = xla_client
@@ -6754,8 +6755,7 @@ def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
   del shape, dtype, algorithm
   return (key.weak_type, False)
 
-
-def _rng_bit_generator_translation_rule(c, key, *, shape, dtype, algorithm):
+def _rng_bit_generator_translation_rule(backend_is_gpu, c, key, *, shape, dtype, algorithm):
   key_shape, key_dtype = c.get_shape(key).dimensions(), c.get_shape(key).numpy_dtype()
   # While the RngBitGenerator HLO accepts a u64[2] key on all backends, we
   # typically represent the key argument to this primitive as a u32[4] so as to
@@ -6766,20 +6766,22 @@ def _rng_bit_generator_translation_rule(c, key, *, shape, dtype, algorithm):
           (key_shape == (2,) and key_dtype == dtypes.dtype('uint64')))
   xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
   if key_dtype == dtypes.dtype('uint32'):
-    u64_etype = xla_client.dtype_to_etype(dtypes.dtype('uint64'))
-    # TODO(mattjj): use BitcastConvertType implementation with newer jaxlib
-    # new_key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
-    new_key = xla_bridge.constant(c, np.zeros(2, dtype=np.dtype('uint64')),
-                                  canonicalize_types=False)
-    for i in range(4):
-      elt = xops.ConvertElementType(xops.Slice(key, [i], [i+1], [1]), u64_etype)
-      if i % 2 == 0:
-        elt = xops.ShiftLeft(elt, xla_bridge.constant(c, np.uint64(32), canonicalize_types=False))
-      new_key = xops.DynamicUpdateSlice(new_key, elt, [xla_bridge.constant(c, i // 2)])
+    u64_etype = xc.dtype_to_etype(dtypes.dtype('uint64'))
+    # TODO(mattjj): the BitcastConvertType segfaults on GPU
+    # TODO(mattjj): remove fallback when minimum jaxlib is 0.1.72 or newer
+    if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
+      new_key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
+    else:
+      new_key = xb.constant(c, np.zeros(2, dtype=np.dtype('uint64')),
+                            canonicalize_types=False)
+      for i in range(4):
+        elt = xops.ConvertElementType(xops.Slice(key, [i], [i+1], [1]), u64_etype)
+        if i % 2 == 0:
+          elt = xops.ShiftLeft(elt, xb.constant(c, np.uint64(32), canonicalize_types=False))
+        new_key = xops.DynamicUpdateSlice(new_key, elt, [xb.constant(c, i // 2)])
     return xops.RngBitGenerator(algorithm, new_key, xla_shape)
   else:
     return xops.RngBitGenerator(algorithm, key, xla_shape)
-
 
 def _rng_bit_generator_named_shape_rule(key, *, shape, dtype, algorithm):
   return [key.named_shape, key.named_shape]
@@ -6793,7 +6795,10 @@ rng_bit_generator_p.def_abstract_eval(
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule,
             _rng_bit_generator_named_shape_rule))
-xla.translations[rng_bit_generator_p] = _rng_bit_generator_translation_rule
+xla.translations[rng_bit_generator_p] = \
+    partial(_rng_bit_generator_translation_rule, False)
+xla.backend_specific_translations['gpu'][rng_bit_generator_p] = \
+    partial(_rng_bit_generator_translation_rule, True)
 
 RandomAlgorithm = xops.RandomAlgorithm
 RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
