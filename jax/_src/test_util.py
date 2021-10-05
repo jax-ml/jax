@@ -101,6 +101,7 @@ def is_sequence(x):
     return True
 
 _default_tolerance = {
+  _dtypes.float0: 0,
   np.dtype(np.bool_): 0,
   np.dtype(np.int8): 0,
   np.dtype(np.int16): 0,
@@ -136,6 +137,11 @@ default_gradient_tolerance = {
 }
 
 def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
+  if a.dtype == b.dtype == _dtypes.float0:
+    if a.shape != b.shape:
+      raise AssertionError(
+        f'float0 arrays have different shapes: {a.shape, b.shape}. {err_msg}')
+    return
   a = a.astype(np.float32) if a.dtype == _dtypes.bfloat16 else a
   b = b.astype(np.float32) if b.dtype == _dtypes.bfloat16 else b
   kw = {}
