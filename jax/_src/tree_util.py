@@ -312,6 +312,20 @@ class Partial(functools.partial):
   >>> call_func(print_zero)
   Traced<ShapedArray(int32[], weak_type=True)>with<DynamicJaxprTrace(level=0/1)>
   """
+  def __new__(klass, func, *args, **kw):
+    # In Python 3.10+, if func is itself a functools.partial instance,
+    # functools.partial.__new__ would merge the arguments of this Partial
+    # instance with the arguments of the func. We box func in another lambda to
+    # avoid this optimization since it would change which arguments are
+    # considered part of the pytree.
+    if isinstance(func, functools.partial):
+      original_func = func
+      func = lambda *args, **kw: original_func(*args, **kw)
+      func.func = original_func.func
+      func.args = original_func.args
+      func.keywords = original_func.keywords
+    return super(Partial, klass).__new__(klass, func, *args, **kw)
+
 
 register_pytree_node(
     Partial,

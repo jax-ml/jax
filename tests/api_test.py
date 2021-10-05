@@ -14,6 +14,7 @@
 
 
 import collections
+import collections.abc
 from contextlib import contextmanager
 import copy
 import enum
@@ -331,8 +332,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         def my_classmethod_jit(cls, x):
           return x+2
 
-  def test_classmethod_is_not_supported(self):
-    with self.assertRaisesRegex(TypeError, "Expected a callable value"):
+  def test_staticmethod_is_not_supported(self):
+    with self.assertRaisesRegex(TypeError,
+                                "staticmethod arguments are not supported"):
 
       class A:
 
@@ -2133,7 +2135,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_array_hash(self):
     rep = jnp.ones(()) + 1.
     self.assertIsInstance(rep, jax.interpreters.xla.DeviceArray)
-    self.assertNotIsInstance(rep, collections.Hashable)
+    self.assertNotIsInstance(rep, collections.abc.Hashable)
     with self.assertRaisesRegex(TypeError, 'unhashable type'):
       hash(rep)
 
