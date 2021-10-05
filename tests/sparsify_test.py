@@ -126,6 +126,7 @@ class SparsifyTest(jtu.JaxTestCase):
     X = jnp.arange(16).reshape(4, 4)
     Xsp = BCOO.fromdense(X)
     Y = jnp.ones(4)
+    Ysp = BCOO.fromdense(Y)
 
     # dot_general
     result_sparse = sparsify(operator.matmul)(Xsp, Y)
@@ -136,6 +137,11 @@ class SparsifyTest(jtu.JaxTestCase):
     result_sparse = sparsify(operator.matmul)(Y, Xsp)
     result_dense = operator.matmul(Y, X)
     self.assertAllClose(result_sparse, result_dense)
+
+    # spdot_general
+    result_sparse = sparsify(operator.matmul)(Xsp, Ysp)
+    result_dense = operator.matmul(X, Y)
+    self.assertAllClose(result_sparse.todense(), result_dense)
 
   def testSparseAdd(self):
     x = BCOO.fromdense(jnp.arange(5))
