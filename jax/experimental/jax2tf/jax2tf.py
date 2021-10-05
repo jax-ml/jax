@@ -3037,6 +3037,7 @@ def _pjit(*args: TfVal,
           resource_env: maps.ResourceEnv,
           donated_invars,
           name: str,
+          positional_semantics,
           _in_avals: Sequence[core.ShapedArray],
           _out_aval: core.ShapedArray) -> TfVal:
   del donated_invars
