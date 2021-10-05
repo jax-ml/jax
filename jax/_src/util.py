@@ -92,14 +92,6 @@ def split_dict(dct, names):
 def concatenate(xs):
   return list(it.chain.from_iterable(xs))
 
-class partialmethod(functools.partial):
-  def __get__(self, instance, owner):
-    if instance is None:
-      return self
-    else:
-      return partial(self.func, instance,
-                     *(self.args or ()), **(self.keywords or {}))
-
 def curry(f):
   """Curries arguments of f, returning a function on any remaining arguments.
 

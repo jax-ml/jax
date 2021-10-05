@@ -16,7 +16,7 @@
 import collections
 from collections import namedtuple
 from contextlib import contextmanager
-from functools import partial, total_ordering
+from functools import partial, partialmethod, total_ordering
 import gc
 import itertools as it
 import operator
@@ -38,8 +38,8 @@ from .errors import (ConcretizationTypeError, TracerArrayConversionError,
 from . import linear_util as lu
 
 from jax._src import source_info_util
-from ._src.util import (safe_zip, safe_map, curry, prod, partialmethod,
-                        tuple_insert, tuple_delete, cache, as_hashable_function,
+from ._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,
+                        tuple_delete, cache, as_hashable_function,
                         HashableFunction)
 import jax._src.pretty_printer as pp
 
