@@ -14,6 +14,7 @@
 
 
 import collections
+import functools
 import re
 
 from absl.testing import absltest
@@ -190,6 +191,12 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(actual.func, inputs.func)
     self.assertEqual(actual.args, inputs.args)
     self.assertEqual(actual.keywords, inputs.keywords)
+
+  def testPartialDoesNotMergeWithOtherPartials(self):
+    def f(a, b, c): pass
+    g = functools.partial(f, 2)
+    h = tree_util.Partial(g, 3)
+    self.assertEqual(h.args, (3,))
 
   @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripViaBuild(self, inputs):

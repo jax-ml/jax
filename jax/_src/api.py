@@ -156,6 +156,10 @@ config_debug_infs._add_hooks(_update_debug_special_global,
 float0 = dtypes.float0
 
 def _check_callable(fun):
+  # In Python 3.10+, the only thing stopping us from supporting staticmethods
+  # is that we can't take weak references to them, which the C++ JIT requires.
+  if isinstance(fun, staticmethod):
+    raise TypeError(f"staticmethod arguments are not supported, got {fun}")
   if not callable(fun):
     raise TypeError(f"Expected a callable value, got {fun}")
   if _isgeneratorfunction(fun):
