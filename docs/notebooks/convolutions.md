@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.10.0
+    jupytext_version: 1.13.0
 kernelspec:
   display_name: Python 3
   language: python
@@ -34,10 +34,9 @@ For basic convolution operations, the `jax.numpy` and `jax.scipy` operations are
 Basic one-dimensional convolution is implemented by {func}`jax.numpy.convolve`, which provides a JAX interface for {func}`numpy.convolve`. Here is a simple example of 1D smoothing implemented via a convolution:
 
 ```{code-cell} ipython3
----
-id: 0qYLpeZO3Z9-
-outputId: 4f6717ac-a062-4a85-8330-d57bf80de384
----
+:id: 0qYLpeZO3Z9-
+:outputId: 4f6717ac-a062-4a85-8330-d57bf80de384
+
 import matplotlib.pyplot as plt
 
 from jax import random
@@ -71,10 +70,9 @@ For *N*-dimensional convolution, {func}`jax.scipy.signal.convolve` provides a si
 For example, here is a simple approach to de-noising an image based on convolution with a Gaussian filter:
 
 ```{code-cell} ipython3
----
-id: Jk5qdnbv6QgT
-outputId: 292205eb-aa09-446f-eec2-af8c23cfc718
----
+:id: Jk5qdnbv6QgT
+:outputId: 292205eb-aa09-446f-eec2-af8c23cfc718
+
 from scipy import misc
 import jax.scipy as jsp
 
@@ -116,10 +114,9 @@ A survey of the family of convolutional operators, [a guide to convolutional ari
 Let's define a simple diagonal edge kernel:
 
 ```{code-cell} ipython3
----
-id: Yud1Y3ss-x1K
-outputId: 3185fba5-1ad7-462f-96ba-7ed1b0c3d5a2
----
+:id: Yud1Y3ss-x1K
+:outputId: 3185fba5-1ad7-462f-96ba-7ed1b0c3d5a2
+
 # 2D kernel - HWIO layout
 kernel = jnp.zeros((3, 3, 3, 3), dtype=jnp.float32)
 kernel += jnp.array([[1, 1, 0],
@@ -135,10 +132,9 @@ plt.imshow(kernel[:, :, 0, 0]);
 And we'll make a simple synthetic image:
 
 ```{code-cell} ipython3
----
-id: cpbGsIGa_Qyx
-outputId: d7c5d21f-c3a0-42e9-c9bc-3da1a508c0e7
----
+:id: cpbGsIGa_Qyx
+:outputId: d7c5d21f-c3a0-42e9-c9bc-3da1a508c0e7
+
 # NHWC layout
 img = jnp.zeros((1, 200, 198, 3), dtype=jnp.float32)
 for k in range(3):
@@ -161,10 +157,9 @@ These are the simple convenience functions for convolutions
 ️⚠️ The convenience `lax.conv`, `lax.conv_with_general_padding` helper function assume __NCHW__ images and __OIHW__ kernels.
 
 ```{code-cell} ipython3
----
-id: kppxbxpZW0nb
-outputId: 9fc5494c-b443-4e74-fe48-fac09e12378c
----
+:id: kppxbxpZW0nb
+:outputId: 9fc5494c-b443-4e74-fe48-fac09e12378c
+
 from jax import lax
 out = lax.conv(jnp.transpose(img,[0,3,1,2]),    # lhs = NCHW image tensor
                jnp.transpose(kernel,[3,2,0,1]), # rhs = OIHW conv kernel tensor
@@ -177,10 +172,9 @@ plt.imshow(np.array(out)[0,0,:,:]);
 ```
 
 ```{code-cell} ipython3
----
-id: aonr1tWvYCW9
-outputId: 3d44d494-9620-4736-e331-c9569a4888cd
----
+:id: aonr1tWvYCW9
+:outputId: 3d44d494-9620-4736-e331-c9569a4888cd
+
 out = lax.conv_with_general_padding(
   jnp.transpose(img,[0,3,1,2]),    # lhs = NCHW image tensor
   jnp.transpose(kernel,[2,3,0,1]), # rhs = IOHW conv kernel tensor
@@ -210,10 +204,9 @@ The important argument is the 3-tuple of axis layout arguments:
 ⚠️ To demonstrate the flexibility of dimension numbers we choose a __NHWC__ image and __HWIO__ kernel convention for `lax.conv_general_dilated` below.
 
 ```{code-cell} ipython3
----
-id: oXKebfCb_i2B
-outputId: d5a569b3-febc-4832-f725-1d5e8fd31b9b
----
+:id: oXKebfCb_i2B
+:outputId: d5a569b3-febc-4832-f725-1d5e8fd31b9b
+
 dn = lax.conv_dimension_numbers(img.shape,     # only ndim matters, not shape
                                 kernel.shape,  # only ndim matters, not shape 
                                 ('NHWC', 'HWIO', 'NHWC'))  # the important bit
@@ -225,10 +218,9 @@ print(dn)
 #### SAME padding, no stride, no dilation
 
 ```{code-cell} ipython3
----
-id: rgb2T15aFVG6
-outputId: 9b33cdb0-6959-4c88-832a-b92c4e42ae72
----
+:id: rgb2T15aFVG6
+:outputId: 9b33cdb0-6959-4c88-832a-b92c4e42ae72
+
 out = lax.conv_general_dilated(img,    # lhs = image tensor
                                kernel, # rhs = conv kernel tensor
                                (1,1),  # window strides
@@ -247,10 +239,9 @@ plt.imshow(np.array(out)[0,:,:,0]);
 #### VALID padding, no stride, no dilation
 
 ```{code-cell} ipython3
----
-id: 1HQwudKVFVG-
-outputId: be9d6b26-8e3e-44d9-dbd2-df2f6bbf98c2
----
+:id: 1HQwudKVFVG-
+:outputId: be9d6b26-8e3e-44d9-dbd2-df2f6bbf98c2
+
 out = lax.conv_general_dilated(img,     # lhs = image tensor
                                kernel,  # rhs = conv kernel tensor
                                (1,1),   # window strides
@@ -269,10 +260,9 @@ plt.imshow(np.array(out)[0,:,:,0]);
 #### SAME padding, 2,2 stride, no dilation
 
 ```{code-cell} ipython3
----
-id: mKq2-zmmFVHC
-outputId: 14cc0114-e230-4555-a682-23e00b534863
----
+:id: mKq2-zmmFVHC
+:outputId: 14cc0114-e230-4555-a682-23e00b534863
+
 out = lax.conv_general_dilated(img,    # lhs = image tensor
                                kernel, # rhs = conv kernel tensor
                                (2,2),  # window strides
@@ -291,10 +281,9 @@ plt.imshow(np.array(out)[0,:,:,0]);
 #### VALID padding, no stride, rhs kernel dilation ~ Atrous convolution (excessive to illustrate)
 
 ```{code-cell} ipython3
----
-id: _pGr0x6qFVHF
-outputId: 9edbccb6-d976-4b55-e0b7-e6f3b743e476
----
+:id: _pGr0x6qFVHF
+:outputId: 9edbccb6-d976-4b55-e0b7-e6f3b743e476
+
 out = lax.conv_general_dilated(img,     # lhs = image tensor
                                kernel,  # rhs = conv kernel tensor
                                (1,1),   # window strides
@@ -313,10 +302,9 @@ plt.imshow(np.array(out)[0,:,:,0]);
 #### VALID padding, no stride, lhs=input dilation  ~ Transposed Convolution
 
 ```{code-cell} ipython3
----
-id: B9Ail8ppFVHJ
-outputId: 7aa19474-566f-4419-bfae-8286dd026c1c
----
+:id: B9Ail8ppFVHJ
+:outputId: 7aa19474-566f-4419-bfae-8286dd026c1c
+
 out = lax.conv_general_dilated(img,               # lhs = image tensor
                                kernel,            # rhs = conv kernel tensor
                                (1,1),             # window strides
@@ -335,10 +323,9 @@ plt.imshow(np.array(out)[0,:,:,0]);
 We can use the last to, for instance, implement _transposed convolutions_:
 
 ```{code-cell} ipython3
----
-id: 5EYIj77-NdHE
-outputId: f45b16f7-cc6e-4593-8aca-36b4152c3dfa
----
+:id: 5EYIj77-NdHE
+:outputId: f45b16f7-cc6e-4593-8aca-36b4152c3dfa
+
 # The following is equivalent to tensorflow:
 # N,H,W,C = img.shape
 # out = tf.nn.conv2d_transpose(img, kernel, (N,2*H,2*W,C), (1,2,2,1))
@@ -370,10 +357,9 @@ plt.imshow(np.array(out)[0,:,:,0]);
 You aren't limited to 2D convolutions, a simple 1D demo is below:
 
 ```{code-cell} ipython3
----
-id: jJ-jcAn3cig-
-outputId: 67c46ace-6adc-4c47-c1c7-1f185be5fd4b
----
+:id: jJ-jcAn3cig-
+:outputId: 67c46ace-6adc-4c47-c1c7-1f185be5fd4b
+
 # 1D kernel - WIO layout
 kernel = jnp.array([[[1, 0, -1], [-1,  0,  1]], 
                     [[1, 1,  1], [-1, -1, -1]]], 
@@ -410,10 +396,9 @@ plt.plot(out[0]);
 ### 3D Convolutions
 
 ```{code-cell} ipython3
----
-id: QNvSiq5-mcLd
-outputId: c99ec88c-6d5c-4acd-c8d3-331f026f5631
----
+:id: QNvSiq5-mcLd
+:outputId: c99ec88c-6d5c-4acd-c8d3-331f026f5631
+
 import matplotlib as mpl
 
 # Random 3D kernel - HWDIO layout
