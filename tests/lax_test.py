@@ -2390,6 +2390,8 @@ class LaxTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.jaxpr.eqns, 2)
 
   def testRngBitGenerator(self):
+    # This test covers the original behavior of lax.rng_bit_generator, which
+    # required x64=True, and only checks shapes and jit invariance.
     if not config.x64_enabled:
       raise SkipTest("RngBitGenerator requires 64bit key")
 
@@ -2404,6 +2406,15 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(out[1].shape, (5, 7))
     self.assertArraysEqual(out[0], out_jit[0])
     self.assertArraysEqual(out[1], out_jit[1])
+
+  @jtu.skip_on_devices("tpu")
+  def testRngBitGeneratorReturnedKey(self):
+    # This test ensures that the key bit-packing/unpacking operations used in
+    # the translation rule for rng_bit_generator, on older jaxlibs and at time
+    # of writing on GPU, are inverses of one another.
+    key = np.array([3, 1, 4, 2], dtype=np.dtype('uint32'))
+    new_key, _ = lax.rng_bit_generator(key, (0,))
+    self.assertAllClose(key, new_key)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_weak_type={}".format(dtype.__name__, weak_type),
