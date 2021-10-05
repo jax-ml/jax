@@ -16,7 +16,8 @@ from docutils import nodes, utils
 
 from sphinx.util.nodes import split_explicit_title
 
-def jax_issue_role(name, rawtext, text, lineno, inliner, options={}, content=[]):
+def jax_issue_role(name, rawtext, text, lineno, inliner, options=None,
+                   content=()):
   """Generate links to jax issues or PRs in sphinx.
 
   Usage::
@@ -30,11 +31,12 @@ def jax_issue_role(name, rawtext, text, lineno, inliner, options={}, content=[])
   text = text.lstrip('#')
   if not text.isdigit():
       raise RuntimeError(f"Invalid content in {rawtext}: expected an issue or PR number.")
+  options = {} if options is None else options
   url = "https://github.com/google/jax/issues/{}".format(text)
   node = nodes.reference(rawtext, '#' + text, refuri=url, **options)
   return [node], []
 
-def doi_role(typ, rawtext, text, lineno, inliner, options={}, content=[]):
+def doi_role(typ, rawtext, text, lineno, inliner, options=None, content=()):
   text = utils.unescape(text)
   has_explicit_title, title, part = split_explicit_title(text)
   full_url = 'https://doi.org/' + part

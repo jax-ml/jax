@@ -18,7 +18,7 @@ from functools import partial
 import itertools
 import operator
 import re
-from unittest import SkipTest
+import unittest
 import textwrap
 
 from absl.testing import absltest
@@ -1775,21 +1775,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     python_should_be_executing = False
     lax.while_loop(cond, body, 0)
 
+  # This second caching test shows a different kind of caching that we haven't
+  # implemented (but could!), namely that Python functions that are distinct
+  # objects but are equivalent functions trigger cache hits. This kind of
+  # caching could be salient when using lambda functions with control flow:
+  #
+  #   lax.while_loop(lambda x: x < 5, lambda x: x + 2, 0)
+  #   lax.while_loop(lambda x: x < 5, lambda x: x + 2, 0)
+  #
+  # To get a cache hit on the second line we'd need to form a jaxpr and
+  # compare them for equality (including the literals on identity). We could
+  # implement that by adding a __hash__/__eq__ to core.Jaxpr and
+  # core.ClosedJaxpr (see #1221).
+  @unittest.skip("not implemented")
   def testCaching2(self):
-    # This second caching test shows a different kind of caching that we haven't
-    # implemented (but could!), namely that Python functions that are distinct
-    # objects but are equivalent functions trigger cache hits. This kind of
-    # caching could be salient when using lambda functions with control flow:
-    #
-    #   lax.while_loop(lambda x: x < 5, lambda x: x + 2, 0)
-    #   lax.while_loop(lambda x: x < 5, lambda x: x + 2, 0)
-    #
-    # To get a cache hit on the second line we'd need to form a jaxpr and
-    # compare them for equality (including the literals on identity). We could
-    # implement that by adding a __hash__/__eq__ to core.Jaxpr and
-    # core.ClosedJaxpr (see #1221).
-    raise SkipTest("not implemented")
-
     def cond(x):
       assert python_should_be_executing
       return x < 5

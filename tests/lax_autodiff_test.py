@@ -180,7 +180,7 @@ LAX_GRAD_SPECIAL_VALUE_TESTS = [
 
 
 def check_grads_bilinear(f, args, order,
-                         modes=["fwd", "rev"], atol=None, rtol=None):
+                         modes=("fwd", "rev"), atol=None, rtol=None):
   # Can use large eps to make up for numerical inaccuracies since the op is
   # bilinear (relying on the fact that we only check one arg at a time)
   lhs, rhs = args

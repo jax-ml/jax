@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest import SkipTest
+import unittest
 
 from absl.testing import absltest
 from jax._src import test_util as jtu
@@ -35,8 +35,8 @@ class MetadataTest(jtu.JaxTestCase):
     self.assertRegex(hlo, 'op_type="sin"')
     self.assertRegex(hlo, 'op_name="xla_computation\\(foo\\)/sin"')
 
+  @unittest.skip("TODO") # TODO(jekbradbury)
   def test_nested_jit_metadata(self):
-    raise SkipTest              # TODO(jekbradbury)
     @jax.jit
     def foo(x):
       return jnp.sin(x)

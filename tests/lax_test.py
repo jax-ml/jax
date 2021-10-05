@@ -2011,8 +2011,8 @@ class LaxTest(jtu.JaxTestCase):
          "Offset dimension 4 in gather op is out of bounds"),
         ("MismatchingElidedWindowDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
          (4, 5, 6, 7, 8), (4,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
-         "All components of the offset index in a gather op must either be a "
-         "offset dimension or explicitly collapsed"),
+         ("All components of the offset index in a gather op must either be a "
+          "offset dimension or explicitly collapsed")),
         ("OutOfBoundsWindowToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
          (4, 5, 6, 7, 8), (0, 1, 2, 3, 19), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
          "Invalid collapsed_slice_dims set in gather op; valid range is"),
@@ -2021,9 +2021,9 @@ class LaxTest(jtu.JaxTestCase):
          "collapsed_slice_dims in gather op must not repeat"),
         ("MismatchingGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
          (4, 5, 6, 7, 8), (), (0, 1, 2, 3), (10, 9, 8, 7, 6),
-         "Gather op has 4 elements in start_index_map and the bound of "
-         "dimension index_vector_dim=4 of indices is 5. These two "
-         "numbers must be equal."),
+         ("Gather op has 4 elements in start_index_map and the bound of "
+          "dimension index_vector_dim=4 of indices is 5. These two "
+          "numbers must be equal.")),
         ("OutOfBoundsGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
          (4, 5, 6, 7, 8), (), (0, 1, 2, 3, 7), (10, 9, 8, 7, 6),
          "Invalid start_index_map"),
@@ -2041,8 +2041,8 @@ class LaxTest(jtu.JaxTestCase):
          "Gather op must have one slice size for every input dimension"),
         ("WindowBoundsNot1ForElidedDim", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
          (4, 5, 6, 7), (1,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
-         "Gather op can only collapse slice dims with bound 1 or 0, but bound "
-         "is 9 for index 1 at position 0.")
+         ("Gather op can only collapse slice dims with bound 1 or 0, but bound "
+          "is 9 for index 1 at position 0."))
       ]
   ))
   def testGatherShapeCheckingRule(self, operand_shape, indices_shape,
@@ -2223,9 +2223,9 @@ class LaxTest(jtu.JaxTestCase):
               ("MismatchingScatterDimsToOperandDims", (50, 49, 48, 47, 46),
                np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
                (4, 5, 6), (1, 2), (0, 1, 2, 3),
-               "Scatter op has 4 elements in scatter_dims_to_operand_dims and "
-               "the bound of dimension index_vector_dim=4 of indices "
-               "is 5. These two numbers must be equal"),
+               ("Scatter op has 4 elements in scatter_dims_to_operand_dims and "
+                "the bound of dimension index_vector_dim=4 of indices "
+                "is 5. These two numbers must be equal")),
               ("OutOfBoundsScatterDimsToOperandDims", (50, 49, 48, 47, 46),
                np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
                (4, 5, 6), (1, 2), (0, 1, 2, 3, 10),
@@ -2237,8 +2237,8 @@ class LaxTest(jtu.JaxTestCase):
               ("InsufficientWindowDims", (50, 49, 48, 47, 46),
                np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
                (4, 5, 6), (1,), (0, 1, 2, 3),
-               "Scatter op has window of size 4; doesn't match operand of "
-               "rank 5.")
+               ("Scatter op has window of size 4; doesn't match operand of "
+                "rank 5."))
            ]
       ))
   def testScatterShapeCheckingRule(self, operand_shape, indices,

@@ -52,12 +52,12 @@ flags.DEFINE_enum(
 
 flags.DEFINE_integer(
   'num_generated_cases',
-  int(os.getenv('JAX_NUM_GENERATED_CASES', 10)),
+  int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
 
 flags.DEFINE_integer(
   'max_cases_sampling_retries',
-  int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', 100)),
+  int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', '100')),
   'Number of times a failed test sample should be retried. '
   'When an unseen case cannot be generated in this many trials, the '
   'sampling process is terminated.'
@@ -288,7 +288,7 @@ def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
 
 
 def check_grads(f, args, order,
-                modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
+                modes=("fwd", "rev"), atol=None, rtol=None, eps=None):
   """Check gradients from automatic differentiation against finite differences.
 
   Gradients are only checked in a single randomly chosen direction, which
@@ -647,10 +647,8 @@ def rand_some_inf(rng):
   """Return a random sampler that produces infinities in floating types."""
   base_rand = rand_default(rng)
 
-  """
-  TODO: Complex numbers are not correctly tested
-  If blocks should be switched in order, and relevant tests should be fixed
-  """
+  # TODO: Complex numbers are not correctly tested
+  # If blocks should be switched in order, and relevant tests should be fixed
   def rand(shape, dtype):
     """The random sampler function."""
     if not _dtypes.issubdtype(dtype, np.floating):
@@ -708,10 +706,8 @@ def rand_some_inf_and_nan(rng):
   """Return a random sampler that produces infinities in floating types."""
   base_rand = rand_default(rng)
 
-  """
-  TODO: Complex numbers are not correctly tested
-  If blocks should be switched in order, and relevant tests should be fixed
-  """
+  # TODO: Complex numbers are not correctly tested
+  # If blocks should be switched in order, and relevant tests should be fixed
   def rand(shape, dtype):
     """The random sampler function."""
     if not _dtypes.issubdtype(dtype, np.floating):

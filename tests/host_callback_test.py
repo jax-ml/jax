@@ -20,6 +20,7 @@ import re
 import threading
 import time
 from typing import Callable, Optional, Sequence
+import unittest
 from unittest import skip, SkipTest
 
 from absl.testing import absltest
@@ -1496,8 +1497,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         device: cpu:0 what: after
         [[3.00 5.00 7.00]]""")
 
+  @unittest.skip("cond of pmap does not work in JAX. Issue #5178.")
   def test_tap_cond_pmap(self):
-    raise SkipTest("cond of pmap does not work in JAX. Issue #5178.")
     # A matrix M[ij] = i * 10 + j
     nr_devices = len(local_devices())
     shape = (nr_devices, 3)

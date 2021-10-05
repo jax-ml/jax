@@ -122,8 +122,8 @@ class TestPolynomial(jtu.JaxTestCase):
     for zeros in [1, 2, 5]
     for nonzeros in [0, 3]))
   @jtu.skip_on_devices("gpu")
+  @unittest.skip("getting segfaults on MKL")  # TODO(#3711)
   def testRootsInvalid(self, zeros, nonzeros, dtype):
-    raise unittest.SkipTest("getting segfaults on MKL")  # TODO(#3711)
     rng = jtu.rand_default(np.random.RandomState(0))
 
     # The polynomial coefficients here start with zero and would have to

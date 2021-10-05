@@ -294,7 +294,7 @@ class EinsumTest(jtu.JaxTestCase):
 
   def test_einsum_kpmurphy_example(self):
     # code from an email with @murphyk
-    N = 2; C = 3; D = 4; K = 5; T = 6;
+    N, C, D, K, T = 2, 3, 4, 5, 6
     r = self.rng()
     S = r.randn(N, T, K)
     W = r.randn(K, D)

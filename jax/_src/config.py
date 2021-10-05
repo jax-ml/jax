@@ -49,7 +49,7 @@ def bool_env(varname: str, default: bool) -> bool:
 
 def int_env(varname: str, default: int) -> int:
   """Read an environment variable and interpret it as an integer."""
-  return int(os.getenv(varname, default))
+  return int(os.getenv(varname, str(default)))
 
 
 class Config:

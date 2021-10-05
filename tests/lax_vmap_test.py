@@ -16,7 +16,7 @@
 from functools import partial
 import itertools
 from typing import Optional, cast
-from unittest import SkipTest
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -326,9 +326,9 @@ class LaxVmapTest(jtu.JaxTestCase):
       ]
       for dtype in default_dtypes
       for bdims in all_bdims(inshape)))
+  @unittest.skip("this test has failures in some cases")  # TODO(mattjj)
   def testBroadcastInDim(self, inshape, dtype, outshape, dimensions, bdims):
     rng = jtu.rand_default(self.rng())
-    raise SkipTest("this test has failures in some cases")  # TODO(mattjj)
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CheckBatching(op, 5, bdims, (inshape,), (dtype,), rng)
 

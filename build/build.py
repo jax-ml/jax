@@ -68,8 +68,8 @@ def get_python_bin_path(python_bin_path_flag):
 def get_python_version(python_bin_path):
   version_output = shell(
     [python_bin_path, "-c",
-     "import sys; print(\"{}.{}\".format(sys.version_info[0], "
-     "sys.version_info[1]))"])
+     ("import sys; print(\"{}.{}\".format(sys.version_info[0], "
+      "sys.version_info[1]))")])
   major, minor = map(int, version_output.split("."))
   return major, minor
 

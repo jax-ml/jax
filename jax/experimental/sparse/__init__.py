@@ -91,7 +91,7 @@ BCOO objects are designed to be compatible with JAX transforms, including :func:
 
     >>> from jax import grad, jit
 
-    >>> def f(y): 
+    >>> def f(y):
     ...   return (M_sp.T @ y).sum()
     ...
     >>> jit(grad(f))(y)

@@ -2537,10 +2537,10 @@ def _valid_jaxtype(arg):
 
 class ShapeDtypeStruct:
   __slots__ = ["shape", "dtype", "named_shape"]
-  def __init__(self, shape, dtype, named_shape={}):
+  def __init__(self, shape, dtype, named_shape=None):
     self.shape = shape
     self.dtype = np.dtype(dtype)
-    self.named_shape = named_shape
+    self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: prod(self.shape))
   ndim = property(lambda self: len(self.shape))

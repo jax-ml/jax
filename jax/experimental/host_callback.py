@@ -783,20 +783,18 @@ def _values_to_avals(vals) -> Sequence[core.ShapedArray]:
   return tuple([core.raise_to_shaped(core.get_aval(v)) for v in vals])
 
 ### The id_tap_dep primitive
-"""
-The id_tap_dep_p primitive is used to create a dependency of the result of
-id_tap on the actual tap operation. This is only needed when the
-id_tap function is used with the `result` parameter. This primitive acts
-as the identity operator on the first argument.
-
-For example, given `id_tap(f, (a, b), result=(r, s)`, we convert this to
-
-   a1, b1 = outside_call_p(f, a, b)
-   r1 = id_tap_dep_p(r, a1)
-   s1 = id_tap_dep_p(s, a1)
-
-There are always two arguments and the result is equal to the first.
-"""
+# The id_tap_dep_p primitive is used to create a dependency of the result of
+# id_tap on the actual tap operation. This is only needed when the
+# id_tap function is used with the `result` parameter. This primitive acts
+# as the identity operator on the first argument.
+#
+# For example, given `id_tap(f, (a, b), result=(r, s)`, we convert this to
+#
+#    a1, b1 = outside_call_p(f, a, b)
+#    r1 = id_tap_dep_p(r, a1)
+#    s1 = id_tap_dep_p(s, a1)
+#
+# There are always two arguments and the result is equal to the first.
 id_tap_dep_p = core.Primitive("id_tap_dep")
 id_tap_dep_p.multiple_results = False
 id_tap_dep_p.def_impl(lambda r, _: r)
@@ -1301,7 +1299,7 @@ def _outside_call_transpose_rule(cts, *args, **params):
       *cts_tangents,
       **dict(_add_transform(params, "transpose"),
              arg_treedef=vjp_arg_treedef))
-  return (cts_primals + cts_tangents_through_tap)
+  return cts_primals + cts_tangents_through_tap
 
 
 ad.primitive_transposes[outside_call_p] = _outside_call_transpose_rule

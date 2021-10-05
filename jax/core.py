@@ -241,8 +241,7 @@ class Literal:
   def aval(self):
     return raise_to_shaped(get_aval(self.val))
 
-  def __hash__(self):
-    assert False
+  __hash__ = None  # type: ignore
 
   def __repr__(self):
     if hasattr(self, 'hash'):
@@ -1097,10 +1096,10 @@ class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'named_shape']
   array_abstraction_level = 1
 
-  def __init__(self, shape, dtype, weak_type=False, named_shape={}):
+  def __init__(self, shape, dtype, weak_type=False, named_shape=None):
     super().__init__(dtype, weak_type=weak_type)
     self.shape = canonicalize_shape(shape)
-    self.named_shape = dict(named_shape)
+    self.named_shape = {} if named_shape is None else dict(named_shape)
 
   def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
     if shape is None:

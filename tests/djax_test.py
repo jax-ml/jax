@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import unittest
 from unittest import skipIf
 
 from absl.testing import absltest
@@ -160,8 +161,8 @@ class DJaxADTests(jtu.JaxTestCase):
 @skipIf(jax.config.x64_enabled, "only 32bit for now")
 class DJaxBatchingTests(jtu.JaxTestCase):
 
+  @unittest.skip("TODO")  # TODO broke this somehow
   def test_nonzero(self):
-    raise absltest.SkipTest("TODO")  # TODO broke this somehow
     @djax.djit
     def f(x):
       return nonzero(x)

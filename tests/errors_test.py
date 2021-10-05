@@ -38,7 +38,7 @@ def get_exception(etype, f):
     return e
   assert False
 
-def check_filtered_stack_trace(test, etype, f, frame_patterns=[],
+def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
                                filter_mode="remove_frames"):
   with jax._src.config.traceback_filtering(filter_mode):
     test.assertRaises(etype, f)

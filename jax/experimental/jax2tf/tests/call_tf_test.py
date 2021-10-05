@@ -352,7 +352,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
   def test_grad_pytree(self, with_jit=False):
 
     def fun_tf(x: Dict, y: Tuple) -> Tuple:
-      return (x["first"] * x["second"] + 3. * y[0] + 4. * y[1])
+      return x["first"] * x["second"] + 3. * y[0] + 4. * y[1]
 
     x = dict(first=np.float32(3.), second=np.float32(4.))
     y = (np.float32(5.), np.float32(6.))

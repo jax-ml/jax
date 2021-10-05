@@ -17,4 +17,4 @@
 from jax._src.scipy.stats.betabinom import (
   logpmf as logpmf,
   pmf as pmf,
-) 
+)

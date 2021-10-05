@@ -220,9 +220,10 @@ def fun_name(f):
   except:
     return str(f)
 
-def wrap_init(f, params={}) -> WrappedFun:
+def wrap_init(f, params=None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
-  return WrappedFun(f, (), (), tuple(sorted(params.items())))
+  return WrappedFun(f, (), (),
+                    () if params is None else tuple(sorted(params.items())))
 
 
 class _CacheLocalContext(threading.local):

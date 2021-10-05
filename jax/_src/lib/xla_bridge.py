@@ -228,7 +228,8 @@ def backends():
         else:
           # If the backend isn't built into the binary, or if it has no devices,
           # we expect a RuntimeError.
-          logging.info("Unable to initialize backend '%s': %s" % (platform, err))
+          logging.info("Unable to initialize backend '%s': %s", platform,
+                       err)
           _backends_errors[platform] = str(err)
           continue
     if _default_backend.platform == "cpu" and FLAGS.jax_platform_name != 'cpu':

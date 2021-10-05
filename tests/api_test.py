@@ -1513,31 +1513,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       f_jvp(T)
 
-  def test_partial_eval_lower(self):
-    # this is a simplified model of a bug that arose when we first used @jit in
-    # a jvp rule. it's in this file because we want to use make_jaxpr.
-
-    # NOTE(mattjj): I no longer understand what this was meant to test. My guess
-    # is it was related to staging out the broadcast into a jaxpr to be
-    # transposed, but after #1749 that's no longer a problem. After changing
-    # make_jaxpr (and jit) to stage out sub-calls fully, this test started to
-    # fail; I left it in as skipped because deleting tests feels wrong.
-    raise unittest.SkipTest("obsolete test")
-
-    @api.jit
-    def f(a, b, c):
-      a = lax.broadcast(a, (2,))
-      return lax.select(a, b, c)
-
-    a = np.ones((3, 3), dtype=np.bool_)
-    b = np.ones((2, 3, 3))
-    c = np.ones((2, 3, 3))
-
-    jaxpr = api.make_jaxpr(lambda b, c: f(a, b, c))(b, c)
-    subjaxpr = next(eqn.params["call_jaxpr"] for eqn in jaxpr.jaxpr.eqns
-                    if "call_jaxpr" in eqn.params)
-    self.assertEqual(len(subjaxpr.eqns), 1)
-
   def test_grad_of_int_errors(self):
     # Errors without allow_int=True
     dfn = grad(lambda x: x ** 2)
@@ -5019,34 +4994,6 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = (2., jnp.cos(1.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_nondiff_arg_tracer(self):
-    # This test is now skipped because we decided not to support this behavior
-    # anymore (namely, nondiff args can't be tracers), but
-    # test_closed_over_tracer is a replacement test for analogous behavior that
-    # we do support
-    raise unittest.SkipTest("removed support for tracers in nondiff args")
-
-    @partial(api.custom_vjp, nondiff_argnums=(0,))
-    def f(x, y):
-      return x * y
-    def f_fwd(x, y):
-      return f(x, y), jnp.cos(y)
-    def f_rev(x, cos_y, g):
-      return (cos_y * g,)
-    f.defvjp(f_fwd, f_rev)
-
-    @jit
-    def g(x, y):
-      return f(x, y)
-
-    ans = g(2, 3.)
-    expected = 6.
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.grad(g, 1)(2., 3.)
-    expected = jnp.cos(3.)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
   def test_closed_over_tracer(self):
     # This test is similar to test_nondiff_arg_tracer except it uses lexical
     # closure rather than the nondiff_argnums mechanism. We decided to disallow
@@ -5217,33 +5164,6 @@ class CustomVJPTest(jtu.JaxTestCase):
       return f(x)
 
     jax.grad(g, argnums=(1,))(F(2.0), 0.)  # doesn't crash
-
-  def test_nondiff_argnums_stop_gradient(self):
-    # This test is now skipped because we decided not to support this behavior
-    # anymore (namely, nondiff args can't be tracers), but test_clip_gradient is
-    # a replacement showing behavior we do support.
-    raise unittest.SkipTest("removed support for tracers in nondiff args")
-
-    # https://github.com/google/jax/issues/2784
-    @partial(api.custom_vjp, nondiff_argnums=(0, 1))
-    def _clip_gradient(lo, hi, x):
-      return x  # identity function
-
-    def clip_gradient_fwd(lo, hi, x):
-      # return x, None
-      return x, (hi, )
-
-    def clip_gradient_bwd(lo, hi, _, g):
-      return (jnp.clip(g, lo, hi),)
-
-    _clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
-
-    def clip_gradient(x):
-      lo = -1
-      hi = x + 1  # causes things to break
-      return _clip_gradient(lo, hi, x)
-
-    jax.grad(clip_gradient)(1.)  # doesn't crash
 
   def test_clip_gradient(self):
     # https://github.com/google/jax/issues/2784

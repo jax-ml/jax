@@ -4649,18 +4649,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertAllClose(expected, actual, atol=tol,
                           rtol=tol)
 
-  def testIssue883(self):
-    # from https://github.com/google/jax/issues/883
-    raise SkipTest("we decided to disallow arrays as static args")
-
-    @partial(jax.jit, static_argnums=(1,))
-    def f(x, v):
-      return x
-
-    x = jnp.ones((10, 10))
-    v = jnp.array([1, 2, 3])
-    _ = f(x, v)
-    _ = f(x, v)  # doesn't crash
 
   def testReductionOfOutOfBoundsAxis(self):  # Issue 888
     x = jnp.ones((3, 4))

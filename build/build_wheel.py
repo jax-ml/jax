@@ -150,7 +150,9 @@ def verify_mac_libraries_dont_reference_chkstack():
   nm = subprocess.run(
     ["nm", "-g",
      r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so")
-     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    ],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+    check=False)
   if nm.returncode != 0:
     raise RuntimeError(f"nm process failed: {nm.stdout} {nm.stderr}")
   if "____chkstk_darwin" in nm.stdout:
@@ -232,7 +234,7 @@ def build_wheel(sources_path, output_path, cpu):
   cwd = os.getcwd()
   os.chdir(sources_path)
   subprocess.run([sys.executable, "setup.py", "bdist_wheel",
-                 python_tag_arg, platform_tag_arg])
+                 python_tag_arg, platform_tag_arg], check=True)
   os.chdir(cwd)
   for wheel in glob.glob(os.path.join(sources_path, "dist", "*.whl")):
     output_file = os.path.join(output_path, os.path.basename(wheel))

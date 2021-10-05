@@ -125,7 +125,7 @@ class JetTest(jtu.JaxTestCase):
 
     self.check_jet(f, primals, series_in, check_dtypes=False)
 
-  def unary_check(self, fun, lims=[-2, 2], order=3, dtype=None, atol=1e-4,
+  def unary_check(self, fun, lims=(-2, 2), order=3, dtype=None, atol=1e-4,
                   rtol=1e-4):
     dims = 2, 3
     rng = np.random.RandomState(0)
@@ -138,7 +138,8 @@ class JetTest(jtu.JaxTestCase):
       terms_in = [rng(dims, dtype) for _ in range(order)]
     self.check_jet(fun, (primal_in,), (terms_in,), atol, rtol)
 
-  def binary_check(self, fun, lims=[-2, 2], order=3, finite=True, dtype=None):
+  def binary_check(self, fun, lims=None, order=3, finite=True, dtype=None):
+    lims = lims or [-2, 2]
     dims = 2, 3
     rng = np.random.RandomState(0)
     if isinstance(lims, tuple):
@@ -161,17 +162,17 @@ class JetTest(jtu.JaxTestCase):
     else:
       self.check_jet_finite(fun, primal_in, series_in, atol=1e-4, rtol=1e-4)
 
-  def unary_check_float0(self, fun, lims=[-2, 2], order=3, dtype=None):
+  def unary_check_float0(self, fun, lims=(-2, 2), order=3, dtype=None):
     # like unary_check but for functions that output integers (so their tangent
     # type is float0 arrays)
     raise unittest.SkipTest("jet tests must be adapted for integer-output functions")
 
-  def binary_check_float0(self, fun, lims=[-2, 2], order=3, finite=True, dtype=None):
+  def binary_check_float0(self, fun, lims=(-2, 2), order=3, finite=True, dtype=None):
     # like binary_check but for functions that output integers (so their tangent
     # type is float0 arrays)
     raise unittest.SkipTest("jet tests must be adapted for integer-output functions")
 
-  def expit_check(self, lims=[-2, 2], order=3):
+  def expit_check(self, lims=(-2, 2), order=3):
     dims = 2, 3
     rng = np.random.RandomState(0)
     primal_in = transform(lims, rng.rand(*dims))

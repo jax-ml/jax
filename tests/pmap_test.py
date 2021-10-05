@@ -20,6 +20,7 @@ import gc
 import os
 from random import shuffle
 from typing import Optional, cast
+import unittest
 from unittest import SkipTest
 import warnings
 import weakref
@@ -1007,9 +1008,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual([b.device() for b in ans.device_buffers],
                      [b.device() for b in x_sharded.device_buffers])
 
+  @unittest.skip("Nested pmaps with devices not yet implemented")
   def testNestedPmapConstantDevices(self):
-    raise SkipTest("Nested pmaps with devices not yet implemented")
-
     if jax.device_count() < 6:
       raise SkipTest("this test requires >= 6 devices")
 
@@ -1352,8 +1352,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @ignore_xmap_warning()
+  @unittest.skip("not implemented")  # TODO(mattjj): re-implement
   def testSoftPmapNested(self):
-    raise SkipTest("not implemented")  # TODO(mattjj): re-implement
     n = 4 * jax.device_count()
 
     @partial(soft_pmap, axis_name='i')
@@ -1367,8 +1367,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @ignore_xmap_warning()
+  @unittest.skip("not implemented")  # TODO(mattjj): re-implement
   def testGradOfSoftPmap(self):
-    raise SkipTest("not implemented")  # TODO(mattjj): re-implement
     n = 4 * jax.device_count()
 
     @partial(soft_pmap, axis_name='i')
@@ -1392,8 +1392,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = soft_pmap(lambda x: x)(x)  # doesn't crash
     self.assertIsInstance(x, pxla.ShardedDeviceArray)
 
+  @unittest.skip("the underlying code here is broken")  # TODO(mattjj)
   def testSoftPmapAllToAll(self):
-    raise SkipTest("the underlying code here is broken")  # TODO(mattjj)
     n = 4 * jax.device_count()
     def f(x):
       return lax.all_to_all(x, 'i', 0, 0)
@@ -1466,11 +1466,11 @@ class PythonPmapTest(jtu.JaxTestCase):
     z = y[0]  # doesn't crash
     self.assertAllClose(z, 2 * x[0], check_dtypes=False)
 
+  # TODO(mattjj): this fails with multiple devices (unless we add a jit)
+  # because we assume eager ops (like scan here) can't require more than 1
+  # replica.
+  @unittest.skip("need eager multi-replica support")
   def testPostProcessMap(self):
-    # TODO(mattjj): this fails with multiple devices (unless we add a jit)
-    # because we assume eager ops (like scan here) can't require more than 1
-    # replica.
-    raise SkipTest("need eager multi-replica support")
     # test came from https://github.com/google/jax/issues/1369
     nrep = jax.device_count()
 
@@ -1947,8 +1947,8 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       for axes, split_axis, concat_axis
       in it.product([('i', 'j'), ('j', 'i')], range(3), range(3)))
   @ignore_slow_all_to_all_warning()
+  @unittest.skip("multi-axis all_to_all broken after #4835")  # TODO(mattjj,apaszke)
   def testAllToAllMultipleAxesVsVmap(self, axes, split_axis, concat_axis):
-    raise SkipTest("multi-axis all_to_all broken after #4835")  # TODO(mattjj,apaszke)
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
 

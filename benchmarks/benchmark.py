@@ -75,8 +75,8 @@ def benchmark(f: Callable[[], Any], iters: Optional[int] = None,
 
   times_arr = np.array(times)
   print("---------Benchmark results for %s---------" % (name or f.__name__))
-  print("mean=%f std=%f %%std=%f total=%f" %
-        (times_arr.mean(), times_arr.std(), _pstd(times_arr), times_arr.sum()))
+  print(f"mean={times_arr.mean()} std={times_arr.std()} "
+        f"%%std={_pstd(times_arr)} total={times_arr.sum()}")
   print("#iters=%d #warmup=%d" % (count, warmup))
   print()
   return times_arr

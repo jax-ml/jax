@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from unittest import SkipTest
+import unittest
 
 import numpy as np
 from absl.testing import absltest, parameterized
@@ -272,15 +272,15 @@ class MaskingTest(jtu.JaxTestCase):
     expected = 5
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  # TODO Shapecheck fails - shape_as_value can't deal with abstract eval yet
+  @unittest.skip("Shapecheck fails")
   def test_mean(self):
-    # TODO Shapecheck fails - shape_as_value can't deal with abstract eval yet
-    raise SkipTest
     self.check(lambda x: jnp.sum(x) / shape_as_value(x.shape)[0], ['n'], '',
                {'n': 3}, [(4,)], ['float_'],
                jtu.rand_default(self.rng()))
 
+  @unittest.skip("Failing after fixing Poly unsoundness #4878")
   def test_arithmetic(self):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     @partial(mask, in_shapes=['(n, m)', 'm'], out_shape='(n, m)')
     def times(x, y):
       return x * y
@@ -452,8 +452,8 @@ class MaskingTest(jtu.JaxTestCase):
     out = duplicate([jnp.arange(3)], dict(n=2))
     assert np.all(np.array([0, 1, 0, 1]) == out[:4])
 
+  @unittest.skip("broken by omnistaging")  # TODO(mattjj): update
   def test_jit2(self):
-    raise SkipTest("broken by omnistaging")  # TODO(mattjj): update
     # Trigger MaskTrace.post_process_call
     def fun(x):
       @jit
@@ -479,8 +479,8 @@ class MaskingTest(jtu.JaxTestCase):
           (((-1, 2, 0), (1, 2, 2)), (4, 2)),
           (((-1, -2, 2),), (5,)),
           (((-1, -2, 1), (1, 2, 2)), (4, 2))))
+  @unittest.skip("Failing after fixing Poly unsoundness #4878")
   def test_pad(self, padding_config, shape):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     def pad(x):
       return lax.pad(x, jnp.array(1., x.dtype), padding_config)
 
@@ -496,8 +496,8 @@ class MaskingTest(jtu.JaxTestCase):
 
   # TODO(mattjj,j-towns): fix test failure and reenable.
   @jtu.skip_on_devices("tpu")
+  @unittest.skip("broken by omnistaging")  # TODO(mattjj): update
   def test_numpy_pad(self):
-    raise SkipTest("broken by omnistaging")  # TODO(mattjj): update
     def numpy_pad(x):
       return jnp.pad(x, (0, 1), constant_values=5.)
 
@@ -522,10 +522,10 @@ class MaskingTest(jtu.JaxTestCase):
     # String padding is not implemented for transposed convolution, see
     # conv_general_dilated implementation:
     if (lhs_dilation is None or not isinstance(padding, str))))
+  @unittest.skip("Failing after fixing Poly unsoundness #4878")
   def test_conv(
           self, padding, lhs_dilation, dimension_numbers, lhs_perm,
           rhs_perm, out_perm):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     def conv(lhs, rhs):
       return lax.conv_general_dilated(
         lhs, rhs, (1, 1), padding, lhs_dilation=lhs_dilation,
@@ -570,10 +570,10 @@ class MaskingTest(jtu.JaxTestCase):
     # String padding is not implemented for transposed convolution, see
     # conv_general_dilated implementation:
     if (lhs_dilation is None or not isinstance(padding, str))))
+  @unittest.skip("Failing after fixing Poly unsoundness #4878")
   def test_conv_strided(
           self, padding, lhs_dilation, dimension_numbers, lhs_perm,
           rhs_perm, out_perm):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     def conv(lhs, rhs):
       return lax.conv_general_dilated(
         lhs, rhs, (2, 1), padding, lhs_dilation=lhs_dilation,
@@ -602,17 +602,15 @@ class MaskingTest(jtu.JaxTestCase):
                ['float_', 'float_'], jtu.rand_default(self.rng()), rtol=1e-4,
                atol=1e-4)
 
+  @unittest.skip("requires gather support")
   def test_indexing(self):
-    # Requires gather support
-    raise SkipTest
     self.check(lambda x: x[0], ['n'], '', {'n': 2}, [(3,)], ['float_'],
                jtu.rand_default(self.rng()))
     self.check(lambda x: x[-1], ['n'], '', {'n': 2}, [(3,)], ['float_'],
                jtu.rand_default(self.rng()))
 
+  @unittest.skip("requires gather support")
   def test_slicing(self):
-    raise SkipTest
-    # Requires gather support
     self.check(lambda x: x[1:], ['n'], 'n+-1', {'n': 2}, [(3,)], ['float_'])
     self.check(lambda x: x[:-1], ['n'], 'n+-1', {'n': 2}, [(3,)], ['float_'])
     self.check(lambda x: x[..., -1], ['(n,3)'], 'n', {'n': 2}, [(3, 4)], ['float_'])
@@ -626,8 +624,8 @@ class MaskingTest(jtu.JaxTestCase):
     def rev2(x):
       return lax.rev(x, (1,))
 
+  @unittest.skip("TODO")
   def test_rev_by_indexing(self):
-    raise SkipTest
 
     @shapecheck(['n'], 'n+-1')
     def rev1(x):
@@ -641,8 +639,8 @@ class MaskingTest(jtu.JaxTestCase):
     # self.check(lambda x: x[:0:-1], ['n'], dict(n=jnp.array([2, 3])), 'n+-1')
     # self.check(lambda x: x[-2::-1], ['n'], dict(n=jnp.array([2, 3])), 'n+-1')
 
+  @unittest.skip("Failing after fixing Poly unsoundness #4878")
   def test_lax_slice(self):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     self.check(lambda x: lax.slice(x, (1,), (x.shape[0],)), ['n'], 'n+-1',
                {'n': 2}, [(3,)], ['float_'], jtu.rand_default(self.rng()))
     # TODO self.check(lambda x: lax.slice(x, (x.shape[0] // 2,), (x.shape[0],)),
@@ -651,8 +649,8 @@ class MaskingTest(jtu.JaxTestCase):
                ['n'], '1', {'n': 2}, [(5,)], ['float_'],
                jtu.rand_default(self.rng()))
 
+  @unittest.skip("Failing after fixing Poly unsoundness #4878")
   def test_reshape(self):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     self.check(lambda x: jnp.reshape(x, (x.shape[1], 2, 4, 1)),
                ['1, n, 4, 2'], 'n, 2, 4, 1', dict(n=2), [(1, 3, 4, 2)],
                ['float_'], jtu.rand_default(self.rng()))
@@ -702,20 +700,22 @@ class MaskingTest(jtu.JaxTestCase):
     self.check(jnp.sum, ['(m, n)'], '', dict(m=2, n=3), [(3, 4)], ['float_'],
                jtu.rand_default(self.rng()))
 
+  @unittest.skip("custom_jvp doesn't work with masking yet")
   def test_expit(self):
-    raise SkipTest("custom_jvp doesn't work with masking yet")
     self.check(expit, ['n'], 'n', dict(n=3), [(4,)], ['float_'],
                jtu.rand_default(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
     for dtype in [np.float32, np.float64]))
+  @unittest.skip("not yet implemented")
   def test_uniform(self, dtype):
-    raise SkipTest("not yet implemented")
     # TODO needs fix for https://github.com/google/jax/issues/2155
+    pass
 
+  @unittest.skip("not yet implemented")
   def test_broadcast_in_dim(self):
-    raise SkipTest
+    pass
 
   def test_destructure(self):
     def d(key):
@@ -730,8 +730,8 @@ class MaskingTest(jtu.JaxTestCase):
     self.check(lambda x: jnp.where(x < 0, x, 0. * x), ['n'], 'n',
                {'n': 2}, [(3,)], ['float_'], jtu.rand_default(self.rng()))
 
+  @unittest.skip("Failing after fixing Poly unsoundness #4878")
   def test_split(self):
-    raise SkipTest("Failing after fixing Poly unsoundness #4878")
     self.check(lambda x: jnp.split(x, 2), ['2*n'], ['n', 'n'], dict(n=4),
                [(8,)], ['float_'], jtu.rand_default(self.rng()))
     self.check(lambda x: jnp.split(x, [10]), ['n'], ['10', 'n+-10'], dict(n=12),
@@ -775,9 +775,8 @@ class MaskingTest(jtu.JaxTestCase):
     message = "Masking rule for unsupported_op not implemented yet."
     self.assertRaisesWithLiteralMatch(NotImplementedError, message, thunk)
 
+  @unittest.skip("not yet implemented")
   def test_nesting(self):
-    raise SkipTest("not yet implemented")
-
     @partial(mask, in_shapes=['n'], out_shape='')
     def padded_sum(x):
       return jnp.sum(x)
