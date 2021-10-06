@@ -6745,11 +6745,9 @@ def _rng_bit_generator_shape_rule(key, *, shape, dtype, algorithm):
   del dtype, algorithm
   return (key.shape, tuple(shape))
 
-
 def _rng_bit_generator_dtype_rule(key, *, shape, dtype, algorithm):
   del shape, algorithm
   return (key.dtype, dtype)
-
 
 def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
   del shape, dtype, algorithm
@@ -6766,22 +6764,46 @@ def _rng_bit_generator_translation_rule(backend_is_gpu, c, key, *, shape, dtype,
           (key_shape == (2,) and key_dtype == dtypes.dtype('uint64')))
   xla_shape = xc.Shape.array_shape(np.dtype(dtype), shape)
   if key_dtype == dtypes.dtype('uint32'):
-    u64_etype = xc.dtype_to_etype(dtypes.dtype('uint64'))
     # TODO(mattjj): the BitcastConvertType segfaults on GPU
     # TODO(mattjj): remove fallback when minimum jaxlib is 0.1.72 or newer
     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-      new_key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
+      u64_etype = xc.dtype_to_etype(dtypes.dtype('uint64'))
+      key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
     else:
-      new_key = xb.constant(c, np.zeros(2, dtype=np.dtype('uint64')),
-                            canonicalize_types=False)
-      for i in range(4):
-        elt = xops.ConvertElementType(xops.Slice(key, [i], [i+1], [1]), u64_etype)
-        if i % 2 == 0:
-          elt = xops.ShiftLeft(elt, xb.constant(c, np.uint64(32), canonicalize_types=False))
-        new_key = xops.DynamicUpdateSlice(new_key, elt, [xb.constant(c, i // 2)])
-    return xops.RngBitGenerator(algorithm, new_key, xla_shape)
-  else:
-    return xops.RngBitGenerator(algorithm, key, xla_shape)
+      key = _convert_4xU32_to_2xU64_without_bitcast(c, key)
+  out_key, out_vals = xla.xla_destructure(
+      c, xops.RngBitGenerator(algorithm, key, xla_shape))
+  if key_dtype == dtypes.dtype('uint32'):
+    if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
+      u32_etype = xc.dtype_to_etype(dtypes.dtype('uint32'))
+      out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
+    else:
+      out_key = _convert_2xU64_to_4xU32_without_bitcast(c, out_key)
+  return xops.Tuple(c, [out_key, out_vals])
+
+def _convert_4xU32_to_2xU64_without_bitcast(c, key):
+  u64_etype = xc.dtype_to_etype(dtypes.dtype('uint64'))
+  new_key = xb.constant(c, np.zeros(2, dtype=np.dtype('uint64')),
+                        canonicalize_types=False)
+  _32 = xb.constant(c, np.uint64(32), canonicalize_types=False)
+  for i in [0, 2]:
+    hi = xops.ConvertElementType(xops.Slice(key, [i]  , [i+1], [1]), u64_etype)
+    lo = xops.ConvertElementType(xops.Slice(key, [i+1], [i+2], [1]), u64_etype)
+    elt = xops.Xor(xops.ShiftLeft(hi, _32), lo)
+    new_key = xops.DynamicUpdateSlice(new_key, elt, [xb.constant(c, i // 2)])
+  return new_key
+
+def _convert_2xU64_to_4xU32_without_bitcast(c, key):
+  u32_etype = xc.dtype_to_etype(dtypes.dtype('uint32'))
+  new_key = xb.constant(c, np.zeros(4, dtype=np.dtype('uint32')))
+  _32 = xb.constant(c, np.uint64(32), canonicalize_types=False)
+  for i in [0, 1]:
+    elt = xops.Slice(key, [i], [i+1], [1])
+    hi = xops.ConvertElementType(xops.ShiftRightLogical(elt, _32), u32_etype)
+    lo = xops.ConvertElementType(elt, u32_etype)
+    new_key = xops.DynamicUpdateSlice(new_key, hi, [xb.constant(c, 2 * i)])
+    new_key = xops.DynamicUpdateSlice(new_key, lo, [xb.constant(c, 2 * i + 1)])
+  return new_key
 
 def _rng_bit_generator_named_shape_rule(key, *, shape, dtype, algorithm):
   return [key.named_shape, key.named_shape]
@@ -6804,9 +6826,7 @@ RandomAlgorithm = xops.RandomAlgorithm
 RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
 
 
-def rng_bit_generator(key,
-                      shape,
-                      dtype=np.uint32,
+def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT):
   """Stateless PRNG bit generator. Experimental and its use is discouraged.
 
