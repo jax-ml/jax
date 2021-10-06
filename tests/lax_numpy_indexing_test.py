@@ -912,17 +912,6 @@ class UpdateOps(enum.Enum):
     return x
 
   def jax_fn(op, indexer, x, y, indices_are_sorted=False,
-             unique_indices=False):
-    return {
-      UpdateOps.UPDATE: ops.index_update,
-      UpdateOps.ADD: ops.index_add,
-      UpdateOps.MUL: ops.index_mul,
-      UpdateOps.MIN: ops.index_min,
-      UpdateOps.MAX: ops.index_max,
-    }[op](x, indexer, y, indices_are_sorted=indices_are_sorted,
-          unique_indices=unique_indices)
-
-  def sugar_fn(op, indexer, x, y, indices_are_sorted=False,
              unique_indices=False, mode=None):
     x = jnp.array(x)
     return {
@@ -977,7 +966,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
-    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y, mode=mode)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, mode=mode)
     self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
     self._CompileAndCheck(jax_fn, args_maker)
 
@@ -999,7 +988,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
-    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y,
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y,
                                              unique_indices=True)
     self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
     self._CompileAndCheck(jax_fn, args_maker)
@@ -1022,7 +1011,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
-    jax_fn = lambda x, y: UpdateOps.sugar_fn(
+    jax_fn = lambda x, y: UpdateOps.jax_fn(
       op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
     self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True,
                             tol=_update_tol(op))
@@ -1046,7 +1035,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
-    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
     self._CompileAndCheck(jax_fn, args_maker)
 
@@ -1071,7 +1060,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                               indexer, op, mode):
     rng = jtu.rand_default(self.rng())
-    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y, mode=mode)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, mode=mode)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
     check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
@@ -1092,7 +1081,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testAdvancedIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                                 indexer, op):
     rng = jtu.rand_default(self.rng())
-    jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y,
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y,
                                              unique_indices=True)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
