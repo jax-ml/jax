@@ -1049,8 +1049,8 @@ def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, a
   raise AssertionError("Unexpected call to _all_gather_impl")
 
 def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled, axis_env, platform):
-  # TODO(cjfj): Enable this for TPU also?
-  if (platform == 'gpu') and (all_gather_dimension == 0):
+  # TODO(jekbradbury): enable for all_gather_dimension > 0
+  if platform == 'tpu' or platform == 'gpu' and all_gather_dimension == 0:
     if not tiled:
       new_shape = list(c.get_shape(x).dimensions())
       new_shape.insert(all_gather_dimension, 1)
@@ -1081,7 +1081,7 @@ def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   if tiled:
     raise NotImplementedError("Please open a feature request!")
-  # TODO(cjfj): Add reduce-scatter op to XLA?
+  # TODO(cjfj): Use lax.reduce_scatter here
   concat_axis = 0
   return (lax_numpy.sum(all_to_all(
       cts, axis_name=axis_name, split_axis=all_gather_dimension,
@@ -1159,9 +1159,10 @@ def _reduce_scatter_via_reducer(x, *, reducer, scatter_dimension, axis_name, axi
   return outs
 
 
-def _reduce_scatter_translation_rule(prim, reducer, c, x, *, scatter_dimension, axis_name,axis_index_groups, axis_size, tiled, axis_env, platform):
-  # TODO(b/194706412): Enable this for TPU?
-  if platform == "gpu":
+def _reduce_scatter_translation_rule(prim, reducer, c, x, *, scatter_dimension,
+                                     axis_name, axis_index_groups, axis_size,
+                                     tiled, axis_env, platform):
+  if platform in ("tpu", "gpu"):
     scalar = ShapedArray((), c.get_shape(x).numpy_dtype())
     computation = xla.primitive_subcomputation(prim, scalar, scalar)
     replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
