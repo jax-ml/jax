@@ -5535,7 +5535,7 @@ def _unique1d_sorted_mask(ar, optional_indices=False):
   return aux, mask, perm
 
 def _unique1d(ar, return_index=False, return_inverse=False,
-              return_counts=False, size=None):
+              return_counts=False, size=None, fill_value=None):
   """
   Find the unique elements of an array, ignoring shape.
   """
@@ -5545,9 +5545,16 @@ def _unique1d(ar, return_index=False, return_inverse=False,
   aux, mask, perm = _unique1d_sorted_mask(ar, return_index or return_inverse)
   ind = mask if size is None else nonzero(mask, size=size)
 
-  ret = (aux[ind],)
+  result = aux[ind]
+  if size is not None and fill_value is not None:
+    result = where(arange(size) >= mask.sum(), fill_value, result)
+
+  ret = (result,)
   if return_index:
-    ret += (perm[ind],)
+    perm_ind = perm[ind]
+    if size is not None and fill_value is not None:
+      perm_ind = where(arange(size) >= mask.sum(), fill_value, perm_ind)
+    ret += (perm_ind,)
   if return_inverse:
     imask = cumsum(mask) - 1
     inv_idx = zeros(mask.shape, dtype=dtypes.canonicalize_dtype(int_))
@@ -5616,17 +5623,17 @@ def _unique_axis(ar, axis, return_index=False, return_inverse=False,
 _UNIQUE_DOC = """\
 Because the size of the output of ``unique`` is data-dependent, the function is not
 typically compatible with JIT. The JAX version adds the optional `size` argument which
-specifies the size of the data-dependent output arrays: it must be specified statically for
-``jnp.unique`` to be traced. If specified, the first `size` unique elements will be returned;
-if there are fewer unique elements than `size` indicates, the return value will be padded with
-the minimum value in the input array.
+specifies the size of the data-dependent output arrays: it must be specified statically
+for ``jnp.unique`` to be traced. If specified, the first `size` unique elements will be
+returned; if there are fewer unique elements than `size` indicates, the return value will
+be padded with `fill_value`, which defaults to the minimum value in the input array.
 
 The `size` cannot currently be used with the `axis` argument."""
 
 
 @_wraps(np.unique, skip_params=['axis'], lax_description=_UNIQUE_DOC)
 def unique(ar, return_index=False, return_inverse=False,
-           return_counts=False, axis: Optional[int] = None, *, size=None):
+           return_counts=False, axis: Optional[int] = None, *, size=None, fill_value=None):
   _check_arraylike("unique", ar)
 
   # TODO(jakevdp): call _check_arraylike on input.
@@ -5641,7 +5648,7 @@ def unique(ar, return_index=False, return_inverse=False,
 
   ar = asarray(ar)
   if axis is None:
-    ret = _unique1d(ar, return_index, return_inverse, return_counts, size=size)
+    ret = _unique1d(ar, return_index, return_inverse, return_counts, size=size, fill_value=fill_value)
   else:
     axis = core.concrete_or_error(operator.index, axis, "axis argument of jnp.unique()")
     ret = _unique_axis(ar, axis, return_index, return_inverse, return_counts)

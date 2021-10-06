@@ -2312,13 +2312,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_size={}".format(
-         jtu.format_shape_dtype_string(shape, dtype), size),
-       "shape": shape, "dtype": dtype, "size": size}
+      {"testcase_name": "_{}_size={}_fill_value={}".format(
+         jtu.format_shape_dtype_string(shape, dtype), size, fill_value),
+       "shape": shape, "dtype": dtype, "size": size, "fill_value": fill_value}
       for dtype in number_dtypes
       for size in [1, 5, 10]
+      for fill_value in [None, -1]
       for shape in nonempty_array_shapes))
-  def testUniqueSize(self, shape, dtype, size):
+  def testUniqueSize(self, shape, dtype, size, fill_value):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     kwds = dict(return_index=True, return_inverse=True, return_counts=True)
@@ -2329,12 +2330,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         u, ind, counts = u[:size], ind[:size], counts[:size]
       else:
         extra = size - len(u)
-        u = np.concatenate([u, np.full(extra, u[0], u.dtype)])
-        ind = np.concatenate([ind, np.full(extra, ind[0], ind.dtype)])
-        counts = np.concatenate([counts, np.zeros(extra, counts.dtype)])
+        u = np.pad(u, (0, extra), constant_values=u[0] if fill_value is None else fill_value)
+        ind = np.pad(ind, (0, extra), constant_values=ind[0] if fill_value is None else fill_value)
+        counts = np.pad(counts, (0, extra), constant_values=0)
       return u, ind, inv, counts
 
-    jnp_fun = lambda x: jnp.unique(x, size=size, **kwds)
+    jnp_fun = lambda x: jnp.unique(x, size=size, fill_value=fill_value, **kwds)
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
