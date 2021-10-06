@@ -69,6 +69,24 @@ Array = Any
 DType = Any
 Shape = core.Shape
 
+@functools.partial(jax.jit, inline=True)
+def _array_copy(arr):
+  """Return an on-device copy of a DeviceArray.
+
+  This is a private method; users can access this via ``jnp.array(x, copy=True)``.
+
+  Why do we need copies in a purely functional langauge? Well, JAX is *almost*
+  purely functional: the semantics of `donate_argnums` mean that sometimes buffers
+  are consumed, and you actually need to ensure a copy is generated on device.
+  """
+  # TODO(jakevdp): There is no XLA copy operation, so for the time being we rely
+  # on an implementation detail: although XLA will optimize away non-operations like
+  # adding zero, it still results in a copied buffer. Eventually, we should move to
+  # a more direct method that avoids inserting a spurious add_p/or_p into the jaxpr.
+  if arr.dtype == bool:
+    return bitwise_or(arr, _const(arr, False))
+  return add(arr, _const(arr, 0))
+
 def _try_broadcast_shapes(shapes):
   assert shapes
   if len(shapes) == 1: return shapes[0]
