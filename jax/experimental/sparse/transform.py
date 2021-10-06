@@ -280,10 +280,14 @@ for _prim in [
   sparse_rules[_prim] = _zero_preserving_unary_op(_prim)
 
 def _dot_general_sparse(spenv, *argspecs, dimension_numbers, precision, preferred_element_type):
-  if argspecs[0].is_sparse() and argspecs[1].is_sparse():
-    raise NotImplementedError("dot_general between two sparse matrices.")
   A, B = argspecs_to_arrays(spenv, argspecs)
-  if argspecs[0].is_sparse():
+  if argspecs[0].is_sparse() and argspecs[1].is_sparse():
+    shape = sparse.ops._dot_general_validated_shape(A.shape, B.shape, dimension_numbers)
+    data, indices = sparse.bcoo_spdot_general(A.data, A.indices, B.data, B.indices,
+                                              lhs_shape=A.shape, rhs_shape=B.shape,
+                                              dimension_numbers=dimension_numbers)
+    return [ArgSpec(shape, spenv.push(data), spenv.push(indices))]
+  elif argspecs[0].is_sparse():
     result = sparse.bcoo_dot_general(A.data, A.indices, B, lhs_shape=A.shape,
                                     dimension_numbers=dimension_numbers)
   else:
