@@ -1292,7 +1292,7 @@ def _dtype(x):
   return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
 
-def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
+def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None, axis_size=None) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -1315,9 +1315,9 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
       elements. ``in_axes`` must be a container tree prefix of the positional
       argument tuple passed to ``fun``.
 
-      At least one positional argument must have ``in_axes`` not None. The sizes
-      of the mapped input axes for all mapped positional arguments must all be
-      equal.
+      Either ``axis_size`` must be provided explicitly, or at least one
+      positional argument must have ``in_axes`` not None. The sizes of the
+      mapped input axes for all mapped positional arguments must all be equal.
 
       Arguments passed as keywords are always mapped over their leading axis
       (i.e. axis index 0).
@@ -1334,6 +1334,8 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
       returned by ``fun``.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
+    axis_size: Optional, an integer indicating the size of the axis to be
+      mapped. If not provided, the mapped axis size is inferred from arguments.
 
   Returns:
     Batched/vectorized version of ``fun`` with arguments that correspond to
@@ -1436,23 +1438,27 @@ def vmap(fun: F, in_axes=0, out_axes=0, axis_name=None) -> F:
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  if not all(type(l) is int for l in tree_leaves(in_axes)):
+  if not all(type(l) is int or type(l) in batching.spec_types
+             for l in tree_leaves(in_axes)):
     raise TypeError("vmap in_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {in_axes}.")
-  if not all(type(l) is int for l in tree_leaves(out_axes)):
+  if not all(type(l) is int or type(l) in batching.spec_types
+               for l in tree_leaves(out_axes)):
     raise TypeError("vmap out_axes must be an int, None, or (nested) container "
                     f"with those types as leaves, but got {out_axes}.")
 
   @wraps(fun, docstr=docstr)
   @api_boundary
   def batched_fun(*args, **kwargs):
-    args_flat, in_tree  = tree_flatten((args, kwargs))
+    args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
     f = lu.wrap_init(fun)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
+    flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
-    axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap", kws=True)
+    axis_size_ = (axis_size if axis_size is not None else
+                  _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap",
+                                    kws=True))
     out_flat = batching.batch(
-        flat_fun, axis_name, axis_size, in_axes_flat,
+        flat_fun, axis_name, axis_size_, in_axes_flat,
         lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
     ).call_wrapped(*args_flat)
     return tree_unflatten(out_tree(), out_flat)
@@ -2683,12 +2689,12 @@ def device_get(x: Any):
       pass
   return tree_map(_device_get, x)
 
-
 def _check_arg(arg):
   if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
     raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid JAX type.")
 
-# TODO(necula): this duplicates code in core.valid_jaxtype
+# TODO(mattjj,necula): this duplicates code in core.valid_jaxtype, but one
+# internal user relies on it for duck-typing. must fix downstream user!
 def _valid_jaxtype(arg):
   try:
     xla.abstractify(arg)  # faster than core.get_aval

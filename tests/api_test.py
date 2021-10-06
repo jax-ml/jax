@@ -2750,6 +2750,8 @@ class APITest(jtu.JaxTestCase):
 
   def test_leak_checker_avoids_false_positives(self):
     with jax.checking_leaks():
+      api.vmap(lambda x: x)(np.arange(3.))  # doesn't crash
+
       @jit
       def f(x):
         return x
@@ -3038,37 +3040,6 @@ class APITest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_rev)
 
     api.grad(lambda x: f(f(f(x))))(1.)
-
-  def test_custom_vjp_scan_batching_edge_case(self):
-    # https://github.com/google/jax/issues/5832
-    @jax.custom_vjp
-    def mul(x, coeff): return x * coeff
-    def mul_fwd(x, coeff): return mul(x, coeff), (x, coeff)
-    def mul_bwd(res, g):
-        x, coeff = res
-        g_x = g * coeff
-        g_coeff = (x * g).sum()
-        return g_x, g_coeff
-    mul.defvjp(mul_fwd, mul_bwd)
-
-    def scan_over_mul(x, coeff):
-        def f_(x, t):
-            return mul(x, coeff), None
-        y, _ = jax.lax.scan(f_, x, jnp.arange(3))
-        return y
-
-    key = jax.random.PRNGKey(0)
-    key1, key2 = jax.random.split(key, 2)
-    x_batch = jax.random.normal(key1, (3, 2))
-    covector_batch = jax.random.normal(key2, (3, 2))
-    coeff = jnp.array(1.)
-
-    batched_scan_over_mul = jax.vmap(scan_over_mul, in_axes=(0, None), out_axes=0)
-    res, vjp_fun = jax.vjp(batched_scan_over_mul, x_batch, coeff)
-    vjp_fun(covector_batch)  # doesn't crash
-
-    jtu.check_grads(batched_scan_over_mul, (x_batch, coeff), order=2,
-                    modes=['rev'])
 
   def test_jit_inline(self):
     @partial(api.jit, inline=False)
@@ -6010,6 +5981,37 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_bwd)
 
     jax.jit(lambda x: jax.vjp(f, 0., x)[1](1.))(1)  # doesn't crash
+
+  def test_custom_vjp_scan_batching_edge_case(self):
+    # https://github.com/google/jax/issues/5832
+    @jax.custom_vjp
+    def mul(x, coeff): return x * coeff
+    def mul_fwd(x, coeff): return mul(x, coeff), (x, coeff)
+    def mul_bwd(res, g):
+        x, coeff = res
+        g_x = g * coeff
+        g_coeff = (x * g).sum()
+        return g_x, g_coeff
+    mul.defvjp(mul_fwd, mul_bwd)
+
+    def scan_over_mul(x, coeff):
+        def f_(x, t):
+            return mul(x, coeff), None
+        y, _ = jax.lax.scan(f_, x, jnp.arange(3))
+        return y
+
+    key = jax.random.PRNGKey(0)
+    key1, key2 = jax.random.split(key, 2)
+    x_batch = jax.random.normal(key1, (3, 2))
+    covector_batch = jax.random.normal(key2, (3, 2))
+    coeff = jnp.array(1.)
+
+    batched_scan_over_mul = jax.vmap(scan_over_mul, in_axes=(0, None), out_axes=0)
+    res, vjp_fun = jax.vjp(batched_scan_over_mul, x_batch, coeff)
+    vjp_fun(covector_batch)  # doesn't crash
+
+    jtu.check_grads(batched_scan_over_mul, (x_batch, coeff), order=2,
+                    modes=['rev'])
 
 
 class CustomTransposeTest(jtu.JaxTestCase):

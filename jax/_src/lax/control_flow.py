@@ -435,10 +435,10 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
         axis_name=axis_name, main_type=main_type)
   else:
     # If the predicate is not batched, we can look at the `cond_jaxpr`'s out
-    # shape to determine the rank of the predicate. From this rank
-    # we pick the dims of the carry to be batched to ensure that the predicate
-    # shape is a prefix of the carry in and out shapes. We can then batch
-    # the `body_jaxpr` according to these new batch dims.
+    # shape to determine the rank of the predicate. From this rank we pick the
+    # dims of the carry to be batched to ensure that the predicate shape is a
+    # prefix of the carry in and out shapes. We can then batch the `body_jaxpr`
+    # according to these new batch dims.
     cond_rank = len(cond_jaxpr.out_avals[0].shape)
     carry_dims = [cond_rank if b else None for b in carry_bat]
     body_jaxpr_batched, _ = batching.batch_jaxpr_axes(
@@ -2459,9 +2459,11 @@ def _linear_solve_batching_rule(axis_size, axis_name, main_type, args, dims,
       solve_t_jaxpr_batched = None
       b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
     else:
-      solve_t_jaxpr_batched, solve_t_b_bat = batching.batch_jaxpr(
+      solve_t_jaxpr_batched, solve_t_b_aux_bat = batching.batch_jaxpr(
           solve_t, axis_size, solve_t_bat + x_bat_out, instantiate=b_bat,
           axis_name=axis_name, main_type=main_type)
+      assert len(solve_t_b_aux_bat) == len(orig_b_bat) + num_aux
+      solve_t_b_bat, _ = split_list(solve_t_b_aux_bat, [len(orig_b_bat)])
       b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
                       orig_b_bat)
     if x_bat_out == x_bat and b_bat_out == b_bat:
