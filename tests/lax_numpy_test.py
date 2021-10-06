@@ -3494,6 +3494,32 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             canonicalize_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_dtype={np.dtype(dtype)}", "dtype": dtype}
+      for dtype in all_dtypes))
+  def testArrayCopy(self, dtype):
+    x = jnp.ones(10, dtype=dtype)
+
+    x_view = jnp.asarray(x)
+    x_view_jit = jax.jit(jnp.asarray)(x)
+    x_copy = jnp.array(x)
+    x_copy_jit = jax.jit(jnp.array)(x)
+
+    _ptr = lambda x: x.device_buffer.unsafe_buffer_pointer()
+
+    self.assertEqual(_ptr(x), _ptr(x_view))
+    self.assertEqual(_ptr(x), _ptr(x_view_jit))
+    self.assertNotEqual(_ptr(x), _ptr(x_copy))
+    self.assertNotEqual(_ptr(x), _ptr(x_copy_jit))
+
+    x.delete()
+
+    self.assertTrue(x_view.is_deleted())
+    self.assertTrue(x_view_jit.is_deleted())
+
+    self.assertFalse(x_copy.is_deleted())
+    self.assertFalse(x_copy_jit.is_deleted())
+
   def testArrayUnsupportedDtypeError(self):
     with self.assertRaisesRegex(TypeError,
                                 "JAX only supports number and bool dtypes.*"):

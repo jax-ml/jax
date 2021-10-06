@@ -50,6 +50,7 @@ from jax.config import config
 from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
 from jax.interpreters import pxla
 from jax import lax
+from jax._src.lax.lax import _array_copy
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis, maybe_named_axis)
@@ -3553,12 +3554,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0, *, device=None):
     out = _np_array(object, copy=copy, dtype=dtype)
     if dtype: assert _dtype(out) == dtype
   elif isinstance(object, (DeviceArray, core.Tracer)):
-    if isinstance(object, DeviceArray) and copy:
-      # We perform a copy by bouncing back to the host
-      # TODO(phawkins): add a device runtime function to copy a buffer
-      out = _np_asarray(object)
-    else:
-      out = object
+    out = _array_copy(object) if copy else object
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([asarray(elt, dtype=dtype) for elt in object])
