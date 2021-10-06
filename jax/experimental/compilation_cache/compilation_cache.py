@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import hashlib
+import os
 import re
+import sys
 
 import jax
 from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
@@ -57,6 +59,11 @@ def put_executable(xla_computation, compile_options, executable: xla_client.Exec
   serialized_executable = backend.serialize_executable(executable)
   _cache.put(cache_key, serialized_executable)
 
+def _log_cache_key_hash(hash_obj, last_serialized: str):
+  if logging.vlog_is_on(1):
+    logging.vlog(1, "get_cache_key hash after serializing %s: %s",
+                 last_serialized, hash_obj.digest().hex())
+
 def get_cache_key(xla_computation, compile_options, backend) -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
@@ -79,17 +86,20 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
   serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
   scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
   hash_obj.update(scrubbed_hlo)
-  if logging.vlog_is_on(1):
-    logging.vlog(1, f"get_cache_key hash after serializing computation: {hash_obj.digest().hex()}")
+  _log_cache_key_hash(hash_obj, "computation")
+
   _hash_compile_options(hash_obj, compile_options)
-  if logging.vlog_is_on(1):
-    logging.vlog(1, f"get_cache_key hash after serializing compile_options: {hash_obj.digest().hex()}")
+  _log_cache_key_hash(hash_obj, "compile_options")
+
   hash_obj.update(bytes(jax._src.lib.version))
-  if logging.vlog_is_on(1):
-    logging.vlog(1, f"get_cache_key hash after serializing jax_lib version: {hash_obj.digest().hex()}")
+  _log_cache_key_hash(hash_obj, "jax_lib version")
+
   _hash_platform(hash_obj, backend)
-  if logging.vlog_is_on(1):
-    logging.vlog(1, f"get_cache_key hash after serializing the backend: {hash_obj.digest().hex()}")
+  _log_cache_key_hash(hash_obj, "the backend")
+
+  _hash_xla_flags(hash_obj)
+  _log_cache_key_hash(hash_obj, "XLA flags")
+
   return hash_obj.digest().hex()
 
 def _hash_compile_options(hash_obj, compile_options_obj):
@@ -144,6 +154,42 @@ def _hash_platform(hash_obj, backend):
   _hash_string(hash_obj, backend.platform)
   _hash_string(hash_obj, backend.platform_version)
   _hash_string(hash_obj, backend.runtime_type)
+
+_xla_flags_to_exclude_from_cache_key = [
+    "--xla_dump_compress_protos",
+    "--xla_dump_module_metadata",
+    "--xla_dump_max_hlo_modules",
+    "--xla_dump_include_timestamp",
+    "--xla_dump_hlo_pass_re",
+    "--xla_dump_hlo_module_re",
+    "--xla_dump_hlo_snapshots",
+    "--xla_dump_fusion_visualization",
+    "--xla_dump_hlo_as_url",
+    "--xla_dump_hlo_as_proto",
+    "--xla_dump_hlo_as_text",
+    "--xla_dump_to",
+    "--xla_force_host_platform_device_count",
+    "--xla_dump_disable_metadata",
+    "--xla_dump_hlo_pipeline_re",
+]
+
+def _hash_xla_flags(hash_obj):
+  xla_flags = []
+
+  xla_flags_env_var = os.getenv("XLA_FLAGS")
+  if xla_flags_env_var:
+    xla_flags.extend(xla_flags_env_var.split())
+
+  xla_flags.extend(arg for arg in sys.argv if arg.startswith("--xla_"))
+
+  # N.B. all XLA flags that take an argument must use '=' and not a space
+  # (e.g. --xla_force_host_platform_device_count=8) (I think).
+  for flag in xla_flags:
+    if flag.split('=')[0] in _xla_flags_to_exclude_from_cache_key:
+      logging.vlog(1, "Not including XLA flag in cache key: %s", flag)
+      continue
+    logging.vlog(1, "Including XLA flag in cache key: %s", flag)
+    _hash_string(hash_obj, flag)
 
 def _hash_int(hash_obj, int_var):
   hash_obj.update(int_var.to_bytes(8, byteorder='big'))

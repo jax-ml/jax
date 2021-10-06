@@ -16,6 +16,7 @@ from functools import partial
 import hashlib
 import os
 import random
+import sys
 import tempfile
 import unittest
 from unittest import SkipTest
@@ -140,6 +141,46 @@ class CompilationCacheTest(jtu.JaxTestCase):
     backend = jax._src.lib.xla_bridge.get_backend()
     self.assertNotEqual(cc.get_cache_key(computation1, compile_options, backend),
                         cc.get_cache_key(computation2, compile_options, backend))
+
+  def test_xla_flags(self):
+    computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+    compile_options = jax._src.lib.xla_bridge.get_compile_options(
+        num_replicas=1, num_partitions=1)
+    backend = jax._src.lib.xla_bridge.get_backend()
+
+    orig_xla_flags = os.getenv("XLA_FLAGS")
+    orig_argv = sys.argv
+    try:
+      os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
+      key1 = cc.get_cache_key(computation, compile_options, backend)
+      os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=1"
+      key2 = cc.get_cache_key(computation, compile_options, backend)
+      self.assertNotEqual(key1, key2)
+
+      os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
+      key3 = cc.get_cache_key(computation, compile_options, backend)
+      self.assertEqual(key1, key3)
+
+      # Test flag in _xla_flags_to_exclude_from_cache_key
+      os.environ["XLA_FLAGS"] = (
+          "--xla_gpu_autotune_level=0 --xla_force_host_platform_device_count=8")
+      key4 = cc.get_cache_key(computation, compile_options, backend)
+      self.assertEqual(key1, key4)
+
+      # Test flags given on command line
+      del os.environ["XLA_FLAGS"]
+      sys.argv.append("--xla_gpu_autotune_level=0")
+      key5 = cc.get_cache_key(computation, compile_options, backend)
+      self.assertEqual(key1, key5)
+      sys.argv.append("--xla_force_host_platform_device_count=8")
+      self.assertEqual(key1, key5)
+
+    finally:
+      if orig_xla_flags is not None:
+        os.environ["XLA_FLAGS"] = orig_xla_flags
+      elif os.getenv("XLA_FLAGS") is not None:
+        del os.environ["XLA_FLAGS"]
+      sys.argv = orig_argv
 
   def test_get_no_executable(self):
     with tempfile.TemporaryDirectory() as tmpdir:
