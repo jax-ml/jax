@@ -551,7 +551,7 @@ ad.primitive_jvps[coo_matmat_p] = _coo_matmat_jvp_rule
 class JAXSparse:
   """Base class for high-level JAX sparse objects."""
   data: jnp.ndarray
-  shape: Tuple[int, int]
+  shape: Tuple[int, ...]
   nse: property
   dtype: property
 
@@ -614,6 +614,7 @@ class CSR(JAXSparse):
   data: jnp.ndarray
   indices: jnp.ndarray
   indptr: jnp.ndarray
+  shape: Tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
 
@@ -653,6 +654,7 @@ class CSC(JAXSparse):
   data: jnp.ndarray
   indices: jnp.ndarray
   indptr: jnp.ndarray
+  shape: Tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
 
@@ -692,6 +694,7 @@ class COO(JAXSparse):
   data: jnp.ndarray
   row: jnp.ndarray
   col: jnp.ndarray
+  shape: Tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
 
