@@ -1139,6 +1139,37 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertEqual(M1.dtype, M2.dtype)
     self.assertArraysEqual(M1.todense(), M2.todense())
 
+class BCSRTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+      for n_batch in range(len(shape) - 1)
+      for n_dense in [len(shape) - 2 - n_batch]))
+  def test_bcsr_dense_round_trip(self, shape, dtype, n_batch, n_dense):
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+    n_sparse = M.ndim - n_batch - n_dense
+    nse = int(sparse.bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    data, indices, indptr = sparse.bcsr_fromdense(M, n_batch=n_batch, n_dense=n_dense)
+    data_jit, indices_jit, indptr_jit = jit(partial(sparse.bcsr_fromdense, nse=nse, n_batch=n_batch, n_dense=n_dense))(M)
+    self.assertArraysEqual(data, data_jit)
+    self.assertArraysEqual(indices, indices_jit)
+    self.assertArraysEqual(indptr, indptr_jit)
+
+    self.assertEqual(data.dtype, dtype)
+    self.assertEqual(data.shape, shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:])
+    self.assertEqual(indices.dtype, jnp.int32)  # TODO: test passing this arg
+    self.assertEqual(indices.shape, shape[:n_batch] + (nse,))
+    self.assertEqual(indptr.dtype, jnp.int32)  # TODO: test passing this arg
+    self.assertEqual(indptr.shape, shape[:n_batch] + (shape[n_batch] + 1,))
+
+    todense = partial(sparse.bcsr_todense, shape=shape)
+    self.assertArraysEqual(M, todense(data, indices, indptr))
+    self.assertArraysEqual(M, jit(todense)(data, indices, indptr))
+
 
 class SparseGradTest(jtu.JaxTestCase):
   def test_sparse_grad(self):

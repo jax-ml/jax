@@ -229,4 +229,15 @@ from .ops import (
     CSR as CSR,
 )
 
+from .bcsr import (
+    bcsr_fromdense as bcsr_fromdense,
+    bcsr_fromdense_p as bcsr_fromdense_p,
+    bcsr_todense as bcsr_todense,
+    bcsr_todense_p as bcsr_todense_p,
+    bcsr_extract as bcsr_extract,
+    bcsr_extract_p as bcsr_extract_p,
+    BCSR as BCSR,
+
+)
+
 from .transform import sparsify as sparsify

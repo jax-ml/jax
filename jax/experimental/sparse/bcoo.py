@@ -228,8 +228,7 @@ def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32
   return bcoo_fromdense_p.bind(mat, nse=nse, n_batch=n_batch, n_dense=n_dense,
                                index_dtype=index_dtype)
 
-@bcoo_fromdense_p.def_impl
-def _bcoo_fromdense_impl(mat, *, nse, n_batch, n_dense, index_dtype):
+def _bcoo_fromdense_helper(mat, *, nse, n_batch, n_dense, index_dtype):  
   mat = jnp.asarray(mat)
   mask = (mat != 0)
   if n_dense > 0:
@@ -245,9 +244,14 @@ def _bcoo_fromdense_impl(mat, *, nse, n_batch, n_dense, index_dtype):
   data = bcoo_extract(indices, mat)
 
   true_nonzeros = jnp.arange(nse) < mask.sum(list(range(n_batch, mask.ndim)))[..., None]
-  true_nonzeros = true_nonzeros[(n_batch + 1) * (slice(None),) + n_dense * (None,)]
-  data = jnp.where(true_nonzeros, data, 0)
+  data = jnp.where(true_nonzeros[(...,) + n_dense * (None,)], data, 0)
 
+  return data, indices, true_nonzeros
+
+@bcoo_fromdense_p.def_impl
+def _bcoo_fromdense_impl(mat, *, nse, n_batch, n_dense, index_dtype):
+  data, indices, true_nonzeros = _bcoo_fromdense_helper(mat,
+      nse=nse, n_batch=n_batch, n_dense=n_dense, index_dtype=index_dtype)
   return data, indices
 
 @bcoo_fromdense_p.def_abstract_eval
