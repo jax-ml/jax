@@ -187,7 +187,7 @@ from .ad import (
     grad as grad,
     value_and_grad as value_and_grad,
 )
-from .ops import (
+from .bcoo import (
     bcoo_dot_general as bcoo_dot_general,
     bcoo_dot_general_p as bcoo_dot_general_p,
     bcoo_dot_general_sampled as bcoo_dot_general_sampled,
@@ -204,6 +204,10 @@ from .ops import (
     bcoo_todense_p as bcoo_todense_p,
     bcoo_transpose as bcoo_transpose,
     bcoo_transpose_p as bcoo_transpose_p,
+    BCOO as BCOO,
+)
+
+from .ops import (
     coo_fromdense as coo_fromdense,
     coo_fromdense_p as coo_fromdense_p,
     coo_matmat as coo_matmat,
@@ -223,7 +227,6 @@ from .ops import (
     COO as COO,
     CSC as CSC,
     CSR as CSR,
-    BCOO as BCOO,
 )
 
 from .transform import sparsify as sparsify
