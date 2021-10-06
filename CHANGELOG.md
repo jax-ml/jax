@@ -28,11 +28,16 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     unhashable static arguments into the function object.
   * `jax.util.partial` was an accidental export that has now been removed. Use
     `functools.partial` from the Python standard library instead.
+* Deprecations
+  * The functions `jax.ops.index_update`, `jax.ops.index_add` etc. are
+    deprecated and will be removed in a future JAX release. Please use
+    [the `.at` property on JAX arrays](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html)
+    instead, e.g., `x.at[idx].set(y)`. For now, these functions produce a
+    `DeprecationWarning`.
 * New features:
-  * A C++ code-path improving the dispatch time for pmap is now the default when
-    using jaxlib 0.1.72 or newer. The feature can be disabled using the
-    `--experimental_cpp_pmap` flag (or `JAX_CPP_PMAP` environment variable).
-    It improves dispatch time,
+  * An optimized C++ code-path improving the dispatch time for `pmap` is now the
+    default when using jaxlib 0.1.72 or newer. The feature can be disabled using
+    the `--experimental_cpp_pmap` flag (or `JAX_CPP_PMAP` environment variable).
 
 ## jax 0.2.21 (Sept 23, 2021)
 * [GitHub
