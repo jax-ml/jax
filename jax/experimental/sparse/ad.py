@@ -23,7 +23,7 @@ from jax._src.api_util import _ensure_index, _ensure_index_tuple
 from jax.util import safe_zip
 from jax._src.util import wraps
 from jax._src.traceback_util import api_boundary
-from .ops import BCOO
+from .bcoo import BCOO
 
 
 def value_and_grad(fun: Callable,

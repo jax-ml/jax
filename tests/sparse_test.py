@@ -24,7 +24,6 @@ import jax
 from jax import config
 from jax import dtypes
 from jax.experimental import sparse
-from jax.experimental.sparse.ops import _bcoo_nse
 from jax import lax
 from jax._src.lib import cusparse
 from jax._src.lib import xla_bridge
@@ -390,7 +389,7 @@ class BCOOTest(jtu.JaxTestCase):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
     n_sparse = M.ndim - n_batch - n_dense
-    nse = int(_bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = int(sparse.bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
     data, indices = sparse.bcoo_fromdense(M, n_batch=n_batch, n_dense=n_dense)
     data_jit, indices_jit = jit(partial(sparse.bcoo_fromdense, nse=nse, n_batch=n_batch, n_dense=n_dense))(M)
     self.assertArraysEqual(data, data_jit)
@@ -437,7 +436,7 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_fromdense_ad(self, shape, dtype, n_batch, n_dense):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nse = int(_bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = int(sparse.bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
 
     def fromdense(M):
       return sparse.bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)[0]
@@ -462,7 +461,7 @@ class BCOOTest(jtu.JaxTestCase):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
     n_sparse = M.ndim - n_batch - n_dense
-    nse = int(_bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = int(sparse.bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
 
     fromdense = partial(sparse.bcoo_fromdense, nse=nse, n_dense=n_dense)
     todense = partial(sparse.bcoo_todense, shape=shape[n_batch:])
@@ -992,7 +991,7 @@ class BCOOTest(jtu.JaxTestCase):
       return lax.dot_general(x, y, dimension_numbers=dimension_numbers)
 
     def f_sparse(x, y, xsp, ysp):
-      shape = sparse.ops._dot_general_validated_shape(x.shape, y.shape, dimension_numbers)
+      shape = sparse.bcoo._dot_general_validated_shape(x.shape, y.shape, dimension_numbers)
       data, indices = sparse.bcoo_spdot_general(xsp.data, xsp.indices, ysp.data, ysp.indices,
                                                 lhs_shape=x.shape, rhs_shape=y.shape,
                                                 dimension_numbers=dimension_numbers)

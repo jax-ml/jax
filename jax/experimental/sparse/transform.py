@@ -282,7 +282,7 @@ for _prim in [
 def _dot_general_sparse(spenv, *argspecs, dimension_numbers, precision, preferred_element_type):
   A, B = argspecs_to_arrays(spenv, argspecs)
   if argspecs[0].is_sparse() and argspecs[1].is_sparse():
-    shape = sparse.ops._dot_general_validated_shape(A.shape, B.shape, dimension_numbers)
+    shape = sparse.bcoo._dot_general_validated_shape(A.shape, B.shape, dimension_numbers)
     data, indices = sparse.bcoo_spdot_general(A.data, A.indices, B.data, B.indices,
                                               lhs_shape=A.shape, rhs_shape=B.shape,
                                               dimension_numbers=dimension_numbers)
