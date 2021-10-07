@@ -1368,10 +1368,30 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   lambda a, i: a[i],
                   [RandArg((3, 4), _f32), np.array([1, 2, 0], np.int32)],
                   poly_axes=[0, 0], enable_and_diable_xla=True),
-    _make_harness("getitem", "op=poly_idx=slice",
-                  lambda a: a[1],
+    # op is poly and index is an entire slice
+    _make_harness("getitem", "op=poly_idx=slice-all",
+                  lambda a: a[:],
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0], enable_and_diable_xla=True),
+    # op is poly and index is a partial slice
+    _make_harness("getitem", "op=poly_idx=slice-ct-1",
+                  lambda a: a[:2],
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0], enable_and_diable_xla=True,
+                  expect_error=(IndexError, "Cannot use NumPy slice indexing on an array dimension")),
+    _make_harness("getitem", "op=poly_idx=slice-ct-2",
+                  lambda a: a[:, :2],
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0], enable_and_diable_xla=True),
+    _make_harness("getitem", "op=poly_idx=slice-None-1",
+                  lambda a: a[:a.shape[0]],
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0], enable_and_diable_xla=True),
+    _make_harness("getitem", "op=poly_idx=slice-poly",
+                  lambda a: a[:a.shape[0] - 1],
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0], enable_and_diable_xla=True,
+                  expect_error=(IndexError, "Array slice indices must have static")),
     _make_harness("index_in_dim", "idx=pos",
                   lambda x: lax.index_in_dim(x, 0, axis=0, keepdims=False),
                   [RandArg((3, 4), _f32)],
@@ -1715,7 +1735,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="delta_0_poly_axes=[0]"
+      #one_containing="getitem_op=poly_idx=slice-None-1"
   )
   def test_prim(self, harness: Harness):
     args = harness.dyn_args_maker(self.rng())

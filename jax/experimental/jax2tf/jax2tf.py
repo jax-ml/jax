@@ -2348,13 +2348,13 @@ def _gather_dimensions_proto(indices_shape, dimension_numbers):
   return proto
 
 
-def _clip(max_indices: Sequence[TfVal], start_indices: TfVal, slice_sizes):
+def _clip(max_indices: Sequence[TfVal], start_indices: Sequence[TfVal], slice_sizes: Sequence[TfVal]):
   """Simulates XLA clipping behavior with TF ops.
 
   Various TF ops have different clipping behavior than XLA:
-  * If `start_indices` is OOB, then TF fails but XLA clips the indices to
+  * If `start_indices` is out-of-bounds, then TF fails but XLA clips the indices to
     [0, max_len].
-  * If `start_indices + slice_size` is OOB, then TF fails, but XLA adjust
+  * If `start_indices + slice_size` is out-of-bounds, then TF fails, but XLA adjust
     `start_indices` so that a full slice is returned.
   This function clips the start indices correctly.
   """
@@ -2369,7 +2369,7 @@ def _clip(max_indices: Sequence[TfVal], start_indices: TfVal, slice_sizes):
 
 
 def _gather_using_tf_slice(operand: TfVal, start_indices: TfVal, *,
-                           dimension_numbers, slice_sizes,
+                           dimension_numbers, slice_sizes: core.Shape,
                            _in_avals: Sequence[core.ShapedArray],
                            _out_aval: core.ShapedArray):
   """Implements 'scalar indexing into arrays' cases of lax.gather using tf.slice.
@@ -2382,8 +2382,9 @@ def _gather_using_tf_slice(operand: TfVal, start_indices: TfVal, *,
   # in `operand`. Since tf.strided_slice uses a single array for specifying the
   # start indices, we use a scatter to map the start indices to the right axes.
   begin = tf.scatter_nd(indices, start_indices, [len(op_shape)])
-  begin = _clip(_eval_shape(op_shape), begin, slice_sizes)
-  end = slice_sizes + begin
+  slice_sizes_tf = _eval_shape(slice_sizes)
+  begin = _clip(_eval_shape(op_shape), begin, slice_sizes_tf)
+  end = slice_sizes_tf + begin
 
   # Convert from tuple of dimensions to shrink mask. e.g. (0, 2) --> 5.
   shrink_mask = sum(2 ** x for x in dimension_numbers.collapsed_slice_dims)
@@ -2441,12 +2442,12 @@ def _gather_using_tf_gather(operand: TfVal, start_indices: TfVal, *,
         f"unexpected slice_sizes {slice_sizes} != {expected_slice_sizes}")
 
   squeezed_indices = tf.squeeze(start_indices, -1)
-  start_indices = _clip(_eval_shape(op_shape)[axis], squeezed_indices, 1)
+  start_indices = _clip((_eval_shape(op_shape)[axis],), squeezed_indices, (1,))
   return tf.gather(operand, start_indices, axis=axis, batch_dims=0)
 
 
 @partial(bool_to_int8, argnums=[0])
-def _gather(operand, start_indices, *, dimension_numbers, slice_sizes,
+def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shape,
             indices_are_sorted, unique_indices, mode, fill_value,
             _in_avals: Sequence[core.ShapedArray],
             _out_aval: core.ShapedArray):
@@ -2507,19 +2508,19 @@ def _slice(operand, start_indices, limit_indices, strides, _in_avals,
 tf_impl_with_avals[lax.slice_p] = _slice
 
 
-def _dynamic_slice(operand, *start_indices, slice_sizes,
+def _dynamic_slice(operand, *start_indices, slice_sizes: core.Shape,
                    _in_avals: Sequence[core.ShapedArray],
                    _out_aval: core.ShapedArray):
   start_indices = tf.stack(start_indices)
-  slice_sizes = _eval_shape(slice_sizes)
+  slice_sizes_tf = _eval_shape(slice_sizes)
 
   if _thread_local_state.enable_xla:
-    res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes)
+    res = tfxla.dynamic_slice(operand, start_indices, size_indices=slice_sizes_tf)
     return res
 
   operand_shape = _eval_shape(_in_avals[0].shape)
-  start_indices = _clip(operand_shape, start_indices, slice_sizes)
-  return tf.slice(operand, start_indices, size=slice_sizes)
+  start_indices = _clip(operand_shape, start_indices, slice_sizes_tf)
+  return tf.slice(operand, start_indices, size=slice_sizes_tf)
 
 
 tf_impl_with_avals[lax.dynamic_slice_p] = _dynamic_slice
@@ -2537,10 +2538,10 @@ def _dynamic_update_slice(operand, update, *start_indices,
 
   op_shape = _eval_shape(_in_avals[0].shape)
   op_size = tf.size(operand)
-  update_shape = _eval_shape(_in_avals[1].shape)
+  update_shape_tf = _eval_shape(_in_avals[1].shape)
 
-  start_indices = _clip(op_shape, start_indices, update_shape)
-  end_indices = tf.add(start_indices, update_shape)
+  start_indices = _clip(op_shape, start_indices, update_shape_tf)
+  end_indices = tf.add(start_indices, update_shape_tf)
   flatten = tf.keras.backend.flatten
 
   # Get the cells to update in `operand` as an array of ids.
