@@ -1182,6 +1182,10 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     # TODO(mattjj): enable this test if/when RngBitGenerator supports it
     raise SkipTest('8-bit types not supported with RBG PRNG')
 
+class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
+  def seed_prng(self, seed):
+    return prng.seed_with_impl(prng.unsafe_rbg_prng_impl, seed)
+
 def _sampler_unimplemented_with_rbg(*args, **kwargs):
   # TODO(mattjj): enable these tests if/when RngBitGenerator supports them
   raise SkipTest('8- and 16-bit types not supported with RBG PRNG')
@@ -1189,6 +1193,7 @@ def _sampler_unimplemented_with_rbg(*args, **kwargs):
 for attr in dir(LaxRandomWithRBGPRNGTest):
   if 'int8' in attr or 'int16' in attr or 'float16' in attr:
     setattr(LaxRandomWithRBGPRNGTest, attr, _sampler_unimplemented_with_rbg)
+    setattr(LaxRandomWithUnsafeRBGPRNGTest, attr, _sampler_unimplemented_with_rbg)
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
@@ -1213,7 +1218,8 @@ for test_prefix in [
               _sampler_unimplemented_with_custom_prng)
       setattr(LaxRandomWithRBGPRNGTest, attr,
               _sampler_unimplemented_with_custom_prng)
-
+      setattr(LaxRandomWithUnsafeRBGPRNGTest, attr,
+              _sampler_unimplemented_with_custom_prng)
 
 
 if __name__ == "__main__":

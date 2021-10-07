@@ -505,8 +505,12 @@ def _rbg_seed(seed: int) -> jnp.ndarray:
   return jnp.concatenate([halfkey, halfkey])
 
 def _rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
-  _, keys = lax.rng_bit_generator(key, (num, 4), dtype='uint32')
-  return keys
+  return jnp.concatenate([_threefry_split(key[:2], num),
+                          _threefry_split(key[2:], num)], axis=1)
+
+def _rbg_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
+  return jnp.concatenate([_threefry_fold_in(key[:2], data),
+                          _threefry_fold_in(key[2:], data)])
 
 def _rbg_random_bits(key: jnp.ndarray, bit_width: int, shape: Sequence[int]
                      ) -> jnp.ndarray:
@@ -517,12 +521,25 @@ def _rbg_random_bits(key: jnp.ndarray, bit_width: int, shape: Sequence[int]
   _, bits = lax.rng_bit_generator(key, shape, dtype=UINT_DTYPES[bit_width])
   return bits
 
-def _rbg_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
-  return jnp.uint32(data) ^ key
-
 rbg_prng_impl = PRNGImpl(
     key_shape=(4,),
     seed=_rbg_seed,
     split=_rbg_split,
     random_bits=_rbg_random_bits,
     fold_in=_rbg_fold_in)
+
+def _unsafe_rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
+  # treat 10 iterations of random bits as a 'hash function'
+  _, keys = lax.rng_bit_generator(key, (10 * num, 4), dtype='uint32')
+  return keys[::10]
+
+def _unsafe_rbg_fold_in(key: jnp.ndarray, data: int) -> jnp.ndarray:
+  _, random_bits = lax.rng_bit_generator(_rbg_seed(data), (10, 4), dtype='uint32')
+  return key ^ random_bits[-1]
+
+unsafe_rbg_prng_impl = PRNGImpl(
+    key_shape=(4,),
+    seed=_rbg_seed,
+    split=_unsafe_rbg_split,
+    random_bits=_rbg_random_bits,
+    fold_in=_unsafe_rbg_fold_in)
