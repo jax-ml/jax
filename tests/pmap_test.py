@@ -129,6 +129,13 @@ class PythonPmapTest(jtu.JaxTestCase):
       else:
         return device_mesh_shape
 
+  def testDeviceBufferAvals(self):
+    f = self.pmap(lambda x: x)
+    x = jnp.zeros((jax.device_count(), 4))
+    y = f(x)
+    for shard in y.device_buffers:
+      self.assertIsInstance(shard.aval, ShapedArray)
+
   def testBasic(self):
     f = self.pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 

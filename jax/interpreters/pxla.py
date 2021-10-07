@@ -527,7 +527,7 @@ class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
       device_buffers[i].to_py()`.
   """
   __slots__ = [
-      "aval", "device_buffers", "sharding_spec", "indices",
+      "aval", "_device_buffers", "sharding_spec", "indices",
       "_one_replica_buffer_indices", "_npy_value"
   ]
 
@@ -543,13 +543,24 @@ class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
       indices = spec_to_indices(aval.shape, sharding_spec)
 
     self.aval = aval
-    self.device_buffers = device_buffers
+    self._device_buffers = device_buffers
     self.sharding_spec = sharding_spec
     self.indices = indices
     self._npy_value = None
     self._one_replica_buffer_indices = None
     if config.jax_enable_checks:
       assert type(aval) is ShapedArray
+
+  @property
+  def device_buffers(self):
+    # TODO(jakevdp): deprecate this property; it is an implementation detail
+    # that should not be public.
+    if self._device_buffers is None:
+      return None
+    for buf in self._device_buffers:
+      if buf.aval is None:
+        buf.aval = ShapedArray(buf.shape, buf.dtype, self.aval.weak_type)
+    return self._device_buffers
 
   @property
   def shape(self):
@@ -568,11 +579,11 @@ class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
     return len(self.aval.shape)
 
   def delete(self):
-    if self.device_buffers is None:
+    if self._device_buffers is None:
       return
-    for buf in self.device_buffers:
+    for buf in self._device_buffers:
       buf.delete()
-    self.device_buffers = None
+    self._device_buffers = None
     self._npy_value = None
 
 
