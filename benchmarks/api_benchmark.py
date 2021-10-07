@@ -288,6 +288,9 @@ def pmap_simple_8_devices_100_args(state):
   for i in range(100):
     args.append(jnp.array(list(range(i, i+8))))
 
+  # Warmup loop.
+  out = f(*args)
+
   while state:
     out = f(*args)
     jax.tree_map(lambda x: x.block_until_ready(), out)
