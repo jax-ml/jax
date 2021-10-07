@@ -129,6 +129,18 @@ class PythonPmapTest(jtu.JaxTestCase):
       else:
         return device_mesh_shape
 
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 40,
+                 "Requires jaxlib 0.1.72")
+  def testDeviceBufferAvals(self):
+    f = self.pmap(lambda x: x)
+    x = jnp.zeros((jax.device_count(), 4))
+    y = f(x)
+    for shard in y.device_buffers:
+      self.assertIsInstance(shard.aval, ShapedArray)
+      self.assertEqual(shard.aval.shape, shard.shape)
+      self.assertEqual(shard.aval.dtype, shard.dtype)
+      self.assertEqual(shard.aval.weak_type, y.aval.weak_type)
+
   def testBasic(self):
     f = self.pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 
