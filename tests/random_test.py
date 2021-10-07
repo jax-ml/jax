@@ -1137,6 +1137,32 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     keys = vmap(lambda i: random.fold_in(key, i))(jnp.arange(3))
     self.assertEqual(keys.shape, (3,))
 
+  def test_vmap_split_not_mapped_key(self):
+    key = self.seed_prng(73)
+    single_split_key = random.split(key)
+    vmapped_keys = vmap(lambda _: random.split(key))(jnp.zeros(3,))
+    self.assertEqual(vmapped_keys.shape, (3, 2))
+    for vk in vmapped_keys:
+      self.assertArraysEqual(vk.keys, single_split_key.keys)
+
+  def test_vmap_split_mapped_key(self):
+    key = self.seed_prng(73)
+    mapped_keys = random.split(key, num=3)
+    forloop_keys = [random.split(k) for k in mapped_keys]
+    vmapped_keys = vmap(random.split)(mapped_keys)
+    self.assertEqual(vmapped_keys.shape, (3, 2))
+    for fk, vk in zip(forloop_keys, vmapped_keys):
+      self.assertArraysEqual(fk.keys, vk.keys)
+
+  def test_vmap_random_bits(self):
+    rand_fun = lambda key: random.randint(key, (), 0, 100)
+    key = self.seed_prng(73)
+    mapped_keys = random.split(key, num=3)
+    forloop_rand_nums = [rand_fun(k) for k in mapped_keys]
+    rand_nums = vmap(rand_fun)(mapped_keys)
+    self.assertEqual(rand_nums.shape, (3,))
+    self.assertArraysEqual(rand_nums, jnp.array(forloop_rand_nums))
+
   def test_cannot_add(self):
     key = self.seed_prng(73)
     self.assertRaisesRegex(
