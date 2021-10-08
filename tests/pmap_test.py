@@ -114,6 +114,20 @@ class PythonPmapTest(jtu.JaxTestCase):
   def pmap(self):
     return src_api._python_pmap
 
+  def testDeviceBufferToArray(self):
+    sda = self.pmap(lambda x: x)(jnp.ones((jax.device_count(), 2)))
+    buf = sda.device_buffers[-1]
+
+    view = jnp.array(buf, copy=False)
+    self.assertArraysEqual(sda[-1], view)
+    self.assertEqual(buf.device(), view.device())
+    self.assertEqual(buf.unsafe_buffer_pointer(), view.unsafe_buffer_pointer())
+
+    copy = jnp.array(buf, copy=True)
+    self.assertArraysEqual(sda[-1], copy)
+    self.assertEqual(buf.device(), copy.device())
+    self.assertNotEqual(buf.unsafe_buffer_pointer(), copy.unsafe_buffer_pointer())
+
   def _getMeshShape(self, device_mesh_shape):
     device_count = jax.device_count()
     if any(size == -1 for size in device_mesh_shape):

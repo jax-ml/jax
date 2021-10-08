@@ -47,7 +47,7 @@ from jax._src.api_util import _ensure_index_tuple
 from jax import errors
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import config
-from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray
+from jax.interpreters.xla import DeviceArray, _DeviceArray, _CppDeviceArray, make_device_array
 from jax.interpreters import pxla
 from jax import lax
 from jax._src.lax.lax import _array_copy
@@ -3554,6 +3554,11 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0, *, device=None):
     out = _np_array(object, copy=copy, dtype=dtype)
     if dtype: assert _dtype(out) == dtype
   elif isinstance(object, (DeviceArray, core.Tracer)):
+    if object.aval is None:
+      # object is a raw buffer; convert to device array on its current device.
+      aval = ShapedArray(object.xla_shape().dimensions(), object.dtype,
+                         weak_type=bool(getattr(object, "weak_type", False)))
+      object = make_device_array(aval, object.device(), object)
     out = _array_copy(object) if copy else object
   elif isinstance(object, (list, tuple)):
     if object:
