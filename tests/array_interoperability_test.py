@@ -167,7 +167,7 @@ class DLPackTest(jtu.JaxTestCase):
     backend = xla_bridge.get_backend()
     client = getattr(backend, "client", backend)
 
-    regex_str = (r'Unimplemented: Only DLPack tensors with trivial \(compact\) '
+    regex_str = (r'UNIMPLEMENTED: Only DLPack tensors with trivial \(compact\) '
                  r'striding are supported')
     with self.assertRaisesRegex(RuntimeError, regex_str):
       xla_client._xla.dlpack_managed_tensor_to_buffer(
