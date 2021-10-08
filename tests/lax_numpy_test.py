@@ -4755,6 +4755,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker, rtol=tol,
                             atol=tol)
 
+  def testNanStdGrad(self):
+    # Regression test for https://github.com/google/jax/issues/8128
+    x = jnp.arange(5.0).at[0].set(jnp.nan)
+    y = jax.grad(jnp.nanvar)(x)
+    self.assertAllClose(y, jnp.array([0.0, -0.75, -0.25, 0.25, 0.75]))
+
+    z = jax.grad(jnp.nanstd)(x)
+    self.assertEqual(jnp.isnan(z).sum(), 0)
 
   @parameterized.named_parameters(
       jtu.cases_from_list(

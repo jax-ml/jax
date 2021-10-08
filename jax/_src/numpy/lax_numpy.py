@@ -2907,7 +2907,8 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
 
   a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
   a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True)
-  centered = a - a_mean
+
+  centered = where(isnan(a), 0, a - a_mean)  # double-where trick for gradients.
   if issubdtype(centered.dtype, complexfloating):
     centered = lax.real(lax.mul(centered, lax.conj(centered)))
   else:
@@ -2916,7 +2917,7 @@ def nanvar(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
   normalizer = sum(logical_not(isnan(a)), axis=axis, keepdims=keepdims)
   normalizer = normalizer - ddof
   normalizer_mask = lax.le(normalizer, 0)
-  result = nansum(centered, axis, keepdims=keepdims)
+  result = sum(centered, axis, keepdims=keepdims)
   result = where(normalizer_mask, nan, result)
   divisor = where(normalizer_mask, 1, normalizer)
   out = lax.div(result, lax.convert_element_type(divisor, result.dtype))
