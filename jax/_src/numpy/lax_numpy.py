@@ -1969,20 +1969,36 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
   else:
     return (ar1[:, None] == ar2[None, :]).any(-1)
 
-@_wraps(np.setdiff1d, lax_description="""
-In the JAX version, the `assume_unique` argument is not referenced.
-""")
-def setdiff1d(ar1, ar2, assume_unique=False):
+_SETDIFF1D_DOC = """\
+Because the size of the output of ``setdiff1d`` is data-dependent, the function is not
+typically compatible with JIT. The JAX version adds the optional `size` argument which
+specifies the size of the output array: it must be specified statically for ``jnp.setdiff1d``
+to be traced. If specified, the first `size` unique elements will be returned; if there are
+fewer unique elements than `size` indicates, the return value will be padded with
+the `fill_value`, which defaults to zero."""
+
+@_wraps(np.setdiff1d, lax_description=_SETDIFF1D_DOC)
+def setdiff1d(ar1, ar2, assume_unique=False, *, size=None, fill_value=None):
   _check_arraylike("setdiff1d", ar1, ar2)
-
-  ar1 = core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
-  ar2 = core.concrete_or_error(None, ar2, "The error arose in setdiff1d()")
-
-  ar1 = unique(ar1)
-  ar2 = unique(ar2)
-
-  idx = in1d(ar1, ar2, invert=True)
-  return ar1[idx]
+  if size is None:
+    ar1 = core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
+  else:
+    size = core.concrete_or_error(operator.index, size, "The error arose in setdiff1d()")
+  ar1 = asarray(ar1)
+  fill_value = asarray(0 if fill_value is None else fill_value, dtype=ar1.dtype)
+  if ar1.size == 0:
+    return full_like(ar1, fill_value, shape=size or 0)
+  if not assume_unique:
+    ar1 = unique(ar1, size=size and ar1.size)
+  mask = in1d(ar1, ar2, invert=True)
+  if size is None:
+    return ar1[mask]
+  else:
+    if not (assume_unique or size is None):
+      # Set mask to zero at locations corresponding to unique() padding.
+      n_unique = ar1.size + 1 - (ar1 == ar1[0]).sum()
+      mask = where(arange(ar1.size) < n_unique, mask, False)
+    return where(arange(size) < mask.sum(), ar1[where(mask, size=size)], fill_value)
 
 
 _UNION1D_DOC = """\
