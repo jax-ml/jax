@@ -1159,14 +1159,11 @@ class ShapedArray(UnshapedArray):
   def strip_named_shape(self):
     return self.update(named_shape={})
 
-  def __len__(self):
+  def _len(self, ignored_tracer):
     try:
       return self.shape[0]
     except IndexError as err:
       raise TypeError("len() of unsized object") from err  # same as numpy error
-
-  def _len(self, ignored_tracer):
-    return len(self)
 
 
 def _forward_to_value(self, fun, ignored_tracer, *args):
