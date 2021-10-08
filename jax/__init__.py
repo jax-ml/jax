@@ -47,6 +47,7 @@ from ._src.config import (
   debug_infs as debug_infs,
   log_compiles as log_compiles,
   default_matmul_precision as default_matmul_precision,
+  default_prng_impl as default_prng_impl,
   numpy_rank_promotion as numpy_rank_promotion,
 )
 from ._src.api import (

@@ -205,6 +205,36 @@ class PrngTest(jtu.JaxTestCase):
     expected = jnp.array(key, dtype=jnp.uint32)
     self.assertArraysEqual(actual, expected)
 
+  def test_default_prng_selection(self):
+    if not config.jax_enable_custom_prng:
+      self.skipTest("test requires config.jax_enable_custom_prng")
+    for name, impl in [('threefry2x32', prng.threefry_prng_impl),
+                       ('rbg', prng.rbg_prng_impl),
+                       ('unsafe_rbg', prng.unsafe_rbg_prng_impl)]:
+      with jax.default_prng_impl(name):
+        key = random.PRNGKey(42)
+        self.assertIs(key.impl, impl)
+        k1, k2 = random.split(key, 2)
+        self.assertIs(k1.impl, impl)
+        self.assertIs(k2.impl, impl)
+
+  def test_explicit_threefry2x32_key(self):
+    if not config.jax_enable_custom_prng:
+      self.skipTest("test requires config.jax_enable_custom_prng")
+    key = random.threefry2x32_key(42)
+    self.assertIs(key.impl, prng.threefry_prng_impl)
+
+  def test_explicit_rbg_key(self):
+    if not config.jax_enable_custom_prng:
+      self.skipTest("test requires config.jax_enable_custom_prng")
+    key = random.rbg_key(42)
+    self.assertIs(key.impl, prng.rbg_prng_impl)
+
+  def test_explicit_unsafe_rbg_key(self):
+    if not config.jax_enable_custom_prng:
+      self.skipTest("test requires config.jax_enable_custom_prng")
+    key = random.unsafe_rbg_key(42)
+    self.assertIs(key.impl, prng.unsafe_rbg_prng_impl)
 
 @jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomTest(jtu.JaxTestCase):
@@ -250,7 +280,7 @@ class LaxRandomTest(jtu.JaxTestCase):
             f'{expected_freq}\n{actual_freq}')
 
   def seed_prng(self, seed):
-    return random.PRNGKey(seed)
+    return random.threefry2x32_key(seed)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
@@ -1125,7 +1155,7 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
 @jtu.with_config(jax_numpy_rank_promotion="raise")
 class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def seed_prng(self, seed):
-    return prng.seed_with_impl(prng.rbg_prng_impl, seed)
+    return random.rbg_key(seed)
 
   def test_split_shape(self):
     key = self.seed_prng(73)
