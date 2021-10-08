@@ -512,6 +512,13 @@ enable_custom_prng = config.define_bool_state(
           'disabling it will be considered deprecated. In a version '
           'after that the flag will be removed altogether.'))
 
+default_prng_impl = config.define_enum_state(
+    name='jax_default_prng_impl',
+    enum_values=['threefry2x32', 'rbg', 'unsafe_rbg'],
+    default='threefry2x32',
+    help=('Select the default PRNG implementation, used when one is not '
+          'explicitly provided at seeding time.'))
+
 hlo_source_file_canonicalization_regex = config.define_string_state(
     name='jax_hlo_source_file_canonicalization_regex',
     default=None,

@@ -71,7 +71,7 @@ def _check_prng_key(key):
           'Raw arrays as random keys to jax.random functions are deprecated. '
           'Assuming valid threefry2x32 key for now.',
           FutureWarning)
-    return prng.PRNGKeyArray(prng.threefry_prng_impl, key), True
+    return prng.PRNGKeyArray(_get_default_prng_impl(), key), True
   else:
     raise TypeError(f'unexpected PRNG key type {type(key)}')
 
@@ -88,11 +88,26 @@ def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> jnp.ndarray:
   return key._random_bits(bit_width, shape)
 
 
+PRNG_IMPLS = {
+    'threefry2x32': prng.threefry_prng_impl,
+    'rbg': prng.rbg_prng_impl,
+    'unsafe_rbg': prng.unsafe_rbg_prng_impl,
+}
+
+def _get_default_prng_impl():
+  impl_name = config.jax_default_prng_impl
+  assert impl_name in PRNG_IMPLS, impl_name
+  return PRNG_IMPLS[impl_name]
+
+
 ### key operations
 
 
 def PRNGKey(seed: int) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
+
+  The resulting key carries the default PRNG implementation, as
+  determined by the ``jax_default_prng_impl`` config flag.
 
   Args:
     seed: a 64- or 32-bit integer used as the value of the key.
@@ -100,9 +115,41 @@ def PRNGKey(seed: int) -> KeyArray:
   Returns:
     A PRNG key, consumable by random functions as well as ``split``
     and ``fold_in``.
+
   """
-  return _return_prng_keys(
-      True, prng.seed_with_impl(prng.threefry_prng_impl, seed))
+  impl = _get_default_prng_impl()
+  key = prng.seed_with_impl(impl, seed)
+  return _return_prng_keys(True, key)
+
+# TODO(frostig): remove once we always enable_custom_prng
+def _check_default_impl_with_no_custom_prng(impl, name):
+  default_impl = _get_default_prng_impl()
+  default_name = config.jax_default_prng_impl
+  if not config.jax_enable_custom_prng and default_impl is not impl:
+    raise RuntimeError('jax_enable_custom_prng must be enabled in order '
+                       f'to seed an RNG with an implementation "f{name}" '
+                       f'differing from the default "f{default_name}".')
+
+def threefry2x32_key(seed: int) -> KeyArray:
+  """Creates a threefry2x32 PRNG key from an integer seed."""
+  impl = prng.threefry_prng_impl
+  _check_default_impl_with_no_custom_prng(impl, 'threefry2x32')
+  key = prng.seed_with_impl(impl, seed)
+  return _return_prng_keys(True, key)
+
+def rbg_key(seed: int) -> KeyArray:
+  """Creates an RBG PRNG key from an integer seed."""
+  impl = prng.rbg_prng_impl
+  _check_default_impl_with_no_custom_prng(impl, 'rbg')
+  key = prng.seed_with_impl(impl, seed)
+  return _return_prng_keys(True, key)
+
+def unsafe_rbg_key(seed: int) -> KeyArray:
+  """Creates an unsafe RBG PRNG key from an integer seed."""
+  impl = prng.unsafe_rbg_prng_impl
+  _check_default_impl_with_no_custom_prng(impl, 'unsafe_rbg')
+  key = prng.seed_with_impl(impl, seed)
+  return _return_prng_keys(True, key)
 
 def _fold_in(key: KeyArray, data: int) -> KeyArray:
   # Alternative to fold_in() to use within random samplers.
@@ -939,7 +986,7 @@ def gamma(key: KeyArray,
   key, _ = _check_prng_key(key)
   if key.impl is not prng.threefry_prng_impl:
     raise NotImplementedError(
-        f'`gamma` is only implemented for the default PRNG, not {key.impl}')
+        f'`gamma` is only implemented for the threefry2x32 RNG, not {key.impl}')
   return gamma_threefry2x32(key.keys, a, shape, dtype)
 
 def gamma_threefry2x32(key: jnp.ndarray,  # raw ndarray form of a 2x32 key
@@ -1074,7 +1121,8 @@ def poisson(key: KeyArray,
   key, _ = _check_prng_key(key)
   if key.impl is not prng.threefry_prng_impl:
     raise NotImplementedError(
-        f'`poisson` is only implemented for the default PRNG, not {key.impl}')
+        '`poisson` is only implemented for the threefry2x32 RNG, '
+        f'not {key.impl}')
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
   if np.shape(lam) != shape:
