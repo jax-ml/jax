@@ -780,7 +780,10 @@ class XlaComputation:
     self._executable = None
     self.compile_args = compile_args
 
-  def compile(self):
+  def is_trivial(self):
+    return self._is_trivial
+
+  def compile(self) -> 'XlaCompiledComputation':
     if self._executable is None:
       if self._is_trivial:
         self._executable = XlaCompiledComputation.from_trivial_jaxpr(*self.compile_args)
@@ -790,7 +793,8 @@ class XlaComputation:
 
 
 class XlaCompiledComputation:
-  def __init__(self, unsafe_call):
+  def __init__(self, xla_executable, unsafe_call):
+    self.xla_executable = xla_executable
     self.unsafe_call = unsafe_call
 
   @staticmethod
@@ -810,22 +814,28 @@ class XlaCompiledComputation:
     options.parameter_is_tupled_arguments = tuple_args
     compiled = compile_or_get_cached(backend, xla_computation, options)
     if nreps == 1:
-      return XlaCompiledComputation(partial(
+      return XlaCompiledComputation(compiled, partial(
           _execute_compiled, compiled, out_avals, result_handlers, kept_var_idx))
     else:
-      return XlaCompiledComputation(partial(
+      return XlaCompiledComputation(compiled, partial(
           _execute_replicated, compiled, out_avals, result_handlers, kept_var_idx))
+
+  def is_trivial(self):
+    return self.xla_executable == None
 
   @staticmethod
   def from_trivial_jaxpr(jaxpr, consts, device, out_avals, kept_var_idx):
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
-    return XlaCompiledComputation(partial(
+    return XlaCompiledComputation(None, partial(
         _execute_trivial, jaxpr, device, consts, out_avals,
         result_handlers, kept_var_idx))
 
-  def __call__(self, *args):
+  def call(self, *args):
     # TODO(apaszke,frostig): Check that args are compatible with input avals!
     return self.unsafe_call(*args)
+
+  def __call__(self, *args):
+    return self.call(*args)
 
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
