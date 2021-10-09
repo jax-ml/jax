@@ -1657,6 +1657,8 @@ class MeshComputation:
 
 
 class MeshExecutable:
+  __slots__ = ['xla_executable', 'unsafe_call']
+
   def __init__(self,
                computation: xc.XlaComputation,
                mesh: Mesh,
@@ -1716,10 +1718,10 @@ class MeshExecutable:
       handle_args = InputsHandler(compiled.local_devices(), local_input_specs,
                                   input_indices)
       self.unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
-      self.compiled = compiled
+      self.xla_executable = compiled
 
-  def __call__(self, *args):
-    # TODO(apaszke): Validate arguments
+  def call(self, *args):
+    # TODO(apaszke,frostig): Check that args are compatible with input avals!
     return self.unsafe_call(*args)
 
 

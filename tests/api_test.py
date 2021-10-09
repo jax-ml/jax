@@ -696,7 +696,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     live_refs = len([ref for ref in refs if ref() is not None])
     self.assertLessEqual(live_refs, 100)
 
-  def test_lower_compile(self):
+  def test_jit_lower_compile(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
@@ -705,7 +705,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f_exe = f_low.compile()
     self.assertAllClose(f_exe(1.), 2.)
 
-  def test_lower_compile_in_tree_mismatch(self):
+  def test_jit_lower_compile_in_tree_mismatch(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
@@ -716,12 +716,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         TypeError, "function compiled for .*, called with .*",
         lambda: f_exe([1.]))
 
-  def test_lower_compile_trivial(self):
+  def test_jit_lower_compile_trivial(self):
     def f(x): return x
     out = self.jit(f).lower(1.).compile()(4.)
     self.assertAllClose(out, 4.)
 
-  def test_lower_compile_trivial_in_tree_mismatch(self):
+  def test_jit_lower_compile_trivial_in_tree_mismatch(self):
     def f(x): return x
     f_exe = self.jit(f).lower(1.).compile()
     self.assertRaisesRegex(
