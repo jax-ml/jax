@@ -5849,22 +5849,24 @@ argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               weak_type_rule=_strip_weak_type)
 batching.defreducer(argmin_p)
 ad.defjvp_zero(argmin_p)
-xla.register_translation(
-    argmin_p,
-    xla.lower_fun(partial(_argminmax_gpu_translation_rule, _reduce_min),
-                  multiple_results=False, new_style=True),
-    platform='gpu')
+if jax._src.lib._xla_extension_version < 41:
+  xla.register_translation(
+  argmin_p,
+  xla.lower_fun(partial(_argminmax_gpu_translation_rule, _reduce_min),
+  multiple_results=False, new_style=True),
+  platform='gpu')
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', _argmax_translation_rule,
                               weak_type_rule=_strip_weak_type)
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
-xla.register_translation(
-    argmax_p,
-    xla.lower_fun(partial(_argminmax_gpu_translation_rule, _reduce_max),
-                  multiple_results=False, new_style=True),
-    platform='gpu')
+if jax._src.lib._xla_extension_version < 41:
+  xla.register_translation(
+  argmax_p,
+  xla.lower_fun(partial(_argminmax_gpu_translation_rule, _reduce_max),
+  multiple_results=False, new_style=True),
+  platform='gpu')
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
