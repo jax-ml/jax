@@ -2748,10 +2748,18 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
   return fun_remat
 remat = checkpoint
 
+def dot_with_no_batch_dims(prim, *_, **params) -> bool:
+  if prim.name == 'dot_general':
+    (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
+    if not lhs_b and not rhs_b:
+      return True
+  return False
+
 checkpoint_policies = types.SimpleNamespace(
     checkpoint_dots=
     lambda prim, *_, **__: prim in {jax._src.lax.lax.dot_general_p,
                                     jax._src.lax.lax.conv_general_dilated_p},
+    checkpoint_dots_with_no_batch_dims=dot_with_no_batch_dims
 )
 
 

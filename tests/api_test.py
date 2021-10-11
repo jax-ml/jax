@@ -3559,6 +3559,40 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' dot_'), 6)
     jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
 
+  def test_remat_checkpoint_dots_with_no_batch_dims(self):
+    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)
+    def f(x):
+      x = jnp.einsum('ij,jk->ik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      x = jnp.einsum('ij,jk->ik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      x = jnp.einsum('ij,jk->ik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      return x
+
+    _, f_lin = api.linearize(f, jnp.ones((2, 2)))
+    jaxpr_text = str(f_lin.func.args[0])
+    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' dot_general'), 6)
+    jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
+
+  def test_remat_checkpoint_dots_with_no_batch_dims2(self):
+    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots_with_no_batch_dims)
+    def f(x):
+      x = jnp.einsum('nij,njk->nik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      x = jnp.einsum('nij,njk->nik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      x = jnp.einsum('nij,njk->nik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      return x
+
+    _, f_lin = api.linearize(f, jnp.ones((3, 2, 2)))
+    jaxpr_text = str(f_lin.func.args[0])
+    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' dot_general'), 9)
+    jtu.check_grads(f, (jnp.ones((3, 2, 2)),), order=2, modes=['fwd', 'rev'])
+
   def test_remat_checkpoint_dots_jit(self):
     @api.jit
     @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
