@@ -1991,17 +1991,17 @@ typically compatible with JIT. The JAX version adds the optional `size` argument
 specifies the size of the output array: it must be specified statically for ``jnp.union1d``
 to be traced. If specified, the first `size` unique elements will be returned; if there are
 fewer unique elements than `size` indicates, the return value will be padded with
-the minimum value of the union."""
+the `fill_value`, which defaults to the minimum value of the union."""
 
 @_wraps(np.union1d, lax_description=_UNION1D_DOC)
-def union1d(ar1, ar2, *, size=None):
+def union1d(ar1, ar2, *, size=None, fill_value=None):
   _check_arraylike("union1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
     ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
   else:
     size = core.concrete_or_error(operator.index, size, "The error arose in union1d()")
-  return unique(concatenate((ar1, ar2), axis=None), size=size)
+  return unique(concatenate((ar1, ar2), axis=None), size=size, fill_value=fill_value)
 
 
 @_wraps(np.setxor1d, lax_description="""
