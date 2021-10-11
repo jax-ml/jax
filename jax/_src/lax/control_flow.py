@@ -210,6 +210,10 @@ def fori_loop(lower, upper, body_fun, init_val):
     use_scan = False
 
   if use_scan:
+    if config.jax_disable_jit and upper_ == lower_:
+      # non-jit implementation of scan does not support length=0
+      return init_val
+
     (_, result), _ = scan(_fori_scan_body_fun(body_fun), (lower_, init_val),
                           None, length=upper_ - lower_)
   else:
@@ -1284,6 +1288,8 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
       length, = unique_lengths
 
   if config.jax_disable_jit:
+    if length == 0:
+      raise ValueError("zero-length scan is not supported in disable_jit() mode because the output type is unknown.")
     carry = init
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x
