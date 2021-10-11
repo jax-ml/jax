@@ -1,0 +1,15 @@
+# Evaluation Results
+
+*Last generated on: {{generation_date}}* (YYYY-MM-DD)
+
+## jax2tf --> TFLite
+
+{{jax2tf_to_tflite}}
+
+## jax2tf --> TFjs
+
+{{jax2tf_to_tfjs}}
+
+## Table generation
+
+See `examples_test.py` for instructions on how to regenerate this table.
