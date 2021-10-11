@@ -357,6 +357,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.array([0, 2, 2, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  # TODO(b/202709967): Enable once fixed
+  @unittest.skipIf(jtu.device_under_test() == 'gpu', "Test triggers an internal XLA:GPU error")
+  def testWhileLoopBatchedWithConstBody(self):
+    def f(x):
+      def body_fn(_): return jnp.asarray(0., dtype=jnp.float32)
+      def cond_fn(_): return jnp.logical_not(False) == False
+      return jax.lax.while_loop(cond_fn, body_fn, x)
+    x = jnp.arange(5, dtype=jnp.float32)
+    self.assertAllClose(jax.vmap(f)(x), x)
 
   def testWhileLoopCondConstsBatched(self):
     def fun(x, y):

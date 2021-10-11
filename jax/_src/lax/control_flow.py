@@ -393,7 +393,7 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
   # reach a fixpoint.
   for _ in range(1 + len(carry_bat)):
     _, carry_bat_out = batching.batch_jaxpr(
-        body_jaxpr, axis_size, bconst_bat + carry_bat, instantiate=False,
+        body_jaxpr, axis_size, bconst_bat + carry_bat, instantiate=carry_bat,
         axis_name=axis_name, main_type=main_type)
     if carry_bat == carry_bat_out:
       break
