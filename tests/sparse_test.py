@@ -1059,6 +1059,16 @@ class BCOOTest(jtu.JaxTestCase):
     M_dedup = M._dedupe()
     self.assertAllClose(M.todense(), M_dedup.todense())
 
+  def test_bcoo_dedupe_padding(self):
+    # Regression test for https://github.com/google/jax/issues/8163
+    data = jnp.array([1, 0, 0])
+    indices = jnp.array([1, 0, 0])[:, None]
+    x = sparse.BCOO((data, indices), shape=(3,))
+    y = x._dedupe()
+    self.assertArraysEqual(x.todense(), y.todense())
+    self.assertArraysEqual(x.indices, y.indices)
+    self.assertArraysEqual(x.data, y.data)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_nbatch={}_ndense={}_axes={}".format(
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense, axes),
