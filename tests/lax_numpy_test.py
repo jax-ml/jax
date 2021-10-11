@@ -1261,6 +1261,33 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.setdiff1d, jnp.setdiff1d, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_size={}_fill_value={}".format(
+       jtu.format_shape_dtype_string(shape1, dtype1),
+       jtu.format_shape_dtype_string(shape2, dtype2),
+       size, fill_value),
+       "shape1": shape1, "shape2": shape2, "dtype1": dtype1, "dtype2": dtype2,
+       "size": size, "fill_value": fill_value}
+      for dtype1 in [s for s in default_dtypes if s != jnp.bfloat16]
+      for dtype2 in [s for s in default_dtypes if s != jnp.bfloat16]
+      for shape1 in all_shapes
+      for shape2 in all_shapes
+      for size in [1, 5, 10]
+      for fill_value in [None, -1]))
+  def testSetdiff1dSize(self, shape1, shape2, dtype1, dtype2, size, fill_value):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
+    def np_fun(arg1, arg2):
+      result = np.setdiff1d(arg1, arg2)
+      if size <= len(result):
+        return result[:size]
+      else:
+        return np.pad(result, (0, size-len(result)), constant_values=fill_value or 0)
+    def jnp_fun(arg1, arg2):
+      return jnp.setdiff1d(arg1, arg2, size=size, fill_value=fill_value)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(
        jtu.format_shape_dtype_string(shape1, dtype1),
        jtu.format_shape_dtype_string(shape2, dtype2)),
