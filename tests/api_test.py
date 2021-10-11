@@ -80,6 +80,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # Tensorflow.
     return api._cpp_jit
 
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 40,
+                   "Test requires jaxlib 0.1.72")
+  def test_jit_func_repr(self):
+    def my_function():
+      return
+    jitted = jit(my_function)
+    self.assertEqual(repr(jitted), repr(my_function))
+
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
                            lambda: self.jit(3))
