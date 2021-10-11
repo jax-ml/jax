@@ -47,6 +47,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
   # If you want to run this test for only one harness, add parameter
   # `one_containing="foo"` to parameterized below.
   @primitive_harness.parameterized(primitive_harness.all_harnesses,
+                                   #one_containing="gather_from_slicing_name",
                                    include_jax_unimpl=True)
   @jtu.ignore_warning(category=UserWarning,
                       message="Using reduced precision for gradient.*")
