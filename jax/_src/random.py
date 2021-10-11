@@ -28,7 +28,8 @@ from jax.config import config
 from jax.core import NamedShape
 from jax._src.api import jit, vmap
 from jax._src.numpy.lax_numpy import (_arraylike, _check_arraylike,
-                                      _constant_like, _convert_and_clip_integer)
+                                      _constant_like, _convert_and_clip_integer,
+                                      _canonicalize_axis)
 from jax._src.lib import xla_bridge
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
@@ -370,33 +371,35 @@ def shuffle(key: KeyArray, x: Array, axis: int = 0) -> jnp.ndarray:
   return _shuffle(key, x, axis)  # type: ignore
 
 
-def permutation(key: KeyArray, x: Array) -> jnp.ndarray:
+def permutation(key: KeyArray,
+                x: Union[int, Array],
+                axis: int = 0) -> jnp.ndarray:
   """
-  Permute elements of an array along its first axis or return a permuted range.
+  Return a randomly permuted array or range.
 
-  If `x` is a multi-dimensional array, it is only shuffled along its
-  first index.
-
-  Args:n
+  Args:
     key: a PRNG key used as the random key.
-    x: the array or integer range to be shuffled.
+    x: int or array. If x is an integer, randomly shuffle np.arange(x).
+      If x is an array, randomly shuffle its elements.
+    axis: int, optional. The axis which x is shuffled along. Default is 0.
 
   Returns:
     A shuffled version of x or array range
   """
   key, _ = _check_prng_key(key)
+  axis = _canonicalize_axis(axis, np.ndim(x) or 1)
   if not np.ndim(x):
     # scalar case, must be a concrete integer
     if not np.issubdtype(lax.dtype(x), np.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
     x = int(x)  # type: ignore[assignment]
-    return _shuffle(key, jnp.arange(x), 0)
+    return _shuffle(key, jnp.arange(x), axis)
   elif np.ndim(x) == 1:
-    return _shuffle(key, x, 0)
+    return _shuffle(key, x, axis)
   else:
     assert isinstance(x, jnp.ndarray)
-    ind = _shuffle(key, jnp.arange(x.shape[0]), 0)  # type: ignore[attribute-error]
-    return x[ind]
+    ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[attribute-error]
+    return jnp.take(x, ind, axis)
 
 
 @partial(jit, static_argnums=(2,), inline=True)
@@ -428,15 +431,16 @@ def _shuffle(key, x, axis) -> jnp.ndarray:
 
 
 def choice(key: KeyArray,
-           a: IntegerArray,
+           a: Union[int, Array],
            shape: Sequence[int] = (),
            replace: bool = True,
-           p=None) -> jnp.ndarray:
-  """Generates a random sample from a given 1-D array.
+           p: Optional[RealArray] = None,
+           axis: int = 0) -> jnp.ndarray:
+  """Generates a random sample from a given array.
 
   Args:
     key: a PRNG key used as the random key.
-    a : 1D array or int. If an ndarray, a random sample is generated from
+    a : array or int. If an ndarray, a random sample is generated from
       its elements. If an int, the random sample is generated as if a were
       arange(a).
     shape : tuple of ints, optional. Output shape.  If the given shape is,
@@ -447,6 +451,8 @@ def choice(key: KeyArray,
     p : 1-D array-like, The probabilities associated with each entry in a.
       If not given the sample assumes a uniform distribution over all
       entries in a.
+    axis: int, optional. The axis along which the selection is performed.
+      The default, 0, selects by row.
 
   Returns:
     An array of shape `shape` containing samples from `a`.
@@ -455,14 +461,13 @@ def choice(key: KeyArray,
   if not isinstance(shape, Sequence):
     raise TypeError("shape argument of jax.random.choice must be a sequence, "
                     f"got {shape}")
-  if np.ndim(a) not in [0, 1]:
-    raise ValueError("a must be an integer or 1-dimensional")
   _check_arraylike("choice", a)
   if np.ndim(a) == 0:
     a = core.concrete_or_error(int, a, "The error occurred in jax.random.choice()")
   else:
     a = jnp.asarray(a)
-  n_inputs = int(a) if np.ndim(a) == 0 else len(a)  # type: ignore[arg-type]
+  axis = _canonicalize_axis(axis, np.ndim(a) or 1)
+  n_inputs = int(a) if np.ndim(a) == 0 else a.shape[axis]  # type: ignore[arg-type]
   n_draws = prod(shape)
   if n_draws == 0:
     return jnp.zeros(shape, dtype=lax.dtype(a))
@@ -474,9 +479,11 @@ def choice(key: KeyArray,
   if p is None:
     if replace:
       ind = randint(key, shape, 0, n_inputs)
-      result = ind if np.ndim(a) == 0 else a[ind]  # type: ignore[index]
+      result = ind if np.ndim(a) == 0 else jnp.take(a, ind, axis)
     else:
-      result = permutation(key, a)[:n_draws]
+      slices = tuple(slice(n_draws if a == axis else None)
+                     for a in range(np.ndim(a) or 1))
+      result = permutation(key, a, axis)[slices]
   else:
     if p.shape != (n_inputs,):
       raise ValueError("p must be None or match the shape of a")
@@ -484,13 +491,14 @@ def choice(key: KeyArray,
       p_cuml = jnp.cumsum(p)
       r = p_cuml[-1] * (1 - uniform(key, shape))
       ind = jnp.searchsorted(p_cuml, r)
-      result = ind if np.ndim(a) == 0 else a[ind]  # type: ignore[index]
     else:
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
       g = -gumbel(key, (n_inputs,)) - jnp.log(p)
       ind = jnp.argsort(g)[:n_draws]
-      result = ind if np.ndim(a) == 0 else a[ind]  # type: ignore[index]
-  return result.reshape(shape)
+    result = ind if np.ndim(a) == 0 else jnp.take(a, ind, axis)
+
+  return result.reshape(shape if np.ndim(a) == 0 else
+                        np.insert(np.delete(a.shape, axis), axis, shape))
 
 
 def normal(key: KeyArray,
