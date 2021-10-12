@@ -1550,7 +1550,8 @@ class NamedShape:
     raise TypeError(f"NamedShape doesn't support comparisons with {type(other)}")
 
   def __hash__(self):
-    return hash((self.__positional, tuple(self.__named.items())))
+    named = frozenset(self.__named.items())
+    return hash((self.__positional, named))
 
 def join_named_shapes(*named_shapes):
   result = {}
