@@ -551,6 +551,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertAllClose(cfun(x, num), np.sum(x[:num]), check_dtypes=False)
       self.assertAllClose(cfun(x, num), np.sum(x[:num]), check_dtypes=False)
 
+  def testForiLoopIssue8152(self):
+    y = lax.fori_loop(lower=0, upper=0, body_fun=lambda x, i: x + i, init_val=1.)
+    self.assertAllClose(y, 1., check_dtypes=False)
+
+    # trivial fori_loop should work - even when jit is disabled
+    with jax.disable_jit():
+      y = lax.fori_loop(lower=0, upper=0, body_fun=lambda x, i: x + i, init_val=1.)
+    self.assertAllClose(y, 1., check_dtypes=False)
+
+    # scan with length 0 should work with jit, but raise an error without
+    def should_raise_wo_jit():
+      carry, out = lax.scan(lambda c, x: (c + x, x), 0., np.array([]))
+      return carry
+    self.assertAllClose(should_raise_wo_jit(), 0., check_dtypes=False)
+    with jax.disable_jit():
+      self.assertRaises(ValueError, should_raise_wo_jit)
+
   def testCond(self):
     def fun(x):
       if x < 3:
