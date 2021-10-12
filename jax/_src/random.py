@@ -81,7 +81,7 @@ def _return_prng_keys(was_wrapped, key):
   if config.jax_enable_custom_prng:
     return key
   else:
-    return key.keys if was_wrapped else key
+    return key.unsafe_raw_array() if was_wrapped else key
 
 def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> jnp.ndarray:
   key, _ = _check_prng_key(key)
@@ -987,7 +987,7 @@ def gamma(key: KeyArray,
   if key.impl is not prng.threefry_prng_impl:
     raise NotImplementedError(
         f'`gamma` is only implemented for the threefry2x32 RNG, not {key.impl}')
-  return gamma_threefry2x32(key.keys, a, shape, dtype)
+  return gamma_threefry2x32(key.unsafe_raw_array(), a, shape, dtype)
 
 def gamma_threefry2x32(key: jnp.ndarray,  # raw ndarray form of a 2x32 key
                        a: RealArray,

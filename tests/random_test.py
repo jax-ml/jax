@@ -48,7 +48,7 @@ uint_dtypes = jtu.dtypes.all_unsigned
 
 def _prng_key_as_array(key):
   # TODO(frostig): remove once we upgrade to always enable_custom_prng
-  return key.keys if config.jax_enable_custom_prng else key
+  return key.unsafe_raw_array() if config.jax_enable_custom_prng else key
 
 
 @jtu.with_config(jax_numpy_rank_promotion="raise")
@@ -1173,7 +1173,8 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     vmapped_keys = vmap(lambda _: random.split(key))(jnp.zeros(3,))
     self.assertEqual(vmapped_keys.shape, (3, 2))
     for vk in vmapped_keys:
-      self.assertArraysEqual(vk.keys, single_split_key.keys)
+      self.assertArraysEqual(vk.unsafe_raw_array(),
+                             single_split_key.unsafe_raw_array())
 
   def test_vmap_split_mapped_key(self):
     key = self.seed_prng(73)
@@ -1182,7 +1183,8 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     vmapped_keys = vmap(random.split)(mapped_keys)
     self.assertEqual(vmapped_keys.shape, (3, 2))
     for fk, vk in zip(forloop_keys, vmapped_keys):
-      self.assertArraysEqual(fk.keys, vk.keys)
+      self.assertArraysEqual(fk.unsafe_raw_array(),
+                             vk.unsafe_raw_array())
 
   def test_vmap_random_bits(self):
     rand_fun = lambda key: random.randint(key, (), 0, 100)
