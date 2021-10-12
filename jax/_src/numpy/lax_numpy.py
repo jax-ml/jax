@@ -476,8 +476,11 @@ def _np_array(obj, dtype=None, **kwargs):
   arr = np.array(obj, dtype=dtype, **kwargs)
   obj_dtype = getattr(obj, 'dtype', None)
   arr_dtype = np.dtype(arr.dtype).type
-  if dtype is None and obj_dtype is None and arr_dtype in _DEFAULT_TYPEMAP:
-    arr = arr.astype(_DEFAULT_TYPEMAP[arr_dtype])
+  if dtype is None and obj_dtype is None:
+    if dtypes.is_python_scalar(obj):
+      arr = arr.astype(dtypes.dtype(obj))
+    elif arr_dtype in _DEFAULT_TYPEMAP:
+      arr = arr.astype(_DEFAULT_TYPEMAP[arr_dtype])
   return arr
 
 _np_asarray = partial(_np_array, copy=False)
