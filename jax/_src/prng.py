@@ -97,7 +97,7 @@ class PRNGKeyArray:
   """
 
   impl: PRNGImpl
-  keys: jnp.ndarray
+  _keys: jnp.ndarray
 
   def __init__(self, impl, key_data: jnp.ndarray):
     # key_data might be a placeholder python `object` or `bool`
@@ -107,10 +107,18 @@ class PRNGKeyArray:
       raise TypeError(
           f'Invalid PRNG key data {key_data} for PRNG implementation {impl}')
     self.impl = impl
-    self.keys = key_data
+    self._keys = key_data
 
   def tree_flatten(self):
-    return (self.keys,), self.impl
+    return (self._keys,), self.impl
+
+  def unsafe_raw_array(self):
+    """Access the raw numerical array that carries underlying key data.
+
+    Returns:
+      A uint32 JAX array whose leading dimensions are ``self.shape``.
+    """
+    return self._keys
 
   @classmethod
   def tree_unflatten(cls, impl, keys):
@@ -137,26 +145,26 @@ class PRNGKeyArray:
           'deprecated `shape` attribute of PRNG key arrays. In a future version '
           'of JAX this attribute will be removed or its value may change.',
           FutureWarning)
-      return self.keys.shape
+      return self._keys.shape
 
   @property
   def _shape(self):
     base_ndim = len(self.impl.key_shape)
-    return self.keys.shape[:-base_ndim]
+    return self._keys.shape[:-base_ndim]
 
   def _is_scalar(self):
     base_ndim = len(self.impl.key_shape)
-    return self.keys.ndim == base_ndim
+    return self._keys.ndim == base_ndim
 
   def __len__(self):
     if self._is_scalar():
       raise TypeError('len() of unsized object')
-    return len(self.keys)
+    return len(self._keys)
 
   def __iter__(self) -> Iterator['PRNGKeyArray']:
     if self._is_scalar():
       raise TypeError('iteration over a 0-d single PRNG key')
-    return (PRNGKeyArray(self.impl, k) for k in iter(self.keys))
+    return (PRNGKeyArray(self.impl, k) for k in iter(self._keys))
 
   def __getitem__(self, idx) -> 'PRNGKeyArray':
     if not isinstance(idx, tuple):
@@ -166,21 +174,21 @@ class PRNGKeyArray:
           'PRNGKeyArray only supports indexing with integer indices. '
           f'Cannot index at {idx}')
     base_ndim = len(self.impl.key_shape)
-    ndim = self.keys.ndim - base_ndim
+    ndim = self._keys.ndim - base_ndim
     if len(idx) > ndim:
       raise IndexError(
           f'too many indices for PRNGKeyArray: array is {ndim}-dimensional '
           f'but {len(idx)} were indexed')
-    return PRNGKeyArray(self.impl, self.keys[idx])
+    return PRNGKeyArray(self.impl, self._keys[idx])
 
   def _fold_in(self, data: int) -> 'PRNGKeyArray':
-    return PRNGKeyArray(self.impl, self.impl.fold_in(self.keys, data))
+    return PRNGKeyArray(self.impl, self.impl.fold_in(self._keys, data))
 
   def _random_bits(self, bit_width, shape) -> jnp.ndarray:
-    return self.impl.random_bits(self.keys, bit_width, shape)
+    return self.impl.random_bits(self._keys, bit_width, shape)
 
   def _split(self, num: int) -> 'PRNGKeyArray':
-    return PRNGKeyArray(self.impl, self.impl.split(self.keys, num))
+    return PRNGKeyArray(self.impl, self.impl.split(self._keys, num))
 
   def __repr__(self):
     arr_shape = self._shape

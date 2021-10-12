@@ -523,7 +523,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     # TODO(frostig): remove once we always enable_custom_prng
     def _prng_key_as_array(key):
-      return key.keys if config.jax_enable_custom_prng else key
+      return key.unsafe_raw_array() if config.jax_enable_custom_prng else key
 
     # TODO(frostig): remove once we always enable_custom_prng
     def _array_as_prng_key(arr):
