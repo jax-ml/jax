@@ -2799,15 +2799,25 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
   ...   z = jnp.sin(y)
   ...   return z
   ...
-  >>> jax.grad(g)(2.0)
-  DeviceArray(-0.25563914, dtype=float32)
+  >>> jax.value_and_grad(g)(2.0)
+  (DeviceArray(0.78907233, dtype=float32, weak_type=True), DeviceArray(-0.2556391, dtype=float32))
 
   Here, the same value is produced whether or not the :func:`jax.checkpoint`
-  decorator is present. But when using :func:`jax.checkpoint`, the value
-  ``jnp.sin(2.0)`` is computed twice: once on the forward pass, and once on the
-  backward pass. The values ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))`` are
-  also computed twice. Without using the decorator, both ``jnp.cos(2.0)`` and
-  ``jnp.cos(jnp.sin(2.0))`` would be stored and reused.
+  decorator is present. When the decorator is not present, the values
+  ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))`` are computed on the forward
+  pass and are stored for use in the backward pass, because they are needed
+  on the backward pass and depend only on the primal inputs. When using
+  :func:`jax.checkpoint`, the forward pass will compute only the primal outputs
+  and only the primal inputs (``2.0``) will be stored for the backward pass.
+  At that time, the value ``jnp.sin(2.0)`` is recomputed, along with the values
+  ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))``.
+
+  While ``jax.checkpoint`` controls what values are stored from the forward-pass
+  to be used on the backward pass, the total amount of memory required to
+  evaluate a function or its VJP depends on many additional internal details of
+  that function. Those details include which numerical primitives are used,
+  how they're composed, where jit and control flow primitives like scan
+  are used, and other factors.
 
   The :func:`jax.checkpoint` decorator can be applied recursively to express
   sophisticated autodiff rematerialization strategies. For example:
