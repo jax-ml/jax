@@ -775,7 +775,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
 
 class XlaComputation:
   def __init__(self, hlo, is_trivial, *compile_args):
-    self.hlo = hlo
+    self._hlo = hlo
     self._is_trivial = is_trivial
     self._executable = None
     self.compile_args = compile_args
@@ -783,18 +783,25 @@ class XlaComputation:
   def is_trivial(self):
     return self._is_trivial
 
+  def hlo(self):
+    if self.is_trivial():
+      raise ValueError('A trivial computation has no HLO')
+    return self._hlo
+
   def compile(self) -> 'XlaCompiledComputation':
     if self._executable is None:
-      if self._is_trivial:
-        self._executable = XlaCompiledComputation.from_trivial_jaxpr(*self.compile_args)
+      if self.is_trivial():
+        self._executable = XlaCompiledComputation.from_trivial_jaxpr(
+            *self.compile_args)
       else:
-        self._executable = XlaCompiledComputation.from_xla_computation(self.hlo, *self.compile_args)
+        self._executable = XlaCompiledComputation.from_xla_computation(
+            self.hlo(), *self.compile_args)
     return self._executable
 
 
 class XlaCompiledComputation:
   def __init__(self, xla_executable, unsafe_call):
-    self.xla_executable = xla_executable
+    self._xla_executable = xla_executable
     self.unsafe_call = unsafe_call
 
   @staticmethod
@@ -821,7 +828,12 @@ class XlaCompiledComputation:
           _execute_replicated, compiled, out_avals, result_handlers, kept_var_idx))
 
   def is_trivial(self):
-    return self.xla_executable == None
+    return self._xla_executable == None
+
+  def xla_executable(self):
+    if self.is_trivial():
+      raise ValueError('A trivial compiled computation has no XLA executable')
+    return self._xla_executable
 
   @staticmethod
   def from_trivial_jaxpr(jaxpr, consts, device, out_avals, kept_var_idx):

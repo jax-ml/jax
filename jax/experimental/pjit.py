@@ -23,7 +23,7 @@ from functools import partial
 from . import maps
 from .. import core
 from .. import linear_util as lu
-from .._src.api import _check_callable, _check_arg
+from .._src.api import _check_callable, _check_arg, Lowered
 from .._src import source_info_util
 from .._src.api_util import (argnums_partial_except, flatten_axes,
                              flatten_fun_nokwargs, _ensure_index_tuple,
@@ -169,11 +169,10 @@ def pjit(fun: Callable,
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axis_resources = tuple(in_axis_resources)
 
-  in_axis_resources, in_axis_resources_entries, _ = \
+  in_axis_resources, _, _ = \
       _prepare_axis_resources(in_axis_resources, "in_axis_resources")
-  out_axis_resources, out_axis_resources_entries, out_axis_treedef = \
+  out_axis_resources, _, _ = \
       _prepare_axis_resources(out_axis_resources, "out_axis_resources")
-  out_axis_resources_entries = tuple(out_axis_resources_entries)
 
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
@@ -224,26 +223,26 @@ def pjit(fun: Callable,
         donated_invars=donated_invars,
         name=flat_fun.__name__,
         positional_semantics=maps._positional_semantics)
-    return args_flat, params, out_tree()
+    return args_flat, params, in_tree, out_tree()
 
   @wraps(fun)
   def wrapped(*args, **kwargs):
     for arg in tree_leaves(args):
       _check_arg(arg)
-    args_flat, params, out_tree = infer_params(*args, **kwargs)
+    args_flat, params, _, out_tree = infer_params(*args, **kwargs)
     out = pjit_p.bind(*args_flat, **params)
     return tree_unflatten(out_tree, out)
 
   def lower(*args, **kwargs):
-    args_flat, params, out_tree = infer_params(*args, **kwargs)
-    return _pjit_lower(
+    args_flat, params, in_tree, out_tree = infer_params(*args, **kwargs)
+    lowering = _pjit_lower(
         params['jaxpr'], params['in_axis_resources'],
         params['out_axis_resources'], params['resource_env'],
         params['donated_invars'], params['name'], maps._positional_semantics)
+    return Lowered(lowering, in_tree, out_tree, no_kwargs=True)
+
   wrapped.lower = lower
-
   return wrapped
-
 
 class _ListWithW(list):
   __slots__ = ('__weakref__',)
@@ -594,7 +593,8 @@ def _pjit_partial_eval(trace, *in_tracers,
   if num_residuals:
     executable = _pjit_lower(**known_params).compile(
         _allow_propagation_to_outputs=True, _allow_compile_replicated=False)
-    output_op_sharding = executable.compiled.hlo_modules()[0].spmd_output_sharding
+    output_op_sharding = \
+        executable.xla_executable.hlo_modules()[0].spmd_output_sharding
     output_sharding_specs = parse_op_sharding(output_op_sharding, mesh)
     residual_specs = tuple(output_sharding_specs[-num_residuals:])
   else:

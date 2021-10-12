@@ -494,6 +494,65 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Make sure this doesn't crash
     pjit(lambda x: x, in_axis_resources=(None), out_axis_resources=(None))(key)
 
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompile(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    expected = x @ (x + 1)
+
+    exe = f.lower(x, x + 1).compile()
+    actual = exe(x, x + 1)
+
+    splits = np.split(expected, 4)
+    self.assertAllClose(actual.device_buffers[0].to_py(), splits[0],
+                        check_dtypes=False)
+    self.assertAllClose(actual.device_buffers[1].to_py(), splits[1],
+                        check_dtypes=False)
+    self.assertAllClose(actual.device_buffers[2].to_py(), splits[2],
+                        check_dtypes=False)
+    self.assertAllClose(actual.device_buffers[3].to_py(), splits[3],
+                        check_dtypes=False)
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompileWithKwargs(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y, **kwargs):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    exe = f.lower(x, x + 1).compile()
+
+    self.assertRaisesRegex(
+        NotImplementedError,
+        "function was compiled by a transformation that does not support "
+        "keyword arguments, but called with keyword arguments: a, b",
+        lambda: exe(x, x + 1, a=1, b=2))
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompileInTreeMismatch(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    exe = f.lower(x, x + 1).compile()
+
+    self.assertRaisesRegex(
+        TypeError, "function compiled for .*, called with .*",
+        lambda: exe([x], [x + 1]))
+
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 

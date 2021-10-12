@@ -357,8 +357,8 @@ def _python_jit(
         donated_invars=donated_invars, inline=inline)
     return tree_unflatten(out_tree(), out_flat)
 
-  f_jitted.lower = _make_lower(fun, static_argnums, static_argnames, device,
-                               backend, donate_argnums, inline)
+  f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
+                              backend, donate_argnums, inline)
   return f_jitted
 
 
@@ -471,73 +471,97 @@ def _cpp_jit(
                              cache=_cpp_jit_cache)
   f_jitted = wraps(fun)(cpp_jitted_f)
 
-  f_jitted.lower = _make_lower(fun, static_argnums, static_argnames, device,
-                               backend, donate_argnums, inline)
+  f_jitted.lower = _jit_lower(fun, static_argnums, static_argnames, device,
+                              backend, donate_argnums, inline)
 
   return f_jitted
 
 
-class JitLowered:
-  __slots__ = ['computation', 'in_tree', 'out_tree']
+class Lowered:
+  """Lowering of a function specialized to argument types and values.
 
-  computation: xla.XlaComputation
+  A lowering is a computation ready for compilation. This class
+  carries a lowering together with the remaining information needed to
+  later compile and execute it. It also provides a common API for
+  querying properties of lowered computations across JAX's various
+  lowering paths (``jit``, ``pmap``, etc.).
+  """
+  __slots__ = ['in_tree', 'out_tree', '_lowering', '_no_kwargs']
+
   in_tree: PyTreeDef
   out_tree: PyTreeDef
+  _lowering: Union[xla.XlaComputation, pxla.MeshComputation]
+  _no_kwargs: bool
 
-  def __init__(self, computation, in_tree, out_tree):
-    self.computation = computation
+  def __init__(self, lowering, in_tree, out_tree, no_kwargs=False):
+    self._lowering = lowering
     self.in_tree = in_tree
     self.out_tree = out_tree
+    self._no_kwargs = no_kwargs
 
   def _xla_computation(self):
     # TODO(frostig): finalize API. For now, return the underlying
     # computation directly via this method.
-    if self.computation.is_trivial():
-      raise ValueError('A trivial computation has no HLO')
-    return self.computation.hlo
+    return self._lowering.hlo()
 
-  def compile(self) -> 'JitCompiled':
-    return JitCompiled(
-        self.computation.compile(), self.in_tree, self.out_tree)
+  def compile(self) -> 'Compiled':
+    return Compiled(
+        self._lowering.compile(), self.in_tree, self.out_tree, self._no_kwargs)
 
 
-class JitCompiled:
-  __slots__ = ['computation', 'in_tree', 'out_tree']
+class Compiled:
+  """Compiled representation of a function specialized to types/values.
 
-  computation: xla.XlaCompiledComputation
+  A compiled computation is associated with an executable and the
+  remaining information needed to execute it. It also provides a
+  common API for querying properties of compiled computations across
+  JAX's various compilation paths and backends.
+  """
+  __slots__ = ['in_tree', 'out_tree', '_executable', '_no_kwargs']
+
   in_tree: PyTreeDef
   out_tree: PyTreeDef
+  _executable: Union[xla.XlaCompiledComputation, pxla.MeshExecutable]
+  _no_kwargs: bool
 
-  def __init__(self, computation, in_tree, out_tree):
-    self.computation = computation
+  def __init__(self, executable, in_tree, out_tree, no_kwargs=False):
+    self._executable = executable
     self.in_tree = in_tree
     self.out_tree = out_tree
+    self._no_kwargs = no_kwargs
 
   def _xla_executable(self):
     # TODO(frostig): finalize API. For now, return the underlying
     # executable directly via this method.
-    if self.computation.is_trivial():
-      raise ValueError('A trivial computation has no executable')
-    return self.computation.xla_executable
+    return self._executable.xla_executable()
 
   def __call__(self, *args, **kwargs):
-    args_flat, in_tree = tree_flatten((args, kwargs))
+    if self._no_kwargs:
+      if kwargs:
+        kws = ', '.join(kwargs.keys())
+        raise NotImplementedError(
+            'function was compiled by a transformation that does not support '
+            f'keyword arguments, but called with keyword arguments: {kws}')
+      args_flat, in_tree = tree_flatten(args)
+    else:
+      args_flat, in_tree = tree_flatten((args, kwargs))
     if in_tree != self.in_tree:
       # TODO(frostig): provide more info about the source function
+      # and transformation
       raise TypeError(
           f'function compiled for {self.in_tree}, called with {in_tree}')
-    out_flat = self.computation.call(*args_flat)
+    out_flat = self._executable.call(*args_flat)
     return tree_unflatten(self.out_tree, out_flat)
 
 
-def _make_lower(fun, static_argnums, static_argnames, device, backend,
-                donate_argnums, inline):
+def _jit_lower(fun, static_argnums, static_argnames, device, backend,
+               donate_argnums, inline):
   """Make a ``lower`` method for jitted functions."""
   # If the function we returned from ``jit`` were a class instance,
   # this might naturally be a method, with ``fun`` as a ``self`` and
   # all the other arguments stored as attributes.
   @api_boundary
-  def lower(*args, **kwargs) -> JitLowered:
+  def lower(*args, **kwargs) -> Lowered:
     """Lower this function for the given arguments.
 
     A lowered function is staged out of Python and translated to a
@@ -545,7 +569,7 @@ def _make_lower(fun, static_argnums, static_argnames, device, backend,
     manner. It is ready for compilation but not yet compiled.
 
     Returns:
-      A ``JitLowered`` instance representing the lowering.
+      A ``Lowered`` instance representing the lowering.
     """
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
@@ -554,7 +578,7 @@ def _make_lower(fun, static_argnums, static_argnames, device, backend,
     arg_specs = unsafe_map(xla.arg_spec, args_flat)
     computation = xla.lower_xla_callable(
         flat_fun, device, backend, name, donated_invars, *arg_specs)
-    return JitLowered(computation, in_tree, out_tree())
+    return Lowered(computation, in_tree, out_tree())
 
   return lower
 
