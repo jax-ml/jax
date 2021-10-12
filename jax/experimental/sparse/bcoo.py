@@ -67,17 +67,20 @@ def _dedupe_bcoo_one(data, indices):
   if indices.shape[1] == 0:
     return data, indices
 
-  # This is a fixed-size version of jnp.unique() with return_indices=True
-  # unique values are zero-filled at the end.
-  perm = jnp.lexsort(indices.T[::-1])
+  # The following is similar to
+  #   indices_unique, inv_idx = jnp.unique(indices, axis=0, return_inverse=True,
+  #                                        size=indices.shape[0], fill_value=0)
+  # but modified to keep padding at the end of the resulting arrays.
+  is_padding = (indices == 0).all(1) & (data == 0)
+  perm = jnp.lexsort(indices[:, ::-1].T)
   aux = indices[perm]
   mask = jnp.ones(indices.shape[0], dtype=bool)
   mask = mask.at[1:].set(jnp.any(aux[1:] != aux[:-1], 1))
+  mask = mask & ~is_padding[perm]  # this is the padding modification.
   imask = jnp.cumsum(mask) - 1
   indices_unique = jnp.where(mask[:, None], aux, 0)[jnp.argsort(~mask)]
   inv_idx = jnp.zeros_like(imask).at[perm].set(imask)
 
-  # With the above, de-duping is easy.
   data_unique = jnp.zeros_like(data).at[inv_idx].add(data)
   return data_unique, indices_unique
 
