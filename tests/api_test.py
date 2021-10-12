@@ -1428,6 +1428,13 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "len[(][)] of unsized object"):
       _ = len(s)
 
+  def test_shape_dtype_struct_hash(self):
+    s1 = api.ShapeDtypeStruct(shape=(2, 3), dtype=jnp.float32)
+    s2 = api.ShapeDtypeStruct(shape=(2, 3), dtype=jnp.float32)
+    s3 = api.ShapeDtypeStruct(shape=(2, 4), dtype=jnp.float32)
+    self.assertEqual(hash(s1), hash(s2))
+    self.assertNotEqual(hash(s1), hash(s3))
+
   def test_eval_shape(self):
     def fun(x, y):
       return jnp.tanh(jnp.dot(x, y) + 3.)

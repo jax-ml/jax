@@ -2678,7 +2678,10 @@ class ShapeDtypeStruct:
           self.shape, self.dtype, self.named_shape)
 
   def __hash__(self):
-    return hash((self.shape, self.dtype, self.named_shape))
+    # TODO(frostig): avoid the conversion from dict by addressing
+    # https://github.com/google/jax/issues/8182
+    named = frozenset(self.named_shape.items())
+    return hash((self.shape, self.dtype, named))
 
 def eval_shape(fun: Callable, *args, **kwargs):
   """Compute the shape/dtype of ``fun`` without any FLOPs.
