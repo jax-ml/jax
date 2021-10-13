@@ -886,7 +886,6 @@ def find_top_trace(xs, axis_names=None) -> Trace:
 
 class AbstractValue:
   __slots__: List[str] = []
-  _num_buffers: int = 1  # number of buffers used to represent the value.
 
   def at_least_vspace(self):
     raise NotImplementedError("must override")
@@ -918,8 +917,6 @@ class Bot(AbstractValue): pass
 bot = Bot()
 
 class AbstractUnit(AbstractValue):
-  # TODO(jakevdp): make it possible to set zero buffers
-  # _num_buffers = 0
   def at_least_vspace(self): return self
   def join(self, other):
     if config.jax_enable_checks:

@@ -2613,7 +2613,8 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):
   def _device_put_replicated(x):
     aval = core.unmapped_aval(len(devices), core.no_axis_name, 0,
                               core.raise_to_shaped(core.get_aval(x)))
-    assert isinstance(aval, core.ShapedArray) and aval._num_buffers == 1
+    assert (isinstance(aval, core.ShapedArray) and
+            len(xla.aval_to_xla_shapes(aval)) == 1)
     buf, = xla.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
     return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
