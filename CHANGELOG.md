@@ -40,6 +40,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     the `--experimental_cpp_pmap` flag (or `JAX_CPP_PMAP` environment variable).
   * `jax.numpy.unique` now supports an optional `fill_value` argument ({jax-issue}`#8121`)
 
+## jaxlib 0.1.73 (Unreleased)
+
+## jaxlib 0.1.72 (Oct 12, 2021)
+
 ## jax 0.2.21 (Sept 23, 2021)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.20...jax-v0.2.21).
