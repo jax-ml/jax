@@ -183,17 +183,17 @@ remat_p = core.Primitive('remat2')
 remat_p.multiple_results = True
 
 @remat_p.def_impl
-def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
+def remat_impl(*args, jaxpr: core.Jaxpr, prevent_cse, differentiated, policy):
   del prevent_cse, differentiated, policy  # Unused.
   return core.eval_jaxpr(jaxpr, (), *args)
 
 @remat_p.def_abstract_eval
-def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
+def remat_abstract_eval(*args, jaxpr: core.Jaxpr, prevent_cse, differentiated, policy):
   del args, prevent_cse, differentiated, policy  # Unused.
   return [v.aval for v in jaxpr.outvars]
 
 def remat_translation(c, axis_env, name_stack, avals, backend, *in_nodes,
-                      jaxpr, prevent_cse, differentiated, policy):
+                      jaxpr: core.Jaxpr, prevent_cse, differentiated, policy):
   del policy  # Unused.
   if differentiated and prevent_cse:
     if backend == "gpu":
@@ -207,7 +207,7 @@ def remat_translation(c, axis_env, name_stack, avals, backend, *in_nodes,
     return xla.xops.Tuple(c, outs)
 xla.initial_style_translations[remat_p] = remat_translation
 
-def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
+def remat_jvp(primals, tangents, jaxpr: core.Jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars
   in_nonzeros = [type(t) is not ad_util.Zero for t in tangents]
   jaxpr_ = core.ClosedJaxpr(jaxpr, ())
@@ -224,7 +224,7 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
 
-def remat_partial_eval(trace, *tracers, jaxpr, **params):
+def remat_partial_eval(trace, *tracers, jaxpr: core.Jaxpr, **params):
   assert not jaxpr.constvars
   policy = params['policy'] or (lambda *_, **__: False)
   # unzip into known and jaxpr_unknown
@@ -270,7 +270,7 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr',
             remat_paratial_eval_custom_params_updater)
 
-def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr, **params):
+def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr: core.Jaxpr, **params):
   assert not jaxpr.constvars
   cell = lambda: None
 

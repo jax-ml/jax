@@ -30,8 +30,10 @@ from jax._src import dtypes
 from jax import linear_util as lu
 from jax import random, tree_util
 from jax import numpy as jnp
+from jax import numpy as jnp
 from jax._src import source_info_util
 from jax._src import util
+from jax._src import ad_checkpoint
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 from jax._src.lax import lax
@@ -952,7 +954,6 @@ tf_not_yet_impl = [
     "random_gamma_grad",
     "reduce_precision",
     "schur",
-    "remat2",  # TODO(mattjj,necula): support new remat?
 
     # Not high priority?
     "after_all",
@@ -2721,6 +2722,21 @@ tf_impl_with_avals[lax_control_flow.scan_p] = _convert_jax_impl(
     lax_control_flow._scan_impl,
     extra_name_stack="scan")
 
+
+def _remat2(*args: TfVal, jaxpr: core.Jaxpr,
+            prevent_cse: bool, differentiated: bool, policy,
+            _in_avals: Sequence[core.ShapedArray],
+            _out_aval: core.ShapedArray) -> Sequence[TfVal]:
+  # We just inline the body of the primitive; all differentiation has already
+  # happened.
+  # TODO(necula): we really should insert the prevent-CSE trick to ensure that
+  # we generate the same code as JAX.
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, [])
+  results = _interpret_jaxpr(closed_jaxpr, *args,
+                             extra_name_stack="remat2")
+  return results
+
+tf_impl_with_avals[ad_checkpoint.remat_p] = _remat2
 
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted

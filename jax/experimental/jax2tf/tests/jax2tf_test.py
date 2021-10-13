@@ -15,6 +15,7 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 
+import functools
 import re
 from typing import Dict, Tuple
 
@@ -618,6 +619,22 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_remat1(self):
     @jax.remat
+    def f(x1):
+      x2 = jnp.sin(x1)
+      x3 = jnp.sin(x2)
+      x4 = jnp.sin(x3)
+      return jnp.sum(x4)
+
+    # The computation of grad_f computes "sin" 5 times, 3 for the forward pass
+    # and then to rematerialize "x2" and "x3" in the backward pass.
+    arg = np.arange(3.)
+    self.TransformConvertAndCompare(f, arg, "grad")
+    # TODO: check that the TF code also computes "sin" 5 times
+
+  def test_remat2(self):
+    # If we pass the policy, we use the new remat.
+    # TODO(necula): remove this test when remat is initial style by default.
+    @functools.partial(jax.remat, policy=lambda *_, **__: True)
     def f(x1):
       x2 = jnp.sin(x1)
       x3 = jnp.sin(x2)
