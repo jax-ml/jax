@@ -793,16 +793,20 @@ class XlaCompiledComputation:
         jaxpr, device, consts, out_avals, result_handlers, kept_var_idx))
 
   def call(self, *args):
-    arg_specs = map(arg_spec, args)
+    arg_specs = unsafe_map(arg_spec, args)
     arg_avals = [spec[0] for spec in arg_specs]
-    for ref_aval, arg_aval in zip(self.in_avals, arg_avals):
-      if not core.typematch(ref_aval, arg_aval):
-        ref_avals_fmt = ', '.join(str(a) for a in self.in_avals)
-        arg_avals_fmt = ', '.join(str(a) for a in arg_avals)
-        raise TypeError(
-          f"Computation compiled for input types:\n  {ref_avals_fmt}\n"
-          f"called with:\n  {arg_avals_fmt}")
+    check_arg_avals_for_call(self.in_avals, arg_avals)
     return self.unsafe_call(*args)
+
+
+def check_arg_avals_for_call(ref_avals, arg_avals):
+  for ref_aval, arg_aval in zip(ref_avals, arg_avals):
+    if not core.typematch(ref_aval, arg_aval):
+      ref_avals_fmt = ', '.join(str(a) for a in ref_avals)
+      arg_avals_fmt = ', '.join(str(a) for a in arg_avals)
+      raise TypeError(
+        f"Computation compiled for input types:\n  {ref_avals_fmt}\n"
+        f"called with:\n  {arg_avals_fmt}")
 
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):

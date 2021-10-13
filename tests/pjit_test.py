@@ -553,6 +553,25 @@ class PJitTest(jtu.BufferDonationTestCase):
         TypeError, "function compiled for .*, called with .*",
         lambda: exe([x], [x + 1]))
 
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testLowerCompileArgTypeMismatch(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x_f32 = x.astype(jnp.float32)
+    x_i32 = x.astype(jnp.int32)
+    exe = f.lower(x_f32, x_f32).compile()
+    self.assertRaisesRegex(
+        TypeError,
+        "Computation compiled for input types:\n.*float32.*\n"
+        "called with:\n.*int32.*",
+        lambda: exe(x_i32, x_i32))
+
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
