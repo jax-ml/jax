@@ -188,6 +188,9 @@ def build_tree(treedef, xs):
   return treedef.from_iterable_tree(xs)
 
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
+  """Transform a tree having tree structure (outer, inner) into one having structure
+  (inner, outer).
+  """
   flat, treedef = tree_flatten(pytree_to_transpose)
   inner_size = inner_treedef.num_leaves
   outer_size = outer_treedef.num_leaves
