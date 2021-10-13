@@ -720,6 +720,20 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         TypeError, "function compiled for .*, called with .*",
         lambda: f_exe([4.]))
 
+  def test_jit_lower_compile_arg_type_mismatch(self):
+    def f(x):
+      return jnp.sqrt(x ** 2) + 1.
+
+    x = jnp.array(1, dtype=int)
+    x_f32 = x.astype(jnp.float32)
+    x_i32 = x.astype(jnp.int32)
+    f_exe = self.jit(f).lower(x_f32).compile()
+    self.assertRaisesRegex(
+        TypeError,
+        "Computation compiled for input types:\n.*float32.*\n"
+        "called with:\n.*int32.*",
+        lambda: f_exe(x_i32))
+
 
 class PythonJitTest(CPPJitTest):
 

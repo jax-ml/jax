@@ -663,8 +663,9 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
-    return XlaComputation(name, None, True, jaxpr, consts, device, out_avals,
-                          kept_var_idx)
+    return XlaComputation(
+        name, None, True, jaxpr, consts, device, abstract_args, out_avals,
+        kept_var_idx)
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -702,15 +703,18 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   backend = xb.get_backend(backend)
   out_tuple = xops.Tuple(c, out_nodes)
   if backend.platform in ("gpu", "tpu"):
-    donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+    donated_invars = set_up_aliases(
+        c, xla_args, out_tuple, donated_invars, tuple_args)
   if any(donated_invars):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
     unused_donations = [str(c.GetShape(a))
                         for a, d in zip(xla_args, donated_invars) if d]
-    warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
+    warn("Some donated buffers were not usable: {}".format(
+         ", ".join(unused_donations)))
   built = c.build(out_tuple)
-  return XlaComputation(name, built, False, nreps, device, backend, tuple_args,
-                        out_avals, kept_var_idx)
+  return XlaComputation(
+      name, built, False, nreps, device, backend, tuple_args, abstract_args,
+      out_avals, kept_var_idx)
 
 
 class XlaComputation:
@@ -730,7 +734,7 @@ class XlaComputation:
 
   def hlo(self):
     if self.is_trivial():
-      raise ValueError('A trivial computation has no HLO')
+      raise ValueError("A trivial computation has no HLO")
     return self._hlo
 
   def compile(self) -> 'XlaCompiledComputation':
@@ -745,8 +749,9 @@ class XlaComputation:
 
 
 class XlaCompiledComputation:
-  def __init__(self, xla_executable, unsafe_call):
+  def __init__(self, xla_executable, in_avals, unsafe_call):
     self._xla_executable = xla_executable
+    self.in_avals = in_avals
     self.unsafe_call = unsafe_call
 
   @staticmethod
@@ -757,6 +762,7 @@ class XlaCompiledComputation:
       device,
       backend,
       tuple_args: bool,
+      in_avals,
       out_avals,
       kept_var_idx) -> 'XlaCompiledComputation':
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
@@ -767,37 +773,36 @@ class XlaCompiledComputation:
     options.parameter_is_tupled_arguments = tuple_args
     compiled = compile_or_get_cached(backend, xla_computation, options)
     buffer_counts = [len(aval_to_xla_shapes(aval)) for aval in out_avals]
-    if nreps == 1:
-      return XlaCompiledComputation(compiled, partial(
-          _execute_compiled, name, compiled, buffer_counts, result_handlers,
-          kept_var_idx))
-    else:
-      return XlaCompiledComputation(compiled, partial(
-          _execute_replicated, name, compiled, buffer_counts, result_handlers,
-          kept_var_idx))
+    execute = _execute_compiled if nreps == 1 else _execute_replicated
+    return XlaCompiledComputation(compiled, in_avals, partial(execute,
+          name, compiled, buffer_counts, result_handlers, kept_var_idx))
 
   def is_trivial(self):
     return self._xla_executable == None
 
   def xla_executable(self):
     if self.is_trivial():
-      raise ValueError('A trivial compiled computation has no XLA executable')
+      raise ValueError("A trivial compiled computation has no XLA executable")
     return self._xla_executable
 
   @staticmethod
-  def from_trivial_jaxpr(jaxpr, consts, device, out_avals, kept_var_idx
-                        )  -> 'XlaCompiledComputation':
+  def from_trivial_jaxpr(jaxpr, consts, device, in_avals, out_avals,
+                         kept_var_idx) -> 'XlaCompiledComputation':
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
-    return XlaCompiledComputation(None, partial(
-        _execute_trivial, jaxpr, device, consts, out_avals,
-        result_handlers, kept_var_idx))
+    return XlaCompiledComputation(None, in_avals, partial(_execute_trivial,
+        jaxpr, device, consts, out_avals, result_handlers, kept_var_idx))
 
   def call(self, *args):
-    # TODO(apaszke,frostig): Check that args are compatible with input avals!
+    arg_specs = map(arg_spec, args)
+    arg_avals = [spec[0] for spec in arg_specs]
+    for ref_aval, arg_aval in zip(self.in_avals, arg_avals):
+      if not core.typematch(ref_aval, arg_aval):
+        ref_avals_fmt = ', '.join(str(a) for a in self.in_avals)
+        arg_avals_fmt = ', '.join(str(a) for a in arg_avals)
+        raise TypeError(
+          f"Computation compiled for input types:\n  {ref_avals_fmt}\n"
+          f"called with:\n  {arg_avals_fmt}")
     return self.unsafe_call(*args)
-
-  def __call__(self, *args):
-    return self.call(*args)
 
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
