@@ -5607,20 +5607,29 @@ def _unique_axis_sorted_mask(ar, axis):
     mask = ones(size, dtype=bool).at[1:].set(any(aux[:, 1:] != aux[:, :-1], 0))
   else:
     mask = zeros(size, dtype=bool)
-  return aux, mask, perm, out_shape
+  return aux, mask, perm
 
 def _unique_axis(ar, axis, return_index=False, return_inverse=False,
-                 return_counts=False):
+                 return_counts=False, size=None, fill_value=None):
   """
   Find the unique elements of an array along a particular axis.
   """
-  aux, mask, perm, out_shape = _unique_axis_sorted_mask(ar, axis)
-  result = moveaxis(aux[:, mask].T.reshape(mask.sum() or aux.shape[1], *out_shape), 0, axis)
+  aux, mask, perm = _unique_axis_sorted_mask(ar, axis)
+  out_shape = ar.shape[:axis] + ar.shape[axis + 1:]
+  ind = mask if size is None else nonzero(mask, size=size)[0]
+  result = aux[:, ind]
+  if size is not None and fill_value is not None:
+    result = where(arange(size) >= mask.sum(), fill_value, result)
+  leading_dim = size if size is not None else mask.sum() or aux.shape[1]
+  result = moveaxis(result.T.reshape(leading_dim, *out_shape), 0, axis)
 
   ret = (result,)
   if return_index:
     if aux.size:
-      ret += (perm[mask],)
+      perm_ind = perm[ind]
+      if size is not None and fill_value is not None:
+        perm_ind = where(arange(size) >= mask.sum(), fill_value, perm_ind)
+      ret += (perm_ind,)
     else:
       ret += (perm,)
   if return_inverse:
@@ -5633,7 +5642,11 @@ def _unique_axis(ar, axis, return_index=False, return_inverse=False,
     ret += (inv_idx,)
   if return_counts:
     if aux.size:
-      idx = concatenate(nonzero(mask) + (array([mask.size]),))
+      if size is None:
+        idx = append(nonzero(mask)[0], mask.size)
+      else:
+        idx = nonzero(mask, size=size + 1)[0]
+        idx = idx.at[1:].set(where(idx[1:], idx[1:], mask.size))
       ret += (diff(idx),)
     elif ar.shape[axis]:
       ret += (array([ar.shape[axis]]),)
@@ -5648,21 +5661,14 @@ typically compatible with JIT. The JAX version adds the optional `size` argument
 specifies the size of the data-dependent output arrays: it must be specified statically
 for ``jnp.unique`` to be compiled with non-static operands. If specified, the first `size`
 unique elements will be returned; if there are fewer unique elements than `size` indicates,
-the return value will be padded with `fill_value`, which defaults to the minimum value in
-the input array.
-
-The `size` cannot currently be used with the `axis` argument."""
+the return value will be padded with `fill_value`, which defaults to the minimum value
+along the specified axis of the input."""
 
 
 @_wraps(np.unique, skip_params=['axis'], lax_description=_UNIQUE_DOC)
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis: Optional[int] = None, *, size=None, fill_value=None):
   _check_arraylike("unique", ar)
-
-  # TODO(jakevdp): call _check_arraylike on input.
-  if axis is not None and size is not None:
-    # TODO(jakevdp): implement size & axis together.
-    raise NotImplementedError("jnp.unique `size` and `axis` arguments cannot be used together.")
 
   if size is None:
     ar = core.concrete_or_error(None, ar, "The error arose for the first argument of jnp.unique()")
@@ -5674,7 +5680,7 @@ def unique(ar, return_index=False, return_inverse=False,
     ret = _unique1d(ar, return_index, return_inverse, return_counts, size=size, fill_value=fill_value)
   else:
     axis = core.concrete_or_error(operator.index, axis, "axis argument of jnp.unique()")
-    ret = _unique_axis(ar, axis, return_index, return_inverse, return_counts)
+    ret = _unique_axis(ar, axis, return_index, return_inverse, return_counts, size=size, fill_value=fill_value)
 
   return ret[0] if len(ret) == 1 else ret
 
