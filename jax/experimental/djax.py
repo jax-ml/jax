@@ -727,6 +727,11 @@ def array_result_handler(aval):
     return Array(shape, aval._eltTy, array_handler(*bufs))
   return handler
 
+def aval_to_num_buffers(aval):
+  if isinstance(aval, AbsArray):
+    return 1
+  else:
+    return len(xla.aval_to_xla_shapes(aval))
 
 translations: Dict[core.Primitive, Callable] = {}
 
@@ -745,7 +750,7 @@ def _dynamic_xla_call_impl(*args, jaxpr, num_consts):
   out = xops.Tuple(c, [o for ops in dim_outs + outs for o in ops])
   compiled = xb.get_backend(None).compile(c.build(out))
   result_handlers = map(result_handler, [v.aval for v in jaxpr.outs])
-  out_bufcounts = [v.aval._num_buffers for v in jaxpr.outs]
+  out_bufcounts = [aval_to_num_buffers(v.aval) for v in jaxpr.outs]
   partitioner = result_partitioner(jaxpr.in_dim_binders, in_dim_vals,
                                    jaxpr.out_dims, out_bufcounts)
   return execute_compiled(compiled, partitioner, result_handlers,
@@ -798,7 +803,8 @@ def traceable_to_padded_translation(traceable):
     operands_ = it.chain.from_iterable([*dims.values(), *operands])
     outs = xla.jaxpr_subcomp(c, jaxpr, None, xla.AxisEnv(1, (), ()),
                              xla._xla_consts(c, consts), '', *operands_)
-    return xla._partition_outputs(out_avals, outs)
+    return xla._partition_outputs(
+      [aval_to_num_buffers(aval) for aval in out_avals], outs)
   return translation
 
 def _replace_vars_with_bounds(aval):

@@ -93,7 +93,7 @@ def _device_put_unit(_, device):
   backend = xb.get_device_backend(device)
   return (backend.buffer_from_pyval(np.zeros((), dtype=np.dtype('bool')),
                                     device),)
-def _make_array_shape(a):
+def _make_array_shape(a: ShapedArray) -> Sequence[XlaShape]:
   if a.dtype is dtypes.float0:
     return (xc.Shape.array_shape(np.dtype('bool'), a.shape),)
   else:
@@ -126,19 +126,21 @@ def make_op_metadata(primitive: core.Primitive,
 
 xb.register_constant_handler(core.Unit, lambda c, *_: _make_unit_constant(c))
 
-def aval_to_xla_shapes(aval):
+def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[XlaShape]:
   try:
     return xla_shape_handlers[type(aval)](aval)
   except KeyError as err:
     raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
 
-xla_shape_handlers: Dict[Type[core.AbstractValue], Callable] = {
+xla_shape_handlers: Dict[Type[core.AbstractValue],
+                         Callable[[Any], Sequence[XlaShape]]] = {
     core.AbstractUnit: _make_unit_shape,
     ShapedArray: _make_array_shape,
     ConcreteArray: _make_array_shape,
 }
 
-def aval_to_result_handler(device: Optional[Device], aval: core.AbstractValue) -> Callable:
+def aval_to_result_handler(device: Optional[Device],
+                           aval: core.AbstractValue) -> Callable:
   try:
     return xla_result_handlers[type(aval)](device, aval)
   except KeyError as err:
@@ -279,8 +281,7 @@ def apply_primitive(prim, *args, **params):
   return compiled_fun(*args)
 
 
-def _partition_outputs(avals, outs):
-  nouts = [aval._num_buffers for aval in avals]
+def _partition_outputs(nouts: Sequence[int], outs):
   if config.jax_enable_checks:
     assert sum(nouts) == len(outs), f"Internal error: sum(nouts)={sum(nouts)} should equal len(outs)={len(outs)}."
   outs = iter(outs)
@@ -373,7 +374,9 @@ def _flatmap(func: Callable, vars: Sequence):
   return list(it.chain.from_iterable(map(func, vars)))
 
 def _partitionmap(func: Callable, vars: Sequence, nodes: Sequence):
-  return map(func, vars, _partition_outputs([v.aval for v in vars], nodes))
+  return map(func, vars,
+             _partition_outputs([len(aval_to_xla_shapes(v.aval)) for v in vars],
+                                nodes))
 
 def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
   if backend not in ('cpu', 'gpu', 'tpu'):
@@ -436,7 +439,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
 
     assert isinstance(ans, xe.XlaOp)
     c.get_shape(ans)  # force xla to do shape error checking
-    if eqn.primitive.multiple_results or any(v.aval._num_buffers > 1 for v in eqn.outvars):
+    if (eqn.primitive.multiple_results or
+        any(len(aval_to_xla_shapes(v.aval)) > 1 for v in eqn.outvars)):
       out_nodes = xla_destructure(c, ans)
     else:
       out_nodes = [ans]
@@ -762,13 +766,14 @@ class XlaCompiledComputation:
         device_assignment=(device.id,) if device else None)
     options.parameter_is_tupled_arguments = tuple_args
     compiled = compile_or_get_cached(backend, xla_computation, options)
+    buffer_counts = [len(aval_to_xla_shapes(aval)) for aval in out_avals]
     if nreps == 1:
       return XlaCompiledComputation(compiled, partial(
-          _execute_compiled, name, compiled, out_avals, result_handlers,
+          _execute_compiled, name, compiled, buffer_counts, result_handlers,
           kept_var_idx))
     else:
       return XlaCompiledComputation(compiled, partial(
-          _execute_replicated, name, compiled, out_avals, result_handlers,
+          _execute_replicated, name, compiled, buffer_counts, result_handlers,
           kept_var_idx))
 
   def is_trivial(self):
@@ -918,7 +923,8 @@ def _xla_param(builder, param_num, xla_shape, replicated, partitions, parts_prot
     return with_sharding(builder, partitions, make_param)
 
 
-def _execute_compiled(name: str, compiled: XlaExecutable, avals, handlers,
+def _execute_compiled(name: str, compiled: XlaExecutable,
+                      output_buffer_counts: Sequence[int], handlers,
                       kept_var_idx, *args):
   device, = compiled.local_devices()
   input_bufs = list(
@@ -928,10 +934,12 @@ def _execute_compiled(name: str, compiled: XlaExecutable, avals, handlers,
           if x is not token and i in kept_var_idx))
   out_bufs = compiled.execute(input_bufs)
   check_special(name, out_bufs)
-  return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
+  return [handler(*bs) for handler, bs in
+          zip(handlers, _partition_outputs(output_buffer_counts, out_bufs))]
 
 
-def _execute_replicated(name: str, compiled: XlaExecutable, avals, handlers,
+def _execute_replicated(name: str, compiled: XlaExecutable,
+                        output_buffer_counts: Sequence[int], handlers,
                         kept_var_idx, *args):
   input_bufs = [
       list(
@@ -946,7 +954,8 @@ def _execute_replicated(name: str, compiled: XlaExecutable, avals, handlers,
           list(zip(*input_bufs)))
   ]
   check_special(name, out_bufs)
-  return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
+  return [handler(*bs) for handler, bs in
+          zip(handlers, _partition_outputs(output_buffer_counts, out_bufs))]
 
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
@@ -1070,9 +1079,10 @@ def lower_fun(fun, multiple_results, parallel=False, with_avals=False, backend=N
       wrapped_fun = _tuple_output(wrapped_fun)
     with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts), '',
-                         *xla_args)
-    if multiple_results or any(v.aval._num_buffers > 1 for v in jaxpr.outvars):
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts),
+                         '', *xla_args)
+    if (multiple_results or
+        any(len(aval_to_xla_shapes(v.aval)) > 1 for v in jaxpr.outvars)):
       return xops.Tuple(c, outs)
     else:
       assert len(outs) == 1, outs

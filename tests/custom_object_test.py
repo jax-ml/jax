@@ -58,7 +58,6 @@ class SparseArray:
 
 class AbstractSparseArray(core.ShapedArray):
   __slots__ = ['index_dtype', 'nnz', 'data_aval', 'indices_aval']
-  _num_buffers = 2
 
   def __init__(self, shape, dtype, index_dtype, nnz, weak_type=False,
                named_shape=None):
@@ -236,7 +235,6 @@ class Empty:
     self.aval = aval
 
 class AbstractEmpty(core.AbstractValue):
-  _num_buffers = 0
 
   def join(self, other):
     assert isinstance(other, self.__class__), other
