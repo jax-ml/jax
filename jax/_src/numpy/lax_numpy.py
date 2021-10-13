@@ -2823,7 +2823,8 @@ typically compatible with JIT. The JAX version adds the optional `size` argument
 specifies the size of the output arrays: it must be specified statically for ``jnp.nonzero``
 to be compiled with non-static operands. If specified, the first `size` nonzero elements
 will be returned; if there are fewer nonzero elements than `size` indicates, the result
-will be padded with ``fill_value``, which defaults to zero.
+will be padded with ``fill_value``, which defaults to zero. ``fill_value`` may be a scalar,
+or a tuple specifying the fill value in each dimension.
 """
 
 @_wraps(np.nonzero, lax_description=_NONZERO_DOC)
@@ -2841,10 +2842,12 @@ def nonzero(a, *, size=None, fill_value=None):
   strides = np.cumprod(a.shape[::-1])[::-1] // a.shape
   out = tuple((flat_indices // stride) % size for stride, size in zip(strides, a.shape))
   if size is not None and fill_value is not None:
-    if ndim(fill_value) != 0:
-      raise ValueError(f"fill_value must be a scalar; got {fill_value}")
+    if not isinstance(fill_value, tuple):
+      fill_value = a.ndim * (fill_value,)
+    if _shape(fill_value) != (a.ndim,):
+      raise ValueError(f"fill_value must be a scalar or a tuple of length {a.ndim}; got {fill_value}")
     fill_mask = arange(size) >= mask.sum()
-    out = tuple(where(fill_mask, fill_value, entry) for entry in out)
+    out = tuple(where(fill_mask, fval, entry) for fval, entry in safe_zip(fill_value, out))
   return out
 
 @_wraps(np.flatnonzero, lax_description=_NONZERO_DOC)
