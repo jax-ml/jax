@@ -94,6 +94,9 @@ def high_precision_dot(a, b):
 def posify(matrix):
   return high_precision_dot(matrix, matrix.T.conj())
 
+ignore_jit_of_pmap_warning = partial(
+  jtu.ignore_warning, message=".*jit-of-pmap.*")
+
 
 class LaxControlFlowTest(jtu.JaxTestCase):
 
@@ -2446,6 +2449,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.arange(10)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_jit_of_pmap_warning()
   def test_while_loop_of_pmap(self):
     # code from jsnoek@
 
@@ -2464,6 +2468,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_jit_of_pmap_warning()
   def test_while_loop_of_pmap_error_message(self):
 
     def body(i, x):
@@ -2476,9 +2481,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         ValueError,
         re.escape(
-            "compiling a primitive computation `scan` that requires {} "
-            "replicas, but only {} XLA devices are available on backend {}."
-            .format(too_big, jax.device_count(), jtu.device_under_test())),
+            "compiling computation `scan` that requires {} "
+            "replicas, but only {} XLA devices are available."
+            .format(too_big, jax.device_count())),
         lambda: f_loop(jnp.ones(too_big)))
 
   @parameterized.named_parameters(

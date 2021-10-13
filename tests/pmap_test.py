@@ -1182,7 +1182,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     pts = jnp.ones(device_count)
     qs = jnp.asarray(((0,0), (3,3), (2,2)))
 
-    _, expected = map_version(qs, pts)
+    with ignore_jit_of_pmap_warning():
+      _, expected = map_version(qs, pts)
     _, ans = vmap_version(qs, pts)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1574,7 +1575,8 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     result1 = vmap(lambda b: matrix_vector(x, b, True))(y)       # vmap + pmap
     result2 = lax.map(lambda b: matrix_vector(x, b, False), y)   # map + map
-    result3 = lax.map(lambda b: matrix_vector(x, b, True), y)    # map + pmap
+    with ignore_jit_of_pmap_warning():
+      result3 = lax.map(lambda b: matrix_vector(x, b, True), y)    # map + pmap
     result4 = jnp.stack([matrix_vector(x, b, False) for b in y])  # none + map
 
     self.assertAllClose(result1, result2, check_dtypes=False, atol=1e-3, rtol=1e-3)
@@ -1761,7 +1763,8 @@ class PythonPmapTest(jtu.JaxTestCase):
       y = lax.cond(True, jax.pmap(identity), jax.pmap(identity), x)
       return y
 
-    cond_of_pmap(jnp.zeros((jax.device_count(), 2)))
+    with ignore_jit_of_pmap_warning():
+      cond_of_pmap(jnp.zeros((jax.device_count(), 2)))
 
   def test_static_argnum_on_method(self):
 
