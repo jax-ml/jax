@@ -3768,6 +3768,38 @@ class RematTest(jtu.JaxTestCase):
       return lax.scan(lambda _, x: (None, f(x)), None, x)[1]
     jtu.check_grads(g, (jnp.ones((2, 3)),), order=2, modes=['fwd', 'rev'])
 
+  def test_constants_not_hoisted(self):
+    # The old implementation of remat worked by data dependence, and so
+    # (potentially large) constants would not be rematerialized and could be
+    # wastefully instantiated. This test checks that the newer remat
+    # implementation avoids that. We engage the newer implementation by passing
+    # an explicit policy.
+    def saved_residuals(f, *args, **kwargs):
+      linearize = lambda *args: jax.linearize(f, *args, **kwargs)[1]
+      jaxpr = jax.make_jaxpr(linearize)(*args).jaxpr
+      return [v.aval for v in jaxpr.outvars]
+
+    # no residuals from constants created inside jnp.einsum
+    @partial(jax.checkpoint, policy=lambda *_, **__: False)
+    def f(x):
+      return jnp.einsum('ii->i', x)
+    res_avals = saved_residuals(f, jnp.ones((2, 2)))
+    self.assertLen(res_avals, 0)
+
+    # no residuals from jnp.zeros
+    @partial(jax.checkpoint, policy=lambda *_, **__: False)
+    def f(x):
+      return jnp.zeros_like(x) * x
+    res_avals = saved_residuals(f, jnp.ones((2, 2)))
+    self.assertLen(res_avals, 0)
+
+    # no residuals from jnp.zeros, but input must be saved
+    @partial(jax.checkpoint, policy=lambda *_, **__: False)
+    def f(x):
+      return jnp.zeros_like(x) * jnp.sin(x)
+    res_avals = saved_residuals(f, jnp.ones((2, 2)))
+    self.assertLen(res_avals, 1)
+
 
 class JaxprTest(jtu.JaxTestCase):
 

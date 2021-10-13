@@ -1071,7 +1071,7 @@ def _xla_call_partial_eval_custom_params_updater(
   new_params_staged = dict(params_staged, donated_invars=tuple(donated_invars_staged))
   return new_params_known, new_params_staged
 pe.partial_eval_jaxpr_custom_rules[xla_call_p] = \
-    partial(pe.call_partial_eval_custom_rule,
+    partial(pe.call_partial_eval_custom_rule, 'call_jaxpr',
             _xla_call_partial_eval_custom_params_updater)
 pe.dce_rules[xla_call_p] = pe.dce_jaxpr_call_rule
 

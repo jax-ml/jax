@@ -76,6 +76,7 @@ from ..interpreters import invertible_ad as iad
 from ..interpreters.invertible_ad import custom_ivjp
 from ..custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
                                   custom_vjp, linear_call)
+from ..ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
 
 from .._src.config import (flags, config, bool_env, disable_jit as _disable_jit,
                            debug_nans as config_debug_nans,
@@ -2861,6 +2862,10 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
   ...     return lambda x: f1(jax.checkpoint(f2)(x))
   ...
   """
+  # TODO(mattjj): we temporarily have parallel code paths
+  if policy is not None:
+    return new_checkpoint(fun, prevent_cse=prevent_cse, policy=policy)
+
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
@@ -2872,22 +2877,7 @@ def checkpoint(fun: Callable, concrete: bool = False, prevent_cse: bool = True,
                              policy=policy)
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
-remat = checkpoint
-
-def dot_with_no_batch_dims(prim, *_, **params) -> bool:
-  if prim.name == 'dot_general':
-    (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
-    if not lhs_b and not rhs_b:
-      return True
-  return False
-
-checkpoint_policies = types.SimpleNamespace(
-    checkpoint_dots=
-    lambda prim, *_, **__: prim in {jax._src.lax.lax.dot_general_p,
-                                    jax._src.lax.lax.conv_general_dilated_p},
-    checkpoint_dots_with_no_batch_dims=dot_with_no_batch_dims
-)
-
+remat = checkpoint  # type: ignore
 
 def named_call(
     fun: Callable[..., Any],

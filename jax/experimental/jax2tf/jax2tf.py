@@ -952,6 +952,7 @@ tf_not_yet_impl = [
     "random_gamma_grad",
     "reduce_precision",
     "schur",
+    "remat2",  # TODO(mattjj,necula): support new remat?
 
     # Not high priority?
     "after_all",
