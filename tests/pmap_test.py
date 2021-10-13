@@ -1785,7 +1785,29 @@ class PythonPmapTest(jtu.JaxTestCase):
         ValueError, "Non-hashable static arguments are not supported.*"):
       pmapped_f(inputs, np.asarray(1))
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_axis_size={axis_size}", "axis_size": axis_size}
+      for axis_size in [1, 2])
+  def test_grad_of_pmap_compilation_caching(self, axis_size):
+    if len(jax.local_devices()) < axis_size:
+      raise SkipTest("too few devices for test")
 
+    @jax.pmap
+    def f(x):
+      return jnp.sin(x)
+
+    x = jnp.ones(axis_size)
+    f(x)  # warm-up any dispatching compilations
+
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      _, f_bwd  = jax.vjp(f, x)
+      _ = f_bwd(x)
+    self.assertEqual(count[0], 2)  # one for fwd, one for bwd
+
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      _  = jax.vjp(f, x)
+      _ = f_bwd(x)
+    self.assertEqual(count[0], 0)  # cache hits on fwd and bwd
 
 class CppPmapTest(PythonPmapTest):
 
