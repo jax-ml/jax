@@ -62,17 +62,17 @@ def random_layer_params(m, n, key, scale=1e-2):
   return scale * random.normal(w_key, (n, m)), scale * random.normal(b_key, (n,))
 
 # Initialize all layers for a fully-connected neural network with sizes "sizes"
-def init_network_params(sizes, key):
+def init_network_params(sizes, key, scale):
   keys = random.split(key, len(sizes))
-  return [random_layer_params(m, n, k) for m, n, k in zip(sizes[:-1], sizes[1:], keys)]
+  return [random_layer_params(m, n, k, scale) for m, n, k in zip(sizes[:-1], sizes[1:], keys)]
 
 layer_sizes = [784, 512, 512, 10]
-param_scale = 0.1
+param_scale = 0.01
 step_size = 0.01
 num_epochs = 8
 batch_size = 128
 n_targets = 10
-params = init_network_params(layer_sizes, random.PRNGKey(0))
+params = init_network_params(layer_sizes, random.PRNGKey(0), param_scale)
 ```
 
 +++ {"id": "BtoNk_yxWtIw"}
@@ -238,13 +238,13 @@ training_generator = NumpyLoader(mnist_dataset, batch_size=batch_size, num_worke
 :outputId: 65a9087c-c326-49e5-cbfc-e0839212fa31
 
 # Get the full train dataset (for checking accuracy while training)
-train_images = np.array(mnist_dataset.train_data).reshape(len(mnist_dataset.train_data), -1)
-train_labels = one_hot(np.array(mnist_dataset.train_labels), n_targets)
+train_images = np.array(mnist_dataset.data).reshape(len(mnist_dataset.data), -1)
+train_labels = one_hot(np.array(mnist_dataset.targets), n_targets)
 
 # Get full test dataset
 mnist_dataset_test = MNIST('/tmp/mnist/', download=True, train=False)
-test_images = jnp.array(mnist_dataset_test.test_data.numpy().reshape(len(mnist_dataset_test.test_data), -1), dtype=jnp.float32)
-test_labels = one_hot(np.array(mnist_dataset_test.test_labels), n_targets)
+test_images = jnp.array(mnist_dataset_test.data.numpy().reshape(len(mnist_dataset_test.data), -1), dtype=jnp.float32)
+test_labels = one_hot(np.array(mnist_dataset_test.targets), n_targets)
 ```
 
 +++ {"id": "xxPd6Qw3Z98v"}
