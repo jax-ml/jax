@@ -970,11 +970,12 @@ def partial_eval_jaxpr_custom_rule_not_implemented(
 ParamsUpdater = Callable[[List[bool], int, dict, dict], Tuple[dict, dict]]
 
 def call_partial_eval_custom_rule(
-    params_updater: ParamsUpdater, saveable: Callable[..., bool],
-    unks_in: List[bool], inst_in: List[bool], eqn: JaxprEqn
+    jaxpr_param_name: str, params_updater: ParamsUpdater,
+    saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
+    eqn: JaxprEqn
   ) -> Tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], List[Var]]:
   jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = _partial_eval_jaxpr_custom(
-      eqn.params['call_jaxpr'], unks_in, saveable)
+      eqn.params[jaxpr_param_name], unks_in, saveable)
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   out_binders_known = [v for v in out_binders_known if v is not dropvar]
@@ -993,11 +994,13 @@ def call_partial_eval_custom_rule(
               if type(x) is Var and not inst]
   return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
 partial_eval_jaxpr_custom_rules[core.call_p] = \
-    partial(call_partial_eval_custom_rule, lambda _, __, x, y: (x, y))
+    partial(call_partial_eval_custom_rule, 'call_jaxpr',
+            lambda _, __, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[core.named_call_p] = \
-    partial(call_partial_eval_custom_rule, lambda _, __, x, y: (x, y))
+    partial(call_partial_eval_custom_rule, 'call_jaxpr',
+            lambda _, __, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[remat_call_p] = \
-    partial(call_partial_eval_custom_rule,
+    partial(call_partial_eval_custom_rule, 'call_jaxpr',
             lambda _, __, p1, p2: (p1, dict(p2, differentiated=True)))
 
 
