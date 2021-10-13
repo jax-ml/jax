@@ -2335,34 +2335,50 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testUnique(self, shape, dtype, axis, return_index, return_inverse, return_counts):
     if axis is not None and numpy_version < (1, 19) and np.empty(shape).size == 0:
       self.skipTest("zero-sized axis in unique leads to error in older numpy.")
-    rng = jtu.rand_default(self.rng())
+    rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda x: np.unique(x, return_index, return_inverse, return_counts, axis=axis)
     jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_size={}_fill_value={}".format(
-         jtu.format_shape_dtype_string(shape, dtype), size, fill_value),
-       "shape": shape, "dtype": dtype, "size": size, "fill_value": fill_value}
+      {"testcase_name": "_{}_axis={}_size={}_fill_value={}".format(
+         jtu.format_shape_dtype_string(shape, dtype), axis, size, fill_value),
+       "shape": shape, "dtype": dtype, "axis": axis,
+       "size": size, "fill_value": fill_value}
       for dtype in number_dtypes
       for size in [1, 5, 10]
       for fill_value in [None, -1]
-      for shape in nonempty_array_shapes))
-  def testUniqueSize(self, shape, dtype, size, fill_value):
-    rng = jtu.rand_default(self.rng())
+      for shape in nonempty_array_shapes
+      for axis in [None] + list(range(len(shape)))))
+  def testUniqueSize(self, shape, dtype, axis, size, fill_value):
+    rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    kwds = dict(return_index=True, return_inverse=True, return_counts=True)
+    kwds = dict(axis=axis, return_index=True, return_inverse=True, return_counts=True)
 
     def np_fun(x):
-      u, ind, inv, counts = jnp.unique(x, **kwds)
-      if size <= len(u):
-        u, ind, counts = u[:size], ind[:size], counts[:size]
+      u, ind, inv, counts = np.unique(x, **kwds)
+      axis = kwds['axis']
+      if axis is None:
+        x = x.ravel()
+        axis = 0
+
+      n_unique = u.shape[axis]
+      if size <= u.shape[axis]:
+        slc = (slice(None),) * axis + (slice(size),)
+        u, ind, counts = u[slc], ind[:size], counts[:size]
       else:
-        extra = size - len(u)
-        u = np.pad(u, (0, extra), constant_values=u[0] if fill_value is None else fill_value)
-        ind = np.pad(ind, (0, extra), constant_values=ind[0] if fill_value is None else fill_value)
-        counts = np.pad(counts, (0, extra), constant_values=0)
+        extra = (0, size - n_unique)
+        pads = [(0, 0)] * u.ndim
+        pads[axis] = extra
+        u = np.pad(u, pads, constant_values=0)
+        slices = [slice(None)] * u.ndim
+        slices[axis] = slice(1)
+        u_fill = u[tuple(slices)] if fill_value is None else fill_value
+        slices[axis] = slice(n_unique, None)
+        u[tuple(slices)] = u_fill
+        ind = np.pad(ind, extra, constant_values=ind[0] if fill_value is None else fill_value)
+        counts = np.pad(counts, extra, constant_values=0)
       return u, ind, inv, counts
 
     jnp_fun = lambda x: jnp.unique(x, size=size, fill_value=fill_value, **kwds)
