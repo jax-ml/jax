@@ -374,8 +374,7 @@ def shuffle(key: KeyArray, x: Array, axis: int = 0) -> jnp.ndarray:
 def permutation(key: KeyArray,
                 x: Union[int, Array],
                 axis: int = 0) -> jnp.ndarray:
-  """
-  Return a randomly permuted array or range.
+  """Returns a randomly permuted array or range.
 
   Args:
     key: a PRNG key used as the random key.
@@ -387,19 +386,17 @@ def permutation(key: KeyArray,
     A shuffled version of x or array range
   """
   key, _ = _check_prng_key(key)
+  _check_arraylike("permutation", x)
   axis = _canonicalize_axis(axis, np.ndim(x) or 1)
   if not np.ndim(x):
-    # scalar case, must be a concrete integer
     if not np.issubdtype(lax.dtype(x), np.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
-    x = int(x)  # type: ignore[assignment]
-    return _shuffle(key, jnp.arange(x), axis)
-  elif np.ndim(x) == 1:
+    r = core.concrete_or_error(int, x, 'argument x of jax.random.permutation()')
+    return _shuffle(key, jnp.arange(r), axis)
+  if np.ndim(x) == 1:
     return _shuffle(key, x, axis)
-  else:
-    assert isinstance(x, jnp.ndarray)
-    ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[attribute-error]
-    return jnp.take(x, ind, axis)
+  ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[union-attr]
+  return jnp.take(x, ind, axis)
 
 
 @partial(jit, static_argnums=(2,), inline=True)
@@ -481,8 +478,7 @@ def choice(key: KeyArray,
       ind = randint(key, shape, 0, n_inputs)
       result = ind if np.ndim(a) == 0 else jnp.take(a, ind, axis)
     else:
-      slices = tuple(slice(n_draws if a == axis else None)
-                     for a in range(np.ndim(a) or 1))
+      slices = (slice(None),) * axis + (slice(n_draws),)
       result = permutation(key, a, axis)[slices]
   else:
     if p.shape != (n_inputs,):
