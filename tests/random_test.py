@@ -418,8 +418,9 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testChoice(self, dtype, input_range_or_shape, shape, replace, weighted, axis):
     key = self.seed_prng(0)
     is_range = type(input_range_or_shape) is int
-    x = (input_range_or_shape if is_range else jnp.arange(
-      np.prod(input_range_or_shape), dtype=dtype).reshape(input_range_or_shape))
+    x = (input_range_or_shape if is_range else
+         np.random.default_rng(0).permutation(jnp.arange(np.prod(
+           input_range_or_shape), dtype=dtype)).reshape(input_range_or_shape))
     N = x if is_range else x.shape[axis]
     p = None if not weighted else (np.arange(N) + 1) / np.sum(np.arange(N) + 1)
     rand = lambda key, x: random.choice(key, x, shape, replace, p, axis)
@@ -430,50 +431,47 @@ class LaxRandomTest(jtu.JaxTestCase):
       x, shape or None, replace, p, axis))
     self.assertEqual(np_shape, sample.shape)
     if not replace and shape:
-      self.assertArraysEqual(np.sort(sample, axis),
-                             np.sort(np.unique(sample, axis=axis), axis))
-    self.assertAllClose(sample, rand(key, np.array(x)))
-    self.assertAllClose(sample, jax.jit(rand, static_argnames=
+      def lsort(x):
+        if not np.prod(x.shape): return x
+        ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
+        return jnp.take(x, ind, axis)
+      self.assertArraysEqual(lsort(sample), lsort(np.unique(sample, axis=axis)))
+    self.assertArraysEqual(sample, rand(key, np.array(x)))
+    self.assertArraysEqual(sample, jax.jit(rand, static_argnames=
       'x' if is_range else None)(key, x))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(
-      testcase_name=f"_{jtu.format_shape_dtype_string(shape, dtype)}"
+      testcase_name=f"_dtype={dtype}_range_or_shape={range_or_shape}"
                     f"_axis={axis}",
-      dtype=dtype, shape=shape, axis=axis)
+      dtype=dtype, range_or_shape=range_or_shape, axis=axis)
     for dtype in jtu.dtypes.floating + jtu.dtypes.integer
-    for shape in [100, (10, 10), (10, 5, 2), 0, 1, (0, 5), (1, 5)]
-    for ndim in [1 if type(shape) is int else len(shape)]
+    for range_or_shape in [0, 1, 100, (0,), (1,), (100,),
+                           (10, 10), (10, 5, 2), (0, 5), (1, 5)]
+    for ndim in [1 if type(range_or_shape) is int else len(range_or_shape)]
     for axis in range(-ndim, ndim or 1)))
-  def testPermutationArray(self, dtype, shape, axis):
+  def testPermutation(self, dtype, range_or_shape, axis):
     key = self.seed_prng(0)
-    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    rand = lambda key: random.permutation(key, x, axis)
-    crand = jax.jit(rand)
-
-    perm1 = rand(key)
-    perm2 = crand(key)
-
-    self.assertAllClose(perm1, perm2)
-    if x.shape[axis] >= 10:
-      self.assertFalse(np.all(perm1 == x))  # seems unlikely!
-    self.assertAllClose(np.sort(perm1, axis=axis), x, check_dtypes=False)
-    self.assertArraysAllClose(
-      x, jnp.arange(np.prod(shape)).reshape(shape).astype(dtype))
-
-  def testPermutationInteger(self):
-    key = self.seed_prng(0)
-    x = 100
-    rand = lambda key: random.permutation(key, x)
-    crand = jax.jit(rand)
-
-    perm1 = rand(key)
-    perm2 = crand(key)
-
-    self.assertAllClose(perm1, perm2)
-    self.assertEqual(perm1.dtype, perm2.dtype)
-    self.assertFalse(np.all(perm1 == np.arange(100)))  # seems unlikely!
-    self.assertAllClose(np.sort(perm1), np.arange(100), check_dtypes=False)
+    is_range = type(range_or_shape) is int
+    x = (range_or_shape if is_range else
+         np.random.default_rng(0).permutation(jnp.arange(
+           np.prod(range_or_shape), dtype=dtype)).reshape(range_or_shape))
+    shape = ((range_or_shape,) if is_range else range_or_shape)
+    x_ = np.copy(x)
+    rand = lambda key, x: random.permutation(key, x, axis)
+    perm = rand(key, x)
+    if shape[axis] >= 10:
+      self.assertFalse(np.all(perm == x))  # seems unlikely!
+    arr = np.arange(x) if is_range else x
+    def lsort(x):
+      if not np.prod(x.shape): return x
+      ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
+      return jnp.take(x, ind, axis)
+    self.assertArraysEqual(lsort(arr), lsort(perm), check_dtypes=not is_range)
+    self.assertArraysEqual(x_, x)
+    self.assertArraysEqual(perm, rand(key, np.array(x)))
+    self.assertArraysEqual(perm, jax.jit(rand, static_argnames=
+      'x' if is_range else None)(key, x))
 
   def testPermutationErrors(self):
     key = self.seed_prng(0)
