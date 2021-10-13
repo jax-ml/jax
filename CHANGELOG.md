@@ -8,11 +8,15 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
+## jax 0.2.23 (Unreleased)
+* [GitHub
+  commits](https://github.com/google/jax/compare/jax-v0.2.22...main).
+
 ## jaxlib 0.1.73 (Unreleased)
 
-## jax 0.2.22 (Unreleased)
+## jax 0.2.22 (Oct 12, 2021)
 * [GitHub
-  commits](https://github.com/google/jax/compare/jax-v0.2.21...main).
+  commits](https://github.com/google/jax/compare/jax-v0.2.21...jax-v0.2.22).
 * Breaking Changes
   * Static arguments to `jax.pmap` must now be hashable.
 
