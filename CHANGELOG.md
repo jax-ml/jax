@@ -50,6 +50,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Breaking changes:
     * Support for CUDA 10.2 and CUDA 10.1 has been dropped. Jaxlib now supports
       CUDA 11.1+.
+  * Bug fixes:
+    * Fixes https://github.com/google/jax/issues/7461, which caused wrong
+      outputs on all platforms due to incorrect buffer aliasing inside the XLA
+      compiler.
 
 ## jax 0.2.21 (Sept 23, 2021)
 * [GitHub
