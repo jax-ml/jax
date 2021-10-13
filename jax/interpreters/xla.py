@@ -274,7 +274,8 @@ def arg_spec(x: Any) -> ArgSpec:
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args), **params)
+  compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
+                                        **params)
   return compiled_fun(*args)
 
 
@@ -291,43 +292,18 @@ def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
   avals, arg_devices = unzip2(arg_specs)
   donated_invars = (False,) * len(arg_specs)
   device = _device_from_arg_devices(arg_devices)
-  backend = xb.get_device_backend(device)
-  if primitive_uses_outfeed(prim, params):
-    # We use the _xla_callable path, where we pre-process the primitives
-    def prim_fun(*args):
-      return prim.bind(*args, **params)
-    return _xla_callable(lu.wrap_init(prim_fun), device, None, "prim", donated_invars,
-                         *arg_specs)
-  aval_out = prim.abstract_eval(*avals, **params)
+  def prim_fun(*args):
+    out = prim.bind(*args, **params)
+    if prim.multiple_results:
+      return out
+    else:
+      return out,
+  compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), device, None,
+                                    prim.name, donated_invars, *arg_specs)
   if not prim.multiple_results:
-    handle_result = aval_to_result_handler(device, aval_out)
+    return lambda *args, **kw: compiled(*args, **kw)[0]
   else:
-    handlers = map(partial(aval_to_result_handler, device), aval_out)
-    handle_result = lambda *bufs:\
-      tuple(handler(*bs) for handler, bs in zip(handlers, _partition_outputs(aval_out, bufs)))
-  tuple_args = len(avals) > 100
-  if prim in initial_style_translations:
-    nreps = initial_style_primitive_replicas(params)
-  else:
-    nreps = 1
-
-  if nreps > xb.device_count(backend):
-    raise ValueError(
-        f"compiling a primitive computation `{prim}` that requires {nreps} "
-        f"replicas, but only {xb.device_count(backend)} XLA devices are "
-        f"available on backend {backend.platform}.")
-  built_c = primitive_computation(prim, AxisEnv(nreps, (), ()), backend,
-                                  tuple_args, *avals, **params)
-  options = xb.get_compile_options(
-      num_replicas=nreps,
-      num_partitions=1,
-      device_assignment=device and (device.id,))
-  options.parameter_is_tupled_arguments = tuple_args
-  compiled = backend_compile(backend, built_c, options)
-  if nreps == 1:
-    return partial(_execute_compiled_primitive, prim, compiled, handle_result)
-  else:
-    return partial(_execute_replicated_primitive, prim, compiled, handle_result)
+    return compiled
 
 def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[Device]:
   """Given devices of inputs, determine where to perform a computation.
@@ -346,64 +322,19 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
     msg = "primitive arguments must be colocated on the same device, got {}"
     raise ValueError(msg.format(", ".join(map(str, devices)))) from err
 
-@cache()
-def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params):
+def primitive_subcomputation(prim: core.Primitive, *avals: core.AbstractValue,
+                             **params):
   c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
-  op_metadata = make_op_metadata(prim, params)
-  c.set_op_metadata(op_metadata)
-  platform = xb.get_backend(backend).platform
-  xla_args, _ = _xla_callable_args(c, avals, tuple_args)
-  # return val always set as a side-effect on c
-  if prim in backend_specific_translations[platform]:
-    rule = backend_specific_translations[platform][prim]
-    ans = rule(c, *xla_args, **params)
-  elif prim in translations:
-    rule = translations[prim]
-    ans = rule(c, *xla_args, **params)
-  elif prim in translations_with_avals:
-    rule = translations_with_avals[prim]
-    ans = rule(c, avals, xla_args, params)
-  elif prim in initial_style_translations:
-    rule = initial_style_translations[prim]
-    ans = rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
-         *xla_args, **params)
-  else:
-    raise NotImplementedError(f"XLA translation rule for {prim!r} on platform {platform!r} not found")
-  assert isinstance(ans, xe.XlaOp)
-  c.clear_op_metadata()
-  try:
-    return c.build(ans)
-  except RuntimeError as e:
-    msg = (" ".join(map(str, e.args)) + "\n"
-           "This is a bug in JAX's shape-checking rules; please report it!\n"
-           "https://github.com/google/jax/issues\n")
-    raise RuntimeError(msg) from e
-
-def primitive_subcomputation(prim, *avals, **params):
-  axis_env = AxisEnv(1, (), ())
-  return primitive_computation(prim, axis_env, None, False, *avals, **params)
+  f = lower_fun(prim.bind, prim.multiple_results, with_avals=True)
+  xla_args, _ = _xla_callable_args(c, avals, tuple_args=False)
+  ans = f(c, avals, xla_args, params)
+  return c.build(ans)
 
 def backend_compile(backend, built_c, options):
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results
   return backend.compile(built_c, compile_options=options)
 
-def _execute_compiled_primitive(prim, compiled, result_handler, *args):
-  device, = compiled.local_devices()
-  input_bufs = list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
-  out_bufs = compiled.execute(input_bufs)
-  check_special(prim.name, out_bufs)
-  return result_handler(*out_bufs)
-
-def _execute_replicated_primitive(prim, compiled, result_handler, *args):
-  input_bufs = [
-      list(it.chain.from_iterable(device_put(x, device) for x in args if x is not token))
-      for device in compiled.local_devices()]
-  out_bufs = [
-      buf[0] for buf in compiled.execute_sharded_on_local_devices(
-          list(zip(*input_bufs)))
-  ]
-  return result_handler(*out_bufs)
 
 def needs_check_special():
   return config.jax_debug_infs or config.jax_debug_nans
@@ -691,11 +622,15 @@ def _xla_consts(c, consts):
       id_: xb.constant_general(c, const) for id_, const in unique_consts.items()}
   return [c for const in consts for c in xla_consts[id(const)]]
 
-@lu.cache
-def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
-  return lower_xla_callable(fun, device, backend, name, donated_invars, *arg_specs).compile().unsafe_call
+def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
+                           donated_invars, *arg_specs):
+  return lower_xla_callable(fun, device, backend, name, donated_invars,
+                            *arg_specs).compile().unsafe_call
 
-def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
+_xla_callable = lu.cache(_xla_callable_uncached)
+
+def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
+                       donated_invars, *arg_specs):
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
@@ -724,7 +659,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
   if not jaxpr.eqns:
-    return XlaComputation(None, True, jaxpr, consts, device, out_avals, kept_var_idx)
+    return XlaComputation(name, None, True, jaxpr, consts, device, out_avals,
+                          kept_var_idx)
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -732,7 +668,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
                 fun.__name__, id(fun), abstract_args)
 
   if nreps > 1:
-    warn(f"The jitted function {fun.__name__} includes a pmap. Using "
+    warn(f"The jitted function {name} includes a pmap. Using "
          "jit-of-pmap can lead to inefficient data movement, as the outer jit "
          "does not preserve sharded data representations and instead collects "
          "input and output arrays onto a single device. "
@@ -741,8 +677,8 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
 
   if nreps > xb.device_count(backend):
     raise ValueError(
-        f"compiling computation that requires {nreps} replicas, but only "
-        f"{xb.device_count(backend)} XLA devices are available")
+        f"compiling computation `{name}` that requires {nreps} replicas, but "
+        f"only {xb.device_count(backend)} XLA devices are available.")
 
   if xb.process_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
     raise NotImplementedError(
@@ -751,7 +687,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
 
   tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
 
-  c = xb.make_computation_builder("jit_{}".format(fun.__name__))
+  c = xb.make_computation_builder(f"jit_{fun.__name__}")
   xla_consts = _xla_consts(c, consts)
   xla_args, donated_invars = _xla_callable_args(c, abstract_args, tuple_args,
                                                 donated_invars=donated_invars)
@@ -769,12 +705,17 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars
                         for a, d in zip(xla_args, donated_invars) if d]
     warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
   built = c.build(out_tuple)
-  return XlaComputation(
-      built, False, nreps, device, backend, tuple_args, out_avals, kept_var_idx)
+  return XlaComputation(name, built, False, nreps, device, backend, tuple_args,
+                        out_avals, kept_var_idx)
 
 
 class XlaComputation:
-  def __init__(self, hlo, is_trivial, *compile_args):
+  name: str
+  _is_trivial: bool
+  _executable: Optional['XlaCompiledComputation']
+
+  def __init__(self, name: str, hlo, is_trivial: bool, *compile_args):
+    self.name = name
     self._hlo = hlo
     self._is_trivial = is_trivial
     self._executable = None
@@ -795,7 +736,7 @@ class XlaComputation:
             *self.compile_args)
       else:
         self._executable = XlaCompiledComputation.from_xla_computation(
-            self.hlo(), *self.compile_args)
+            self.name, self.hlo(), *self.compile_args)
     return self._executable
 
 
@@ -806,13 +747,14 @@ class XlaCompiledComputation:
 
   @staticmethod
   def from_xla_computation(
+      name: str,
       xla_computation,
       nreps: int,
       device,
       backend,
       tuple_args: bool,
       out_avals,
-      kept_var_idx):
+      kept_var_idx) -> 'XlaCompiledComputation':
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
     options = xb.get_compile_options(
         num_replicas=nreps,
@@ -822,10 +764,12 @@ class XlaCompiledComputation:
     compiled = compile_or_get_cached(backend, xla_computation, options)
     if nreps == 1:
       return XlaCompiledComputation(compiled, partial(
-          _execute_compiled, compiled, out_avals, result_handlers, kept_var_idx))
+          _execute_compiled, name, compiled, out_avals, result_handlers,
+          kept_var_idx))
     else:
       return XlaCompiledComputation(compiled, partial(
-          _execute_replicated, compiled, out_avals, result_handlers, kept_var_idx))
+          _execute_replicated, name, compiled, out_avals, result_handlers,
+          kept_var_idx))
 
   def is_trivial(self):
     return self._xla_executable == None
@@ -836,7 +780,8 @@ class XlaCompiledComputation:
     return self._xla_executable
 
   @staticmethod
-  def from_trivial_jaxpr(jaxpr, consts, device, out_avals, kept_var_idx):
+  def from_trivial_jaxpr(jaxpr, consts, device, out_avals, kept_var_idx
+                        )  -> 'XlaCompiledComputation':
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
     return XlaCompiledComputation(None, partial(
         _execute_trivial, jaxpr, device, consts, out_avals,
@@ -973,8 +918,8 @@ def _xla_param(builder, param_num, xla_shape, replicated, partitions, parts_prot
     return with_sharding(builder, partitions, make_param)
 
 
-def _execute_compiled(compiled: XlaExecutable, avals, handlers, kept_var_idx,
-                      *args):
+def _execute_compiled(name: str, compiled: XlaExecutable, avals, handlers,
+                      kept_var_idx, *args):
   device, = compiled.local_devices()
   input_bufs = list(
       it.chain.from_iterable(
@@ -982,12 +927,12 @@ def _execute_compiled(compiled: XlaExecutable, avals, handlers, kept_var_idx,
           for i, x in enumerate(args)
           if x is not token and i in kept_var_idx))
   out_bufs = compiled.execute(input_bufs)
-  check_special(xla_call_p.name, out_bufs)
+  check_special(name, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
 
-def _execute_replicated(compiled: XlaExecutable, avals, handlers, kept_var_idx,
-                        *args):
+def _execute_replicated(name: str, compiled: XlaExecutable, avals, handlers,
+                        kept_var_idx, *args):
   input_bufs = [
       list(
           it.chain.from_iterable(
@@ -1000,7 +945,7 @@ def _execute_replicated(compiled: XlaExecutable, avals, handlers, kept_var_idx,
       buf[0] for buf in compiled.execute_sharded_on_local_devices(
           list(zip(*input_bufs)))
   ]
-  check_special(xla_call_p.name, out_bufs)
+  check_special(name, out_bufs)
   return [handler(*bs) for handler, bs in zip(handlers, _partition_outputs(avals, out_bufs))]
 
 

@@ -6111,7 +6111,8 @@ def _select_and_scatter_add_translation(
   dtype = shape.numpy_dtype()
   scalar = ShapedArray((), dtype)
   select = xla.primitive_subcomputation(select_prim, scalar, scalar)
-  scatter = xla.primitive_subcomputation(add_p, scalar, scalar)
+  scatter = xla.primitive_subcomputation(or_p if dtype == np.bool_ else add_p,
+                                         scalar, scalar)
   zero = xb.constant(c, np.array(0, dtype))
   # TODO(b/161704903): remove this workaround when XLA:CPU bug is fixed.
   expand_padding = (expand_padding and
