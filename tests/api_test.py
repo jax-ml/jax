@@ -3960,6 +3960,11 @@ class RematTest(jtu.JaxTestCase):
     self.assertStartsWith(res[4][1], "named z")
     self.assertEqual(res[5][0].shape, ())
 
+  def test_saved_residuals_utility_literals(self):
+    res = saved_residuals(lambda x: x * 2., 3.)
+    self.assertLen(res, 1)
+    self.assertEqual(res[0][0].shape, ())
+
 
 class JaxprTest(jtu.JaxTestCase):
 
