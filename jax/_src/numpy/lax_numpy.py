@@ -6478,6 +6478,16 @@ def piecewise(x, condlist, funclist, *args, **kw):
     funclist = [0] + list(funclist)
   else:
     raise ValueError(f"with {nc} condition(s), either {nc} or {nc+1} functions are expected; got {nf}")
+  consts = {i: c for i, c in enumerate(funclist) if not callable(c)}
+  funcs = {i: f for i, f in enumerate(funclist) if callable(f)}
+  return _piecewise(x, condlist, consts,
+                    frozenset(funcs.items()),  # dict is not hashable.
+                    *args, **kw)
+
+@partial(jit, static_argnames=['funcs'])
+def _piecewise(x, condlist, consts, funcs, *args, **kw):
+  funcs = dict(funcs)
+  funclist = [consts.get(i, funcs.get(i)) for i in range(len(condlist) + 1)]
   indices = argmax(cumsum(concatenate([zeros_like(condlist[:1]), condlist], 0), 0), 0)
   dtype = _dtype(x)
   def _call(f):
