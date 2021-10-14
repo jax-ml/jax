@@ -2281,6 +2281,21 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(ans1, np.cos(2.), check_dtypes=False)
     self.assertAllClose(ans2, np.cos(3.), check_dtypes=False)
 
+  def test_grad_of_jit_compilation_caching2(self):
+    # Like the above test, but instead of logging use our compile counters.
+    @api.jit
+    def f(x):
+      return jnp.sin(x)
+
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      _  = jax.grad(f)(3.)
+    self.assertEqual(count[0], 2)  # one for fwd, one for bwd
+
+    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+      _  = jax.grad(f)(3.)
+      _  = jax.grad(f)(4.)
+    self.assertEqual(count[0], 0)  # cache hits on both fwd and bwd
+
   def test_grad_does_not_unflatten_tree_with_none(self):
     # https://github.com/google/jax/issues/7546
     class CustomNode(list):
