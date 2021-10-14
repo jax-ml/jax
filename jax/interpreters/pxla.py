@@ -892,7 +892,8 @@ def parallel_callable(fun: lu.WrappedFun,
     out_tuple = build_out_tuple()
 
   if backend.platform in ("gpu", "tpu"):
-    donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+    donated_invars = xla.set_up_aliases(c, xla_args, c.GetShape(out_tuple),
+                                        donated_invars, tuple_args)
   built = c.Build(out_tuple)
 
   if devices is None:
@@ -1629,7 +1630,8 @@ def lower_mesh_computation(
     out_tuple = xops.Tuple(c, out_nodes)
 
   if backend.platform in ("gpu", "tpu"):
-    xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+    xla.set_up_aliases(c, xla_args, c.GetShape(out_tuple), donated_invars,
+                       tuple_args)
     # TODO: Warn about unused donations?
 
   built = c.Build(out_tuple)

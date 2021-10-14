@@ -18,8 +18,8 @@ from functools import partial, partialmethod
 import itertools as it
 import operator as op
 import re
-from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Type,
-                    Tuple, Union, NamedTuple)
+from typing import (Any, Callable, Deque, Dict, List, Optional, Sequence, Set,
+                    Type, Tuple, Union, NamedTuple)
 from warnings import warn
 import weakref
 
@@ -282,8 +282,8 @@ def apply_primitive(prim, *args, **params):
 
 
 def _partition_outputs(nouts: Sequence[int], outs):
-  if config.jax_enable_checks:
-    assert sum(nouts) == len(outs), f"Internal error: sum(nouts)={sum(nouts)} should equal len(outs)={len(outs)}."
+  if len(nouts) == 1:
+    return [outs]
   outs = iter(outs)
   return [[next(outs) for _ in range(nout)] for nout in nouts]
 
@@ -701,17 +701,19 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
       AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   backend = xb.get_backend(backend)
-  out_tuple = xops.Tuple(c, out_nodes)
+  # There is a non-zero cost to building an output tuple, particularly on TPU.
+  # Avoid it if the output arity is 1.
+  output = out_nodes[0] if len(out_nodes) == 1 else xops.Tuple(c, out_nodes)
   if backend.platform in ("gpu", "tpu"):
     donated_invars = set_up_aliases(
-        c, xla_args, out_tuple, donated_invars, tuple_args)
+        c, xla_args, c.GetShape(output), donated_invars, tuple_args)
   if any(donated_invars):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
     unused_donations = [str(c.GetShape(a))
                         for a, d in zip(xla_args, donated_invars) if d]
     warn("Some donated buffers were not usable: {}".format(
          ", ".join(unused_donations)))
-  built = c.build(out_tuple)
+  built = c.build(output)
   return XlaComputation(
       name, built, False, nreps, device, backend, tuple_args, abstract_args,
       out_avals, kept_var_idx)
@@ -772,7 +774,8 @@ class XlaCompiledComputation:
         device_assignment=(device.id,) if device else None)
     options.parameter_is_tupled_arguments = tuple_args
     compiled = compile_or_get_cached(backend, xla_computation, options)
-    buffer_counts = [len(aval_to_xla_shapes(aval)) for aval in out_avals]
+    buffer_counts = (None if len(out_avals) == 1 else
+                     [len(aval_to_xla_shapes(aval)) for aval in out_avals])
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     return XlaCompiledComputation(compiled, in_avals, partial(execute,
           name, compiled, buffer_counts, result_handlers, kept_var_idx))
@@ -809,10 +812,11 @@ def check_arg_avals_for_call(ref_avals, arg_avals):
         f"called with:\n  {arg_avals_fmt}")
 
 
-def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
+def set_up_aliases(c, xla_args, out_shape: XlaShape, donated_args, tuple_args):
   """Configures input/output "must" aliasing based on `donated_args`."""
   # First for every input array add it to `donations` iff it is a member of
   # `donated_args`.
+  donations: Dict[Tuple[Tuple[int, ...], Any], Deque]
   donations = defaultdict(deque)
   for arg_index, arg in enumerate(xla_args):
     if donated_args[arg_index]:
@@ -828,7 +832,7 @@ def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
 
   # Consume donations for outputs.
   out_donated_args = list(donated_args)
-  for output_index, element in flatten_shape(c.GetShape(out_tuple)):
+  for output_index, element in flatten_shape(out_shape):
     key = (element.dimensions(), element.xla_element_type())
     if donations.get(key, ()):
       param_number, param_index, arg_index = donations[key].popleft()
@@ -933,7 +937,7 @@ def _xla_param(builder, param_num, xla_shape, replicated, partitions, parts_prot
 
 
 def _execute_compiled(name: str, compiled: XlaExecutable,
-                      output_buffer_counts: Sequence[int], handlers,
+                      output_buffer_counts: Optional[Sequence[int]], handlers,
                       kept_var_idx, *args):
   device, = compiled.local_devices()
   input_bufs = list(
@@ -943,12 +947,15 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
           if x is not token and i in kept_var_idx))
   out_bufs = compiled.execute(input_bufs)
   check_special(name, out_bufs)
-  return [handler(*bs) for handler, bs in
-          zip(handlers, _partition_outputs(output_buffer_counts, out_bufs))]
+  if output_buffer_counts is None:
+    return (handlers[0](*out_bufs),)
+  return tuple(
+      handler(*bs) for handler, bs in
+      unsafe_zip(handlers, _partition_outputs(output_buffer_counts, out_bufs)))
 
 
 def _execute_replicated(name: str, compiled: XlaExecutable,
-                        output_buffer_counts: Sequence[int], handlers,
+                        output_buffer_counts: Optional[Sequence[int]], handlers,
                         kept_var_idx, *args):
   input_bufs = [
       list(
@@ -963,8 +970,11 @@ def _execute_replicated(name: str, compiled: XlaExecutable,
           list(zip(*input_bufs)))
   ]
   check_special(name, out_bufs)
-  return [handler(*bs) for handler, bs in
-          zip(handlers, _partition_outputs(output_buffer_counts, out_bufs))]
+  if output_buffer_counts is None:
+    return (handlers[0](*out_bufs),)
+  return tuple(
+      handler(*bs) for handler, bs in
+      unsafe_zip(handlers, _partition_outputs(output_buffer_counts, out_bufs)))
 
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,

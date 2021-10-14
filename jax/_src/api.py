@@ -832,8 +832,8 @@ def xla_computation(fun: Callable,
       out_tuple = build_out_tuple()
 
     if any(donated_invars):
-      donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars,
-                                          tuple_args)
+      donated_invars = xla.set_up_aliases(c, xla_args, c.GetShape(out_tuple),
+                                          donated_invars, tuple_args)
     if any(donated_invars):
       shapes = [str(c.GetShape(a)) for a, d in zip(xla_args, donated_invars) if d]
       warn(f"Some donated buffers were not usable: {', '.join(shapes)}")
