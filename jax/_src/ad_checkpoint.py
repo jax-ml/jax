@@ -231,31 +231,35 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
     return f(*args, **kwargs)
 
   jaxpr = jax.make_jaxpr(lambda *args: jax.linearize(f_, *args)[1])(*args).jaxpr
-  res_vars = set(jaxpr.outvars)
+  res_lits = [x for x in jaxpr.outvars if isinstance(x, core.Literal)]
+  res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
+
   results = []
+
+  for x in res_lits:
+    results.append((x.aval, 'from a literal'))
 
   for v in jaxpr.constvars:
     if v in res_vars:
-      results.append((v, 'from a constant'))
+      results.append((v.aval, 'from a constant'))
 
   assert len(jaxpr.invars) == len(args)
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:
       src = f'from {pe.arg_info_pytree(f, in_tree, True, [i])}'
-      results.append((v, src))
+      results.append((v.aval, src))
 
   for eqn in jaxpr.eqns:
     src = source_info_util.summarize(eqn.source_info)
     for v in eqn.outvars:
       if v in res_vars:
         if eqn.primitive is name_p:
-          results.append((v, f'named {eqn.params["name"]} from {src}'))
+          results.append((v.aval, f'named {eqn.params["name"]} from {src}'))
         else:
-          results.append((v, f'from {src}'))
+          results.append((v.aval, f'from {src}'))
 
-  res_vars_accounted_for = {v for v, _ in results}
-  assert res_vars == res_vars_accounted_for, (res_vars, res_vars_accounted_for)
-  return [(v.aval, src) for v, src in results]
+  assert len(results) == len(jaxpr.outvars)
+  return results
 
 def print_saved_residuals(f, *args, **kwargs):
   for aval, src in saved_residuals(f, *args, **kwargs):
