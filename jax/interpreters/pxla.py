@@ -1647,7 +1647,7 @@ class MeshComputation:
 
   def compile(self,
               _allow_propagation_to_outputs : bool = False,
-              _allow_compile_replicated : bool = True):
+              _allow_compile_replicated : bool = True) -> 'MeshExecutable':
     if self._executable is None:
       self._executable = MeshExecutable(
           self.hlo, *self.compile_args,
@@ -1657,7 +1657,7 @@ class MeshComputation:
 
 
 class MeshExecutable:
-  __slots__ = ['xla_executable', 'unsafe_call']
+  __slots__ = ['xla_executable', 'unsafe_call', '_local_in_untiled_avals']
 
   def __init__(self,
                computation: xc.XlaComputation,
@@ -1720,8 +1720,12 @@ class MeshExecutable:
       self.unsafe_call = partial(execute_replicated, compiled, backend, handle_args, handle_outs)
       self.xla_executable = compiled
 
+    self._local_in_untiled_avals = local_in_untiled_avals
+
   def call(self, *args):
-    # TODO(apaszke,frostig): Check that args are compatible with input avals!
+    arg_avals = map(xla.abstractify, args)
+    ref_avals = self._local_in_untiled_avals
+    xla.check_arg_avals_for_call(ref_avals, arg_avals)
     return self.unsafe_call(*args)
 
 
