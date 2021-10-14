@@ -38,6 +38,7 @@ py_binary(
     ] + if_not_windows([
         "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
     ]) + if_cuda([
+        "//jaxlib:gpu_support",
         "//jaxlib:_cublas",
         "//jaxlib:_cusolver",
         "//jaxlib:_cusparse",

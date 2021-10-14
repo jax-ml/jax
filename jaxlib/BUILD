@@ -19,7 +19,6 @@ load(
     "cuda_library",
     "flatbuffer_cc_library",
     "flatbuffer_py_library",
-    "if_cuda_is_configured",
     "if_rocm_is_configured",
     "pybind_extension",
 )
@@ -118,12 +117,7 @@ py_library(
         "lapack.py",
         "pocketfft.py",
         "version.py",
-    ] + if_cuda_is_configured([
-        "cuda_linalg.py",
-        "cuda_prng.py",
-        "cusolver.py",
-        "cusparse.py",
-    ]) + if_rocm_is_configured([
+    ] + if_rocm_is_configured([
         "rocsolver.py",
     ]),
     deps = [":pocketfft_flatbuffers_py"],
@@ -234,6 +228,12 @@ cc_library(
 
 py_library(
     name = "gpu_support",
+    srcs = [
+        "cuda_linalg.py",
+        "cuda_prng.py",
+        "cusolver.py",
+        "cusparse.py",
+    ],
     deps = [
         ":_cublas",
         ":_cuda_linalg",
