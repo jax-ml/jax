@@ -15,6 +15,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * New features:
   * `jax.random.choice` and `jax.random.permutation` now support
     multidimensional arrays and an optional `axis` argument ({jax-issue}`#8158`)
+* Breaking changes:
+  * `jax.numpy.take` and `jax.numpy.take_along_axis` now require array-like inputs
+    (see {jax-issue}`#7737`)
 
 ## jaxlib 0.1.73 (Unreleased)
 
