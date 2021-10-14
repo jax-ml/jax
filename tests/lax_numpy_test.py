@@ -42,7 +42,7 @@ from jax._src import dtypes
 from jax import tree_util
 from jax.interpreters import xla
 from jax.test_util import check_grads
-from jax._src.util import prod
+from jax._src.util import prod, safe_zip
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc
 
 from jax.config import config
@@ -944,7 +944,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "size": size, "fill_value": fill_value}
       for shape in nonempty_array_shapes
       for dtype in all_dtypes
-      for fill_value in [None, -1]
+      for fill_value in [None, -1, shape or (1,)]
       for size in [1, 5, 10]))
   def testNonzeroSize(self, shape, dtype, size, fill_value):
     rng = jtu.rand_some_zero(self.rng())
@@ -955,8 +955,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       if size <= len(result[0]):
         return tuple(arg[:size] for arg in result)
       else:
-        return tuple(np.concatenate([arg, np.full(size - len(arg), fill_value or 0, arg.dtype)])
-                     for arg in result)
+        fillvals = fill_value if np.ndim(fill_value) else len(result) * [fill_value or 0]
+        return tuple(np.concatenate([arg, np.full(size - len(arg), fval, arg.dtype)])
+                     for fval, arg in safe_zip(fillvals, result))
     jnp_fun = lambda x: jnp.nonzero(x, size=size, fill_value=fill_value)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
