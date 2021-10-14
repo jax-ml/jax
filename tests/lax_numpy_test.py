@@ -2358,7 +2358,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "size": size, "fill_value": fill_value}
       for dtype in number_dtypes
       for size in [1, 5, 10]
-      for fill_value in [None, -1]
+      for fill_value in [None, -1, "slice"]
       for shape in nonempty_array_shapes
       for axis in [None] + list(range(len(shape)))))
   def testUniqueSize(self, shape, dtype, axis, size, fill_value):
@@ -2366,7 +2366,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     kwds = dict(axis=axis, return_index=True, return_inverse=True, return_counts=True)
 
-    def np_fun(x):
+    if fill_value == "slice":
+      if axis is None:
+        fill_value = rng((), dtype)
+      else:
+        fill_value = rng(shape[:axis] + shape[axis + 1:], dtype)
+
+    def np_fun(x, fill_value=fill_value):
       u, ind, inv, counts = np.unique(x, **kwds)
       axis = kwds['axis']
       if axis is None:
@@ -2384,9 +2390,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         u = np.pad(u, pads, constant_values=0)
         slices = [slice(None)] * u.ndim
         slices[axis] = slice(1)
-        u_fill = u[tuple(slices)] if fill_value is None else fill_value
+        if fill_value is None:
+          fill_value = u[tuple(slices)]
+        elif np.ndim(fill_value):
+          fill_value = lax.expand_dims(fill_value, (axis,))
         slices[axis] = slice(n_unique, None)
-        u[tuple(slices)] = u_fill
+        u[tuple(slices)] = fill_value
         ind = np.pad(ind, extra, constant_values=ind[0])
         counts = np.pad(counts, extra, constant_values=0)
       return u, ind, inv, counts

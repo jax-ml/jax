@@ -5622,6 +5622,8 @@ def _unique_axis(ar, axis, return_index=False, return_inverse=False,
   ind = mask if size is None else nonzero(mask, size=size)[0]
   result = aux[:, ind]
   if size is not None and fill_value is not None:
+    if _ndim(fill_value):
+      fill_value = broadcast_to(fill_value, out_shape).reshape(_prod(out_shape), 1)
     result = where(arange(size) >= mask.sum(), fill_value, result)
   leading_dim = size if size is not None else mask.sum() or aux.shape[1]
   result = moveaxis(result.T.reshape(leading_dim, *out_shape), 0, axis)
