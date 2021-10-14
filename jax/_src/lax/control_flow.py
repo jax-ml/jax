@@ -1979,6 +1979,19 @@ def _memcpy(axis, num, src, dst, offset):
 
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule  # type: ignore
 
+def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, algorithm):
+  """Calls RBG in a loop and stacks the results."""
+  key, = batched_args
+  bd, = batch_dims
+  if bd is batching.not_mapped:
+    return lax.rng_bit_generator_p.bind(key, shape=shape, dtype=dtype,
+                                        algorithm=algorithm), (None, None)
+  key = batching.moveaxis(key, bd, 0)
+  map_body = lambda k: lax.rng_bit_generator_p.bind(k, shape=shape, dtype=dtype, algorithm=algorithm)
+  stacked_keys, stacked_bits = map(map_body, key)
+  return (stacked_keys, stacked_bits), (0, 0)
+
+batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
 
 def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
