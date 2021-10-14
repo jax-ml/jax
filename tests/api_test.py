@@ -82,6 +82,30 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     # Tensorflow.
     return api._cpp_jit
 
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 40,
+                   "Test requires jaxlib 0.1.73")
+  def test_jit_repr(self):
+    def my_function():
+      return
+    jitted = jit(my_function)
+    self.assertEqual(repr(jitted), f"<CompiledFunction of {repr(my_function)}>")
+
+  @unittest.skipIf(jax._src.lib._xla_extension_version < 40,
+                   "Test requires jaxlib 0.1.73")
+  def test_jit_repr_errors(self):
+    class Callable:
+      def __call__(self): pass
+      def __repr__(self):
+        raise ValueError("invalid repr")
+
+    # repr succeeds when underlying function repr fails.
+    jitted = jit(Callable())
+    self.assertEqual(repr(jitted), "<CompiledFunction>")
+
+    # repr succeeds when object is malformed.
+    del jitted.__wrapped__
+    self.assertEqual(repr(jitted), "<CompiledFunction>")
+
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
                            lambda: self.jit(3))
