@@ -16,5 +16,7 @@
 from jax._src.ad_checkpoint import (
   checkpoint,
   checkpoint_policies,
+  checkpoint_name,
+  print_saved_residuals,
   remat,
 )

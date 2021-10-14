@@ -54,6 +54,8 @@ from jax._src import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
 import jax._src.util
+from jax._src.ad_checkpoint import saved_residuals
+from jax.ad_checkpoint import checkpoint_name
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -3827,11 +3829,7 @@ class RematTest(jtu.JaxTestCase):
     # (potentially large) constants would not be rematerialized and could be
     # wastefully instantiated. This test checks that the newer remat
     # implementation avoids that. We engage the newer implementation by passing
-    # an explicit policy.
-    def saved_residuals(f, *args, **kwargs):
-      linearize = lambda *args: jax.linearize(f, *args, **kwargs)[1]
-      jaxpr = jax.make_jaxpr(linearize)(*args).jaxpr
-      return [v.aval for v in jaxpr.outvars]
+    # an explicit policy. See https://github.com/google/jax/pull/8191.
 
     # no residuals from constants created inside jnp.einsum
     @partial(jax.checkpoint, policy=lambda *_, **__: False)
@@ -3853,6 +3851,74 @@ class RematTest(jtu.JaxTestCase):
       return jnp.zeros_like(x) * jnp.sin(x)
     res_avals = saved_residuals(f, jnp.ones((2, 2)))
     self.assertLen(res_avals, 1)
+
+  def test_name_denylist(self):
+    def f(x):
+      y = checkpoint_name(jnp.multiply(2., 2.), 'y')
+      z = checkpoint_name(jnp.multiply(2., 2.), 'z')
+      w = checkpoint_name(jnp.multiply(2., 2.), 'w')
+      u = jnp.multiply(2., 2.)
+      return (((x * y) * z) * w) * u
+
+    policy = jax.checkpoint_policies.save_any_names_but_these('y', 'z', 'w')
+    res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
+    self.assertLen(res, 0)  # can't save anything
+
+    policy = jax.checkpoint_policies.save_any_names_but_these('z', 'w')
+    res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
+    self.assertLen(res, 1)  # can save only y
+
+    policy = jax.checkpoint_policies.save_any_names_but_these('w')
+    res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
+    self.assertLen(res, 2)  # can save y and z
+
+    policy = jax.checkpoint_policies.save_any_names_but_these()
+    res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
+    self.assertLen(res, 3)  # can save y, z, and w
+
+  def test_name_allowlist(self):
+    def f(x):
+      y = checkpoint_name(jnp.multiply(2., 2.), 'y')
+      z = checkpoint_name(jnp.multiply(2., 2.), 'z')
+      w = checkpoint_name(jnp.multiply(2., 2.), 'w')
+      u = jnp.multiply(2., 2.)
+      return (((x * y) * z) * w) * u
+
+    policy = jax.checkpoint_policies.save_only_these_names('y', 'z', 'w')
+    res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
+    self.assertLen(res, 3)  # can save y, z, and w
+
+    policy = jax.checkpoint_policies.save_only_these_names('z', 'w')
+    res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
+    self.assertLen(res, 2)  # can save z and w
+
+    policy = jax.checkpoint_policies.save_only_these_names('w')
+    res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
+    self.assertLen(res, 1)  # can save w
+
+    policy = jax.checkpoint_policies.save_only_these_names()
+    res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
+    self.assertLen(res, 0)  # can't save anything!
+
+  def test_saved_residuals_utility(self):
+    def f(x, y):
+      x1, x2 = x
+      z = checkpoint_name(jnp.sin(3.), 'z')
+      return z * ((x1 * x2) * y) * np.array([3.])
+
+    res = saved_residuals(f, (2., 3.), y=4.)
+    self.assertLen(res, 6)
+    self.assertEqual(res[0][0].shape, (1,))
+    self.assertEqual(res[0][1], "from a constant")
+    self.assertEqual(res[1][0].shape, ())
+    self.assertEqual(res[1][1], "from the argument 'x'")
+    self.assertEqual(res[2][0].shape, ())
+    self.assertEqual(res[2][1], "from the argument 'x'")
+    self.assertEqual(res[3][0].shape, ())
+    self.assertEqual(res[3][1], "from the argument 'y'")
+    self.assertEqual(res[4][0].shape, ())
+    self.assertStartsWith(res[4][1], "named z")
+    self.assertEqual(res[5][0].shape, ())
 
 
 class JaxprTest(jtu.JaxTestCase):
