@@ -1826,6 +1826,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # This is a higher-order function, so the cache miss check will fail.
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, check_cache_misses=False)
 
+  def testPiecewiseRecompile(self):
+    def g(x):
+      g.num_traces += 1
+      return x
+    g.num_traces = 0
+    x = jnp.arange(10.0)
+    for i in range(5):
+      jnp.piecewise(x, [x < 0], [g, 0.])
+    self.assertEqual(g.num_traces, 1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "{}_perm={}_{}".format(
