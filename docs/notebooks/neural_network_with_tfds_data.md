@@ -75,7 +75,6 @@ def init_network_params(sizes, key):
   return [random_layer_params(m, n, k) for m, n, k in zip(sizes[:-1], sizes[1:], keys)]
 
 layer_sizes = [784, 512, 512, 10]
-param_scale = 0.1
 step_size = 0.01
 num_epochs = 10
 batch_size = 128
