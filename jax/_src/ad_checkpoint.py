@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Optional
+from typing import Callable, Optional, List, Tuple
 import types
 
 import jax
@@ -31,6 +31,8 @@ from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip)
 
+source_info_util.register_exclusion(__file__)
+
 # TODO(mattjj): before this can be the standard remat implementation, we must:
 #   [ ] fix up callers who use the 'concrete' option (now removed)
 #   [ ] implement remat-of-control-flow-primitives (passing through the policy)
@@ -39,21 +41,60 @@ map = safe_map
 zip = safe_zip
 
 
-def _checkpoint_dots(prim, *_, **__) -> bool:
+### Policies
+
+def everything_saveable(*_, **__) -> bool:
+  # This is the effective policy without any use of jax.remat.
+  return True
+
+def nothing_saveable(*_, **__) -> bool:
+  # This is the effective policy when using jax.remat without explicit policy.
+  return False
+
+def checkpoint_dots(prim, *_, **__) -> bool:
+  # Matrix multiplies are expensive, so let's save them (and nothing else).
   return prim in {jax._src.lax.lax.dot_general_p,
                   jax._src.lax.lax.conv_general_dilated_p}
 
-def _dot_with_no_batch_dims(prim, *_, **params) -> bool:
+def dot_with_no_batch_dims(prim, *_, **params) -> bool:
+  # This is a useful heuristic for transformers.
   if prim is jax._src.lax.lax.dot_general_p:
     (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
     if not lhs_b and not rhs_b:
       return True
   return False
 
+name_p = core.Primitive('name')
+
+def save_any_names_but_these(*names_not_to_save):
+  # Save named values, excluding the names given.
+  names_not_to_save = frozenset(names_not_to_save)
+  def policy(prim, *_, **params):
+    if prim is name_p:
+      return params['name'] not in names_not_to_save
+    return False  # only allow saving named values
+  return policy
+
+def save_only_these_names(*names_which_can_be_saved):
+  # Save named values, only among the names given.
+  names_which_can_be_saved = set(names_which_can_be_saved)
+  def policy(prim, *_, **params):
+    if prim is name_p:
+      return params['name'] in names_which_can_be_saved
+    return False  # not saveable unless it's in the allow-list
+  return policy
+
 checkpoint_policies = types.SimpleNamespace(
-    checkpoint_dots=_checkpoint_dots,
-    checkpoint_dots_with_no_batch_dims=_dot_with_no_batch_dims,
+    everything_saveable=everything_saveable,
+    nothing_saveable=nothing_saveable,
+    checkpoint_dots=checkpoint_dots,
+    checkpoint_dots_with_no_batch_dims=dot_with_no_batch_dims,
+    save_any_names_but_these=save_any_names_but_these,
+    save_only_these_names=save_only_these_names,
 )
+
+
+### Main API
 
 def checkpoint(fun: Callable, prevent_cse: bool = True,
                policy: Optional[Callable[..., bool]] = None
@@ -178,6 +219,50 @@ def checkpoint(fun: Callable, prevent_cse: bool = True,
   return fun_remat
 
 remat = checkpoint  # alias
+
+
+### Utilities
+
+def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
+  args, in_tree = tree_flatten((args, kwargs))
+
+  def f_(*args):
+    args, kwargs = tree_unflatten(in_tree, args)
+    return f(*args, **kwargs)
+
+  jaxpr = jax.make_jaxpr(lambda *args: jax.linearize(f_, *args)[1])(*args).jaxpr
+  res_vars = set(jaxpr.outvars)
+  results = []
+
+  for v in jaxpr.constvars:
+    if v in res_vars:
+      results.append((v, 'from a constant'))
+
+  assert len(jaxpr.invars) == len(args)
+  for i, v in enumerate(jaxpr.invars):
+    if v in res_vars:
+      src = f'from {pe.arg_info_pytree(f, in_tree, True, [i])}'
+      results.append((v, src))
+
+  for eqn in jaxpr.eqns:
+    src = source_info_util.summarize(eqn.source_info)
+    for v in eqn.outvars:
+      if v in res_vars:
+        if eqn.primitive is name_p:
+          results.append((v, f'named {eqn.params["name"]} from {src}'))
+        else:
+          results.append((v, f'from {src}'))
+
+  res_vars_accounted_for = {v for v, _ in results}
+  assert res_vars == res_vars_accounted_for, (res_vars, res_vars_accounted_for)
+  return [(v.aval, src) for v, src in results]
+
+def print_saved_residuals(f, *args, **kwargs):
+  for aval, src in saved_residuals(f, *args, **kwargs):
+    print(f'{aval.str_short(short_dtypes=True)} {src}')
+
+
+### Implementation
 
 remat_p = core.Primitive('remat2')
 remat_p.multiple_results = True
@@ -306,3 +391,22 @@ def remat_vmap(axis_size, axis_name, main_type, args, dims, *, jaxpr, **params):
   out_dims = [0 if b else None for b in out_batched]
   return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
 batching.axis_primitive_batchers[remat_p] = remat_vmap
+
+
+def checkpoint_name(x, name):
+  return name_p.bind(x, name=name)
+
+name_p.def_impl(lambda x, *, name: x)
+name_p.def_abstract_eval(lambda x, *, name: x)
+
+def name_jvp(primals, tangents, *, name):
+  (x,), (xdot,) = primals, tangents
+  return name_p.bind(x, name=name), xdot  # don't name the tangent value
+ad.primitive_jvps[name_p] = name_jvp
+
+xla.translations[name_p] = lambda c, x, *, name: x
+
+def name_batcher(args, dims, *, name):
+  (x,), (d,) = args, dims
+  return name_p.bind(x, name=name), d
+batching.primitive_batchers[name_p] = name_batcher

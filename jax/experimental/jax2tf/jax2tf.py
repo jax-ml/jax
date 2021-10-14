@@ -953,6 +953,7 @@ tf_not_yet_impl = [
     "reduce_precision",
     "schur",
     "remat2",  # TODO(mattjj,necula): support new remat?
+    "name",
 
     # Not high priority?
     "after_all",
