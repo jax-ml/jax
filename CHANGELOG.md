@@ -12,6 +12,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.22...main).
 
+* New features:
+  * `jax.random.choice` and `jax.random.permutation` now support
+    multidimensional arrays and an optional `axis` argument ({jax-issue}`#8158`)
+
 ## jaxlib 0.1.73 (Unreleased)
 
 ## jax 0.2.22 (Oct 12, 2021)
@@ -45,8 +49,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     default when using jaxlib 0.1.72 or newer. The feature can be disabled using
     the `--experimental_cpp_pmap` flag (or `JAX_CPP_PMAP` environment variable).
   * `jax.numpy.unique` now supports an optional `fill_value` argument ({jax-issue}`#8121`)
-  * `jax.random.choice` and `jax.random.permutation` now support 
-    multidimensional arrays and an optional `axis` argument ({jax-issue}`#8158`)
 
 ## jaxlib 0.1.72 (Oct 12, 2021)
   * Breaking changes:
