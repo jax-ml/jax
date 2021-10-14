@@ -2377,7 +2377,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         u_fill = u[tuple(slices)] if fill_value is None else fill_value
         slices[axis] = slice(n_unique, None)
         u[tuple(slices)] = u_fill
-        ind = np.pad(ind, extra, constant_values=ind[0] if fill_value is None else fill_value)
+        ind = np.pad(ind, extra, constant_values=ind[0])
         counts = np.pad(counts, extra, constant_values=0)
       return u, ind, inv, counts
 

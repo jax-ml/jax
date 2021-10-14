@@ -5576,10 +5576,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
 
   ret = (result,)
   if return_index:
-    perm_ind = perm[ind]
-    if size is not None and fill_value is not None:
-      perm_ind = where(arange(size) >= mask.sum(), fill_value, perm_ind)
-    ret += (perm_ind,)
+    ret += (perm[ind],)
   if return_inverse:
     imask = cumsum(mask) - 1
     inv_idx = zeros(mask.shape, dtype=dtypes.canonicalize_dtype(int_))
@@ -5629,10 +5626,7 @@ def _unique_axis(ar, axis, return_index=False, return_inverse=False,
   ret = (result,)
   if return_index:
     if aux.size:
-      perm_ind = perm[ind]
-      if size is not None and fill_value is not None:
-        perm_ind = where(arange(size) >= mask.sum(), fill_value, perm_ind)
-      ret += (perm_ind,)
+      ret += (perm[ind],)
     else:
       ret += (perm,)
   if return_inverse:
