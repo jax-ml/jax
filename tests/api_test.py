@@ -3997,6 +3997,13 @@ class RematTest(jtu.JaxTestCase):
 
     _ = api.grad(f)(3.)  # doesn't crash
 
+  def test_dce_keeps_eqns_with_used_outputs_but_no_used_inputs(self):
+    @new_checkpoint
+    def f(x):
+      c = jax.jit(lambda: 3.)()
+      return c * x
+
+    _ = jax.grad(f)(3.)  # doesn't crash
 
 class JaxprTest(jtu.JaxTestCase):
 

@@ -1020,13 +1020,18 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: List[bool]
   map(write, jaxpr.outvars, used_outputs)
   for eqn in jaxpr.eqns[::-1]:
     used_outs = map(read, eqn.outvars)
-    rule = dce_rules.get(eqn.primitive)
-    if rule:
-      used_ins, new_eqn = rule(used_outs, eqn)
-      if any(used_ins): new_eqns.append(new_eqn)
-    elif any(used_outs):
-      new_eqns.append(eqn)
-      used_ins = [True] * len(eqn.invars)
+    # If any outputs are used, then we need to keep a version of the eqn and
+    # potentially mark some inputs as used. Otherwise mark all inputs as unused.
+    if any(used_outs):
+      # If there's a rule for modifying the eqn and computing used inputs, apply
+      # it. Otherwise, keep the eqn unmodified and mark all inputs as used.
+      rule = dce_rules.get(eqn.primitive)
+      if rule:
+        used_ins, new_eqn = rule(used_outs, eqn)
+      else:
+        used_ins = [True] * len(eqn.invars)
+        new_eqn = eqn
+      new_eqns.append(new_eqn)
     else:
       used_ins = [False] * len(eqn.invars)
     map(write, eqn.invars, used_ins)
