@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
+import builtins
 from functools import partial
 import contextlib
 import os
@@ -1453,6 +1454,56 @@ def _precision_config_proto(precision: Optional[Tuple[PrecisionType,
   return proto
 
 
+def _transpose_for_tf_conv(lhs, rhs, dimension_numbers):
+  """Tranposes lhs and rhs to respectively NHWC and HWIO so they can be passed to TF functions."""
+  # TODO(marcvanzee): Add tests for this ops for shape polymorphism.
+  lhs_perm, rhs_perm, _ = dimension_numbers
+
+  # TODO(marcvanzee): Consider merging tranposes if we want to optimize.
+  # For `lhs_perm` / `output_perm`, perm (0, 1, 2, 3) corresponds to "NCHW".
+  lhs = tf.transpose(lhs, lhs_perm)  # lhs --> "NCHW"
+  # However, the TF ops only support "NHWC" on CPU, so we transpose again.
+  lhs = tf.transpose(lhs, (0, 2, 3, 1))  # "NCHW" --> "NHWC"
+  # For `rhs_perm`, perm (0, 1, 2, 3) corresponds to "OIHW".
+  rhs = tf.transpose(rhs, rhs_perm)  # rhs --> "OIHW"
+  # For the tf ops, rhs is expected to be "OIHW".
+  rhs = tf.transpose(rhs, (2, 3, 1, 0))  # "OIHW" --> "HWIO"
+
+  return lhs, rhs
+
+
+def _pad_for_tf_conv(lhs, rhs_dilated_shape, window_strides, padding):
+  """Pads `lhs` if padding isn't "SAME" or "VALID" and returns (pad_type, new_lhs)."""
+
+  for pad_str in ["VALID", "SAME"]:
+    lhs_sdims = lhs.shape[1:3]  # lhs == NHWC
+    gen_padding = lax.padtype_to_pads(lhs_sdims, rhs_dilated_shape,
+                                      window_strides, pad_str)
+    if list(gen_padding) == list(padding):
+      return pad_str, lhs
+
+  # Since TF ops only accepts padding in ["VALID", "SAME"], we manually pad
+  # using tf.pad if the padding is different, and we pass "VALID" padding to TF.
+  # Add empty padding for batch and feature dimensions.
+  no_pad = tf.constant([[0, 0]])
+  padding = tf.concat([no_pad, padding, no_pad], 0)
+  lhs = tf.pad(lhs, padding)
+  return "VALID", lhs
+
+
+def _is_valid_padding(kernel_sdims, strides, padding):
+  """Returns True if `padding` corresponds to "VALID" padding for a transposed convolution."""
+  # This is simply the padding == 'VALID' part of lax._conv_transpose_padding.
+  for (begin, end), k, s in zip(padding, kernel_sdims, strides):
+    pad_len = k + s - 2 + builtins.max(k - s, 0)
+    pad_a = k - 1
+    pad_b = pad_len - pad_a
+    if begin != pad_a or end != pad_b:
+      return False
+
+  return True
+
+
 def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
                  dimension_numbers, feature_group_count, batch_group_count,
                  preferred_element_type: Optional[DType], out_shape) -> TfVal:
@@ -1462,114 +1513,108 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
               "convolutions can be converted without XLA.")
     return _xla_disabled_error("conv_general_dilated", f"{msg} - {suffix}")
 
-  # TODO(bchetioui): this function is not exhaustive wrt which convolution cases
-  # can be translated into TF primitives. Further investigation is needed to
-  # fully flesh it out.
-  if lhs.dtype not in [tf.float16, tf.float32, tf.float64]:
-    raise error(f"tf.nn.convolution is not supported for dtype {lhs.dtype}")
-  if feature_group_count != 1:
-    raise error("tf.nn.convolution does not support grouped convolutions")
-  # TODO(bchetioui): is there something to do with batch_group_count?
+  nr_spatial_dimensions = len(lhs.shape) - 2
+
+  # Currently we only support 2D convolutions because it keeps the code
+  # relatively simple and covers most cases.
+  if nr_spatial_dimensions != 2:
+    error(f"We only support 2D convolutions, but found {nr_spatial_dimensions}.")
+
+  # We can implement batch grouping when there is a need for it.
   if batch_group_count != 1:
-    raise error("Unimplemented support for batch_group_count != 1")
-  nb_spatial_dimensions = len(lhs.shape) - 2
-  # TF can only deal with 1D, 2D and 3D convolution
-  if nb_spatial_dimensions < 1 or nb_spatial_dimensions > 3:
-    raise error("TensorFlow can only handle convolutions with 1, 2, or 3 "
-                "spatial dimensions")
-  # TODO(bchetioui): handle different stride cases
-  if list(window_strides) != [1] * nb_spatial_dimensions:
-    raise error("Unimplemented support for window_strides != "
-                f"{tuple([1] * nb_spatial_dimensions)}")
+    raise error("Unimplemented support for batch_group_count != 1 "
+                f"(found {batch_group_count})")
 
   if preferred_element_type is not None and preferred_element_type != lhs.dtype:
     raise error("Unimplemented support for preferred_element_type")
 
-  def convert_padding() -> str:
-    # TODO(bchetioui): in this instance, we can not use padtype_to_pads as
-    # string padding is not implemented for transposed convolution.
-    if list(lhs_dilation) != [1] * nb_spatial_dimensions:
-      raise error("Padding conversion is not supported for transposed "
-                  "convolution.")
-    lhs_perm, rhs_perm, _ = dimension_numbers
-    effective_rhs_shape = [
-        (k - 1) * r + 1
-        for k, r in zip(np.take(rhs.shape, rhs_perm)[2:], rhs_dilation)
-    ]
-    lhs_shape = np.take(lhs.shape, lhs_perm)[2:]
-    # TF only allows 'VALID' and 'SAME' padding
-    for pad_str in ["VALID", "SAME"]:
-      gen_padding = lax.padtype_to_pads(lhs_shape, effective_rhs_shape,
-                                        window_strides, pad_str)
-      if list(gen_padding) == list(padding):
-        return pad_str
-    raise error("Input padding not supported in TensorFlow.")
+  lhs, rhs = _transpose_for_tf_conv(lhs, rhs, dimension_numbers)
+  output_perm = dimension_numbers[2]
 
-  def convert_dim_nums() -> str:
-    lhs_spec, rhs_spec, out_spec = dimension_numbers
-    # TF only allows filters with shape:
-    # spatial_filter_shape + [in_channels, out_channels]. In JAX however,
-    # rhs_spec is represented as a tuple containing the following:
-    # [out_channels, in_channels] + spatial_filter_shape.
-    supported_rhs_shape = ([nb_spatial_dimensions + 1, nb_spatial_dimensions] +
-                           list(range(nb_spatial_dimensions)))
-    if list(rhs_spec) != supported_rhs_shape:
-      raise error("Input filter (RHS) shape format not supported in "
-                  "TensorFlow.")
-    # TF only supports same LHS and output data format
-    if lhs_spec != out_spec:
-      raise error("TensorFlow requires the same data format for LHS and "
-                  "output.")
-    # Alphabet extracted from the documentation of tf.conv{1,2,3}d
-    spatial_dim_alphabet = "DHW"[-nb_spatial_dimensions:]
-    # TF only supports the following data formats:
-    # - [batch_size, in_channels] + input_spatial_shape
+  in_channels = lhs.shape[-1]
+  *rhs_spatial_shapes, _, rhs_out_channel = rhs.shape
 
-    # TODO(bchetioui): TF currently does not support the above on CPU. To avoid
-    # failing on this platform, this path is commented out for now.
-    # if list(lhs_spec) == list(range(len(lhs_spec))):
-    #  return "NC" + spatial_dim_alphabet
+  is_depthwise = in_channels == feature_group_count and feature_group_count > 1
+  is_transpose = list(lhs_dilation) != [1] * nr_spatial_dimensions
+  is_atrous = list(rhs_dilation) != [1] * nr_spatial_dimensions
 
-    # - [batch_size] + input_spatial_shape + [in_channels]
-    if list(lhs_spec) == ([0, len(lhs_spec) - 1] +
-                          list(range(1,
-                                     len(lhs_spec) - 1))):
-      return "N" + spatial_dim_alphabet + "C"
-    raise error("Data format is unsupported by TensorFlow.")
+  if feature_group_count > 1 and not is_depthwise:
+    raise error("Grouped convolutions are unsupported")
 
-  def convert_dilation_and_compute_result(tf_padding: str,
-                                          tf_dim_nums: str) -> TfVal:
-    no_dilation = [1] * nb_spatial_dimensions
-    # TODO(bchetioui): is there a generic way to do a transposed atrous
-    # convolution in TensorFlow?
-    if not (list(lhs_dilation) == no_dilation or
-            list(rhs_dilation) == no_dilation):
-      raise error("Both LHS and RHS dilations are set.")
-    # This is a non-dilated or atrous convolution
-    if list(lhs_dilation) == no_dilation:
-      return tf.nn.convolution(
-          lhs,
-          rhs,
-          strides=window_strides,
-          padding=tf_padding,
-          data_format=tf_dim_nums,
-          dilations=rhs_dilation)
-    # TODO(bchetioui): the below path is unreachable for now, as passing a lhs
-    # dilation to this function will result in convert_padding returning None
-    # systematically. This must be investigated further.
-    # Dilation of the LHS is transposed convolution
-    return tf.nn.conv_transpose(
-        lhs,
-        rhs,
-        out_shape,
-        window_strides,
-        padding=tf_padding,
-        data_format=tf_dim_nums,
-        dilations=lhs_dilation)
+  if is_transpose:
+    # We provide support for transposed convolutions called through
+    # lax.conv2d_tranpose, but only if the provided padding was VALID.
+    if not _is_valid_padding(rhs_spatial_shapes, window_strides, padding):
+      raise error("Can only convert Transposed Convolutions with 'VALID' padding")
 
-  tf_padding = convert_padding()
-  tf_dim_nums = convert_dim_nums()
-  return convert_dilation_and_compute_result(tf_padding, tf_dim_nums)
+  if [is_depthwise, is_atrous, is_transpose].count(True) > 1:
+    raise error("Can only do one of depthwise, atrous and tranposed convolutions")
+
+  rhs_dilated_shape = [
+      (k - 1) * r + 1 for k, r in zip(rhs_spatial_shapes, rhs_dilation)
+  ]
+
+  padding_type, padded_lhs = _pad_for_tf_conv(lhs, rhs_dilated_shape, window_strides,
+                                       padding)
+
+  if any(r > l for l, r in zip(padded_lhs.shape[1:3], rhs_dilated_shape)):
+    # If the filter shape is bigger than the input shape in a spatial dimension,
+    # lax returns only zeros while tf.conv2d returns an error.
+    # We thus return zeros to make sure the behavior is consistent.
+    return tf.broadcast_to(tf.constant(0, dtype=tf.float32), out_shape)
+
+  # Some TF ops require len(window_strides) == 4 while others do not. We simply
+  # ensure it always has len(4).
+  if type(window_strides) == int:
+    window_strides = [window_strides] * 2
+  if len(window_strides) == 2:
+    window_strides = [1] + list(window_strides) + [1]
+
+  if is_depthwise:
+    # Reshape filter from
+    # [filter_height, filter_width, 1, in_channels * channel_multiplier] to
+    # [filter_height, filter_width, in_channels, channel_multiplier].
+    new_rhs_shape = tuple(rhs_spatial_shapes) + (in_channels, rhs_out_channel // in_channels)
+    output = tf.nn.depthwise_conv2d(
+        input=padded_lhs,
+        filter=tf.reshape(rhs, new_rhs_shape),
+        strides=window_strides,
+        padding=padding_type,
+        dilations=rhs_dilation)
+
+  elif is_transpose:
+    # tf.nn.conv2d_transpose requires a transposed filter.
+    rhs_t = tf.reverse(rhs, [0, 1])
+    rhs_t = tf.transpose(rhs_t, (0, 1, 3, 2))
+
+    # We should tranpose `out_shape` so it conforms to what TF expects.
+    tf_out_shape = tuple(out_shape[i] for i in output_perm)  # "NCHW"
+    tf_out_shape = tuple(tf_out_shape[i] for i in (0, 2, 3, 1))  # "NCHW" -> "NHWC"
+
+    output = tf.nn.conv2d_transpose(
+        input=lhs,
+        filters=rhs_t,
+        output_shape=tf_out_shape,
+        strides=lhs_dilation,
+        padding="VALID")
+
+  else:
+    output = tf.nn.conv2d(
+        input=padded_lhs,
+        filters=rhs,
+        strides=window_strides,
+        padding=padding_type,
+        dilations=rhs_dilation)
+
+  # TF outputs in format "NHWC", so convert to "NCHW", which is lax's default
+  # format.
+  output = tf.transpose(output, (0, 3, 1, 2))  # "NHWC" --> "NCHW"
+  # To determine the right permutation, we compute the inverse permutation of
+  # `output_perm`, so that when `output_perm` is applied to `output`, we obtain
+  # the outpt in NCHW format.
+  inverse_perm = tuple(output_perm.index(i) for i in range(4))
+  output = tf.transpose(output, inverse_perm)  # "NCHW" -> desired output shape.
+  return output
 
 
 def _conv_general_dilated(lhs, rhs, *,
