@@ -3989,8 +3989,15 @@ class RematTest(jtu.JaxTestCase):
     self.assertLen(res, 1)
     self.assertEqual(res[0][0].shape, ())
 
-  def test_checkpoint_dropvars(self):
-    @new_checkpoint
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
+      ])
+  def test_checkpoint_dropvars(self, remat):
+    @remat
     def f(x):
       _, x = api.jit(lambda: (x, x))()
       return x
@@ -4004,6 +4011,21 @@ class RematTest(jtu.JaxTestCase):
       return c * x
 
     _ = jax.grad(f)(3.)  # doesn't crash
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"{suffix}", "remat": remat}
+      for suffix, remat in [
+          ('', api.remat),
+          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
+      ])
+  def test_unit_dropvar_consistency_regression(self, remat):
+    @partial(remat, policy=lambda *_, **__: False)
+    def f(u, x):
+      x, _ = jax.jit(lambda x: (x, u))(x)
+      return x
+
+    _ = api.linearize(partial(f, core.unit), 3.)
 
 class JaxprTest(jtu.JaxTestCase):
 
