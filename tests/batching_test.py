@@ -1193,6 +1193,22 @@ class BatchingTest(jtu.JaxTestCase):
     res = vmap(vmap(f, axis_name='j'), axis_name='i', out_axes=None)(x)
     self.assertAllClose(res, x.T)
 
+  def testAllGatherTiled(self):
+    def f(x):
+      return lax.all_gather(x, axis_name='i', tiled=True)
+
+    x = jnp.arange(60).reshape((4, 3, 5))
+    res = vmap(f, axis_name='i', in_axes=(1,), out_axes=None)(x)
+    self.assertAllClose(res, x.transpose((1, 0, 2)).reshape(-1, 5))
+
+  def testBatchedAllGatherTiled(self):
+    def f(x):
+      return lax.all_gather(x, axis_name='i', tiled=True)
+
+    x = jnp.arange(60).reshape((4, 3, 5))
+    res = vmap(vmap(f, in_axes=1, out_axes=1), axis_name='i', in_axes=1, out_axes=None)(x)
+    self.assertAllClose(res, x.transpose((1, 0, 2)).reshape(-1, 5))
+
   def testAllGatherVjp(self):
     def f(x):
       return lax.all_gather(x, axis_name='i')

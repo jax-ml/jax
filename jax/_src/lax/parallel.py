@@ -1089,12 +1089,10 @@ def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_
       axis=concat_axis),)
 
 def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
-  if tiled:
-    raise NotImplementedError("Please open a feature request!")
   (x,), (d,) = vals_in, dims_in
   if d <= all_gather_dimension:
     all_gather_dimension += 1
-  else:
+  elif not tiled:  # Tiled all-gather doesn't modify the set of dimensions
     d += 1
   result = all_gather_p.bind(
       x,
@@ -1107,8 +1105,6 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
 
 def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in, all_gather_dimension, axis_name,
                                    axis_index_groups, axis_size, tiled):
-  if tiled:
-    raise NotImplementedError("Please open a feature request!")
   assert axis_index_groups is None, "axis_index_groups not supported in vmap"
   assert axis_size == frame_size, "axis size doesn't match"
   if not isinstance(axis_name, tuple):
@@ -1121,8 +1117,12 @@ def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in, 
     out_shape = list(np.shape(x))
     out_shape.insert(all_gather_dimension, axis_size)
     broadcast_dims = [i for i in range(len(out_shape)) if i != all_gather_dimension]
-    return lax.broadcast_in_dim(x, out_shape, broadcast_dims), batching.not_mapped
-  return _moveaxis(d, all_gather_dimension, x), batching.not_mapped
+    y = lax.broadcast_in_dim(x, out_shape, broadcast_dims)
+  else:
+    y = _moveaxis(d, all_gather_dimension, x)
+  if tiled:
+    y = _foldaxis(all_gather_dimension, y)
+  return y, batching.not_mapped
 
 all_gather_p = core.AxisPrimitive('all_gather')
 all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
