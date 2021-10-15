@@ -5419,7 +5419,7 @@ def take(a, indices, axis: Optional[int] = None, out=None, mode=None):
 def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
-  _check_arraylike("take", a)
+  _check_arraylike("take", a, indices)
   a = asarray(a)
   indices = asarray(indices)
 
@@ -5474,7 +5474,7 @@ def _normalize_index(index, axis_size):
 @_wraps(np.take_along_axis, update_doc=False)
 @partial(jit, static_argnames=('axis',))
 def take_along_axis(arr, indices, axis: Optional[int]):
-  _check_arraylike("take_along_axis", arr)
+  _check_arraylike("take_along_axis", arr, indices)
   if axis is None:
     if ndim(indices) != 1:
       msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
