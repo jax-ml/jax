@@ -254,7 +254,7 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
     for v in eqn.outvars:
       if v in res_vars:
         if eqn.primitive is name_p:
-          results.append((v.aval, f'named {eqn.params["name"]} from {src}'))
+          results.append((v.aval, f"named '{eqn.params['name']}' from {src}"))
         else:
           results.append((v.aval, f'from {src}'))
 
@@ -316,7 +316,7 @@ ad.primitive_jvps[remat_p] = remat_jvp
 def remat_partial_eval(trace, *tracers, jaxpr, **params):
   assert not jaxpr.constvars
   policy = params['policy'] or (lambda *_, **__: False)
-  # unzip into known and jaxpr_unknown
+  # unzip into jaxpr_known and jaxpr_unknown
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_unknown, out_unknowns, out_inst, _ = \
       pe._partial_eval_jaxpr_custom(jaxpr, in_unknowns, policy)

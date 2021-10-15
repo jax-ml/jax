@@ -3981,13 +3981,21 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(res[3][0].shape, ())
     self.assertEqual(res[3][1], "from the argument 'y'")
     self.assertEqual(res[4][0].shape, ())
-    self.assertStartsWith(res[4][1], "named z")
+    self.assertStartsWith(res[4][1], "named 'z'")
     self.assertEqual(res[5][0].shape, ())
 
   def test_saved_residuals_utility_literals(self):
     res = saved_residuals(lambda x: x * 2., 3.)
     self.assertLen(res, 1)
     self.assertEqual(res[0][0].shape, ())
+
+  def test_checkpoint_dropvars(self):
+    @new_checkpoint
+    def f(x):
+      _, x = api.jit(lambda: (x, x))()
+      return x
+
+    _ = api.grad(f)(3.)  # doesn't crash
 
 
 class JaxprTest(jtu.JaxTestCase):

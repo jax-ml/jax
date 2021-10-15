@@ -788,7 +788,7 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   in_unknowns = ([False] * len(consts) +
                  [not t.is_known() for t in it.chain(env_tracers, tracers)])
   if params['policy']:
-    # unzip into known and jaxpr_unknown
+    # unzip into jaxpr_known and jaxpr_unknown
     jaxpr_known, jaxpr_unknown, out_unknowns, out_inst, _ = _partial_eval_jaxpr_custom(
         jaxpr, in_unknowns, params['policy'])
     jaxpr_known, in_used_known = dce_jaxpr(jaxpr_known, [True] * len(jaxpr_known.outvars))
@@ -978,7 +978,6 @@ def call_partial_eval_custom_rule(
       eqn.params[jaxpr_param_name], unks_in, saveable)
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
-  out_binders_known = [v for v in out_binders_known if v is not dropvar]
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   newvar = core.gensym([jaxpr_known, jaxpr_staged])
   residuals = [newvar(v.aval) for v in jaxpr_staged.invars[:num_res]]
