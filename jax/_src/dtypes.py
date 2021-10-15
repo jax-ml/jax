@@ -40,10 +40,10 @@ _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
 
-bool_ = np.bool_
-int_: np.dtype = np.int64  # type: ignore
-float_: np.dtype = np.float64  # type: ignore
-complex_ = np.complex128
+bool_: type = np.bool_
+int_: type = np.int64
+float_: type = np.float64
+complex_: type = np.complex128
 
 # TODO(phawkins): change the above defaults to:
 # int_ = np.int32
