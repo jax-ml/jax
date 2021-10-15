@@ -2165,11 +2165,12 @@ def select(condlist, choicelist, default=0):
 
 @_wraps(np.bincount, lax_description="""\
 Jax adds the optional `length` parameter which specifies the output length, and
-defaults to ``x.max() + 1``. It must be specified for bincount to be compilable.
-Values larger than the specified length will be discarded.
+defaults to ``x.max() + 1``. It must be specified for bincount to be compiled
+with non-static operands. Values larger than the specified length will be discarded.
+If `length` is specified, `minlength` will be ignored.
 
 Additionally, while ``np.bincount`` raises an error if the input array contains
-negative values, ``jax.numpy.bincount`` treats negative values as zero.
+negative values, ``jax.numpy.bincount`` clips negative values to zero.
 """)
 def bincount(x, weights=None, minlength=0, *, length=None):
   _check_arraylike("bincount", x)
@@ -2184,11 +2185,10 @@ def bincount(x, weights=None, minlength=0, *, length=None):
     x = core.concrete_or_error(asarray, x,
       "The error occured because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
-    length = max(x, initial=-1) + 1
+    length = _max(minlength, x.size and x.max() + 1)
   else:
     length = core.concrete_or_error(operator.index, length,
         "The error occurred because of argument 'length' of jnp.bincount.")
-  length = _max(length, minlength)
   if weights is None:
     weights = 1
   elif shape(x) != shape(weights):

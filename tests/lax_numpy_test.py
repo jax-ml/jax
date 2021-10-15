@@ -4578,19 +4578,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for dtype in int_dtypes
     for weights in [True, False]
     for minlength in [0, 20]
-    for length in [None, 10]
+    for length in [None, 8]
   ))
   def testBincount(self, shape, dtype, weights, minlength, length):
-    rng = jtu.rand_positive(self.rng())
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype), (rng(shape, 'float32') if weights else None))
 
-    np_fun = partial(np.bincount, minlength=minlength)
+    def np_fun(x, *args):
+      x = np.clip(x, 0, None)  # jnp.bincount clips negative values to zero.
+      out = np.bincount(x, *args, minlength=minlength)
+      if length and length > out.size:
+        return np.pad(out, (0, length - out.size))
+      return out[:length]
     jnp_fun = partial(jnp.bincount, minlength=minlength, length=length)
 
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     if length is not None:
       self._CompileAndCheck(jnp_fun, args_maker)
-    if length is None:
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
   def testBincountNegative(self):
     # Test that jnp.bincount ignores negative values.
