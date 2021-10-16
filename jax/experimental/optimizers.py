@@ -501,7 +501,7 @@ def sm3(step_size, momentum=0.9):
   return init, update, get_params
 
 @optimizer
-def adamw(step_size, b1=0.9, b2=0.999, eps=1e-8, l2=1e-2):
+def adamw(step_size, alpha=1.0, b1=0.9, b2=0.999, eps=1e-8, l2=1e-2):
   """Construct optimizer triple for adamW (Decoupled Weight Decay Regularization).
   https://arxiv.org/pdf/1711.05101.pdf
   
@@ -515,11 +515,10 @@ def adamw(step_size, b1=0.9, b2=0.999, eps=1e-8, l2=1e-2):
     eps: optional, a positive scalar value for epsilon, a small constant for
       numerical stability (default 1e-8).
     l2: optional, weight decay/L2 regularization factor. 
-    eta: schedule multiplier. 
   Returns:
     An (init_fun, update_fun, get_params) triple.
   """ 
-  multiplyers = make_schedule(1.0)
+  step_size = make_schedule(step_size)
   def init(x0):
     m0 = jnp.zeros_like(x0)
     v0 = jnp.zeros_like(x0)
@@ -531,7 +530,7 @@ def adamw(step_size, b1=0.9, b2=0.999, eps=1e-8, l2=1e-2):
     v = (1 - b2) * jnp.square(g) + b2 * v  # Second moment estimate.
     mhat = m / (1 - jnp.asarray(b1, m.dtype) ** (i + 1))  # Bias correction.
     vhat = v / (1 - jnp.asarray(b2, m.dtype) ** (i + 1))
-    x = x - multiplyers(i) (step_size * mhat / (jnp.sqrt(vhat) + eps) + l2 * x)
+    x = x - step_size(i) * (alpha * mhat / (jnp.sqrt(vhat) + eps) + l2 * x)
     return x, m, v
   def get_params(state):
     x, _, _ = state
