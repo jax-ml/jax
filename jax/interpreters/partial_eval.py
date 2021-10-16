@@ -18,6 +18,7 @@ import functools
 from functools import partial
 import inspect
 import itertools as it
+import operator as op
 from typing import (Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple,
                     List, Union, cast)
 from weakref import ref
@@ -974,10 +975,14 @@ def call_partial_eval_custom_rule(
     saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
     eqn: JaxprEqn
   ) -> Tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], List[Var]]:
-  jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = _partial_eval_jaxpr_custom(
-      eqn.params[jaxpr_param_name], unks_in, saveable)
+  jaxpr = eqn.params[jaxpr_param_name]
+  jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
+      _partial_eval_jaxpr_custom(jaxpr, unks_in, saveable)
   ins_known, _ = partition_list(unks_in, eqn.invars)
-  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
+  # by convention, _partial_eval_jaxpr_custom drops units on known outputs
+  known_units_out = [v.aval is core.abstract_unit for v in jaxpr.outvars]
+  dropped_outs_known = map(op.or_, unks_out, known_units_out)
+  out_binders_known, _ = partition_list(dropped_outs_known, eqn.outvars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   newvar = core.gensym([jaxpr_known, jaxpr_staged])
   residuals = [newvar(v.aval) for v in jaxpr_staged.invars[:num_res]]
