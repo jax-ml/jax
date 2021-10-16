@@ -760,6 +760,20 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         "called with:\n.*int32.*",
         lambda: f_exe(x_i32))
 
+  def test_jit_lower_compile_multi_arg(self):
+    def f(*args):
+      x, *_ = args
+      return jnp.sqrt(x ** 2) + 1.
+    f_exe = self.jit(f).lower(1., 1.).compile()
+    self.assertAllClose(f_exe(1., 1.), 2.)
+
+  def test_jit_lower_compile_trivial_multi_arg(self):
+    def f(*args):
+      x, *_ = args
+      return x
+    f_exe = self.jit(f).lower(1., 1.).compile()
+    self.assertAllClose(f_exe(1., 1.), 1.)
+
 
 class PythonJitTest(CPPJitTest):
 
