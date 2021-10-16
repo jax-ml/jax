@@ -883,8 +883,9 @@ def parallel_callable(fun: lu.WrappedFun,
                                                     partitions=arg_parts,
                                                     donated_invars=donated_invars)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend_name, axis_env, xla_consts,
-                                  extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
+    ctx = xla.TranslationContext(c, backend.platform, axis_env,
+                                 extend_name_stack(wrap_name(name, 'pmap')))
+    out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   build_out_tuple = partial(xops.Tuple, c, out_nodes)
   if out_parts is not None:
     out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
@@ -1297,9 +1298,10 @@ def _pmap_translation_rule(c, axis_env,
     for aval, in_node, in_axis in safe_zip(in_avals, in_nodes, in_axes))
 
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    sharded_outs = xla.jaxpr_subcomp(
-        c, call_jaxpr, backend, new_env, (),
-        extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
+    ctx = xla.TranslationContext(
+        c, backend, new_env,
+        extend_name_stack(name_stack, wrap_name(name, 'pmap')))
+    sharded_outs = xla.jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_xla_unshard(c, aval, new_env, out_axis, shard, backend=backend)
           for aval, out_axis, shard in safe_zip(out_avals, out_axes, sharded_outs)]
@@ -1620,9 +1622,10 @@ def lower_mesh_computation(
       partitions_proto=partitions_proto,
       donated_invars=donated_invars)
   with core.extend_axis_env_nd(mesh.shape.items()):
-    out_nodes = xla.jaxpr_subcomp(
-        c, jaxpr, backend.platform, axis_env, xla_consts,
-        extend_name_stack(wrap_name(transformed_name, 'xmap')), *xla_args)
+    ctx = xla.TranslationContext(
+        c, backend.platform, axis_env,
+        extend_name_stack(wrap_name(transformed_name, 'xmap')))
+    out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   if spmd_lowering:
     out_partitions_t = xb.tuple_sharding_proto(out_partitions)
     out_tuple = xb.with_sharding_proto(c, out_partitions_t, xops.Tuple, c, out_nodes)

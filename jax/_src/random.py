@@ -959,12 +959,12 @@ random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
 random_gamma_p.def_abstract_eval(lambda key, a: core.raise_to_shaped(a))
 ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
-xla.translations_with_avals[random_gamma_p] = xla.lower_fun(
+xla.register_translation(random_gamma_p, xla.lower_fun(
     partial(_gamma_impl, use_vmap=True),
-    multiple_results=False, with_avals=True)
-xla.backend_specific_translations['cpu'][random_gamma_p] = xla.lower_fun(
+    multiple_results=False, new_style=True))
+xla.register_translation(random_gamma_p, xla.lower_fun(
     partial(_gamma_impl, use_vmap=False),
-    multiple_results=False)
+    multiple_results=False, new_style=True), platform='cpu')
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key: KeyArray,

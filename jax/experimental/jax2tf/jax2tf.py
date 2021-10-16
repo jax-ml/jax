@@ -42,6 +42,7 @@ import jax._src.random
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import ad
+from jax.interpreters import partial_eval
 from jax.interpreters import pxla
 from jax.interpreters import sharded_jit
 from jax.interpreters import xla
@@ -940,9 +941,10 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
 
 
-for unexpected in xla.call_translations:  # Call primitives are inlined
-  if unexpected is pjit.pjit_p:
-    continue
+# Call primitives are inlined
+for unexpected in [core.call_p, core.named_call_p, xla.xla_call_p,
+                   partial_eval.remat_call_p, sharded_jit.sharded_call_p,
+                   maps.xmap_p]:
   tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.

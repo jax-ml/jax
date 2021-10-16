@@ -370,7 +370,7 @@ class JVPTrace(Trace):
     avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
     tangents_out = custom_lin_p.bind(
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
-        avals_out=avals_out)
+        out_avals=avals_out)
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
@@ -676,7 +676,7 @@ def _interleave(xs, ys):
 
 
 custom_lin_p = core.Primitive('custom_lin')
-custom_lin_p.def_abstract_eval(lambda *_, avals_out, **__: avals_out)
+custom_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
 custom_lin_p.multiple_results = True
 
 def _raise_custom_vjp_error_on_jvp(*_, **__):
@@ -684,9 +684,9 @@ def _raise_custom_vjp_error_on_jvp(*_, **__):
                   "function.")
 custom_lin_p.def_impl(_raise_custom_vjp_error_on_jvp)
 
-def _custom_lin_transpose(cts_out, *invals, num_res, bwd, avals_out):
+def _custom_lin_transpose(cts_out, *invals, num_res, bwd, out_avals):
   res, _ = split_list(invals, [num_res])
-  cts_out = map(instantiate_zeros_aval, avals_out, cts_out)
+  cts_out = map(instantiate_zeros_aval, out_avals, cts_out)
   cts_in = bwd.call_wrapped(*res, *cts_out)
   return [None] * num_res + list(cts_in)
 primitive_transposes[custom_lin_p] = _custom_lin_transpose

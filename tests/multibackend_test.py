@@ -91,6 +91,9 @@ class MultiBackendTest(jtu.JaxTestCase):
       raise SkipTest("Backend is not CPU or the device under test")
     if inner not in ('cpu', jtu.device_under_test(), None):
       raise SkipTest("Backend is not CPU or the device under test")
+    if outer is None and inner == jtu.device_under_test():
+      raise SkipTest("(None, device) is allowed")
+
     @partial(jax.jit, backend=outer)
     def fun(x, y):
         @partial(jax.jit, backend=inner)

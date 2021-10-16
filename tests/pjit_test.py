@@ -355,8 +355,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     f = xmap(lambda x: h(x * 2), in_axes=['i', ...], out_axes=['i', ...],
              axis_resources={'i': 'y'})
     x = jnp.arange(16).reshape((4, 4))
-    self.assertIn(pjit_p, xla.call_translations)
-    rule = xla.call_translations[pjit_p]
+    rule = xla._translations[pjit_p]
     test_rule_called = False
     def _test_rule(*args, **kwargs):
       nonlocal test_rule_called
@@ -366,11 +365,11 @@ class PJitTest(jtu.BufferDonationTestCase):
       self.assertIn(('y',), in_axis_resources[0].partitions)
       return rule(*args, **kwargs)
     try:
-      xla.call_translations[pjit_p] = _test_rule
+      xla._translations[pjit_p] = _test_rule
       f(x)
       self.assertTrue(test_rule_called)
     finally:
-      xla.call_translations[pjit_p] = rule
+      xla._translations[pjit_p] = rule
 
   @jtu.with_mesh([('x', 2)])
   def testLowerWithAbstractArgs(self):

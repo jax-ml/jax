@@ -322,8 +322,9 @@ def while_loop(cond_fun: Callable[[T], bool],
 def _while_loop_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
 
-def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
-                                 cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
+def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
+                                 body_jaxpr, cond_nconsts, body_nconsts):
+  c = ctx.builder
   cond_consts, body_consts, init_vals = split_list(args, [cond_nconsts, body_nconsts])
   batched = bool(cond_jaxpr.out_avals[0].shape)
 
@@ -339,9 +340,11 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   cond_carry = xb.parameter(cond_c, 0, c.get_shape(init_carry))
   cond_carry_elts = [xops.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
-  pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
-                            _map(partial(xb.constant, cond_c), cond_jaxpr.consts),
-                            extend_name_stack(name_stack, 'cond'), *(x + z))
+  cond_ctx = ctx.replace(builder=cond_c,
+                         name_stack=extend_name_stack(ctx.name_stack, 'cond'))
+  pred, = xla.jaxpr_subcomp(
+      cond_ctx, cond_jaxpr.jaxpr,
+      _map(partial(xb.constant, cond_c), cond_jaxpr.consts), *(x + z))
   if batched:
     scalar = ShapedArray((), np.bool_)
     or_ = xla.primitive_subcomputation(lax.or_p, scalar, scalar)
@@ -352,13 +355,18 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   body_carry = xb.parameter(body_c, 0, c.get_shape(init_carry))
   body_carry_elts = [xops.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
-  new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
-                            _map(partial(xb.constant, body_c), body_jaxpr.consts),
-                            extend_name_stack(name_stack, 'body'), *(y + z))
+  body_ctx = ctx.replace(builder=body_c,
+                         name_stack=extend_name_stack(ctx.name_stack, 'body'))
+  new_z = xla.jaxpr_subcomp(
+      body_ctx, body_jaxpr.jaxpr,
+      _map(partial(xb.constant, body_c), body_jaxpr.consts),
+      *(y + z))
   if batched:
-    body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
-                                   _map(partial(xb.constant, body_c), cond_jaxpr.consts),
-                                   extend_name_stack(name_stack, 'body_pred'), *(x + z))
+    body_pred_ctx = body_ctx.replace(
+        name_stack=extend_name_stack(ctx.name_stack, 'body_pred'))
+    body_pred, = xla.jaxpr_subcomp(
+        body_pred_ctx, cond_jaxpr.jaxpr,
+        _map(partial(xb.constant, body_c), cond_jaxpr.consts), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z, body_jaxpr.out_avals)
     assert _map(body_c.get_shape, new_z) == _map(body_c.get_shape, z) # no broadcast
   new_carry = xops.Tuple(body_c, [*x, *y, *new_z])
@@ -366,7 +374,7 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   ans = xops.While(cond_c.build(pred), body_c.build(new_carry), init_carry)
   ans_elts = [xops.GetTupleElement(ans, i) for i in range(len(args))]
   _,  _, z = split_list(ans_elts, [cond_nconsts, body_nconsts])
-  return xops.Tuple(c, z)
+  return z
 
 def _pred_bcast_select(c, pred, x, y, x_y_aval: core.AbstractValue):
   pred_shape = c.get_shape(pred).dimensions()
@@ -594,7 +602,8 @@ while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval
-xla.initial_style_translations[while_p] = _while_loop_translation_rule
+xla.register_translation(while_p, _while_loop_translation_rule,
+                         initial_style=True)
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
@@ -786,25 +795,29 @@ def _cond_with_per_branch_args(pred,
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["branches"][0].out_avals)
 
-def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
-                           index, *args, branches, linear):
+def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
+                           linear):
   del linear  # Unused.
 
+  name_stack = extend_name_stack(ctx.name_stack, "cond")
   def make_computation(name, jaxpr, op_shape):
     c = xb.make_computation_builder(name + '_comp')
     op = xb.parameter(c, 0, op_shape)
     ops = [xops.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
-    outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
-                             _map(partial(xb.constant, c), jaxpr.consts),
-                             extend_name_stack(name_stack, name + '_fun'), *ops)
+    subctx = ctx.replace(
+        builder=c, name_stack=extend_name_stack(name_stack, name + '_fun'))
+    outs = xla.jaxpr_subcomp(subctx, jaxpr.jaxpr,
+                             _map(partial(xb.constant, c), jaxpr.consts), *ops)
     return c.build(xops.Tuple(c, outs))
 
+  c = ctx.builder
   op = xops.Tuple(c, args)
   op_shape = c.get_shape(op)
   branch_computations = [
       make_computation(f'branch_{i}', jaxpr, op_shape)
       for i, jaxpr in enumerate(branches)]
-  return xops.Conditional(index, branch_computations, [op] * len(branches))
+  return xla.xla_destructure(
+      c, xops.Conditional(index, branch_computations, [op] * len(branches)))
 
 def _select_tree(indices, branch_vals):
   assert len(branch_vals) > 0
@@ -1171,7 +1184,7 @@ ad.primitive_jvps[cond_p] = _cond_jvp
 ad.reducing_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.axis_primitive_batchers[cond_p] = _cond_batching_rule
-xla.initial_style_translations[cond_p] = _cond_translation_rule
+xla.register_translation(cond_p, _cond_translation_rule, initial_style=True)
 core.custom_typechecks[cond_p] = _cond_typecheck
 pe.partial_eval_jaxpr_custom_rules[cond_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented
 
@@ -1923,7 +1936,9 @@ scan_p.def_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.reducing_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-xla.initial_style_translations[scan_p] = xla.lower_fun_initial_style(_scan_impl)
+xla.register_translation(scan_p, xla.lower_fun(_scan_impl, new_style=True,
+                                               multiple_results=True),
+                         initial_style=True)
 batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
 masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
@@ -2482,8 +2497,10 @@ linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
-xla.initial_style_translations[linear_solve_p] = \
-    xla.lower_fun_initial_style(_custom_linear_solve_impl)
+xla.register_translation(
+    linear_solve_p, xla.lower_fun(_custom_linear_solve_impl, new_style=True,
+                                  multiple_results=True),
+    initial_style=True)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
 batching.axis_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
 pe.partial_eval_jaxpr_custom_rules[linear_solve_p] = pe.partial_eval_jaxpr_custom_rule_not_implemented

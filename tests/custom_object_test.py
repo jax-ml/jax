@@ -182,7 +182,9 @@ def _identity_impl(mat):
 def _identity_abstract_eval(mat):
   return AbstractSparseArray(mat.shape, mat.dtype, mat.index_dtype, mat.nnz)
 
-xla.translations_with_avals[identity_p] = xla.lower_fun(_identity_impl, multiple_results=False, with_avals=True)
+xla.register_translation(
+    identity_p, xla.lower_fun(_identity_impl, multiple_results=False,
+                              new_style=True))
 
 def split(x):
   return split_p.bind(x)
@@ -199,7 +201,8 @@ def _split_abstract_eval(mat):
   m = AbstractSparseArray(mat.shape, mat.dtype, mat.index_dtype, mat.nnz)
   return m, m
 
-xla.translations_with_avals[split_p] = xla.lower_fun(_split_impl, multiple_results=True, with_avals=True)
+xla.register_translation(
+    split_p, xla.lower_fun(_split_impl, multiple_results=True, new_style=True))
 
 def make_sparse_array(rng, shape, dtype, nnz=0.2):
   mat = rng(shape, dtype)

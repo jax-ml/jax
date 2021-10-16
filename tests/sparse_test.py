@@ -249,10 +249,12 @@ class cuSparseTest(jtu.JaxTestCase):
     cuda_version = None if version == "<unknown>" else int(version.split()[-1])
     if cuda_version is None or cuda_version < 11000:
       self.assertFalse(cusparse and cusparse.is_supported)
-      self.assertNotIn(sparse.csr_todense_p, xla.backend_specific_translations["gpu"])
+      self.assertNotIn(sparse.csr_todense_p,
+                       xla._backend_specific_translations["gpu"])
     else:
       self.assertTrue(cusparse and cusparse.is_supported)
-      self.assertIn(sparse.csr_todense_p, xla.backend_specific_translations["gpu"])
+      self.assertIn(sparse.csr_todense_p,
+                    xla._backend_specific_translations["gpu"])
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(
