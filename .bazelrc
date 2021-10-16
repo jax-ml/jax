@@ -210,7 +210,6 @@ build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --extra_execution_platforms="@ubu
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --host_platform="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.0.5-tensorrt7.2_config_platform//:platform"
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --platforms="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.0.5-tensorrt7.2_config_platform//:platform"
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --repo_env=TF_CUDA_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.0.5-tensorrt7.2_config_cuda"
-build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --repo_env=TF_TENSORRT_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.0.5-tensorrt7.2_config_tensorrt"
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --repo_env=TF_NCCL_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.0.5-tensorrt7.2_config_nccl"
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_py3.7 --config=rbe_linux_cuda11.4_cudnn8.0.5_nvcc_base  --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu18.04-gcc7_manylinux2010-cuda11.4-cudnn8.0.5-tensorrt7.2_config_python3.7"
 build:rbe_linux_cuda11.4_cudnn8.0.5_nvcc_py3.7 --python_path="/usr/local/bin/python3.7"
