@@ -132,12 +132,6 @@ class OptimizerTests(jtu.JaxTestCase):
     step_size = 0.1
     self._CheckOptimizer(optimizers.adabelief, loss, x0, num_iters, step_size)
   
-  def testACPropVector(self):
-    def loss(x): return jnp.dot(x, x)
-    x0 = jnp.ones(2)
-    num_iters = 100
-    step_size = 0.1
-    self._CheckOptimizer(optimizers.acprop, loss, x0, num_iters, step_size)
 
   def testSgdClosure(self):
     def loss(y, x): return y**2 * x**2
@@ -212,12 +206,6 @@ class OptimizerTests(jtu.JaxTestCase):
     x0 = jnp.ones(2)
     step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
     self._CheckFuns(optimizers.adabelief, loss, x0, step_schedule)
-
-  def testACPropVectorInverseTimeDecaySchedule(self):
-    def loss(x): return jnp.dot(x, x)
-    x0 = jnp.ones(2)
-    step_schedule = optimizers.inverse_time_decay(0.1, 3, 2.)
-    self._CheckFuns(optimizers.acprop, loss, x0, step_schedule)
 
   def testMomentumVectorInverseTimeDecayStaircaseSchedule(self):
     def loss(x): return jnp.dot(x, x)
