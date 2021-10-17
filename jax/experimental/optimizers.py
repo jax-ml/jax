@@ -500,6 +500,80 @@ def sm3(step_size, momentum=0.9):
 
   return init, update, get_params
 
+@optimizer
+def adamw(step_size, b1=0.9, b2=0.999, eps=1e-8, l2=1e-2):
+  """Construct optimizer triple for adamW (Decoupled Weight Decay Regularization).
+  https://arxiv.org/pdf/1711.05101.pdf
+  
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to a positive scalar.
+    b1: optional, a positive scalar value for beta_1, the exponential decay rate
+      for the first moment estimates (default 0.9).
+    b2: optional, a positive scalar value for beta_2, the exponential decay rate
+      for the second moment estimates (default 0.999).
+    eps: optional, a positive scalar value for epsilon, a small constant for
+      numerical stability (default 1e-8).
+    l2: optional, weight decay/L2 regularization factor. 
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """ 
+  step_size = make_schedule(step_size)
+  def init(x0):
+    m0 = jnp.zeros_like(x0)
+    v0 = jnp.zeros_like(x0)
+    return x0, m0, v0
+  def update(i, g, state):
+    x, m, v = state
+    g = g + l2 * x * step_size(i)
+    m = (1 - b1) * g + b1 * m  # First  moment estimate.
+    v = (1 - b2) * jnp.square(g) + b2 * v  # Second moment estimate.
+    mhat = m / (1 - jnp.asarray(b1, m.dtype) ** (i + 1))  # Bias correction.
+    vhat = v / (1 - jnp.asarray(b2, m.dtype) ** (i + 1))
+    x = x - step_size(i) * (mhat / (jnp.sqrt(vhat) + eps) - l2 * x)
+    return x, m, v
+  def get_params(state):
+    x, _, _ = state
+    return x
+  return init, update, get_params
+
+
+@optimizer
+def adabelief(step_size, b1=0.9, b2=0.999, eps=1e-8):
+  """Construct optimizer triple for AdaBelief (Adapting Stepsizes by the 
+    Belief in Observed Gradients).http://arxiv.org/abs/2010.07468
+  
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to a positive scalar.
+    b1: optional, a positive scalar value for beta_1, the exponential decay rate
+      for the first moment estimates (default 0.9).
+    b2: optional, a positive scalar value for beta_2, the exponential decay rate
+      for the second moment estimates (default 0.999).
+    eps: optional, a positive scalar value for epsilon, a small constant for
+      numerical stability (default 1e-8).
+
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+  def init(x0):
+    m0 = jnp.zeros_like(x0)
+    s0 = jnp.zeros_like(x0)
+    return x0, m0, s0
+
+  def update(i, g, state):
+    x, m, s = state
+    m = b1 * m + (1 - b1) * g
+    s = b2 * s + (1 - b2) * jnp.square(g - m) + eps
+    mhat = m / (1 - jnp.asarray(b1, m.dtype) ** (i + 1))  # Bias correction.
+    shat = s / (1 - jnp.asarray(b2, m.dtype) ** (i + 1))
+    x = x - step_size(i) * mhat / (jnp.sqrt(shat) + eps)
+    return x, m, s
+  def get_params(state):
+    x, _, _ = state
+    return x
+  return init, update, get_params
 
 ### learning rate schedules
 
