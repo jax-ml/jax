@@ -822,9 +822,10 @@ def xla_computation(fun: Callable,
       should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
       xla_args, donated_invars = xla._xla_callable_args(
           c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)
-      out_nodes = xla.jaxpr_subcomp(
-          c, jaxpr, backend, axis_env_, xla_consts,
-          extend_name_stack(wrap_name(fun_name, "xla_computation")), *xla_args)
+      ctx = xla.TranslationContext(
+          c, backend, axis_env_,
+          extend_name_stack(wrap_name(fun_name, "xla_computation")))
+      out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
     build_out_tuple = partial(xc.ops.Tuple, c, out_nodes)
     if out_parts is not None:
       out_tuple = xb.with_sharding(c, out_parts_flat, build_out_tuple)

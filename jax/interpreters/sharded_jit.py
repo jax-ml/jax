@@ -87,10 +87,10 @@ def _sharded_callable(
 
   jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(fun, global_abstract_args)
 
-  if xb.get_backend().platform not in ["tpu", "gpu"]:
+  platform = xb.get_backend().platform
+  if platform  not in ["tpu", "gpu"]:
     # TODO(skye): fall back to regular jit?
-    raise ValueError("sharded_jit not supported for " +
-                     xb.get_backend().platform)
+    raise ValueError(f"sharded_jit not supported for {platform}")
 
   nparts = pxla.reconcile_num_partitions(jaxpr, nparts)
   assert nparts is not None
@@ -142,9 +142,9 @@ def _sharded_callable(
   xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = _xla_sharded_args(c, global_abstract_args, in_parts)
   axis_env = xla.AxisEnv(nrep, (), ())
-  out_nodes = xla.jaxpr_subcomp(
-      c, jaxpr, None, axis_env, xla_consts,
-      extend_name_stack(wrap_name(name, "sharded_jit")), *xla_args)
+  ctx = xla.TranslationContext(
+      c, platform, axis_env, extend_name_stack(wrap_name(name, "sharded_jit")))
+  out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   out_tuple = xb.with_sharding(c, out_parts, xops.Tuple, c, out_nodes)
   built = c.Build(out_tuple)
 
@@ -194,9 +194,10 @@ def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
     arg = xb.parameter(subc, i, c.GetShape(n))
     args.append(xb.set_sharding(subc, arg, sharding))
 
-  out_nodes = xla.jaxpr_subcomp(
-      subc, call_jaxpr, backend, axis_env, (),
-      extend_name_stack(name_stack, wrap_name(name, "sharded_jit")), *args)
+  ctx = xla.TranslationContext(
+      subc, backend, axis_env,
+      extend_name_stack(wrap_name(name, "sharded_jit")))
+  out_nodes = xla.jaxpr_subcomp(ctx, call_jaxpr, (), *args)
   out_parts = out_parts_thunk()
   assert len(out_parts) == len(out_nodes)
   out_nodes = [xb.set_sharding(subc, out, sharding)

@@ -118,12 +118,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     """Fail if there are JAX primitives that are not implemented."""
     # Harvest primitives from XLA translation tables
     all_primitives = (
-        set(xla.translations)
-        | set(xla.backend_specific_translations["cpu"])
-        | set(xla.backend_specific_translations["gpu"])
-        | set(xla.backend_specific_translations["tpu"])
-        | set(xla.initial_style_translations)
-        | set(xla.parallel_translations))
+        set(xla._translations)
+        | set(xla._backend_specific_translations["cpu"])
+        | set(xla._backend_specific_translations["gpu"])
+        | set(xla._backend_specific_translations["tpu"]))
 
     tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl) | set(
         jax.experimental.jax2tf.jax2tf.tf_impl_with_avals)

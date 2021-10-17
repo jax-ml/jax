@@ -46,7 +46,7 @@ from jax._src.lib import xla_client as xc
 from .._src.util import (safe_map, safe_zip, HashableFunction,
                          as_hashable_function, unzip2, distributed_debug_log,
                          tuple_insert, moveaxis, split_list, wrap_name)
-from .._src.lax.parallel import _axis_index_translation_rule
+from .._src.lax.parallel import _build_axis_index_lowering
 from .. import lax
 
 class _PositionalSemantics(Enum):
@@ -1347,9 +1347,10 @@ def _xmap_translation_rule_replica(c, axis_env,
   #       them!
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  tiled_outs = xla.jaxpr_subcomp(
-      c, vectorized_jaxpr, backend, axis_env, (),
-      xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')), *tiled_ins)
+  ctx = xla.TranslationContext(
+      c, backend, axis_env,
+      xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')))
+  tiled_outs = xla.jaxpr_subcomp(ctx, vectorized_jaxpr, (), *tiled_ins)
 
   outs = [_xla_untile(c, axis_env, tiled_out, ans_out_axes, local_mesh_shape, backend)
           if v.aval is not core.abstract_unit else tiled_out
@@ -1363,8 +1364,8 @@ def _xla_tile_base_indices(c, axis_env, tile_shape, axes, axis_sizes):
   linear_idxs = [zero] * len(tile_shape)
   strides = [1] * len(tile_shape)
   for name, axis in reversed(axes.items()):
-    axis_index = _axis_index_translation_rule(
-        c, axis_name=name, axis_env=axis_env, platform=None)
+    axis_index = _build_axis_index_lowering(
+        c, axis_name=name, axis_env=axis_env)
     stride_c = xb.constant(c, np.array(strides[axis], np.int32))
     if linear_idxs[axis] is zero and strides[axis] == 1:
       linear_idxs[axis] = axis_index
@@ -1464,10 +1465,11 @@ def _xmap_translation_rule_spmd(c, axis_env,
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  global_out_nodes = xla.jaxpr_subcomp(
-      c, vectorized_jaxpr, backend, axis_env, (),
-      xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')),
-      *sharded_global_in_nodes)
+  ctx = xla.TranslationContext(
+      c, backend, axis_env,
+      xla.extend_name_stack(name_stack, xla.wrap_name(name, 'xmap')))
+  global_out_nodes = xla.jaxpr_subcomp(ctx, vectorized_jaxpr, (),
+                                       *sharded_global_in_nodes)
 
   sharded_global_out_nodes = [
     xb.set_sharding_proto(c, node, global_sharding_spec(aval, aval_axes).sharding_proto())

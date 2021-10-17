@@ -643,9 +643,10 @@ def _allreduce_abstract_eval(*args, axes, axis_index_groups):
                       arg.dtype, named_shape=named_shape)
           for arg, named_shape in zip(args, named_shapes)]
 
-def _allreduce_translation_rule(prim, pos_prim, c, *args, axes, axis_index_groups,
-                                axis_env, platform):
-  if axis_index_groups is not None and platform == "tpu":
+def _allreduce_translation_rule(prim, pos_fn, ctx, avals_in, avals_out, *args,
+                                axes, axis_index_groups):
+  c = ctx.builder
+  if axis_index_groups is not None and ctx.platform == "tpu":
     len_0 = len(axis_index_groups[0])
     if any(len(g) != len_0 for g in axis_index_groups):
       raise ValueError("axis_index_groups must all be the same size")
@@ -654,13 +655,14 @@ def _allreduce_translation_rule(prim, pos_prim, c, *args, axes, axis_index_group
     axes_partition[isinstance(axis, int)].append(axis)
 
   if positional_axes:
-    args = map(partial(xla.translations[pos_prim], c, axes=tuple(positional_axes)), args)
+    reducer = xla.lower_fun(pos_fn, multiple_results=False)
+    args = map(partial(reducer, c, axes=tuple(positional_axes)), args)
   if not named_axes:
-    return xops.Tuple(c, args)
+    return args
 
   def all_reduce(x):
     replica_groups_protos = xc.make_replica_groups(
-        _replica_groups(axis_env, named_axes, axis_index_groups))
+        _replica_groups(ctx.axis_env, named_axes, axis_index_groups))
     scalar = ShapedArray((), c.get_shape(x).numpy_dtype())
     computation = xla.primitive_subcomputation(prim, scalar, scalar)
     return xops.AllReduce(x, computation, replica_groups_protos, None, None)
@@ -673,7 +675,7 @@ def _allreduce_translation_rule(prim, pos_prim, c, *args, axes, axis_index_group
     outs = [xops.Complex(all_reduce(xops.Real(x)), all_reduce(xops.Imag(x)))
             if dtypes.issubdtype(c.get_shape(x).numpy_dtype(), np.complexfloating)
             else all_reduce(x) for x in args]
-  return xops.Tuple(c, outs)
+  return outs
 
 def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
   named_axes, pos_axes = axes_partition = [], []
@@ -698,8 +700,9 @@ psum_p = core.AxisPrimitive('psum')
 psum_p.multiple_results = True
 psum_p.def_impl(partial(_allreduce_impl, lax._reduce_sum))
 psum_p.def_abstract_eval(_allreduce_abstract_eval)
-xla.parallel_translations[psum_p] = partial(_allreduce_translation_rule,
-                                            lax.add_p, lax.reduce_sum_p)  # type: ignore
+xla.register_translation(
+    psum_p, partial(_allreduce_translation_rule, lax.add_p, lax._reduce_sum),
+    is_collective=True)
 ad.deflinear2(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 batching.primitive_batchers[psum_p] = partial(_reduction_batcher, psum_p)
@@ -734,8 +737,9 @@ pmax_p = core.AxisPrimitive('pmax')
 pmax_p.multiple_results = True
 pmax_p.def_impl(partial(_allreduce_impl, lax._reduce_max))
 pmax_p.def_abstract_eval(_allreduce_abstract_eval)
-xla.parallel_translations[pmax_p] = partial(_allreduce_translation_rule,
-                                            lax.max_p, lax.reduce_max_p)  # type: ignore
+xla.register_translation(
+    pmax_p, partial(_allreduce_translation_rule, lax.max_p, lax._reduce_max),
+    is_collective=True)
 pxla.multi_host_supported_collectives.add(pmax_p)
 batching.primitive_batchers[pmax_p] = partial(_reduction_batcher, pmax_p)
 batching.axis_primitive_batchers[pmax_p] = \
@@ -747,8 +751,9 @@ pmin_p = core.AxisPrimitive('pmin')
 pmin_p.multiple_results = True
 pmin_p.def_impl(partial(_allreduce_impl, lax._reduce_min))
 pmin_p.def_abstract_eval(_allreduce_abstract_eval)
-xla.parallel_translations[pmin_p] = partial(_allreduce_translation_rule,
-                                            lax.min_p, lax.reduce_min_p)  # type: ignore
+xla.register_translation(
+    pmin_p, partial(_allreduce_translation_rule, lax.min_p, lax._reduce_min),
+    is_collective=True)
 pxla.multi_host_supported_collectives.add(pmin_p)
 batching.primitive_batchers[pmin_p] = partial(_reduction_batcher, pmin_p)
 batching.axis_primitive_batchers[pmin_p] = \
@@ -756,8 +761,8 @@ batching.axis_primitive_batchers[pmin_p] = \
 core.axis_substitution_rules[pmin_p] = partial(_subst_all_names_in_param, 'axes')
 
 
-def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
-  replica_groups = _replica_groups(axis_env, axis_name, None)
+def _ppermute_translation_rule(ctx, avals_in, avals_out, x, *, axis_name, perm):
+  replica_groups = _replica_groups(ctx.axis_env, axis_name, None)
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -768,7 +773,7 @@ def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
   for grp in replica_groups:
     grp = list(sorted(grp))
     full_perm.extend((grp[src], grp[dst]) for src, dst in perm)
-  return xops.CollectivePermute(x, full_perm)
+  return [xops.CollectivePermute(x, full_perm)]
 
 def _ppermute_transpose_rule(t, x, perm, axis_name):
   srcs, dsts = unzip2(perm)
@@ -798,7 +803,8 @@ def _collective_batcher(prim, args, dims, **params):
 ppermute_p = core.AxisPrimitive('ppermute')
 ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
-xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
+xla.register_translation(ppermute_p, _ppermute_translation_rule,
+                         is_collective=True)
 pxla.multi_host_supported_collectives.add(ppermute_p)
 batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
 batching.axis_primitive_batchers[ppermute_p] = _ppermute_batcher
@@ -839,19 +845,20 @@ def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis, axis_in
   sliced = lax.dynamic_slice_in_dim(full, tile_base_idx, tile_size, split_axis + 1)
   return _foldaxis(concat_axis, _moveaxis(0, concat_axis, sliced))
 
-def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
-                                 axis_index_groups, axis_env, platform):
+def _all_to_all_translation_rule(ctx, avals_in, avals_out, x, *, split_axis,
+                                 concat_axis, axis_name, axis_index_groups):
   # Workaround for AllToAll not being implemented on CPU.
-  replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
+  replica_groups = _replica_groups(ctx.axis_env, axis_name, axis_index_groups)
   if len(replica_groups[0]) == 1:
-    return x
-  elif (platform == "tpu") or ((platform == "gpu") and (split_axis == 0) and
+    return [x]
+  elif (ctx.platform == "tpu") or ((ctx.platform == "gpu") and (split_axis == 0) and
                                (concat_axis == 0)):
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
     replica_groups_protos = xc.make_replica_groups(replica_groups)
-    return xops.AllToAll(x, split_axis, concat_axis, split_count, replica_groups_protos)
+    return [xops.AllToAll(x, split_axis, concat_axis, split_count,
+                          replica_groups_protos)]
   else:
     warnings.warn(
         "all_to_all (and pswapaxes) are only implemented properly for TPUs and GPUs (if "
@@ -859,16 +866,13 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
         "very slow and memory intensive algorithm, so expect significant slowdowns."
     )
     lowering = xla.lower_fun(
-        _all_to_all_via_all_gather, multiple_results=False, parallel=True)
+        _all_to_all_via_all_gather, multiple_results=False, new_style=True)
     return lowering(
-        c,
-        x,
+        ctx, avals_in, avals_out, x,
+        axis_name=axis_name,
         split_axis=split_axis,
         concat_axis=concat_axis,
-        axis_name=axis_name,
-        axis_index_groups=axis_index_groups,
-        axis_env=axis_env,
-        platform=platform)
+        axis_index_groups=axis_index_groups)
 
 def _all_to_all_transpose_rule(cts, x, axis_name, split_axis, concat_axis, axis_index_groups):
   return (all_to_all(
@@ -950,7 +954,8 @@ def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_
 
 all_to_all_p = core.AxisPrimitive('all_to_all')
 all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
-xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
+xla.register_translation(all_to_all_p, _all_to_all_translation_rule,
+                         is_collective=True)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
@@ -1048,22 +1053,29 @@ def _all_gather_via_psum(x, *, all_gather_dimension, axis_name, axis_index_group
 def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   raise AssertionError("Unexpected call to _all_gather_impl")
 
-def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled, axis_env, platform):
+def _all_gather_translation_rule(
+    ctx, avals_in, avals_out, x, *, all_gather_dimension, axis_name,
+    axis_index_groups, axis_size, tiled):
   # TODO(jekbradbury): enable for all_gather_dimension > 0
-  if platform == 'tpu' or platform == 'gpu' and all_gather_dimension == 0:
+  c = ctx.builder
+  if ctx.platform == 'tpu' or ctx.platform == 'gpu' and all_gather_dimension == 0:
     if not tiled:
       new_shape = list(c.get_shape(x).dimensions())
       new_shape.insert(all_gather_dimension, 1)
       broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
       x = xops.BroadcastInDim(x, new_shape, broadcast_dimensions)
-    replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
-    return xops.AllGather(x, all_gather_dimension=all_gather_dimension, shard_count=axis_size,
-                          replica_groups=xc.make_replica_groups(replica_groups))
+    replica_groups = _replica_groups(ctx.axis_env, axis_name, axis_index_groups)
+    return [
+        xops.AllGather(x, all_gather_dimension=all_gather_dimension,
+                       shard_count=axis_size,
+                       replica_groups=xc.make_replica_groups(replica_groups))]
   else:
-    lowering = xla.lower_fun(_all_gather_via_psum, multiple_results=False, parallel=True)
-    return lowering(c, x, all_gather_dimension=all_gather_dimension, axis_name=axis_name,
-                    axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled,
-                    axis_env=axis_env, platform=platform)
+    lowering = xla.lower_fun(_all_gather_via_psum, multiple_results=False,
+                             new_style=True)
+    return lowering(
+        ctx, avals_in, avals_out, x, all_gather_dimension=all_gather_dimension,
+        axis_name=axis_name, axis_index_groups=axis_index_groups,
+        axis_size=axis_size, tiled=tiled)
 
 def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   if not isinstance(axis_name, (list, tuple)):
@@ -1103,7 +1115,8 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
       tiled=tiled)
   return result, d
 
-def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in, all_gather_dimension, axis_name,
+def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in,
+                                   all_gather_dimension, axis_name,
                                    axis_index_groups, axis_size, tiled):
   assert axis_index_groups is None, "axis_index_groups not supported in vmap"
   assert axis_size == frame_size, "axis size doesn't match"
@@ -1127,7 +1140,8 @@ def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in, 
 all_gather_p = core.AxisPrimitive('all_gather')
 all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
 all_gather_p.def_impl(_all_gather_impl)
-xla.parallel_translations[all_gather_p] = _all_gather_translation_rule
+xla.register_translation(all_gather_p, _all_gather_translation_rule,
+                         is_collective=True)
 ad.deflinear2(all_gather_p, _all_gather_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_gather_p)
 batching.primitive_batchers[all_gather_p] = _all_gather_batcher
@@ -1135,7 +1149,8 @@ batching.axis_primitive_batchers[all_gather_p] = _all_gather_batched_collective
 core.axis_substitution_rules[all_gather_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 
-def _reduce_scatter_via_reducer(x, *, reducer, scatter_dimension, axis_name, axis_index_groups, axis_size, tiled):
+def _reduce_scatter_via_reducer(x, *, reducer, scatter_dimension, axis_name,
+                                axis_index_groups, axis_size, tiled):
   index = _index_in_group(axis_name, axis_index_groups)
   scatter_dim_input_size = x.shape[scatter_dimension]
   if tiled and scatter_dim_input_size % axis_size != 0:
@@ -1159,13 +1174,14 @@ def _reduce_scatter_via_reducer(x, *, reducer, scatter_dimension, axis_name, axi
   return outs
 
 
-def _reduce_scatter_translation_rule(prim, reducer, c, x, *, scatter_dimension,
-                                     axis_name, axis_index_groups, axis_size,
-                                     tiled, axis_env, platform):
-  if platform in ("tpu", "gpu"):
+def _reduce_scatter_translation_rule(prim, reducer, ctx, avals_in, avals_out, x,
+                                     *, scatter_dimension, axis_name,
+                                     axis_index_groups, axis_size, tiled):
+  c = ctx.builder
+  if ctx.platform in ("tpu", "gpu"):
     scalar = ShapedArray((), c.get_shape(x).numpy_dtype())
     computation = xla.primitive_subcomputation(prim, scalar, scalar)
-    replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
+    replica_groups = _replica_groups(ctx.axis_env, axis_name, axis_index_groups)
     x = xops.ReduceScatter(
         x,
         computation,
@@ -1176,20 +1192,17 @@ def _reduce_scatter_translation_rule(prim, reducer, c, x, *, scatter_dimension,
       new_shape = list(c.get_shape(x).dimensions())
       del new_shape[scatter_dimension]
       x = xops.Reshape(x, new_shape)
-    return x
+    return [x]
   else:
     return xla.lower_fun(
-        _reduce_scatter_via_reducer, multiple_results=False, parallel=True)(
-            c,
-            x,
+        _reduce_scatter_via_reducer, multiple_results=False, new_style=True)(
+            ctx, avals_in, avals_out, x,
             reducer=reducer,
             scatter_dimension=scatter_dimension,
             axis_name=axis_name,
             axis_index_groups=axis_index_groups,
             axis_size=axis_size,
-            tiled=tiled,
-            axis_env=axis_env,
-            platform=platform)
+            tiled=tiled)
 
 
 def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
@@ -1222,8 +1235,10 @@ def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
 
 reduce_scatter_p = core.AxisPrimitive("reduce_scatter")
 reduce_scatter_p.def_abstract_eval(_reduce_scatter_abstract_eval)
-xla.parallel_translations[reduce_scatter_p] = partial(
-    _reduce_scatter_translation_rule, lax.add_p, psum)  # type: ignore
+xla.register_translation(
+    reduce_scatter_p,
+    partial(_reduce_scatter_translation_rule, lax.add_p, psum),
+    is_collective=True)
 pxla.multi_host_supported_collectives.add(reduce_scatter_p)
 
 
@@ -1297,7 +1312,7 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None, t
   return tree_util.tree_map(bind, x)
 
 
-def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
+def _build_axis_index_lowering(c, axis_name, axis_env):
   if isinstance(axis_name, tuple):
     assert axis_name, 'empty axis name'
     if len(axis_name) > 1:
@@ -1312,12 +1327,17 @@ def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
   return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
+def _axis_index_translation_rule(ctx, avals_in, avals_out, *, axis_name):
+  return [_build_axis_index_lowering(ctx.builder, axis_name, ctx.axis_env)]
+
+
 def _axis_index_abstract_eval(*, axis_name):
   frame = core.axis_frame(axis_name)
   return ShapedArray((), np.int32, named_shape={axis_name: frame.size})
 
 axis_index_p = core.Primitive('axis_index')
-xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
+xla.register_translation(axis_index_p, _axis_index_translation_rule,
+                         is_collective=True)
 axis_index_p.def_abstract_eval(_axis_index_abstract_eval)
 pxla.multi_host_supported_collectives.add(axis_index_p)
 core.axis_substitution_rules[axis_index_p] = partial(_subst_all_names_in_param, 'axis_name')
@@ -1402,20 +1422,16 @@ def _pdot_vmap_batching_rule(vals_in, dims_in, *, axis_name, pos_contract,
   return out, result_batch_dim
 batching.primitive_batchers[pdot_p] = _pdot_vmap_batching_rule
 
-def _pdot_translation_rule(c, x, y, *, axis_name, pos_contract, pos_batch, precision,
-                           axis_env, platform):
-  local_out = lax._dot_general_translation_rule(
-      c, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
-      preferred_element_type=None)
-  if axis_name:
-    out_tup = xla.parallel_translations[psum_p](
-        c, local_out, axes=axis_name, axis_index_groups=None,
-        axis_env=axis_env, platform=platform)
-    out, = xla.xla_destructure(c, out_tup)
-  else:
-    out = local_out
-  return out
-xla.parallel_translations[pdot_p] = _pdot_translation_rule
+
+def _pdot_lowering(x, y, *, axis_name, pos_contract, pos_batch, precision):
+  local_out = lax.dot_general(x, y, dimension_numbers=[pos_contract, pos_batch],
+                              precision=precision, preferred_element_type=None)
+  return psum(local_out, axis_name) if axis_name is not None else local_out
+
+xla.register_translation(
+    pdot_p,
+    xla.lower_fun(_pdot_lowering, multiple_results=False, new_style=True),
+    is_collective=True)
 
 def _pdot_transpose_lhs(g, y, *, axis_name, pos_contract, pos_batch, precision):
   # TODO: avals with names, call pbroadcast with axis_name
@@ -1456,11 +1472,12 @@ def _pgather_abstract_eval(src, idx, *, axes):
   shape = idx.shape + tuple(shape)
   return ShapedArray(shape, src.dtype)
 
-def _pgather_parallel_translation(c, src, idx, *, axes, axis_env, platform):
+def _pgather_parallel_translation(ctx, avals_in, avals_out, src, idx, *, axes):
   if any(not isinstance(axis, int) for axis in axes):
     raise NotImplementedError("pgather only supported in the SPMD lowering."
                               "Please open a feature request!")
-  return xla.lower_fun(_pgather_impl, multiple_results=False)(c, src, idx, axes=axes)
+  return xla.lower_fun(_pgather_impl, multiple_results=False, new_style=True)(
+      ctx, avals_in, avals_out, src, idx, axes=axes)
 
 def _pgather_batcher(vals_in, dims_in, *, axes):
   src, idx = vals_in
@@ -1503,7 +1520,8 @@ def _pgather_collective_batcher(axis_size, frame_name, _, vals_in, dims_in, *, a
 pgather_p = core.AxisPrimitive('pgather')
 pgather_p.def_impl(_pgather_impl)
 pgather_p.def_abstract_eval(_pgather_abstract_eval)
-xla.parallel_translations[pgather_p] = _pgather_parallel_translation
+xla.register_translation(pgather_p, _pgather_parallel_translation,
+                         is_collective=True)
 # TODO: Transpose? That requires adding pscatter...
 batching.primitive_batchers[pgather_p] = _pgather_batcher
 batching.axis_primitive_batchers[pgather_p] = _pgather_collective_batcher
