@@ -23,7 +23,7 @@ with open('jaxlib/version.py') as f:
 cuda_version = os.environ.get("JAX_CUDA_VERSION")
 cudnn_version = os.environ.get("JAX_CUDNN_VERSION")
 if cuda_version and cudnn_version:
-  __version__ += f"+cuda{cuda_version.replace('.', '')}_cudnn{cudnn_version.replace('.', '')}"
+  __version__ += f"+cuda{cuda_version.replace('.', '')}-cudnn{cudnn_version.replace('.', '')}"
 
 setup(
     name='jaxlib',
