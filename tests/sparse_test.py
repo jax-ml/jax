@@ -1063,8 +1063,9 @@ class BCOOTest(jtu.JaxTestCase):
 
   def test_bcoo_dedupe_padding(self):
     # Regression test for https://github.com/google/jax/issues/8163
+    size = 3
     data = jnp.array([1, 0, 0])
-    indices = jnp.array([1, 0, 0])[:, None]
+    indices = jnp.array([1, size, size])[:, None]
     x = sparse.BCOO((data, indices), shape=(3,))
     y = x._dedupe()
     self.assertArraysEqual(x.todense(), y.todense())
@@ -1150,6 +1151,35 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertEqual(M1.shape, M2.shape)
     self.assertEqual(M1.dtype, M2.dtype)
     self.assertArraysEqual(M1.todense(), M2.todense())
+
+  def test_bcoo_bad_fillvals(self):
+    # Extra values have 100 rather than zero. This lets us check that logic is
+    # properly ignoring these indices.
+    data = jnp.array([1, 2, 3, 100, 100])
+    indices = jnp.array([1, 2, 3, 5, 5])[:, None]
+    x_sp = sparse.BCOO((data, indices), shape=(5,))
+    x_de = x_sp.todense()
+
+    data = jnp.array([3, 2, 100, 100])
+    indices = jnp.array([2, 3, 5, 5])[:, None]
+    y_sp = sparse.BCOO((data, indices), shape=(5,))
+    y_de = y_sp.todense()
+
+    self.assertArraysEqual(x_de, jnp.array([0, 1, 2, 3, 0]))
+    self.assertArraysEqual(y_de, jnp.array([0, 0, 3, 2, 0]))
+
+    self.assertArraysEqual(x_sp._dedupe().todense(), x_de)
+    self.assertArraysEqual(y_sp._dedupe().todense(), y_de)
+
+    # reduce_sum:
+    self.assertArraysEqual(x_sp.sum(), x_de.sum())
+
+    # bcoo_dot_general
+    self.assertArraysEqual(x_sp @ y_de, x_de @ y_de)
+
+    # bcoo_spdot_general
+    self.assertArraysEqual((x_sp @ y_sp).todense(), x_de @ y_de)
+    self.assertArraysEqual((y_sp @ x_sp).todense(), y_de @ x_de)
 
 
 class SparseGradTest(jtu.JaxTestCase):
