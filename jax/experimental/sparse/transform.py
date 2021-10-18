@@ -175,12 +175,12 @@ def eval_sparse(
       return env[var]
 
   def write_buffer(var: core.Var, a: Array) -> None:
-    if var is core.dropvar:
+    if isinstance(var, core.DropVar):
       return
     env[var] = ArgSpec(a.shape, spenv.push(a), None)
 
   def write(var: core.Var, a: ArgSpec) -> None:
-    if var is core.dropvar:
+    if isinstance(var, core.DropVar):
       return
     assert a is not None
     env[var] = a
@@ -210,7 +210,7 @@ def eval_sparse(
       out_bufs = out_bufs if prim.multiple_results else [out_bufs]
       out = []
       for buf, outvar in safe_zip(out_bufs, eqn.outvars):
-        if outvar is core.dropvar:
+        if isinstance(outvar, core.DropVar):
           out.append(None)
         else:
           out.append(ArgSpec(buf.shape, spenv.push(buf), None))

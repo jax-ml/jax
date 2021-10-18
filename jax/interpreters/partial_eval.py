@@ -36,7 +36,7 @@ from .._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                          as_hashable_function)
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
-                    dropvar, ConcreteArray, raise_to_shaped, Var, Atom,
+                    ConcreteArray, raise_to_shaped, Var, Atom,
                     JaxprEqn, Primitive)
 from jax._src import source_info_util
 from ..config import config
@@ -587,8 +587,8 @@ def recipe_to_eqn(getvar: Callable[[JaxprTracer], Atom],
   _, in_tracers, out_tracer_refs, primitive, params, source_info = recipe
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   invars  = [getvar(t) for t in in_tracers]
-  outvars = [core.dropvar if t is None else cast(Var, getvar(t))
-             for t in out_tracers]
+  outvars = [core.DropVar(core.abstract_unit) if t is None
+             else cast(Var, getvar(t)) for t in out_tracers]
   return new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
 
 def tracers_to_jaxpr(
@@ -1254,7 +1254,8 @@ def _inline_literals(jaxpr, constvals):
   new_eqns = []
   for eqn in jaxpr.eqns:
     invars = [lit(v) or var(v) for v in eqn.invars]
-    outvars = [var(v) if v in used else dropvar for v in eqn.outvars]
+    outvars = [var(v) if v in used else core.DropVar(v.aval)
+               for v in eqn.outvars]
     new_eqns.append(new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
                                   eqn.source_info))
   new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]

@@ -321,7 +321,7 @@ For example, here is an example fori loop
 { lambda ; a:f32[16] b:i32[]. let
     c:f32[16] = broadcast_in_dim[broadcast_dimensions=() shape=(16,)] 1.0
     d:f32[16] = add a c
-    _:* _:* e:f32[16] = while[
+    _:i32[] _:i32[] e:f32[16] = while[
       body_jaxpr={ lambda ; f:f32[16] g:f32[16] h:i32[] i:i32[] j:f32[16]. let
           k:i32[] = add h 1
           l:f32[16] = mul f 3.0

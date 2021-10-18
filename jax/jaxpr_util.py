@@ -53,7 +53,7 @@ def primitives_by_source(jaxpr: core.Jaxpr):
 
 def primitives_by_shape(jaxpr: core.Jaxpr):
   def shape_fmt(var):
-    return '*' if var is core.dropvar else var.aval.str_short()
+    return '*' if isinstance(var, core.DropVar) else var.aval.str_short()
   def key(eqn):
     return (eqn.primitive.name, ' '.join(map(shape_fmt, eqn.outvars)))
   return histogram(jaxpr, key, ' :: '.join)
@@ -79,7 +79,7 @@ def var_defs_and_refs(jaxpr: core.Jaxpr):
     assert v is not core.unitvar
     assert v not in defs, v
     assert v not in refs, v
-    if v is not core.dropvar:
+    if not isinstance(v, core.DropVar):
       defs[v] = eqn
       refs[v] = []
 

@@ -212,13 +212,9 @@ def gensym(jaxprs: Optional[Sequence[Jaxpr]] = None,
 # be read. In that sense, `dropvar` is not a variable, but it is convenient to
 # treat it as a special case of one. Its `aval` is similarly inexact.
 class DropVar(Var):
-  count = -1
-  suffix = ''
-  def __init__(self): pass
-  @property
-  def aval(self): return abstract_unit
+  def __init__(self, aval: 'AbstractValue'):
+    super().__init__(-1, '', aval)
   def __repr__(self): return '_'
-dropvar = DropVar()
 
 class Literal:
   __slots__ = ["val", "hash"]
@@ -1806,7 +1802,7 @@ class DuplicateAxisNameError(Exception):
 def subst_axis_names_var(v: Var, subst: AxisSubst, var_map: Dict[Var, Var]) -> Var:
   # Var identity is load-bearing, so we can't have duplicates!
   if v is unitvar: return v
-  if v is dropvar: return v
+  if isinstance(v, DropVar): return v
   assert v not in var_map
   if not hasattr(v.aval, 'named_shape'):
     var_map[v] = v
@@ -1941,7 +1937,7 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
 
   def write(v: Var, a: AbstractValue) -> None:
     typecheck_assert(v not in env, f"Variable '{v}' already bound")
-    if v is not dropvar:
+    if not isinstance(v, DropVar):
       typecheck_assert(typecompat(v.aval, a),
                        f"Variable '{v}' inconsistently typed as {a}, "
                        f"bound as {v.aval}")

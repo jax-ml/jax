@@ -930,9 +930,9 @@ class HostCallbackTapTest(jtu.JaxTestCase):
             identity=True
             transforms=()
           ] b
-          _:* = mul c 2.00
+          _:f32[] = mul c 2.00
           d:f32[] = mul 1.00 2.00
-          _:* = broadcast_in_dim[broadcast_dimensions=() shape=()] 0.00
+          _:f32[] = broadcast_in_dim[broadcast_dimensions=() shape=()] 0.00
           e:f32[] = outside_call[
             arg_treedef={treedef}
             callback=...

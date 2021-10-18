@@ -450,7 +450,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
       return y + 3
 
     jaxpr = make_jaxpr(f)(1).jaxpr
-    assert jaxpr.eqns[0].outvars[0] is core.dropvar
+    assert isinstance(jaxpr.eqns[0].outvars[0], core.DropVar)
     core.check_jaxpr(jaxpr)
 
   def test_jaxpr_dropvar_from_loop(self):
@@ -461,7 +461,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
       return y + 1.
 
     jaxpr = make_jaxpr(f)(1.).jaxpr
-    assert jaxpr.eqns[0].outvars[0] is core.dropvar
+    assert isinstance(jaxpr.eqns[0].outvars[0], core.DropVar)
     core.check_jaxpr(jaxpr)
 
   def test_jaxpr_dropvar_from_cond(self):
@@ -473,7 +473,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
       return y
 
     jaxpr = make_jaxpr(f)(1.).jaxpr
-    assert jaxpr.eqns[-1].outvars[0] is core.dropvar
+    assert isinstance(jaxpr.eqns[-1].outvars[0], core.DropVar)
     core.check_jaxpr(jaxpr)
 
   def test_jaxpr_undefined_eqn_invar(self):
