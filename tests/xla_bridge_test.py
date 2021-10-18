@@ -46,13 +46,13 @@ class XlaBridgeTest(jtu.JaxTestCase):
                      expected_device_assignment)
 
   def test_parameter_replication_default(self):
-    c = xb.make_computation_builder("test")
+    c = xc.XlaBuilder("test")
     _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
     built_c = c.Build()
     assert "replication" not in built_c.as_hlo_text()
 
   def test_parameter_replication(self):
-    c = xb.make_computation_builder("test")
+    c = xc.XlaBuilder("test")
     _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "",
                      False)
     built_c = c.Build()

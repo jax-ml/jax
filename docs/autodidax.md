@@ -1562,7 +1562,7 @@ def xla_callable(hashable_jaxpr: IDHashable, hashable_consts: Tuple[IDHashable])
   typecheck_jaxpr(jaxpr)
   consts = [x.val for x in hashable_consts]
   in_avals = [v.aval for v in jaxpr.in_binders[len(consts):]]
-  c = xb.make_computation_builder('xla_call')
+  c = xc.XlaBuilder('xla_call')
   xla_consts = _xla_consts(c, consts)
   xla_params = _xla_params(c, in_avals)
   outs = jaxpr_subcomp(c, jaxpr, xla_consts + xla_params)
@@ -1644,7 +1644,7 @@ xla_translations[less_p] = partial(direct_translation, xops.Lt)
 def reduce_sum_translation(c, in_avals, in_vals, *, axis):
   (x_aval,), (x,) = in_avals, in_vals
   zero = xops.ConstantLiteral(c, np.array(0, x_aval.dtype))
-  subc = xb.make_computation_builder('add')
+  subc = xc.XlaBuilder('add')
   shape = _xla_shape(ShapedArray((), x_aval.dtype))
   xops.Add(xops.Parameter(subc, 0, shape), xops.Parameter(subc, 1, shape))
   return [xops.Reduce(c, [x], [zero], subc.build(), [axis])]
@@ -1776,7 +1776,7 @@ abstract_eval_rules[xla_call_p] = xla_call_abstract_eval_rule
 def xla_call_translation(c, in_avals, in_vals, *, jaxpr, num_consts):
   del num_consts  # Only used at top-level.
   # Calling jaxpr_subcomp directly would inline. We generate a Call HLO instead.
-  subc = xb.make_computation_builder('inner xla_call')
+  subc = xc.XlaBuilder('inner xla_call')
   xla_params = _xla_params(subc, in_avals)
   outs = jaxpr_subcomp(subc, jaxpr, xla_params)
   subc = subc.build(xops.Tuple(subc, outs))
@@ -2843,7 +2843,7 @@ def cond_translation(c, in_avals, in_vals, *, true_jaxpr, false_jaxpr):
   operand_shape = c.get_shape(operand)
 
   def make_comp(name: str, jaxpr: Jaxpr) -> xe.XlaComputation:
-    c = xb.make_computation_builder(name)
+    c = xc.XlaBuilder(name)
     operand = xb.parameter(c, 0, operand_shape)
     operands = tree_unflatten(in_tree, destructure_tuple(c, operand))
     outs = jaxpr_subcomp(c, jaxpr, operands)

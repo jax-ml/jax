@@ -39,6 +39,7 @@ from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
 
 import numpy as np
 
@@ -1753,7 +1754,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     Check that we get the proper error from the runtime."""
     if not hcb._use_outfeed(jtu.device_under_test()):
       raise SkipTest("test works only for outfeed")
-    comp = xla_bridge.make_computation_builder(self._testMethodName)
+    comp = xla_client.XlaBuilder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
     hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
     with self.assertRaisesRegex(RuntimeError,
@@ -1766,7 +1767,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     """Try to register different shapes for the same consumer ID."""
     if not hcb._use_outfeed(jtu.device_under_test()):
       raise SkipTest("test works only for outfeed")
-    comp = xla_bridge.make_computation_builder(self._testMethodName)
+    comp = xla_client.XlaBuilder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
     hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
     hcb._callback_handler_data.receiver.add_outfeed(

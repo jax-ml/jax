@@ -4727,7 +4727,7 @@ def _gather_translation_rule(c, operand, indices, *, dimension_numbers,
 
   # Compute the conjunction of the mask elements across the dimensions in which
   # we are slicing.
-  and_builder = xb.make_computation_builder("and_reduction")
+  and_builder = xc.XlaBuilder("and_reduction")
   scalar_pred = xla_client.Shape.array_shape(np.dtype(np.bool_), ())
   xops.And(xb.parameter(and_builder, 0, scalar_pred),
            xb.parameter(and_builder, 1, scalar_pred))
@@ -5029,7 +5029,7 @@ def _scatter_add_translation_rule(
                                            dimension_numbers)
 
   def _make_reducer(dtype):
-    subc = xla_bridge.make_computation_builder("scatter_add_reducer")
+    subc = xc.XlaBuilder("scatter_add_reducer")
     shape = xc.Shape.array_shape(np.dtype(dtype), ())
     args = [xb.parameter(subc, 0, shape), xb.parameter(subc, 1, shape)]
     out = xops.Add(args[0], args[1])
@@ -5549,7 +5549,7 @@ def _reduction_computation(c, jaxpr, consts, init_values, singleton=True):
     init_values = [init_values]
   shapes = safe_map(c.get_shape, init_values + init_values)
   axis_env = xla.AxisEnv(1, (), ())  # no parallel primitives inside reductions
-  subc = xla_bridge.make_computation_builder("reduction_computation")
+  subc = xc.XlaBuilder("reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [xb.parameter(subc, i, shape) for i, shape in enumerate(shapes)]
   ctx = xla.TranslationContext(subc, None, axis_env, '')
@@ -6300,7 +6300,7 @@ def _select_and_gather_add_translation(
                                   etype)
 
   def reducer():
-    c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
+    c = xc.XlaBuilder("select_and_gather_pair_reducer")
     x = xb.parameter(c, 0,
       xla_client.Shape.array_shape(np.dtype(double_word_dtype), ()))
     y = xb.parameter(c, 1,
@@ -6330,7 +6330,7 @@ def _select_and_gather_add_translation_using_variadic_reducewindow(
                                           canonicalize_types=False)
 
   def reducer():
-    c = xla_bridge.make_computation_builder("select_and_gather_pair_reducer")
+    c = xc.XlaBuilder("select_and_gather_pair_reducer")
     shape = xla_client.Shape.array_shape(np.dtype(dtype), ())
     kx, vx, ky, vy = (xb.parameter(c, i, shape) for i in range(4))
     which = (xops.Ge if select_prim is ge_p else xops.Le)(kx, ky)
@@ -6487,7 +6487,7 @@ def _sort_lt_comparator(*operands, num_keys=1):
 
 def _sort_translation_rule(c, *operands, dimension, is_stable, num_keys):
   types = [c.get_shape(x).xla_element_type() for x in operands]
-  subc = xla_bridge.make_computation_builder("sort_lt_comparator")
+  subc = xc.XlaBuilder("sort_lt_comparator")
   params = [xb.parameter(subc, 2 * i + j, xc.Shape.array_shape(typ, ()))
             for i, typ in enumerate(types) for j in range(2)]
   result = xla.lower_fun(partial(_sort_lt_comparator, num_keys=num_keys),

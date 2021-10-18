@@ -336,7 +336,7 @@ def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
 
   init_carry = xops.Tuple(c, cond_consts + body_consts + init_vals)
 
-  cond_c = xb.make_computation_builder("cond_computation")
+  cond_c = xla_client.XlaBuilder("cond_computation")
   cond_carry = xb.parameter(cond_c, 0, c.get_shape(init_carry))
   cond_carry_elts = [xops.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
@@ -351,7 +351,7 @@ def _while_loop_translation_rule(ctx, avals_in, avals_out, *args, cond_jaxpr,
     pred = xops.Reduce(cond_c, [pred], [xb.constant(cond_c, np.array(False))], or_,
                          list(range(cond_jaxpr.out_avals[0].ndim)))
 
-  body_c = xb.make_computation_builder("body_computation")
+  body_c = xla_client.XlaBuilder("body_computation")
   body_carry = xb.parameter(body_c, 0, c.get_shape(init_carry))
   body_carry_elts = [xops.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
@@ -801,7 +801,7 @@ def _cond_translation_rule(ctx, avals_in, avals_out, index, *args, branches,
 
   name_stack = extend_name_stack(ctx.name_stack, "cond")
   def make_computation(name, jaxpr, op_shape):
-    c = xb.make_computation_builder(name + '_comp')
+    c = xla_client.XlaBuilder(name + '_comp')
     op = xb.parameter(c, 0, op_shape)
     ops = [xops.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
     subctx = ctx.replace(

@@ -62,7 +62,7 @@ Buffer = xe.Buffer
 
 XlaOp = xc.XlaOp
 XlaShape = xc.Shape
-XlaComputationBuilder = xc.XlaBuilder
+XlaBuilder = xc.XlaBuilder
 XlaExecutable = xc.Executable
 
 # This flag is set on exit; no logging should be attempted
@@ -328,7 +328,7 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
 
 def primitive_subcomputation(prim: core.Primitive, *avals: core.AbstractValue,
                              **params):
-  c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
+  c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
   f = lower_fun(prim.bind, multiple_results=prim.multiple_results)
   xla_args, _ = _xla_callable_args(c, avals, tuple_args=False)
   ans = f(c, *xla_args, **params)
@@ -683,7 +683,7 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
 
   tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
 
-  c = xb.make_computation_builder(f"jit_{fun.__name__}")
+  c = xc.XlaBuilder(f"jit_{fun.__name__}")
   xla_consts = _xla_consts(c, consts)
   xla_args, donated_invars = _xla_callable_args(c, abstract_args, tuple_args,
                                                 donated_invars=donated_invars)
@@ -1026,7 +1026,7 @@ def _xla_call_translation_rule(ctx, avals_in, avals_out, *in_nodes, name,
   del device, donated_invars, inline  # Ignored.
   c = ctx.builder
   check_backend_matches(backend, ctx.platform)
-  subc = xb.make_computation_builder(f"jit_{name}")
+  subc = xc.XlaBuilder(f"jit_{name}")
   args = [xb.parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
   sub_ctx = ctx.replace(
       builder=subc,
@@ -1579,7 +1579,7 @@ def _remat_using_cond(ctx, in_nodes, name, call_jaxpr):
   pred = xops.Lt(rng, xb.constant(c, np.array(2, dtype=np.float32)))
 
   true_op = xops.Tuple(c, in_nodes)
-  remat_subc = xb.make_computation_builder("remat_call_subcomputation")
+  remat_subc = xc.XlaBuilder("remat_call_subcomputation")
   input_op = xb.parameter(remat_subc, 0, c.get_shape(true_op), replicated=[])
   args = xla_destructure(remat_subc, input_op)
   sub_ctx = ctx.replace(
@@ -1590,7 +1590,7 @@ def _remat_using_cond(ctx, in_nodes, name, call_jaxpr):
   remat_subc = remat_subc.build(xops.Tuple(remat_subc, out_nodes))
 
   false_op = true_op
-  dummy_subc = xb.make_computation_builder("remat_call_dummy_subcomputation")
+  dummy_subc = xc.XlaBuilder("remat_call_dummy_subcomputation")
   xb.parameter(dummy_subc, 0, c.get_shape(false_op), replicated=[])
   out_nodes = [_zeros(dummy_subc, s) for s in out_node_shapes]
   dummy_subc = dummy_subc.build(xops.Tuple(dummy_subc, out_nodes))
@@ -1604,7 +1604,7 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   c = ctx.builder
   # Dummy subc for getting subcomp shapes.
   dummy_inputs = xops.Tuple(c, in_nodes)
-  dummy_subc = xb.make_computation_builder("remat_dummy_subcomputation")
+  dummy_subc = xc.XlaBuilder("remat_dummy_subcomputation")
   dummy_input_op = xb.parameter(dummy_subc, 0, c.get_shape(dummy_inputs), replicated=[])
   dummy_args = xla_destructure(dummy_subc, dummy_input_op)
   dummy_ctx = ctx.replace(
@@ -1617,7 +1617,7 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   zeros_like_outs = [_zeros(c, s) for s in out_node_shapes]
   inputs = xops.Tuple(c, [i_init] + list(in_nodes) + zeros_like_outs)
 
-  cond_subc = xb.make_computation_builder("remat_cond_subcomputation")
+  cond_subc = xc.XlaBuilder("remat_cond_subcomputation")
   input_op = xb.parameter(cond_subc, 0, c.get_shape(inputs), replicated=[])
   i = xops.GetTupleElement(input_op, 0)
   rng = xops.RngUniform(xb.constant(cond_subc, np.array(1, dtype=np.int32)),
@@ -1625,7 +1625,7 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
                         xc.Shape.array_shape(xc.PrimitiveType.S32, []))
   cond_subc = cond_subc.build(xops.Lt(i, rng))
 
-  body_subc = xb.make_computation_builder("remat_body_subcomputation")
+  body_subc = xc.XlaBuilder("remat_body_subcomputation")
   input_op = xb.parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
   i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes)+1]
   i_next = xops.Add(i, xb.constant(body_subc, np.array(1, dtype=np.int32)))
@@ -1664,7 +1664,7 @@ def _named_call_translation_rule(ctx, avals_in, avals_out, *in_nodes,
                                  name="core_call", backend=None, call_jaxpr):
   check_backend_matches(backend, ctx.platform)
   c = ctx.builder
-  subc = xb.make_computation_builder(name)
+  subc = xc.XlaBuilder(name)
   args = [xb.parameter(subc, i, c.GetShape(n)) for i, n in enumerate(in_nodes)]
   sub_ctx = ctx.replace(builder=subc,
                         name_stack=extend_name_stack(ctx.name_stack, name))

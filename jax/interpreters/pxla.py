@@ -875,7 +875,7 @@ def parallel_callable(fun: lu.WrappedFun,
 
   tuple_args = len(global_sharded_avals) > 100  # pass long arg lists as tuple for TPU
 
-  c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
+  c = xc.XlaBuilder("pmap_{}".format(fun.__name__))
   xla_consts = map(partial(xb.constant, c), consts)
   replicated_args = [axis is None for axis in in_axes]
   xla_args, donated_invars = xla._xla_callable_args(c, global_sharded_avals, tuple_args,
@@ -1594,7 +1594,7 @@ def lower_mesh_computation(
   jaxpr = xla.apply_outfeed_rewriter(jaxpr)
 
   # 3. Build up the HLO
-  c = xb.make_computation_builder(f"xmap_{fun.__name__}")
+  c = xc.XlaBuilder(f"xmap_{fun.__name__}")
   xla_consts = map(partial(xb.constant, c), consts)
   tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
   in_partitions: Optional[List]

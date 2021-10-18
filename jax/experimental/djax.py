@@ -743,7 +743,7 @@ dynamic_xla_call_p.multiple_results = True
 def _dynamic_xla_call_impl(*args, jaxpr, num_consts):
   in_dim_vals, consts, args = split_list(args, [len(jaxpr.in_dim_binders), num_consts])
   dim_in_avals = [v.aval for v in jaxpr.in_dim_binders]
-  c = xb.make_computation_builder("dxla_call")
+  c = xc.XlaBuilder("dxla_call")
   dim_params, params = _make_params(c, dim_in_avals, map(xla.abstractify, args))
   const_params = _xla_consts(c, consts)
   dim_outs, outs = djaxpr_subcomp(c, jaxpr, dim_params, const_params + params)

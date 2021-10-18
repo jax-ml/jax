@@ -496,7 +496,7 @@ xops = xla_client._xla.ops
 
 XlaOp = xla_client.XlaOp
 XlaShape = xla_client.Shape
-XlaComputationBuilder = xla_client.XlaBuilder
+XlaBuilder = xla_client.XlaBuilder
 XlaDevice = xla_client.Device
 XlaLocalClient = xla_client.Client
 DType = Any
@@ -923,7 +923,7 @@ def _outside_call_impl(*args, **params):
 outside_call_p.def_impl(_outside_call_impl)
 
 
-def _outside_call_translation_rule(comp: XlaComputationBuilder,
+def _outside_call_translation_rule(comp: XlaBuilder,
                                    *args_op: XlaOp,
                                    platform="tpu",
                                    has_token,
