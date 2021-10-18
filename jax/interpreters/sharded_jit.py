@@ -138,7 +138,7 @@ def _sharded_callable(
               "Compiling %s for %d devices with args %s.",
               fun.__name__, nparts, global_abstract_args)
 
-  c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
+  c = xc.XlaBuilder("spjit_{}".format(fun.__name__))
   xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = _xla_sharded_args(c, global_abstract_args, in_parts)
   axis_env = xla.AxisEnv(nrep, (), ())

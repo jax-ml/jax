@@ -558,9 +558,6 @@ def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
   return with_sharding_proto(builder, _sharding_to_proto(sharding), op_fn, *args, **kwargs)
 
-def make_computation_builder(name):
-  return xla_client.XlaBuilder(name)
-
 
 def register_constant_handler(type_, handler_fun):
   _constant_handlers[type_] = handler_fun

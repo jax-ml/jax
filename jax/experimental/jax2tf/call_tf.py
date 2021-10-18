@@ -237,7 +237,7 @@ def _call_tf_abstract_eval(*_,
 call_tf_p.def_abstract_eval(_call_tf_abstract_eval)
 
 
-def _call_tf_translation_rule(builder: xla.XlaComputationBuilder, *args_op,
+def _call_tf_translation_rule(builder: xla.XlaBuilder, *args_op,
                               function_flat_tf,
                               args_flat_sig_tf,
                               **_):
@@ -253,7 +253,7 @@ def _code_generator_and_avals(
     function_flat_tf,
     args_flat_sig_tf,
     code_gen_optional=False
-) -> Tuple[Optional[Callable[[xla.XlaComputationBuilder, Sequence[xla.XlaOp]], xla.XlaOp]],
+) -> Tuple[Optional[Callable[[xla.XlaBuilder, Sequence[xla.XlaOp]], xla.XlaOp]],
            Sequence[core.ShapedArray]]:
   # Returns and caches a code generator (taking a builder and the
   # XlaOps for the arguments) and a sequence of result abstract shapes.
@@ -384,7 +384,7 @@ def _code_generator_and_avals(
 
   result_avals = tuple(map(canonical_res_aval, result_shapes))  # type: ignore
 
-  def code_gen(builder: xla.XlaComputationBuilder, args_op: Sequence[xla.XlaOp]) -> xla.XlaOp:
+  def code_gen(builder: xla.XlaBuilder, args_op: Sequence[xla.XlaOp]) -> xla.XlaOp:
     captured_ops = [xops.ConstantLiteral(builder, np.asarray(inp))
                     for inp in captured_inputs]
 
