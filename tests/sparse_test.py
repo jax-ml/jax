@@ -954,7 +954,7 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(jr_sparse, jr_dense, atol=tol)
     self.assertAllClose(jf_sparse, jr_sparse, atol=tol)
 
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
+  @unittest.skip("Jaxlib GPU build failing in OSS.")
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}[n_batch={}]_{}[n_batch={}]_dims={}".format(
         jtu.format_shape_dtype_string(lhs_shape, dtype), lhs_n_batch,
