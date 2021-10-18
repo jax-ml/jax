@@ -11,7 +11,6 @@ jax.lib.xla_bridge
 .. autosummary::
   :toctree: _autosummary
 
-  constant
   default_backend
   device_count
   get_backend
