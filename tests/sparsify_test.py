@@ -343,6 +343,16 @@ class SparsifyTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "sparsified true_fun and false_fun output.*"):
       func(x_bcoo, y)
 
+  def testWeakTypes(self):
+    # Regression test for https://github.com/google/jax/issues/8267
+    M = jnp.arange(12, dtype='int32').reshape(3, 4)
+    Msp = BCOO.fromdense(M)
+    self.assertArraysEqual(
+      operator.mul(2, M),
+      sparsify(operator.mul)(2, Msp).todense(),
+      check_dtypes=True,
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

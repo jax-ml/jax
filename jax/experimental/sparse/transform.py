@@ -55,6 +55,7 @@ import numpy as np
 from jax import core
 from jax import lax
 from jax import linear_util as lu
+import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -78,7 +79,7 @@ class SparseEnv:
     self._buffers = list(bufs)
 
   def push(self, arr: Array) -> int:
-    self._buffers.append(np.array(arr) if np.isscalar(arr) else arr)  # type: ignore
+    self._buffers.append(jnp.asarray(arr))  # type: ignore
     return len(self._buffers) - 1
 
   def get(self, ind: int) -> Array:
@@ -155,7 +156,8 @@ def argspecs_to_avals(
     if argspec.is_unit():
       return core.abstract_unit
     else:
-      return core.ShapedArray(argspec.shape, argspec.data(spenv).dtype)
+      data = argspec.data(spenv)
+      return core.ShapedArray(argspec.shape, data.dtype, data.aval.weak_type)
   return tree_map(argspec_to_aval, argspecs, is_leaf=_is_argspec)
 
 
