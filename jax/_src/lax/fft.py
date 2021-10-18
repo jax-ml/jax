@@ -61,7 +61,7 @@ def fft_impl(x, fft_type, fft_lengths):
   return xla.apply_primitive(fft_p, x, fft_type=fft_type, fft_lengths=fft_lengths)
 
 _complex_dtype = lambda dtype: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
-_real_dtype = lambda dtype: np.zeros((), dtype).real.dtype
+_real_dtype = lambda dtype: np.finfo(dtype).dtype
 _is_even = lambda x: x % 2 == 0
 
 def fft_abstract_eval(x, fft_type, fft_lengths):
