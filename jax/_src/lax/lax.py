@@ -2251,7 +2251,8 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
               weak_type_rule, named_shape_rule))
-  xla.translations[prim] = translation_rule or partial(standard_translate, name)
+  xla.register_translation(
+      prim, translation_rule or partial(_standard_translate, name))
   return prim
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
@@ -2299,9 +2300,10 @@ def standard_multi_result_abstract_eval(
   else:
     raise TypeError(avals, least_specialized)
 
-def standard_translate(name, c, *args, **kwargs):
+def _standard_translate(name, ctx, avals_in, avals_out, *args, **kwargs):
+  del ctx, avals_in, avals_out
   xla_opname = ''.join(term.capitalize() for term in name.split('_'))
-  return getattr(xops, xla_opname)(*args, **kwargs)
+  return [getattr(xops, xla_opname)(*args, **kwargs)]
 
 def standard_named_shape_rule(*avals, **kwargs):
   return core.join_named_shapes(*(a.named_shape for a in avals))
@@ -2320,7 +2322,8 @@ def unop(result_dtype, accepted_dtypes, name, translation_rule=None):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
-                            translation_rule=translation_rule, weak_type_rule=weak_type_rule)
+                            translation_rule=translation_rule,
+                            weak_type_rule=weak_type_rule)
   batching.defvectorized(prim)
   masking.defvectorized(prim)
   return prim
@@ -2381,7 +2384,6 @@ def _naryop_weak_type_rule(name, *avals, **kwargs):
   return all(aval.weak_type for aval in avals)
 
 def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
-  # TODO(frostig,mattjj): only used with arity > 2 once, simplify
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
   shape_rule = partial(_broadcasting_shape_rule, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)
@@ -2393,23 +2395,21 @@ def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
   return prim
 standard_naryop = partial(naryop, _input_dtype)
 
-# Decorator for translation rules which adds explicit broadcasting of positional
-# arguments. This is necessary only for a handful of primitives whose XLA
-# implementations do not support broadcasting.
-def _broadcast_translate(translate: Callable):
-  def _broadcast_array(x, shape, result_shape):
-    if shape == result_shape:
-      return x
-    bcast_dims = tuple(range(len(result_shape) - len(shape), len(result_shape)))
-    result = xops.BroadcastInDim(x, result_shape, bcast_dims)
-    return result
 
-  def _broadcasted_translation_rule(c, *args, **kwargs):
-    shapes = [c.get_shape(x).dimensions() for x in args]
-    result_shape = broadcast_shapes(*shapes)
-    args = [_broadcast_array(x, s, result_shape) for x, s in zip(args, shapes)]
-    return translate(c, *args, **kwargs)
-  return _broadcasted_translation_rule
+def _broadcast_translate(op, ctx, avals_in, avals_out, *args):
+  """Variant of _standard_translate that performs explicit broadcasting.
+
+  Not all XLA library functions perform their own broadcasting."""
+  aval_out, = avals_out
+  broadcasted_args = []
+  for aval_in, arg in zip(avals_in, args):
+    if aval_out.shape != aval_in.shape:
+      bcast_dims = tuple(range(len(aval_out.shape) - len(aval_in.shape),
+                               len(aval_out.shape)))
+      arg = xops.BroadcastInDim(arg, aval_out.shape, bcast_dims)
+    broadcasted_args.append(arg)
+  return [op(*broadcasted_args)]
+
 
 # Like autograd.numpy.numpy_vjps.unbroadcast, this utility handles transposition
 # involving linear primitives with implicit broadcasting.
@@ -2450,22 +2450,21 @@ _bool_or_int = _int | _bool
 neg_p = standard_unop(_num, 'neg')
 ad.deflinear2(neg_p, lambda t, operand: [neg(t)])
 
-def _sign_translation_rule(c, x):
-  shape = c.get_shape(x)
-  dtype = shape.numpy_dtype()
+def _sign_translation_rule(ctx, avals_in, avals_out, x):
+  c = ctx.builder
+  x_aval, = avals_in
+  dtype = x_aval.dtype
   if dtypes.issubdtype(dtype, np.unsignedinteger):
     zero = xb.constant(c, np.array(0, dtype=dtype))
-    dims = c.get_shape(x).dimensions()
-    return xops.Select(xops.Eq(x, zero), xops.Broadcast(zero, dims),
-                       xops.Broadcast(xb.constant(c, np.array(1, dtype=dtype)),
-                                      dims))
-  return xops.Sign(x)
+    return [xops.Select(xops.Eq(x, zero), xops.Broadcast(zero, x_aval.shape),
+                        xops.Broadcast(xb.constant(c, np.array(1, dtype=dtype)),
+                                       x_aval.shape))]
+  return [xops.Sign(x)]
 
 sign_p = standard_unop(_num, 'sign', translation_rule=_sign_translation_rule)
 ad.defjvp_zero(sign_p)
 
-_nextafter_translation_rule = \
-    _broadcast_translate(partial(standard_translate, 'next_after'))
+_nextafter_translation_rule = partial(_broadcast_translate, xops.NextAfter)
 nextafter_p = standard_naryop([_float, _float], 'nextafter',
                               translation_rule=_nextafter_translation_rule)
 
@@ -2488,15 +2487,16 @@ def _round_to_nearest_even(x):
                bitwise_and(eq(fraction, half), is_odd)),
     add(round_val, one), round_val)
 
-def _round_translation_rule(c, x, *, rounding_method):
+def _round_translation_rule(ctx, avals_in, avals_out, x, *, rounding_method):
   if rounding_method is RoundingMethod.AWAY_FROM_ZERO:
-    return xops.Round(x)
+    return [xops.Round(x)]
   else: # rounding_method is RoundingMethod.TO_NEAREST_EVEN
-    rounding_fun = xla.lower_fun(_round_to_nearest_even, multiple_results=False)
-    return rounding_fun(c, x)
+    rounding_fun = xla.lower_fun(_round_to_nearest_even, multiple_results=False,
+                                 new_style=True)
+    return rounding_fun(ctx, avals_in, avals_out, x)
 
 round_p = standard_unop(_float, 'round')
-xla.translations[round_p] = _round_translation_rule
+xla.register_translation(round_p, _round_translation_rule)
 ad.defjvp_zero(round_p)
 
 is_finite_p = unop(_fixed_dtype(np.bool_), _float, 'is_finite')
@@ -2529,7 +2529,7 @@ ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
 
-@partial(xla.lower_fun, multiple_results=False)
+@partial(xla.lower_fun, multiple_results=False, new_style=True)
 @_upcast_fp16_for_computation
 def tan_translation_rule(x):
   return div(sin(x), cos(x))
@@ -2548,7 +2548,8 @@ def asin_translation_rule(x):
 
 asin_p = standard_unop(_float | _complex, 'asin',
                        translation_rule=xla.lower_fun(asin_translation_rule,
-                                                      multiple_results=False))
+                                                      multiple_results=False,
+                                                      new_style=True))
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
 
 
@@ -2571,7 +2572,8 @@ def acos_translation_rule(x):
 
 acos_p = standard_unop(_float | _complex, 'acos',
                        translation_rule=xla.lower_fun(acos_translation_rule,
-                                                      multiple_results=False))
+                                                      multiple_results=False,
+                                                      new_style=True))
 ad.defjvp(acos_p, lambda g, x: mul(g, -rsqrt(_const(x, 1) - square(x))))
 
 def atan_translation_rule(x):
@@ -2579,7 +2581,8 @@ def atan_translation_rule(x):
 
 atan_p = standard_unop(_float | _complex, 'atan',
                        translation_rule=xla.lower_fun(atan_translation_rule,
-                                                      multiple_results=False))
+                                                      multiple_results=False,
+                                                      new_style=True))
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
@@ -2606,8 +2609,8 @@ ad.defjvp(atanh_p,
 
 regularized_incomplete_beta_p = standard_naryop(
     [_float, _float, _float], 'regularized_incomplete_beta',
-    translation_rule=_broadcast_translate(
-      partial(standard_translate, 'regularized_incomplete_beta')))
+    translation_rule=partial(_broadcast_translate,
+                             xops.RegularizedIncompleteBeta))
 
 def betainc_gradx(g, a, b, x):
   lbeta = lgamma(a) + lgamma(b) - lgamma(a + b)
@@ -2630,10 +2633,9 @@ digamma_p = standard_unop(_float, 'digamma')
 
 igamma_p = standard_naryop(
   [_float, _float], 'igamma',
-  translation_rule=_broadcast_translate(partial(standard_translate, 'igamma')))
+  translation_rule=partial(_broadcast_translate, xops.Igamma))
 igamma_grad_a_p = standard_naryop([_float, _float], 'igamma_grad_a',
-  translation_rule=_broadcast_translate(partial(standard_translate,
-                                               'igamma_grad_a')))
+  translation_rule=partial(_broadcast_translate, xops.IgammaGradA))
 
 def igamma_gradx(g, a, x):
   return g * exp(-x + (a - _ones(a)) * log(x) - lgamma(a))
@@ -2645,7 +2647,7 @@ ad.defjvp(igamma_p, igamma_grada, igamma_gradx)
 
 igammac_p = standard_naryop(
   [_float, _float], 'igammac',
-  translation_rule=_broadcast_translate(partial(standard_translate, 'igammac')))
+  translation_rule=partial(_broadcast_translate, xops.Igammac))
 
 def igammac_gradx(g, a, x):
   return -igamma_gradx(g, a, x)
@@ -2656,8 +2658,7 @@ def igammac_grada(g, a, x):
 ad.defjvp(igammac_p, igammac_grada, igammac_gradx)
 
 random_gamma_grad_p = standard_naryop([_float, _float], 'random_gamma_grad',
-  translation_rule=_broadcast_translate(partial(standard_translate,
-                                               'random_gamma_grad')))
+  translation_rule=partial(_broadcast_translate, xops.RandomGammaGrad))
 
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
@@ -2723,7 +2724,8 @@ def _conj_transpose_rule(t, x, *, input_dtype):
   else:
     return [real(t)]
 
-xla.translations[conj_p] = lambda c, x, **kwargs: xops.Conj(x)
+xla.register_translation(conj_p,
+    lambda ctx, avals_in, avals_out, x, **kwargs: [xops.Conj(x)])
 ad.primitive_jvps[conj_p] = partial(ad.linear_jvp, conj_p)
 ad.primitive_transposes[conj_p] = _conj_transpose_rule
 
@@ -2752,11 +2754,12 @@ ad.defjvp2(rsqrt_p,
 if jax._src.lib._xla_extension_version >= 28:
   _cbrt_translation_rule = None
 else:
-  def _cbrt_translation_rule(c, x):
-    dtype = c.get_shape(x).numpy_dtype()
-    return xops.Mul(
-      xops.Sign(x),
-      xops.Pow(xops.Abs(x), xb.constant(c, np.array(1/3, dtype=dtype))))
+  def _cbrt_translation_rule(ctx, avals_in, avals_out, x):
+    x_aval, = avals_in
+    return [xops.Mul(
+       xops.Sign(x),
+       xops.Pow(xops.Abs(x),
+                xb.constant(ctx.builder, np.array(1/3, dtype=x_aval.dtype))))]
 
 cbrt_p = standard_unop(_float, 'cbrt',
                        translation_rule=_cbrt_translation_rule)
@@ -2782,12 +2785,12 @@ def _integer_pow_dtype_rule(x, *, y):
                     f"integer_pow({x}, {y})")
   return dtype
 
-def _integer_pow_translation_rule(c, x, *, y):
+def _integer_pow_translation_rule(ctx, avals_in, avals_out, x, *, y):
   # This should be kept in sync with the jax2tf translation rule.
+  x_aval, = avals_in
   if y == 0:
-    shape = c.get_shape(x)
-    one = xb.constant(c, np.array(1, dtype=shape.numpy_dtype()))
-    return xops.Broadcast(one, shape.dimensions())
+    one = xb.constant(ctx.builder, np.array(1, dtype=x_aval.dtype))
+    return [xops.Broadcast(one, x_aval.shape)]
   is_reciprocal = y < 0
   if is_reciprocal:
     y = -y
@@ -2798,7 +2801,7 @@ def _integer_pow_translation_rule(c, x, *, y):
     y >>= 1
     if y > 0:
       x = xops.Mul(x, x)
-  return xops.Reciprocal(acc) if is_reciprocal else acc
+  return [xops.Reciprocal(acc) if is_reciprocal else acc]
 
 def _integer_pow_jvp(g, x, *, y):
   return _zeros(g) if y == 0 else mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
@@ -2960,14 +2963,16 @@ def _minmax_complex_lowering(x, y, *, lax_cmp_pick_x):
                   lax_cmp_pick_x(rx, ry))
   return select(pick_x, x, y)
 
-def _minmax_translation_rule(c, x, y, *, op_minmax=None, lax_cmp_pick_x=None):
-  dtype = c.get_shape(x).numpy_dtype()
-  if dtypes.issubdtype(dtype, np.complexfloating):
+def _minmax_translation_rule(ctx, avals_in, avals_out, x, y, *, op_minmax=None,
+                             lax_cmp_pick_x=None):
+  x_aval, y_aval = avals_in
+  if dtypes.issubdtype(x_aval.dtype, np.complexfloating):
     return xla.lower_fun(partial(_minmax_complex_lowering,
                                  lax_cmp_pick_x=lax_cmp_pick_x),
-                         multiple_results=False)(c, x, y)
+                         multiple_results=False,
+                         new_style=True)(ctx, avals_in, avals_out, x, y)
   else:
-    return op_minmax(x, y)
+    return [op_minmax(x, y)]
 
 max_p: core.Primitive = standard_naryop(
   [_any, _any], 'max', translation_rule=partial(
@@ -3020,13 +3025,15 @@ def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
 def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type):
   return weak_type
 
-def _convert_element_type_translation_rule(c, operand, *, new_dtype, weak_type):
-  old_dtype = c.get_shape(operand).numpy_dtype()
+def _convert_element_type_translation_rule(ctx, avals_in, avals_out, operand, *,
+                                           new_dtype, weak_type):
+  aval_in, = avals_in
+  old_dtype = aval_in.dtype
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     operand = xops.Real(operand)
   new_etype = xla_client.dtype_to_etype(new_dtype)
-  return xops.ConvertElementType(operand, new_element_type=new_etype)
+  return [xops.ConvertElementType(operand, new_element_type=new_etype)]
 
 def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
   assert ad.is_undefined_primal(operand)
@@ -3053,7 +3060,8 @@ convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
             _convert_element_type_weak_type_rule, standard_named_shape_rule))
-xla.translations[convert_element_type_p] = _convert_element_type_translation_rule
+xla.register_translation(convert_element_type_p,
+                         _convert_element_type_translation_rule)
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
@@ -3072,9 +3080,10 @@ def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
     raise TypeError(f"`bitcast_convert_type` for operand type ({old_dtype}) must have destination type ({new_dtype}) of same size.")
   return new_dtype
 
-def _bitcast_convert_type_translation_rule(c, operand, *, new_dtype):
+def _bitcast_convert_type_translation_rule(ctx, avals_in, avals_out, operand, *,
+                                           new_dtype):
   new_etype = xla_bridge.dtype_to_etype(new_dtype)
-  return xops.BitcastConvertType(operand, new_element_type=new_etype)
+  return [xops.BitcastConvertType(operand, new_element_type=new_etype)]
 
 bitcast_convert_type_p = standard_primitive(
     _bitcast_convert_type_shape_rule, _bitcast_convert_type_dtype_rule,
@@ -3276,14 +3285,14 @@ def _conv_general_dilated_transpose_rhs(
 
 
 def _conv_general_dilated_translation_rule(
-    c, lhs, rhs, *, window_strides, padding,
+    ctx, avals_in, avals_out, lhs, rhs, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
     batch_group_count, precision, expand_complex_convolutions,
     preferred_element_type, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   dimension_numbers = _conv_general_proto(dimension_numbers)
   precision_config = _precision_config(precision)
-  dtype = c.get_shape(lhs).numpy_dtype()
+  dtype = avals_in[0].dtype
   if expand_complex_convolutions and np.issubdtype(dtype, np.complexfloating):
     # We use a trick for complex multiplication due to Gauss which uses three
     # multiplications and five additions; instead of the naive method of four
@@ -3311,16 +3320,16 @@ def _conv_general_dilated_translation_rule(
     k1 = conv(xops.Add(lhs_real, lhs_imag), rhs_real)
     k2 = conv(lhs_real, xops.Sub(rhs_imag, rhs_real))
     k3 = conv(lhs_imag, xops.Add(rhs_real, rhs_imag))
-    return xops.Complex(xops.Sub(k1, k3), xops.Add(k1, k2))
+    return [xops.Complex(xops.Sub(k1, k3), xops.Add(k1, k2))]
 
   if preferred_element_type is not None:
     preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
 
-  return xops.ConvGeneralDilated(
+  return [xops.ConvGeneralDilated(
       lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
       dimension_numbers, feature_group_count, batch_group_count,
       precision_config=precision_config,
-      preferred_element_type=preferred_element_type)
+      preferred_element_type=preferred_element_type)]
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, *, window_strides, padding,
@@ -3455,10 +3464,14 @@ conv_general_dilated_p = standard_primitive(
 # TODO(b/161124619, b/161126248): XLA does not support complex convolution on
 # GPU, and on CPU it uses a slow loop-based implementation;
 # on these backends, lower complex convolutions away.
-xla.backend_specific_translations['cpu'][conv_general_dilated_p] = partial(
-    _conv_general_dilated_translation_rule, expand_complex_convolutions=True)
-xla.backend_specific_translations['gpu'][conv_general_dilated_p] = partial(
-    _conv_general_dilated_translation_rule, expand_complex_convolutions=True)
+xla.register_translation(conv_general_dilated_p,
+                         partial(_conv_general_dilated_translation_rule,
+                                 expand_complex_convolutions=True),
+                         platform='cpu')
+xla.register_translation(conv_general_dilated_p,
+                         partial(_conv_general_dilated_translation_rule,
+                                 expand_complex_convolutions=True),
+                         platform='gpu')
 
 ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_lhs,
@@ -3649,31 +3662,33 @@ def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
   new_dimension_numbers = ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch))
   return new_dimension_numbers, int(result_batch_dim)
 
-def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision,
+def _dot_general_translation_rule(ctx, avals_in, avals_out, lhs, rhs, *,
+                                  dimension_numbers, precision,
                                   preferred_element_type: Optional[DType]):
   if preferred_element_type is not None:
     preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
-  return xops.DotGeneral(lhs, rhs,
-                         xc.make_dot_dimension_numbers(dimension_numbers),
-                         precision_config=_precision_config(precision),
-                         preferred_element_type=preferred_element_type)
+  return [xops.DotGeneral(lhs, rhs,
+                          xc.make_dot_dimension_numbers(dimension_numbers),
+                          precision_config=_precision_config(precision),
+                          preferred_element_type=preferred_element_type)]
 
-def _dot_general_cpu_translation_rule(c, lhs, rhs, *, dimension_numbers, precision,
-                                  preferred_element_type: Optional[DType]):
+def _dot_general_cpu_translation_rule(ctx, avals_in, avals_out, lhs, rhs, *,
+                                      dimension_numbers, precision,
+                                      preferred_element_type: Optional[DType]):
   if preferred_element_type is not None:
     preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
 
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
-  if c.get_shape(lhs).numpy_dtype() == np.float16:
+  if avals_in[0].dtype == np.float16:
     lhs = xops.ConvertElementType(lhs, xla_client.dtype_to_etype(np.float32))
     rhs = xops.ConvertElementType(rhs, xla_client.dtype_to_etype(np.float32))
     preferred_element_type = (preferred_element_type or
                               xla_client.dtype_to_etype(np.float16))
 
-  return xops.DotGeneral(lhs, rhs,
-                         xc.make_dot_dimension_numbers(dimension_numbers),
-                         precision_config=_precision_config(precision),
-                         preferred_element_type=preferred_element_type)
+  return [xops.DotGeneral(lhs, rhs,
+                          xc.make_dot_dimension_numbers(dimension_numbers),
+                          precision_config=_precision_config(precision),
+                          preferred_element_type=preferred_element_type)]
 
 def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
                               precision,
@@ -3695,8 +3710,8 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
-xla.backend_specific_translations["cpu"][dot_general_p] = \
-  _dot_general_cpu_translation_rule
+xla.register_translation(dot_general_p, _dot_general_cpu_translation_rule,
+                         platform="cpu")
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
@@ -3849,9 +3864,9 @@ def _concatenate_dtype_rule(*operands, **kwargs):
   _check_same_dtypes('concatenate', False, *(o.dtype for o in operands))
   return operands[0].dtype
 
-def _concatenate_translation_rule(c, *operands, **kwargs):
-  dimension = kwargs.pop('dimension')
-  return xops.ConcatInDim(c, operands, dimension)
+def _concatenate_translation_rule(ctx, avals_in, avals_out, *operands,
+                                  dimension, **kw):
+  return [xops.ConcatInDim(ctx.builder, operands, dimension)]
 
 def _concatenate_transpose_rule(t, *operands, dimension):
   operand_shapes = [o.aval.shape if ad.is_undefined_primal(o) else o.shape
@@ -3952,9 +3967,10 @@ def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
                                          (operand_bdim,))
   return select(mask, x, broadcasted_padding), operand_bdim
 
-def _pad_translation_rule(c, operand, padding_value, *, padding_config):
-  return xops.Pad(operand, padding_value,
-                  xc.make_padding_config(padding_config))
+def _pad_translation_rule(ctx, avals_in, avals_out, operand, padding_value, *,
+                          padding_config):
+  return [xops.Pad(operand, padding_value,
+                   xc.make_padding_config(padding_config))]
 
 def _pad_masking_rule(padded_vals, logical_shapes, padding_config):
   operand, padding_value = padded_vals
@@ -4010,9 +4026,8 @@ def _compute_squeeze_shape(shape, dimensions):
         f"one, got shape={shape} and dimensions={dimensions}")
   return tuple(s for i, s in enumerate(shape) if i not in dims_set)
 
-def _squeeze_translation_rule(c, arg, *, dimensions):
-  new_shape = _compute_squeeze_shape(c.get_shape(arg).dimensions(), dimensions)
-  return xops.Reshape(arg, new_shape)
+def _squeeze_translation_rule(ctx, avals_in, avals_out, arg, *, dimensions):
+  return [xops.Reshape(arg, avals_out[0].shape)]
 
 def _squeeze_transpose_rule(t, operand, *, dimensions):
   assert ad.is_undefined_primal(operand)
@@ -4079,11 +4094,12 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions):
 def _reshape_dtype_rule(operand, *, new_sizes, dimensions):
   return operand.dtype
 
-def _reshape_translation_rule(c, operand, *, new_sizes, dimensions):
+def _reshape_translation_rule(ctx, avals_in, avals_out, operand, *, new_sizes,
+                              dimensions):
   if dimensions is None:
-    return xops.Reshape(operand, new_sizes)
+    return [xops.Reshape(operand, new_sizes)]
   else:
-    return xops.Reshape(operand, dimensions, new_sizes)
+    return [xops.Reshape(operand, dimensions, new_sizes)]
 
 def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions):
   assert ad.is_undefined_primal(operand)
@@ -4308,10 +4324,10 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
   diff = core.diff_shape(limit_indices, start_indices)
   return core.stride_shape(diff, (1,) * len(diff), strides)
 
-def _slice_translation_rule(c, operand, *, start_indices, limit_indices,
-                            strides):
-  return xops.Slice(operand, start_indices, limit_indices,
-                    strides or [1] * len(start_indices))
+def _slice_translation_rule(ctx, avals_in, avals_out, operand, *, start_indices,
+                            limit_indices, strides):
+  return [xops.Slice(operand, start_indices, limit_indices,
+                     strides or [1] * len(start_indices))]
 
 def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   assert ad.is_undefined_primal(operand)
@@ -4395,8 +4411,9 @@ def _dynamic_slice_dtype_rule(operand, *start_indices, slice_sizes):
     raise TypeError(msg.format(", ".join(i.dtype.name for i in start_indices)))
   return operand.dtype
 
-def _dynamic_slice_translation_rule(c, operand, *start_indices, slice_sizes):
-  return xops.DynamicSlice(operand, start_indices, slice_sizes)
+def _dynamic_slice_translation_rule(ctx, avals_in, avals_out, operand,
+                                    *start_indices, slice_sizes):
+  return [xops.DynamicSlice(operand, start_indices, slice_sizes)]
 
 def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
   tangent_out = tangents[0]
@@ -4511,8 +4528,9 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
     update_t = ds(t, start_indices, update_shape) if ad.is_undefined_primal(update) else None
   return [operand_t, update_t] + [None] * len(start_indices)
 
-def _dynamic_update_slice_translation_rule(c, operand, update, *start_indices):
-  return xops.DynamicUpdateSlice(operand, update, start_indices)
+def _dynamic_update_slice_translation_rule(ctx, avals_in, avals_out, operand,
+                                           update, *start_indices):
+  return [xops.DynamicUpdateSlice(operand, update, start_indices)]
 
 def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
   # A dynamic update slice is a special case of scatter; we can delegate to the
@@ -4545,14 +4563,16 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
     _dynamic_update_slice_batching_rule
 
 
-def _gather_dimensions_proto(indices_shape, dimension_numbers):
+def _gather_dimensions_proto(
+    indices_shape: Sequence[int], dimension_numbers: GatherDimensionNumbers
+) -> xla_client.GatherDimensionNumbers:
   assert type(dimension_numbers) is GatherDimensionNumbers
   proto = xla_client.GatherDimensionNumbers()
   proto.offset_dims.extend(dimension_numbers.offset_dims)
   proto.collapsed_slice_dims.extend(dimension_numbers.collapsed_slice_dims)
   proto.start_index_map.extend(dimension_numbers.start_index_map)
-  assert indices_shape.rank() > 0
-  proto.index_vector_dim = indices_shape.rank() - 1
+  assert len(indices_shape) > 0, indices_shape
+  proto.index_vector_dim = len(indices_shape) - 1
   return proto
 
 def _gather_dtype_rule(operand, indices, *, fill_value, **kwargs):
@@ -4696,28 +4716,30 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
   return tuple(next(slice_sizes) if i in offset_dims
                else next(indices_shape) for i in range(output_shape_rank))
 
-def _gather_translation_rule(c, operand, indices, *, dimension_numbers,
+def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
+                             dimension_numbers,
                              slice_sizes, unique_indices, indices_are_sorted,
                              mode, fill_value):
-  indices_shape = c.get_shape(indices)
-  dimensions = _gather_dimensions_proto(indices_shape, dimension_numbers)
+  operand_aval, indices_aval = avals_in
+  aval_out, = avals_out
+  c = ctx.builder
+  dimensions = _gather_dimensions_proto(indices_aval.shape, dimension_numbers)
   if (mode == GatherScatterMode.CLIP or
       mode == GatherScatterMode.PROMISE_IN_BOUNDS):
     # XLA's Gather has clamp semantics, so we can just call it directly.
-    return xops.Gather(operand, indices, dimensions, slice_sizes,
-                       indices_are_sorted=indices_are_sorted)
+    return [xops.Gather(operand, indices, dimensions, slice_sizes,
+                        indices_are_sorted=indices_are_sorted)]
 
   # Otherwise, we need to mask out out-of-bounds indices and replace those
   # slices with `fill_value`.
   assert mode == GatherScatterMode.FILL_OR_DROP, mode
 
   dnums = dimension_numbers
-  operand_shape = c.get_shape(operand)
   intarray = partial(np.array, dtype=np.int64)
-  operand_dims = intarray(operand_shape.dimensions())
+  operand_dims = intarray(operand_aval.shape)
   indices = xops.ConvertElementType(
     indices, xb.dtype_to_etype(np.int64))
-  num_batch_dims = len(indices_shape.dimensions()) - 1
+  num_batch_dims = len(indices_aval.shape) - 1
 
   upper_bound = operand_dims[intarray(dnums.start_index_map)]
   upper_bound -= intarray(slice_sizes)[intarray(dnums.start_index_map)]
@@ -4739,21 +4761,16 @@ def _gather_translation_rule(c, operand, indices, *, dimension_numbers,
   output_ndims = num_batch_dims + len(dnums.offset_dims)
   batch_dims_in_output = np.delete(np.arange(output_ndims),
                                    dnums.offset_dims)
-  output_shape = np.zeros((output_ndims,), np.int64)
-  collapsed_slice_sizes = np.delete(intarray(slice_sizes),
-                                    dnums.collapsed_slice_dims)
-  output_shape[intarray(dnums.offset_dims)] = collapsed_slice_sizes
-  output_shape[batch_dims_in_output] = intarray(indices_shape.dimensions()[:-1])
 
   # We don't consume unique_indices directly in gather(), only in its transpose
   # (scatter).
-  return xops.Select(
-    xops.BroadcastInDim(mask, output_shape, batch_dims_in_output),
+  return [xops.Select(
+    xops.BroadcastInDim(mask, aval_out.shape, batch_dims_in_output),
     xops.Gather(operand, indices, dimensions, slice_sizes,
                 indices_are_sorted=indices_are_sorted),
     xops.Broadcast(
-        xb.constant(c, np.array(fill_value, operand_shape.numpy_dtype())),
-        output_shape))
+        xb.constant(c, np.array(fill_value, operand_aval.dtype)),
+        aval_out.shape))]
 
 def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
                      slice_sizes, unique_indices, indices_are_sorted, mode,
@@ -4854,15 +4871,17 @@ ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
 
 
-def _scatter_dimensions_proto(indices_shape, dimension_numbers):
+def _scatter_dimensions_proto(
+    indices_shape: Sequence[int], dimension_numbers: ScatterDimensionNumbers
+) -> xla_client.ScatterDimensionNumbers:
   assert type(dimension_numbers) is ScatterDimensionNumbers
   proto = xla_client.ScatterDimensionNumbers()
   proto.update_window_dims.extend(dimension_numbers.update_window_dims)
   proto.inserted_window_dims.extend(dimension_numbers.inserted_window_dims)
   proto.scatter_dims_to_operand_dims.extend(
       dimension_numbers.scatter_dims_to_operand_dims)
-  assert indices_shape.rank() > 0
-  proto.index_vector_dim = indices_shape.rank() - 1
+  assert len(indices_shape) > 0, indices_shape
+  proto.index_vector_dim = len(indices_shape) - 1
   return proto
 
 def _scatter_dtype_rule(operand, indices, updates, **kwargs):
@@ -4999,34 +5018,36 @@ def _clamp_scatter_indices(c, indices, operand_shape, updates_shape, dnums):
     xb.constant(c, upper_bound.astype(indices_dtype)),
     broadcast_dimensions=[len(indices_shape.dimensions()) - 1])
 
-def _scatter_translation_rule(c, operand, indices, updates, *,
-                              update_jaxpr, update_consts, dimension_numbers,
-                              indices_are_sorted, unique_indices, mode):
+def _scatter_translation_rule(ctx, avals_in, avals_out, operand, indices,
+                              updates, *, update_jaxpr, update_consts,
+                              dimension_numbers, indices_are_sorted,
+                              unique_indices, mode):
+  c = ctx.builder
+  operand_aval, indices_aval, updates_aval = avals_in
   if mode == GatherScatterMode.CLIP:
-    indices = _clamp_scatter_indices(
-      c, indices, c.get_shape(operand).dimensions(),
-      c.get_shape(updates).dimensions(), dimension_numbers)
+    indices = _clamp_scatter_indices(c, indices, operand_aval.shape,
+                                     updates_aval.shape, dimension_numbers)
 
-  dtype = c.get_shape(operand).numpy_dtype()
-  init_value = xb.constant(c, np.array(0, dtype))
+  init_value = xb.constant(c, np.array(0, operand_aval.dtype))
   update_computation = _reduction_computation(
       c, update_jaxpr, update_consts, init_value)
-  indices_shape = c.get_shape(indices)
-  return xops.Scatter(operand, indices, updates, update_computation,
-                      _scatter_dimensions_proto(indices_shape, dimension_numbers),
-                      indices_are_sorted, unique_indices)
+  return [xops.Scatter(
+      operand, indices, updates, update_computation,
+      _scatter_dimensions_proto(indices_aval.shape, dimension_numbers),
+      indices_are_sorted, unique_indices)]
 
 def _scatter_add_translation_rule(
-    c, operand, indices, updates, *, update_jaxpr, update_consts,
-    dimension_numbers, indices_are_sorted, unique_indices, mode,
+    ctx, avals_in, avals_out, operand, indices, updates, *, update_jaxpr,
+    update_consts, dimension_numbers, indices_are_sorted, unique_indices, mode,
     expand_complex128=False):
+  c = ctx.builder
+  operand_aval, indices_aval, updates_aval = avals_in
   if mode == GatherScatterMode.CLIP:
     indices = _clamp_scatter_indices(
-      c, indices, c.get_shape(operand).dimensions(),
-      c.get_shape(updates).dimensions(), dimension_numbers)
-  dtype = c.get_shape(operand).numpy_dtype()
-  scatter_dims = _scatter_dimensions_proto(c.get_shape(indices),
-                                           dimension_numbers)
+      c, indices, operand_aval.shape, updates_aval.shape, dimension_numbers)
+  dtype = operand_aval.dtype
+  scatter_dims = _scatter_dimensions_proto(
+      indices_aval.shape, dimension_numbers)
 
   def _make_reducer(dtype):
     subc = xc.XlaBuilder("scatter_add_reducer")
@@ -5043,11 +5064,11 @@ def _scatter_add_translation_rule(
     im = xops.Scatter(xops.Imag(operand), indices, xops.Imag(updates),
                       update_computation, scatter_dims, indices_are_sorted,
                       unique_indices)
-    return xops.Complex(re, im)
+    return [xops.Complex(re, im)]
   else:
     update_computation = _make_reducer(dtype)
-    return xops.Scatter(operand, indices, updates, update_computation,
-                        scatter_dims, indices_are_sorted, unique_indices)
+    return [xops.Scatter(operand, indices, updates, update_computation,
+                         scatter_dims, indices_are_sorted, unique_indices)]
 
 def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
                      dimension_numbers, indices_are_sorted, unique_indices,
@@ -5201,8 +5222,9 @@ ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
 
-xla.backend_specific_translations['gpu'][scatter_add_p] = partial(
-    _scatter_add_translation_rule, expand_complex128=True)
+xla.register_translation(scatter_add_p, partial(_scatter_add_translation_rule,
+                                                expand_complex128=True),
+                         platform='gpu')
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
@@ -5507,16 +5529,18 @@ def _reduce_weak_type_rule(*avals, computation, jaxpr, consts, dimensions):
   return [op.weak_type and init_val.weak_type
           for op, init_val in safe_zip(operand_avals, init_val_avals)]
 
-def _reduce_translation_rule(c, *values, computation, jaxpr,
-                             consts, dimensions):
+def _reduce_translation_rule(ctx, avals_in, avals_out, *values, computation,
+                             jaxpr, consts, dimensions):
+  c = ctx.builder
   operands, init_values = split_list(values, [len(values) // 2])
   if len(operands) == 1:
     init_value = init_values[0]
     xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
-    out = xops.Reduce(c, operands, init_values, xla_computation, dimensions)
-    return xops.Tuple(c, (out,))
-  xla_computation = _reduction_computation(c, jaxpr, consts, init_values, singleton=False)
-  return xops.Reduce(c, operands, init_values, xla_computation, dimensions)
+    return [xops.Reduce(c, operands, init_values, xla_computation, dimensions)]
+  xla_computation = _reduction_computation(c, jaxpr, consts, init_values,
+                                           singleton=False)
+  return xla.xla_destructure(
+      c, xops.Reduce(c, operands, init_values, xla_computation, dimensions))
 
 def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
                        consts, dimensions):
@@ -5628,9 +5652,8 @@ def _reduce_named_shape_rule(*avals, computation, jaxpr, consts, dimensions):
   if any(a.named_shape for a in init_avals):
     raise NotImplementedError
   named_shapes = [a.named_shape for a in operand_avals]
-  if not all(named_shapes[0] == named_shape for named_shape in named_shapes):
-    raise NotImplementedError
-  return named_shapes
+  join = core.join_named_shapes(*(a.named_shape for a in operand_avals))
+  return [join] * len(named_shapes)
 
 
 reduce_p = core.Primitive('reduce')
@@ -5640,7 +5663,7 @@ reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule,
             _reduce_named_shape_rule))
-xla.translations[reduce_p] = _reduce_translation_rule
+xla.register_translation(reduce_p, _reduce_translation_rule)
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -5653,13 +5676,13 @@ def _reduce_number_dtype_rule(name, operand, *args, **kw):
 def _reduce_sum_shape_rule(operand, *, axes):
   return _reduce_op_shape_rule(operand, axes=axes)
 
-def _reduce_sum_translation_rule(c, operand, *, axes):
-  shape = c.get_shape(operand)
-  dtype = shape.numpy_dtype()
-  scalar = ShapedArray((), dtype)
-  return xops.Reduce(c, [operand], [xb.constant(c, np.array(0, dtype))],
-                     xla.primitive_subcomputation(add_p, scalar, scalar),
-                     axes)
+def _reduce_sum_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
+  operand_aval, = avals_in
+  scalar = ShapedArray((), operand_aval.dtype)
+  return [xops.Reduce(
+      ctx.builder, [operand],
+      [xb.constant(ctx.builder, np.array(0, operand_aval.dtype))],
+      xla.primitive_subcomputation(add_p, scalar, scalar), axes)]
 
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
@@ -5686,11 +5709,13 @@ def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
     raise ValueError(f"reduction axes {axes} contains out-of-bounds indices for {operand}.")
   return tuple(np.delete(operand.shape, axes))
 
-def _reduce_prod_translation_rule(c, operand, *, axes):
-  dtype = c.get_shape(operand).numpy_dtype()
-  scalar = ShapedArray((), dtype)
-  return xops.Reduce(c, [operand], [xb.constant(c, np.array(1, dtype))],
-                     xla.primitive_subcomputation(mul_p, scalar, scalar), axes)
+def _reduce_prod_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
+  operand_aval, = avals_in
+  scalar = ShapedArray((), operand_aval.dtype)
+  return [xops.Reduce(
+      ctx.builder, [operand],
+      [xb.constant(ctx.builder, np.array(1, operand_aval.dtype))],
+      xla.primitive_subcomputation(mul_p, scalar, scalar), axes)]
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
   reducer = lambda x, y: [mul(x, y)]
@@ -5710,11 +5735,13 @@ _masking_defreducer(reduce_prod_p,
 def _reduce_chooser_shape_rule(operand, *, axes):
   return tuple(np.delete(operand.shape, axes))
 
-def _reduce_chooser_translation_rule(prim, identity, c, operand, *, axes):
-  dtype = c.get_shape(operand).numpy_dtype()
-  scalar = ShapedArray((), dtype)
-  return xops.Reduce(c, [operand], [xb.constant(c, identity(dtype))],
-                     xla.primitive_subcomputation(prim, scalar, scalar), axes)
+def _reduce_chooser_translation_rule(prim, identity, ctx, avals_in, avals_out,
+                                     operand, *, axes):
+  operand_aval, = avals_in
+  scalar = ShapedArray((), operand_aval.dtype)
+  return [xops.Reduce(ctx.builder, [operand],
+                      [xb.constant(ctx.builder, identity(operand_aval.dtype))],
+                      xla.primitive_subcomputation(prim, scalar, scalar), axes)]
 
 def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -5797,29 +5824,33 @@ def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
 
 _argmin_translation_rule = xla.lower_fun(
   partial(_compute_argminmax, lt, _get_min_identity),
-  multiple_results=False)
+  multiple_results=False, new_style=True)
 
 _argmax_translation_rule = xla.lower_fun(
   partial(_compute_argminmax, gt, _get_max_identity),
-  multiple_results=False)
+  multiple_results=False, new_style=True)
 
 argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmin', _argmin_translation_rule,
                               weak_type_rule=_strip_weak_type)
 batching.defreducer(argmin_p)
 ad.defjvp_zero(argmin_p)
-xla.backend_specific_translations['gpu'][argmin_p] = xla.lower_fun(
-  partial(_argminmax_gpu_translation_rule, _reduce_min),
-  multiple_results=False)
+xla.register_translation(
+    argmin_p,
+    xla.lower_fun(partial(_argminmax_gpu_translation_rule, _reduce_min),
+                  multiple_results=False, new_style=True),
+    platform='gpu')
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', _argmax_translation_rule,
                               weak_type_rule=_strip_weak_type)
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
-xla.backend_specific_translations['gpu'][argmax_p] = xla.lower_fun(
-  partial(_argminmax_gpu_translation_rule, _reduce_max),
-  multiple_results=False)
+xla.register_translation(
+    argmax_p,
+    xla.lower_fun(partial(_argminmax_gpu_translation_rule, _reduce_max),
+                  multiple_results=False, new_style=True),
+    platform='gpu')
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
@@ -5828,10 +5859,12 @@ def _reduce_logical_shape_rule(operand, *, axes):
     raise TypeError(msg.format(operand.dtype))
   return tuple(np.delete(operand.shape, axes))
 
-def _reduce_logical_translation_rule(prim, identity, c, operand, *, axes):
+def _reduce_logical_translation_rule(prim, identity, ctx, avals_in, avals_out,
+                                     operand, *, axes):
   scalar = ShapedArray((), np.bool_)
-  return xops.Reduce(c, [operand], [xb.constant(c, identity(np.bool_))],
-                     xla.primitive_subcomputation(prim, scalar, scalar), axes)
+  return [xops.Reduce(ctx.builder, [operand],
+                      [xb.constant(ctx.builder, identity(np.bool_))],
+                      xla.primitive_subcomputation(prim, scalar, scalar), axes)]
 
 _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
                                       or_p, _get_max_identity)
@@ -5863,13 +5896,15 @@ def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
     operand, window_dimensions, window_strides, padding, base_dilation,
     window_dilation)
 
-def _reduce_window_translation_rule(c, operand, init_value, *, jaxpr, consts,
+def _reduce_window_translation_rule(ctx, avals_in, avals_out, operand,
+                                    init_value, *, jaxpr, consts,
                                     window_dimensions, window_strides, padding,
                                     base_dilation, window_dilation):
-  xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
-  return xops.ReduceWindowWithGeneralPadding(
+  xla_computation = _reduction_computation(ctx.builder, jaxpr, consts,
+                                           init_value)
+  return [xops.ReduceWindowWithGeneralPadding(
     operand, init_value, xla_computation, window_dimensions,
-    window_strides, base_dilation, window_dilation, padding)
+    window_strides, base_dilation, window_dilation, padding)]
 
 def _generic_reduce_window_batch_rule(
     batched_args, batch_dims, *, jaxpr, consts, window_dimensions,
@@ -5907,15 +5942,16 @@ def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
                                           window_strides, padding, base_dilation,
                                           window_dilation)
 
-def _reduce_window_sum_translation_rule(c, operand, *, window_dimensions,
-                                        window_strides, padding, base_dilation,
+def _reduce_window_sum_translation_rule(ctx, avals_in, avals_out, operand, *,
+                                        window_dimensions, window_strides,
+                                        padding, base_dilation,
                                         window_dilation):
-  dtype = c.get_shape(operand).numpy_dtype()
-  scalar = ShapedArray((), dtype)
-  return xops.ReduceWindowWithGeneralPadding(
-    operand, xb.constant(c, np.array(0, dtype)),
+  operand_aval, = avals_in
+  scalar = ShapedArray((), operand_aval.dtype)
+  return [xops.ReduceWindowWithGeneralPadding(
+    operand, xb.constant(ctx.builder, np.array(0, operand_aval.dtype)),
     xla.primitive_subcomputation(add_p, scalar, scalar), window_dimensions,
-    window_strides, base_dilation, window_dilation, padding)
+    window_strides, base_dilation, window_dilation, padding)]
 
 def _reduce_window_sum_transpose_rule(cotangent, operand, *, window_dimensions,
                                       window_strides, padding, base_dilation,
@@ -5962,14 +5998,14 @@ batching.primitive_batchers[reduce_window_sum_p] = partial(
   _reduce_window_batch_rule, _reduce_window_sum)
 
 def _reduce_window_chooser_translation_rule(
-    prim, identity, c, operand, *, window_dimensions, window_strides, padding,
-    base_dilation, window_dilation):
-  dtype = c.get_shape(operand).numpy_dtype()
-  scalar = ShapedArray((), dtype)
-  return xops.ReduceWindowWithGeneralPadding(
-    operand, xb.constant(c, identity(dtype)),
+    prim, identity, ctx, avals_in, avals_out, operand, *, window_dimensions,
+    window_strides, padding, base_dilation, window_dilation):
+  operand_aval, = avals_in
+  scalar = ShapedArray((), operand_aval.dtype)
+  return [xops.ReduceWindowWithGeneralPadding(
+    operand, xb.constant(ctx.builder, identity(operand_aval.dtype)),
     xla.primitive_subcomputation(prim, scalar, scalar), window_dimensions,
-    window_strides, base_dilation, window_dilation, padding)
+    window_strides, base_dilation, window_dilation, padding)]
 
 def _reduce_window_chooser_jvp_rule(prim, g, operand, *, window_dimensions,
                                     window_strides, padding, base_dilation,
@@ -6087,13 +6123,15 @@ def _select_and_scatter_shape_rule(
   return operand.shape
 
 def _select_and_scatter_translation(
-  c, operand, source, init_value, *, select_jaxpr, select_consts, scatter_jaxpr,
-  scatter_consts, window_dimensions, window_strides, padding):
+    ctx, avals_in, avals_out, operand, source, init_value, *, select_jaxpr,
+    select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
+    window_strides, padding):
+  c = ctx.builder
   select = _reduction_computation(c, select_jaxpr, select_consts, init_value)
   scatter = _reduction_computation(c, scatter_jaxpr, scatter_consts, init_value)
-  return xops.SelectAndScatterWithGeneralPadding(
+  return [xops.SelectAndScatterWithGeneralPadding(
     operand, select, window_dimensions, window_strides, padding, source,
-    init_value, scatter)
+    init_value, scatter)]
 
 select_and_scatter_p = standard_primitive(
     _select_and_scatter_shape_rule, _input_dtype, 'select_and_scatter',
@@ -6106,10 +6144,11 @@ def _select_and_scatter_add_shape_rule(
   return operand.shape
 
 def _select_and_scatter_add_translation(
-    c, source, operand, *, select_prim, window_dimensions, window_strides,
-    padding, expand_padding):
-  shape = c.get_shape(operand)
-  dtype = shape.numpy_dtype()
+    ctx, avals_in, avals_out, source, operand, *, select_prim,
+    window_dimensions, window_strides, padding, expand_padding):
+  source_aval, operand_aval = avals_in
+  c = ctx.builder
+  dtype = operand_aval.dtype
   scalar = ShapedArray((), dtype)
   select = xla.primitive_subcomputation(select_prim, scalar, scalar)
   scatter = xla.primitive_subcomputation(or_p if dtype == np.bool_ else add_p,
@@ -6132,10 +6171,10 @@ def _select_and_scatter_add_translation(
   if expand_padding:
     start_indices = [lo for (lo, hi) in original_padding]
     stop_indices = [lo + d for ((lo, hi), d) in zip(original_padding,
-                                                    shape.dimensions())]
+                                                    operand_aval.shape)]
     output = xops.Slice(output, start_indices, stop_indices,
                         [1] * len(start_indices))
-  return output
+  return [output]
 
 def _select_and_scatter_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
@@ -6193,11 +6232,15 @@ batching.primitive_batchers[select_and_scatter_add_p] = \
     _select_and_scatter_add_batch_rule
 
 # TODO(b/161704903): workaround for XLA/CPU crash.
-xla.backend_specific_translations['cpu'][select_and_scatter_add_p] = partial(
-    _select_and_scatter_add_translation, expand_padding=True)
+xla.register_translation(
+    select_and_scatter_add_p,
+    partial(_select_and_scatter_add_translation, expand_padding=True),
+    platform='cpu')
 # TODO(b/182390722): workaround for XLA/GPU crash.
-xla.backend_specific_translations['gpu'][select_and_scatter_add_p] = partial(
-    _select_and_scatter_add_translation, expand_padding=True)
+xla.register_translation(
+    select_and_scatter_add_p,
+    partial(_select_and_scatter_add_translation, expand_padding=True),
+    platform='gpu')
 
 def _select_and_gather_add_shape_rule(
     tangents, operand, *, select_prim, window_dimensions, window_strides,
@@ -6223,11 +6266,13 @@ _INT_DTYPES = {
 }
 
 def _select_and_gather_add_translation(
-    c, tangents, operand, *, select_prim, window_dimensions, window_strides,
-    padding, base_dilation, window_dilation, max_bits=64):
-  shape = c.get_shape(operand)
-  dtype = shape.numpy_dtype()
-  etype = shape.xla_element_type()
+    ctx, avals_in, avals_out, tangents, operand, *, select_prim,
+    window_dimensions, window_strides, padding, base_dilation, window_dilation,
+    max_bits=64):
+  c = ctx.builder
+  tangents_aval, operand_aval, = avals_in
+  dtype = operand_aval.dtype
+  etype = xla_client.dtype_to_etype(dtype)
   nbits = dtypes.finfo(dtype).bits
 
   assert nbits <= max_bits
@@ -6317,14 +6362,15 @@ def _select_and_gather_add_translation(
     pack(operand, tangents), pack(const(c, dtype, init), const(c, dtype, 0)),
     reducer(), window_dimensions, window_strides, base_dilation,
     window_dilation, padding)
-  return snd(out)
+  return [snd(out)]
 
 # TODO(phawkins): use this translation rule on all platforms.
 def _select_and_gather_add_translation_using_variadic_reducewindow(
-    c, tangents, operand, *, select_prim, window_dimensions, window_strides,
-    padding, base_dilation, window_dilation):
-  shape = c.get_shape(operand)
-  dtype = shape.numpy_dtype()
+    ctx, avals_in, avals_out, tangents, operand, *, select_prim,
+    window_dimensions, window_strides, padding, base_dilation, window_dilation):
+  c = ctx.builder
+  tangents_aval, operand_aval = avals_in
+  dtype = operand_aval.dtype
 
   const = lambda c, dtype, x: xb.constant(c, np.array(x, dtype=dtype),
                                           canonicalize_types=False)
@@ -6343,7 +6389,7 @@ def _select_and_gather_add_translation_using_variadic_reducewindow(
     [operand, tangents], [const(c, dtype, init), const(c, dtype, 0)],
     reducer(), window_dimensions, window_strides, base_dilation,
     window_dilation, padding)
-  return xops.GetTupleElement(out, 1)
+  return [xops.GetTupleElement(out, 1)]
 
 def _select_and_gather_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
@@ -6408,17 +6454,17 @@ def _select_and_gather_add_batching_rule(
 
 select_and_gather_add_p = standard_primitive(
     _select_and_gather_add_shape_rule, _input_dtype, 'select_and_gather_add',
-    _select_and_gather_add_translation)
+    _select_and_gather_add_translation_using_variadic_reducewindow)
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
   _select_and_gather_add_transpose
 batching.primitive_batchers[select_and_gather_add_p] = \
   _select_and_gather_add_batching_rule
 # TODO(b/183233858): use variadic reducewindow on GPU, when implemented.
-xla.backend_specific_translations['cpu'][select_and_gather_add_p] = \
-  _select_and_gather_add_translation_using_variadic_reducewindow
-xla.backend_specific_translations['tpu'][select_and_gather_add_p] = \
-  _select_and_gather_add_translation_using_variadic_reducewindow
+xla.register_translation(
+    select_and_gather_add_p,
+    _select_and_gather_add_translation,
+    platform='gpu')
 
 
 def _sort_abstract_eval(*args, **kwargs):
@@ -6485,7 +6531,9 @@ def _sort_lt_comparator(*operands, num_keys=1):
   return p
 
 
-def _sort_translation_rule(c, *operands, dimension, is_stable, num_keys):
+def _sort_translation_rule(ctx, avals_in, avals_out, *operands, dimension,
+                           is_stable, num_keys):
+  c = ctx.builder
   types = [c.get_shape(x).xla_element_type() for x in operands]
   subc = xc.XlaBuilder("sort_lt_comparator")
   params = [xb.parameter(subc, 2 * i + j, xc.Shape.array_shape(typ, ()))
@@ -6495,7 +6543,7 @@ def _sort_translation_rule(c, *operands, dimension, is_stable, num_keys):
   comparator = subc.build(result)
   out = xops.Sort(c, operands, dimension=dimension, is_stable=is_stable,
                   comparator=comparator)
-  return out if len(operands) != 1 else xops.Tuple(c, [out])
+  return xla.xla_destructure(c, out) if len(operands) != 1 else [out]
 
 def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   shape = primals[0].shape
@@ -6530,7 +6578,7 @@ sort_p = Primitive('sort')
 sort_p.multiple_results = True
 sort_p.def_impl(partial(xla.apply_primitive, sort_p))
 sort_p.def_abstract_eval(_sort_abstract_eval)
-xla.translations[sort_p] = _sort_translation_rule
+xla.register_translation(sort_p, _sort_translation_rule)
 ad.primitive_jvps[sort_p] = _sort_jvp
 batching.primitive_batchers[sort_p] = _sort_batch_rule
 
@@ -6588,11 +6636,14 @@ def _top_k_batch_rule(batched_args, batch_dims, *, k):
   else:
     return top_k(operand, k=k), (bdim, bdim)
 
+def _top_k_translation_rule(ctx, avals_in, avals_out, x, *, k):
+  return xla.xla_destructure(ctx.builder, xops.TopK(x, k))
+
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(xla.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
-xla.translations[top_k_p] = partial(standard_translate, 'top_k')
+xla.register_translation(top_k_p, _top_k_translation_rule)
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
@@ -6622,7 +6673,8 @@ def create_token(_=None):
 create_token_p = Primitive("create_token")
 create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
 create_token_p.def_abstract_eval(lambda *_: abstract_token)
-xla.translations[create_token_p] = lambda c, *_: xops.CreateToken(c)
+xla.register_translation(create_token_p,
+                         lambda ctx, *_: [xops.CreateToken(ctx.builder)])
 
 def after_all(*operands):
   """Merges one or more XLA token values. Experimental.
@@ -6636,13 +6688,13 @@ def _after_all_abstract_eval(*operands):
   return abstract_token
 
 
-def _after_all_translation_rule(c, *operands):
-  return xops.AfterAll(c, operands)
+def _after_all_translation_rule(ctx, avals_in, avals_out, *operands):
+  return [xops.AfterAll(ctx.builder, operands)]
 
 after_all_p = Primitive("after_all")
 after_all_p.def_impl(partial(xla.apply_primitive, after_all_p))
 after_all_p.def_abstract_eval(_after_all_abstract_eval)
-xla.translations[after_all_p] = _after_all_translation_rule
+xla.register_translation(after_all_p, _after_all_translation_rule)
 
 
 def infeed(token, shape=None, partitions=None):
@@ -6673,7 +6725,9 @@ def _infeed_abstract_eval(token, *, shapes, partitions):
   return shapes + (abstract_token,)
 
 
-def _infeed_translation_rule(c, token, *, shapes, partitions):
+def _infeed_translation_rule(ctx, avals_in, avals_out, token, *, shapes,
+                             partitions):
+  c = ctx.builder
   shape = tuple(shape.with_major_to_minor_layout_if_absent()
                 for x in shapes for shape in xla.aval_to_xla_shapes(x))
   build_infeed = partial(xops.InfeedWithToken, token,
@@ -6686,14 +6740,13 @@ def _infeed_translation_rule(c, token, *, shapes, partitions):
     xs_and_token = build_infeed()
   xs = xops.GetTupleElement(xs_and_token, 0)
   token = xops.GetTupleElement(xs_and_token, 1)
-  outs = [xops.GetTupleElement(xs, i) for i in range(len(shapes))] + [token]
-  return xops.Tuple(c, outs)
+  return [xops.GetTupleElement(xs, i) for i in range(len(shapes))] + [token]
 
 infeed_p = Primitive("infeed")
 infeed_p.multiple_results = True
 infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
 infeed_p.def_abstract_eval(_infeed_abstract_eval)
-xla.translations[infeed_p] = _infeed_translation_rule
+xla.register_translation(infeed_p, _infeed_translation_rule)
 
 def outfeed(token, xs, partitions = None):
   """Outfeeds value `xs` to the host. Experimental.
@@ -6714,18 +6767,19 @@ def _outfeed_abstract_eval(token, *xs, partitions):
     raise TypeError("First argument to outfeed must be a token")
   return abstract_token
 
-def _outfeed_translation_rule(c, token, *xs, partitions):
+def _outfeed_translation_rule(ctx, avals_in, avals_out, token, *xs, partitions):
+  c = ctx.builder
   t = xops.Tuple(c, xs)
   if partitions is not None:
-    return xb.with_sharding(c, partitions, xops.OutfeedWithToken,
-                            t, token, c.get_shape(t))
+    return [xb.with_sharding(c, partitions, xops.OutfeedWithToken,
+                             t, token, c.get_shape(t))]
   else:
-    return xops.OutfeedWithToken(t, token, c.get_shape(t))
+    return [xops.OutfeedWithToken(t, token, c.get_shape(t))]
 
 outfeed_p = Primitive("outfeed")
 outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
 outfeed_p.def_abstract_eval(_outfeed_abstract_eval)
-xla.translations[outfeed_p] = _outfeed_translation_rule
+xla.register_translation(outfeed_p, _outfeed_translation_rule)
 
 def rng_uniform(a, b, shape):
   """Stateful PRNG generator. Experimental and its use is discouraged.
@@ -6751,14 +6805,15 @@ def _rng_uniform_abstract_eval(a, b, *, shape):
   return a.update(shape=shape, dtype=a.dtype,
                   weak_type=(a.weak_type and b.weak_type))
 
-def _rng_uniform_translation_rule(c, a, b, *, shape):
+def _rng_uniform_translation_rule(ctx, avals_in, avals_out, a, b, *, shape):
+  c = ctx.builder
   xla_shape = xc.Shape.array_shape(c.get_shape(a).xla_element_type(), shape)
-  return xops.RngUniform(a, b, xla_shape)
+  return [xops.RngUniform(a, b, xla_shape)]
 
 rng_uniform_p = Primitive("rng_uniform")
 rng_uniform_p.def_impl(partial(xla.apply_primitive, rng_uniform_p))
 rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
-xla.translations[rng_uniform_p] = _rng_uniform_translation_rule
+xla.register_translation(rng_uniform_p, _rng_uniform_translation_rule)
 
 
 def _rng_bit_generator_shape_rule(key, *, shape, dtype, algorithm):
@@ -6773,7 +6828,10 @@ def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
   del shape, dtype, algorithm
   return (key.weak_type, False)
 
-def _rng_bit_generator_translation_rule(backend_is_gpu, c, key, *, shape, dtype, algorithm):
+def _rng_bit_generator_translation_rule(
+    ctx, avals_in, avals_out, key, *, shape, dtype, algorithm):
+  c = ctx.builder
+  backend_is_gpu = ctx.platform == "gpu"
   key_shape, key_dtype = c.get_shape(key).dimensions(), c.get_shape(key).numpy_dtype()
   # While the RngBitGenerator HLO accepts a u64[2] key on all backends, we
   # typically represent the key argument to this primitive as a u32[4] so as to
@@ -6799,7 +6857,7 @@ def _rng_bit_generator_translation_rule(backend_is_gpu, c, key, *, shape, dtype,
       out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
     else:
       out_key = _convert_2xU64_to_4xU32_without_bitcast(c, out_key)
-  return xops.Tuple(c, [out_key, out_vals])
+  return [out_key, out_vals]
 
 def _convert_4xU32_to_2xU64_without_bitcast(c, key):
   u64_etype = xc.dtype_to_etype(dtypes.dtype('uint64'))
@@ -6837,10 +6895,8 @@ rng_bit_generator_p.def_abstract_eval(
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule,
             _rng_bit_generator_named_shape_rule))
-xla.translations[rng_bit_generator_p] = \
-    partial(_rng_bit_generator_translation_rule, False)
-xla.backend_specific_translations['gpu'][rng_bit_generator_p] = \
-    partial(_rng_bit_generator_translation_rule, True)
+xla.register_translation(rng_bit_generator_p,
+                         _rng_bit_generator_translation_rule)
 
 RandomAlgorithm = xops.RandomAlgorithm
 RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
@@ -6879,15 +6935,16 @@ def _iota_abstract_eval(*, dtype, shape, dimension):
                      f"dimension={dimension} for shape {shape}")
   return ShapedArray(shape, dtype)
 
-def _iota_translation_rule(c, dtype, shape, dimension):
+def _iota_translation_rule(ctx, avals_in, avals_out, *, dtype, shape,
+                           dimension):
   etype = xla_client.dtype_to_etype(dtype)
   xla_shape = xc.Shape.array_shape(etype, shape)
-  return xops.Iota(c, xla_shape, dimension)
+  return [xops.Iota(ctx.builder, xla_shape, dimension)]
 
 iota_p = Primitive('iota')
 iota_p.def_impl(partial(xla.apply_primitive, iota_p))
 iota_p.def_abstract_eval(_iota_abstract_eval)
-xla.translations[iota_p] = _iota_translation_rule
+xla.register_translation(iota_p, _iota_translation_rule)
 
 
 ### util

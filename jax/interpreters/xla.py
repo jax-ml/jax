@@ -14,6 +14,7 @@
 
 
 from collections import defaultdict, deque
+import collections.abc
 import dataclasses
 import functools
 from functools import partial, partialmethod
@@ -442,7 +443,8 @@ def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
       ans = rule(ctx, map(aval, eqn.invars), map(aval, eqn.outvars),
                  *in_nodes, **eqn.params)
 
-    assert all(isinstance(x, xe.XlaOp) for x in ans), ans
+    assert isinstance(ans, collections.abc.Sequence), (ans, eqn)
+    assert all(isinstance(x, xe.XlaOp) for x in ans), (ans, eqn)
     map(ctx.builder.get_shape, ans)  # force xla to do shape error checking
     ctx.builder.clear_op_metadata()
     _partitionmap(write, eqn.outvars, ans)
@@ -1178,7 +1180,12 @@ def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
       wrapped_fun = lu.wrap_init(fun, params)
       if not multiple_results:
         wrapped_fun = _tuple_output(wrapped_fun)
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals_in)
+      if parallel:
+        axis_env = ctx.axis_env
+      else:
+        axis_env = AxisEnv(1, (), ())
+      with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
+        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals_in)
       return jaxpr_subcomp(ctx, jaxpr, _xla_consts(ctx.builder, consts),
                            *xla_args)
     return f_new

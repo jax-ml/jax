@@ -277,7 +277,6 @@ from jax._src.lax.lax import (
   standard_abstract_eval as standard_abstract_eval,
   standard_naryop as standard_naryop,
   standard_primitive as standard_primitive,
-  standard_translate as standard_translate,
   standard_unop as standard_unop,
   stop_gradient as stop_gradient,
   sub as sub,

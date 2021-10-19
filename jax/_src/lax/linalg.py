@@ -663,7 +663,8 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
                             unit_diagonal=unit_diagonal), 0
 
 def _triangular_solve_translation_rule(
-    c, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+    ctx, avals_in, avals_out, a, b, *, left_side, lower, transpose_a,
+    conjugate_a, unit_diagonal):
   if conjugate_a and not transpose_a:
     a = xops.Conj(a)
     conjugate_a = False
@@ -672,7 +673,8 @@ def _triangular_solve_translation_rule(
   else:
     transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
                  else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
-  return xops.TriangularSolve(a, b, left_side, lower, unit_diagonal, transpose)
+  return [
+      xops.TriangularSolve(a, b, left_side, lower, unit_diagonal, transpose)]
 
 triangular_solve_p = standard_primitive(
     triangular_solve_shape_rule, triangular_solve_dtype_rule,

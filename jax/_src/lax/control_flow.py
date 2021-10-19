@@ -2713,7 +2713,7 @@ def _cumulative_reduction_primitive(name,
     name,
     translation_rule=xla.lower_fun(
       partial(associative_scan, reduce_fn),
-      multiple_results=False))
+      multiple_results=False, new_style=True))
   xla.backend_specific_translations['tpu'][reducer_p] = xla.lower_fun(
     partial(_cumred_tpu_translation_rule, tpu_reduce_window_fn),
     multiple_results=False)
