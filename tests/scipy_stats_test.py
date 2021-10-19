@@ -528,13 +528,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(3,), (3,), ()],
           [(3,), (3,), (3, 3)],
           [(3, 4), (4,), (4, 4)],
-
-          # # These test cases are where scipy flattens things, which has
-          # # different batch semantics than some might expect
-          # [(5, 3, 2), (5, 3, 2,), ()],
-          # [(5, 3, 2), (5, 3, 2,), (5, 3, 2, 2)],
-          # [(5, 3, 2), (3, 2,), (5, 3, 2, 2)],
-          # [(5, 3, 2), (3, 2,), (2, 2)],
+          [(2, 3, 4), (4,), (4, 4)],
       ]
       for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
       if (mean_shape is not None or mean_dtype == np.float32)
@@ -560,6 +554,56 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             args_maker, tol=1e-3)
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_x={}_mean={}_cov={}".format(
+          jtu.format_shape_dtype_string(x_shape, x_dtype),
+          jtu.format_shape_dtype_string(mean_shape, mean_dtype)
+          if mean_shape is not None else None,
+          jtu.format_shape_dtype_string(cov_shape, cov_dtype)
+          if cov_shape is not None else None),
+       "x_shape": x_shape, "x_dtype": x_dtype,
+       "mean_shape": mean_shape, "mean_dtype": mean_dtype,
+       "cov_shape": cov_shape, "cov_dtype": cov_dtype}
+      for x_shape, mean_shape, cov_shape in [
+          # These test cases are where scipy flattens things, which has
+          # different batch semantics than some might expect, so we manually
+          # vectorize scipy's outputs for the sake of testing.
+          [(5, 3, 2), (5, 3, 2), (5, 3, 2, 2)],
+          [(2,), (5, 3, 2), (5, 3, 2, 2)],
+          [(5, 3, 2), (2,), (5, 3, 2, 2)],
+          [(5, 3, 2), (5, 3, 2,), (2, 2)],
+          [(1, 3, 2), (3, 2,), (5, 1, 2, 2)],
+          [(5, 3, 2), (1, 2,), (2, 2)],
+      ]
+      for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
+      if (mean_shape is not None or mean_dtype == np.float32)
+      and (cov_shape is not None or cov_dtype == np.float32)))
+  def testMultivariateNormalLogpdfBroadcasted(self, x_shape, x_dtype, mean_shape,
+                                              mean_dtype, cov_shape, cov_dtype):
+    rng = jtu.rand_default(self.rng())
+    def args_maker():
+      args = [rng(x_shape, x_dtype)]
+      if mean_shape is not None:
+        args.append(5 * rng(mean_shape, mean_dtype))
+      if cov_shape is not None:
+        if cov_shape == ():
+          args.append(0.1 + rng(cov_shape, cov_dtype) ** 2)
+        else:
+          factor_shape = (*cov_shape[:-1], 2 * cov_shape[-1])
+          factor = rng(factor_shape, cov_dtype)
+          args.append(np.matmul(factor, np.swapaxes(factor, -1, -2)))
+      return args
+
+    osp_fun = np.vectorize(osp_stats.multivariate_normal.logpdf,
+                           signature="(n),(n),(n,n)->()")
+
+    self._CheckAgainstNumpy(osp_fun, lsp_stats.multivariate_normal.logpdf,
+                            args_maker, tol=1e-3)
+    self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
+                          rtol=1e-4, atol=1e-4)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_ndim={}_nbatch={}_dtype={}".format(ndim, nbatch, dtype.__name__),
