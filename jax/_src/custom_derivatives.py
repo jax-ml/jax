@@ -696,7 +696,7 @@ xla.register_translation(
     initial_style=True)
 
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
-xla.translations[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
+xla.register_translation(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 
 pe.partial_eval_jaxpr_custom_rules[custom_vjp_call_jaxpr_p] = \
     custom_jvp_jaxpr_custom_partial_eval_rule  # type: ignore

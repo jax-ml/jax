@@ -350,25 +350,33 @@ def _nan_like(c, operand):
     nan = xops.Constant(c, np.array(np.nan, dtype=dtype))
   return xops.Broadcast(nan, shape.dimensions())
 
-def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
+def _cholesky_cpu_gpu_translation_rule(potrf_impl, ctx, avals_in, avals_out,
+                                       operand):
+  operand_aval, = avals_in
+  c = ctx.builder
+  batch_dims = operand_aval.shape[:-2]
   result, info = potrf_impl(c, operand, lower=True)
-  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
-  return _broadcasting_select(c,
-                              xops.Reshape(ok, batch_dims + (1, 1)), result,
-                              _nan_like(c, result))
+  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
+  return [_broadcasting_select(c,
+                               xops.Reshape(ok, batch_dims + (1, 1)), result,
+                               _nan_like(c, result))]
 
-xla.backend_specific_translations['cpu'][cholesky_p] = partial(
-  _cholesky_cpu_gpu_translation_rule, lapack.potrf)
+xla.register_translation(
+    cholesky_p,
+    partial(_cholesky_cpu_gpu_translation_rule, lapack.potrf),
+    platform='cpu')
 
 if cusolver is not None:
-  xla.backend_specific_translations['gpu'][cholesky_p] = partial(
-    _cholesky_cpu_gpu_translation_rule, cusolver.potrf)
+  xla.register_translation(
+    cholesky_p,
+    partial(_cholesky_cpu_gpu_translation_rule, cusolver.potrf),
+    platform='gpu')
 
 if rocsolver is not None:
-  xla.backend_specific_translations['gpu'][cholesky_p] = partial(
-    _cholesky_cpu_gpu_translation_rule, rocsolver.potrf)
+  xla.register_translation(
+    cholesky_p,
+    partial(_cholesky_cpu_gpu_translation_rule, rocsolver.potrf),
+    platform='gpu')
 
 # Asymmetric eigendecomposition
 
@@ -409,15 +417,17 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
 
 _cpu_geev = lapack.geev
 
-def eig_cpu_translation_rule(c, operand, *, compute_left_eigenvectors,
-                             compute_right_eigenvectors):
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
+def _eig_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
+                              compute_left_eigenvectors,
+                              compute_right_eigenvectors):
+  operand_aval, = avals_in
+  batch_dims = operand_aval.shape[:-2]
+  c = ctx.builder
 
   w, vl, vr, info = _cpu_geev(c, operand, jobvl=compute_left_eigenvectors,
                               jobvr=compute_right_eigenvectors)
 
-  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
   output = [w]
@@ -432,7 +442,7 @@ def eig_cpu_translation_rule(c, operand, *, compute_left_eigenvectors,
                               _nan_like(c, vr))
     output.append(vr)
 
-  return xops.Tuple(c, output)
+  return output
 
 def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
                       compute_right_eigenvectors):
@@ -462,8 +472,8 @@ eig_p = Primitive('eig')
 eig_p.multiple_results = True
 eig_p.def_impl(eig_impl)
 eig_p.def_abstract_eval(eig_abstract_eval)
-xla.translations[eig_p] = eig_translation_rule
-xla.backend_specific_translations['cpu'][eig_p] = eig_cpu_translation_rule
+xla.register_translation(eig_p, eig_translation_rule)
+xla.register_translation(eig_p, _eig_cpu_translation_rule, platform='cpu')
 batching.primitive_batchers[eig_p] = eig_batching_rule
 ad.primitive_jvps[eig_p] = eig_jvp_rule
 
@@ -474,12 +484,11 @@ def eigh_impl(operand, lower):
   v, w = xla.apply_primitive(eigh_p, operand, lower=lower)
   return v, w
 
-def eigh_translation_rule(c, operand, lower):
-  shape = c.get_shape(operand)
-  dims = shape.dimensions()
-  if dims[-1] == 0:
-    return xops.Tuple(c, [operand, xops.Real(xops.Reshape(operand, dims[:-1]))])
-  return xops.Tuple(c, xops.Eigh(operand, lower=lower))
+def _eigh_translation_rule(ctx, avals_in, avals_out, operand, *, lower):
+  operand_aval, = avals_in
+  if operand_aval.shape[-1] == 0:
+    return [operand, xops.Real(xops.Reshape(operand, operand_aval.shape[:-1]))]
+  return xops.Eigh(operand, lower=lower)
 
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
@@ -497,16 +506,18 @@ def eigh_abstract_eval(operand, lower):
     v, w = operand, operand
   return v, w
 
-def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
+def _eigh_cpu_gpu_translation_rule(syevd_impl, ctx, avals_in, avals_out,
+                                   operand, *, lower):
+  operand_aval, = avals_in
+  batch_dims = operand_aval.shape[:-2]
+  c = ctx.builder
   v, w, info = syevd_impl(c, operand, lower=lower)
-  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
   v = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), v,
                            _nan_like(c, v))
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
-  return xops.Tuple(c, [v, w])
+  return [v, w]
 
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
@@ -545,22 +556,25 @@ eigh_p = Primitive('eigh')
 eigh_p.multiple_results = True
 eigh_p.def_impl(eigh_impl)
 eigh_p.def_abstract_eval(eigh_abstract_eval)
-xla.translations[eigh_p] = eigh_translation_rule
+xla.register_translation(eigh_p, _eigh_translation_rule)
 ad.primitive_jvps[eigh_p] = eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = eigh_batching_rule
 
 _cpu_syevd = lapack.syevd
 
-xla.backend_specific_translations['cpu'][eigh_p] = partial(
-  _eigh_cpu_gpu_translation_rule, _cpu_syevd)
+xla.register_translation(
+    eigh_p, partial(_eigh_cpu_gpu_translation_rule, _cpu_syevd),
+    platform='cpu')
 
 if cusolver is not None:
-  xla.backend_specific_translations['gpu'][eigh_p] = partial(
-    _eigh_cpu_gpu_translation_rule, cusolver.syevd)
+  xla.register_translation(
+    eigh_p, partial(_eigh_cpu_gpu_translation_rule, cusolver.syevd),
+    platform='gpu')
 
 if rocsolver is not None:
-  xla.backend_specific_translations['gpu'][eigh_p] = partial(
-    _eigh_cpu_gpu_translation_rule, rocsolver.syevd)
+  xla.register_translation(
+    eigh_p, partial(_eigh_cpu_gpu_translation_rule, rocsolver.syevd),
+    platform='gpu')
 
 
 triangular_solve_dtype_rule = partial(
@@ -686,17 +700,18 @@ batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
 
 
 def _triangular_solve_cpu_translation_rule(
-    c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
-  shape = c.get_shape(a)
-  dtype = shape.element_type().type
+    ctx, avals_in, avals_out, a, b, *, left_side, lower, transpose_a,
+    conjugate_a, unit_diagonal):
+  a_aval, _ = avals_in
+  c = ctx.builder
 
   if conjugate_a and not transpose_a:
     a = xops.Conj(a)
     conjugate_a = False
-  if len(shape.dimensions()) == 2 and np.dtype(dtype) in _cpu_lapack_types:
-    return lapack.jax_trsm(
-      c, xops.Constant(c, np.array(1, dtype=dtype)),
-      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
+  if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
+    return [lapack.jax_trsm(
+      c, xops.Constant(c, np.array(1, dtype=a_aval.dtype)),
+      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
@@ -705,24 +720,26 @@ def _triangular_solve_cpu_translation_rule(
     else:
       transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
                    else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
-    return xops.TriangularSolve(a, b, left_side, lower, unit_diagonal, transpose)
+    return [xops.TriangularSolve(a, b, left_side, lower, unit_diagonal,
+                                 transpose)]
 
-xla.backend_specific_translations['cpu'][triangular_solve_p] = \
-  _triangular_solve_cpu_translation_rule
+xla.register_translation(triangular_solve_p,
+                         _triangular_solve_cpu_translation_rule,
+                         platform='cpu')
 
-def _triangular_solve_gpu_translation_rule(trsm_impl,
-    c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
-  shape = c.get_shape(a)
-  dims = shape.dimensions()
-  m, n = dims[-2:]
-  batch = prod(dims[:-2])
+def _triangular_solve_gpu_translation_rule(
+    trsm_impl, ctx, avals_in, avals_out, a, b, *, left_side, lower, transpose_a,
+    conjugate_a, unit_diagonal):
+  c = ctx.builder
+  a_aval, _ = avals_in
+  m, n = a_aval.shape[-2:]
+  batch = prod(a_aval.shape[:-2])
   if conjugate_a and not transpose_a:
     a = xops.Conj(a)
     conjugate_a = False
   if batch > 1 and m <= 256 and n <= 256:
-    return trsm_impl(
-      c, a, b, left_side, lower, transpose_a,
-      conjugate_a, unit_diagonal)
+    return [trsm_impl(c, a, b, left_side, lower, transpose_a,
+                      conjugate_a, unit_diagonal)]
   else:
     # Use the XLA implementation for unbatched triangular_solve.
     if not transpose_a:
@@ -730,16 +747,20 @@ def _triangular_solve_gpu_translation_rule(trsm_impl,
     else:
       transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
                    else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
-    return xops.TriangularSolve(a, b, left_side, lower, unit_diagonal,
-                                transpose)
+    return [xops.TriangularSolve(a, b, left_side, lower, unit_diagonal,
+                                 transpose)]
 
 if cusolver is not None:
-  xla.backend_specific_translations['gpu'][triangular_solve_p] = \
-      partial(_triangular_solve_gpu_translation_rule, cusolver.trsm)
+  xla.register_translation(
+      triangular_solve_p,
+      partial(_triangular_solve_gpu_translation_rule, cusolver.trsm),
+      platform='gpu')
 
 if rocsolver is not None:
-  xla.backend_specific_translations['gpu'][triangular_solve_p] = \
-      partial(_triangular_solve_gpu_translation_rule, rocsolver.trsm)
+  xla.register_translation(
+    triangular_solve_p,
+    partial(_triangular_solve_gpu_translation_rule, rocsolver.trsm),
+    platform='gpu')
 
 # Support operation for LU decomposition: Transformation of the pivots returned
 # by LU decomposition into permutations.
@@ -757,8 +778,7 @@ def _lu_pivots_body_fn(i, permutation_and_swaps):
   return permutation.at[iotas + (j,)].set(x), swaps
 
 
-@partial(api.jit, static_argnums=(1,))
-def _generic_lu_pivots_to_permutation(swaps, m):
+def _generic_lu_pivots_to_permutation(swaps, permutation_size):
   """Converts the pivots (row swaps) returned by LU to a permutation.
 
   We build a permutation rather than applying `swaps` directly to the rows
@@ -766,13 +786,14 @@ def _generic_lu_pivots_to_permutation(swaps, m):
 
   Args:
     swaps: an array of shape (..., k) of row swaps to perform
-    m: the size of the output permutation. m should be >= k.
+    permutation_size: the size of the output permutation. Should be >= k.
   Returns:
     An int32 array of shape (..., m).
   """
   assert len(swaps.shape) >= 1
   batch_dims = swaps.shape[:-1]
   k = swaps.shape[-1]
+  m = permutation_size
 
   permutation = lax.broadcasted_iota(jnp.int32, batch_dims + (m,),
                                      len(batch_dims))
@@ -812,13 +833,10 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
   return lu_pivots_to_permutation_p.bind(
       x, permutation_size=permutation_size), 0
 
-
-def _lu_pivots_to_permutation_translation_rule(c, pivots, *, permutation_size):
-  lowered_fun = xla.lower_fun(
-      lambda x: _generic_lu_pivots_to_permutation(x, permutation_size),
-      multiple_results=False)
-  return lowered_fun(c, pivots)
-
+def _lu_pivots_to_permutation_gpu(ctx, avals_in, avals_out, pivots, *,
+                                  permutation_size):
+  return [cuda_linalg.lu_pivots_to_permutation(
+      ctx.builder, pivots, permutation_size=permutation_size)]
 
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
 lu_pivots_to_permutation_p.multiple_results = False
@@ -828,12 +846,15 @@ lu_pivots_to_permutation_p.def_abstract_eval(
     _lu_pivots_to_permutation_abstract_eval)
 batching.primitive_batchers[lu_pivots_to_permutation_p] = (
     _lu_pivots_to_permutation_batching_rule)
-xla.translations[lu_pivots_to_permutation_p] = (
-    _lu_pivots_to_permutation_translation_rule)
+xla.register_translation(
+    lu_pivots_to_permutation_p,
+    xla.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False,
+                  new_style=True))
 
 if cuda_linalg:
-  xla.backend_specific_translations['gpu'][lu_pivots_to_permutation_p] = (
-      cuda_linalg.lu_pivots_to_permutation)
+  xla.register_translation(lu_pivots_to_permutation_p,
+                           _lu_pivots_to_permutation_gpu,
+                           platform='gpu')
 
 # LU decomposition
 
@@ -988,49 +1009,50 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
-def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand, backend):
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
-  m = shape.dimensions()[-2]
+def _lu_cpu_gpu_translation_rule(getrf_impl, ctx, avals_in, avals_out, operand):
+  operand_aval, = avals_in
+  c = ctx.builder
+  batch_dims = operand_aval.shape[:-2]
+  m = operand_aval.shape[-2]
   lu, pivot, info = getrf_impl(c, operand)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = xops.Sub(pivot, xops.ConstantLiteral(c, np.array(1, np.int32)))
-  ok = xops.Ge(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  pivot = xops.Sub(pivot, xops.Constant(c, np.array(1, np.int32)))
+  ok = xops.Ge(info, xops.Constant(c, np.array(0, np.int32)))
   lu = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), lu,
                             _nan_like(c, lu))
   perm = xla.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
-                       multiple_results=False, backend=backend)(c, pivot)
-  return xops.Tuple(c, [lu, pivot, perm])
+                       multiple_results=False, backend=ctx.platform)(c, pivot)
+  return [lu, pivot, perm]
 
 
-def _lu_tpu_translation_rule(c, operand):
-  if hasattr(xops, "LU"):
-    lu, pivot, perm = xops.LU(operand)
-    return xops.Tuple(c, [lu, pivot, perm])
-  else:
-    return xla.lower_fun(_lu_python, multiple_results=True)(c, operand)
+def _lu_tpu_translation_rule(ctx, avals_in, avals_out, operand):
+  return xops.LU(operand)
 
 
 lu_p = Primitive('lu')
 lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
-xla.translations[lu_p] = xla.lower_fun(_lu_python, multiple_results=True)
+xla.register_translation(lu_p, xla.lower_fun(_lu_python, multiple_results=True,
+                                             new_style=True))
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-xla.backend_specific_translations['cpu'][lu_p] = partial(
-  _lu_cpu_gpu_translation_rule, lapack.getrf, backend='cpu')
+xla.register_translation(lu_p,
+                         partial(_lu_cpu_gpu_translation_rule, lapack.getrf),
+                         platform='cpu')
 
 if cusolver is not None:
-  xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, cusolver.getrf, backend='gpu')
+  xla.register_translation(
+      lu_p, partial(_lu_cpu_gpu_translation_rule, cusolver.getrf),
+      platform='gpu')
 
 if rocsolver is not None:
-  xla.backend_specific_translations['gpu'][lu_p] = partial(
-    _lu_cpu_gpu_translation_rule, rocsolver.getrf, backend='gpu')
+  xla.register_translation(
+      lu_p, partial(_lu_cpu_gpu_translation_rule, rocsolver.getrf),
+      platform='gpu')
 
-xla.backend_specific_translations['tpu'][lu_p] = _lu_tpu_translation_rule
+xla.register_translation(lu_p, _lu_tpu_translation_rule, platform='tpu')
 
 
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
@@ -1094,8 +1116,8 @@ def qr_impl(operand, full_matrices):
   q, r = xla.apply_primitive(qr_p, operand, full_matrices=full_matrices)
   return q, r
 
-def qr_translation_rule(c, operand, full_matrices):
-  return xops.Tuple(c, xops.QR(operand, full_matrices))
+def _qr_translation_rule(ctx, avals_in, avals_out, operand, *, full_matrices):
+  return xops.QR(operand, full_matrices)
 
 def qr_abstract_eval(operand, full_matrices):
   if isinstance(operand, ShapedArray):
@@ -1137,10 +1159,11 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
   x = batching.moveaxis(x, bd, 0)
   return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
 
-def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
-                                 full_matrices):
-  shape = c.get_shape(operand)
-  dims = shape.dimensions()
+def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, ctx, avals_in,
+                                 avals_out, operand, *, full_matrices):
+  c = ctx.builder
+  operand_aval, = avals_in
+  dims = operand_aval.shape
   m, n = dims[-2:]
   batch_dims = dims[:-2]
   r, tau, info_geqrf = geqrf_impl(c, operand)
@@ -1155,13 +1178,13 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
   else:
     padding_config = [(0, 0, 0)] * len(dims)
     padding_config[-1] = (0, m - n, 0)
-    q = xops.Pad(r, xops.Constant(c, np.array(0, dtype=shape.element_type())),
+    q = xops.Pad(r, xops.Constant(c, np.array(0, dtype=operand_aval.dtype)),
                  xla_client.make_padding_config(padding_config))
     q, info_orgqr = orgqr_impl(c, q, tau)
   if info_geqrf is not None:
     ok = xops.And(
-      xops.Eq(info_geqrf, xops.ConstantLiteral(c, np.array(0, np.int32))),
-      xops.Eq(info_orgqr, xops.ConstantLiteral(c, np.array(0, np.int32))))
+      xops.Eq(info_geqrf, xops.Constant(c, np.array(0, np.int32))),
+      xops.Eq(info_orgqr, xops.Constant(c, np.array(0, np.int32))))
     q = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), q,
                              _nan_like(c, q))
     r = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), r,
@@ -1170,26 +1193,31 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
     pass # rocsolver does not return info
 
   r = xla.lower_fun(jnp.triu, multiple_results=False)(c, r)
-  return xops.Tuple(c, [q, r])
+  return [q, r]
 
 qr_p = Primitive('qr')
 qr_p.multiple_results = True
 qr_p.def_impl(qr_impl)
 qr_p.def_abstract_eval(qr_abstract_eval)
-xla.translations[qr_p] = qr_translation_rule
+xla.register_translation(qr_p, _qr_translation_rule)
 ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = qr_batching_rule
 
-xla.backend_specific_translations['cpu'][qr_p] = partial(
-  _qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr)
+xla.register_translation(
+    qr_p, partial(_qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr),
+    platform='cpu')
 
 if cusolver is not None:
-  xla.backend_specific_translations['gpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr)
+  xla.register_translation(
+      qr_p,
+      partial(_qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr),
+      platform='gpu')
 
 if rocsolver is not None:
-  xla.backend_specific_translations['gpu'][qr_p] = partial(
-    _qr_cpu_gpu_translation_rule, rocsolver.geqrf, rocsolver.orgqr)
+  xla.register_translation(
+      qr_p,
+      partial(_qr_cpu_gpu_translation_rule, rocsolver.geqrf, rocsolver.orgqr),
+      platform='gpu')
 
 
 # Singular value decomposition
@@ -1198,12 +1226,15 @@ def svd_impl(operand, full_matrices, compute_uv):
   return xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
                              compute_uv=compute_uv)
 
-def svd_translation_rule(c, operand, full_matrices, compute_uv):
-  shape = c.get_shape(operand).dimensions()
+def _svd_translation_rule(ctx, avals_in, avals_out, operand, *, full_matrices,
+                          compute_uv):
+  operand_aval, = avals_in
+  shape = operand_aval.shape
   m, n = shape[-2:]
   if m == 0 or n == 0:
-    return xla.lower_fun(_empty_svd, multiple_results=True)(
-      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+    return xla.lower_fun(_empty_svd, multiple_results=True, new_style=True)(
+      ctx, avals_in, avals_out, operand, full_matrices=full_matrices,
+        compute_uv=compute_uv)
 
   u, s, v = xops.SVD(operand)
   permutation = list(range(len(shape)))
@@ -1214,9 +1245,9 @@ def svd_translation_rule(c, operand, full_matrices, compute_uv):
     vt = xops.SliceInDim(vt, 0, min(m, n), stride=1, dimno=len(shape) - 2)
 
   if not compute_uv:
-    return xops.Tuple(c, [s])
+    return [s]
   else:
-    return xops.Tuple(c, [s, u, vt])
+    return [s, u, vt]
 
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
@@ -1293,19 +1324,22 @@ def _empty_svd(a, *, full_matrices, compute_uv):
     u, v = v, u
   return s, u, v
 
-def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
-  shape = c.get_shape(operand).dimensions()
-  m, n = shape[-2:]
-  batch_dims = shape[:-2]
+def _svd_cpu_gpu_translation_rule(gesvd_impl, ctx, avals_in, avals_out, operand,
+                                  *, full_matrices, compute_uv):
+  operand_aval, = avals_in
+  m, n = operand_aval.shape[-2:]
+  batch_dims = operand_aval.shape[:-2]
+  c = ctx.builder
 
   if m == 0 or n == 0:
-    return xla.lower_fun(_empty_svd, multiple_results=True)(
-      c, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+    return xla.lower_fun(_empty_svd, multiple_results=True, new_style=True)(
+      ctx, avals_in, avals_out, operand, full_matrices=full_matrices,
+        compute_uv=compute_uv)
 
   s, u, vt, info = gesvd_impl(c, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
-  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
   s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
                            _nan_like(c, s))
 
@@ -1318,7 +1352,7 @@ def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute
                               _nan_like(c, vt))
     result += [u, vt]
 
-  return xops.Tuple(c, result)
+  return result
 
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args
@@ -1337,19 +1371,26 @@ svd_p.def_impl(svd_impl)
 svd_p.def_abstract_eval(svd_abstract_eval)
 ad.primitive_jvps[svd_p] = svd_jvp_rule
 batching.primitive_batchers[svd_p] = svd_batching_rule
-xla.translations[svd_p] = svd_translation_rule
+xla.register_translation(svd_p, _svd_translation_rule)
 
-xla.backend_specific_translations['cpu'][svd_p] = partial(
-  _svd_cpu_gpu_translation_rule, lapack.gesdd)
+xla.register_translation(
+    svd_p, partial(_svd_cpu_gpu_translation_rule, lapack.gesdd),
+    platform='cpu')
 
 if cusolver is not None:
-  xla.backend_specific_translations['gpu'][svd_p] = partial(
-    _svd_cpu_gpu_translation_rule, cusolver.gesvd)
+  xla.register_translation(
+    svd_p, partial(_svd_cpu_gpu_translation_rule, cusolver.gesvd),
+    platform='gpu')
 
 if rocsolver is not None:
-  xla.backend_specific_translations['gpu'][svd_p] = partial(
-    _svd_cpu_gpu_translation_rule, rocsolver.gesvd)
+  xla.register_translation(
+    svd_p, partial(_svd_cpu_gpu_translation_rule, rocsolver.gesvd),
+    platform='gpu')
 
+
+def _tridiagonal_solve_gpu_translation_rule(ctx, avals_in, avals_out, dl, d, du,
+                                            b, *, m, n, ldb, t):
+  return [cusparse.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
 
 tridiagonal_solve_p = Primitive('tridiagonal_solve')
 tridiagonal_solve_p.multiple_results = False
@@ -1358,18 +1399,11 @@ tridiagonal_solve_p.def_impl(
 tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
 # TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
 if cusparse is not None and hasattr(cusparse, "gtsv2"):
-  xla.backend_specific_translations['gpu'][tridiagonal_solve_p] = cusparse.gtsv2
+  xla.register_translation(tridiagonal_solve_p,
+                           _tridiagonal_solve_gpu_translation_rule,
+                           platform='gpu')
 
-
-def _tridiagonal_solve_translation_rule(c, dl, d, du, b, *, m, n, ldb, t):
-  del m, n, ldb, t
-  lowered_fun = xla.lower_fun(_tridiagonal_solve_jax, multiple_results=False)
-  return lowered_fun(c, dl, d, du, b)
-
-xla.translations[tridiagonal_solve_p] = _tridiagonal_solve_translation_rule
-
-
-def _tridiagonal_solve_jax(dl, d, du, b):
+def _tridiagonal_solve_jax(dl, d, du, b, **kw):
   """Pure JAX implementation of `tridiagonal_solve`."""
   prepend_zero = lambda x: jnp.append(jnp.zeros([1], dtype=x.dtype), x[:-1])
   fwd1 = lambda tu_, x: x[1] / (x[0] - x[2] * tu_)
@@ -1395,6 +1429,10 @@ def _tridiagonal_solve_jax(dl, d, du, b):
                    unroll=32)
 
   return x_[::-1]
+
+
+xla.register_translation(tridiagonal_solve_p, xla.lower_fun(
+    _tridiagonal_solve_jax, multiple_results=False, new_style=True))
 
 
 def tridiagonal_solve(dl, d, du, b):
@@ -1469,8 +1507,8 @@ def _schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
       select_callable=select_callable)
 
 
-def _schur_translation_rule(c, operand, *, compute_schur_vectors,
-                            sort_eig_vals):
+def _schur_translation_rule(ctx, avals_in, avals_out, operand, *,
+                            compute_schur_vectors, sort_eig_vals):
   raise NotImplementedError(
       "Schur decomposition is only implemented on the CPU backend.")
 
@@ -1492,10 +1530,12 @@ def _schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
   return (T, vs) if compute_schur_vectors else (T,)
 
 
-def _schur_cpu_translation_rule(c, operand, *, compute_schur_vectors,
-                                sort_eig_vals, select_callable):
-  shape = c.get_shape(operand)
-  batch_dims = shape.dimensions()[:-2]
+def _schur_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
+                                compute_schur_vectors, sort_eig_vals,
+                                select_callable):
+  operand_aval, = avals_in
+  batch_dims = operand_aval.shape[:-2]
+  c = ctx.builder
 
   if jaxlib_version < (0, 1, 72):
     raise NotImplementedError(
@@ -1519,7 +1559,7 @@ def _schur_cpu_translation_rule(c, operand, *, compute_schur_vectors,
         sort=sort_eig_vals,
         select=select_callable)
 
-  ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
+  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
   T = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), T,
                            _nan_like(c, T))
   output = [T]
@@ -1529,7 +1569,7 @@ def _schur_cpu_translation_rule(c, operand, *, compute_schur_vectors,
 
     output.append(vs)
 
-  return xops.Tuple(c, output)
+  return output
 
 
 def _schur_batching_rule(batched_args, batch_dims, *, compute_schur_vectors,
@@ -1555,7 +1595,7 @@ schur_p = Primitive('schur')
 schur_p.multiple_results = True
 schur_p.def_impl(_schur_impl)
 schur_p.def_abstract_eval(_schur_abstract_eval)
-xla.translations[schur_p] = _schur_translation_rule
-xla.backend_specific_translations['cpu'][schur_p] = _schur_cpu_translation_rule
+xla.register_translation(schur_p, _schur_translation_rule)
+xla.register_translation(schur_p, _schur_cpu_translation_rule, platform='cpu')
 batching.primitive_batchers[schur_p] = _schur_batching_rule
 ad.primitive_jvps[schur_p] = _schur_jvp_rule

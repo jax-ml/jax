@@ -409,15 +409,17 @@ def _sharding_constraint_impl(x, partitions):
   raise NotImplementedError(
       "with_sharding_constraint() should only be called inside sharded_jit()")
 
-def _sharding_constraint_translation_rule(c, x_node, partitions):
-  return xb.set_sharding(c, x_node, partitions)
+def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node,
+                                          partitions):
+  return [xb.set_sharding(ctx.builder, x_node, partitions)]
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
 sharding_constraint_p.def_abstract_eval(lambda x, partitions: x)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, partitions: (with_sharding_constraint(ct, partitions),))
-xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
+xla.register_translation(sharding_constraint_p,
+                         _sharding_constraint_translation_rule)
 
 def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
   """Identity-like function that specifies how ``x`` should be sharded.

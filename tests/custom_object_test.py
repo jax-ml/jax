@@ -145,12 +145,12 @@ def _sp_indices_impl(mat):
 def _sp_indices_abstract_eval(mat):
   return mat.indices_aval
 
-def _sp_indices_translation_rule(c, data, indices):
-  return indices
+def _sp_indices_translation_rule(ctx, avals_in, avals_out, data, indices):
+  return [indices]
 
 # Note: cannot use lower_fun to define attribute access primitives
 # because it leads to infinite recursion.
-xla.translations[sp_indices_p] = _sp_indices_translation_rule
+xla.register_translation(sp_indices_p, _sp_indices_translation_rule)
 
 sp_data_p = core.Primitive('sp_data')
 
@@ -162,12 +162,12 @@ def _sp_data_impl(mat):
 def _sp_data_abstract_eval(mat):
   return mat.data_aval
 
-def _sp_data_translation_rule(c, data, indices):
-  return data
+def _sp_data_translation_rule(ctx, avals_in, avals_out, data, indices):
+  return [data]
 
 # Note: cannot use lower_fun to define attribute access primitives
 # because it leads to infinite recursion.
-xla.translations[sp_data_p] = _sp_data_translation_rule
+xla.register_translation(sp_data_p, _sp_data_translation_rule)
 
 def identity(x):
   return identity_p.bind(x)

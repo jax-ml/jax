@@ -2718,10 +2718,11 @@ def _cumulative_reduction_primitive(name,
     translation_rule=xla.lower_fun(
       partial(associative_scan, reduce_fn),
       multiple_results=False, new_style=True))
-  xla.backend_specific_translations['tpu'][reducer_p] = xla.lower_fun(
-    partial(_cumred_tpu_translation_rule, tpu_reduce_window_fn),
-    multiple_results=False)
-  batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule, reducer_p)
+  xla.register_translation(reducer_p, xla.lower_fun(
+      partial(_cumred_tpu_translation_rule, tpu_reduce_window_fn),
+      multiple_results=False, new_style=True), platform='tpu')
+  batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
+                                                   reducer_p)
   return reducer_p
 
 cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, lax._reduce_window_sum)

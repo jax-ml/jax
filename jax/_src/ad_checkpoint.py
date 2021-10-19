@@ -405,7 +405,8 @@ def name_jvp(primals, tangents, *, name):
   return name_p.bind(x, name=name), xdot  # don't name the tangent value
 ad.primitive_jvps[name_p] = name_jvp
 
-xla.translations[name_p] = lambda c, x, *, name: x
+xla.register_translation(name_p,
+                         lambda ctx, avals_in, avals_out, x, *, name: [x])
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims

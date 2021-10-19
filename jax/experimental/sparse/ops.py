@@ -103,14 +103,15 @@ def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
   assert indptr.shape[0] == shape[0] + 1
   return core.ShapedArray(shape, data.dtype)
 
-def _csr_todense_gpu_translation_rule(c, data, indices, indptr, *, shape):
-  return cusparse.csr_todense(c, data, indices, indptr, shape=shape)
+def _csr_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
+                                      indptr, *, shape):
+  return [cusparse.csr_todense(ctx.builder, data, indices, indptr, shape=shape)]
 
-xla.translations[csr_todense_p] = xla.lower_fun(
-    _csr_todense_impl, multiple_results=False)
+xla.register_translation(csr_todense_p, xla.lower_fun(
+    _csr_todense_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
-  xla.backend_specific_translations['gpu'][
-      csr_todense_p] = _csr_todense_gpu_translation_rule
+  xla.register_translation(csr_todense_p, _csr_todense_gpu_translation_rule,
+                           platform='gpu')
 
 #--------------------------------------------------------------------
 # csr_fromdense
@@ -159,16 +160,18 @@ def _csr_fromdense_abstract_eval(mat, *, nse, index_dtype):
   indptr = core.ShapedArray((mat.shape[0] + 1,), index_dtype)
   return data, indices, indptr
 
-def _csr_fromdense_gpu_translation_rule(c, mat, *, nse, index_dtype):
+def _csr_fromdense_gpu_translation_rule(ctx, avals_in, avals_out, mat, *, nse,
+                                        index_dtype):
   data, indices, indptr = cusparse.csr_fromdense(
-      c, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
-  return xops.Tuple(c, [data, indices, indptr])
+      ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
+  return [data, indices, indptr]
 
-xla.translations[csr_fromdense_p] = xla.lower_fun(
-    _csr_fromdense_impl, multiple_results=True)
+xla.register_translation(csr_fromdense_p, xla.lower_fun(
+    _csr_fromdense_impl, multiple_results=True, new_style=True))
 if cusparse and cusparse.is_supported:
-  xla.backend_specific_translations['gpu'][
-      csr_fromdense_p] = _csr_fromdense_gpu_translation_rule
+  xla.register_translation(csr_fromdense_p,
+                           _csr_fromdense_gpu_translation_rule,
+                           platform='gpu')
 
 #--------------------------------------------------------------------
 # csr_matvec
@@ -211,14 +214,16 @@ def _csr_matvec_abstract_eval(data, indices, indptr, v, *, shape, transpose):
   assert v.shape[0] == (shape[0] if transpose else shape[1])
   return core.ShapedArray((out_shape,), data.dtype)
 
-def _csr_matvec_gpu_translation_rule(c, data, indices, indptr, v, *, shape, transpose):
-  return cusparse.csr_matvec(c, data, indices, indptr, v, shape=shape, transpose=transpose)
+def _csr_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
+                                     indptr, v, *, shape, transpose):
+  return [cusparse.csr_matvec(ctx.builder, data, indices, indptr, v,
+                              shape=shape, transpose=transpose)]
 
-xla.translations[csr_matvec_p] = xla.lower_fun(
-    _csr_matvec_impl, multiple_results=False)
+xla.register_translation(csr_matvec_p, xla.lower_fun(
+    _csr_matvec_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
-  xla.backend_specific_translations['gpu'][
-      csr_matvec_p] = _csr_matvec_gpu_translation_rule
+  xla.register_translation(csr_matvec_p, _csr_matvec_gpu_translation_rule,
+                           platform='gpu')
 
 
 #--------------------------------------------------------------------
@@ -263,14 +268,16 @@ def _csr_matmat_abstract_eval(data, indices, indptr, B, *, shape, transpose):
   assert B.shape[0] == (shape[0] if transpose else shape[1])
   return core.ShapedArray((out_shape, B.shape[1]), data.dtype)
 
-def _csr_matmat_gpu_translation_rule(c, data, indices, indptr, B, *, shape, transpose):
-  return cusparse.csr_matmat(c, data, indices, indptr, B, shape=shape, transpose=transpose)
+def _csr_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, indices,
+                                     indptr, B, *, shape, transpose):
+  return [cusparse.csr_matmat(ctx.builder, data, indices, indptr, B,
+                              shape=shape, transpose=transpose)]
 
-xla.translations[csr_matmat_p] = xla.lower_fun(
-    _csr_matmat_impl, multiple_results=False)
+xla.register_translation(csr_matmat_p, xla.lower_fun(
+    _csr_matmat_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
-  xla.backend_specific_translations['gpu'][
-      csr_matmat_p] = _csr_matmat_gpu_translation_rule
+  xla.register_translation(csr_matmat_p, _csr_matmat_gpu_translation_rule,
+                           platform='gpu')
 
 
 #--------------------------------------------------------------------
@@ -300,8 +307,9 @@ def _coo_todense_impl(data, row, col, *, shape):
 def _coo_todense_abstract_eval(data, row, col, *, shape):
   return core.ShapedArray(shape, data.dtype)
 
-def _coo_todense_gpu_translation_rule(c, data, row, col, *, shape):
-  return cusparse.coo_todense(c, data, row, col, shape=shape)
+def _coo_todense_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
+                                      *, shape):
+  return [cusparse.coo_todense(ctx.builder, data, row, col, shape=shape)]
 
 def _coo_todense_jvp(data_dot, data, row, col, *, shape):
   return coo_todense(data_dot, row, col, shape=shape)
@@ -319,11 +327,11 @@ def _coo_todense_transpose(ct, data, row, col, *, shape):
 
 ad.defjvp(coo_todense_p, _coo_todense_jvp, None, None)
 ad.primitive_transposes[coo_todense_p] = _coo_todense_transpose
-xla.translations[coo_todense_p] = xla.lower_fun(
-    _coo_todense_impl, multiple_results=False)
+xla.register_translation(coo_todense_p, xla.lower_fun(
+    _coo_todense_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
-  xla.backend_specific_translations['gpu'][
-      coo_todense_p] = _coo_todense_gpu_translation_rule
+  xla.register_translation(coo_todense_p, _coo_todense_gpu_translation_rule,
+                           platform='gpu')
 
 #--------------------------------------------------------------------
 # coo_fromdense
@@ -367,10 +375,11 @@ def _coo_fromdense_abstract_eval(mat, *, nse, index_dtype):
   row = col = core.ShapedArray((nse,), index_dtype)
   return data, row, col
 
-def _coo_fromdense_gpu_translation_rule(c, mat, *, nse, index_dtype):
+def _coo_fromdense_gpu_translation_rule(ctx, avals_in, avals_out, mat, *, nse,
+                                        index_dtype):
   data, row, col = cusparse.coo_fromdense(
-      c, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
-  return xops.Tuple(c, [data, row, col])
+      ctx.builder, mat, nnz=nse, index_dtype=np.dtype(index_dtype))
+  return [data, row, col]
 
 def _coo_fromdense_jvp(primals, tangents, *, nse, index_dtype):
   M, = primals
@@ -400,11 +409,12 @@ def _coo_fromdense_transpose(ct, M, *, nse, index_dtype):
 ad.primitive_jvps[coo_fromdense_p] = _coo_fromdense_jvp
 ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
 
-xla.translations[coo_fromdense_p] = xla.lower_fun(
-    _coo_fromdense_impl, multiple_results=True)
+xla.register_translation(coo_fromdense_p, xla.lower_fun(
+    _coo_fromdense_impl, multiple_results=True, new_style=True))
 if cusparse and cusparse.is_supported:
-  xla.backend_specific_translations['gpu'][
-      coo_fromdense_p] = _coo_fromdense_gpu_translation_rule
+  xla.register_translation(coo_fromdense_p,
+                           _coo_fromdense_gpu_translation_rule,
+                           platform='gpu')
 
 #--------------------------------------------------------------------
 # coo_matvec
@@ -450,8 +460,10 @@ def _coo_matvec_abstract_eval(data, row, col, v, *, shape, transpose):
   out_shape = shape[1] if transpose else shape[0]
   return core.ShapedArray((out_shape,), data.dtype)
 
-def _coo_matvec_gpu_translation_rule(c, data, row, col, v, *, shape, transpose):
-  return cusparse.coo_matvec(c, data, row, col, v, shape=shape, transpose=transpose)
+def _coo_matvec_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
+                                     v, *, shape, transpose):
+  return [cusparse.coo_matvec(ctx.builder, data, row, col, v, shape=shape,
+                              transpose=transpose)]
 
 def _coo_matvec_jvp_mat(data_dot, data, row, col, v, *, shape, transpose):
   return coo_matvec(data_dot, row, col, v, shape=shape, transpose=transpose)
@@ -472,11 +484,11 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, shape, transpose):
 
 ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
 ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
-xla.translations[coo_matvec_p] = xla.lower_fun(
-    _coo_matvec_impl, multiple_results=False)
+xla.register_translation(coo_matvec_p, xla.lower_fun(
+    _coo_matvec_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
-  xla.backend_specific_translations['gpu'][
-      coo_matvec_p] = _coo_matvec_gpu_translation_rule
+  xla.register_translation(coo_matvec_p, _coo_matvec_gpu_translation_rule,
+                           platform='gpu')
 
 #--------------------------------------------------------------------
 # coo_matmat
@@ -521,14 +533,16 @@ def _coo_matmat_abstract_eval(data, row, col, B, *, shape, transpose):
   out_shape = shape[1] if transpose else shape[0]
   return core.ShapedArray((out_shape, B.shape[1]), data.dtype)
 
-def _coo_matmat_gpu_translation_rule(c, data, row, col, B, *, shape, transpose):
-  return cusparse.coo_matmat(c, data, row, col, B, shape=shape, transpose=transpose)
+def _coo_matmat_gpu_translation_rule(ctx, avals_in, avals_out, data, row, col,
+                                     B, *, shape, transpose):
+  return [cusparse.coo_matmat(ctx.builder, data, row, col, B, shape=shape,
+                              transpose=transpose)]
 
-xla.translations[coo_matmat_p] = xla.lower_fun(
-    _coo_matmat_impl, multiple_results=False)
+xla.register_translation(coo_matmat_p, xla.lower_fun(
+    _coo_matmat_impl, multiple_results=False, new_style=True))
 if cusparse and cusparse.is_supported:
-  xla.backend_specific_translations['gpu'][
-      coo_matmat_p] = _coo_matmat_gpu_translation_rule
+  xla.register_translation(coo_matmat_p, _coo_matmat_gpu_translation_rule,
+                           platform='gpu')
 
 def _coo_matmat_jvp_rule(primals_in, tangents_in, **params):
   vals, rows, cols, mat = primals_in

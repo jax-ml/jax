@@ -2699,7 +2699,8 @@ class APITest(jtu.JaxTestCase):
     tokentest_p = core.Primitive("tokentest")
     tokentest_p.def_impl(partial(xla.apply_primitive, tokentest_p))
     tokentest_p.def_abstract_eval(lambda x, y: x)
-    xla.translations[tokentest_p] = lambda c, x, y:  x
+    xla.register_translation(tokentest_p,
+                             lambda ctx, avals_in, avals_out, x, y: [x])
     ad.defjvp(tokentest_p, (lambda g, x, token: x), None)
 
     token = jax.lax.create_token(123)

@@ -350,21 +350,24 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   return tuple(x)
 
 
-def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
-  shape = lax.broadcast_shapes(
-      c.get_shape(k1).dimensions(), c.get_shape(k2).dimensions(),
-      c.get_shape(x1).dimensions(), c.get_shape(x2).dimensions())
-  rank = len(shape)
-  if 0 in shape:
+def _threefry2x32_gpu_translation_rule(ctx, avals_in, avals_out, k1, k2, x1,
+                                       x2):
+  aval_out, _ = avals_out
+  k1_aval, k2_aval, x1_aval, x2_aval = avals_in
+  rank = len(aval_out.shape)
+  if 0 in aval_out.shape:
     zeros = xla_client.ops.Broadcast(
-        xla_client.ops.Constant(c, np.array(0, np.uint32)), shape)
-    return xla_client.ops.Tuple(c, [zeros, zeros])
-  def _broadcast(x):
-    ndims = c.get_shape(x).rank()
-    return xla_client.ops.BroadcastInDim(x, shape,
-                                         tuple(range(rank - ndims, rank)))
-  return cuda_prng.threefry2x32(
-      c, (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
+        xla_client.ops.Constant(ctx.builder, np.array(0, np.uint32)),
+        aval_out.shape)
+    return [zeros, zeros]
+  def _broadcast(x, aval):
+    return xla_client.ops.BroadcastInDim(
+        x, aval_out.shape, tuple(range(rank - len(aval.shape), rank)))
+  return xla.xla_destructure(
+      ctx.builder,
+      cuda_prng.threefry2x32(
+          ctx.builder, (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+          (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval))))
 
 
 threefry2x32_p = core.Primitive("threefry2x32")
@@ -379,8 +382,8 @@ xla.register_translation(threefry2x32_p, xla.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=True),
     multiple_results=True, new_style=True), platform='cpu')
 if cuda_prng:
-  xla.backend_specific_translations['gpu'][threefry2x32_p] = \
-      _threefry2x32_gpu_translation_rule
+  xla.register_translation(threefry2x32_p, _threefry2x32_gpu_translation_rule,
+                           platform='gpu')
 
 
 @partial(jit, inline=True)

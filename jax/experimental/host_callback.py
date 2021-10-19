@@ -798,7 +798,8 @@ def _values_to_avals(vals) -> Sequence[core.ShapedArray]:
 id_tap_dep_p = core.Primitive("id_tap_dep")
 id_tap_dep_p.multiple_results = False
 id_tap_dep_p.def_impl(lambda r, _: r)
-xla.translations[id_tap_dep_p] = lambda comp, a_res, a_tap: a_res
+xla.register_translation(id_tap_dep_p,
+                         lambda ctx, avals_in, avals_out, a_res, a_tap: [a_res])
 id_tap_dep_p.def_abstract_eval(lambda r_a, _: r_a)
 
 def _id_tap_dep_jvp_rule(primals, tangents):
@@ -923,9 +924,8 @@ def _outside_call_impl(*args, **params):
 outside_call_p.def_impl(_outside_call_impl)
 
 
-def _outside_call_translation_rule(comp: XlaBuilder,
+def _outside_call_translation_rule(ctx, avals_in, avals_out,
                                    *args_op: XlaOp,
-                                   platform="tpu",
                                    has_token,
                                    identity,
                                    flat_results_aval=(),
@@ -934,6 +934,7 @@ def _outside_call_translation_rule(comp: XlaBuilder,
   assert has_token
   current_token = args_op[-2]
   current_itoken = args_op[-1]
+  comp = ctx.builder
   assert comp.get_shape(current_token).is_token() and comp.get_shape(current_itoken).is_token(), (
       "The last two arguments must be tokens")
 
@@ -944,7 +945,7 @@ def _outside_call_translation_rule(comp: XlaBuilder,
                                             flat_results_aval))
   need_callback_results_on_device = (not identity and
                                      len(non_empty_flat_results_aval) > 0)
-  use_outfeed = _use_outfeed(platform)
+  use_outfeed = _use_outfeed(ctx.platform)
   send_infeed = use_outfeed and need_callback_results_on_device
   generated_infeed = False  # Keep track if we emitted an infeed op
   if use_outfeed:
@@ -1041,7 +1042,7 @@ def _outside_call_translation_rule(comp: XlaBuilder,
         xla.aval_to_xla_shapes(res_aval)[0]
         for res_aval in callback_flat_results_aval
     ]
-    backend = xb.get_backend(platform)
+    backend = xb.get_backend(ctx.platform)
     token_and_results_op, keep_alive = backend.emit_python_callback(
         wrapped_callback,
         comp,
@@ -1062,12 +1063,10 @@ def _outside_call_translation_rule(comp: XlaBuilder,
   assert identity or len(results) == len(flat_results_aval), (
       f"got {len(results)} but expected {len(flat_results_aval)}. "
       f"identity = {identity}")
-  return xops.Tuple(comp, results + [next_token, next_itoken])
+  return results + [next_token, next_itoken]
 
 
-for platform in ["cpu", "gpu", "tpu"]:
-  xla.backend_specific_translations[platform][outside_call_p] = (
-      functools.partial(_outside_call_translation_rule, platform=platform))
+xla.register_translation(outside_call_p, _outside_call_translation_rule)
 
 
 def _outside_call_run_callback(
@@ -1383,7 +1382,7 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
     else:
       output_token_var = mk_new_var(last_token_var.aval)
       output_itoken_var = mk_new_var(last_itoken_var.aval)
-      _rewrite_eqn(platform, eqn, eqns, last_token_var, output_token_var,
+      _rewrite_eqn(eqn, eqns, last_token_var, output_token_var,
                    last_itoken_var, output_itoken_var, mk_new_var)
       last_token_var = output_token_var
       last_itoken_var = output_itoken_var
@@ -1393,7 +1392,7 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
   return new_jaxpr
 
 
-def _rewrite_eqn(platform: str, eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
+def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                  input_token_var: core.Var, output_token_var: core.Var,
                  input_itoken_var: core.Var, output_itoken_var: core.Var,
                  mk_new_var: Callable[[core.AbstractValue], core.Var]):
@@ -1691,7 +1690,7 @@ id_p = core.Primitive("id")
 id_p.multiple_results = True
 id_p.def_impl(lambda *args: args)
 id_p.def_abstract_eval(lambda *args: args)
-xla.translations[id_p] = lambda c, *args: xops.Tuple(c, args)
+xla.register_translation(id_p, lambda ctx, avals_in, avals_out, *args: args)
 
 xla.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)
 

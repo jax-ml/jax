@@ -752,11 +752,13 @@ ad.deflinear2(sharding_constraint_p,
                   sharding_constraint_p.bind(
                       ct, axis_resources=axis_resources, resource_env=resource_env),))
 
-def _sharding_constraint_translation_rule(c, x_node, axis_resources, resource_env):
+def _sharding_constraint_translation_rule(ctx, avals_in, avals_out, x_node, *,
+                                          axis_resources, resource_env):
   mesh = resource_env.physical_mesh
-  return xb.set_sharding_proto(c, x_node,
-                               get_sharding_proto(c, x_node, axis_resources, mesh))
-xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
+  return [xb.set_sharding_proto(
+      ctx.builder, x_node,
+      get_sharding_proto(ctx.builder, x_node, axis_resources, mesh))]
+xla.register_translation(sharding_constraint_p, _sharding_constraint_translation_rule)
 
 def _sharding_constraint_batcher(insert_axis, axis_size, axis_name, main_type, vals_in, dims_in,
                                  axis_resources, resource_env):

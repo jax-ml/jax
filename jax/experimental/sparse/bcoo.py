@@ -188,8 +188,8 @@ def _bcoo_todense_batching_rule(batched_args, batch_dims, *, shape):
 ad.defjvp(bcoo_todense_p, _bcoo_todense_jvp, None)
 ad.primitive_transposes[bcoo_todense_p] = _bcoo_todense_transpose
 batching.primitive_batchers[bcoo_todense_p] = _bcoo_todense_batching_rule
-xla.translations[bcoo_todense_p] = xla.lower_fun(
-    _bcoo_todense_impl, multiple_results=False)
+xla.register_translation(bcoo_todense_p, xla.lower_fun(
+    _bcoo_todense_impl, multiple_results=False, new_style=True))
 
 #--------------------------------------------------------------------
 # bcoo_fromdense
@@ -288,8 +288,8 @@ def _bcoo_fromdense_batching_rule(batched_args, batch_dims, *, nse, n_batch, n_d
 ad.primitive_jvps[bcoo_fromdense_p] = _bcoo_fromdense_jvp
 ad.primitive_transposes[bcoo_fromdense_p] = _bcoo_fromdense_transpose
 batching.primitive_batchers[bcoo_fromdense_p] = _bcoo_fromdense_batching_rule
-xla.translations[bcoo_fromdense_p] = xla.lower_fun(
-    _bcoo_fromdense_impl, multiple_results=True)
+xla.register_translation(bcoo_fromdense_p, xla.lower_fun(
+    _bcoo_fromdense_impl, multiple_results=True, new_style=True))
 
 #----------------------------------------------------------------------
 # bcoo_extract
@@ -355,8 +355,8 @@ def _bcoo_extract_batching_rule(batched_args, batch_dims):
 ad.defjvp(bcoo_extract_p, None, _bcoo_extract_jvp)
 ad.primitive_transposes[bcoo_extract_p] = _bcoo_extract_transpose
 batching.primitive_batchers[bcoo_extract_p] = _bcoo_extract_batching_rule
-xla.translations[bcoo_extract_p] = xla.lower_fun(
-    _bcoo_extract_impl, multiple_results=False)
+xla.register_translation(bcoo_extract_p, xla.lower_fun(
+    _bcoo_extract_impl, multiple_results=False, new_style=True))
 
 #----------------------------------------------------------------------
 # bcoo_transpose
@@ -450,8 +450,8 @@ def _bcoo_transpose_batch_rule(batched_args, batch_dims, *, permutation, shape):
 ad.primitive_jvps[bcoo_transpose_p] = _bcoo_transpose_jvp
 ad.primitive_transposes[bcoo_transpose_p] = _bcoo_transpose_transpose
 batching.primitive_batchers[bcoo_transpose_p] = _bcoo_transpose_batch_rule
-xla.translations[bcoo_transpose_p] = xla.lower_fun(
-    _bcoo_transpose_impl, multiple_results=True)
+xla.register_translation(bcoo_transpose_p, xla.lower_fun(
+    _bcoo_transpose_impl, multiple_results=True, new_style=True))
 
 #----------------------------------------------------------------------
 # bcoo_dot_general
@@ -620,8 +620,8 @@ def _bcoo_dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
 ad.defjvp(bcoo_dot_general_p, _bcoo_dot_general_jvp_lhs, None, _bcoo_dot_general_jvp_rhs)
 ad.primitive_transposes[bcoo_dot_general_p] = _bcoo_dot_general_transpose
 batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
-xla.translations[bcoo_dot_general_p] = xla.lower_fun(
-    _bcoo_dot_general_impl, multiple_results=False)
+xla.register_translation(bcoo_dot_general_p, xla.lower_fun(
+    _bcoo_dot_general_impl, multiple_results=False, new_style=True))
 
 #----------------------------------------------------------------------
 # bcoo_dot_general_sampled
@@ -672,8 +672,8 @@ ad.defjvp(bcoo_dot_general_sampled_p, _bcoo_dot_general_sampled_jvp_A,
           _bcoo_dot_general_sampled_jvp_B, None)
 ad.primitive_transposes[bcoo_dot_general_sampled_p] = _bcoo_dot_general_sampled_transpose
 batching.primitive_batchers[bcoo_dot_general_sampled_p] = _bcoo_dot_general_sampled_batch_rule
-xla.translations[bcoo_dot_general_sampled_p] = xla.lower_fun(
-    _bcoo_dot_general_sampled_impl, multiple_results=False)
+xla.register_translation(bcoo_dot_general_sampled_p, xla.lower_fun(
+    _bcoo_dot_general_sampled_impl, multiple_results=False, new_style=True))
 
 #----------------------------------------------------------------------
 # bcoo_spdot_general
@@ -816,8 +816,8 @@ def _bcoo_spdot_general_batch_rule(batched_args, batch_dims, *, dimension_number
 
 # TODO(JVP): jvp, transpose
 batching.primitive_batchers[bcoo_spdot_general_p] = _bcoo_spdot_general_batch_rule
-xla.translations[bcoo_spdot_general_p] = xla.lower_fun(
-    _bcoo_spdot_general_impl, multiple_results=True)
+xla.register_translation(bcoo_spdot_general_p, xla.lower_fun(
+    _bcoo_spdot_general_impl, multiple_results=True, new_style=True))
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?
