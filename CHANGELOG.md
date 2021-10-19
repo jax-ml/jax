@@ -8,6 +8,8 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
+## jaxlib 0.1.74 (Unreleased)
+
 ## jax 0.2.23 (Unreleased)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.22...main).
@@ -19,7 +21,28 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jax.numpy.take` and `jax.numpy.take_along_axis` now require array-like inputs
     (see {jax-issue}`#7737`)
 
-## jaxlib 0.1.73 (Unreleased)
+## jaxlib 0.1.73 (Oct 18, 2021)
+
+* Multiple cuDNN versions are now supported for jaxlib GPU `cuda11` wheels.
+  * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
+    installation is new enough, since it supports additional functionality.
+  * cuDNN 8.0.5 or newer.
+
+* Breaking changes:
+  * The install commands for GPU jaxlib are as follows:
+
+    ```bash
+    pip install --upgrade pip
+
+    # Installs the wheel compatible with CUDA 11 and cuDNN 8.2 or newer.
+    pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_releases.html 
+
+    # Installs the wheel compatible with Cuda 11 and cudnn 8.2 or newer.
+    pip install jax[cuda=11,cudnn=82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+
+    # Installs the wheel compatible with Cuda 11 and cudnn 8.0.5 or newer.
+    pip install jax[cuda=11,cudnn=805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+    ```
 
 ## jax 0.2.22 (Oct 12, 2021)
 * [GitHub
