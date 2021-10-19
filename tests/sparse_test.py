@@ -384,7 +384,7 @@ class BCOOTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
        "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+      for dtype in jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)))
   def test_bcoo_dense_round_trip(self, shape, dtype, n_batch, n_dense):

@@ -156,7 +156,7 @@ def _bcoo_todense_impl(data, indices, *, shape):
   batch_ind = tuple(grid)[:-1]
 
   if not sparse_ind:
-    data = data.sum(n_batch, keepdims=bool(batch_ind))
+    data = data.sum(n_batch, keepdims=bool(batch_ind), dtype=data.dtype)
   return jnp.zeros(shape, data.dtype).at[batch_ind + sparse_ind].add(data)
 
 @bcoo_todense_p.def_abstract_eval
