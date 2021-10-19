@@ -115,7 +115,8 @@ class _Indexable(object):
   """Helper object for building indexes for indexed update functions.
 
   .. deprecated:: 0.2.22
-     Prefer the use of :attr:`jax.numpy.ndarray.at`.
+     Prefer the use of :attr:`jax.numpy.ndarray.at`. If an explicit index
+     is needed, use :func:`jax.numpy.index_exp`.
 
   This is a singleton object that overrides the :code:`__getitem__` method
   to return the index it is passed.
@@ -171,7 +172,7 @@ def index_add(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_add(x, jax.ops.index[2:4, 3:], 6.)
+  >>> jax.ops.index_add(x, jnp.index_exp[2:4, 3:], 6.)
   DeviceArray([[1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 7., 7., 7.],
@@ -223,7 +224,7 @@ def index_mul(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_mul(x, jax.ops.index[2:4, 3:], 6.)
+  >>> jax.ops.index_mul(x, jnp.index_exp[2:4, 3:], 6.)
   DeviceArray([[1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 6., 6., 6.],
@@ -273,7 +274,7 @@ def index_min(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_min(x, jax.ops.index[2:4, 3:], 0.)
+  >>> jax.ops.index_min(x, jnp.index_exp[2:4, 3:], 0.)
   DeviceArray([[1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 0., 0., 0.],
@@ -322,7 +323,7 @@ def index_max(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_max(x, jax.ops.index[2:4, 3:], 6.)
+  >>> jax.ops.index_max(x, jnp.index_exp[2:4, 3:], 6.)
   DeviceArray([[1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 6., 6., 6.],
@@ -372,7 +373,7 @@ def index_update(x: Array,
     An array.
 
   >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_update(x, jax.ops.index[::2, 3:], 6.)
+  >>> jax.ops.index_update(x, jnp.index_exp[::2, 3:], 6.)
   DeviceArray([[1., 1., 1., 6., 6., 6.],
                [1., 1., 1., 1., 1., 1.],
                [1., 1., 1., 6., 6., 6.],

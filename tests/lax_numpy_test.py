@@ -2917,7 +2917,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for dtype in default_dtypes
   ))
   def testDigitize(self, xshape, binshape, right, reverse, dtype):
-    order = jax.ops.index[::-1] if reverse else jax.ops.index[:]
+    order = jnp.index_exp[::-1] if reverse else jnp.index_exp[:]
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), jnp.sort(rng(binshape, dtype))[order]]
     np_fun = lambda x, bins: np.digitize(x, bins, right=right)
