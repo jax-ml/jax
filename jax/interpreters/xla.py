@@ -1344,7 +1344,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def _value(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      self._npy_value = self.device_buffer.to_py()
+      self._npy_value = self.device_buffer.to_py()  # pytype: disable=attribute-error  # bind-properties
       self._npy_value.flags.writeable = False
     return self._npy_value
 
@@ -1387,7 +1387,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
 
   @property
   def __cuda_array_interface__(self):
-    return self.device_buffer.__cuda_array_interface__
+    return self.device_buffer.__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
 
 
 # Adding methods dynamically to both _DeviceArray and _CppDeviceArray
