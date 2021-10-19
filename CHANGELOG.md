@@ -35,13 +35,13 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     pip install --upgrade pip
 
     # Installs the wheel compatible with CUDA 11 and cuDNN 8.2 or newer.
-    pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_releases.html 
+    pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
     # Installs the wheel compatible with Cuda 11 and cudnn 8.2 or newer.
-    pip install jax[cuda=11,cudnn=82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+    pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
     # Installs the wheel compatible with Cuda 11 and cudnn 8.0.5 or newer.
-    pip install jax[cuda=11,cudnn=805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+    pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
     ```
 
 ## jax 0.2.22 (Oct 12, 2021)
