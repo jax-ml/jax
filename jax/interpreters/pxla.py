@@ -93,9 +93,13 @@ _UNSHARDED_INSTANCE = NoSharding()
 AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 
+# https://mypy.readthedocs.io/en/stable/runtime_troubles.html#typing-type-checking
+# mypy will consider this constant to be True at type check time.
+MYPY = False
+
 # TODO(jblespiau): Remove the version check when jaxlib 0.1.70 is the minimal
 # version.
-if TYPE_CHECKING or _xla_extension_version < 30:
+if MYPY or (not TYPE_CHECKING and _xla_extension_version < 30):
   class ShardingSpec:
     """Describes the sharding of an ndarray.
 
@@ -473,8 +477,8 @@ def make_sharded_device_array(
   """
   if sharding_spec is None:
     sharded_aval = aval.update(shape=aval.shape[1:])
-    sharding_spec = _pmap_sharding_spec(aval.shape[0], aval.shape[0],
-                                        1, None, sharded_aval, 0)
+    sharding_spec = _pmap_sharding_spec(aval.shape[0], aval.shape[0], 1, None,
+                                        sharded_aval, 0)
 
   if indices is None:
     indices = spec_to_indices(aval.shape, sharding_spec)

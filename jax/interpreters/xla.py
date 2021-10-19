@@ -1325,9 +1325,11 @@ def _tuple_output(*args, **kwargs):
   yield (ans,)
 
 def lower_fun(fun: Callable, *, multiple_results: bool, parallel: bool = False,
-              backend=None, new_style: bool = False):
+              backend=None, new_style: bool = False) -> Callable:
   if new_style:
-    def f_new(ctx, avals_in, avals_out, *xla_args, **params):
+    def f_new(ctx: TranslationContext, avals_in: Sequence[core.AbstractValue],
+              avals_out: Sequence[core.AbstractValue], *xla_args: xc.XlaOp,
+              **params) -> Sequence[xc.XlaOp]:
       wrapped_fun = lu.wrap_init(fun, params)
       if not multiple_results:
         wrapped_fun = _tuple_output(wrapped_fun)

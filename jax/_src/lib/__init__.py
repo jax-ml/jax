@@ -26,7 +26,7 @@ __all__ = [
   'xla_extension',
 ]
 
-# First, before attempting to import jaxlib, warn about experimental machine
+# First, before attempting to from jax import jaxlib, warn about experimental machine
 # configurations.
 if platform.system() == "Darwin" and platform.machine() == "arm64":
   warnings.warn("JAX on Mac ARM machines is experimental and minimally tested. "
@@ -34,7 +34,7 @@ if platform.system() == "Darwin" and platform.machine() == "arm64":
                 "event of problems.")
 
 try:
-  import jaxlib
+  import jaxlib as jaxlib
 except ModuleNotFoundError as err:
   raise ModuleNotFoundError(
     'jax requires jaxlib to be installed. See '
@@ -43,7 +43,7 @@ except ModuleNotFoundError as err:
 
 from jax.version import _minimum_jaxlib_version as _minimum_jaxlib_version_str
 try:
-  from jaxlib import version as jaxlib_version
+  import jaxlib.version as jaxlib_version
 except Exception as err:
   # jaxlib is too old to have version number.
   msg = f'This version of jax requires jaxlib version >= {_minimum_jaxlib_version_str}.'
@@ -68,12 +68,12 @@ def _check_jaxlib_version():
 
 _check_jaxlib_version()
 
-from jaxlib import cpu_feature_guard
+import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
-from jaxlib import xla_client
-from jaxlib import lapack
-from jaxlib import pocketfft
+import jaxlib.xla_client as xla_client
+import jaxlib.lapack as lapack
+import jaxlib.pocketfft as pocketfft
 
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
@@ -81,27 +81,27 @@ jax_jit = xla_client._xla.jax_jit
 pmap_lib = xla_client._xla.pmap_lib
 
 try:
-  from jaxlib import cusolver  # pytype: disable=import-error
+  import jaxlib.cusolver as cusolver  # pytype: disable=import-error
 except ImportError:
   cusolver = None
 
 try:
-  from jaxlib import cusparse  # pytype: disable=import-error
+  import jaxlib.cusparse as cusparse  # pytype: disable=import-error
 except ImportError:
   cusparse = None
 
 try:
-  from jaxlib import rocsolver  # pytype: disable=import-error
+  import jaxlib.rocsolver as rocsolver  # pytype: disable=import-error
 except ImportError:
   rocsolver = None
 
 try:
-  from jaxlib import cuda_prng  # pytype: disable=import-error
+  import jaxlib.cuda_prng as cuda_prng  # pytype: disable=import-error
 except ImportError:
   cuda_prng = None
 
 try:
-  from jaxlib import cuda_linalg  # pytype: disable=import-error
+  import jaxlib.cuda_linalg as cuda_linalg  # pytype: disable=import-error
 except ImportError:
   cuda_linalg = None
 
