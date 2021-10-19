@@ -1339,7 +1339,8 @@ def _xla_unshard(c, aval, axis_env, out_axis, x, backend):
     convert_bool = (np.issubdtype(aval.dtype, np.bool_)
                     and xb.get_backend(backend).platform in ('cpu', 'gpu'))
     if convert_bool:
-      x = xops.ConvertElementType(x, xb.dtype_to_etype(np.float32))
+      x = xops.ConvertElementType(
+          x, xla.dtype_to_primitive_type(np.dtype(np.float32)))
 
     xla_shape = c.get_shape(x)
     dims = list(xla_shape.dimensions())
@@ -1360,7 +1361,8 @@ def _xla_unshard(c, aval, axis_env, out_axis, x, backend):
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
       nonzero = xops.Ne(out, xb.constant(c, np.array(0, dtype=np.float32)))
-      out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(np.bool_))
+      out = xops.ConvertElementType(
+          nonzero, xla.dtype_to_primitive_type(np.dtype(np.bool_)))
     return out
   else:
     raise TypeError((aval, c.get_shape(x)))

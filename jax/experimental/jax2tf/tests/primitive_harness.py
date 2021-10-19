@@ -492,7 +492,8 @@ def _make_convert_element_type_harness(name,
       "convert_element_type",
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_olddtype={jtu.dtype_str(dtype)}_newdtype={jtu.dtype_str(new_dtype)}",
       lambda arg: (lax.convert_element_type_p.bind(
-          arg, new_dtype=new_dtype, weak_type=False)), [RandArg(shape, dtype)],
+          arg, new_dtype=np.dtype(new_dtype), weak_type=False)),
+      [RandArg(shape, dtype)],
       shape=shape,
       dtype=dtype,
       new_dtype=new_dtype)
@@ -660,7 +661,8 @@ def _make_bitcast_convert_type_harness(name,
   define(
       "bitcast_convert_type",
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newdtype={np.dtype(new_dtype).name}",
-      lambda x: (lax.bitcast_convert_type_p.bind(x, new_dtype=new_dtype)),
+      lambda x: lax.bitcast_convert_type_p.bind(x,
+                                                new_dtype=np.dtype(new_dtype)),
       [RandArg(shape, dtype)],
       shape=shape,
       dtype=dtype,
@@ -856,7 +858,7 @@ def _make_iota_harness(name, *, shape=(2, 3), dtype=np.float32, dimension=0):
       lax.iota_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimension={dimension}",
       lambda dtype, shape, dim:
-      (lax.iota_p.bind(dtype=dtype, shape=shape, dimension=dim)),
+      (lax.iota_p.bind(dtype=np.dtype(dtype), shape=shape, dimension=dim)),
       [StaticArg(dtype),
        StaticArg(shape),
        StaticArg(dimension)],

@@ -396,7 +396,7 @@ def _code_generator_and_avals(
       if res_aval.dtype != res_shape.numpy_dtype():
         res_op = xops.ConvertElementType(
             res_op,
-            new_element_type=xla_client.dtype_to_etype(res_aval.dtype))
+            new_element_type=xla.dtype_to_primitive_type(res_aval.dtype))
       return res_op
 
     results = [

@@ -134,7 +134,8 @@ def _conv_general_dilated(
     raise error("Unimplemented support for batch_group_count != 1 "
                 f"(found {batch_group_count})")
 
-  if preferred_element_type is not None and preferred_element_type != lhs.dtype:
+  if (preferred_element_type is not None and
+      preferred_element_type != lhs.dtype.as_numpy_dtype):
     raise error("Unimplemented support for preferred_element_type")
 
   lhs, rhs = _transpose_for_tf_conv(lhs, rhs, dimension_numbers)

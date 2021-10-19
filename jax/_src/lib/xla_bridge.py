@@ -427,18 +427,6 @@ def host_ids(backend=None):
 
 ### utility functions
 
-@util.memoize
-def dtype_to_etype(dtype):
-  """Convert from dtype to canonical etype (reading config.x64_enabled)."""
-  return xla_client.dtype_to_etype(dtypes.canonicalize_dtype(dtype))
-
-
-@util.memoize
-def supported_numpy_dtypes():
-  return {dtypes.canonicalize_dtype(dtype)
-          for dtype in xla_client.XLA_ELEMENT_TYPE_TO_DTYPE.values()}
-
-
 # TODO(mattjj,frostig): try to remove this function
 def normalize_to_xla_dtypes(val):
   """Normalize dtypes in a value."""

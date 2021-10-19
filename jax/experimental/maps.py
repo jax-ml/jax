@@ -1396,7 +1396,8 @@ def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
   convert_bool = (np.issubdtype(x_dtype, np.bool_)
                   and xb.get_backend(backend).platform in ('cpu', 'gpu'))
   if convert_bool:
-    x = xops.ConvertElementType(x, xb.dtype_to_etype(np.float32))
+    x = xops.ConvertElementType(
+        x, xla.dtype_to_primitive_type(np.dtype(np.float32)))
 
   tile_shape = list(xla_shape.dimensions())
   shape = list(tile_shape)
@@ -1413,7 +1414,8 @@ def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
   # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
   if convert_bool:
     nonzero = xops.Ne(out, xb.constant(c, np.array(0, dtype=np.float32)))
-    out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(np.bool_))
+    out = xops.ConvertElementType(
+        nonzero, xla.dtype_to_primitive_type(np.dtype(np.bool_)))
   return out
 
 def _xmap_translation_rule_spmd(c, axis_env,

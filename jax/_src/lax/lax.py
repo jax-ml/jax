@@ -648,6 +648,8 @@ def conv_general_dilated(
     padding = padtype_to_pads(
         np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,  # type: ignore[index]
         window_strides, padding)
+  preferred_element_type = (None if preferred_element_type is None else
+                            np.dtype(preferred_element_type))
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
@@ -684,7 +686,8 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   """
   if 1 <= lhs.ndim <= 2 and 1 <= rhs.ndim <= 2 and core.symbolic_equal_dim(lhs.shape[-1], rhs.shape[0]):
     return dot_general(lhs, rhs, (((lhs.ndim - 1,), (0,)), ((), ())),
-                       precision=precision, preferred_element_type=preferred_element_type)
+                       precision=precision,
+                       preferred_element_type=preferred_element_type)
   else:
     raise TypeError("Incompatible shapes for dot: got {} and {}.".format(
         lhs.shape, rhs.shape))
@@ -722,6 +725,8 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
   contract_dims_seq, batch_dims_seq = dimension_numbers
   contract_dims = tuple(map(tuple, contract_dims_seq))  # type: ignore
   batch_dims = tuple(map(tuple, batch_dims_seq))  # type: ignore
+  preferred_element_type = (None if preferred_element_type is None else
+                            np.dtype(preferred_element_type))
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(contract_dims, batch_dims),
                             precision=canonicalize_precision(precision),
@@ -3032,7 +3037,7 @@ def _convert_element_type_translation_rule(ctx, avals_in, avals_out, operand, *,
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
     operand = xops.Real(operand)
-  new_etype = xla_client.dtype_to_etype(new_dtype)
+  new_etype = xla.dtype_to_primitive_type(new_dtype)
   return [xops.ConvertElementType(operand, new_element_type=new_etype)]
 
 def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
@@ -3082,7 +3087,7 @@ def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
 
 def _bitcast_convert_type_translation_rule(ctx, avals_in, avals_out, operand, *,
                                            new_dtype):
-  new_etype = xla_bridge.dtype_to_etype(new_dtype)
+  new_etype = xla.dtype_to_primitive_type(new_dtype)
   return [xops.BitcastConvertType(operand, new_element_type=new_etype)]
 
 bitcast_convert_type_p = standard_primitive(
@@ -3307,8 +3312,9 @@ def _conv_general_dilated_translation_rule(
     if preferred_element_type is not None:
       # Convert complex dtype to types used for real and imaginary parts
       assert np.issubdtype(preferred_element_type, np.complexfloating)
-      preferred_element_type = xla_client.dtype_to_etype(
-          np.float64 if preferred_element_type == np.complex128 else np.float32)
+      preferred_element_type = xla.dtype_to_primitive_type(np.dtype(
+          np.float64 if preferred_element_type == np.complex128
+          else np.float32))
 
     conv = lambda x, y: xops.ConvGeneralDilated(
         x, y, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -3323,7 +3329,7 @@ def _conv_general_dilated_translation_rule(
     return [xops.Complex(xops.Sub(k1, k3), xops.Add(k1, k2))]
 
   if preferred_element_type is not None:
-    preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
+    preferred_element_type = xla.dtype_to_primitive_type(preferred_element_type)
 
   return [xops.ConvGeneralDilated(
       lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
@@ -3666,7 +3672,7 @@ def _dot_general_translation_rule(ctx, avals_in, avals_out, lhs, rhs, *,
                                   dimension_numbers, precision,
                                   preferred_element_type: Optional[DType]):
   if preferred_element_type is not None:
-    preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
+    preferred_element_type = xla.dtype_to_primitive_type(preferred_element_type)
   return [xops.DotGeneral(lhs, rhs,
                           xc.make_dot_dimension_numbers(dimension_numbers),
                           precision_config=_precision_config(precision),
@@ -3676,14 +3682,17 @@ def _dot_general_cpu_translation_rule(ctx, avals_in, avals_out, lhs, rhs, *,
                                       dimension_numbers, precision,
                                       preferred_element_type: Optional[DType]):
   if preferred_element_type is not None:
-    preferred_element_type = xla_client.dtype_to_etype(preferred_element_type)
+    preferred_element_type = xla.dtype_to_primitive_type(preferred_element_type)
 
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
   if avals_in[0].dtype == np.float16:
-    lhs = xops.ConvertElementType(lhs, xla_client.dtype_to_etype(np.float32))
-    rhs = xops.ConvertElementType(rhs, xla_client.dtype_to_etype(np.float32))
-    preferred_element_type = (preferred_element_type or
-                              xla_client.dtype_to_etype(np.float16))
+    lhs = xops.ConvertElementType(
+        lhs, xla.dtype_to_primitive_type(np.dtype(np.float32)))
+    rhs = xops.ConvertElementType(
+        rhs, xla.dtype_to_primitive_type(np.dtype(np.float32)))
+    preferred_element_type = (
+        preferred_element_type or
+        xla.dtype_to_primitive_type(np.dtype(np.float16)))
 
   return [xops.DotGeneral(lhs, rhs,
                           xc.make_dot_dimension_numbers(dimension_numbers),
@@ -4738,7 +4747,7 @@ def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
   intarray = partial(np.array, dtype=np.int64)
   operand_dims = intarray(operand_aval.shape)
   indices = xops.ConvertElementType(
-    indices, xb.dtype_to_etype(np.int64))
+    indices, xla.dtype_to_primitive_type(dtypes.canonicalize_dtype(np.int64)))
   num_batch_dims = len(indices_aval.shape) - 1
 
   upper_bound = operand_dims[intarray(dnums.start_index_map)]
@@ -6254,15 +6263,15 @@ def _select_and_gather_add_shape_rule(
     window_dilation)
 
 _UINT_DTYPES = {
-  16: np.uint16,
-  32: np.uint32,
-  64: np.uint64,
+  16: np.dtype(np.uint16),
+  32: np.dtype(np.uint32),
+  64: np.dtype(np.uint64),
 }
 
 _INT_DTYPES = {
-  16: np.int16,
-  32: np.int32,
-  64: np.int64,
+  16: np.dtype(np.int16),
+  32: np.dtype(np.int32),
+  64: np.dtype(np.int64),
 }
 
 def _select_and_gather_add_translation(
@@ -6272,7 +6281,7 @@ def _select_and_gather_add_translation(
   c = ctx.builder
   tangents_aval, operand_aval, = avals_in
   dtype = operand_aval.dtype
-  etype = xla_client.dtype_to_etype(dtype)
+  etype = xla.dtype_to_primitive_type(dtype)
   nbits = dtypes.finfo(dtype).bits
 
   assert nbits <= max_bits
@@ -6287,8 +6296,8 @@ def _select_and_gather_add_translation(
     # 2k-bit unsigned integer using bit tricks.
     word_dtype = _UINT_DTYPES[nbits]
     double_word_dtype = _UINT_DTYPES[nbits * 2]
-    word_type = xla_client.dtype_to_etype(word_dtype)
-    double_word_type = xla_client.dtype_to_etype(double_word_dtype)
+    word_type = xla.dtype_to_primitive_type(word_dtype)
+    double_word_type = xla.dtype_to_primitive_type(double_word_dtype)
 
     # Packs two values into a tuple.
     def pack(a, b):
@@ -6323,7 +6332,7 @@ def _select_and_gather_add_translation(
     nmant = r_nbits - nexp - 1
 
     double_word_dtype = word_dtype = _UINT_DTYPES[nbits]
-    word_type = xla_client.dtype_to_etype(word_dtype)
+    word_type = xla.dtype_to_primitive_type(word_dtype)
 
     # Packs two values into a tuple.
     def pack(a, b):
@@ -6497,7 +6506,7 @@ def _float_to_int_for_sort(x):
   signed = bitcast_convert_type(x, signed_dtype)
   unsigned = bitcast_convert_type(x, unsigned_dtype)
   flipped = bitcast_convert_type(
-    sub(unsigned_dtype(np.iinfo(signed_dtype).max), unsigned), signed_dtype)
+    sub(unsigned_dtype.type(np.iinfo(signed_dtype).max), unsigned), signed_dtype)
   return select(lt(signed, _zero(signed)), flipped, signed)
 
 # Default comparator that sorts the operands lexicographically on the
@@ -6845,7 +6854,7 @@ def _rng_bit_generator_translation_rule(
     # TODO(mattjj): the BitcastConvertType segfaults on GPU
     # TODO(mattjj): remove fallback when minimum jaxlib is 0.1.72 or newer
     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-      u64_etype = xc.dtype_to_etype(dtypes.dtype('uint64'))
+      u64_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint64'))
       key = xops.BitcastConvertType(xops.Reshape(key, (2, 2)), u64_etype)
     else:
       key = _convert_4xU32_to_2xU64_without_bitcast(c, key)
@@ -6853,14 +6862,14 @@ def _rng_bit_generator_translation_rule(
       c, xops.RngBitGenerator(algorithm, key, xla_shape))
   if key_dtype == dtypes.dtype('uint32'):
     if jaxlib_version >= (0, 1, 72) and not backend_is_gpu:
-      u32_etype = xc.dtype_to_etype(dtypes.dtype('uint32'))
+      u32_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint32'))
       out_key = xops.Reshape(xops.BitcastConvertType(out_key, u32_etype), (4,))
     else:
       out_key = _convert_2xU64_to_4xU32_without_bitcast(c, out_key)
   return [out_key, out_vals]
 
 def _convert_4xU32_to_2xU64_without_bitcast(c, key):
-  u64_etype = xc.dtype_to_etype(dtypes.dtype('uint64'))
+  u64_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint64'))
   new_key = xb.constant(c, np.zeros(2, dtype=np.dtype('uint64')),
                         canonicalize_types=False)
   _32 = xb.constant(c, np.uint64(32), canonicalize_types=False)
@@ -6872,7 +6881,7 @@ def _convert_4xU32_to_2xU64_without_bitcast(c, key):
   return new_key
 
 def _convert_2xU64_to_4xU32_without_bitcast(c, key):
-  u32_etype = xc.dtype_to_etype(dtypes.dtype('uint32'))
+  u32_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint32'))
   new_key = xb.constant(c, np.zeros(4, dtype=np.dtype('uint32')))
   _32 = xb.constant(c, np.uint64(32), canonicalize_types=False)
   for i in [0, 1]:
@@ -6937,7 +6946,7 @@ def _iota_abstract_eval(*, dtype, shape, dimension):
 
 def _iota_translation_rule(ctx, avals_in, avals_out, *, dtype, shape,
                            dimension):
-  etype = xla_client.dtype_to_etype(dtype)
+  etype = xla.dtype_to_primitive_type(dtype)
   xla_shape = xc.Shape.array_shape(etype, shape)
   return [xops.Iota(ctx.builder, xla_shape, dimension)]
 

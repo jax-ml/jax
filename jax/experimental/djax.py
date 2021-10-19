@@ -1357,7 +1357,7 @@ def _iota_translation_rule(c, dims, avals, operands, *, size=None):
     shape = aval.shape
   else:
     shape = ()
-  etype = xc.dtype_to_etype(np.dtype('int32'))
+  etype = xla.dtype_to_primitive_type(np.dtype('int32'))
   xla_shape = xc.Shape.array_shape(etype, (*shape, size))
   return [[xops.Iota(c, xla_shape, len(shape))]]
 translations[iota_p] = _iota_translation_rule
