@@ -818,7 +818,7 @@ def xla_computation(fun: Callable,
         out_parts_flat = tuple(flatten_axes(
             "xla_computation out_parts", out_tree(), out_parts))
       c = xc.XlaBuilder(f"xla_computation_{fun_name}")
-      xla_consts = map(partial(xb.constant, c), consts)
+      xla_consts = map(partial(xla.pyval_to_ir_constant, c), consts)
       should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
       xla_args, donated_invars = xla._xla_callable_args(
           c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)

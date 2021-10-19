@@ -38,8 +38,10 @@ from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax import tree_util
-from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_bridge
+
+xops = xla_client.ops
 
 import numpy as np
 
@@ -1761,7 +1763,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
                                 "Consumer ID cannot be a reserved value: 0"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 0,
-          [xla_bridge.constant(comp, np.zeros((2, 3), dtype=np.float32))])
+          [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))])
 
   def test_tap_error_different_shapes(self):
     """Try to register different shapes for the same consumer ID."""
@@ -1772,17 +1774,17 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
     hcb._callback_handler_data.receiver.add_outfeed(
         comp, token, 123,
-        [xla_bridge.constant(comp, np.zeros((2, 3), dtype=np.float32))])
+        [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))])
     with self.assertRaisesRegex(
         RuntimeError, ".*does not match previous shape element_type.*"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
-          [xla_bridge.constant(comp, np.zeros((2, 3), dtype=np.int32))])
+          [xops.Constant(comp, np.zeros((2, 3), dtype=np.int32))])
     with self.assertRaisesRegex(
         RuntimeError, ".*does not match previous shape element_type.*"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
-          [xla_bridge.constant(comp, np.zeros((2,), dtype=np.float32))])
+          [xops.Constant(comp, np.zeros((2,), dtype=np.float32))])
 
   def test_tap_id_tap_removed_kwargs(self):
     def func(x, transforms, y):

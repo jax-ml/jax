@@ -643,7 +643,8 @@ def _make_params(c, dim_in_avals, in_avals):
 def _xla_consts(c, consts):
   unique_consts = {id(const): const for const in consts}
   xla_consts = {
-      id_: [xb.constant(c, const)] for id_, const in unique_consts.items()}
+      id_: [xla.pyval_to_ir_constant(c, const)]
+      for id_, const in unique_consts.items()}
   return [xla_consts[id(const)] for const in consts]
 
 def djaxpr_subcomp(c, jaxpr, dim_args, args):
@@ -654,7 +655,7 @@ def djaxpr_subcomp(c, jaxpr, dim_args, args):
 
   def read(v):
     if type(v) is core.Literal:
-      return [xb.constant(c, xla.canonicalize_dtype(v.val))]
+      return [xla.pyval_to_ir_constant(c, xla.canonicalize_dtype(v.val))]
     else:
       return env[v]
 

@@ -70,28 +70,13 @@ XlaExecutable = xc.Executable
 _on_exit = False
 
 
-def compile_or_get_cached(backend, computation, compile_options):
-    # Avoid import cycle between jax and jax.experimental
-    from jax.experimental.compilation_cache import compilation_cache as cc
-    # Persistent compilation cache only implemented on TPU.
-    # TODO(skye): add warning when initializing cache on unsupported default platform
-    if cc.is_initialized() and backend.platform == 'tpu':
-        cached_executable = cc.get_executable(computation, compile_options, backend)
-        if cached_executable is not None:
-            logging.info('Persistent compilation cache hit')
-            return cached_executable
-        else:
-            compiled = backend_compile(backend, computation, compile_options)
-            cc.put_executable(computation, compile_options, compiled, backend)
-            return compiled
-    return backend_compile(backend, computation, compile_options)
-
 def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 # unit representation
-def _make_unit_constant(c): return xb.constant_general(c, np.zeros((), dtype=np.dtype('bool')))
+def _make_unit_constant(c): return [
+    xops.Constant(c, np.zeros((), dtype=np.dtype('bool')))]
 def _make_unit_shape(_): return (xc.Shape.array_shape(np.dtype('bool'), ()),)
 def _device_put_unit(_, device):
   backend = xb.get_device_backend(device)
@@ -128,6 +113,8 @@ def make_op_metadata(primitive: core.Primitive,
 
 ### handlers
 
+# Numpy dtypes -> XLA primitive types
+
 _dtype_to_primitive_type: Dict[np.dtype, xc.PrimitiveType] = {
   np.dtype('bool'): xc.PrimitiveType.PRED,
   np.dtype('int8'): xc.PrimitiveType.S8,
@@ -156,7 +143,8 @@ def dtype_to_primitive_type(dtype: np.dtype) -> xc.PrimitiveType:
   except KeyError as err:
     raise TypeError(f"No XLA lowering for NumPy dtype: {dtype}") from err
 
-xb.register_constant_handler(core.Unit, lambda c, *_: _make_unit_constant(c))
+
+# JAX abstract values -> XLA shapes
 
 def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[XlaShape]:
   try:
@@ -170,6 +158,123 @@ xla_shape_handlers: Dict[Type[core.AbstractValue],
     ShapedArray: _make_array_shape,
     ConcreteArray: _make_array_shape,
 }
+
+
+
+# IR constants
+
+_constant_handlers: Dict[type, Callable] = {}
+
+def pyval_to_ir_constants(builder, py_val, canonicalize_types=True):
+  """Translate a general constant `py_val` to a constant, canonicalizing its dtype.
+
+  Args:
+    py_val: a Python value to be translated to a constant.
+
+  Returns:
+    A representation of the constant as a list of xla ops.
+  """
+  for t in type(py_val).mro():
+    handler = _constant_handlers.get(t)
+    if handler: return handler(builder, py_val, canonicalize_types)
+  if hasattr(py_val, '__jax_array__'):
+    return pyval_to_ir_constants(builder, py_val.__jax_array__(),
+                                 canonicalize_types)
+  raise TypeError("No constant handler for type: {}".format(type(py_val)))
+
+def pyval_to_ir_constant(builder, py_val, canonicalize_types=True):
+  """Translate constant `py_val` to a constant, canonicalizing its dtype.
+
+  Args:
+    py_val: a Python value to be translated to a constant.
+
+  Returns:
+    A representation of the constant, either a ComputationDataHandle or None
+  """
+  const = pyval_to_ir_constants(builder, py_val, canonicalize_types=canonicalize_types)
+  assert len(const) == 1, f"Internal error: cannot create constant from object of type {type(py_val)}"
+  return const[0]
+
+
+def register_constant_handler(type_, handler_fun):
+  _constant_handlers[type_] = handler_fun
+
+register_constant_handler(core.Unit, lambda c, *_: _make_unit_constant(c))
+
+
+# TODO(mattjj,frostig): try to remove this function
+def _normalize_to_xla_dtypes(val):
+  """Normalize dtypes in a value."""
+  if hasattr(val, '__array__') or np.isscalar(val):
+    return np.asarray(val, dtype=dtypes.canonicalize_dtype(dtypes.result_type(val)))
+  elif isinstance(val, (tuple, list)):
+    return tuple(_normalize_to_xla_dtypes(x) for x in val)
+  raise TypeError('Can\'t convert to XLA: {}'.format(val))
+
+def _numpy_array_constant(builder, value, canonicalize_types=True):
+  if canonicalize_types:
+    value = _normalize_to_xla_dtypes(value)
+  return [xops.Constant(builder, value)]
+
+
+def _ndarray_constant_handler(c, val, canonicalize_types=True):
+  """Constant handler for ndarray literals, handling zero-size strides.
+
+  This function essentially calls _numpy_array_constant(val) except it has
+  special handling of arrays with any strides of size zero: for those, it
+  generates appropriate calls to NumpyArrayConstant, Broadcast, and Transpose
+  to avoid staging in large literals that might arise from np.zeros or np.ones
+  or the output of lax.broadcast (which uses np.broadcast_to which in turn
+  uses size-zero strides).
+
+  Args:
+    c: an XlaBuilder
+    val: an ndarray.
+
+  Returns:
+    An XLA ComputationDataHandle / XlaOp representing the constant ndarray
+    staged into the XLA Computation.
+  """
+  # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
+  if dtypes.result_type(val) == dtypes.float0:
+    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool_))
+  elif np.any(np.equal(0, val.strides)) and val.size > 0:
+    zero_stride_axes, = np.where(np.equal(0, val.strides))
+    other_axes, = np.where(np.not_equal(0, val.strides))
+    collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
+                              for ax in range(val.ndim))]
+    xla_val = xops.Broadcast(
+        _numpy_array_constant(c, collapsed_val, canonicalize_types)[0],
+        np.take(val.shape, zero_stride_axes))
+    permutation = np.argsort(tuple(zero_stride_axes) + tuple(other_axes))
+    return [xops.Transpose(xla_val, permutation)]
+  else:
+    return _numpy_array_constant(c, val, canonicalize_types)
+register_constant_handler(np.ndarray, _ndarray_constant_handler)
+
+
+def _scalar_constant_handler(c, val, canonicalize_types=True):
+  return _numpy_array_constant(c, val, canonicalize_types)
+
+for scalar_type in [np.int8, np.int16, np.int32, np.int64,
+                    np.uint8, np.uint16, np.uint32, np.uint64,
+                    np.float16, np.float32, np.float64,
+                    np.bool_, np.longlong,
+                    dtypes.bfloat16]:
+  register_constant_handler(scalar_type, _scalar_constant_handler)
+
+# https://github.com/winpython/winpython/issues/613#issuecomment-380121523
+if hasattr(np, "float128"):
+  register_constant_handler(np.float128, _scalar_constant_handler)
+
+def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
+  return _numpy_array_constant(c, dtype.type(val))
+
+for ptype, dtype in dtypes.python_scalar_dtypes.items():
+  register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
+
+
+# Result handlers
 
 def aval_to_result_handler(device: Optional[Device],
                            aval: core.AbstractValue) -> Callable:
@@ -434,7 +539,7 @@ def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
   # assert ctx.platform is not None
   def read(v):
     if type(v) is Literal:
-      return xb.constant_general(ctx.builder, canonicalize_dtype(v.val))
+      return pyval_to_ir_constants(ctx.builder, canonicalize_dtype(v.val))
     else:
       return env[v]
 
@@ -449,7 +554,8 @@ def jaxpr_subcomp(ctx: TranslationContext, jaxpr: core.Jaxpr,
     env[v] = node
 
   env: Dict[core.Var, Sequence[XlaOp]] = {}
-  _partitionmap(write, [core.unitvar], _make_unit_constant(ctx.builder))
+  _partitionmap(write, [core.unitvar],
+                pyval_to_ir_constants(ctx.builder, core.unit))
   _partitionmap(write, jaxpr.constvars, consts)
   _partitionmap(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
@@ -645,7 +751,7 @@ def _flatten_shape(s: XlaShape, index: Tuple[int, ...],
 def _xla_consts(c, consts):
   unique_consts = {id(const): const for const in consts}
   xla_consts = {
-      id_: xb.constant_general(c, const) for id_, const in unique_consts.items()}
+      id_: pyval_to_ir_constants(c, const) for id_, const in unique_consts.items()}
   return [c for const in consts for c in xla_consts[id(const)]]
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
@@ -738,6 +844,23 @@ def lower_xla_callable(fun: lu.WrappedFun, device, backend, name,
   return XlaComputation(
       name, built, False, nreps, device, backend, tuple_args, abstract_args,
       out_avals, kept_var_idx)
+
+
+def compile_or_get_cached(backend, computation, compile_options):
+    # Avoid import cycle between jax and jax.experimental
+    from jax.experimental.compilation_cache import compilation_cache as cc
+    # Persistent compilation cache only implemented on TPU.
+    # TODO(skye): add warning when initializing cache on unsupported default platform
+    if cc.is_initialized() and backend.platform == 'tpu':
+        cached_executable = cc.get_executable(computation, compile_options, backend)
+        if cached_executable is not None:
+            logging.info('Persistent compilation cache hit')
+            return cached_executable
+        else:
+            compiled = backend_compile(backend, computation, compile_options)
+            cc.put_executable(computation, compile_options, compiled, backend)
+            return compiled
+    return backend_compile(backend, computation, compile_options)
 
 
 class XlaComputation:
@@ -1183,7 +1306,7 @@ register_translation(xla_call_p, _xla_call_translation_rule)
 def zeros_like_translation_rule(c, x):
   shape = c.get_shape(x)
   assert not shape.is_tuple()
-  zero = xb.constant(c, np.array(0, shape.element_type()))
+  zero = xops.Constant(c, np.array(0, shape.element_type()))
   return xops.Broadcast(zero, shape.dimensions())
 translations[ad_util.zeros_like_p] = zeros_like_translation_rule
 
@@ -1539,9 +1662,9 @@ for device_array in [_CppDeviceArray, _DeviceArray]:
   canonicalize_dtype_handlers[device_array] = identity
 
 def _device_array_constant_handler(c, val, canonicalize_types=True):
-  return xb.constant_general(c, val.device_buffer.to_py())
-xb.register_constant_handler(_DeviceArray, _device_array_constant_handler)
-xb.register_constant_handler(_CppDeviceArray, _device_array_constant_handler)
+  return pyval_to_ir_constants(c, val.device_buffer.to_py())
+register_constant_handler(_DeviceArray, _device_array_constant_handler)
+register_constant_handler(_CppDeviceArray, _device_array_constant_handler)
 
 def _device_put_device_array(x: Union[DeviceArrayProtocol, _DeviceArray], device: Optional[Device]):
   x = _copy_device_array_to_device(x, device)
@@ -1593,7 +1716,7 @@ masking.defvectorized(device_put_p)
 def _zeros(c, xla_shape):
   if xla_shape.is_array():
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-    zero = xb.constant(c, np.array(0, dtype=dtype))
+    zero = xops.Constant(c, np.array(0, dtype=dtype))
     return xops.Broadcast(zero, shape)
   else:
     # It is a token
@@ -1608,10 +1731,10 @@ def _remat_using_cond(ctx, in_nodes, name, call_jaxpr):
        Conditional."""
   # Fake condition which always selects True branch.
   c = ctx.builder
-  rng = xops.RngUniform(xb.constant(c, np.array(0, dtype=np.float32)),
-                        xb.constant(c, np.array(1, dtype=np.float32)),
+  rng = xops.RngUniform(xops.Constant(c, np.array(0, dtype=np.float32)),
+                        xops.Constant(c, np.array(1, dtype=np.float32)),
                         xc.Shape.array_shape(xc.PrimitiveType.F32, []))
-  pred = xops.Lt(rng, xb.constant(c, np.array(2, dtype=np.float32)))
+  pred = xops.Lt(rng, xops.Constant(c, np.array(2, dtype=np.float32)))
 
   true_op = xops.Tuple(c, in_nodes)
   remat_subc = xc.XlaBuilder("remat_call_subcomputation")
@@ -1648,22 +1771,22 @@ def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
   dummy_subcomp_outs = jaxpr_subcomp(dummy_ctx, call_jaxpr, (), *dummy_args)
   out_node_shapes = [dummy_subc.get_shape(o) for o in dummy_subcomp_outs]
 
-  i_init = xb.constant(c, np.array(0, dtype=np.int32))
+  i_init = xops.Constant(c, np.array(0, dtype=np.int32))
   zeros_like_outs = [_zeros(c, s) for s in out_node_shapes]
   inputs = xops.Tuple(c, [i_init] + list(in_nodes) + zeros_like_outs)
 
   cond_subc = xc.XlaBuilder("remat_cond_subcomputation")
   input_op = xb.parameter(cond_subc, 0, c.get_shape(inputs), replicated=[])
   i = xops.GetTupleElement(input_op, 0)
-  rng = xops.RngUniform(xb.constant(cond_subc, np.array(1, dtype=np.int32)),
-                        xb.constant(cond_subc, np.array(2, dtype=np.int32)),
+  rng = xops.RngUniform(xops.Constant(cond_subc, np.array(1, dtype=np.int32)),
+                        xops.Constant(cond_subc, np.array(2, dtype=np.int32)),
                         xc.Shape.array_shape(xc.PrimitiveType.S32, []))
   cond_subc = cond_subc.build(xops.Lt(i, rng))
 
   body_subc = xc.XlaBuilder("remat_body_subcomputation")
   input_op = xb.parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
   i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes)+1]
-  i_next = xops.Add(i, xb.constant(body_subc, np.array(1, dtype=np.int32)))
+  i_next = xops.Add(i, xops.Constant(body_subc, np.array(1, dtype=np.int32)))
   body_ctx = ctx.replace(
       builder=body_subc,
       name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, 'remat')))

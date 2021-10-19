@@ -686,12 +686,13 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
 
 
 def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
-  return xb.constant_general(c, np.asarray(val), canonicalize_types=canonicalize_types)
+  return xla.pyval_to_ir_constants(c, np.asarray(val),
+                                   canonicalize_types=canonicalize_types)
 
 
 def _register_handlers_for_sharded_device_array(sda):
   shard_arg_handlers[sda] = _shard_sharded_device_array_slow_path
-  xb.register_constant_handler(sda, _sharded_device_array_constant_handler)
+  xla.register_constant_handler(sda, _sharded_device_array_constant_handler)
 
   core.pytype_aval_mappings[sda] = ConcreteArray
   xla.device_put_handlers[sda] = xla._device_put_array
@@ -876,7 +877,7 @@ def parallel_callable(fun: lu.WrappedFun,
   tuple_args = len(global_sharded_avals) > 100  # pass long arg lists as tuple for TPU
 
   c = xc.XlaBuilder("pmap_{}".format(fun.__name__))
-  xla_consts = map(partial(xb.constant, c), consts)
+  xla_consts = map(partial(xla.pyval_to_ir_constant, c), consts)
   replicated_args = [axis is None for axis in in_axes]
   xla_args, donated_invars = xla._xla_callable_args(c, global_sharded_avals, tuple_args,
                                                     replicated=replicated_args,
@@ -1317,7 +1318,7 @@ def _xla_shard(c, aval, axis_env, x, in_axis):
     return x
   elif isinstance(aval, ShapedArray):
     dims = list(c.get_shape(x).dimensions())
-    zero = xb.constant(c, np.zeros((), dtype=np.uint32))
+    zero = xops.Constant(c, np.zeros((), dtype=np.uint32))
     idxs = [zero] * (len(dims) - 1)
     idxs.insert(in_axis, _unravel_index(c, axis_env))
     dims_unsqueezed = dims.copy()
@@ -1344,9 +1345,10 @@ def _xla_unshard(c, aval, axis_env, out_axis, x, backend):
 
     xla_shape = c.get_shape(x)
     dims = list(xla_shape.dimensions())
-    padded = xops.Broadcast(xb.constant(c, np.array(0, xla_shape.numpy_dtype())),
-                         [axis_env.sizes[-1]] + dims)
-    zero = xb.constant(c, np.zeros((), dtype=np.uint32))
+    padded = xops.Broadcast(
+        xops.Constant(c, np.array(0, xla_shape.numpy_dtype())),
+        [axis_env.sizes[-1]] + dims)
+    zero = xops.Constant(c, np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
     padded = xops.DynamicUpdateSlice(padded, xops.Reshape(x, [1] + dims), idxs)
     replica_groups_protos = xc.make_replica_groups(
@@ -1360,7 +1362,7 @@ def _xla_unshard(c, aval, axis_env, out_axis, x, backend):
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
-      nonzero = xops.Ne(out, xb.constant(c, np.array(0, dtype=np.float32)))
+      nonzero = xops.Ne(out, xops.Constant(c, np.array(0, dtype=np.float32)))
       out = xops.ConvertElementType(
           nonzero, xla.dtype_to_primitive_type(np.dtype(np.bool_)))
     return out
@@ -1368,8 +1370,9 @@ def _xla_unshard(c, aval, axis_env, out_axis, x, backend):
     raise TypeError((aval, c.get_shape(x)))
 
 def _unravel_index(c, axis_env):
-  div = xb.constant(c, np.array(axis_env.nreps // prod(axis_env.sizes), np.uint32))
-  mod = xb.constant(c, np.array(axis_env.sizes[-1], np.uint32))
+  div = xops.Constant(c, np.array(axis_env.nreps // prod(axis_env.sizes),
+                                  np.uint32))
+  mod = xops.Constant(c, np.array(axis_env.sizes[-1], np.uint32))
   return xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
 
 # ------------------- xmap -------------------
@@ -1597,7 +1600,7 @@ def lower_mesh_computation(
 
   # 3. Build up the HLO
   c = xc.XlaBuilder(f"xmap_{fun.__name__}")
-  xla_consts = map(partial(xb.constant, c), consts)
+  xla_consts = map(partial(xla.pyval_to_ir_constant, c), consts)
   tuple_args = len(in_jaxpr_avals) > 100  # pass long arg lists as tuple for TPU
   in_partitions: Optional[List]
   if spmd_lowering:

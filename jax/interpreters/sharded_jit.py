@@ -139,7 +139,7 @@ def _sharded_callable(
               fun.__name__, nparts, global_abstract_args)
 
   c = xc.XlaBuilder("spjit_{}".format(fun.__name__))
-  xla_consts = _map(partial(xb.constant, c), consts)
+  xla_consts = _map(partial(xla.pyval_to_ir_constant, c), consts)
   xla_args = _xla_sharded_args(c, global_abstract_args, in_parts)
   axis_env = xla.AxisEnv(nrep, (), ())
   ctx = xla.TranslationContext(

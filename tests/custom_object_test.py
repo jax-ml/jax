@@ -121,8 +121,8 @@ def sparse_array_device_put_handler(a, device):
 
 def sparse_array_constant_handler(c, val, canonicalize_dtypes):
   return (
-    xb.constant(val.data, canonicalize_dtypes),
-    xb.constant(val.indices, canonicalize_dtypes)
+    xla.pyval_to_ir_constant(val.data, canonicalize_dtypes),
+    xla.pyval_to_ir_constant(val.indices, canonicalize_dtypes)
   )
 
 core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
@@ -132,7 +132,7 @@ xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
 xla.device_put_handlers[SparseArray] = sparse_array_device_put_handler
 xla.xla_result_handlers[AbstractSparseArray] = sparse_array_result_handler
 xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
-xb.register_constant_handler(SparseArray, sparse_array_constant_handler)
+xla.register_constant_handler(SparseArray, sparse_array_constant_handler)
 
 
 sp_indices_p = core.Primitive('sp_indices')

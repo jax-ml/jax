@@ -1360,20 +1360,21 @@ def _xmap_translation_rule_replica(c, axis_env,
   return xops.Tuple(c, outs)
 
 def _xla_tile_base_indices(c, axis_env, tile_shape, axes, axis_sizes):
-  zero = xb.constant(c, np.zeros((), dtype=np.int32))
+  zero = xops.Constant(c, np.zeros((), dtype=np.int32))
   linear_idxs = [zero] * len(tile_shape)
   strides = [1] * len(tile_shape)
   for name, axis in reversed(axes.items()):
     axis_index = _build_axis_index_lowering(
         c, axis_name=name, axis_env=axis_env)
-    stride_c = xb.constant(c, np.array(strides[axis], np.int32))
+    stride_c = xops.Constant(c, np.array(strides[axis], np.int32))
     if linear_idxs[axis] is zero and strides[axis] == 1:
       linear_idxs[axis] = axis_index
     else:
       linear_idxs[axis] = xops.Add(linear_idxs[axis], xops.Mul(axis_index, stride_c))
     strides[axis] *= axis_sizes[name]
   return [zero if linear_idx is zero else
-          xops.Mul(linear_idx, xb.constant(c, np.array(tile_dim_size, np.int32)))
+          xops.Mul(linear_idx,
+                   xops.Constant(c, np.array(tile_dim_size, np.int32)))
           for linear_idx, tile_dim_size in zip(linear_idxs, tile_shape)]
 
 def _xla_tile(c, axis_env, x, in_axes, axis_sizes):
@@ -1405,7 +1406,7 @@ def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
     shape[axis] *= axis_sizes[name]
   base_idxs = _xla_tile_base_indices(c, axis_env, tile_shape, out_axes, axis_sizes)
 
-  padded = xops.Broadcast(xb.constant(c, np.array(0, x_dtype)), shape)
+  padded = xops.Broadcast(xops.Constant(c, np.array(0, x_dtype)), shape)
   padded = xops.DynamicUpdateSlice(padded, x, base_idxs)
   replica_groups_protos = xc.make_replica_groups(
     xla.axis_groups(axis_env, tuple(out_axes.keys())))
@@ -1413,7 +1414,7 @@ def _xla_untile(c, axis_env, x, out_axes, axis_sizes, backend):
 
   # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
   if convert_bool:
-    nonzero = xops.Ne(out, xb.constant(c, np.array(0, dtype=np.float32)))
+    nonzero = xops.Ne(out, xops.Constant(c, np.array(0, dtype=np.float32)))
     out = xops.ConvertElementType(
         nonzero, xla.dtype_to_primitive_type(np.dtype(np.bool_)))
   return out

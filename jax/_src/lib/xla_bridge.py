@@ -22,7 +22,7 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial, lru_cache
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import warnings
 
 from absl import logging
@@ -34,7 +34,6 @@ from jax._src.config import flags, bool_env
 from . import tpu_driver_client
 from . import xla_client
 from jax._src import util, traceback_util
-from jax._src import dtypes
 import numpy as np
 import threading
 
@@ -427,20 +426,6 @@ def host_ids(backend=None):
 
 ### utility functions
 
-# TODO(mattjj,frostig): try to remove this function
-def normalize_to_xla_dtypes(val):
-  """Normalize dtypes in a value."""
-  if hasattr(val, '__array__') or np.isscalar(val):
-    return np.asarray(val, dtype=dtypes.canonicalize_dtype(dtypes.result_type(val)))
-  elif isinstance(val, (tuple, list)):
-    return tuple(normalize_to_xla_dtypes(x) for x in val)
-  raise TypeError('Can\'t convert to XLA: {}'.format(val))
-
-def _numpy_array_constant(builder, value, canonicalize_types=True):
-  if canonicalize_types:
-    value = normalize_to_xla_dtypes(value)
-  return [xops.ConstantLiteral(builder, value)]
-
 def parameter(builder, num, shape, name=None, replicated=None):
   if name is None:
     name = ''
@@ -452,36 +437,6 @@ def parameter(builder, num, shape, name=None, replicated=None):
   return xops.Parameter(builder, num,
                         shape.with_major_to_minor_layout_if_absent(), name,
                         replicated)
-
-
-def constant_general(builder, py_val, canonicalize_types=True):
-  """Translate a general constant `py_val` to a constant, canonicalizing its dtype.
-
-  Args:
-    py_val: a Python value to be translated to a constant.
-
-  Returns:
-    A representation of the constant as a list of xla ops.
-  """
-  for t in type(py_val).mro():
-    handler = _constant_handlers.get(t)
-    if handler: return handler(builder, py_val, canonicalize_types)
-  if hasattr(py_val, '__jax_array__'):
-    return constant(builder, py_val.__jax_array__(), canonicalize_types)
-  raise TypeError("No constant handler for type: {}".format(type(py_val)))
-
-def constant(builder, py_val, canonicalize_types=True):
-  """Translate constant `py_val` to a constant, canonicalizing its dtype.
-
-  Args:
-    py_val: a Python value to be translated to a constant.
-
-  Returns:
-    A representation of the constant, either a ComputationDataHandle or None
-  """
-  const = constant_general(builder, py_val, canonicalize_types=canonicalize_types)
-  assert len(const) == 1, f"Internal error: cannot create constant from object of type {type(py_val)}"
-  return const[0]
 
 # HLO instructions optionally can be annotated to say how the output should be
 # spatially partitioned (represented in XLA as OpSharding protos, see
@@ -545,65 +500,3 @@ def set_sharding(builder, op, sharding: SpatialSharding):
 def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
   return with_sharding_proto(builder, _sharding_to_proto(sharding), op_fn, *args, **kwargs)
-
-
-def register_constant_handler(type_, handler_fun):
-  _constant_handlers[type_] = handler_fun
-_constant_handlers: Dict[type, Callable] = {}
-
-
-def _ndarray_constant_handler(c, val, canonicalize_types=True):
-  """Constant handler for ndarray literals, handling zero-size strides.
-
-  This function essentially calls _numpy_array_constant(val) except it has
-  special handling of arrays with any strides of size zero: for those, it
-  generates appropriate calls to NumpyArrayConstant, Broadcast, and Transpose
-  to avoid staging in large literals that might arise from np.zeros or np.ones
-  or the output of lax.broadcast (which uses np.broadcast_to which in turn
-  uses size-zero strides).
-
-  Args:
-    c: an XlaBuilder
-    val: an ndarray.
-
-  Returns:
-    An XLA ComputationDataHandle / XlaOp representing the constant ndarray
-    staged into the XLA Computation.
-  """
-  # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
-  if dtypes.result_type(val) == dtypes.float0:
-    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool_))
-  elif np.any(np.equal(0, val.strides)) and val.size > 0:
-    zero_stride_axes, = np.where(np.equal(0, val.strides))
-    other_axes, = np.where(np.not_equal(0, val.strides))
-    collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
-                              for ax in range(val.ndim))]
-    xla_val = xops.Broadcast(
-        _numpy_array_constant(c, collapsed_val, canonicalize_types)[0],
-        np.take(val.shape, zero_stride_axes))
-    permutation = np.argsort(tuple(zero_stride_axes) + tuple(other_axes))
-    return [xops.Transpose(xla_val, permutation)]
-  else:
-    return _numpy_array_constant(c, val, canonicalize_types)
-register_constant_handler(np.ndarray, _ndarray_constant_handler)
-
-
-def _scalar_constant_handler(c, val, canonicalize_types=True):
-  return _numpy_array_constant(c, val, canonicalize_types)
-
-for scalar_type in [np.int8, np.int16, np.int32, np.int64,
-                    np.uint8, np.uint16, np.uint32, np.uint64,
-                    np.float16, np.float32, np.float64,
-                    np.bool_, np.longlong,
-                    xla_client.bfloat16]:
-  register_constant_handler(scalar_type, _scalar_constant_handler)
-
-# https://github.com/winpython/winpython/issues/613#issuecomment-380121523
-if hasattr(np, "float128"):
-  register_constant_handler(np.float128, _scalar_constant_handler)
-
-def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
-  return _numpy_array_constant(c, dtype.type(val))
-
-for ptype, dtype in dtypes.python_scalar_dtypes.items():
-  register_constant_handler(ptype, partial(_python_scalar_handler, dtype))

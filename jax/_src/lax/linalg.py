@@ -41,7 +41,6 @@ from jax._src.lib import cusparse
 from jax._src.lib import rocsolver
 
 from jax._src.lib import xla_client
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import version as jaxlib_version
 
 xops = xla_client.ops
@@ -346,9 +345,9 @@ def _nan_like(c, operand):
   shape = c.get_shape(operand)
   dtype = shape.element_type()
   if jnp.issubdtype(dtype, np.complexfloating):
-    nan = xb.constant(c, np.array(np.nan * (1. + 1j), dtype=dtype))
+    nan = xops.Constant(c, np.array(np.nan * (1. + 1j), dtype=dtype))
   else:
-    nan = xb.constant(c, np.array(np.nan, dtype=dtype))
+    nan = xops.Constant(c, np.array(np.nan, dtype=dtype))
   return xops.Broadcast(nan, shape.dimensions())
 
 def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
@@ -696,7 +695,7 @@ def _triangular_solve_cpu_translation_rule(
     conjugate_a = False
   if len(shape.dimensions()) == 2 and np.dtype(dtype) in _cpu_lapack_types:
     return lapack.jax_trsm(
-      c, xb.constant(c, np.array(1, dtype=dtype)),
+      c, xops.Constant(c, np.array(1, dtype=dtype)),
       a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
   else:
     # Fall back to the HLO implementation for unsupported types or batching.

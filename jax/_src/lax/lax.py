@@ -2460,10 +2460,12 @@ def _sign_translation_rule(ctx, avals_in, avals_out, x):
   x_aval, = avals_in
   dtype = x_aval.dtype
   if dtypes.issubdtype(dtype, np.unsignedinteger):
-    zero = xb.constant(c, np.array(0, dtype=dtype))
-    return [xops.Select(xops.Eq(x, zero), xops.Broadcast(zero, x_aval.shape),
-                        xops.Broadcast(xb.constant(c, np.array(1, dtype=dtype)),
-                                       x_aval.shape))]
+    zero = xops.Constant(c, np.array(0, dtype=dtype))
+    return [xops.Select(
+        xops.Eq(x, zero),
+        xops.Broadcast(zero, x_aval.shape),
+        xops.Broadcast(xops.Constant(c, np.array(1, dtype=dtype)),
+                       x_aval.shape))]
   return [xops.Sign(x)]
 
 sign_p = standard_unop(_num, 'sign', translation_rule=_sign_translation_rule)
@@ -2764,7 +2766,8 @@ else:
     return [xops.Mul(
        xops.Sign(x),
        xops.Pow(xops.Abs(x),
-                xb.constant(ctx.builder, np.array(1/3, dtype=x_aval.dtype))))]
+                xla.pyval_to_ir_constant(ctx.builder,
+                                         np.array(1/3, dtype=x_aval.dtype))))]
 
 cbrt_p = standard_unop(_float, 'cbrt',
                        translation_rule=_cbrt_translation_rule)
@@ -2794,7 +2797,7 @@ def _integer_pow_translation_rule(ctx, avals_in, avals_out, x, *, y):
   # This should be kept in sync with the jax2tf translation rule.
   x_aval, = avals_in
   if y == 0:
-    one = xb.constant(ctx.builder, np.array(1, dtype=x_aval.dtype))
+    one = xla.pyval_to_ir_constant(ctx.builder, np.array(1, dtype=x_aval.dtype))
     return [xops.Broadcast(one, x_aval.shape)]
   is_reciprocal = y < 0
   if is_reciprocal:
@@ -4752,8 +4755,8 @@ def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
 
   upper_bound = operand_dims[intarray(dnums.start_index_map)]
   upper_bound -= intarray(slice_sizes)[intarray(dnums.start_index_map)]
-  mask = xops.And(xops.Ge(indices, xb.constant(c, intarray(0))),
-                  xops.Le(indices, xb.constant(c, upper_bound),
+  mask = xops.And(xops.Ge(indices, xla.pyval_to_ir_constant(c, intarray(0))),
+                  xops.Le(indices, xla.pyval_to_ir_constant(c, upper_bound),
                           broadcast_dimensions=[num_batch_dims]))
 
   # Compute the conjunction of the mask elements across the dimensions in which
@@ -4762,8 +4765,8 @@ def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
   scalar_pred = xla_client.Shape.array_shape(np.dtype(np.bool_), ())
   xops.And(xb.parameter(and_builder, 0, scalar_pred),
            xb.parameter(and_builder, 1, scalar_pred))
-  mask = xops.Reduce(c, [mask], [xb.constant(c, True)], and_builder.build(),
-                     [num_batch_dims])
+  mask = xops.Reduce(c, [mask], [xla.pyval_to_ir_constant(c, True)],
+                     and_builder.build(), [num_batch_dims])
 
   # Computes the output shape and the positions of the batch dimensions in the
   # output
@@ -4778,7 +4781,7 @@ def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
     xops.Gather(operand, indices, dimensions, slice_sizes,
                 indices_are_sorted=indices_are_sorted),
     xops.Broadcast(
-        xb.constant(c, np.array(fill_value, operand_aval.dtype)),
+        xla.pyval_to_ir_constant(c, np.array(fill_value, operand_aval.dtype)),
         aval_out.shape))]
 
 def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
@@ -5023,8 +5026,9 @@ def _clamp_scatter_indices(c, indices, operand_shape, updates_shape, dnums):
   upper_bound -= intarray(slice_sizes)[intarray(dnums.scatter_dims_to_operand_dims)]
   upper_bound = np.minimum(upper_bound, np.iinfo(indices_dtype).max)
   return xops.Min(
-    xops.Max(xb.constant(c, np.array(0, dtype=indices_dtype)), indices),
-    xb.constant(c, upper_bound.astype(indices_dtype)),
+    xops.Max(xla.pyval_to_ir_constant(c, np.array(0, dtype=indices_dtype)),
+             indices),
+    xla.pyval_to_ir_constant(c, upper_bound.astype(indices_dtype)),
     broadcast_dimensions=[len(indices_shape.dimensions()) - 1])
 
 def _scatter_translation_rule(ctx, avals_in, avals_out, operand, indices,
@@ -5037,7 +5041,7 @@ def _scatter_translation_rule(ctx, avals_in, avals_out, operand, indices,
     indices = _clamp_scatter_indices(c, indices, operand_aval.shape,
                                      updates_aval.shape, dimension_numbers)
 
-  init_value = xb.constant(c, np.array(0, operand_aval.dtype))
+  init_value = xla.pyval_to_ir_constant(c, np.array(0, operand_aval.dtype))
   update_computation = _reduction_computation(
       c, update_jaxpr, update_consts, init_value)
   return [xops.Scatter(
@@ -5690,7 +5694,7 @@ def _reduce_sum_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
   scalar = ShapedArray((), operand_aval.dtype)
   return [xops.Reduce(
       ctx.builder, [operand],
-      [xb.constant(ctx.builder, np.array(0, operand_aval.dtype))],
+      [xla.pyval_to_ir_constant(ctx.builder, np.array(0, operand_aval.dtype))],
       xla.primitive_subcomputation(add_p, scalar, scalar), axes)]
 
 def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
@@ -5723,7 +5727,7 @@ def _reduce_prod_translation_rule(ctx, avals_in, avals_out, operand, *, axes):
   scalar = ShapedArray((), operand_aval.dtype)
   return [xops.Reduce(
       ctx.builder, [operand],
-      [xb.constant(ctx.builder, np.array(1, operand_aval.dtype))],
+      [xla.pyval_to_ir_constant(ctx.builder, np.array(1, operand_aval.dtype))],
       xla.primitive_subcomputation(mul_p, scalar, scalar), axes)]
 
 def _reduce_prod_jvp_rule(primals, tangents, *, axes):
@@ -5749,7 +5753,8 @@ def _reduce_chooser_translation_rule(prim, identity, ctx, avals_in, avals_out,
   operand_aval, = avals_in
   scalar = ShapedArray((), operand_aval.dtype)
   return [xops.Reduce(ctx.builder, [operand],
-                      [xb.constant(ctx.builder, identity(operand_aval.dtype))],
+                      [xla.pyval_to_ir_constant(ctx.builder,
+                                                identity(operand_aval.dtype))],
                       xla.primitive_subcomputation(prim, scalar, scalar), axes)]
 
 def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
@@ -5872,7 +5877,7 @@ def _reduce_logical_translation_rule(prim, identity, ctx, avals_in, avals_out,
                                      operand, *, axes):
   scalar = ShapedArray((), np.bool_)
   return [xops.Reduce(ctx.builder, [operand],
-                      [xb.constant(ctx.builder, identity(np.bool_))],
+                      [xla.pyval_to_ir_constant(ctx.builder, identity(np.bool_))],
                       xla.primitive_subcomputation(prim, scalar, scalar), axes)]
 
 _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
@@ -5958,7 +5963,8 @@ def _reduce_window_sum_translation_rule(ctx, avals_in, avals_out, operand, *,
   operand_aval, = avals_in
   scalar = ShapedArray((), operand_aval.dtype)
   return [xops.ReduceWindowWithGeneralPadding(
-    operand, xb.constant(ctx.builder, np.array(0, operand_aval.dtype)),
+    operand,
+    xla.pyval_to_ir_constant(ctx.builder, np.array(0, operand_aval.dtype)),
     xla.primitive_subcomputation(add_p, scalar, scalar), window_dimensions,
     window_strides, base_dilation, window_dilation, padding)]
 
@@ -6012,7 +6018,8 @@ def _reduce_window_chooser_translation_rule(
   operand_aval, = avals_in
   scalar = ShapedArray((), operand_aval.dtype)
   return [xops.ReduceWindowWithGeneralPadding(
-    operand, xb.constant(ctx.builder, identity(operand_aval.dtype)),
+    operand,
+    xla.pyval_to_ir_constant(ctx.builder, identity(operand_aval.dtype)),
     xla.primitive_subcomputation(prim, scalar, scalar), window_dimensions,
     window_strides, base_dilation, window_dilation, padding)]
 
@@ -6162,7 +6169,7 @@ def _select_and_scatter_add_translation(
   select = xla.primitive_subcomputation(select_prim, scalar, scalar)
   scatter = xla.primitive_subcomputation(or_p if dtype == np.bool_ else add_p,
                                          scalar, scalar)
-  zero = xb.constant(c, np.array(0, dtype))
+  zero = xla.pyval_to_ir_constant(c, np.array(0, dtype))
   # TODO(b/161704903): remove this workaround when XLA:CPU bug is fixed.
   expand_padding = (expand_padding and
                     not all(lo == 0 and hi == 0 for (lo, hi) in padding))
@@ -6171,7 +6178,7 @@ def _select_and_scatter_add_translation(
     identity = (_get_max_identity if select_prim is ge_p
                 else _get_min_identity)
     pads = [(lo, hi, 0) for (lo, hi) in padding]
-    operand = xops.Pad(operand, xb.constant(c, identity(dtype)),
+    operand = xops.Pad(operand, xla.pyval_to_ir_constant(c, identity(dtype)),
                        xc.make_padding_config(pads))
     padding = [(0, 0) for _ in padding]
   output = xops.SelectAndScatterWithGeneralPadding(
@@ -6287,8 +6294,7 @@ def _select_and_gather_add_translation(
   assert nbits <= max_bits
   double_word_reduction = nbits * 2 <= max_bits
 
-  const = lambda c, dtype, x: xb.constant(c, np.array(x, dtype=dtype),
-                                          canonicalize_types=False)
+  const = lambda c, dtype, x: xops.Constant(c, np.array(x, dtype=dtype))
 
   if double_word_reduction:
     # TODO(b/73062247): XLA doesn't yet implement ReduceWindow on tuples, so
@@ -6381,8 +6387,7 @@ def _select_and_gather_add_translation_using_variadic_reducewindow(
   tangents_aval, operand_aval = avals_in
   dtype = operand_aval.dtype
 
-  const = lambda c, dtype, x: xb.constant(c, np.array(x, dtype=dtype),
-                                          canonicalize_types=False)
+  const = lambda c, dtype, x: xops.Constant(c, np.array(x, dtype=dtype))
 
   def reducer():
     c = xc.XlaBuilder("select_and_gather_pair_reducer")
@@ -6870,26 +6875,28 @@ def _rng_bit_generator_translation_rule(
 
 def _convert_4xU32_to_2xU64_without_bitcast(c, key):
   u64_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint64'))
-  new_key = xb.constant(c, np.zeros(2, dtype=np.dtype('uint64')),
-                        canonicalize_types=False)
-  _32 = xb.constant(c, np.uint64(32), canonicalize_types=False)
+  new_key = xops.Constant(c, np.zeros(2, dtype=np.dtype('uint64')))
+  _32 = xops.Constant(c, np.array(32, np.uint64))
   for i in [0, 2]:
     hi = xops.ConvertElementType(xops.Slice(key, [i]  , [i+1], [1]), u64_etype)
     lo = xops.ConvertElementType(xops.Slice(key, [i+1], [i+2], [1]), u64_etype)
     elt = xops.Xor(xops.ShiftLeft(hi, _32), lo)
-    new_key = xops.DynamicUpdateSlice(new_key, elt, [xb.constant(c, i // 2)])
+    new_key = xops.DynamicUpdateSlice(new_key, elt,
+                                      [xla.pyval_to_ir_constant(c, i // 2)])
   return new_key
 
 def _convert_2xU64_to_4xU32_without_bitcast(c, key):
   u32_etype = xla.dtype_to_primitive_type(dtypes.dtype('uint32'))
-  new_key = xb.constant(c, np.zeros(4, dtype=np.dtype('uint32')))
-  _32 = xb.constant(c, np.uint64(32), canonicalize_types=False)
+  new_key = xops.Constant(c, np.zeros(4, dtype=np.dtype('uint32')))
+  _32 = xops.Constant(c, np.array(32, np.uint64))
   for i in [0, 1]:
     elt = xops.Slice(key, [i], [i+1], [1])
     hi = xops.ConvertElementType(xops.ShiftRightLogical(elt, _32), u32_etype)
     lo = xops.ConvertElementType(elt, u32_etype)
-    new_key = xops.DynamicUpdateSlice(new_key, hi, [xb.constant(c, 2 * i)])
-    new_key = xops.DynamicUpdateSlice(new_key, lo, [xb.constant(c, 2 * i + 1)])
+    new_key = xops.DynamicUpdateSlice(new_key, hi,
+                                      [xla.pyval_to_ir_constant(c, 2 * i)])
+    new_key = xops.DynamicUpdateSlice(new_key, lo,
+                                      [xla.pyval_to_ir_constant(c, 2 * i + 1)])
   return new_key
 
 def _rng_bit_generator_named_shape_rule(key, *, shape, dtype, algorithm):

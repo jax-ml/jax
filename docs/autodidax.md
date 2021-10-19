@@ -1593,7 +1593,7 @@ def jaxpr_subcomp(c: xe.XlaBuilder, jaxpr: Jaxpr, args: List[xe.XlaOp]
   env: Dict[Var, xe.XlaOp] = {}
 
   def read(x: Atom) -> xe.XlaOp:
-    return env[x] if type(x) is Var else xb.constant(c, x.val, False)
+    return env[x] if type(x) is Var else xops.Constant(c, np.asarray(x.val))
 
   def write(v: Var, val: xe.XlaOp) -> None:
     env[v] = val

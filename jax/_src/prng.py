@@ -28,7 +28,6 @@ from jax.dtypes import float0
 from jax.interpreters import batching
 from jax.interpreters import xla
 from jax._src.api import jit, vmap
-from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import cuda_prng
 import jax._src.pretty_printer as pp
@@ -358,7 +357,7 @@ def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
   rank = len(shape)
   if 0 in shape:
     zeros = xla_client.ops.Broadcast(
-        xla_bridge.constant(c, np.array(0, np.uint32)), shape)
+        xla_client.ops.Constant(c, np.array(0, np.uint32)), shape)
     return xla_client.ops.Tuple(c, [zeros, zeros])
   def _broadcast(x):
     ndims = c.get_shape(x).rank()

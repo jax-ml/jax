@@ -32,7 +32,6 @@ from jax.interpreters import pxla
 from jax.interpreters import batching
 from jax._src import dtypes
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_bridge as xb
 from jax._src.numpy import lax_numpy
 from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, moveaxis
 
@@ -1321,9 +1320,10 @@ def _build_axis_index_lowering(c, axis_name, axis_env):
     axis_name, = axis_name
   axis_pos = list(axis_env.names).index(axis_name)
   nreplicas = axis_env.nreps // prod(axis_env.sizes)
-  div = xb.constant(c, np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
-                                dtype=np.uint32))
-  mod = xb.constant(c, np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
+  div = xops.Constant(c,
+                      np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
+                               dtype=np.uint32))
+  mod = xops.Constant(c, np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
   return xops.ConvertElementType(
       unsigned_index, xla.dtype_to_primitive_type(np.dtype(np.int32)))
