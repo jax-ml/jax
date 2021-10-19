@@ -45,6 +45,7 @@ class AnnTest(jtu.JaxTestCase):
     scores = lax.dot(qy, db)
     _, gt_args = lax.top_k(scores, k)
     _, ann_args = ann.approx_max_k(scores, k, recall_target=recall)
+    self.assertEqual(k, len(ann_args[0]))
     gt_args_sets = [set(x) for x in gt_args]
     hits = sum(
         len(list(x
@@ -72,6 +73,7 @@ class AnnTest(jtu.JaxTestCase):
     scores = lax.dot(qy, db)
     _, gt_args = lax.top_k(-scores, k)
     _, ann_args = ann.approx_min_k(scores, k, recall_target=recall)
+    self.assertEqual(k, len(ann_args[0]))
     gt_args_sets = [set(x) for x in gt_args]
     hits = sum(
         len(list(x
