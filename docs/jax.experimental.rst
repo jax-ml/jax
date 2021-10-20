@@ -7,6 +7,7 @@ jax.experimental package
 .. toctree::
     :maxdepth: 1
 
+    jax.experimental.ann
     jax.experimental.host_callback
     jax.experimental.loops
     jax.experimental.maps
