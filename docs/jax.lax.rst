@@ -53,6 +53,7 @@ Operators
     conj
     conv
     convert_element_type
+    conv_dimension_numbers
     conv_general_dilated
     conv_general_dilated_patches
     conv_with_general_padding
@@ -208,6 +209,7 @@ Argument classes
 .. currentmodule:: jax.lax
 
 .. autoclass:: ConvDimensionNumbers
+.. autoclass:: ConvGeneralDilatedDimensionNumbers
 .. autoclass:: GatherDimensionNumbers
 .. autoclass:: Precision
 .. autoclass:: RoundingMethod
