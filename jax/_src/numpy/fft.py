@@ -23,6 +23,17 @@ from .util import _wraps
 from . import lax_numpy as jnp
 
 
+def _fft_norm(s, func_name, norm):
+  if norm is None or norm == "backward":
+    return 1
+  elif norm == "ortho":
+    return jnp.sqrt(jnp.prod(s)) if func_name.startswith('i') else 1/jnp.sqrt(jnp.prod(s))
+  elif norm == "forward":
+    return jnp.prod(s) if func_name.startswith('i') else 1/jnp.prod(s)
+  raise ValueError(f'Invalid norm value {norm}; should be "backward",'
+                    '"ortho" or "forward".')
+
+
 def _fft_core(func_name, fft_type, a, s, axes, norm):
   full_name = "jax.numpy.fft." + func_name
 
@@ -30,8 +41,7 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
     s = tuple(map(operator.index, s))
     if np.any(np.less(s, 0)):
       raise ValueError("Shape should be non-negative.")
-  if norm is not None:
-    raise NotImplementedError("%s only supports norm=None, got %s" % (full_name, norm))
+
   if s is not None and axes is not None and len(s) != len(axes):
     # Same error as numpy.
     raise ValueError("Shape and axes have different lengths.")
@@ -76,8 +86,7 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
         s += [max(0, 2 * (a.shape[axes[-1]] - 1))]
     else:
       s = [a.shape[axis] for axis in axes]
-
-  transformed = lax.fft(a, fft_type, tuple(s))
+  transformed = lax.fft(a, fft_type, tuple(s)) * _fft_norm(jnp.array(s), func_name, norm)
 
   if orig_axes is not None:
     transformed = jnp.moveaxis(transformed, axes, orig_axes)

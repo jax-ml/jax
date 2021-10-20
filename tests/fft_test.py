@@ -28,6 +28,12 @@ from jax._src import test_util as jtu
 from jax.config import config
 config.parse_flags_with_absl()
 
+numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
+if numpy_version < (1, 20):
+  FFT_NORMS = [None, "ortho"]
+else:
+  FFT_NORMS = [None, "ortho", "forward", "backward"]
+
 
 float_dtypes = jtu.dtypes.floating
 inexact_dtypes = jtu.dtypes.inexact
@@ -64,8 +70,8 @@ def _irfft_with_zeroed_inputs(irfft_fun):
   # irfft isn't defined on the full domain of inputs, so in order to have a
   # well defined derivative on the whole domain of the function, we zero-out
   # the imaginary part of the first and possibly the last elements.
-  def wrapper(z, axes, s=None):
-    return irfft_fun(_zero_for_irfft(z, axes), axes=axes, s=s)
+  def wrapper(z, axes, s=None, norm=None):
+    return irfft_fun(_zero_for_irfft(z, axes), axes=axes, s=s, norm=norm)
   return wrapper
 
 
@@ -96,23 +102,25 @@ class FftTest(jtu.JaxTestCase):
         func()
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_real={}_shape={}_axes={}_s={}".format(
-          inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes, s),
-       "axes": axes, "shape": shape, "dtype": dtype, "inverse": inverse, "real": real, "s": s}
+      {"testcase_name": "_inverse={}_real={}_shape={}_axes={}_s={}_norm={}".format(
+          inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes, s, norm),
+       "axes": axes, "shape": shape, "dtype": dtype, "inverse": inverse, "real": real, "s": s, "norm":norm}
       for inverse in [False, True]
       for real in [False, True]
       for dtype in (real_dtypes if real and not inverse else all_dtypes)
       for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
       for axes in _get_fftn_test_axes(shape)
-      for s in _get_fftn_test_s(shape, axes)))
+      for s in _get_fftn_test_s(shape, axes)
+      for norm in FFT_NORMS
+      ))
   @jtu.skip_on_devices("rocm")
-  def testFftn(self, inverse, real, shape, dtype, axes, s):
+  def testFftn(self, inverse, real, shape, dtype, axes, s, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_op = _get_fftn_func(jnp.fft, inverse, real)
     np_op = _get_fftn_func(np.fft, inverse, real)
-    jnp_fn = lambda a: jnp_op(a, axes=axes)
-    np_fn = lambda a: np_op(a, axes=axes) if axes is None or axes else a
+    jnp_fn = lambda a: jnp_op(a, axes=axes, norm=norm)
+    np_fn = lambda a: np_op(a, axes=axes, norm=norm) if axes is None or axes else a
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
@@ -239,16 +247,18 @@ class FftTest(jtu.JaxTestCase):
         ValueError, lambda: func(rng([2, 3], dtype=np.float64), axis=[-3]))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_real={}_shape={}_axes={}".format(
-          inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes),
-       "axes": axes, "shape": shape, "dtype": dtype, "inverse": inverse, "real": real}
+      {"testcase_name": "_inverse={}_real={}_shape={}_axes={}_norm={}".format(
+          inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes, norm),
+       "axes": axes, "shape": shape, "dtype": dtype, "inverse": inverse, "real": real, "norm":norm}
       for inverse in [False, True]
       for real in [False, True]
       for dtype in (real_dtypes if real and not inverse else all_dtypes)
       for shape in [(16, 8, 4, 8), (16, 8, 4, 8, 4)]
-      for axes in [(-2, -1), (0, 1), (1, 3), (-1, 2)]))
+      for axes in [(-2, -1), (0, 1), (1, 3), (-1, 2)]
+      for norm in FFT_NORMS
+      ))
   @jtu.skip_on_devices("rocm")
-  def testFft2(self, inverse, real, shape, dtype, axes):
+  def testFft2(self, inverse, real, shape, dtype, axes, norm):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     name = 'fft2'
@@ -258,8 +268,10 @@ class FftTest(jtu.JaxTestCase):
       name = 'i' + name
     jnp_op = getattr(jnp.fft, name)
     np_op = getattr(np.fft, name)
+    jnp_fn = lambda a: jnp_op(a, axes=axes, norm=norm)
+    np_fn = lambda a: np_op(a, axes=axes, norm=norm) if axes is None or axes else a
     # Numpy promotes to complex128 aggressively.
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_op, args_maker)
 
