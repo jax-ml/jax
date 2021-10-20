@@ -45,9 +45,17 @@ def normal(stddev=1e-2, dtype=jnp.float_):
   return init
 
 def _compute_fans(shape: core.NamedShape, in_axis=-2, out_axis=-1):
-  receptive_field_size = shape.total / shape[in_axis] / shape[out_axis]
-  fan_in = shape[in_axis] * receptive_field_size
-  fan_out = shape[out_axis] * receptive_field_size
+  if isinstance(in_axis, int):
+    in_size = shape[in_axis]
+  else:
+    in_size = int(np.prod([shape[i] for i in in_axis]))
+  if isinstance(out_axis, int):
+    out_size = shape[out_axis]
+  else:
+    out_size = int(np.prod([shape[i] for i in out_axis]))
+  receptive_field_size = shape.total / in_size / out_size
+  fan_in = in_size * receptive_field_size
+  fan_out = out_size * receptive_field_size
   return fan_in, fan_out
 
 def _complex_uniform(key, shape, dtype):
