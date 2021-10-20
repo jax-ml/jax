@@ -7126,7 +7126,7 @@ def  _dynamic_slice_indices(operand, start_indices):
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))
     start_indices = [i for i in start_indices]
-  return [np.asarray(i + d if i < 0 else i, getattr(i, 'dtype', dtypes.int_))
+  return [np.asarray(i + d if i < 0 else i, _dtype(i))
           if isinstance(i, (int, np.integer)) and core.is_constant_dim(d)
           else select(lt(i, _const(i, 0)),
                       add(i, convert_element_type(core.dimension_as_value(d), _dtype(i))),
