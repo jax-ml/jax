@@ -197,6 +197,12 @@ xla.register_translation(bcoo_todense_p, xla.lower_fun(
 bcoo_fromdense_p = core.Primitive('bcoo_fromdense')
 bcoo_fromdense_p.multiple_results = True
 
+_TRACED_NSE_ERROR = """
+The error arose for the nse argument of bcoo_fromdense. In order for BCOO.fromdense()
+to be used in traced/compiled code, you must pass a concrete value to the nse
+(number of specified elements) argument.
+"""
+
 def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32):
   """Create COO-format sparse matrix from a dense matrix.
 
@@ -215,7 +221,7 @@ def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32
   mat = jnp.asarray(mat)
   if nse is None:
     nse = _bcoo_nse(mat, n_batch, n_dense)
-  nse = core.concrete_or_error(operator.index, nse, "nse argument of bcoo_fromdense")
+  nse = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
   return bcoo_fromdense_p.bind(mat, nse=nse, n_batch=n_batch, n_dense=n_dense,
                                index_dtype=index_dtype)
 
