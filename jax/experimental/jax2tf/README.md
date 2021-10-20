@@ -151,7 +151,7 @@ prediction_tf = lambda inputs: jax2tf.convert(model_jax)(params_vars, inputs)
 
 my_model = tf.Module()
 # Tell the model saver what are the variables.
-my_model.variables = tf.nest.flatten(params_vars)
+my_model._variables = tf.nest.flatten(params_vars)
 my_model.f = tf.function(prediction_tf, jit_compile=True)
 tf.saved_model.save(my_model)
 ```

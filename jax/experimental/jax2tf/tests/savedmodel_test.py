@@ -154,6 +154,27 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
       # g = tape.gradient(res, xv)
     #self.assertAllClose(g.numpy(), jax.grad(f_jax)(x))
 
+  def test_save_without_embedding_params(self):
+    def model_jax(params, inputs):
+      return params[0] + params[1] * inputs
+
+    params = (np.array(1.0, dtype=jnp.float32),
+              np.array(2.0, dtype=jnp.float32))
+    params_vars = tf.nest.map_structure(tf.Variable, params)
+
+    prediction_tf = lambda x: jax2tf.convert(model_jax)(params_vars, x)
+
+    model = tf.Module()
+    model._variables = tf.nest.flatten(params_vars)
+    model.f = tf.function(prediction_tf, jit_compile=True)
+
+    x = np.array(0.7, dtype=jnp.float32)
+    self.assertAllClose(model.f(x), model_jax(params, x))
+    restored_model = tf_test_util.SaveAndLoadModel(model,
+                                                   save_gradients=False)
+    self.assertAllClose(restored_model.f(x), model_jax(params, x))
+
+
   def test_save_grad_integers(self):
     # https://github.com/google/jax/issues/7123
     # In the end this is a test that does not involve JAX at all
