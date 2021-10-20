@@ -86,7 +86,7 @@ def _flax_examples():
       'imagenet':
           ModuleSpec(
               module_path='imagenet.models.ResNet50',
-              input_shape=(1, 2, 2, 3),
+              input_shape=(8, 224, 224, 3),
               module_kwargs=dict(num_classes=2, dtype=jnp.float32),
               apply_kwargs=dict(train=False, mutable=False)),
       'lm1b':

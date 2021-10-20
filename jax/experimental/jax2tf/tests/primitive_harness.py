@@ -2270,35 +2270,41 @@ def _make_reduce_window_harness(name,
                                 init_value=0,
                                 window_strides=(1, 1),
                                 dtype=np.float32,
-                                padding=((0, 0), (0, 0))):
+                                padding=((0, 0), (0, 0)),
+                                requires_xla=True):
   prim_name = f"reduce_window_{computation.__name__}"
   limitations = []
-  define(
-      prim_name,
-      f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}"
-      .replace(" ", ""),
-      lax.reduce_window,
-      [
-          RandArg(shape, dtype),
-          # Must be static to trigger the picking of the reducers
-          StaticArg(np.array(init_value, dtype=dtype)),
-          StaticArg(computation),
-          StaticArg(window_dimensions),
-          StaticArg(window_strides),
-          StaticArg(padding),
-          StaticArg(base_dilation),
-          StaticArg(window_dilation)
-      ],
-      jax_unimplemented=limitations,
-      shape=shape,
-      dtype=dtype,
-      init_value=np.array(init_value, dtype=dtype),
-      computation=computation,
-      window_dimensions=window_dimensions,
-      window_strides=window_strides,
-      padding=padding,
-      base_dilation=base_dilation,
-      window_dilation=window_dilation)
+
+  xla_opts = [True] if requires_xla else [True, False]
+
+  for enable_xla in xla_opts:
+    define(
+        prim_name,
+        f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}_enablexla={enable_xla}"
+        .replace(" ", ""),
+        lax.reduce_window,
+        [
+            RandArg(shape, dtype),
+            # Must be static to trigger the picking of the reducers
+            StaticArg(np.array(init_value, dtype=dtype)),
+            StaticArg(computation),
+            StaticArg(window_dimensions),
+            StaticArg(window_strides),
+            StaticArg(padding),
+            StaticArg(base_dilation),
+            StaticArg(window_dilation)
+        ],
+        jax_unimplemented=limitations,
+        shape=shape,
+        dtype=dtype,
+        init_value=np.array(init_value, dtype=dtype),
+        computation=computation,
+        window_dimensions=window_dimensions,
+        window_strides=window_strides,
+        padding=padding,
+        base_dilation=base_dilation,
+        window_dilation=window_dilation,
+        enable_xla=enable_xla)
 
 
 # Validate dtypes across all execution paths
@@ -2307,15 +2313,15 @@ def _make_reduce_window_harness(name,
 # several execution paths. Variations of other parameters can thus safely
 # skip testing their corresponding default value.
 for dtype in jtu.dtypes.all:
-  for computation, init_value in [
-      (lax.min, _get_min_identity(dtype)),  # path through reduce_window_min
-      (lax.max, _get_max_identity(dtype)),  # path through TF reduce_window_max
-      (lax.max, 1),  # path through reduce_window
-      (lax.add, 0),  # path_through reduce_window_sum
-      (lax.add, 1),  # path through reduce_window
-      (lax.mul, 0),  # path through reduce_window
-      (lax.mul, 1),  # path through reduce_window
-      (lax.mul, 2),  # path through reduce_window
+  for computation, init_value, requires_xla in [
+      (lax.min, _get_min_identity(dtype), True),  # path through reduce_window_min
+      (lax.max, _get_max_identity(dtype), False),  # path through TF reduce_window_max
+      (lax.max, 1, True),  # path through reduce_window
+      (lax.add, 0, False),  # path_through reduce_window_sum
+      (lax.add, 1, True),  # path through reduce_window
+      (lax.mul, 0, True),  # path through reduce_window
+      (lax.mul, 1, True),  # path through reduce_window
+      (lax.mul, 2, True),  # path through reduce_window
   ]:
     if dtype == np.bool_ and (computation in [lax.add, lax.mul]):
       continue
@@ -2353,6 +2359,16 @@ for shape, window_dimensions in [
       window_strides=tuple([1] * len(shape)),
       window_dimensions=window_dimensions)
 
+# This corresponds to SAME padding.
+_make_reduce_window_harness(
+    "same_padding",
+    shape=(112, 112),
+    init_value=-np.inf,
+    computation=lax.max,
+    window_dimensions=(3, 3),
+    window_strides=(2, 2),
+    padding=((0, 1), (0, 1)),
+    requires_xla=False)
 
 def _make_reducer_harness(prim,
                           name,

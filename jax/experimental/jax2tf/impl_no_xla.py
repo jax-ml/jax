@@ -74,23 +74,21 @@ def _transpose_for_tf_conv(lhs, rhs, dimension_numbers):
   return lhs, rhs
 
 
-def _pad_for_tf_conv(lhs, rhs_dilated_shape, window_strides, padding):
-  """Pads `lhs` if padding isn't "SAME" or "VALID" and returns (pad_type, new_lhs)."""
-
+def pads_to_padtype(in_shape, window_shape, window_strides, padding) -> str:
   for pad_str in ["VALID", "SAME"]:
-    lhs_sdims = lhs.shape[1:3]  # lhs == NHWC
-    gen_padding = lax.padtype_to_pads(lhs_sdims, rhs_dilated_shape,
-                                      window_strides, pad_str)
-    if list(gen_padding) == list(padding):
-      return pad_str, lhs
+    pads = lax.padtype_to_pads(in_shape, window_shape, window_strides, pad_str)
+    if list(pads) == list(padding):
+      return pad_str
+  return "EXPLICIT"
 
-  # Since TF ops only accepts padding in ["VALID", "SAME"], we manually pad
-  # using tf.pad if the padding is different, and we pass "VALID" padding to TF.
+
+def _pad_spatial_dims(in_shape, padding):
+  """Pads `in_shape` using `padding`, which specifies padding for the spatial dimensions."""
   # Add empty padding for batch and feature dimensions.
   no_pad = tf.constant([[0, 0]])
   padding = tf.concat([no_pad, padding, no_pad], 0)
-  lhs = tf.pad(lhs, padding)
-  return "VALID", lhs
+  in_shape = tf.pad(in_shape, padding)
+  return in_shape
 
 
 def _is_valid_padding(kernel_sdims, strides, padding):
@@ -166,10 +164,15 @@ def _conv_general_dilated(
       (k - 1) * r + 1 for k, r in zip(rhs_spatial_shapes, rhs_dilation)
   ]
 
-  padding_type, padded_lhs = _pad_for_tf_conv(lhs, rhs_dilated_shape,
-                                              window_strides, padding)
+  padding_type = pads_to_padtype(lhs.shape[1:3], rhs_dilated_shape, window_strides, padding)
 
-  if any(r > l for l, r in zip(padded_lhs.shape[1:3], rhs_dilated_shape)):
+  # We only manually pad if we aren't using a tranposed convolutions, because
+  # there we don't do any padding.
+  if padding_type == "EXPLICIT" and not is_transpose:
+    lhs = _pad_spatial_dims(lhs, padding)
+    padding_type = "VALID"
+
+  if any(r > l for l, r in zip(lhs.shape[1:3], rhs_dilated_shape)):
     # If the filter shape is bigger than the input shape in a spatial dimension,
     # lax returns only zeros while tf.conv2d returns an error.
     # We thus return zeros to make sure the behavior is consistent.
@@ -189,7 +192,7 @@ def _conv_general_dilated(
     new_rhs_shape = tuple(rhs_spatial_shapes) + (in_channels,
                                                  rhs_out_channel // in_channels)
     output = tf.nn.depthwise_conv2d(
-        input=padded_lhs,
+        input=lhs,
         filter=tf.reshape(rhs, new_rhs_shape),
         strides=window_strides,
         padding=padding_type,
@@ -214,7 +217,7 @@ def _conv_general_dilated(
 
   else:
     output = tf.nn.conv2d(
-        input=padded_lhs,
+        input=lhs,
         filters=rhs,
         strides=window_strides,
         padding=padding_type,
@@ -399,26 +402,27 @@ tf_impl_no_xla[lax.argmin_p] = partial(_argminmax, True)
 tf_impl_no_xla[lax.argmax_p] = partial(_argminmax, False)
 
 
-# _try_tf_pool currently only supports reduce_window_max and reduce_window_sum.
+# _reduce_windown currently only supports reduce_window_max and
+# reduce_window_sum.
 # TODO(bchetioui): this function is not exhaustive wrt which
 # reduce_window_max or reduce_window_sum cases can be translated into a call to
 # max_pool or avg_pool. Further investigation is needed to fully flesh it out.
-def _try_tf_pool(op_name, operand, window_dimensions, window_strides, padding,
-                 base_dilation, window_dilation) -> TfVal:
+def _reduce_window(operand, *, window_dimensions, window_strides, padding,
+            base_dilation, window_dilation, _in_avals, _out_aval, name=None) -> TfVal:
 
   def error(msg):
     suffix = ("See source code for the precise conditions under which "
               "reduce_window can be converted without XLA.")
-    return _xla_disabled_error("reduce_window", f"{msg} - {suffix}")
+    return _xla_disabled_error(name, f"{msg} - {suffix}")
 
   dtype = operand.dtype
   # Contrarily to the main path, tf.int8 is actually a valid type for
   # tf.nn.max_pool.
-  if op_name == "reduce_window_max" and dtype in [
+  if name == "reduce_window_max" and dtype in [
       tf.bool, tf.uint32, tf.uint64, tf.complex64, tf.complex128
   ]:
     raise error(f"tf.nn.max_pool does not support operands of type {dtype}")
-  if op_name == "reduce_window_sum" and operand.dtype not in [
+  if name == "reduce_window_sum" and operand.dtype not in [
       tf.float16, tf.float32, tf.float64
   ]:
     raise error(f"tf.nn.avg_pool does not support operands of type {dtype}")
@@ -435,8 +439,11 @@ def _try_tf_pool(op_name, operand, window_dimensions, window_strides, padding,
   # exist? The whole story seems similar to convolution.
   if list(window_dilation) != [1] * len(operand.shape):
     raise error("Unimplemented support for window dilation")
-  if list(padding) != [(0, 0)] * len(operand.shape):
-    raise error("Unimplemented support for padding")
+
+  tf_padding = pads_to_padtype(operand.shape, window_dimensions, window_strides, padding)
+  if tf_padding == "EXPLICIT":
+    raise error("Padding should either be 'VALID' or 'SAME'.")
+
   # ReduceWindow in XLA takes an array of rank N as a parameter, but
   # tf.nn.max_pool / tf.nn.avg_pool take an array of rank N+2, with a default
   # shape of the form [batch_size] + input_spatial_shape + [num_channels]
@@ -452,16 +459,16 @@ def _try_tf_pool(op_name, operand, window_dimensions, window_strides, padding,
     tf_window_dimensions.append(1)
     tf_window_strides.append(1)
   tf_data_format = "N" + "DHW"[-nb_spatial_dimensions:] + "C"
-  tf_padding = "VALID"
-  if op_name == "reduce_window_max":
+
+  if name == "reduce_window_max":
     result = tf.nn.max_pool(tf_operand, tf_window_dimensions, tf_window_strides,
                             tf_padding, tf_data_format)
-  elif op_name == "reduce_window_sum":
+  elif name == "reduce_window_sum":
     avg = tf.nn.avg_pool(tf_operand, tf_window_dimensions, tf_window_strides,
                          tf_padding, tf_data_format)
     result = avg * np.prod(tf_window_dimensions)
   else:
-    raise error(f"Unimplemented support for {op_name}")
+    raise error("Only reduce_window_max and reduce_window_sum are supported.")
 
   if not has_batch_dim:
     result = tf.squeeze(result, 0)
@@ -470,51 +477,14 @@ def _try_tf_pool(op_name, operand, window_dimensions, window_strides, padding,
   return result
 
 
-def _specialized_reduce_window(operand,
-                               *,
-                               window_dimensions,
-                               window_strides,
-                               padding,
-                               base_dilation,
-                               window_dilation,
-                               _in_avals,
-                               _out_aval,
-                               name=None):
-  """Wraps the TensorFlow reduce window operation based on a reducer and an
-
-  identity function defining the initial value of the reduction depending on
-  the dtype of the operand.
-
-  Args:
-    operand: N dimensional array containing elements of type T
-    window_dimensions: array of integers for window dimension values
-    window_strides: array of integers for window stride values
-    padding: array of pairs of integers for padding values
-    base_dilation: array of integers for base dilation values
-    window_dilation: array of integers for window dilation values
-    name: the name of the specialized reduce window primitive for which this
-      conversion function is called. This information may help to choose a
-      different conversion path (optional)
-
-  Returns:
-    The reduced operand.
-  """
-  if name in ["reduce_window_max", "reduce_window_sum"]:
-    return _try_tf_pool(name, operand, window_dimensions, window_strides,
-                        padding, base_dilation, window_dilation)
-  else:
-    return _xla_disabled_error("reduce_window only possible with max or sum")
-
-
 # pylint: disable=protected-access
 tf_impl_no_xla[lax.reduce_window_sum_p] = (
-    partial(_specialized_reduce_window, name="reduce_window_sum"))
-tf_impl_no_xla[lax.reduce_window_min_p] = (
-    partial(_specialized_reduce_window, name="reduce_window_min"))
+    partial(_reduce_window, name="reduce_window_sum"))
 tf_impl_no_xla[lax.reduce_window_max_p] = (
-    partial(_specialized_reduce_window, name="reduce_window_max"))
+    partial(_reduce_window, name="reduce_window_max"))
 # pylint: enable=protected-access
 
+tf_impl_no_xla[lax.reduce_window_min_p] = _unimplemented("reduce_window_min")
 tf_impl_no_xla[lax.reduce_window_p] = _unimplemented("reduce_window")
 
 tf_impl_no_xla[lax.reduce_p] = _unimplemented("reduce")
