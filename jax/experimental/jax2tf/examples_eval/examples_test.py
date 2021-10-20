@@ -73,6 +73,13 @@ flags.DEFINE_bool(
     True,
     'If true, write results as Markdown. Otherwise, only output to stdout.')
 
+flags.DEFINE_bool(
+    'fail_on_error',
+    False,
+    ('If true, exit with an error when a conversion fails. Useful for '
+     'debugging because it will show the entire stack trace.')
+)
+
 FLAGS = flags.FLAGS
 
 
@@ -89,7 +96,8 @@ def main(argv: Sequence[str]) -> None:
         converter_name=converter_name,
         converter_fn=CONVERTERS[converter_name],
         suite_names=FLAGS.example_suites,
-        examples=FLAGS.examples)
+        examples=FLAGS.examples,
+        fail_on_error=FLAGS.fail_on_error)
 
   if FLAGS.write_markdown:
     examples_converter.write_markdown(results)

@@ -145,7 +145,8 @@ def write_markdown(results: Dict[str, Dict[str, ConvertSuiteResult]]) -> None:
 
       for example_name, error_msg in convert_result.errors.items():
         success = 'FAIL' if error_msg else 'SUCCESS'
-        converter_results.append(f'| {example_name} | {success} | {error_msg}')
+        error_msg = f' {error_msg}' if error_msg else ''
+        converter_results.append(f'| {example_name} | {success} |{error_msg}')
     all_results[converter_name] = converter_results
 
   dirname = os.path.dirname(__file__)
@@ -172,7 +173,8 @@ def write_markdown(results: Dict[str, Dict[str, ConvertSuiteResult]]) -> None:
 def test_convert(converter_name: str,
                  converter_fn: Callable[[ModuleToConvert], None],
                  suite_names: str,
-                 examples: Sequence[str]) -> Dict[str, ConvertSuiteResult]:
+                 examples: Sequence[str],
+                 fail_on_error: bool) -> Dict[str, ConvertSuiteResult]:
   """Converts given examples using `conversion_fn and return results."""
   logging.info('=== Testing converter %s', converter_name)
 
@@ -191,16 +193,21 @@ def test_convert(converter_name: str,
       if not keep_example(suite_name, example_name):
         num_skipped += 1
         continue
-      try:
-        logging.info('Trying example %s', example_name)
+      logging.info('Trying example %s', example_name)
+      error_msg = ''
+      if fail_on_error:
         converter_fn(make_module(spec))
-        error_msg = ''
         logging.info('OK!')
-      except Exception as e:  # pylint: disable=broad-except
-        error_msg = repr(e)
-        logging.info('ERROR %s', error_msg)
+      else:
+        try:
+          converter_fn(make_module(spec))
+          logging.info('OK!')
+        except Exception as e:  # pylint: disable=broad-except
+          error_msg = repr(e)
+          logging.info('ERROR %s', error_msg)
 
       errors[example_name] = error_msg
+
     results[suite_name] = ConvertSuiteResult(
         suite=suite, errors=errors, num_skipped=num_skipped)
 

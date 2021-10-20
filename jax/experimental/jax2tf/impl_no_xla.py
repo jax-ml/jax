@@ -508,14 +508,11 @@ def _clip(max_indices: Sequence[TfVal], start_indices: Sequence[TfVal],
     `start_indices` so that a full slice is returned.
   This function clips the start indices correctly.
   """
-  max_start = tf.subtract(max_indices, slice_sizes)
-  # If `start_indices` and `slice_sizes` are Python tuples of integers,
-  # `tf.subtract` returns a Tensor of dtype tf.int32, which may conflict with
-  # the dtype of `start_indices` if we run in x64 mode and throw an error when
-  # calling `tf.clip_by_vaue`. Therefore we cast to the right dtype here
-  # explicitly.
-  max_start = tf.cast(max_start, dtype=start_indices.dtype)
-  return tf.clip_by_value(start_indices, 0, max_start)
+  # We cast both arguments to `tf.clip_by_value` to int32. Otherwise, this
+  # function may return uint32 which is not always compatible with TF ops, so
+  # this may result in type errors.
+  max_start = tf.cast(tf.subtract(max_indices, slice_sizes), dtype=tf.int32)
+  return tf.clip_by_value(tf.cast(start_indices, dtype=tf.int32), 0, max_start)
 
 
 def _gather_using_tf_slice(operand: TfVal, start_indices: TfVal, *,
