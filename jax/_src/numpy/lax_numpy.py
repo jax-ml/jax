@@ -1332,13 +1332,9 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
   hist = hist[core]
 
   if density:
-    s = sum(hist)
-    for i in builtins.range(D):
-      _shape = np.ones(D, int)
-      _shape[i] = nbins[i] - 2
-      hist = hist / reshape(dedges[i], _shape)
-
-    hist /= s
+    hist /= hist.sum()
+    for norm in ix_(*dedges):
+      hist /= norm
 
   return hist, bin_edges_by_dim
 
