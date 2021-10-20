@@ -21,7 +21,7 @@ import numpy as np
 
 from jax._src import test_util as jtu
 from jax import random
-from jax.experimental import stax
+from jax.example_libraries import stax
 from jax import dtypes
 
 from jax.config import config

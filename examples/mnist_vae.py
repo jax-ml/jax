@@ -27,9 +27,9 @@ import matplotlib.pyplot as plt
 import jax
 import jax.numpy as jnp
 from jax import jit, grad, lax, random
-from jax.experimental import optimizers
-from jax.experimental import stax
-from jax.experimental.stax import Dense, FanOut, Relu, Softplus
+from jax.example_libraries import optimizers
+from jax.example_libraries import stax
+from jax.example_libraries.stax import Dense, FanOut, Relu, Softplus
 from examples import datasets
 
 

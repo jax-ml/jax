@@ -14,6 +14,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.24...main).
 
+* Breaking changes
+  * Moved `jax.experimental.stax` to `jax.example_libraries.stax`
+  * Moved `jax.experimental.optimizers` to `jax.example_libraries.optimizers`
+
+
 ## jax 0.2.24 (Oct 19, 2021)
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.22...jax-v0.2.24).

@@ -75,8 +75,8 @@ from jax import grad
 from jax import jit
 from jax import random
 from jax import vmap
-from jax.experimental import optimizers
-from jax.experimental import stax
+from jax.example_libraries import optimizers
+from jax.example_libraries import stax
 from jax.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
 from jax.examples import datasets

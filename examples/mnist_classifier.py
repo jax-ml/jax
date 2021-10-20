@@ -14,8 +14,8 @@
 
 """A basic MNIST example using JAX with the mini-libraries stax and optimizers.
 
-The mini-library jax.experimental.stax is for neural network building, and
-the mini-library jax.experimental.optimizers is for first-order stochastic
+The mini-library jax.example_libraries.stax is for neural network building, and
+the mini-library jax.example_libraries.optimizers is for first-order stochastic
 optimization.
 """
 
@@ -27,9 +27,9 @@ import numpy.random as npr
 
 import jax.numpy as jnp
 from jax import jit, grad, random
-from jax.experimental import optimizers
-from jax.experimental import stax
-from jax.experimental.stax import Dense, Relu, LogSoftmax
+from jax.example_libraries import optimizers
+from jax.example_libraries import stax
+from jax.example_libraries.stax import Dense, Relu, LogSoftmax
 from examples import datasets
 
 

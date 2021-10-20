@@ -11,6 +11,7 @@ Subpackages
 
     jax.numpy
     jax.scipy
+    jax.example_libraries
     jax.experimental
     jax.image
     jax.lax

@@ -25,13 +25,14 @@ constructor functions for common basic pairs, like `Conv` and `Relu`, and these
 pairs can be composed in series using `stax.serial` or in parallel using
 `stax.parallel`.
 
-Here’s an example:
+Here's an example:
 
 ```python
 import jax.numpy as jnp
 from jax import random
-from jax.experimental import stax
-from jax.experimental.stax import Conv, Dense, MaxPool, Relu, Flatten, LogSoftmax
+from jax.example_libraries import stax
+from jax.example_libraries.stax import (
+    Conv, Dense, MaxPool, Relu, Flatten, LogSoftmax)
 
 # Use stax to set up network initialization and evaluation functions
 net_init, net_apply = stax.serial(
@@ -54,20 +55,20 @@ predictions = net_apply(net_params, inputs)
 
 ### First-order optimization
 
-JAX has a minimal optimization library focused on stochastic first-order
-optimizers. Every optimizer is modeled as an `(init_fun, update_fun,
-get_params)` triple of functions. The `init_fun` is used to initialize the
-optimizer state, which could include things like momentum variables, and the
-`update_fun` accepts a gradient and an optimizer state to produce a new
-optimizer state. The `get_params` function extracts the current iterate (i.e.
-the current parameters) from the optimizer state. The parameters being optimized
-can be ndarrays or arbitrarily-nested list/tuple/dict structures, so you can
-store your parameters however you’d like.
+The file `optimizers.py` contains a minimal optimization library focused on
+stochastic first-order optimizers. Every optimizer is modeled as an
+`(init_fun, update_fun, get_params)` triple of functions. The `init_fun` is used
+to initialize the optimizer state, which could include things like momentum
+variables, and the `update_fun` accepts a gradient and an optimizer state to
+produce a new optimizer state. The `get_params` function extracts the current
+iterate (i.e. the current parameters) from the optimizer state. The parameters
+being optimized can be ndarrays or arbitrarily-nested list/tuple/dict
+structures, so you can store your parameters however you'd like.
 
-Here’s an example, using `jit` to compile the whole update end-to-end:
+Here's an example, using `jit` to compile the whole update end-to-end:
 
 ```python
-from jax.experimental import optimizers
+from jax.example_libraries import optimizers
 from jax import jit, grad
 
 # Define a simple squared-error loss

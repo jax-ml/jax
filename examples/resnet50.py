@@ -22,11 +22,11 @@ import numpy.random as npr
 
 import jax.numpy as jnp
 from jax import jit, grad, random
-from jax.experimental import optimizers
-from jax.experimental import stax
-from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
-                                   FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, LogSoftmax)
+from jax.example_libraries import optimizers
+from jax.example_libraries import stax
+from jax.example_libraries.stax import (AvgPool, BatchNorm, Conv, Dense,
+                                        FanInSum, FanOut, Flatten, GeneralConv,
+                                        Identity, MaxPool, Relu, LogSoftmax)
 
 
 # ResNet blocks compose other layers

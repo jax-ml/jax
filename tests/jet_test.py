@@ -25,7 +25,7 @@ import jax.numpy as jnp
 import jax.scipy.special
 from jax import random
 from jax import jacfwd, jit
-from jax.experimental import stax
+from jax.example_libraries import stax
 from jax.experimental.jet import jet, fact, zero_series
 from jax import lax
 

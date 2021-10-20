@@ -11,20 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""Stax has moved to jax.example_libraries.stax
-
-jax.experimental.stax is deprecated and will delegate to
-jax.example_libraries.stax with a warning for backwards-compatibility
-for a limited time.
-"""
-
-import warnings
-
-from jax.example_libraries.stax import *    # noqa: F401,F403
-
-_HAS_DYNAMIC_ATTRIBUTES = True
-
-warnings.warn('jax.experimental.stax is deprecated, '
-              'import jax.example_libraries.stax instead',
-              FutureWarning)

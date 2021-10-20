@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 
 from jax import jit, grad, vmap
 from jax import random
-from jax.experimental import optimizers
+from jax.example_libraries import optimizers
 import jax.numpy as jnp
 import jax.scipy.stats.norm as norm
 

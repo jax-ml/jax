@@ -24,7 +24,7 @@ import jax._src.test_util as jtu
 from jax import jit, grad, jacfwd, jacrev
 from jax import tree_util
 from jax import lax
-from jax.experimental import optimizers
+from jax.example_libraries import optimizers
 
 from jax.config import config
 config.parse_flags_with_absl()
