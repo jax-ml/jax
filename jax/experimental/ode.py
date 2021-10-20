@@ -165,7 +165,7 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
     point in `t`, represented as an array (or pytree of arrays) with the same
     shape/structure as `y0` except with a new leading axis of length `len(t)`.
   """
-  def _check_arg(arg):
+  for arg in args:
     if not isinstance(arg, core.Tracer) and not core.valid_jaxtype(arg):
       msg = ("The contents of odeint *args must be arrays or scalars, but got "
              "\n{}.")
