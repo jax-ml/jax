@@ -106,8 +106,8 @@ def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=j
     mode: one of "fan_in", "fan_out", and "fan_avg".
     distribution: random distribution to use. One of "truncated_normal",
       "normal" and "uniform".
-    in_axis: axis of the input dimension in the weights tensor.
-    out_axis: axis of the output dimension in the weights tensor.
+    in_axis: axis or sequence of axes of the input dimension in the weights tensor.
+    out_axis: axis or sequence of axes of the output dimension in the weights tensor.
     dtype: the dtype of the weights.
   """
 
