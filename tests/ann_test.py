@@ -15,9 +15,12 @@
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import numpy as np
+
 from jax import lax
 from jax.experimental import ann
 from jax._src import test_util as jtu
+from jax._src.util import prod
 
 from jax.config import config
 
@@ -81,6 +84,30 @@ class AnnTest(jtu.JaxTestCase):
                  if x in gt_args_sets[q]))
         for q, ann_args_per_q in enumerate(ann_args))
     self.assertGreater(hits / (qy_shape[0] * k), recall)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name":
+              "_shape={}_k={}_max_k={}".format(
+                  jtu.format_shape_dtype_string(shape, dtype), k, is_max_k),
+          "shape":
+              shape,
+          "dtype":
+              dtype,
+          "k":
+              k,
+          "is_max_k":
+              is_max_k
+      } for dtype in [np.float32] for shape in [(4,), (5, 5), (2, 1, 4)]
+                          for k in [2, 3] for is_max_k in [True, False]))
+  def test_autodiff(self, shape, dtype, k, is_max_k):
+    vals = np.arange(prod(shape), dtype=dtype)
+    vals = self.rng().permutation(vals).reshape(shape)
+    if is_max_k:
+      fn = lambda vs: ann.approx_max_k(vs, k=k)[0]
+    else:
+      fn = lambda vs: ann.approx_min_k(vs, k=k)[0]
+    jtu.check_grads(fn, (vals,), 2, ["fwd", "rev"], eps=1e-2)
 
 
 if __name__ == "__main__":

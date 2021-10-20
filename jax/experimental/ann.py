@@ -19,9 +19,9 @@ import numpy as np
 from jax import lax, core
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src import dtypes
+from jax._src import ad_util, dtypes
 
-from jax.interpreters import xla, batching
+from jax.interpreters import ad, xla, batching
 
 Array = Any
 r"""ANN (Approximate Nearest Neighbor) is an **experimental** module for fast top-k with a configurable recall rate on TPU.
@@ -37,7 +37,8 @@ multiplication; otherwise, we would see a significant performance regression.
 This constraint prevents us from almost all standard exact top-k algorithms,
 including parallel binary-heap, median-of-medians, and bitonic sort.
 
-Our approach to this problem is to reshape the inputs into equally sized windows,
+Our approach to this problem is to reshape the inputs into equally sized
+windows,
 and return the top-1s in each window containing the true top-k. Suppose we have
 the actual top-k elements randomly spreaded in the windows, and we select the
 top-1 from each window. The collision rate of the top-k affects the accuracy,
@@ -116,7 +117,7 @@ def approx_min_k(operand: Array,
 
 
 def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
-                                     recall_target, is_max_k):
+                                recall_target, is_max_k):
   if k <= 0:
     raise ValueError('k must be positive, got {}'.format(k))
   if len(operand.shape) == 0:
@@ -148,7 +149,7 @@ def _comparator_builder(operand, op_type, is_max_k):
 
 
 def _approx_top_k_tpu_translation(c, operand, k, reduction_dimension,
-                                       recall_target, is_max_k):
+                                  recall_target, is_max_k):
   op_shape = c.get_shape(operand)
   if not op_shape.is_array():
     raise ValueError('operand must be an array, but was {}'.format(op_shape))
@@ -176,7 +177,7 @@ def _approx_top_k_tpu_translation(c, operand, k, reduction_dimension,
 
 
 def _approx_top_k_fallback_translation(c, operand, k, reduction_dimension,
-                                            recall_target, is_max_k):
+                                       recall_target, is_max_k):
   op_shape = c.get_shape(operand)
   if not op_shape.is_array():
     raise ValueError('operand must be an array, but was {}'.format(op_shape))
@@ -196,7 +197,7 @@ def _approx_top_k_fallback_translation(c, operand, k, reduction_dimension,
 
 
 def _approx_top_k_batch_rule(batched_args, batch_dims, *, k,
-                                  reduction_dimension, recall_target, is_max_k):
+                             reduction_dimension, recall_target, is_max_k):
   prototype_arg, new_bdim = next(
       (a, b) for a, b in zip(batched_args, batch_dims) if b is not None)
   new_args = []
@@ -216,6 +217,40 @@ def _approx_top_k_batch_rule(batched_args, batch_dims, *, k,
       is_max_k=False), bdims)
 
 
+# Slow jvp implementation using gather.
+#
+# TODO(fchern): Some optimization ideas
+# 1. ApproxTopK is internally a variadic reduce, so we can simply call
+#    ApproxTopK(operand, tangent, iota) for jvp.
+# 2. vjp cannot benefit from the algorithm above. We must run scatter to
+#    distribute the output cotangent to input cotangent. A reasonable way to do
+#    this is to run it on CPU.
+def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
+                      recall_target, is_max_k):
+  operand, = primals
+  tangent, = tangents
+  if is_max_k:
+    val_out, arg_out = approx_max_k(operand, k, reduction_dimension,
+                                    recall_target)
+  else:
+    val_out, arg_out = approx_min_k(operand, k, reduction_dimension,
+                                    recall_target)
+  if type(tangent) is ad_util.Zero:
+    tangent_out = ad_util.Zero.from_value(val_out)
+  else:
+    arg_shape = arg_out.shape
+    rank = len(arg_shape)
+    if reduction_dimension < 0:
+      reduction_dimension += rank
+    iotas = [
+        lax.broadcasted_iota(arg_out.dtype, arg_shape, i) for i in range(rank)
+    ]
+    idx = tuple(
+        arg_out if i == reduction_dimension else iotas[i] for i in range(rank))
+    tangent_out = tangent[idx]
+  return (val_out, arg_out), (tangent_out, ad_util.Zero.from_value(arg_out))
+
+
 approx_top_k_p = core.Primitive('approx_top_k')
 approx_top_k_p.multiple_results = True
 approx_top_k_p.def_impl(partial(xla.apply_primitive, approx_top_k_p))
@@ -227,3 +262,4 @@ xla.backend_specific_translations['cpu'][
 xla.backend_specific_translations['gpu'][
     approx_top_k_p] = _approx_top_k_fallback_translation
 batching.primitive_batchers[approx_top_k_p] = _approx_top_k_batch_rule
+ad.primitive_jvps[approx_top_k_p] = _approx_top_k_jvp
