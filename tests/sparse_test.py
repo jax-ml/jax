@@ -1122,6 +1122,40 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(out1, out2, rtol=tol)
     self.assertAllClose(out1, out3, rtol=tol)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_n_batch={}_n_dense={}".format(
+        jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
+        jtu.format_shape_dtype_string(rhs_shape, rhs_dtype),
+        n_batch, n_dense),
+       "lhs_shape": lhs_shape, "lhs_dtype": lhs_dtype,
+       "rhs_shape": rhs_shape, "rhs_dtype": rhs_dtype,
+       "n_batch": n_batch, "n_dense": n_dense,
+      }
+      for lhs_shape, rhs_shape in [[(3,), ()], [(3,), (1,)], [(3,), (3,)],
+                                   [(3, 4), ()], [(3, 4), (4,)], [(3, 4), (3, 1)], [(3, 4), (3, 4)],
+                                   [(3, 4, 5), (4, 5)], [(3, 4, 5), (3, 1, 1)], [(3, 4, 5), (1, 4, 1)]]
+      for n_batch in range(len(lhs_shape) + 1)
+      for n_dense in range(len(lhs_shape) + 1 - n_batch)
+      for lhs_dtype in all_dtypes
+      for rhs_dtype in all_dtypes))
+  def test_bcoo_mul_dense(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, n_batch, n_dense):
+    rng_lhs = rand_sparse(self.rng())
+    rng_rhs = jtu.rand_default(self.rng())
+    lhs = jnp.array(rng_lhs(lhs_shape, lhs_dtype))
+    rhs = jnp.array(rng_rhs(rhs_shape, rhs_dtype))
+
+    sp = lambda x: sparse.BCOO.fromdense(x, n_batch=n_batch, n_dense=n_dense)
+
+    out1 = lhs * rhs
+    out2 = (sp(lhs) * rhs).todense()
+    out3 = (rhs * sp(lhs)).todense()
+
+    tol = {np.float64: 1E-13, np.complex128: 1E-13,
+           np.float32: 1E-6, np.complex64: 1E-6}
+    self.assertAllClose(out1, out2, rtol=tol)
+    self.assertAllClose(out1, out3, rtol=tol)
+
+
   def test_bcoo_vmap_shape(self, shape=(2, 3, 4, 5), dtype=np.float32):
     # This test checks that BCOO shape metadata interacts correctly with vmap.
     rng = rand_sparse(self.rng())

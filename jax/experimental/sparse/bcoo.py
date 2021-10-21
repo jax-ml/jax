@@ -29,6 +29,7 @@ from jax.interpreters import xla
 import jax.numpy as jnp
 from jax.interpreters import ad
 from jax.util import safe_zip
+from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
@@ -36,6 +37,26 @@ from . import ops
 
 Dtype = Any
 Shape = Tuple[int, ...]
+
+#----------------------------------------------------------------------
+# General utilities...
+def broadcasting_vmap(fun, in_axes=0, out_axes=0):
+  @functools.wraps(fun)
+  def batched_fun(*args):
+    args_flat, in_tree  = tree_util.tree_flatten(args)
+    in_axes_flat = flatten_axes("vmap in_axes", in_tree, in_axes, kws=False)
+    size = max(arg.shape[i] for arg, i in safe_zip(args_flat, in_axes_flat))
+    if size > 1:
+      if any(arg.shape[i] not in (1, size) for arg, i in safe_zip(args_flat, in_axes_flat)):
+        raise ValueError("vmap_or_broadcast: mismatched input shapes")
+      args_flat, in_axes_flat = zip(*(
+          (lax.index_in_dim(arg, 0, i, keepdims=False), None) if arg.shape[i] == 1 else (arg, i)
+          for arg, i in zip(args_flat, in_axes_flat)
+      ))
+    new_args = tree_util.tree_unflatten(in_tree, args_flat)
+    new_in_axes = tree_util.tree_unflatten(in_tree, in_axes_flat)
+    return vmap(fun, in_axes=new_in_axes, out_axes=out_axes)(*new_args)
+  return batched_fun
 
 #----------------------------------------------------------------------
 # BCOO primitives: batched extension of COO.
@@ -880,6 +901,33 @@ def bcoo_reduce_sum(data, indices, *, shape, axes):
 
   out_shape = tuple(shape[i] for i in range(len(shape)) if i not in axes)
   return data, indices, out_shape
+
+def bcoo_multiply_dense(data, indices, v, *, shape):
+  """Broadcasted elementwise multiplication between a BCOO array and a dense array."""
+  # TODO(jakevdp): the logic here is similar to bcoo_extract... can we reuse that?
+  if v.ndim == 0:
+    return lax.mul(data, v)
+  if shape == v.shape:
+    # Note: due to distributive property, no deduplication necessary!
+    return lax.mul(data, bcoo_extract(indices, v))
+
+  if lax.broadcast_shapes(v.shape, shape) != shape:
+    raise NotImplementedError(
+      "multiplication between sparse and dense is only implemented for cases "
+      "where the output shape matches the sparse matrix shape. Got "
+      f"shape={shape}, v.shape={v.shape}")
+  v = lax.expand_dims(v, range(len(shape) - v.ndim))
+
+  props = _validate_bcoo(data, indices, shape)
+
+  def _mul(data, indices, v):
+    assert indices.shape[1] == v.ndim - props.n_dense
+    ind = tuple(indices[:, i] for i in range(indices.shape[1]))
+    ind = tuple(i if s != 1 else 0 for i, s in zip(ind, v.shape))
+    return data * v[ind]
+  for _ in range(props.n_batch):
+    _mul = broadcasting_vmap(_mul)
+  return _mul(data, indices, v)
 
 @tree_util.register_pytree_node_class
 class BCOO(ops.JAXSparse):
