@@ -621,6 +621,11 @@ class JAXSparse:
     else:
       raise NotImplementedError(f"matmul with object of shape {other.shape}")
 
+  def block_until_ready(self):
+    for arg in self.tree_flatten()[0]:
+      arg.block_until_ready()
+    return self
+
 
 @tree_util.register_pytree_node_class
 class CSR(JAXSparse):
