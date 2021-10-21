@@ -1215,6 +1215,16 @@ class SparseObjectTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
     {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
+  def test_block_until_ready(self, Obj, shape=(5, 8), dtype=np.float32):
+    rng = rand_sparse(self.rng(), post=Obj.fromdense)
+    M = rng(shape, dtype)
+    self.assertEqual(M.shape, M.block_until_ready().shape)
+    self.assertArraysEqual(M.data, M.block_until_ready().data)
+    self.assertArraysEqual(M.todense(), M.block_until_ready().todense())
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_attrs(self, Obj, shape=(5, 8), dtype=np.float16):
     rng = rand_sparse(self.rng(), post=Obj.fromdense)
     M = rng(shape, dtype)
