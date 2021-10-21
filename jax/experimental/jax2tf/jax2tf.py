@@ -159,7 +159,7 @@ class _ThreadLocalState(threading.local):
     # sharing for constants, to enable tf.Graph to take advantage of it.
     # See https://github.com/google/jax/issues/7992.
     self.constant_cache = None  # None means that we don't use a cache. We
-                                # may be outside a conversion scope.
+    # may be outside a conversion scope.
 
 
 _thread_local_state = _ThreadLocalState()
@@ -1475,7 +1475,6 @@ def _conv_general_dilated(lhs, rhs, *,
   out_tf_shape = _aval_to_tf_shape(_out_aval)
   dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
   precision_config_proto = _precision_config_proto(precision)
-  assert batch_group_count == 1  # TODO(necula): implement batch_group_count
 
   def gen_conv(lhs, rhs, preferred_element_type: Optional[DType]):
     out = tfxla.conv(
@@ -1487,6 +1486,7 @@ def _conv_general_dilated(lhs, rhs, *,
         rhs_dilation,
         dnums_proto,
         feature_group_count=feature_group_count,
+        batch_group_count=batch_group_count,
         precision_config=precision_config_proto,
         preferred_element_type=preferred_element_type,
         use_v2=True)

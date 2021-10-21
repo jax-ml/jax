@@ -100,7 +100,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses,
       include_jax_unimpl=False,
-      # one_containing="reduce_window_same_padding"
+      one_containing="conv_general_dilated_group_counts_lhs=float32[4,3,9,10]_rhs=float32[6,3,4,5]_windowstrides=(1,1)_padding=((0,0),(0,0))_lhsdilation=(1,1)_rhsdilation=(1,1)_dimensionnumbers=('NCHW','OIHW','NCHW')_featuregroupcount=1_batchgroupcount=2_precision=None_preferred=float64_enablexla=True"
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
