@@ -165,11 +165,14 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
     point in `t`, represented as an array (or pytree of arrays) with the same
     shape/structure as `y0` except with a new leading axis of length `len(t)`.
   """
-  for arg in args:
+
+  def _check_arg(arg):
     if not isinstance(arg, core.Tracer) and not core.valid_jaxtype(arg):
       msg = ("The contents of odeint *args must be arrays or scalars, but got "
              "\n{}.")
       raise TypeError(msg.format(arg))
+
+  jax.tree_map(_check_arg, args)
 
   converted, consts = custom_derivatives.closure_convert(func, y0, t[0], *args)
   return _odeint_wrapper(converted, rtol, atol, mxstep, y0, t, *args, *consts)
