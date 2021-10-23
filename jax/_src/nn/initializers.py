@@ -44,6 +44,12 @@ def normal(stddev=1e-2, dtype=jnp.float_):
     return random.normal(key, shape, dtype) * stddev
   return init
 
+def truncated_normal(stddev=1e-2, lower=-2, upper=2, dtype=jnp.float_):
+  def init(key, shape, dtype=dtype):
+    dtype = dtypes.canonicalize_dtype(dtype)
+    return random.truncated_normal(key, lower, upper, shape, dtype) * stddev
+  return init
+
 def _compute_fans(shape: core.NamedShape, in_axis=-2, out_axis=-1):
   receptive_field_size = shape.total / shape[in_axis] / shape[out_axis]
   fan_in = shape[in_axis] * receptive_field_size
