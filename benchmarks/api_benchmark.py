@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import lax
+from jax.experimental import sparse
 
 
 partial = functools.partial
@@ -320,6 +321,52 @@ def sda_index_2(state):
 @required_devices(8)
 def sda_index_8(state):
   _run_sda_index_bench(state, 8)
+
+
+@google_benchmark.register
+def sparse_bcoo_fromdense(state):
+  shape = (2000, 2000)
+  nse = 10000
+  size = np.prod(shape)
+  rng = np.random.RandomState(1701)
+  data = rng.randn(nse)
+  indices = np.unravel_index(rng.choice(size, size=nse, replace=False), shape=shape)
+  mat = jnp.zeros(shape).at[indices].set(data)
+  sparse.BCOO.fromdense(mat).block_until_ready()  # warm-up
+
+  while state:
+    sparse.BCOO.fromdense(mat).block_until_ready()
+
+
+@google_benchmark.register
+def sparse_bcoo_todense(state):
+  shape = (2000, 2000)
+  nse = 10000
+  size = np.prod(shape)
+  rng = np.random.RandomState(1701)
+  data = rng.randn(nse)
+  indices = np.unravel_index(rng.choice(size, size=nse, replace=False), shape=shape)
+  mat = sparse.BCOO((jnp.array(data), jnp.column_stack(indices)), shape=shape)
+  mat.todense().block_until_ready()  # warm-up
+
+  while state:
+    mat.todense().block_until_ready()
+
+
+@google_benchmark.register
+def sparse_bcoo_matvec(state):
+  shape = 2000, 2000
+  nse = 10000
+  size = np.prod(shape)
+  rng = np.random.RandomState(1701)
+  data = rng.randn(nse)
+  indices = np.unravel_index(rng.choice(size, size=nse, replace=False), shape=shape)
+  mat = sparse.BCOO((jnp.array(data), jnp.column_stack(indices)), shape=shape)
+  vec = rng.randn(shape[1])
+  (mat @ vec).block_until_ready()  # warm-up
+
+  while state:
+    (mat @ vec).block_until_ready()
 
 
 def swap(a, b):
