@@ -120,6 +120,7 @@ from .version import __version__ as __version__
 # jax and rely on the names imported above.
 from . import abstract_arrays as abstract_arrays
 from . import api_util as api_util
+from . import distributed as distributed
 from . import dtypes as dtypes
 from . import errors as errors
 from . import image as image
