@@ -30,7 +30,7 @@ import collections
 from functools import partial
 import operator
 import types
-from typing import Sequence, FrozenSet, Optional, Tuple, Union
+from typing import Sequence, FrozenSet, Optional, Tuple, Union, Set, Type, Callable
 from textwrap import dedent as _dedent
 import warnings
 
@@ -552,6 +552,12 @@ def _result_dtype(op, *args):
 def _arraylike(x):
   return (isinstance(x, np.ndarray) or isinstance(x, ndarray) or
           hasattr(x, '__jax_array__') or isscalar(x))
+
+
+def _stackable(*args):
+  return _all(type(arg) in stackables for arg in args)
+stackables: Set[Type] = set()
+_register_stackable: Callable[[Type], None] = stackables.add
 
 def _check_arraylike(fun_name, *args):
   """Check if all args fit JAX's definition of arraylike."""
@@ -1718,7 +1724,7 @@ def polyfit(x, y, deg, rcond=None, full=False, w=None, cov=False):
 
 @_wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a, newshape, order="C"):
-  _check_arraylike("reshape", a)
+  _stackable(a) or _check_arraylike("reshape", a)
   try:
     return a.reshape(newshape, order=order)  # forward to method for ndarrays
   except AttributeError:
@@ -1761,7 +1767,7 @@ def _transpose(a, *args):
 @_wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('order',), inline=True)
 def ravel(a, order="C"):
-  _check_arraylike("ravel", a)
+  _stackable(a) or _check_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
   return reshape(a, (size(a),), order)
@@ -2224,6 +2230,8 @@ def broadcast_arrays(*args):
 The JAX version does not necessarily return a view of the input.
 """)
 def broadcast_to(arr, shape):
+  if hasattr(arr, "broadcast_to"):
+    return arr.broadcast_to(shape)
   arr = arr if isinstance(arr, ndarray) else array(arr)
   shape = (shape,) if ndim(shape) == 0 else shape
   shape = canonicalize_shape(shape)  # check that shape is concrete
@@ -3361,7 +3369,7 @@ def stack(arrays, axis: int = 0, out=None):
 
 @_wraps(np.tile)
 def tile(A, reps):
-  _check_arraylike("tile", A)
+  _stackable(A) or _check_arraylike("tile", A)
   try:
     iter(reps)
   except TypeError:
@@ -3392,13 +3400,15 @@ def _concatenate_array(arr, axis: int):
 def concatenate(arrays, axis: int = 0):
   if isinstance(arrays, (np.ndarray, ndarray)):
     return _concatenate_array(arrays, axis)
-  _check_arraylike("concatenate", *arrays)
+  _stackable(*arrays) or _check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
   if axis is None:
     return concatenate([ravel(a) for a in arrays], axis=0)
+  if hasattr(arrays[0], "concatenate"):
+    return arrays[0].concatenate(arrays[1:], axis)
   axis = _canonicalize_axis(axis, ndim(arrays[0]))
   arrays = _promote_dtypes(*arrays)
   # lax.concatenate can be slow to compile for wide concatenations, so form a
