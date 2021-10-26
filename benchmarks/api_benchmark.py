@@ -324,7 +324,7 @@ def sda_index_8(state):
   _run_sda_index_bench(state, 8)
 
 
-def _sparse_bcoo_fromdense(state, jit: bool):
+def _sparse_bcoo_fromdense(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
   size = np.prod(shape)
@@ -335,18 +335,22 @@ def _sparse_bcoo_fromdense(state, jit: bool):
   mat = jnp.zeros(shape).at[indices].set(data)
 
   f = sparse.BCOO.fromdense
-  if jit:
+  if compile or jit:
     # Note: nse must be specified for JIT.
     f = jax.jit(partial(f, nse=nse))
-  f(mat).block_until_ready()  # warm-up
 
-  while state:
+  if compile:
+    while state:
+      f.lower(mat).compile()
+  else:
     f(mat).block_until_ready()
+    while state:
+      f(mat).block_until_ready()
 
 
 @google_benchmark.register
 def sparse_bcoo_fromdense(state):
-  return _sparse_bcoo_fromdense(state, jit=False)
+  return _sparse_bcoo_fromdense(state)
 
 
 @google_benchmark.register
@@ -354,7 +358,12 @@ def sparse_bcoo_fromdense_jit(state):
   return _sparse_bcoo_fromdense(state, jit=True)
 
 
-def _sparse_bcoo_todense(state, jit: bool):
+@google_benchmark.register
+def sparse_bcoo_fromdense_compile(state):
+  return _sparse_bcoo_fromdense(state, compile=True)
+
+
+def _sparse_bcoo_todense(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
   size = np.prod(shape)
@@ -365,17 +374,21 @@ def _sparse_bcoo_todense(state, jit: bool):
   mat = sparse.BCOO((jnp.array(data), jnp.column_stack(indices)), shape=shape)
 
   f = lambda mat: mat.todense()
-  if jit:
+  if jit or compile:
     f = jax.jit(f)
-  f(mat).block_until_ready()  # warm-up
 
-  while state:
+  if compile:
+    while state:
+      f.lower(mat).compile()
+  else:
     f(mat).block_until_ready()
+    while state:
+      f(mat).block_until_ready()
 
 
 @google_benchmark.register
 def sparse_bcoo_todense(state):
-  return _sparse_bcoo_todense(state, jit=False)
+  return _sparse_bcoo_todense(state)
 
 
 @google_benchmark.register
@@ -383,7 +396,12 @@ def sparse_bcoo_todense_jit(state):
   return _sparse_bcoo_todense(state, jit=True)
 
 
-def _sparse_bcoo_matvec(state, jit: bool):
+@google_benchmark.register
+def sparse_bcoo_todense_compile(state):
+  return _sparse_bcoo_todense(state, compile=True)
+
+
+def _sparse_bcoo_matvec(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
   size = np.prod(shape)
@@ -395,22 +413,31 @@ def _sparse_bcoo_matvec(state, jit: bool):
   vec = rng.randn(shape[1])
 
   f = lambda mat, vec: mat @ vec
-  if jit:
+  if jit or compile:
     f = jax.jit(f)
-  f(mat, vec).block_until_ready()  # warm-up
 
-  while state:
+  if compile:
+    while state:
+      f.lower(mat, vec).compile()
+  else:
     f(mat, vec).block_until_ready()
+    while state:
+      f(mat, vec).block_until_ready()
 
 
 @google_benchmark.register
 def sparse_bcoo_matvec(state):
-  return _sparse_bcoo_matvec(state, jit=False)
+  return _sparse_bcoo_matvec(state)
 
 
 @google_benchmark.register
 def sparse_bcoo_matvec_jit(state):
   return _sparse_bcoo_matvec(state, jit=True)
+
+
+@google_benchmark.register
+def sparse_bcoo_matvec_compile(state):
+  return _sparse_bcoo_matvec(state, compile=True)
 
 
 def swap(a, b):
