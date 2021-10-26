@@ -23,7 +23,7 @@ import numpy as np
 from jax import config, core, jit, lax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
-from jax.experimental.sparse import BCOO, sparsify
+from jax.experimental.sparse import BCOO, sparsify, todense
 from jax.experimental.sparse.transform import (
   arrays_to_argspecs, argspecs_to_arrays, sparsify_raw, ArgSpec, SparseEnv)
 
@@ -342,6 +342,17 @@ class SparsifyTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(TypeError, "sparsified true_fun and false_fun output.*"):
       func(x_bcoo, y)
+
+  def testToDense(self):
+    M = jnp.arange(4)
+    Msp = BCOO.fromdense(M)
+    @sparsify
+    def func(M):
+      return todense(M) + 1
+    self.assertArraysEqual(func(M), M + 1)
+    self.assertArraysEqual(func(Msp), M + 1)
+    self.assertArraysEqual(jit(func)(M), M + 1)
+    self.assertArraysEqual(jit(func)(Msp), M + 1)
 
   def testWeakTypes(self):
     # Regression test for https://github.com/google/jax/issues/8267

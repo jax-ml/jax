@@ -521,3 +521,11 @@ def _cond_sparse(spenv, pred, *operands, branches, linear, **params):
   return arrays_to_argspecs(spenv, out)
 
 sparse_rules[lax.cond_p] = _cond_sparse
+
+def _todense_sparse_rule(spenv, argspec, *, tree):
+  del tree  # TODO(jakvdp): we should assert that tree is PytreeDef(*)
+  out = sparse.bcoo_todense(argspec.data(spenv), argspec.indices(spenv), shape=argspec.shape)
+  out_argspec = sparse.transform.ArgSpec(argspec.shape, spenv.push(out), None)
+  return (out_argspec,)
+
+sparse_rules[sparse.todense_p] = _todense_sparse_rule

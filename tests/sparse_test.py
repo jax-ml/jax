@@ -28,6 +28,8 @@ from jax import lax
 from jax._src.lib import cusparse
 from jax._src.lib import xla_bridge
 from jax import jit
+from jax import tree_util
+from jax import vmap
 from jax._src import test_util as jtu
 from jax import xla
 import jax.numpy as jnp
@@ -1221,6 +1223,46 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertEqual(M.shape, M.block_until_ready().shape)
     self.assertArraysEqual(M.data, M.block_until_ready().data)
     self.assertArraysEqual(M.todense(), M.block_until_ready().todense())
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    for Obj in [jnp.array, sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
+  def test_todense(self, Obj, shape=(5, 8), dtype=np.float32):
+    rng = rand_sparse(self.rng())
+    M_dense = rng(shape, dtype)
+    M = jnp.array(M_dense) if Obj is jnp.array else Obj.fromdense(M_dense)
+    self.assertArraysEqual(sparse.todense(M), M_dense)
+    self.assertArraysEqual(jit(sparse.todense)(M), M_dense)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    for Obj in [jnp.array, sparse.BCOO])
+  def test_todense_batching(self, Obj, shape=(5, 8), dtype=np.float32):
+    rng = rand_sparse(self.rng())
+    M_dense = rng(shape, dtype)
+    if Obj is sparse.BCOO:
+      M = sparse.BCOO.fromdense(M_dense, n_batch=1)
+    else:
+      M = jnp.asarray(M_dense)
+    self.assertArraysEqual(vmap(sparse.todense)(M), M_dense)
+    self.assertArraysEqual(jit(vmap(sparse.todense))(M), M_dense)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    for Obj in [jnp.array, sparse.BCOO])
+  def test_todense_ad(self, Obj, shape=(3,), dtype=np.float32):
+    M_dense = jnp.array([1., 2., 3.])
+    M = M_dense if Obj is jnp.array else Obj.fromdense(M_dense)
+
+    print(M_dense)
+    print(M)
+
+    bufs, tree = tree_util.tree_flatten(M)
+    jac = jnp.eye(M.shape[0], dtype=M.dtype)
+    jac1 = jax.jacfwd(lambda *bufs: sparse.todense_p.bind(*bufs, tree=tree))(*bufs)
+    jac2 = jax.jacrev(lambda *bufs: sparse.todense_p.bind(*bufs, tree=tree))(*bufs)
+    self.assertArraysEqual(jac1, jac2)
+    self.assertArraysEqual(jac, jac2)
 
   @parameterized.named_parameters(
     {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}

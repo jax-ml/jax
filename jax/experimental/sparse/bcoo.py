@@ -20,7 +20,6 @@ from typing import Any, NamedTuple, Sequence, Tuple
 import numpy as np
 
 from jax import core
-from jax import dtypes
 from jax import lax
 from jax import tree_util
 from jax import vmap
@@ -881,13 +880,6 @@ def bcoo_reduce_sum(data, indices, *, shape, axes):
 
   out_shape = tuple(shape[i] for i in range(len(shape)) if i not in axes)
   return data, indices, out_shape
-def _is_placeholder(*args):
-  return all(type(arg) is object for arg in args) or all(arg is None for arg in args)
-
-def _asarray_or_float0(arg):
-  if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
-    return arg
-  return jnp.asarray(arg)
 
 @tree_util.register_pytree_node_class
 class BCOO(ops.JAXSparse):
@@ -956,7 +948,7 @@ class BCOO(ops.JAXSparse):
   def __init__(self, args, *, shape):
     # JAX transforms will sometimes instantiate pytrees with null values, so we
     # must catch that in the initialization of inputs.
-    self.data, self.indices = args if _is_placeholder(*args) else map(_asarray_or_float0, args)
+    self.data, self.indices = self._safe_asarray(args)
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -1031,7 +1023,7 @@ class BCOO(ops.JAXSparse):
   def tree_flatten(self):
     children = (self.data, self.indices)
     # pytree sometimes creates placeholder objects & we need to handle that.
-    sparse_shape = self.shape if _is_placeholder(*children) else self._sparse_shape
+    sparse_shape = self.shape if ops._is_placeholder(*children) else self._sparse_shape
     # We serialize the sparse shape only to support batching.
     return children, {"sparse_shape": sparse_shape}
 
@@ -1040,7 +1032,7 @@ class BCOO(ops.JAXSparse):
     data, indices = children
     sparse_shape = aux_data["sparse_shape"]
     # pytree sometimes creates placeholder objects & we need to handle that.
-    if _is_placeholder(data, indices):
+    if ops._is_placeholder(data, indices):
       shape = sparse_shape
     else:
       if np.ndim(indices) < 2 or len(sparse_shape) != np.shape(indices)[-1]:
