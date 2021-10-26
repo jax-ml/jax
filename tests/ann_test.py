@@ -40,7 +40,7 @@ class AnnTest(jtu.JaxTestCase):
         for qy_shape in [(200, 128), (128, 128)]
         for db_shape in [(128, 500), (128, 3000)]
         for dtype in jtu.dtypes.all_floating
-        for k in [10, 50] for recall in [0.9, 0.95]))
+        for k in [1, 10, 50] for recall in [0.9, 0.95]))
   def test_approx_max_k(self, qy_shape, db_shape, dtype, k, recall):
     rng = jtu.rand_default(self.rng())
     qy = rng(qy_shape, dtype)
@@ -68,7 +68,7 @@ class AnnTest(jtu.JaxTestCase):
         for qy_shape in [(200, 128), (128, 128)]
         for db_shape in [(128, 500), (128, 3000)]
         for dtype in jtu.dtypes.all_floating
-        for k in [10, 50] for recall in [0.9, 0.95]))
+        for k in [1, 10, 50] for recall in [0.9, 0.95]))
   def test_approx_min_k(self, qy_shape, db_shape, dtype, k, recall):
     rng = jtu.rand_default(self.rng())
     qy = rng(qy_shape, dtype)
@@ -90,16 +90,11 @@ class AnnTest(jtu.JaxTestCase):
           "testcase_name":
               "_shape={}_k={}_max_k={}".format(
                   jtu.format_shape_dtype_string(shape, dtype), k, is_max_k),
-          "shape":
-              shape,
-          "dtype":
-              dtype,
-          "k":
-              k,
-          "is_max_k":
-              is_max_k
-      } for dtype in [np.float32] for shape in [(4,), (5, 5), (2, 1, 4)]
-                          for k in [2, 3] for is_max_k in [True, False]))
+          "shape": shape, "dtype": dtype, "k": k, "is_max_k": is_max_k }
+        for dtype in [np.float32]
+        for shape in [(4,), (5, 5), (2, 1, 4)]
+        for k in [1, 3]
+        for is_max_k in [True, False]))
   def test_autodiff(self, shape, dtype, k, is_max_k):
     vals = np.arange(prod(shape), dtype=dtype)
     vals = self.rng().permutation(vals).reshape(shape)
