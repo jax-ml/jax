@@ -31,8 +31,10 @@ from jax import jit
 from jax import tree_util
 from jax import vmap
 from jax._src import test_util as jtu
+from jax import random
 from jax import xla
 import jax.numpy as jnp
+from jax.util import split_list
 from jax import jvp
 import numpy as np
 import scipy.sparse
@@ -1368,6 +1370,33 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.sum(0), Msp.sum(0).todense())
     self.assertArraysEqual(M.sum(1), Msp.sum(1).todense())
     self.assertArraysEqual(M.sum(), Msp.sum())
+
+class SparseRandomTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}_ndense={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense}
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)))
+  def test_random_bcoo(self, shape, dtype, n_batch, n_dense):
+    key = random.PRNGKey(1701)
+    mat = sparse.random_bcoo(key, shape=shape, dtype=dtype, n_batch=n_batch, n_dense=n_dense)
+
+    mat_dense = mat.todense()
+    self.assertEqual(mat_dense.shape, shape)
+    self.assertEqual(mat_dense.dtype, dtype)
+
+    n_sparse = len(shape) - n_batch - n_dense
+    batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
+
+    approx_expected_num_nonzero = (
+      np.ceil(0.2 * np.prod(sparse_shape))
+      * np.prod(batch_shape) * np.prod(dense_shape))
+    num_nonzero = (mat_dense != 0).sum()
+    self.assertAlmostEqual(num_nonzero, approx_expected_num_nonzero, delta=2)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
