@@ -33,11 +33,12 @@ top-1 from each window. The collision rate of the top-k affects the accuracy,
 which we can model by the number of people with shared birthdays in the Birthday
 problem.
 
-The recall of this approximation depends on the output size M and desired
-Kelements in top-k. The recall is approximately :math:`\\mathrm{EXP}((1-K)/M)`.
-A quick estimate is the output would roughly be :math:`M=10*K` for 90% target
-recall, and :math:`M=100*K` for 99% target recall. The smaller the output, the
-smaller memory bandwidth it consumes.
+The recall of this approximation depends on the output size :math:`M` and
+desired :math`K` elements in top-k. The recall is approximately
+:math:`\\exp\\left(\\frac{1-K}{M}\\right)`.  A quick estimate is the output
+would roughly be :math:`M=10\\cdot K` for 90% target recall, and
+:math:`M=100\\cdot K` for 99% target recall. The smaller the output, the smaller
+memory bandwidth it consumes.
 
 Usage::
 
