@@ -224,6 +224,8 @@ from .ops import (
     csr_matvec_p as csr_matvec_p,
     csr_todense as csr_todense,
     csr_todense_p as csr_todense_p,
+    todense as todense,
+    todense_p as todense_p,
     COO as COO,
     CSC as CSC,
     CSR as CSR,

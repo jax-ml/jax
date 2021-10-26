@@ -39,12 +39,15 @@ import jax
 from jax import core
 from jax import lax
 from jax import tree_util
+from jax.interpreters import ad
+from jax.interpreters import batching
 from jax.interpreters import xla
+from jax._src import dtypes
 from jax._src.lib import cusparse
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax.util import safe_zip
 import jax.numpy as jnp
-from jax.interpreters import ad
 
 xb = xla_bridge
 xops = xla_client.ops
@@ -69,6 +72,17 @@ def _csr_extract(indices, indptr, mat):
 def _coo_extract(row, col, mat):
   """Extract values of dense matrix mat at given COO indices."""
   return mat[row, col]
+
+def _is_placeholder(*args):
+  return all(type(arg) is object for arg in args) or all(arg is None for arg in args)
+
+def _is_aval(*args):
+  return all(isinstance(arg, core.AbstractValue) for arg in args)
+
+def _asarray_or_float0(arg):
+  if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
+    return arg
+  return jnp.asarray(arg)
 
 #--------------------------------------------------------------------
 # csr_todense
@@ -559,6 +573,70 @@ ad.primitive_jvps[coo_matmat_p] = _coo_matmat_jvp_rule
 
 
 #----------------------------------------------------------------------
+# todense – function to convert sparse matrices to dense while letting
+#           dense matrices pass through.
+todense_p = core.Primitive('todense')
+todense_p.multiple_results = False
+
+def todense(arr):
+  """Convert input to a dense matrix. If input is already dense, pass through."""
+  bufs, tree = tree_util.tree_flatten(arr)
+  return todense_p.bind(*bufs, tree=tree)
+
+@todense_p.def_impl
+def _todense_impl(*bufs, tree):
+  arr = tree_util.tree_unflatten(tree, bufs)
+  if isinstance(arr, (jnp.ndarray, np.ndarray)):
+    return arr
+  return arr.todense()
+
+@todense_p.def_abstract_eval
+def _todense_abstract_eval(*bufs, tree):
+  arr = tree_util.tree_unflatten(tree, bufs)
+  if isinstance(arr, core.ShapedArray):
+    return arr
+  return core.ShapedArray(arr.shape, arr.dtype, weak_type=dtypes.is_weakly_typed(arr.data))
+
+def _todense_jvp(primals, tangents, *, tree):
+  assert not isinstance(tangents[0], ad.Zero)
+  assert all(isinstance(t, ad.Zero) for t in tangents[1:])
+  primals_out = todense_p.bind(*primals, tree=tree)
+  tangents_out = todense_p.bind(tangents[0], *primals[1:], tree=tree)
+  return primals_out, tangents_out
+
+def _todense_transpose(ct, *bufs, tree):
+  assert ad.is_undefined_primal(bufs[0])
+  assert not any(ad.is_undefined_primal(buf) for buf in bufs[1:])
+
+  standin = object()
+  obj = tree_util.tree_unflatten(tree, [standin] * len(bufs))
+  from . import BCOO, bcoo_extract
+  if obj is standin:
+    return (ct,)
+  elif isinstance(obj, BCOO):
+    _, indices = bufs
+    return bcoo_extract(indices, ct), indices
+  elif isinstance(obj, COO):
+    _, row, col = bufs
+    return _coo_extract(row, col, ct), row, col
+  else:
+    raise NotImplementedError(f"todense_transpose for {type(obj)}")
+
+def _todense_batching_rule(batched_args, batch_dims, *, tree):
+  if any(b not in [0, None] for b in batch_dims):
+    raise NotImplementedError(f"batch_dims={batch_dims}. Only 0 and None are supported.")
+  batched_args = [arg[None, ...] if dim is None else arg
+                  for arg, dim in safe_zip(batched_args, batch_dims)]
+  return todense_p.bind(*batched_args, tree=tree), 0
+
+ad.primitive_jvps[todense_p] = _todense_jvp
+ad.primitive_transposes[todense_p] = _todense_transpose
+batching.primitive_batchers[todense_p] = _todense_batching_rule
+xla.register_translation(todense_p, xla.lower_fun(
+    _todense_impl, multiple_results=False, new_style=True))
+
+
+#----------------------------------------------------------------------
 # Sparse objects (APIs subject to change)
 class JAXSparse:
   """Base class for high-level JAX sparse objects."""
@@ -570,6 +648,12 @@ class JAXSparse:
   @property
   def ndim(self):
     return len(self.shape)
+
+  @staticmethod
+  def _safe_asarray(args):
+    if _is_placeholder(*args) or _is_aval(*args):
+      return args
+    return map(_asarray_or_float0, args)
 
   def __init__(self, args, *, shape):
     self.shape = shape
@@ -636,7 +720,7 @@ class CSR(JAXSparse):
   dtype = property(lambda self: self.data.dtype)
 
   def __init__(self, args, *, shape):
-    self.data, self.indices, self.indptr = map(jnp.asarray, args)
+    self.data, self.indices, self.indptr = self._safe_asarray(args)
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -673,7 +757,7 @@ class CSC(JAXSparse):
   dtype = property(lambda self: self.data.dtype)
 
   def __init__(self, args, *, shape):
-    self.data, self.indices, self.indptr = map(jnp.asarray, args)
+    self.data, self.indices, self.indptr = self._safe_asarray(args)
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -710,7 +794,7 @@ class COO(JAXSparse):
   dtype = property(lambda self: self.data.dtype)
 
   def __init__(self, args, *, shape):
-    self.data, self.row, self.col = map(jnp.asarray, args)
+    self.data, self.row, self.col = self._safe_asarray(args)
     super().__init__(args, shape=shape)
 
   @classmethod
