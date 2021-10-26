@@ -19,7 +19,6 @@ from typing import Any, NamedTuple, Sequence, Tuple
 
 import numpy as np
 
-import jax
 from jax import core
 from jax import dtypes
 from jax import lax
@@ -983,7 +982,6 @@ class BCOO(ops.JAXSparse):
     """Return a de-duplicated representation of the BCOO matrix."""
     return BCOO(_dedupe_bcoo(self.data, self.indices, self.shape), shape=self.shape)
 
-  @jax.jit
   def todense(self):
     """Create a dense version of the array."""
     return bcoo_todense(self.data, self.indices, shape=self.shape)
