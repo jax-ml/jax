@@ -62,12 +62,10 @@ def _coo_to_csr(row, nrows):
   indptr = jnp.zeros(nrows + 1, row.dtype)
   return indptr.at[1:].set(jnp.cumsum(jnp.bincount(row, length=nrows)))
 
-@jax.jit
 def _csr_extract(indices, indptr, mat):
   """Extract values of dense matrix mat at given CSR indices."""
   return _coo_extract(_csr_to_coo(indptr, len(indices)), indices, mat)
 
-@jax.jit
 def _coo_extract(row, col, mat):
   """Extract values of dense matrix mat at given COO indices."""
   return mat[row, col]
@@ -647,15 +645,12 @@ class CSR(JAXSparse):
       nse = (mat != 0).sum()
     return cls(csr_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape)
 
-  @jax.jit
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape)
 
-  @jax.jit
   def matvec(self, v):
     return csr_matvec(self.data, self.indices, self.indptr, v, shape=self.shape)
 
-  @jax.jit
   def matmat(self, B):
     return csr_matmat(self.data, self.indices, self.indptr, B, shape=self.shape)
 
@@ -687,15 +682,12 @@ class CSC(JAXSparse):
       nse = (mat != 0).sum()
     return cls(csr_fromdense(mat.T, nse=nse, index_dtype=index_dtype), shape=mat.shape)
 
-  @jax.jit
   def todense(self):
     return csr_todense(self.data, self.indices, self.indptr, shape=self.shape[::-1]).T
 
-  @jax.jit
   def matvec(self, v):
     return csr_matvec(self.data, self.indices, self.indptr, v, shape=self.shape[::-1], transpose=True)
 
-  @jax.jit
   def matmat(self, B):
     return csr_matmat(self.data, self.indices, self.indptr, B, shape=self.shape[::-1], transpose=True)
 
@@ -727,15 +719,12 @@ class COO(JAXSparse):
       nse = (mat != 0).sum()
     return cls(coo_fromdense(mat, nse=nse, index_dtype=index_dtype), shape=mat.shape)
 
-  @jax.jit
   def todense(self):
     return coo_todense(self.data, self.row, self.col, shape=self.shape)
 
-  @jax.jit
   def matvec(self, v):
     return coo_matvec(self.data, self.row, self.col, v, shape=self.shape)
 
-  @jax.jit
   def matmat(self, B):
     return coo_matmat(self.data, self.row, self.col, B, shape=self.shape)
 
