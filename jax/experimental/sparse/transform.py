@@ -55,6 +55,7 @@ import numpy as np
 from jax import core
 from jax import lax
 from jax import linear_util as lu
+from jax.experimental.sparse.bcoo import bcoo_multiply_dense
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
@@ -369,13 +370,8 @@ def _mul_sparse(spenv, *argspecs):
   else:
     if Y.is_sparse():
       X, Y = Y, X
-    Ydata = Y.data(spenv)
-    if Ydata.ndim == 0:
-      out_data = lax.mul(X.data(spenv), Ydata)
-    elif Ydata.shape == X.shape:
-      out_data = lax.mul(X.data(spenv), sparse.bcoo_extract(X.indices(spenv), Ydata))
-    else:
-      raise NotImplementedError("Multiplication between sparse and dense matrices of different shape.")
+    out_data = bcoo_multiply_dense(
+        X.data(spenv), X.indices(spenv), Y.data(spenv), shape=X.shape)
     out_argspec = ArgSpec(X.shape, spenv.push(out_data), X.indices_ref)
 
   return (out_argspec,)
