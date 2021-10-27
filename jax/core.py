@@ -148,11 +148,11 @@ class JaxprEqn(NamedTuple):
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
-  source_info: Optional[source_info_util.Traceback]
+  source_info: source_info_util.SourceInfo
 
   def __repr__(self): return str(pp_eqn(self, JaxprPpContext())).rstrip()
 
-def new_jaxpr_eqn(invars, outvars, primitive, params, source_info=None):
+def new_jaxpr_eqn(invars, outvars, primitive, params, source_info):
   if primitive.call_primitive:
     assert len(outvars) == len(params["call_jaxpr"].outvars)
   return JaxprEqn(invars, outvars, primitive, params, source_info)
@@ -339,7 +339,7 @@ def eval_jaxpr_eqn(eqn, in_vals):
     del bind_params['out_axes']
   else:
     bind_params = params
-  with source_info_util.user_context(eqn.source_info):
+  with source_info_util.user_context(eqn.source_info.traceback):
     return eqn.primitive.bind(*(subfuns + in_vals), **bind_params)
 
 

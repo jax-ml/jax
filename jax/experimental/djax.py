@@ -20,6 +20,7 @@ from typing import (Tuple, List, Sequence, Set, Dict, Any, Callable, Union,
 
 from jax import core
 from jax._src import dtypes
+from jax._src import source_info_util
 from jax.core import Var, Literal, Atom, Tracer
 from jax._src.util import (safe_zip, safe_map, curry, unzip2, split_list,
                            tuple_delete)
@@ -920,7 +921,7 @@ def _dynamic_xla_call_pe(trace, *tracers, jaxpr, num_consts):
            for v in jaxpr2.outs]
   eqn = pe.new_eqn_recipe(in_dim_tracers + res_tracers + unknown_tracers, outs2,
                           dynamic_xla_call_p, dict(jaxpr=jaxpr2, num_consts=0),
-                          None)
+                          source_info_util.new_source_info())
   for t in outs2: t.recipe = eqn
   outs1, outs2 = iter(outs1), iter(outs2)
   return [next(outs2) if uk else next(outs1) for uk in out_unknowns]
@@ -950,7 +951,8 @@ def partial_eval_jaxpr(jaxpr, in_unknowns):
     if any(unks):
       invars = [v if unk else new_res(v) for unk, v in zip(unks, eqn.invars)]
       eqns2.append(pe.new_jaxpr_eqn(invars, eqn.outvars, eqn.primitive,
-                                    eqn.params, None))
+                                    eqn.params,
+                                    source_info_util.new_source_info()))
       map(partial(write, True), eqn.outvars)
     else:
       eqns1.append(eqn)
@@ -1265,7 +1267,8 @@ def _nonzero_staging_rule(trace, tracers, params):
   out_val_tracer = pe.DynamicJaxprTracer(trace, out_val_aval, None)
   invars = map(trace.getvar, tracers)
   outvars = map(trace.makevar, [out_dim_tracer, out_val_tracer])
-  eqn = pe.new_jaxpr_eqn(invars, outvars, nonzero_p, {}, None)
+  eqn = pe.new_jaxpr_eqn(invars, outvars, nonzero_p, {},
+      source_info_util.new_source_info())
   trace.frame.eqns.append(eqn)
   return out_val_tracer
 custom_staging_rules[nonzero_p] = _nonzero_staging_rule
@@ -1319,7 +1322,8 @@ def _iota_staging_rule(trace, tracers, params):
     out_aval = core.ShapedArray((n,), np.dtype('int32'))
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     outvar = trace.makevar(out_tracer)
-    eqn = pe.new_jaxpr_eqn([], [outvar], iota_p, dict(size=n), None)
+    eqn = pe.new_jaxpr_eqn([], [outvar], iota_p, dict(size=n),
+        source_info_util.new_source_info())
   else:
     aval = tracer.aval
     if not isinstance(aval, AbsArray): raise TypeError
@@ -1332,7 +1336,8 @@ def _iota_staging_rule(trace, tracers, params):
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     outvar = trace.makevar(out_tracer)
     invar = trace.getvar(tracer)
-    eqn = pe.new_jaxpr_eqn([invar], [outvar], iota_p, {}, None)
+    eqn = pe.new_jaxpr_eqn([invar], [outvar], iota_p, {},
+        source_info_util.new_source_info())
   trace.frame.eqns.append(eqn)
   return out_tracer
 custom_staging_rules[iota_p] = _iota_staging_rule
@@ -1381,7 +1386,8 @@ def _broadcast_staging_rule(trace, tracers, params):
     out_aval = AbsArray((d, *x.shape), BaseType(dtype))
     out_tracer = pe.DynamicJaxprTracer(trace, out_aval, None)
     eqn = pe.new_jaxpr_eqn([trace.getvar(x), trace.getvar(d)],
-                           [trace.makevar(out_tracer)], broadcast_p, {}, None)
+                           [trace.makevar(out_tracer)], broadcast_p, {},
+                           source_info_util.new_source_info())
     trace.frame.eqns.append(eqn)
     return out_tracer
 custom_staging_rules[broadcast_p] = _broadcast_staging_rule
