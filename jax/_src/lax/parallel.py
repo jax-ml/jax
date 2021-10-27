@@ -899,6 +899,12 @@ def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
     raise NotImplementedError("Please open a feature request!")
   x, = vals_in
   d, = dims_in
+  if d is batching.not_mapped:
+    # TODO(sharadmv,apaszke): Remove this broadcast that comes from
+    # all_gather_transpose and instead avoid using all_to_all in
+    # all_gather_transpose.
+    x = lax.broadcast(x, (axis_size, *x.shape))
+    d = 0
   if isinstance(axis_name, (list, tuple)):
     pos = axis_name.index(frame_name)
     major_axes, minor_axes = axis_name[:pos], axis_name[pos + 1:]
@@ -1098,6 +1104,9 @@ def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_
       cts, axis_name=axis_name, split_axis=all_gather_dimension,
       concat_axis=concat_axis, axis_index_groups=axis_index_groups),
       axis=concat_axis),)
+  # TODO(sharadmv,apaszke): re-enable this when we can properly detect
+  # replication.
+  # return (lax.dynamic_index_in_dim(cts, idx, axis=all_gather_dimension, keepdims=False) * axis_size,)
 
 def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   (x,), (d,) = vals_in, dims_in
