@@ -231,4 +231,5 @@ from .ops import (
     CSR as CSR,
 )
 
+from .random import random_bcoo as random_bcoo
 from .transform import sparsify as sparsify
