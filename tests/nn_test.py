@@ -249,7 +249,7 @@ class NNInitializersTest(jtu.JaxTestCase):
     rng = random.PRNGKey(0)
     shape = (2, 3, 4, 5)
     initializer = nn.initializers.variance_scaling(
-      scale=1.0, model='fan_avg', distribution='truncated_normal',
+      scale=1.0, mode='fan_avg', distribution='truncated_normal',
       in_axis=(0, 1), out_axis=(-2, -1))
     val = initializer(rng, shape)
     
