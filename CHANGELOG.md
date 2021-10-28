@@ -14,6 +14,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 * [GitHub
   commits](https://github.com/google/jax/compare/jax-v0.2.24...main).
 
+* New features:
+  * (Experimental) `jax.distributed.initialize` exposes multi-host GPU backend.
 * Breaking changes
   * Moved `jax.experimental.stax` to `jax.example_libraries.stax`
   * Moved `jax.experimental.optimizers` to `jax.example_libraries.optimizers`

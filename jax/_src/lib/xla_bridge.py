@@ -170,8 +170,15 @@ def tpu_client_timer_callback(timer_secs: float):
 # example, there could be multiple backends that provide the same kind of
 # device.
 _backend_factories = {}
+_default_backend = None
+_backends : Dict[str, Any] = {}
+_backends_errors : Dict[str, str] = {}
+_backend_lock = threading.Lock()
 
 def register_backend_factory(name, factory, *, priority=0):
+  with _backend_lock:
+    if name in _backends:
+      raise RuntimeError(f"Backend {name} already initialized")
   _backend_factories[name] = (factory, priority)
 
 
@@ -186,11 +193,6 @@ register_backend_factory('gpu', xla_client.make_gpu_client,
                          priority=200)
 register_backend_factory(
   'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
-
-_default_backend = None
-_backends : Dict[str, Any] = {}
-_backends_errors : Dict[str, str] = {}
-_backend_lock = threading.Lock()
 
 
 def backends():
