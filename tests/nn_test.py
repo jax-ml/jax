@@ -252,7 +252,7 @@ class NNInitializersTest(jtu.JaxTestCase):
       scale=1.0, mode='fan_avg', distribution='truncated_normal',
       in_axis=(0, 1), out_axis=(-2, -1))
     val = initializer(rng, shape)
-    
+
     self.assertEqual(shape, jnp.shape(val))
 
 
