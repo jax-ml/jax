@@ -97,6 +97,11 @@ class PartialVal(tuple):
 
 
 class JaxprTrace(Trace):
+
+  def __init__(self, *args, name_stack: source_info_util.NameStack):
+    super().__init__(*args)
+    self.name_stack = name_stack
+
   def pure(self, val) -> 'JaxprTracer':
     return self.new_const(val)
 
@@ -163,7 +168,8 @@ class JaxprTrace(Trace):
     tracers = map(self.instantiate_const, tracers)
     avals = [t.aval for t in tracers]
     out_aval = primitive.abstract_eval(*avals, **params)
-    source = source_info_util.current()
+    name_stack = self._current_truncated_name_stack()
+    source = source_info_util.current().replace(name_stack=name_stack)
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
@@ -213,11 +219,11 @@ class JaxprTrace(Trace):
     # The outputs of the staged-out call are Tracers with the new eqn as recipe.
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
+    name_stack = self._current_truncated_name_stack()
+    source = source_info_util.current().replace(name_stack=name_stack)
     eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),
-                         out_tracers, primitive, staged_params,
-                         source_info_util.current())
+                         out_tracers, primitive, staged_params, source)
     for t in out_tracers: t.recipe = eqn
-
     return merge_lists(out_knowns, out_tracers, out_consts)
 
   def process_map(self, primitive, f: lu.WrappedFun, tracers, params):
@@ -305,8 +311,9 @@ class JaxprTrace(Trace):
       update_params = call_param_updaters.get(primitive) or (lambda p, _, __: p)
       new_params = update_params(params, [], len(in_tracers))
       new_params = dict(new_params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
-      eqn = new_eqn_recipe(in_tracers, out_tracers, primitive, new_params,
-                           source_info_util.current())
+      name_stack = self._current_truncated_name_stack()
+      source = source_info_util.current().replace(name_stack=name_stack)
+      eqn = new_eqn_recipe(in_tracers, out_tracers, primitive, new_params, source)
       for t in out_tracers: t.recipe = eqn
       return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -342,8 +349,10 @@ class JaxprTrace(Trace):
                    for d, a in zip(staged_out_axes, out_avals_mapped)]
       out_tracers = [JaxprTracer(trace, PartialVal.unknown(a), None)
                      for a in out_avals]
+      name_stack = self._current_truncated_name_stack()
+      source = source_info_util.current().replace(name_stack=name_stack)
       eqn = new_eqn_recipe((*const_tracers, *env_tracers), out_tracers,
-                           primitive, staged_params, source_info_util.current())
+                           primitive, staged_params, source)
       for t in out_tracers: t.recipe = eqn
       return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -354,6 +363,9 @@ class JaxprTrace(Trace):
     out_axes_unknown: Optional[list] = None
 
     return out, (todo, out_axes_transform)
+
+  def _current_truncated_name_stack(self):
+    return source_info_util.current_name_stack()[len(self.name_stack):]
 
   def partial_eval(self, f: lu.WrappedFun, pvals: Sequence[PartialVal],
                    app: Callable[[lu.WrappedFun, Tuple[core.Value, ...]], Tuple[core.Value]],
@@ -394,11 +406,13 @@ class JaxprTrace(Trace):
       converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
       return converted_jaxpr, (*consts, *env)
 
+    name_stack = self._current_truncated_name_stack()
+    source = source_info_util.current().replace(name_stack=name_stack)
     eqn = new_eqn_recipe(in_tracers, out_tracers, prim.initial_style,
                          dict(fun_jaxpr=closed_jaxpr,
                               jvp_jaxpr_thunk=jvp_jaxpr_thunk,
                               num_consts=len(consts) + len(env)),
-                         source_info_util.current())
+                         source)
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
@@ -434,12 +448,14 @@ class JaxprTrace(Trace):
       converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
       return converted_jaxpr, (*consts, *env)
 
+    name_stack = self._current_truncated_name_stack()
+    source = source_info_util.current().replace(name_stack=name_stack)
     eqn = new_eqn_recipe(in_tracers, out_tracers, prim.initial_style,
                          dict(fun_jaxpr=closed_jaxpr,
                               fwd_jaxpr_thunk=fwd_jaxpr_thunk,
                               num_consts=len(consts) + len(env),
                               bwd=bwd, out_trees=out_trees),
-                         source_info_util.current())
+                         source)
     for t in out_tracers: t.recipe = eqn
     return out_tracers
 
@@ -551,7 +567,8 @@ def trace_to_jaxpr(
     returned jaxpr takes as inputs the known residual values followed by values
     of the originally unknown inputs.
   """
-  with core.new_main(JaxprTrace) as main:
+  current_name_stack = source_info_util.current_name_stack()
+  with core.new_main(JaxprTrace, name_stack=current_name_stack) as main:
     fun = trace_to_subjaxpr(fun, main, instantiate)
     jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
     assert not env
@@ -565,7 +582,7 @@ def trace_to_subjaxpr_nounits(
     main: core.MainTrace, instantiate: Union[bool, Sequence[bool]],
     in_pvals: Sequence[PartialVal]):
   assert all([isinstance(pv, PartialVal) for pv in in_pvals]), in_pvals
-  trace = JaxprTrace(main, core.cur_sublevel())
+  trace = main.with_cur_sublevel()
   in_knowns  = [pval.is_known()     for pval in in_pvals]
   in_consts  = [pval.get_known()    for pval in in_pvals if     pval.is_known()]
   in_tracers = [trace.new_arg(pval) for pval in in_pvals if not pval.is_known()]
@@ -1464,11 +1481,13 @@ class DynamicJaxprTrace(core.Trace):
     dim_tracers = _get_tracers_only_in_shapes(tracers)
     in_avals = _tracers_to_avals(dim_tracers + tracers)
     keep_inputs = [False] * len(dim_tracers) + [True] * len(tracers)
+    name_stack = source_info_util.current_name_stack()
     with core.new_sublevel():
       jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(
         f, self.main, in_avals, keep_inputs=keep_inputs)
     if params.get('inline', False):
-      return core.eval_jaxpr(jaxpr, consts, *dim_tracers, *tracers)
+      with source_info_util.set_name_stack(name_stack):
+        return core.eval_jaxpr(jaxpr, consts, *dim_tracers, *tracers)
     source_info = source_info_util.current()
     env = {v: t for v, t in zip((*jaxpr.constvars, *jaxpr.invars),
                                 (*consts, *dim_tracers, *tracers))
@@ -1695,7 +1714,7 @@ def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
 
   frame = JaxprStackFrame()
-  with extend_jaxpr_stack(main, frame):
+  with extend_jaxpr_stack(main, frame), source_info_util.reset_name_stack():
     trace = DynamicJaxprTrace(main, core.cur_sublevel())
     in_tracers = _avals_to_tracers(trace, in_avals)
     in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
@@ -1835,7 +1854,7 @@ def _get_tracers_in_shapes(seen: Set[TracerId], in_tracers: Sequence[Tracer]
 def trace_to_subjaxpr(main: core.MainTrace, instantiate: Union[bool, Sequence[bool]],
                       pvals: Sequence[PartialVal]):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
-  trace = JaxprTrace(main, core.cur_sublevel())
+  trace = main.with_cur_sublevel()
   in_tracers = map(trace.new_arg, pvals)
   ans = yield in_tracers, {}
   assert isinstance(ans, (list, tuple)), (

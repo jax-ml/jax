@@ -261,7 +261,7 @@ def convert(fun: Callable,
   """
   api._check_callable(fun)
   fun_name = getattr(fun, "__name__", "unknown")
-  name_stack = util.extend_name_stack(util.wrap_name(fun_name, "jax2tf"))
+  name_stack = util.wrap_name(fun_name, "jax2tf") + "/"
   def converted_fun(*args: TfVal, **kwargs: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
     if not core.trace_state_clean() and not _thread_local_state.inside_call_tf:

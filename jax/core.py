@@ -81,10 +81,11 @@ class Jaxpr:
   __repr__ = __str__
 
   def pretty_print(self, *, source_info=False, print_shapes=True,
-                   custom_pp_eqn_rules=True, **kw):
+                   custom_pp_eqn_rules=True, name_stack=False, **kw):
     doc = pp_jaxpr(self, JaxprPpContext(), source_info=source_info,
                    print_shapes=print_shapes,
-                   custom_pp_eqn_rules=custom_pp_eqn_rules)
+                   custom_pp_eqn_rules=custom_pp_eqn_rules,
+                   name_stack=name_stack)
     return doc.format(**kw)
 
   def _repr_pretty_(self, p, cycle):
@@ -141,9 +142,10 @@ class ClosedJaxpr:
   def __str__(self): return str(self.jaxpr)
   def __repr__(self): return repr(self.jaxpr)
 
-  def pretty_print(self, *, source_info=False, print_shapes=True, **kw):
+  def pretty_print(self, *, source_info=False, print_shapes=True,
+                   name_stack=False, **kw):
     return pp_jaxpr(self.jaxpr, JaxprPpContext(), source_info=source_info,
-                    print_shapes=print_shapes).format(**kw)
+                    print_shapes=print_shapes, name_stack=name_stack).format(**kw)
 
 
   def _repr_pretty_(self, p, cycle):
@@ -333,7 +335,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-    with source_info_util.user_context(eqn.source_info.traceback):
+    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
+    with source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack):
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
@@ -2272,50 +2275,52 @@ def pp_vars(vs: Sequence[Any], context: JaxprPpContext,
               [pp.text(pp_var(v, context)) for v in vs])
     ))
 
-def pp_kv_pair(k:str, v: Any, context: JaxprPpContext) -> pp.Doc:
+def pp_kv_pair(k:str, v: Any, context: JaxprPpContext, name_stack: bool = False) -> pp.Doc:
   if type(v) is tuple and all(isinstance(j, (Jaxpr, ClosedJaxpr)) for j in v):
-    pp_v = pp_jaxprs(v, context)
+    pp_v = pp_jaxprs(v, context, name_stack=name_stack)
   elif isinstance(v, Jaxpr):
-    pp_v = pp_jaxpr(v, context)
+    pp_v = pp_jaxpr(v, context, name_stack=name_stack)
   elif isinstance(v, ClosedJaxpr):
-    pp_v = pp_jaxpr(v.jaxpr, context)
+    pp_v = pp_jaxpr(v.jaxpr, context, name_stack=name_stack)
   else:
     pp_v = pp.text(str(v))
   return pp.text(f'{k}=') + pp_v
 
-def pp_kv_pairs(kv_pairs, context: JaxprPpContext) -> pp.Doc:
+def pp_kv_pairs(kv_pairs, context: JaxprPpContext, name_stack: bool = False) -> pp.Doc:
   if not kv_pairs:
     return pp.nil()
   return pp.group(
     pp.nest(2, pp.concat([
       pp.text("["),  pp.brk(""),
-      pp.join(pp.brk(), [pp_kv_pair(k, v, context) for k, v in kv_pairs])
+      pp.join(pp.brk(), [pp_kv_pair(k, v, context, name_stack=name_stack) for k, v in kv_pairs])
     ]))
     + pp.brk("") + pp.text("]")
   )
 
 def pp_eqn(eqn, context: JaxprPpContext, *, print_shapes=True,
-           source_info=False, custom_pp_eqn_rules=True) -> pp.Doc:
+           source_info=False, custom_pp_eqn_rules=True, name_stack=False) -> pp.Doc:
   lhs = pp_vars(eqn.outvars, context, print_shapes=print_shapes)
   annotation = (source_info_util.summarize(eqn.source_info)
                 if source_info else None)
   rule = pp_eqn_rules.get(eqn.primitive)
+  name_stack_annotation = f'[{eqn.source_info.name_stack}]' if name_stack else None
   if rule and custom_pp_eqn_rules:
     rhs = rule(eqn, context)
   else:
-    rhs = [pp.text(eqn.primitive.name),
-           pp_kv_pairs(sorted(eqn.params.items()), context),
+    rhs = [pp.text(eqn.primitive.name, annotation=name_stack_annotation),
+           pp_kv_pairs(sorted(eqn.params.items()), context, name_stack=name_stack),
            pp.text(" ") + pp_vars(eqn.invars, context)]
   return pp.concat([lhs, pp.text(" = ", annotation=annotation), *rhs])
 CustomPpEqnRule = Callable[[JaxprEqn, JaxprPpContext], Sequence[pp.Doc]]
 pp_eqn_rules: Dict[Primitive, CustomPpEqnRule]  = {}
 
 def pp_eqns(eqns, context: JaxprPpContext, *, print_shapes=True,
-            source_info=False, custom_pp_eqn_rules=True
+            source_info=False, custom_pp_eqn_rules=True, name_stack=False,
             ) -> pp.Doc:
   return pp.join(
     pp.brk("; "),
     [pp_eqn(e, context, print_shapes=print_shapes, source_info=source_info,
+            name_stack=name_stack,
             custom_pp_eqn_rules=custom_pp_eqn_rules) for e in eqns])
 
 def _compact_eqn_should_include(k: str, v: Any) -> bool:
@@ -2349,23 +2354,25 @@ def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext, *,
 
 
 def pp_jaxpr(jaxpr, context: JaxprPpContext, *, print_shapes=True,
-             source_info=False, custom_pp_eqn_rules=True) -> pp.Doc:
+             source_info=False, custom_pp_eqn_rules=True, name_stack=False) -> pp.Doc:
   eqns_fn = lambda: pp_eqns(jaxpr.eqns, context, print_shapes=print_shapes,
                             source_info=source_info,
-                            custom_pp_eqn_rules=custom_pp_eqn_rules)
+                            custom_pp_eqn_rules=custom_pp_eqn_rules,
+                            name_stack=name_stack)
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, print_shapes=print_shapes)
 
-def pp_jaxprs(jaxprs, context: JaxprPpContext) -> pp.Doc:
+def pp_jaxprs(jaxprs, context: JaxprPpContext, name_stack: bool = False) -> pp.Doc:
   jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
   return pp.group(pp.nest(2, pp.concat([
       pp.text('('), pp.brk(""),
-      pp.join(pp.brk(), map(lambda x: pp_jaxpr(x, context), jaxprs))]
+      pp.join(pp.brk(), map(lambda x: pp_jaxpr(x, context, name_stack=name_stack), jaxprs))]
     )) + pp.brk("") + pp.text(')')
   )
 
 
 def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int, context: JaxprPpContext,
-                       print_shapes=True, source_info: bool = False) -> pp.Doc:
+                       print_shapes=True, source_info: bool = False,
+                       name_stack: bool = False) -> pp.Doc:
   lo = max(lo, 0)
   hi = max(lo, min(hi, len(jaxpr.eqns)))
   eqns = jaxpr.eqns[lo:hi]
@@ -2377,7 +2384,8 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int, context: JaxprPpContext,
       if lo != 0:
         pps.append(pp.text('...'))
       pps.extend(map((lambda e: pp_eqn(e, context, print_shapes=print_shapes,
-                                       source_info=source_info)), eqns))
+                                       source_info=source_info,
+                                       name_stack=name_stack)), eqns))
       if hi != len(jaxpr.eqns):
         pps.append(pp.text('...'))
     return pp.join(pp.brk("; "), pps)

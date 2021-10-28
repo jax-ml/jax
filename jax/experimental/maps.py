@@ -910,7 +910,7 @@ def _xmap_transpose(params, call_jaxpr, args, cts_in, cts_in_avals, reduce_axes)
   all_args, in_tree_def = tree_flatten(((), args, cts_in))  # empty consts
   fun = lu.hashable_partial(
       lu.wrap_init(ad.backward_pass),
-      call_jaxpr, reduce_axes + tuple(params['global_axis_sizes'].keys()))
+      call_jaxpr, reduce_axes + tuple(params['global_axis_sizes'].keys()), False)
   fun, nz_arg_cts = ad.nonzero_outputs(fun)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   # Preserve axis for primal arguments, skip tangents (represented as undefined primals).

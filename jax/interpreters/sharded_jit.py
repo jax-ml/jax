@@ -35,7 +35,7 @@ from jax._src.api_util import (argnums_partial, flatten_axes, flatten_fun,
                                _ensure_index_tuple)
 import jax._src.util as util
 from jax.tree_util import tree_flatten, tree_unflatten
-from jax._src.util import (extend_name_stack, wrap_name, wraps, safe_map,
+from jax._src.util import (new_name_stack, wrap_name, wraps, safe_map,
                            safe_zip, HashableFunction)
 from jax._src.config import config
 
@@ -149,7 +149,7 @@ def _sharded_callable(
   xla_args = _xla_sharded_args(c, global_abstract_args, in_parts)
   axis_env = xla.AxisEnv(nrep, (), ())
   ctx = xla.TranslationContext(
-      c, platform, axis_env, extend_name_stack(wrap_name(name, "sharded_jit")))
+      c, platform, axis_env, new_name_stack(wrap_name(name, "sharded_jit")))
   out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
   out_tuple = xla.with_sharding(c, out_parts, xops.Tuple, c, out_nodes)
   built = c.Build(out_tuple)
@@ -202,7 +202,7 @@ def _sharded_jit_translation_rule(ctx, avals_in, avals_out, *in_nodes,
 
   sub_ctx = ctx.replace(
       builder=subc,
-      name_stack=extend_name_stack(wrap_name(name, "sharded_jit")))
+      name_stack=new_name_stack(wrap_name(name, "sharded_jit")))
   out_nodes = xla.jaxpr_subcomp(sub_ctx, call_jaxpr, (), *args)
   out_parts = out_parts_thunk()
   assert len(out_parts) == len(out_nodes)
@@ -234,7 +234,7 @@ def _sharded_jit_lowering(ctx, *in_nodes,
       args.append(ns)
 
   sub_ctx = ctx.module_context.replace(
-      name_stack=extend_name_stack(wrap_name(name, "sharded_jit")))
+      name_stack=new_name_stack(wrap_name(name, "sharded_jit")))
   fn = mlir.lower_jaxpr_to_fun(sub_ctx, f"sharded_jit_{name}",
                                core.ClosedJaxpr(call_jaxpr, ()))
 

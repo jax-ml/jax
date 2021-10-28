@@ -407,7 +407,7 @@ def _custom_jvp_call_jaxpr_transpose(reduce_axes, cts, *args, fun_jaxpr,
                                      jvp_jaxpr_thunk, num_consts):
   del jvp_jaxpr_thunk, num_consts
   return ad.backward_pass(
-      fun_jaxpr.jaxpr, reduce_axes, fun_jaxpr.consts, args, cts)
+      fun_jaxpr.jaxpr, reduce_axes, False, fun_jaxpr.consts, args, cts)
 ad.reducing_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
 def custom_jvp_jaxpr_custom_partial_eval_rule(

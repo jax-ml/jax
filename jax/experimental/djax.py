@@ -24,7 +24,7 @@ from jax._src import source_info_util
 from jax.core import Var, Literal, Atom, Tracer
 from jax._src import util
 from jax._src.util import (safe_zip, safe_map, curry, unzip2, split_list,
-                           tuple_delete)
+                           tuple_delete, new_name_stack)
 import jax._src.pretty_printer as pp
 
 map = safe_map
@@ -806,7 +806,8 @@ def traceable_to_padded_translation(traceable):
 
     operands_ = it.chain.from_iterable([*dims.values(), *operands])
     platform = "cpu"  # TODO: don't hardwire in the CPU translation.
-    ctx = xla.TranslationContext(c, platform, xla.AxisEnv(1, (), ()), '')
+    ctx = xla.TranslationContext(c, platform, xla.AxisEnv(1, (), ()),
+                                 new_name_stack())
     outs = xla.jaxpr_subcomp(ctx, jaxpr, xla._xla_consts(c, consts), *operands_)
     return util.unflatten(outs,
                           [aval_to_num_buffers(aval) for aval in out_avals])

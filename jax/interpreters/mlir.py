@@ -266,8 +266,8 @@ register_constant_handler(
 def _source_info_to_location(
     primitive: core.Primitive, params: Dict,
     source_info: source_info_util.SourceInfo,
-    name_stack: str = "") -> ir.Location:
-  eqn_str = name_stack + core.str_eqn_compact(primitive.name, params)
+    name_stack: Union[str, source_info_util.NameStack] = "") -> ir.Location:
+  eqn_str = str(name_stack) + core.str_eqn_compact(primitive.name, params)
   frame = source_info_util.user_frame(source_info)
   if frame is None:
     loc = ir.Location.unknown()
@@ -280,6 +280,7 @@ def _source_info_to_location(
 
 
 # Translation rules
+NameStack = Union[str, source_info_util.NameStack]
 
 def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
@@ -334,7 +335,7 @@ class ModuleContext:
   symbol_table: ir.SymbolTable
   platform: str
   axis_context: AxisContext
-  name_stack: str
+  name_stack: NameStack
 
   # Cached primitive lowerings.
   cached_primitive_lowerings: Dict[Any, builtin.FuncOp]
@@ -344,7 +345,7 @@ class ModuleContext:
     return self.axis_context.axis_env
 
   def __init__(
-      self, platform: str, axis_context: AxisContext, name_stack: str,
+      self, platform: str, axis_context: AxisContext, name_stack: NameStack,
       context: Optional[ir.Context] = None,
       module: Optional[ir.Module] = None,
       ip: Optional[ir.InsertionPoint] = None,
@@ -412,7 +413,7 @@ _module_name_regex = re.compile(r"[^\w.-]")
 def lower_jaxpr_to_module(
     module_name: str, jaxpr: core.ClosedJaxpr, platform: str,
     axis_context: AxisContext,
-    name_stack: str, donated_args: Sequence[bool],
+    name_stack: NameStack, donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None

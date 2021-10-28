@@ -50,7 +50,7 @@ from jax.interpreters import masking
 import jax._src.pretty_printer as pp
 from jax._src import util
 from jax._src.util import (cache, safe_zip, prod, safe_map, canonicalize_axis,
-                           split_list)
+                           split_list, new_name_stack)
 from jax.tree_util import tree_map
 import jax._src.lib
 from jax._src.lib import pytree
@@ -3424,7 +3424,7 @@ def _reduction_computation(ctx, jaxpr, consts, init_values, singleton=True):
   subc = xc.XlaBuilder("reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [xla.parameter(subc, i, shape) for i, shape in enumerate(shapes)]
-  ctx = xla.TranslationContext(subc, platform, axis_env, '')
+  ctx = xla.TranslationContext(subc, platform, axis_env, new_name_stack())
   out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, consts, *args)
   if singleton:
     return subc.build(out_nodes[0])

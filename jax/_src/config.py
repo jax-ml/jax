@@ -140,7 +140,6 @@ class Config:
     for name, val in self.values.items():
       flag_type, meta_args, meta_kwargs = self.meta[name]
       absl_defs[flag_type](name, val, *meta_args, **meta_kwargs)
-
     app.call_after_init(lambda: self.complete_absl_config(absl_flags))
 
   def complete_absl_config(self, absl_flags):
@@ -687,6 +686,11 @@ config.define_bool_state(
     default=False,
     help=('Enables experimental features for staging out computations with '
           'dynamic shapes.'))
+
+config.define_bool_state(
+    name='jax_experimental_name_stack',
+    default=False,
+    help='Enable using the context manager-based name stack.')
 
 # This flag is temporary during rollout of the remat barrier.
 # TODO(parkers): Remove if there are no complaints.

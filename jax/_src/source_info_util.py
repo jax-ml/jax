@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import contextlib
+import dataclasses
 import functools
 import itertools
 import os.path
 import threading
 import types
-from typing import Optional, Iterator, NamedTuple
+from typing import Optional, Iterator, NamedTuple, Union, Tuple
 
 import jax.version
 from jax._src.lib import xla_client, xla_extension_version
@@ -40,15 +41,66 @@ _exclude_paths = [os.path.dirname(jax.version.__file__)]
 def register_exclusion(path):
   _exclude_paths.append(path)
 
+class Scope(NamedTuple):
+  name: str
+
+  def wrap(self, stack: Tuple[str, ...]) -> Tuple[str, ...]:
+    return (self.name, *stack)
+
+class Transform(NamedTuple):
+  name: str
+
+  def wrap(self, stack: Tuple[str, ...]) -> Tuple[str, ...]:
+    return tuple(map(lambda x: f'{self.name}({x})', stack))
+
+@dataclasses.dataclass(frozen=True)
+class NameStack:
+  stack: Tuple[Union[Scope, Transform], ...] = ()
+
+  def extend(self, name: Union[Tuple[str, ...], str]) -> 'NameStack':
+    if not isinstance(name, tuple):
+      name = (name,)
+    scopes = tuple(map(Scope, name))
+    return NameStack(self.stack + scopes)
+
+  def wrap_name(self, name: str) -> str:
+    if not self.stack:
+      return name
+    return f'{str(self)}/{name}'
+
+  def transform(self, transform_name: str) -> 'NameStack':
+    return NameStack((*self.stack, Transform(transform_name)))
+
+  def __getitem__(self, idx) -> 'NameStack':
+    return NameStack(self.stack[idx])
+
+  def __len__(self):
+    return len(self.stack)
+
+  def __add__(self, other: 'NameStack') -> 'NameStack':
+    return NameStack(self.stack + other.stack)
+
+  def __radd__(self, other: 'NameStack') -> 'NameStack':
+    return NameStack(other.stack + self.stack)
+
+  def __str__(self) -> str:
+    scope: Tuple[str, ...] = ()
+    for elem in self.stack[::-1]:
+      scope = elem.wrap(scope)
+    return '/'.join(scope)
+
 class SourceInfo(NamedTuple):
   traceback: Optional[Traceback]
+  name_stack: NameStack
 
-  def replace(self, *, traceback: Optional[Traceback] = None) -> 'SourceInfo':
+  def replace(self, *, traceback: Optional[Traceback] = None,
+      name_stack: Optional[NameStack] = None) -> 'SourceInfo':
     traceback = traceback or self.traceback
-    return self._replace(traceback=traceback)
+    name_stack = self.name_stack if name_stack is None else name_stack
+    return self._replace(traceback=traceback, name_stack=name_stack)
 
 def new_source_info() -> SourceInfo:
-  return SourceInfo(None)
+  return SourceInfo(None, NameStack())
 
 def is_user_filename(filename: str) -> bool:
   """Heuristic that guesses the identity of the user's code in a stack trace."""
@@ -97,11 +149,10 @@ class _SourceInfoContext(threading.local):
 _source_info_context = _SourceInfoContext()
 
 def current() -> SourceInfo:
-  context = _source_info_context.context
-  if not context.traceback:
-    return context.replace(traceback=xla_client.Traceback.get_traceback())
-  return context
-
+  source_info = _source_info_context.context
+  if not source_info.traceback:
+    source_info = source_info.replace(traceback=xla_client.Traceback.get_traceback())
+  return source_info
 
 class JaxStackTraceBeforeTransformation(Exception): pass
 
@@ -118,9 +169,10 @@ def has_user_context(e):
   return False
 
 @contextlib.contextmanager
-def user_context(c: Optional[Traceback]):
+def user_context(c: Optional[Traceback], *, name_stack: Optional[NameStack] = None):
   prev = _source_info_context.context
-  _source_info_context.context = _source_info_context.context.replace(traceback=c)
+  _source_info_context.context = _source_info_context.context.replace(
+      traceback=c, name_stack=name_stack)
   filtered_tb = None
   try:
     yield
@@ -141,3 +193,43 @@ def user_context(c: Optional[Traceback]):
   finally:
     _source_info_context.context = prev
     del filtered_tb
+
+def current_name_stack() -> NameStack:
+  return _source_info_context.context.name_stack
+
+@contextlib.contextmanager
+def extend_name_stack(name: str) -> Iterator[NameStack]:
+  prev_context = _source_info_context.context
+  curr_name_stack = prev_context.name_stack
+  new_context = prev_context.replace(name_stack=curr_name_stack.extend(name))
+  _source_info_context.context = new_context
+  try:
+    yield _source_info_context.context.name_stack
+  finally:
+    _source_info_context.context = prev_context
+
+@contextlib.contextmanager
+def set_name_stack(name_stack: NameStack) -> Iterator[None]:
+  prev_context = _source_info_context.context
+  new_context = prev_context.replace(name_stack=name_stack)
+  _source_info_context.context = new_context
+  try:
+    yield
+  finally:
+    _source_info_context.context = prev_context
+
+@contextlib.contextmanager
+def reset_name_stack() -> Iterator[None]:
+  with set_name_stack(NameStack()):
+    yield
+
+@contextlib.contextmanager
+def transform_name_stack(name: str) -> Iterator[NameStack]:
+  prev_context = _source_info_context.context
+  curr_name_stack = prev_context.name_stack
+  new_context = prev_context.replace(name_stack=curr_name_stack.transform(name))
+  _source_info_context.context = new_context
+  try:
+    yield _source_info_context.context.name_stack
+  finally:
+    _source_info_context.context = prev_context

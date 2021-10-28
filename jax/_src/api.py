@@ -56,10 +56,11 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            Partial, PyTreeDef, all_leaves)
 from jax._src.tree_util import broadcast_prefix
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
-                           extend_name_stack, wrap_name, cache, wraps,
+                           extend_name_stack, new_name_stack, wrap_name, cache, wraps,
                            HashableFunction)
 from jax._src import device_array
 from jax._src import dispatch
+from jax._src import source_info_util
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -895,9 +896,8 @@ def xla_computation(fun: Callable,
       should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
       xla_args, donated_invars = xla._xla_callable_args(
           c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)
-      ctx = xla.TranslationContext(
-          c, backend, axis_env_,
-          extend_name_stack(wrap_name(fun_name, "xla_computation")))
+      name_stack = new_name_stack(wrap_name(fun_name, "xla_computation"))
+      ctx = xla.TranslationContext(c, backend, axis_env_, name_stack)
       out_nodes = xla.jaxpr_subcomp(ctx, jaxpr, xla_consts, *xla_args)
     build_out_tuple = partial(xc.ops.Tuple, c, out_nodes)
     if out_parts is not None:
@@ -2615,7 +2615,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
     dummies = [ad.UndefinedPrimal(a) for a in in_avals]
     in_cotangents = map(
         ad.instantiate_zeros,
-        ad.backward_pass(jaxpr, reduce_axes, consts, dummies, out_cotangents))
+        ad.backward_pass(jaxpr, reduce_axes, True, consts, dummies, out_cotangents))
     return tree_unflatten(in_tree, in_cotangents)
 
   # Ensure that transposed_fun is a PyTree
@@ -3196,6 +3196,9 @@ def named_call(
     name = fun.__name__
 
   _, in_tree = tree_flatten(())
+
+  if config.jax_experimental_name_stack:
+    return source_info_util.extend_name_stack(name)(fun)
 
   @functools.wraps(fun)
   def named_call_f(*args, **kwargs):
